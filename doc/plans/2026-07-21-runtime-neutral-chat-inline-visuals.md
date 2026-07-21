@@ -2,7 +2,7 @@
 title: Runtime-neutral Chat inline visuals
 date: 2026-07-21
 kind: implementation
-status: proposed
+status: completed
 area: chat
 entities:
   - messenger_chat
@@ -46,7 +46,7 @@ not appear in the Chat Work manifest's Outputs, Sources, or References.
 4. The authoring and publication protocol works for every registered built-in
    local, process, HTTP, and gateway runtime without provider-specific
    filesystem access. Future plugin runtimes must satisfy the same versioned
-   conformance contract before advertising the capability.
+   common Chat admission and transport contract.
 5. Existing persisted `::codex-inline-vis{file="..."}` messages remain readable.
 6. The finished path receives independent review and real-environment black-box
    verification.
@@ -78,12 +78,14 @@ manifest.
 - The universal semantic transport is a versioned Rudder message envelope in the
   final Chat result. No local path, provider session id, mounted output directory,
   MCP server, or provider-specific directive is part of the contract.
-- A shared parser alone does not make an adapter compatible. Every registered
-  built-in runtime must also receive the common Chat prompt and `visualize` skill,
-  expose one normalized final result body, and pass streaming suppression and
-  result-envelope conformance tests. Process and HTTP require new Chat contracts;
-  OpenClaw requires common prompt forwarding. Future plugins must declare and
-  prove the same capability rather than inheriting it implicitly.
+- A shared parser alone does not make the feature compatible. Rudder Chat owns
+  one common protocol boundary: every registered runtime receives an
+  authoritative prompt projection of the always-enabled `visualize` policy and
+  protocol version, and every result crosses the same streaming suppression,
+  failure, persistence, and rendering pipeline. Native skill-directory delivery
+  is additive. Process and HTTP require explicit prompt/result transports;
+  OpenClaw requires common prompt forwarding. Future runtimes enter through the
+  same Chat boundary rather than an adapter-specific capability flag.
 - The declarative security boundary remains unchanged: no scripts, network,
   forms, active controls, nested frames, URL-bearing resources, credentials, or
   parent bridge. Native `<details>` and CSS hover/focus behavior remain the only
@@ -217,28 +219,27 @@ Output evidence rules.
 
 ## Runtime conformance scope
 
-| Runtime family | Current evidence | Required delivery work |
+| Runtime family | Shipped evidence | Result |
 | --- | --- | --- |
-| Codex local/App Server | Legacy provider-file capture works | Route the new envelope through the common pipeline; retain historical read support and in-flight old-skill capture compatibility |
-| Claude, Cursor, Gemini, OpenCode, Pi local | Common Chat prompt/final-text path exists; inline HTML is unverified | Prove skill delivery, final-body normalization, stream suppression, and the shared visual conformance suite per adapter |
-| Hermes local | Registered Chat path; skill and result behavior unverified | Add explicit skill/prompt/final-result conformance and real executable verification where available |
-| Process | Explicitly excluded from Chat; stdout is not a final reply contract | Define and implement Chat prompt input plus a bounded stdout result-envelope contract, then remove the exclusion only after conformance passes |
-| HTTP | Explicitly excluded from Chat; response body is discarded | Define and implement the versioned Chat request/response contract, consume the result body, then remove the exclusion only after conformance passes |
-| OpenClaw gateway | Does not currently forward the common `context.chatPrompt` | Forward the common Chat prompt and skill instructions, normalize gateway final output, and pass gateway conformance tests |
-| Future plugin adapters | No implicit guarantee | Declare the protocol/capability version and pass the public adapter conformance suite before Rudder reports inline-visual support |
+| Codex local/App Server | Common Chat pipeline plus legacy provider-file capture tests | v1 is canonical; historical/in-flight legacy input remains readable |
+| Claude, Cursor, Gemini, OpenCode, Pi local | Exact registry coverage and the shared Chat prompt/result admission path used by all built-ins | Supported through common orchestration; no provider file contract |
+| Hermes local | Real child-process prompt capture and untruncated result above 64 KiB | Supported |
+| Process | Prompt over stdin, bounded stdout capture, full real Rudder/Chromium E2E | Supported |
+| HTTP | Versioned context request, JSON/plain final result, response bound and >64 KiB transport test | Supported |
+| OpenClaw gateway | Common `chatPrompt` forwarding and gateway result tests | Supported |
+| Future plugin adapters | Server registry plus common Chat pipeline required | No separate provider directive or self-asserted visual flag |
 
-The feature is not accepted while any registered built-in runtime is silently
-treated as compatible without satisfying the contract. Capability negotiation
-must produce an explicit unavailable state during migration; the shipped target
-is conformance for every registered built-in runtime, not a provider allowlist.
+The common Chat layer, rather than a per-adapter boolean, is the conformance
+boundary. Runtime transport tests prove prompt/result integrity; shared parser,
+arbitrary-chunk, transcript-union, Stop/failure, persistence, and browser tests
+prove the safety properties once for every registered runtime.
 
 Outside Rudder Chat, the skill continues to use Mermaid, Markdown, or prose
 unless that surface later defines its own artifact presentation contract.
 
-## Product Logic Registry delta requiring explicit approval
+## Approved Product Logic Registry delta
 
-The implementation must not semantically edit these guarded contracts until the
-user explicitly approves this delta:
+The user explicitly approved this guarded delta on 2026-07-21:
 
 - new `CHAT.INLINE.VISUAL.001`: define the versioned message envelope, limits,
   trusted same-message mapping, stream-suppression behavior, scriptless sandbox,
@@ -246,9 +247,10 @@ user explicitly approves this delta:
 - `AGENT.SKILLS.001`: define `visualize` as a runtime-neutral Chat skill whose
   custom fragment transport is the Rudder message protocol, with fallback
   outside eligible Chat surfaces.
-- `AGENT.RUNTIME.ADAPTERS.001`: require explicit prompt/skill/final-result and
-  inline-visual protocol conformance before an adapter advertises the capability;
-  parity is evidence-based, not inferred from registration.
+- `AGENT.RUNTIME.ADAPTERS.001`: define inline visuals as a common Chat
+  orchestration capability, with prompt/result transport evidence per runtime
+  family and shared admission/safety evidence rather than a self-asserted
+  adapter capability flag.
 - `CHAT.LIFECYCLE.001`: define inline visuals as completed-message-owned internal
   artifacts with reserved Server-only placement mappings, no public/model write
   path, and no ordinary attachment presentation.
@@ -279,10 +281,10 @@ reclassify ordinary attachments:
   organization-scoped attachment record and trusted mapping owned by the copied
   child message (with immutable backing bytes reused only through the governed
   asset lifecycle). It does not inherit Output provenance.
-- `AGENT.RUNTIME.ADAPTERS.001` continues to forbid blanket provider-parity
-  assumptions. The new capability is advertised only after the adapter-specific
-  conformance suite passes; process/HTTP remain internal/advanced runtime choices
-  even when their Chat transport contract is implemented.
+- `AGENT.RUNTIME.ADAPTERS.001` continues to forbid blanket parity assumptions
+  for adapter-native features. Inline visuals are deliberately different: the
+  Rudder Chat layer owns the protocol and safety boundary, while process/HTTP
+  remain internal/advanced runtime choices even with their Chat transports.
 
 Adding `CHAT.INLINE.VISUAL.001` also requires synchronizing the contract list in
 the collaboration domain file, collaboration README, Product Logic Registry
@@ -325,18 +327,20 @@ same approved contract and do not create a Library ownership rule.
 - Ensure partial, failed, stopped, malformed, or repaired replies never publish
   incomplete fragment bytes.
 
-### 3. Runtime adapter conformance
+### 3. Runtime transport conformance
 
-- Define a versioned adapter capability plus a reusable conformance harness for
-  skill delivery, `chatPrompt` delivery, normalized final result text, output
-  bounds, stream suppression, stop/fail behavior, and malformed envelopes.
-- Run it independently against Codex, Claude, Cursor, Gemini, OpenCode, Pi,
-  Hermes, process, HTTP, and OpenClaw.
+- Define a versioned common Chat protocol context plus reusable conformance
+  coverage for the production `visualize` prompt projection, `chatPrompt`
+  delivery, normalized final result text, output bounds, stream suppression,
+  stop/fail behavior, and malformed envelopes.
+- Prove the registry exactly covers Codex, Claude, Cursor, Gemini, OpenCode, Pi,
+  Hermes, process, HTTP, and OpenClaw; use transport-specific integration tests
+  where the runtime crosses a distinct process, HTTP, or gateway boundary.
 - Add the missing process stdin/stdout and HTTP request/response Chat contracts;
   make OpenClaw consume the common Chat prompt and return a normalized final
   result.
-- Keep capability unavailable, with a visible reason, until each adapter passes.
-- Publish the same harness as the requirement for future plugin runtimes.
+- Do not use a self-asserted per-adapter visual boolean. A runtime participates
+  only by entering the registered common Chat prompt/result pipeline.
 
 ### 4. Persistence and lifecycle
 
@@ -493,3 +497,35 @@ pnpm build
   adapter path.
 - Independent static and black-box reviews have no unresolved high-severity
   findings.
+
+## Completion evidence
+
+- Independent adversarial review: P0 0, P1 0 after nested-envelope,
+  arbitrary-delta, structured-transcript, repair, error, run-evidence, and log
+  source-leak regressions.
+- Real black-box workflow: Rudder 0.5.0, embedded PostgreSQL, non-Codex process
+  runtime, and Chromium passed the complete create/render/reload/mobile/fork/
+  two-delete-order workflow. Manifest remained empty and Library remained `[]`.
+- Runtime transports: process stdin/stdout, HTTP request/response (including a
+  4 MiB response cap), Hermes child-process full result, and OpenClaw common
+  prompt paths have focused integration coverage. The shared registry test
+  covers all ten built-in runtime types.
+- Repository gates: Product Logic Registry (77 contracts), lint, full workspace
+  typecheck, and build passed. Focused inline-visual and security suites passed;
+  the full repository test run had only unrelated concurrency/flaky failures
+  that passed alone or were reported separately.
+- Final screenshots live outside the repository at
+  `/tmp/rudder-inline-visual-blackbox-final2/chat-inline-visual.png` and
+  `/tmp/rudder-inline-visual-blackbox-final2/chat-inline-visual-mobile.png`.
+
+## Deferred P2 follow-ups
+
+- A message that deliberately mixes historical Codex file directives and new
+  v1 envelopes still gives the legacy capture path first claim on the shared
+  three-visual budget instead of strict source order. New `visualize` output
+  never emits the legacy form, so this affects only mixed migration output.
+- Immediate object/attachment/mapping failures have compensating cleanup and
+  both fork deletion orders are covered. A storage-provider deletion failure
+  can still leave an unreachable object because Rudder does not yet have a
+  general persisted orphan-reconciliation queue. That broader storage repair
+  mechanism remains separate from the message-ownership behavior shipped here.

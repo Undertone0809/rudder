@@ -11,9 +11,11 @@ import {
   type Db,
 } from "@rudderhq/db";
 import {
+  chatInlineVisualMappingsFromStructuredPayload,
   extractVisibleChatWorkTargets,
   normalizeChatWorkExternalUrl,
   preferChatWorkManifestCategory,
+  rudderInlineVisualMappingsFromStructuredPayload,
   type ChatWorkManifestCategory,
   type ChatWorkManifestItem,
   type ChatWorkManifestResponse,
@@ -95,9 +97,12 @@ export function chatWorkManifestService(db: Db) {
     const attachmentRows = messageIds.length === 0 ? [] : await db
       .select({
         messageId: chatAttachments.messageId,
+        attachmentId: chatAttachments.id,
         assetId: assets.id,
         originalFilename: assets.originalFilename,
         contentType: assets.contentType,
+        byteSize: assets.byteSize,
+        sha256: assets.sha256,
         createdByAgentId: assets.createdByAgentId,
         createdByUserId: assets.createdByUserId,
       })
@@ -113,6 +118,36 @@ export function chatWorkManifestService(db: Db) {
       const list = attachmentsByMessage.get(attachment.messageId) ?? [];
       list.push(attachment);
       attachmentsByMessage.set(attachment.messageId, list);
+    }
+    const inlineVisualTargetKeys = new Set<string>();
+    for (const message of visibleMessages) {
+      const messageAttachments = attachmentsByMessage.get(message.id) ?? [];
+      for (const mapping of chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload)) {
+        if (mapping.status !== "ready") continue;
+        const attachment = messageAttachments.find((candidate) =>
+          candidate.attachmentId === mapping.attachmentId
+          && candidate.contentType === "text/html"
+          && candidate.originalFilename === mapping.file
+          && Boolean(candidate.createdByAgentId)
+          && !candidate.createdByUserId
+          && candidate.byteSize > 0
+          && candidate.byteSize <= 2 * 1024 * 1024
+        );
+        if (attachment) inlineVisualTargetKeys.add(`asset:${attachment.assetId}`);
+      }
+      for (const mapping of rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload)) {
+        if (mapping.status !== "ready") continue;
+        const attachment = messageAttachments.find((candidate) =>
+          candidate.attachmentId === mapping.attachmentId
+          && candidate.contentType === mapping.contentType
+          && candidate.originalFilename === mapping.file
+          && candidate.byteSize === mapping.byteSize
+          && candidate.sha256.toLowerCase() === mapping.sha256
+          && Boolean(candidate.createdByAgentId)
+          && !candidate.createdByUserId
+        );
+        if (attachment) inlineVisualTargetKeys.add(`asset:${attachment.assetId}`);
+      }
     }
 
     const candidates = new Map<string, ManifestCandidate>();
@@ -145,6 +180,7 @@ export function chatWorkManifestService(db: Db) {
         });
       }
       for (const attachment of attachmentsByMessage.get(message.id) ?? []) {
+        if (inlineVisualTargetKeys.has(`asset:${attachment.assetId}`)) continue;
         const output = role === "assistant" && Boolean(attachment.createdByAgentId);
         mergeCandidate(candidates, {
           orgId: conversation.orgId,
@@ -230,7 +266,11 @@ export function chatWorkManifestService(db: Db) {
       const existingByKey = new Map(existing.map((row) => [row.targetKey, row]));
       for (const row of existing) {
         const candidate = candidates.get(row.targetKey);
-        if (row.category === "output" && (!candidate || candidate.category !== "output")) {
+        if (
+          row.category === "output"
+          && !inlineVisualTargetKeys.has(row.targetKey)
+          && (!candidate || candidate.category !== "output")
+        ) {
           candidates.set(row.targetKey, {
             orgId: row.orgId,
             conversationId: row.conversationId,

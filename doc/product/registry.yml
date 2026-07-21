@@ -1049,6 +1049,37 @@ contracts:
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
       - doc/plans/2026-07-17-safe-change-throughput-architecture-optimization.md
       - doc/plans/2026-07-20-atomic-chat-first-turn.md
+  CHAT.INLINE.VISUAL.001:
+    owner: product
+    domain: collaboration
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/collaboration/chat-messenger-im.md
+    related_code:
+      - packages/shared/src/chat-inline-visuals.ts
+      - packages/shared/src/validators/chat.ts
+      - server/resources/bundled-skills/visualize/SKILL.md
+      - server/resources/bundled-skills/visualize/references/runtime-contract.md
+      - server/src/services/chat-assistant.ts
+      - server/src/services/chat-assistant.helpers.ts
+      - server/src/services/chats.ts
+      - server/src/services/chat-work-manifest.ts
+      - server/src/routes/chats.ts
+      - ui/src/pages/ChatInlineVisual.tsx
+      - ui/src/pages/Chat.messages.tsx
+    related_tests:
+      - packages/shared/src/chat-inline-visuals.test.ts
+      - packages/shared/src/validators/chat.test.ts
+      - server/src/services/chat-assistant.inline-visuals.test.ts
+      - server/src/__tests__/bundled-visualize-skill.test.ts
+      - server/src/__tests__/chat-routes.test.ts
+      - server/src/__tests__/chat-work-manifest.test.ts
+      - ui/src/pages/ChatInlineVisual.test.tsx
+      - ui/src/pages/Chat.messages.test.tsx
+      - tests/e2e/chat-inline-visual.spec.ts
+    related_plans:
+      - doc/plans/2026-07-21-runtime-neutral-chat-inline-visuals.md
   CHAT.TITLE.GENERATION.001:
     owner: product
     domain: collaboration

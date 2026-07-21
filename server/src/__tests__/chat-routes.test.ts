@@ -42,11 +42,13 @@ const mockChatService = vi.hoisted(() => ({
   getMessage: vi.fn(),
   addMessage: vi.fn(),
   updateMessage: vi.fn(),
+  updateMessageInternalInlineVisuals: vi.fn(),
   markInterruptedStreamingMessages: vi.fn(),
   addUserChatMessage: vi.fn(),
   addContextLink: vi.fn(),
   setProjectContextLink: vi.fn(),
   createAttachment: vi.fn(),
+  removeAttachment: vi.fn(),
   convertToIssue: vi.fn(),
   resolve: vi.fn(),
   createProposalApproval: vi.fn(),
@@ -502,6 +504,14 @@ describe("chat routes", () => {
       structuredPayload: input.structuredPayload ?? null,
       transcript: Array.isArray(input.transcript) ? input.transcript : [],
       replyingAgentId: typeof input.replyingAgentId === "string" ? input.replyingAgentId : null,
+    }));
+    mockChatService.updateMessageInternalInlineVisuals.mockImplementation(async (
+      _conversationId: string,
+      messageId: string,
+      input: Record<string, unknown>,
+    ) => ({
+      ...createMessage(messageId, "assistant", "message", ""),
+      structuredPayload: input,
     }));
     mockChatService.markInterruptedStreamingMessages.mockResolvedValue([]);
     mockChatService.getQueueSnapshot.mockResolvedValue({
@@ -3659,21 +3669,205 @@ describe("chat routes", () => {
       originalFilename: "chart.html",
       contentType: "text/html",
     }));
-    expect(mockChatService.updateMessage).toHaveBeenCalledWith(
+    expect(mockChatService.updateMessageInternalInlineVisuals).toHaveBeenCalledWith(
       "chat-1",
       "message-assistant",
-      expect.objectContaining({
-        structuredPayload: {
-          inlineVisuals: [{
-            directiveIndex: 0,
-            file: "chart.html",
-            status: "ready",
-            attachmentId: "attachment-visual",
-          }],
-        },
-      }),
+      {
+        inlineVisuals: [{
+          directiveIndex: 0,
+          file: "chart.html",
+          status: "ready",
+          attachmentId: "attachment-visual",
+        }],
+      },
     );
     expect(String(res.body)).not.toContain("private-object-key");
+  });
+
+  it("persists a runtime-neutral visual as reserved message presentation metadata", async () => {
+    const conversation = createConversation();
+    const body = 'Capacity\n::rudder-inline-vis{slot="0"}';
+    const userMessage = createMessage("message-user", "user", "message", "Make a capacity view");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", body);
+    const sha256 = "a".repeat(64);
+    const generatedAttachment = {
+      id: "attachment-visual-v1",
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      messageId: "message-assistant",
+      assetId: "asset-visual-v1",
+      provider: "local_disk",
+      objectKey: "private-v1-object-key",
+      contentType: "text/html",
+      byteSize: 38,
+      sha256,
+      originalFilename: "inline-visual-1.html",
+      createdByAgentId: "agent-1",
+      createdByUserId: null,
+      contentPath: "/api/assets/asset-visual-v1/content",
+      createdAt: new Date("2026-07-21T08:01:00.000Z"),
+      updatedAt: new Date("2026-07-21T08:01:00.000Z"),
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatService.createAttachment.mockResolvedValueOnce(generatedAttachment);
+    mockStorage.putFile.mockResolvedValueOnce({
+      provider: "local_disk",
+      objectKey: "private-v1-object-key",
+      contentType: "text/html",
+      byteSize: 38,
+      sha256,
+      originalFilename: "inline-visual-1.html",
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: body,
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body,
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+        inlineVisualsV1: [{
+          version: 1,
+          slot: 0,
+          file: "inline-visual-1.html",
+          status: "captured",
+          byteSize: 38,
+        }],
+        generatedAttachments: [{
+          source: "rudder_inline_visual",
+          originalFilename: "inline-visual-1.html",
+          contentType: "text/html",
+          body: Buffer.from('<div id="widget">Balanced</div>'),
+          slot: 0,
+        }],
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Make a capacity view" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.updateMessageInternalInlineVisuals).toHaveBeenCalledWith(
+      "chat-1",
+      "message-assistant",
+      {
+        inlineVisualsV1: [{
+          version: 1,
+          slot: 0,
+          file: "inline-visual-1.html",
+          status: "ready",
+          attachmentId: "attachment-visual-v1",
+          contentType: "text/html",
+          byteSize: 38,
+          sha256,
+        }],
+      },
+    );
+    expect(String(res.body)).not.toContain("private-v1-object-key");
+    expect(String(res.body)).not.toContain("<div id=\\\"widget\\\"");
+  });
+
+  it("removes a just-created visual attachment and object when trusted mapping persistence fails", async () => {
+    const conversation = createConversation();
+    const body = 'Capacity\n::rudder-inline-vis{slot="0"}';
+    const userMessage = createMessage("message-user", "user", "message", "Make a capacity view");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", body);
+    const sha256 = "c".repeat(64);
+    const generatedAttachment = {
+      id: "attachment-cleanup-v1",
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      messageId: "message-assistant",
+      assetId: "asset-cleanup-v1",
+      provider: "local_disk",
+      objectKey: "private-cleanup-object-key",
+      contentType: "text/html",
+      byteSize: 38,
+      sha256,
+      originalFilename: "inline-visual-1.html",
+      createdByAgentId: "agent-1",
+      createdByUserId: null,
+      contentPath: "/api/assets/asset-cleanup-v1/content",
+      createdAt: new Date("2026-07-21T08:01:00.000Z"),
+      updatedAt: new Date("2026-07-21T08:01:00.000Z"),
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatService.createAttachment.mockResolvedValueOnce(generatedAttachment);
+    mockChatService.updateMessageInternalInlineVisuals.mockRejectedValueOnce(new Error("mapping write failed"));
+    mockChatService.removeAttachment.mockResolvedValueOnce({
+      orgId: "organization-1",
+      objectKey: "private-cleanup-object-key",
+      assetDeleted: true,
+    });
+    mockStorage.putFile.mockResolvedValueOnce({
+      provider: "local_disk",
+      objectKey: "private-cleanup-object-key",
+      contentType: "text/html",
+      byteSize: 38,
+      sha256,
+      originalFilename: "inline-visual-1.html",
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: body,
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body,
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+        inlineVisualsV1: [{
+          version: 1,
+          slot: 0,
+          file: "inline-visual-1.html",
+          status: "captured",
+          byteSize: 38,
+        }],
+        generatedAttachments: [{
+          source: "rudder_inline_visual",
+          originalFilename: "inline-visual-1.html",
+          contentType: "text/html",
+          body: Buffer.from('<div id="widget">Balanced</div>'),
+          slot: 0,
+        }],
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Make a capacity view" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.removeAttachment).toHaveBeenCalledWith("attachment-cleanup-v1");
+    expect(mockStorage.deleteObject).toHaveBeenCalledWith(
+      "organization-1",
+      "private-cleanup-object-key",
+    );
+    expect(String(res.body)).not.toContain("private-cleanup-object-key");
   });
 
   it("does not persist a captured inline visual when the final reply removed its directive", async () => {
@@ -4059,6 +4253,48 @@ describe("chat routes", () => {
         transcript: [expect.objectContaining({ kind: "assistant", text: "I will inspect the issue first." })],
       }),
     );
+  });
+
+  it("does not publish inline-visual backing HTML from a failed stream", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need a visual");
+    const progressMessage = {
+      ...createMessage("message-assistant", "assistant", "message", ""),
+      status: "streaming",
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(progressMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async () => {
+      const { ChatAssistantStreamError } = await import("../services/chat-assistant.js");
+      throw new ChatAssistantStreamError("runtime process exited", "", [{
+        source: "rudder_inline_visual",
+        originalFilename: "inline-visual-1.html",
+        contentType: "text/html",
+        body: Buffer.from('<div id="widget">private fragment</div>'),
+        slot: 0,
+      }]);
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Need a visual" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockStorage.putFile).not.toHaveBeenCalled();
+    expect(mockChatService.createAttachment).not.toHaveBeenCalled();
+    expect(String(res.body)).not.toContain("private fragment");
   });
 
   it("updates a streaming assistant placeholder into ask_user on final", async () => {

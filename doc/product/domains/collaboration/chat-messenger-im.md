@@ -5,6 +5,7 @@ status: active
 coverage: detailed
 contract_ids:
   - CHAT.LIFECYCLE.001
+  - CHAT.INLINE.VISUAL.001
   - CHAT.TITLE.GENERATION.001
   - CHAT.FORK.001
   - CHAT.SIDE.CHAT.001
@@ -181,6 +182,10 @@ Product model:
   API, CLI, MCP, automation, and IM entry points.
 - Messages have role, status, body, attachments, rich references, structured
   payloads, and optional run attribution.
+- Completed assistant messages may own scriptless inline visual presentation
+  under `CHAT.INLINE.VISUAL.001`. Its backing asset and trusted placement mapping
+  are internal message state, not a normal attachment, Library artifact, or work
+  Output.
 - A conversation Work manifest reconciles inspectable Outputs, Sources, and
   References from the active visible message branch and durable production
   evidence under `CHAT.THREAD.MANIFEST.001`.
@@ -482,6 +487,180 @@ Evidence:
 - Chat prompt-flow UI, motion-contract, and E2E coverage verify compact starters,
   the two-page transition lock, reduced-motion behavior, context preservation,
   editable prompt completion, retained hidden DOM, and the existing-chat boundary.
+
+## CHAT.INLINE.VISUAL.001
+
+## Contract Summary
+
+Rudder Chat may render a bounded, declarative HTML/SVG/CSS fragment inside a
+completed assistant message. The fragment is message-owned presentation state:
+it is not a normal attachment, Library file, Chat Work manifest item, or
+provider-runtime file contract. Every conforming Agent Runtime uses the same v1
+Rudder message envelope and Server-owned canonical placement.
+
+## Intent / User Job
+
+An operator can ask any configured Chat Agent Runtime for a chart, comparison,
+timeline, scenario view, or compact visual and inspect it in the answer without
+seeing an implementation `.html` file in Work or Library.
+
+## Why / Design Reasoning
+
+Provider-specific visualization directories and directives couple a Rudder
+message feature to one runtime and misclassify presentation internals as work
+Outputs. A Rudder-owned message protocol preserves runtime neutrality while a
+scriptless sandbox keeps visual explanation separate from arbitrary web-app
+execution. The Agent authors a fragment; Rudder owns trust, persistence,
+placement, sanitization, iframe creation, and lifecycle.
+
+## Actors / Objects / State
+
+- Runtime Agent: emits a complete v1 envelope in the final ordinary Chat result.
+- Chat assistant service: suppresses fragment bytes from streaming surfaces,
+  validates the envelope, and normalizes it to a canonical placement.
+- Assistant message: owns the placement and reserved `inlineVisualsV1` mapping.
+- Internal Chat attachment/asset: stores accepted fragment bytes under the same
+  organization and message.
+- Chat renderer: resolves only a matching trusted mapping and renders a
+  scriptless, no-network iframe.
+
+## Entry Points / Inputs
+
+- The always-enabled `visualize` skill under `AGENT.SKILLS.001`.
+- An ordinary successful Chat result containing exact own-line
+  `:::rudder-inline-visual:v1` and `:::rudder-inline-visual:end` markers.
+- Historical and in-flight legacy `::codex-inline-vis{file="..."}` messages,
+  which enter only through the compatibility parser/capture path.
+
+## Product Logic Flow
+
+1. Rudder supplies the same v1 authoring contract through an authoritative
+   common Chat prompt projection of the always-enabled `visualize` policy for
+   every registered Chat runtime. Runtimes with native skill discovery may also
+   receive the full skill package; runtimes without it need no provider-specific
+   skill directory.
+2. The streaming admission path recognizes a live opening marker across
+   arbitrary chunk boundaries before transcript projection, run-result summary
+   persistence, client event broadcast, or stopped-draft recovery. It buffers
+   through the closing marker and never exposes fragment source.
+3. After a successful complete final result, Rudder parses exact block-depth-zero
+   markers. LF and CRLF are valid; indentation, trailing text, nested markers,
+   empty or unterminated blocks, and markers inside CommonMark code/quotes do not
+   publish a visual.
+4. A message may contain at most three visuals, each at most 64 KiB UTF-8, at
+   most 128 KiB total fragment bytes, and at most 256 KiB for a final reply that
+   contains a live visual marker.
+5. Rudder validates the scriptless fragment contract, creates an internal
+   organization/message-scoped HTML attachment, replaces source with
+   `::rudder-inline-vis{slot="n"}`, and writes a reserved Server-only v1 mapping
+   containing slot, attachment id, MIME, byte size, hash, status, and filename.
+6. Public Chat/API input, model structured output, repair output, and imports
+   cannot write the reserved mapping. Persistence revalidates the same message,
+   organization, replying Agent provenance, MIME, filename, size, and hash.
+7. The renderer resolves the same-message mapping, sanitizes HTML/SVG/CSS, and
+   creates the restrictive iframe. Scripts, event handlers, forms, active
+   controls, links, external resources, storage, network, parent bridge, nested
+   frames, and credential access remain unavailable. Native `<details>` is the
+   only stateful interaction.
+8. Failed, stopped, timed-out, malformed, excessive, or incomplete publication
+   discards private fragment bytes and shows only an unavailable presentation;
+   no internal source download is offered.
+9. Attachment/object/message failures use compensating cleanup, and normal Chat
+   deletion releases unreferenced backing assets.
+
+## Decision Table
+
+| Case | Conditions | Product result | Must not happen | Evidence |
+| --- | --- | --- | --- | --- |
+| Valid v1 visual | Successful ordinary reply, exact envelope, safe bounded fragment | Inline visual renders at the message placement | Raw HTML, normal attachment row, Work item, or Library file | Parser, route, UI, manifest, E2E |
+| Non-Codex runtime | Adapter passes prompt/skill/final-result conformance | Same v1 result and renderer | Provider-named path or directive | Adapter conformance and real-runtime E2E |
+| Stop/failure mid-fragment | Opening marker observed without successful completed result | Private buffer discarded; safe stopped/failed body only | Fragment bytes in transcript, event, run summary, or draft | Chunk-boundary and Stop/failure tests |
+| Forged mapping | Model/API supplies attachment id or cross-message/cross-organization metadata | Reserved key stripped or mapping becomes unavailable | Rendering another message's asset | Validator/service tests |
+| Ordinary Agent HTML | HTML attachment has no trusted same-message visual mapping | Normal Chat attachment and Work Output | Hidden merely because it is HTML | Manifest tests |
+| Legacy Codex message | Valid historical directive and managed capture mapping | Continues rendering through compatibility path | New canonical skill output depends on Codex storage | Legacy tests |
+
+## Actor-Visible Input
+
+The Agent sees the v1 Rudder envelope contract and scriptless fragment rules.
+The operator asks for a visual normally; no runtime path, filename, iframe, or
+attachment-management step is required.
+
+## Operator-Visible Output
+
+The completed answer shows surrounding Markdown and the inline visual. The raw
+envelope, canonical placement, backing attachment, and source download remain
+hidden. An unavailable visual shows a compact non-download fallback.
+
+## Persisted Evidence
+
+- Canonical placement in the completed assistant message body.
+- Reserved Server-owned `inlineVisualsV1` mapping in the same message.
+- Same-message Chat attachment and organization-scoped asset for accepted bytes.
+- Run result contains normalized message output, never raw fragment source.
+- No Library row or Chat Work manifest item exists for the backing asset.
+
+## Canonical Scenarios
+
+1. Runtime-neutral capacity comparison:
+   - Trigger: a non-Codex Chat Agent emits one safe v1 envelope.
+   - Expected state/action: one internal attachment and trusted mapping persist.
+   - Visible output: the visual renders after reload and in a fork.
+   - Evidence: adapter conformance, Chat E2E, manifest and fork tests.
+2. Interrupted generation:
+   - Trigger: Stop occurs inside the opening marker, body, or closing marker.
+   - Expected state/action: buffered source is discarded and no mapping publishes.
+   - Visible output: stopped prose only; no raw HTML.
+   - Evidence: exhaustive chunk-boundary and Stop tests.
+3. Ordinary HTML artifact:
+   - Trigger: an Agent creates `report.html` without the trusted protocol.
+   - Expected state/action: normal attachment/Output behavior remains.
+   - Visible output: file appears through existing attachment and Work surfaces.
+   - Evidence: manifest regression test.
+
+## Invariants / Non-Goals
+
+- The protocol is Rudder-owned and provider-neutral. Adapter-specific feature
+  flags do not gate it: runtime transport tests prove prompt/result integrity,
+  while the one common Chat admission path proves source suppression and
+  publication safety for all registered Chat runtimes.
+- Only a Server-owned same-message mapping authorizes hiding and rendering.
+- The backing HTML is neither Library content nor work production evidence.
+- Arbitrary JavaScript web apps, network access, and iframe authoring are not
+  supported by this contract.
+- Legacy Codex capture is compatibility input, not the canonical authoring path.
+
+## Drift Boundaries
+
+Changing marker grammar, limits, mapping trust, supported active behavior,
+sandbox permissions, manifest classification, fork ownership, or adapter
+conformance requires updating this contract. Sanitizer implementation details
+may change without a contract delta when these boundaries remain equivalent.
+
+## Traceability
+
+Related plans:
+
+- `doc/plans/2026-07-21-runtime-neutral-chat-inline-visuals.md`
+
+Related code:
+
+- `packages/shared/src/chat-inline-visuals.ts`
+- `server/resources/bundled-skills/visualize/SKILL.md`
+- `server/src/services/chat-assistant.ts`
+- `server/src/services/chat-assistant.helpers.ts`
+- `server/src/services/chats.ts`
+- `server/src/services/chat-work-manifest.ts`
+- `server/src/routes/chats.ts`
+- `ui/src/pages/ChatInlineVisual.tsx`
+
+Related tests:
+
+- `packages/shared/src/chat-inline-visuals.test.ts`
+- `server/src/services/chat-assistant.inline-visuals.test.ts`
+- `server/src/__tests__/chat-routes.test.ts`
+- `server/src/__tests__/chat-work-manifest.test.ts`
+- `ui/src/pages/ChatInlineVisual.test.tsx`
+- `tests/e2e/chat-inline-visual.spec.ts`
 
 ## CHAT.TITLE.GENERATION.001
 
@@ -856,8 +1035,11 @@ Invariants:
 - A message-level fork must not copy messages after the selected assistant
   response.
 - User messages must not expose or accept message-level fork actions.
-- Attachments are not copied by the initial fork contract; their original
-  source messages remain available in the source conversation.
+- Ordinary attachments are not copied by the initial fork contract; their
+  original source messages remain available in the source conversation.
+  Server-owned inline visual presentation is the narrow exception: the copied
+  child message receives its own attachment row and trusted mapping to the
+  governed immutable asset, without Run or Work Output provenance.
 - Nested forks must not produce duplicate fork-family custom groups.
 - Forking must not attempt to put the root conversation in multiple custom
   groups; preexisting root group membership is the fork-family grouping anchor.
@@ -1323,8 +1505,10 @@ them through `CONTEXT.RESOURCES.001`.
 - Manifest item: category, target type/key, title, URL or internal locator,
   status, source role, message/Run/Agent/user provenance, Project id, metadata,
   and timestamps.
-- Output: Agent-created Chat attachment or Run-backed assistant Library artifact
-  under the guarded `artifacts/...` output namespace.
+- Output: Agent-created ordinary Chat attachment or Run-backed assistant Library
+  artifact under the guarded `artifacts/...` output namespace. A trusted
+  same-message inline visual backing attachment under `CHAT.INLINE.VISUAL.001`
+  is presentation state and is excluded.
 - Source: user attachment, user-provided URL or Library reference, or a Project
   Context Resource eligible for a project-scoped Chat Run.
 - Reference: deduplicated external HTTP(S) website in a visible user or assistant
@@ -1349,7 +1533,11 @@ them through `CONTEXT.RESOURCES.001`.
    their attachments. Transcript entries, reasoning, tool results, stdout, and
    stderr are excluded.
 4. User attachments, user Library references, and user HTTP(S) links become
-   Source candidates. Agent-created attachments become Output candidates.
+   Source candidates. Agent-created ordinary attachments become Output
+   candidates. Before classification, Rudder validates and excludes only
+   attachment ids named by the producing message's Server-owned inline visual
+   mapping; MIME, filename, size, hash, organization, message, and Agent
+   provenance must agree.
 5. An assistant Library reference becomes an Output only when it has a producing
    Run id and resolves under `artifacts/...`; other assistant HTTP(S) links are
    Reference candidates.
@@ -1361,7 +1549,9 @@ them through `CONTEXT.RESOURCES.001`.
    target appears once in its strongest supported category.
 8. Reconciliation removes stale derived Sources/References from superseded or
    edited visible messages, but it does not silently delete a durable Output
-   merely because the message that announced it was refreshed.
+   merely because the message that announced it was refreshed. A historical row
+   now proven to be trusted inline visual presentation is removed because it was
+   never production evidence.
 9. The API returns the current Chat sections. It may continue returning a
    Project id/count as compatibility metadata, but Chat does not render it or
    include it in the visible category count.
@@ -1393,6 +1583,8 @@ them through `CONTEXT.RESOURCES.001`.
 | --- | --- | --- | --- | --- |
 | User supplies a file or website | Active user message attachment or visible HTTP(S) URL | One Source with user/message provenance | The input must not be labeled as Agent Output | Service tests and Chat Work Manifest E2E |
 | Agent creates a Chat attachment | Assistant attachment has Agent creator provenance | One Output with Agent/message/Run provenance where available | It must not be downgraded to a Reference | Service tests and E2E |
+| Agent creates a trusted inline visual | Same completed assistant message owns a validated Server mapping and matching internal HTML attachment | Render in the message; no manifest row | Backing `.html` must not appear as Output, Source, or Reference | Inline visual manifest and E2E tests |
+| Agent creates ordinary HTML | No valid trusted same-message inline visual mapping | One normal Output | HTML extension alone must not hide the artifact | Manifest regression tests |
 | Agent links a produced Library artifact | Assistant message has a Run id and `artifacts/...` Library target | One Output that opens through Library Side Panel | A normal external link must not satisfy this rule | Extraction/service tests |
 | Agent recommends a website | Visible assistant HTTP(S) link with no production evidence | One Reference | Rudder must not claim the website was created by the Run | Extraction/service tests |
 | Link appears in tool history only | URL exists only in transcript, reasoning, stdout, or stderr | No manifest item | Tool exploration must not pollute the visible manifest | Service tests |

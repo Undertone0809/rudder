@@ -92,6 +92,9 @@ owning domain contract.
 
 - Chat conversation/message lifecycle, attachments, rich references, and
   assistant turns: `CHAT.LIFECYCLE.001`, `RUN.CHAT.AGENT.001`.
+- Runtime-neutral scriptless visuals embedded in completed assistant messages,
+  including trusted backing state and sandbox rendering:
+  `CHAT.INLINE.VISUAL.001`.
 - Chat process details show meaningful progress and tool activity while hiding
   provider lifecycle bookkeeping and internal result framing:
   `CHAT.LIFECYCLE.001`, `RUN.RESULT.001`.

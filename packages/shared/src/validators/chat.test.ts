@@ -151,6 +151,14 @@ describe("chat ask_user request payloads", () => {
     })).toEqual({ summary: "keep this" });
   });
 
+  it("strips server-reserved inline visual mappings from public structured payloads", () => {
+    expect(sanitizeChatStructuredPayload({
+      inlineVisuals: [{ directiveIndex: 0, attachmentId: "forged" }],
+      inlineVisualsV1: [{ version: 1, slot: 0, attachmentId: "forged" }],
+      summary: "keep this",
+    })).toEqual({ summary: "keep this" });
+  });
+
   it("rejects duplicate question ids and duplicate option ids", () => {
     const duplicateQuestionIds = chatAskUserRequestSchema.safeParse({
       questions: [

@@ -105,6 +105,75 @@ test.describe("Chat options menu", () => {
     await expect(reloadedToggle).toHaveAttribute("aria-checked", "true");
   });
 
+  test("shows the Plan mode icon at rest and the dismiss icon only on hover", async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem("rudder.theme", "dark");
+    });
+
+    await page.goto("/");
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Plan-Mode-Icon-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Planner",
+      command: E2E_CODEX_STUB,
+    });
+
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/chat?agentId=${chatAgent.id}`);
+
+    await page.getByRole("button", { name: "Add files and options" }).click();
+    const planModeToggle = page.getByRole("switch", { name: "Plan mode" });
+    await expect(planModeToggle).toHaveAttribute("aria-checked", "false");
+    await planModeToggle.click();
+    await page.keyboard.press("Escape");
+
+    const activePlanModeChip = page.locator('button[aria-label="Turn off plan mode"]');
+    const planModeIcon = activePlanModeChip.getByTestId("chat-plan-mode-icon");
+    const planModeDismissIcon = activePlanModeChip.getByTestId("chat-plan-mode-dismiss-icon");
+    await page.evaluate(() => document.fonts.ready);
+    await expect(activePlanModeChip).toBeVisible();
+    await expect(planModeIcon).toBeVisible();
+    await expect(planModeDismissIcon).toBeHidden();
+    const restingGeometry = await activePlanModeChip.evaluate((chip) => {
+      const iconSlot = chip.querySelector('[data-testid="chat-plan-mode-icon"]')?.parentElement;
+      if (!iconSlot) throw new Error("Plan mode icon slot was not rendered");
+      const chipRect = chip.getBoundingClientRect();
+      const iconSlotRect = iconSlot.getBoundingClientRect();
+      return {
+        chip: { width: chipRect.width, height: chipRect.height },
+        iconSlot: { width: iconSlotRect.width, height: iconSlotRect.height },
+      };
+    });
+    await page.screenshot({ path: testInfo.outputPath("plan-mode-rest.png"), fullPage: true });
+
+    await activePlanModeChip.hover();
+    await expect(planModeIcon).toBeHidden();
+    await expect(planModeDismissIcon).toBeVisible();
+    await expect.poll(() => activePlanModeChip.evaluate((chip) => {
+      const iconSlot = chip.querySelector('[data-testid="chat-plan-mode-icon"]')?.parentElement;
+      if (!iconSlot) throw new Error("Plan mode icon slot was not rendered");
+      const chipRect = chip.getBoundingClientRect();
+      const iconSlotRect = iconSlot.getBoundingClientRect();
+      return {
+        chip: { width: chipRect.width, height: chipRect.height },
+        iconSlot: { width: iconSlotRect.width, height: iconSlotRect.height },
+      };
+    })).toEqual(restingGeometry);
+    await page.screenshot({ path: testInfo.outputPath("plan-mode-hover.png"), fullPage: true });
+
+    await page.mouse.move(0, 0);
+    await expect(planModeIcon).toBeVisible();
+    await expect(planModeDismissIcon).toBeHidden();
+  });
+
   test("shows project context, remembers it for new chat, and creates project-linked conversations", async ({ page }) => {
     await page.addInitScript(() => {
       window.localStorage.setItem("rudder.theme", "dark");

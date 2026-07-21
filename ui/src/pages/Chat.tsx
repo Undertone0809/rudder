@@ -2384,9 +2384,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     )} /> </span> </button>
               </DropdownMenuContent> </DropdownMenu>
           {activePlanMode ? (
-            <button type="button" className="inline-flex max-w-[10rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:color-mix(in_oklab,var(--accent-soft)_78%,var(--surface-elevated))] px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:color-mix(in_oklab,var(--accent-soft)_92%,var(--surface-elevated))] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Turn off plan mode" title={PLAN_MODE_HELP_TEXT} onClick={() => applyPlanMode(false)} >
-              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--ink-muted)_78%,transparent)] text-[color:var(--surface-elevated)]">
-                <X className="h-3 w-3" strokeWidth={2.6} /> </span>
+            <button type="button" className="group/plan inline-flex max-w-[10rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:color-mix(in_oklab,var(--accent-soft)_78%,var(--surface-elevated))] px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:color-mix(in_oklab,var(--accent-soft)_92%,var(--surface-elevated))] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Turn off plan mode" title={PLAN_MODE_HELP_TEXT} onClick={() => applyPlanMode(false)} >
+              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
+                <ListChecks data-testid="chat-plan-mode-icon" className="h-3.5 w-3.5 group-hover/plan:hidden" aria-hidden="true" />
+                <span data-testid="chat-plan-mode-dismiss-icon" className="hidden h-4 w-4 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--ink-muted)_78%,transparent)] text-[color:var(--surface-elevated)] group-hover/plan:inline-flex">
+                  <X className="h-3 w-3" strokeWidth={2.6} aria-hidden="true" /> </span> </span>
               <span className="min-w-0 truncate">Plan</span> </button> ) : null}
           {showProjectSelector ? (
             <div className="group/project relative inline-flex max-w-[min(100%,15rem)] min-w-0">

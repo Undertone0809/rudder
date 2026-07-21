@@ -23,6 +23,7 @@ export async function runChildProcess(
     graceSec: number;
     onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
     onSpawn?: (meta: { pid: number; startedAt: string }) => Promise<void>;
+    stdin?: string;
     abortSignal?: AbortSignal;
   },
 ): Promise<RunProcessResult> {

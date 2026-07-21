@@ -22,7 +22,10 @@ import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.
 import { conflict } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
-import { createAssistantTextAccumulator } from "../services/chat-assistant.helpers.js";
+import {
+  chatAssistantErrorForLog,
+  createAssistantTextAccumulator,
+} from "../services/chat-assistant.helpers.js";
 import {
   CHAT_ASSISTANT_USER_ERROR_MESSAGE,
   ChatAssistantStreamError,
@@ -800,7 +803,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         }).catch(() => {});
       }
 
-      logger.warn({ err, conversationId: conversation.id }, "chat assistant stream failed");
+      logger.warn({
+        err: chatAssistantErrorForLog(err),
+        conversationId: conversation.id,
+      }, "chat assistant stream failed");
       if (!clientClosed) {
         const recoverableError = err instanceof ChatAssistantStreamError ? err : null;
         writeStreamEvent(res, {

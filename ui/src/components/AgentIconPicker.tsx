@@ -184,19 +184,13 @@ export function AgentIconPicker({
             className="min-h-0 gap-3"
           >
             <TabsList
-              className="grid h-8 w-full grid-cols-2 rounded-[var(--segmented-control-radius)] p-0.5"
+              className="grid h-8 w-full grid-cols-2 rounded-[var(--control-radius)] p-0.5"
               aria-label="Avatar style"
             >
-              <TabsTrigger
-                value="oreo"
-                className="h-7 rounded-[var(--segmented-control-item-radius)] py-0 text-xs"
-              >
+              <TabsTrigger value="oreo" className="h-7 rounded-[var(--control-radius)] py-0 text-xs">
                 Oreo
               </TabsTrigger>
-              <TabsTrigger
-                value="dicebear"
-                className="h-7 rounded-[var(--segmented-control-item-radius)] py-0 text-xs"
-              >
+              <TabsTrigger value="dicebear" className="h-7 rounded-[var(--control-radius)] py-0 text-xs">
                 DiceBear
               </TabsTrigger>
             </TabsList>

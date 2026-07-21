@@ -1100,7 +1100,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
 
   const templateMessage = nonEmpty(payloadTemplate.message) ?? nonEmpty(payloadTemplate.text);
-  const message = templateMessage ? appendWakeText(templateMessage, wakeText) : wakeText;
+  const chatPrompt = ctx.context.chatMode === true ? nonEmpty(ctx.context.chatPrompt) : null;
+  const runtimePrompt = chatPrompt ?? wakeText;
+  const message = templateMessage ? appendWakeText(templateMessage, runtimePrompt) : runtimePrompt;
   const rudderPayload = buildStandardRudderPayload(ctx, wakePayload, rudderEnv, payloadTemplate);
 
   const agentParams: Record<string, unknown> = {

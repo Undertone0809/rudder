@@ -170,6 +170,15 @@ Product model:
   unavailable instead of receiving a false Browser capability.
 - Runtime execution must pass a bounded Rudder context to the adapter and then
   persist normalized result evidence back into Rudder.
+- Runtime-neutral Chat inline visuals are a versioned Rudder Chat orchestration
+  capability under `CHAT.INLINE.VISUAL.001`, not an adapter-specific opt-in.
+  Every runtime registered for Chat receives the same common prompt projection
+  of the always-enabled `visualize` policy and the same protocol version in its
+  execution context. Native skill-directory projection is additive, not a
+  prerequisite. Runtime transport tests must prove the complete prompt and
+  final result are preserved; the common Chat admission path owns arbitrary
+  chunk, streaming, Stop/failure, size-limit, and no-source-leak conformance for
+  every registered runtime.
 - Agent configuration exposes only operator-facing runtime choices in the
   runtime selector. Low-level adapter types such as generic process and HTTP
   remain internal/advanced plumbing and must not appear as ordinary runtime
@@ -226,6 +235,9 @@ Invariants:
   reliably the provider interrupt completes.
 - Provider parity claims require runtime-specific evidence or a documented
   blocked/substituted proof.
+- Future plugin runtimes must declare and pass the public inline-visual protocol
+  conformance version before Rudder reports the capability; provider-specific
+  filesystem capture is compatibility input, not parity evidence.
 - Runtime availability groups must not silently disable a supported adapter.
   Missing default CLI commands should be shown with setup guidance while still
   allowing custom command configuration and runtime-chain testing where the

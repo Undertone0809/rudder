@@ -401,6 +401,8 @@ export function chatAutomationCreateFromStructuredPayload(payload: unknown) {
 export function sanitizeChatStructuredPayload(payload: Record<string, unknown> | null | undefined) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
   const next = { ...payload };
+  delete next.inlineVisuals;
+  delete next.inlineVisualsV1;
   const requestUserInput = chatAskUserRequestFromStructuredPayload(payload);
   if (requestUserInput) {
     next.requestUserInput = requestUserInput;

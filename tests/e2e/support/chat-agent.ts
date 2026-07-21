@@ -10,6 +10,7 @@ export async function createE2EChatAgent(
     icon?: string | null;
     command?: string;
     model?: string;
+    agentRuntimeType?: "process" | "http" | "claude_local" | "codex_local" | "gemini_local" | "opencode_local" | "pi_local" | "cursor" | "openclaw_gateway" | "hermes_local";
     agentRuntimeConfig?: Record<string, unknown>;
   } = {},
 ) {
@@ -18,7 +19,7 @@ export async function createE2EChatAgent(
       name: options.name ?? "Chat Agent",
       role: options.role ?? "engineer",
       icon: options.icon,
-      agentRuntimeType: "codex_local",
+      agentRuntimeType: options.agentRuntimeType ?? "codex_local",
       agentRuntimeConfig: options.agentRuntimeConfig ?? {
         model: options.model ?? "gpt-5.4",
         command: options.command ?? E2E_CODEX_STUB,

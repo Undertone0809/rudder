@@ -20,7 +20,8 @@ import type {
 import {
   AGENT_RUN_CONCURRENCY_DEFAULT,
   AGENT_RUN_CONCURRENCY_MAX,
-  AGENT_RUN_CONCURRENCY_MIN
+  AGENT_RUN_CONCURRENCY_MIN,
+  redactRudderInlineVisualSources,
 } from "@rudderhq/shared";
 import { and, eq, sql } from "drizzle-orm";
 import type {
@@ -336,16 +337,17 @@ export function buildHeartbeatAdapterInvokePayload(input: {
 
 export function sanitizeStartupContextPromptForPersistence(prompt: string | null | undefined) {
   if (!prompt) return prompt;
+  const redactedPrompt = redactRudderInlineVisualSources(prompt);
   const heading = "\n## Recent Rudder Context";
-  let start = prompt.indexOf(heading);
+  let start = redactedPrompt.indexOf(heading);
   let headingLength = heading.length;
-  if (start < 0 && prompt.startsWith("## Recent Rudder Context")) {
+  if (start < 0 && redactedPrompt.startsWith("## Recent Rudder Context")) {
     start = 0;
     headingLength = "## Recent Rudder Context".length;
   }
-  if (start < 0) return prompt;
-  const nextSection = prompt.indexOf("\n## ", start + headingLength);
-  const recentContext = nextSection < 0 ? prompt.slice(start) : prompt.slice(start, nextSection);
+  if (start < 0) return redactedPrompt;
+  const nextSection = redactedPrompt.indexOf("\n## ", start + headingLength);
+  const recentContext = nextSection < 0 ? redactedPrompt.slice(start) : redactedPrompt.slice(start, nextSection);
   const sourceHeadings = recentContext
     .split("\n")
     .map((line) => line.trim())
@@ -356,8 +358,8 @@ export function sanitizeStartupContextPromptForPersistence(prompt: string | null
     ...sourceHeadings,
   ];
   const replacement = replacementLines.join("\n").trimEnd();
-  if (nextSection < 0) return `${prompt.slice(0, start)}${replacement}`;
-  return `${prompt.slice(0, start)}${replacement}${prompt.slice(nextSection)}`;
+  if (nextSection < 0) return `${redactedPrompt.slice(0, start)}${replacement}`;
+  return `${redactedPrompt.slice(0, start)}${replacement}${redactedPrompt.slice(nextSection)}`;
 }
 
 export function sanitizeStartupContextContextForPersistence(context: Record<string, unknown> | null | undefined) {

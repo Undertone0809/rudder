@@ -10,6 +10,7 @@ import {
   assets,
   automationRuns,
   automations,
+  chatAttachments,
   chatContextLinks,
   chatControlActions,
   chatConversations,
@@ -6335,6 +6336,97 @@ describe("messengerService and issue follows", () => {
     const summaries = await messengerSvc.listThreadSummaries(orgId, userId, { limit: 10, splitIssues: true });
     expect(summaries[0]?.threadKey).toBe(`chat:${grandchild.id}`);
     expect(summaries[1]?.threadKey).toBe(`chat:${child.id}`);
+  });
+
+  it("re-owns runtime-neutral inline visuals across forks without duplicating backing bytes", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-chat-inline-visual-fork";
+    const agentId = randomUUID();
+    const sha256 = "d".repeat(64);
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Inline Visual Fork Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Inline Visual Fork Org"),
+      issuePrefix: `I${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Visual Agent",
+      role: "operator_assistant",
+      status: "idle",
+    });
+    const source = await chatSvc.create(orgId, {
+      title: "Inline visual fork",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+    const sourceMessage = await chatSvc.addMessage(source.id, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      body: 'Capacity\n::rudder-inline-vis{slot="0"}',
+      replyingAgentId: agentId,
+    });
+    const [asset] = await db.insert(assets).values({
+      orgId,
+      provider: "local",
+      objectKey: `inline-visual-fork-${randomUUID()}`,
+      contentType: "text/html",
+      byteSize: 42,
+      sha256,
+      originalFilename: "inline-visual-1.html",
+      createdByAgentId: agentId,
+    }).returning();
+    const [sourceAttachment] = await db.insert(chatAttachments).values({
+      orgId,
+      conversationId: source.id,
+      messageId: sourceMessage.id,
+      assetId: asset!.id,
+    }).returning();
+    await chatSvc.updateMessageInternalInlineVisuals(source.id, sourceMessage.id, {
+      inlineVisualsV1: [{
+        version: 1,
+        slot: 0,
+        file: "inline-visual-1.html",
+        status: "ready",
+        attachmentId: sourceAttachment!.id,
+        contentType: "text/html",
+        byteSize: 42,
+        sha256,
+      }],
+    });
+
+    const child = await chatSvc.forkConversation({
+      sourceConversationId: source.id,
+      orgId,
+      userId,
+      sourceMessageId: sourceMessage.id,
+      createdByUserId: userId,
+    });
+    const childMessages = await chatSvc.listMessages(child.id, { includeTranscript: false });
+    const copiedMessage = childMessages.find((message) => message.role === "assistant")!;
+    const copiedMapping = (copiedMessage.structuredPayload as {
+      inlineVisualsV1?: Array<{ status: string; attachmentId?: string }>;
+    } | null)?.inlineVisualsV1?.[0];
+    const copiedAttachment = copiedMessage.attachments[0]!;
+
+    expect(copiedMessage.body).toBe(sourceMessage.body);
+    expect(copiedMapping).toMatchObject({
+      status: "ready",
+      attachmentId: copiedAttachment.id,
+    });
+    expect(copiedAttachment.id).not.toBe(sourceAttachment!.id);
+    expect(copiedAttachment.messageId).toBe(copiedMessage.id);
+    expect(copiedAttachment.assetId).toBe(asset!.id);
+
+    expect(await chatSvc.removeAttachment(copiedAttachment.id)).toMatchObject({ assetDeleted: false });
+    expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toHaveLength(1);
+    expect(await chatSvc.removeAttachment(sourceAttachment!.id)).toMatchObject({ assetDeleted: true });
+    expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toHaveLength(0);
   });
 
   it("rejects message-level forks from user messages", async () => {

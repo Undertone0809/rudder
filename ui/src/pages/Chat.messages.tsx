@@ -51,6 +51,7 @@ import {
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
   chatInlineVisualMappingsFromStructuredPayload,
+  rudderInlineVisualMappingsFromStructuredPayload,
   type Agent,
   type ChatAskUserQuestion,
   type ChatAskUserRequest,
@@ -2241,7 +2242,10 @@ export function ChatMessageItem({
   const isUser = message.role === "user";
   const statusLabel = !isUser ? assistantStateLabel(message.status) : null;
   const inlineVisualAttachmentIds = new Set(
-    chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload)
+    [
+      ...chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload),
+      ...rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload),
+    ]
       .filter((mapping) => mapping.status === "ready")
       .map((mapping) => mapping.attachmentId),
   );
