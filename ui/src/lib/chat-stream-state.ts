@@ -1,4 +1,96 @@
+import type { TranscriptEntry } from "@/agent-runtimes";
 import type { ChatMessage } from "@rudderhq/shared";
+
+const EMBEDDED_NATIVE_STEER_DISPOSITIONS = new Set([
+  "pending",
+  "acceptance_unknown",
+  "accepted_current",
+]);
+
+export type NativeSteerTranscriptAnchor = {
+  message: ChatMessage;
+  targetGenerationId: string;
+  afterTranscriptEntryCount: number;
+  generationSeq: number;
+  controlActionId: string | null;
+};
+
+function structuredPayloadString(
+  payload: Record<string, unknown> | null,
+  key: string,
+) {
+  const value = payload?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function structuredPayloadNonNegativeInteger(
+  payload: Record<string, unknown> | null,
+  key: string,
+) {
+  const value = payload?.[key];
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+export function nativeSteerTranscriptAnchor(
+  message: ChatMessage,
+): NativeSteerTranscriptAnchor | null {
+  if (message.role !== "user" || message.structuredPayload?.source !== "steer") return null;
+  const deliveryDisposition = structuredPayloadString(message.structuredPayload, "deliveryDisposition");
+  if (!deliveryDisposition || !EMBEDDED_NATIVE_STEER_DISPOSITIONS.has(deliveryDisposition)) return null;
+  const targetGenerationId = structuredPayloadString(message.structuredPayload, "targetGenerationId");
+  const afterTranscriptEntryCount = structuredPayloadNonNegativeInteger(
+    message.structuredPayload,
+    "afterTranscriptEntryCount",
+  );
+  if (!targetGenerationId || afterTranscriptEntryCount === null) return null;
+  return {
+    message,
+    targetGenerationId,
+    afterTranscriptEntryCount,
+    generationSeq: structuredPayloadNonNegativeInteger(message.structuredPayload, "generationSeq") ?? 0,
+    controlActionId: structuredPayloadString(message.structuredPayload, "controlActionId"),
+  };
+}
+
+export function mergeNativeSteerTranscriptEntries(
+  entries: TranscriptEntry[],
+  steerMessages: ChatMessage[],
+): TranscriptEntry[] {
+  const anchors = steerMessages
+    .map(nativeSteerTranscriptAnchor)
+    .filter((anchor): anchor is NativeSteerTranscriptAnchor => Boolean(anchor))
+    .sort((left, right) => (
+      left.afterTranscriptEntryCount - right.afterTranscriptEntryCount
+      || left.generationSeq - right.generationSeq
+      || new Date(left.message.createdAt).getTime() - new Date(right.message.createdAt).getTime()
+      || left.message.id.localeCompare(right.message.id)
+    ));
+  if (anchors.length === 0) return entries;
+
+  const anchorsByEntryCount = new Map<number, NativeSteerTranscriptAnchor[]>();
+  for (const anchor of anchors) {
+    const insertionIndex = Math.min(anchor.afterTranscriptEntryCount, entries.length);
+    const bucket = anchorsByEntryCount.get(insertionIndex) ?? [];
+    bucket.push(anchor);
+    anchorsByEntryCount.set(insertionIndex, bucket);
+  }
+
+  const merged: TranscriptEntry[] = [];
+  for (let entryCount = 0; entryCount <= entries.length; entryCount += 1) {
+    if (entryCount > 0) merged.push(entries[entryCount - 1]!);
+    for (const anchor of anchorsByEntryCount.get(entryCount) ?? []) {
+      merged.push({
+        kind: "user",
+        source: "steer",
+        ts: new Date(anchor.message.createdAt).toISOString(),
+        text: anchor.message.body,
+        messageId: anchor.message.id,
+        controlActionId: anchor.controlActionId ?? undefined,
+      });
+    }
+  }
+  return merged;
+}
 
 export type ActiveChatStreamVisibilityState = {
   userCreatedAt: Date;

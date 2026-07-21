@@ -13,6 +13,7 @@ import {
   chatContextLinks,
   chatControlActions,
   chatConversations,
+  chatGenerationEvents,
   chatGenerations,
   chatMessages,
   chatQueuedMessages,
@@ -477,6 +478,20 @@ describe("messengerService and issue follows", () => {
       controlVersion: 0,
       controlState: "ready",
     });
+    await db.insert(chatGenerationEvents).values({
+      orgId,
+      generationId,
+      generationSeq: 1,
+      attemptEpoch: 1,
+      eventKind: "transcript",
+      payload: {
+        entry: {
+          kind: "thinking",
+          ts: "2026-07-21T08:00:00.000Z",
+          text: "Reasoning before Steer",
+        },
+      },
+    });
     const queued = await chatSvc.createQueuedMessage({
       orgId,
       conversationId,
@@ -524,9 +539,38 @@ describe("messengerService and issue follows", () => {
       kind: "message",
       status: "completed",
       body: "Keep this operator feedback visible",
+      structuredPayload: {
+        source: "steer",
+        targetGenerationId: generationId,
+        afterTranscriptEntryCount: 1,
+        generationSeq: 1,
+        queueItemId: queued.id,
+        controlActionId,
+        deliveryDisposition: "pending",
+      },
     });
     expect(activities).toHaveLength(1);
     expect(activities[0]).toMatchObject({ action: "chat.message_added" });
+
+    await chatSvc.resolveSteerControlAction({
+      orgId,
+      conversationId,
+      itemId: queued.id,
+      controlActionId,
+      status: "accepted_current",
+      disposition: "accepted_current",
+      providerDisposition: "acknowledged",
+    });
+    const [resolvedMessage] = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, messages[0]!.id));
+    expect(resolvedMessage?.structuredPayload).toMatchObject({
+      source: "steer",
+      targetGenerationId: generationId,
+      afterTranscriptEntryCount: 1,
+      deliveryDisposition: "accepted_current",
+    });
   });
 
   it("keeps cancelled Queue tombstones hidden and rejects every Steer path", async () => {
@@ -898,7 +942,8 @@ describe("messengerService and issue follows", () => {
       payload: { body: "Run this in a continuation if no handle registers" },
       requestActor: boardQueueRequestActor(orgId),
     });
-    await chatSvc.beginSteerControlAction({
+    const steerMessages = chatSteerMessageService(db);
+    await steerMessages.beginControlAction({
       orgId,
       conversationId,
       itemId: queued.id,
@@ -906,6 +951,8 @@ describe("messengerService and issue follows", () => {
       expectedGenerationId: generationId,
       expectedAttemptEpoch: 1,
       expectedControlVersion: 0,
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user", actorId: "board" },
     });
 
     await chatSvc.markGenerationControlAttemptCompleted({
@@ -932,6 +979,9 @@ describe("messengerService and issue follows", () => {
       providerDisposition: "not_sent",
       lastError: "runtime_attempt_completed_without_steer_acceptance",
     });
+    const projectedMessages = await chatSvc.listMessages(conversationId, { includeTranscript: false });
+    expect(projectedMessages.find((message) => message.body === queued.payload.body)?.structuredPayload)
+      .toMatchObject({ source: "steer", deliveryDisposition: "continuation_pending" });
   });
 
   it("denies provider send when the owner lease expires or Stop wins the database fence", async () => {
@@ -998,7 +1048,8 @@ describe("messengerService and issue follows", () => {
       payload: { body: "Do not send through an expired owner lease" },
       requestActor: boardQueueRequestActor(orgId),
     });
-    await chatSvc.beginSteerControlAction({
+    const steerMessages = chatSteerMessageService(db);
+    await steerMessages.beginControlAction({
       orgId,
       conversationId,
       itemId: expiredLeaseFeedback.id,
@@ -1006,6 +1057,8 @@ describe("messengerService and issue follows", () => {
       expectedGenerationId: generationId,
       expectedAttemptEpoch: 1,
       expectedControlVersion: 0,
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user", actorId: "board" },
     });
     await db
       .update(chatGenerations)
@@ -1036,7 +1089,7 @@ describe("messengerService and issue follows", () => {
       payload: { body: "Apply this only after the stopped run" },
       requestActor: boardQueueRequestActor(orgId),
     });
-    await chatSvc.beginSteerControlAction({
+    await steerMessages.beginControlAction({
       orgId,
       conversationId,
       itemId: queued.id,
@@ -1044,6 +1097,8 @@ describe("messengerService and issue follows", () => {
       expectedGenerationId: generationId,
       expectedAttemptEpoch: 1,
       expectedControlVersion: 1,
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user", actorId: "board" },
     });
     await chatSvc.generationProtocol.beginStopAction({
       orgId,
@@ -1078,6 +1133,114 @@ describe("messengerService and issue follows", () => {
       status: "stop_requested",
       controlVersion: 3,
     });
+    const projectedMessages = await chatSvc.listMessages(conversationId, { includeTranscript: false });
+    expect(projectedMessages.find((message) => message.body === queued.payload.body)?.structuredPayload)
+      .toMatchObject({ source: "steer", deliveryDisposition: "continuation_pending" });
+  });
+
+  it("never re-embeds a released fallback continuation into its old native transcript", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const oldGenerationId = randomUUID();
+    const controlActionId = randomUUID();
+    const ownerToken = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Released Continuation Projection Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Released Continuation Projection Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Released fallback continuation chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: oldGenerationId,
+      orgId,
+      conversationId,
+      status: "active",
+    });
+    await chatSvc.beginGenerationControlAttempt({
+      orgId,
+      conversationId,
+      generationId: oldGenerationId,
+      attemptEpoch: 1,
+      ownerToken,
+      runtimeType: "codex_local",
+    });
+    await chatSvc.markGenerationControlReady({
+      generationId: oldGenerationId,
+      attemptEpoch: 1,
+      ownerToken,
+      runtimeType: "codex_local",
+      providerThreadId: "thread-released-continuation",
+      providerTurnId: "turn-released-continuation",
+    });
+    const queued = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "released-fallback-continuation",
+      expectedGenerationId: oldGenerationId,
+      payload: { body: "Keep this outside the old transcript" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const steerMessages = chatSteerMessageService(db);
+    await steerMessages.beginControlAction({
+      orgId,
+      conversationId,
+      itemId: queued.id,
+      controlActionId,
+      expectedGenerationId: oldGenerationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user", actorId: "board" },
+    });
+    await db
+      .update(chatGenerations)
+      .set({ status: "stop_requested", stopRequestedAt: new Date() })
+      .where(eq(chatGenerations.id, oldGenerationId));
+    await expect(chatSvc.claimSteerProviderSend({ orgId, controlActionId })).resolves.toMatchObject({
+      sendDenied: true,
+      item: { status: "continuation_pending" },
+    });
+    await chatSvc.markGenerationTerminal(oldGenerationId, "stopped");
+
+    const claim = await chatSvc.claimNextServerQueuedMessage({
+      workerId: "released-continuation-worker",
+      leaseMs: 30_000,
+    });
+    expect(claim?.item).toMatchObject({ id: queued.id, status: "running_next" });
+    await chatSvc.beginGenerationControlAttempt({
+      orgId,
+      conversationId,
+      generationId: claim!.generationId,
+      attemptEpoch: 1,
+      ownerToken: claim!.leaseToken,
+      runtimeType: "codex_local",
+    });
+    const released = await chatSvc.releaseServerQueuedMessageClaim({
+      itemId: queued.id,
+      generationId: claim!.generationId,
+      leaseToken: claim!.leaseToken,
+      leaseEpoch: claim!.leaseEpoch,
+      reason: "continuation_runtime_connection_lost",
+    });
+    expect(released).toMatchObject({
+      status: "acceptance_unknown",
+      deliveryDisposition: "acceptance_unknown",
+      continuationGenerationId: null,
+      dequeuedAt: expect.any(Date),
+    });
+
+    const projectedMessages = await chatSvc.listMessages(conversationId, { includeTranscript: false });
+    expect(projectedMessages.find((message) => message.body === queued.payload.body)?.structuredPayload)
+      .toMatchObject({ source: "steer", deliveryDisposition: "continuation_pending" });
   });
 
   it("preserves a sent Steer as acceptance unknown until a late provider ACK arrives", async () => {
@@ -3356,6 +3519,80 @@ describe("messengerService and issue follows", () => {
     });
     expect(lightweight?.structuredPayload).toBeNull();
     expect(transcript?.transcript).toHaveLength(2);
+  });
+
+  it("hydrates the generation that owns a persisted assistant message", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Generation Projection Org",
+      urlKey: deriveOrganizationUrlKey("Chat Generation Projection Org"),
+      issuePrefix: `G${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Generation projection",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "completed",
+    });
+    const assistantMessage = await chatSvc.addMessage(conversationId, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Final reply",
+      transcript: [
+        {
+          kind: "thinking",
+          ts: "2026-07-21T08:00:00.000Z",
+          text: "Reasoning around native Steer",
+        },
+      ],
+    });
+    await db.insert(chatGenerationEvents).values({
+      orgId,
+      generationId,
+      generationSeq: 1,
+      attemptEpoch: 1,
+      eventKind: "runtime_output",
+      payload: { body: "Final reply" },
+      assistantMessageId: assistantMessage.id,
+    });
+    await chatSvc.addMessage(conversationId, {
+      orgId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Native feedback",
+      structuredPayload: {
+        source: "steer",
+        targetGenerationId: generationId,
+        afterTranscriptEntryCount: 1,
+        generationSeq: 2,
+        deliveryDisposition: "accepted_current",
+      },
+    });
+
+    const messages = await chatSvc.listMessages(conversationId, { includeTranscript: false });
+    const hydratedAssistant = messages.find((message) => message.id === assistantMessage.id) as
+      | (typeof assistantMessage & { generationId?: string | null })
+      | undefined;
+
+    expect(hydratedAssistant?.generationId).toBe(generationId);
+    expect(hydratedAssistant?.transcript).toEqual([
+      expect.objectContaining({ kind: "thinking", text: "Reasoning around native Steer" }),
+    ]);
   });
 
   it("does not mark a chat unread until an incoming message has visible content", async () => {

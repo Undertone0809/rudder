@@ -3966,6 +3966,7 @@ describe("chat routes", () => {
     expect(events[3]?.entry?.kind).toBe("tool_call");
     expect(events[7]?.messages).toHaveLength(1);
     expect(events[7]?.messages[0]?.id).toBe("message-assistant");
+    expect(events[7]?.messages[0]?.generationId).toBe("generation-1");
     expect(mockChatService.generationProtocol.appendVisibleEventAndProject).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: "chat-1",

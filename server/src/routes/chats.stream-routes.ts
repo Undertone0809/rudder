@@ -731,7 +731,11 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
             if (!clientClosed) {
               writeStreamEvent(res, {
                 type: "final",
-                messages: createdMessages,
+                messages: createdMessages.map((message: ChatMessage) => (
+                  message.role === "assistant"
+                    ? { ...message, generationId: generation!.id }
+                    : message
+                )),
               });
               res.end();
             }

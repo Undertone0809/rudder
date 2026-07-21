@@ -107,6 +107,9 @@ export type TranscriptBlock =
   | {
       type: "message";
       role: "assistant" | "user";
+      source?: "steer";
+      messageId?: string;
+      controlActionId?: string;
       ts: string;
       text: string;
       streaming: boolean;

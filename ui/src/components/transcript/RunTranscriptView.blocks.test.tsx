@@ -3,12 +3,33 @@
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
-import { ExpandableTranscriptResponsePre, TranscriptEventRow } from "./RunTranscriptView.blocks";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TranscriptEntry } from "../../agent-runtimes";
+import { ThemeProvider } from "../../context/ThemeContext";
+import {
+  ExpandableTranscriptResponsePre,
+  TranscriptEventRow,
+  TranscriptMessageBlock,
+} from "./RunTranscriptView.blocks";
+import { normalizeTranscript } from "./RunTranscriptView.normalize";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
+
+Object.defineProperty(window, "matchMedia", {
+  writable: true,
+  value: vi.fn().mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })),
+});
 
 let cleanupFn: (() => void) | null = null;
 
@@ -121,5 +142,46 @@ describe("TranscriptEventRow", () => {
     expect(button?.getAttribute("aria-expanded")).toBe("true");
     expect(button?.getAttribute("aria-label")).toBe("Collapse file change details: Updated src/pages/AgentDetail.tsx");
     expect(container.textContent).toContain(rawEvent);
+  });
+});
+
+describe("native Steer transcript blocks", () => {
+  it("keeps adjacent same-anchor Steer messages as separate durable blocks", () => {
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "user",
+        source: "steer",
+        messageId: "steer-message-1",
+        controlActionId: "steer-action-1",
+        ts: "2026-07-21T08:00:00.000Z",
+        text: "First same-anchor direction",
+      },
+      {
+        kind: "user",
+        source: "steer",
+        messageId: "steer-message-2",
+        controlActionId: "steer-action-2",
+        ts: "2026-07-21T08:00:00.000Z",
+        text: "Second same-anchor direction",
+      },
+    ];
+
+    const blocks = normalizeTranscript(entries, false);
+    expect(blocks).toMatchObject([
+      { type: "message", source: "steer", messageId: "steer-message-1", text: "First same-anchor direction" },
+      { type: "message", source: "steer", messageId: "steer-message-2", text: "Second same-anchor direction" },
+    ]);
+
+    const container = render(
+      <ThemeProvider>
+        {blocks.map((block) => block.type === "message" ? (
+          <TranscriptMessageBlock key={block.messageId} block={block} density="compact" presentation="chat" />
+        ) : null)}
+      </ThemeProvider>,
+    );
+    const steerBlocks = container.querySelectorAll("[data-testid='chat-transcript-steer-message']");
+    expect(steerBlocks).toHaveLength(2);
+    expect(steerBlocks[0]?.getAttribute("data-message-id")).toBe("steer-message-1");
+    expect(steerBlocks[1]?.getAttribute("data-message-id")).toBe("steer-message-2");
   });
 });

@@ -1,6 +1,9 @@
+import type { ChatMessage } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import {
   activeChatStreamTimelineInsertionIndex,
+  mergeNativeSteerTranscriptEntries,
+  nativeSteerTranscriptAnchor,
   readChatScopedFlag,
   readChatScopedState,
   setChatFlagState,
@@ -9,7 +12,85 @@ import {
   shouldShowMessageDuringActiveStream,
 } from "./chat-stream-state";
 
+function steerMessage(input: {
+  id: string;
+  body: string;
+  afterTranscriptEntryCount: number;
+  generationSeq: number;
+  deliveryDisposition?: string;
+}): ChatMessage {
+  return {
+    id: input.id,
+    orgId: "org-1",
+    conversationId: "chat-1",
+    role: "user",
+    kind: "message",
+    status: "completed",
+    body: input.body,
+    structuredPayload: {
+      source: "steer",
+      targetGenerationId: "generation-1",
+      afterTranscriptEntryCount: input.afterTranscriptEntryCount,
+      generationSeq: input.generationSeq,
+      controlActionId: `control-${input.id}`,
+      deliveryDisposition: input.deliveryDisposition ?? "accepted_current",
+    },
+    approvalId: null,
+    approval: null,
+    attachments: [],
+    replyingAgentId: null,
+    chatTurnId: `turn-${input.id}`,
+    turnVariant: 0,
+    supersededAt: null,
+    createdAt: new Date("2026-07-21T08:00:00.000Z"),
+    updatedAt: new Date("2026-07-21T08:00:00.000Z"),
+  };
+}
+
 describe("chat stream state helpers", () => {
+  it("merges multiple native Steer messages by durable transcript anchors instead of timestamps", () => {
+    const firstSteer = steerMessage({
+      id: "steer-1",
+      body: "Direction after A",
+      afterTranscriptEntryCount: 1,
+      generationSeq: 4,
+    });
+    const secondSteer = steerMessage({
+      id: "steer-2",
+      body: "Direction after B",
+      afterTranscriptEntryCount: 2,
+      generationSeq: 7,
+    });
+    const entries = [
+      { kind: "thinking" as const, ts: "2026-07-21T08:00:00.000Z", text: "Reasoning A" },
+      { kind: "tool_call" as const, ts: "2026-07-21T08:00:00.000Z", name: "inspect", input: {} },
+      { kind: "thinking" as const, ts: "2026-07-21T08:00:00.000Z", text: "Reasoning B" },
+    ];
+
+    expect(mergeNativeSteerTranscriptEntries(entries, [secondSteer, firstSteer])).toEqual([
+      entries[0],
+      expect.objectContaining({ kind: "user", source: "steer", text: firstSteer.body }),
+      entries[1],
+      expect.objectContaining({ kind: "user", source: "steer", text: secondSteer.body }),
+      entries[2],
+    ]);
+  });
+
+  it("keeps fallback continuation feedback out of the old generation transcript", () => {
+    const continuation = steerMessage({
+      id: "steer-continuation",
+      body: "Run this next",
+      afterTranscriptEntryCount: 1,
+      generationSeq: 4,
+      deliveryDisposition: "continuation_pending",
+    });
+
+    expect(nativeSteerTranscriptAnchor(continuation)).toBeNull();
+    expect(mergeNativeSteerTranscriptEntries([
+      { kind: "thinking", ts: "2026-07-21T08:00:00.000Z", text: "Old run" },
+    ], [continuation])).toHaveLength(1);
+  });
+
   it("scopes send-in-flight flags to the selected chat only", () => {
     const flags = {
       "chat-a": true,

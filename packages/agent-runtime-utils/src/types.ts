@@ -452,7 +452,14 @@ export interface ServerAgentRuntimeModule {
 export type TranscriptEntry =
   | { kind: "assistant"; ts: string; text: string; delta?: boolean }
   | { kind: "thinking"; ts: string; text: string; delta?: boolean }
-  | { kind: "user"; ts: string; text: string }
+  | {
+      kind: "user";
+      ts: string;
+      text: string;
+      source?: "steer";
+      messageId?: string;
+      controlActionId?: string;
+    }
   | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string }
   | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean }
   | { kind: "todo_list"; ts: string; todoListId?: string; items: TranscriptTodoItem[] }

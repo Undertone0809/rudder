@@ -1536,6 +1536,33 @@ export function chatService(db: Db) {
         ))
         .returning();
       if (!item) throw conflict("Queued Steer feedback changed while provider evidence was resolving");
+      const linkedSteerMessageId = item.continuationMessageId ?? item.sourceMessageId;
+      if (linkedSteerMessageId) {
+        const linkedSteerMessage = await tx
+          .select({ structuredPayload: chatMessages.structuredPayload })
+          .from(chatMessages)
+          .where(and(
+            eq(chatMessages.id, linkedSteerMessageId),
+            eq(chatMessages.orgId, input.orgId),
+            eq(chatMessages.conversationId, input.conversationId),
+            eq(chatMessages.role, "user"),
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        const steerPayload = linkedSteerMessage?.structuredPayload;
+        if (steerPayload && steerPayload.source === "steer") {
+          await tx
+            .update(chatMessages)
+            .set({
+              structuredPayload: {
+                ...steerPayload,
+                deliveryDisposition: input.disposition,
+              },
+              updatedAt: now,
+            })
+            .where(eq(chatMessages.id, linkedSteerMessageId));
+        }
+      }
       return { action, item: hydrateQueuedMessage(item), applied: true };
     });
   }
@@ -2716,20 +2743,127 @@ export function chatService(db: Db) {
 
   async function hydrateMessages(rows: MessageHydrationRow[], options: { includeTranscript?: boolean } = {}) {
     const includeTranscript = options.includeTranscript !== false;
-    const [attachmentsByMessageId, approvalsById] = await Promise.all([
+    const assistantMessageIds = rows
+      .filter((row) => row.role === "assistant")
+      .map((row) => row.id);
+    const nativeSteerMessageIds = rows
+      .filter((row) => row.role === "user" && row.structuredPayload?.source === "steer")
+      .map((row) => row.id);
+    const [attachmentsByMessageId, approvalsById, generationMessageRows, linkedSteerQueueRows] = await Promise.all([
       listAttachmentsForMessageIds(rows.map((row) => row.id)),
       listApprovalsForMessages(rows),
+      assistantMessageIds.length > 0
+        ? db
+          .select({
+            assistantMessageId: chatGenerationEvents.assistantMessageId,
+            generationId: chatGenerationEvents.generationId,
+          })
+          .from(chatGenerationEvents)
+          .where(inArray(chatGenerationEvents.assistantMessageId, assistantMessageIds))
+          .orderBy(desc(chatGenerationEvents.generationSeq))
+        : Promise.resolve([]),
+      nativeSteerMessageIds.length > 0
+        ? db
+          .select({
+            sourceMessageId: chatQueuedMessages.sourceMessageId,
+            continuationMessageId: chatQueuedMessages.continuationMessageId,
+            deliveryDisposition: chatQueuedMessages.deliveryDisposition,
+            continuationGenerationId: chatQueuedMessages.continuationGenerationId,
+            dequeuedAt: chatQueuedMessages.dequeuedAt,
+          })
+          .from(chatQueuedMessages)
+          .where(or(
+            inArray(chatQueuedMessages.sourceMessageId, nativeSteerMessageIds),
+            inArray(chatQueuedMessages.continuationMessageId, nativeSteerMessageIds),
+          ))
+        : Promise.resolve([]),
     ]);
+    const generationIdByAssistantMessageId = new Map<string, string>();
+    for (const generationMessageRow of generationMessageRows) {
+      if (!generationMessageRow.assistantMessageId) continue;
+      if (generationIdByAssistantMessageId.has(generationMessageRow.assistantMessageId)) continue;
+      generationIdByAssistantMessageId.set(
+        generationMessageRow.assistantMessageId,
+        generationMessageRow.generationId,
+      );
+    }
+    const steerDispositionByMessageId = new Map<string, string>();
+    for (const queueRow of linkedSteerQueueRows) {
+      const messageIds = new Set([
+        queueRow.sourceMessageId,
+        queueRow.continuationMessageId,
+      ].filter((messageId): messageId is string => Boolean(messageId)));
+      // `dequeuedAt` is durable provenance that this feedback left the native turn.
+      // A failed continuation claim clears continuationGenerationId and may become
+      // acceptance_unknown, but it must never be projected back into the old transcript.
+      const projectedDisposition = queueRow.continuationGenerationId || queueRow.dequeuedAt
+        ? "continuation_pending"
+        : queueRow.deliveryDisposition === "delivered"
+          ? "accepted_current"
+          : queueRow.deliveryDisposition;
+      if (!projectedDisposition) continue;
+      for (const messageId of messageIds) {
+        steerDispositionByMessageId.set(messageId, projectedDisposition);
+      }
+    }
+    const effectiveStructuredPayload = (row: MessageHydrationRow) => {
+      const payload = row.structuredPayload;
+      if (!payload || payload.source !== "steer") return payload;
+      const projectedDisposition = steerDispositionByMessageId.get(row.id);
+      return projectedDisposition
+        ? { ...payload, deliveryDisposition: projectedDisposition }
+        : payload;
+    };
+    const nativeSteerTargetGenerationIds = new Set<string>();
+    for (const row of rows) {
+      const payload = effectiveStructuredPayload(row);
+      const targetGenerationId = payload?.source === "steer"
+        && ["pending", "acceptance_unknown", "accepted_current"].includes(
+          typeof payload.deliveryDisposition === "string" ? payload.deliveryDisposition : "",
+        )
+        && typeof payload.targetGenerationId === "string"
+        ? payload.targetGenerationId
+        : null;
+      if (targetGenerationId) nativeSteerTargetGenerationIds.add(targetGenerationId);
+    }
+    const nativeSteerAssistantMessageIds = includeTranscript
+      ? []
+      : assistantMessageIds.filter((messageId) => {
+        const generationId = generationIdByAssistantMessageId.get(messageId);
+        return Boolean(generationId && nativeSteerTargetGenerationIds.has(generationId));
+      });
+    const nativeSteerTranscriptPayloadByMessageId = new Map<string, Record<string, unknown> | null>();
+    if (nativeSteerAssistantMessageIds.length > 0) {
+      const transcriptPayloadRows = await db
+        .select({
+          id: chatMessages.id,
+          structuredPayload: chatMessages.structuredPayload,
+        })
+        .from(chatMessages)
+        .where(inArray(chatMessages.id, nativeSteerAssistantMessageIds));
+      for (const transcriptPayloadRow of transcriptPayloadRows) {
+        nativeSteerTranscriptPayloadByMessageId.set(
+          transcriptPayloadRow.id,
+          transcriptPayloadRow.structuredPayload,
+        );
+      }
+    }
 
     return rows.map((row) => {
-      const transcript = includeTranscript ? chatTranscriptFromPayload(row.structuredPayload) : [];
-      const transcriptSummary = includeTranscript
+      const generationId = generationIdByAssistantMessageId.get(row.id) ?? null;
+      const includeRowTranscript = includeTranscript
+        || Boolean(generationId && nativeSteerTargetGenerationIds.has(generationId));
+      const transcriptPayload = nativeSteerTranscriptPayloadByMessageId.get(row.id) ?? row.structuredPayload;
+      const transcript = includeRowTranscript ? chatTranscriptFromPayload(transcriptPayload) : [];
+      const transcriptSummary = includeRowTranscript
         ? chatTranscriptSummaryFromEntries(transcript)
         : row.transcriptSummary ?? null;
+      const structuredPayload = effectiveStructuredPayload(row);
       return {
         ...row,
-        structuredPayload: stripChatMetadataFromPayload(row.structuredPayload),
-        transcript: includeTranscript ? transcript : undefined,
+        generationId,
+        structuredPayload: stripChatMetadataFromPayload(structuredPayload),
+        transcript: includeRowTranscript ? transcript : undefined,
         transcriptSummary,
         approval: row.approvalId ? (approvalsById.get(row.approvalId) ?? null) : null,
         attachments: attachmentsByMessageId.get(row.id) ?? [],

@@ -439,7 +439,12 @@ export function normalizeTranscript(
       }
 
       const isStreaming = streaming && entry.kind === "assistant" && entry.delta === true;
-      if (previous?.type === "message" && previous.role === entry.kind) {
+      if (
+        previous?.type === "message"
+        && previous.role === entry.kind
+        && previous.source === (entry.kind === "user" ? entry.source : undefined)
+        && previous.messageId === (entry.kind === "user" ? entry.messageId : undefined)
+      ) {
         const continuesDeltaGroup = entry.kind === "assistant"
           && entry.delta === true
           && previousTextEntry?.kind === "assistant"
@@ -456,6 +461,11 @@ export function normalizeTranscript(
         blocks.push({
           type: "message",
           role: entry.kind,
+          ...(entry.kind === "user" && entry.source ? {
+            source: entry.source,
+            messageId: entry.messageId,
+            controlActionId: entry.controlActionId,
+          } : {}),
           ts: entry.ts,
           text: entry.text,
           streaming: isStreaming,
