@@ -16,13 +16,11 @@ const CANONICAL_ORIGIN = "https://docs.rudderhq.dev";
 const LEGACY_HOST = "doc.rudder.zeeland.studio";
 const REQUIRED_PATHS = [
   { path: "/", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN },
-  { path: "/about", status: 200, bodyIncludes: ["Rudder", "Rudder"], canonical: `${CANONICAL_ORIGIN}/about` },
   { path: "/contact", status: 200, bodyIncludes: ["GitHub", "Bug reports"], canonical: `${CANONICAL_ORIGIN}/contact` },
   { path: "/home", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN, finalPath: "/" },
   { path: "/en", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN, finalPath: "/" },
   { path: "/get-started/installation", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/get-started/installation` },
   { path: "/zh", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/zh` },
-  { path: "/zh/about", status: 200, bodyIncludes: ["Rudder", "开源软件"], canonical: `${CANONICAL_ORIGIN}/zh/about` },
   { path: "/zh/contact", status: 200, bodyIncludes: ["GitHub", "缺陷报告"], canonical: `${CANONICAL_ORIGIN}/zh/contact` },
   { path: "/zh/get-started/installation", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/zh/get-started/installation` },
   { path: "/robots.txt", status: 200, bodyIncludes: [`Sitemap: ${CANONICAL_ORIGIN}/sitemap.xml`] },
@@ -47,6 +45,8 @@ const REQUIRED_PATHS = [
   { path: "/manifest.json", status: 200, bodyIncludes: ["Rudder Docs", "/apple-touch-icon.png"], finalPath: "/site.webmanifest" },
 ];
 const REQUIRED_REDIRECTS = [
+  { source: "/about", destination: "/" },
+  { source: "/zh/about", destination: "/zh" },
   { source: "/concepts/control-plane", destination: "/reference/approvals-budgets-activity" },
   { source: "/zh/concepts/control-plane", destination: "/zh/reference/approvals-budgets-activity" },
   { source: "/concepts/approvals-budgets-activity", destination: "/reference/approvals-budgets-activity" },

@@ -103,7 +103,6 @@
             "icon": "ellipsis",
             "pages": [
               "benchmarks/gdpval-harness",
-              "about",
               "contact",
               "releases"
             ]
@@ -172,7 +171,6 @@
             "icon": "ellipsis",
             "pages": [
               "zh/benchmarks/gdpval-harness",
-              "zh/about",
               "zh/contact",
               "zh/releases"
             ]
@@ -228,10 +226,6 @@
         "header": "Project",
         "items": [
           {
-            "label": "About",
-            "href": "/about"
-          },
-          {
             "label": "Contact",
             "href": "/contact"
           },
@@ -255,6 +249,14 @@
     {
       "source": "/en/en",
       "destination": "/"
+    },
+    {
+      "source": "/en/about",
+      "destination": "/"
+    },
+    {
+      "source": "/en/zh/about",
+      "destination": "/zh"
     },
     {
       "source": "/en/manifest.json",
@@ -311,6 +313,14 @@
     {
       "source": "/en/:path*",
       "destination": "/:path*"
+    },
+    {
+      "source": "/about",
+      "destination": "/"
+    },
+    {
+      "source": "/zh/about",
+      "destination": "/zh"
     },
     {
       "source": "/manifest.json",

@@ -33,7 +33,6 @@ const CHINESE_FOOTER_PATHS = [
   "/concepts/chat-messenger",
   "/concepts/built-in-browser",
   "/concepts/calendar",
-  "/about",
   "/contact",
   "/releases",
 ];
@@ -45,7 +44,6 @@ const CHINESE_FOOTER_LABELS = new Map([
   ["Chat and Messenger", "Chat 和 Messenger"],
   ["Built-in Browser", "内置浏览器"],
   ["Calendar", "日历"],
-  ["About", "关于"],
   ["Contact", "联系方式"],
   ["Changelog", "更新日志"],
 ]);

@@ -42,7 +42,7 @@
       "source_docs": ["doc/product/GOAL.md", "doc/product/PRODUCT.md"],
       "llms": true,
       "pairing_exception": null,
-      "aliases": ["home", "en-root", "en-catchall"],
+      "aliases": ["home", "en-root", "en-catchall", "retire-about", "zh-retire-about"],
       "example_ids": ["rudder-0-5-0-release"],
       "contracts": {"primary": [], "supporting": []},
       "metadata_enforcement": "strict"
@@ -558,23 +558,6 @@
       "metadata_enforcement": "strict"
     },
     {
-      "id": "about",
-      "kind": "project",
-      "user_job": "Understand the project purpose and boundaries.",
-      "status": "active",
-      "files": {"en": "docs/about.mdx", "zh": "docs/zh/about.mdx"},
-      "urls": {"en": "/about", "zh": "/zh/about"},
-      "anchors": {"en": [], "zh": []},
-      "composes": ["home"],
-      "source_docs": ["doc/product/GOAL.md"],
-      "llms": true,
-      "pairing_exception": null,
-      "aliases": [],
-      "example_ids": [],
-      "contracts": {"primary": [], "supporting": []},
-      "metadata_enforcement": "strict"
-    },
-    {
       "id": "contact",
       "kind": "project",
       "user_job": "Find the correct public support or contribution channel.",
@@ -653,6 +636,8 @@
     {"id": "home", "source": "/home", "destination": "/", "permanent": true, "targets": ["mintlify", "vercel"], "status": "active", "owner_page": "home", "locale": "en"},
     {"id": "en-root", "source": "/en", "destination": "/", "permanent": true, "targets": ["mintlify", "vercel"], "status": "active", "owner_page": "home", "locale": "en"},
     {"id": "en-catchall", "source": "/en/:path*", "destination": "/:path*", "permanent": true, "targets": ["mintlify", "vercel"], "status": "active", "owner_page": "home", "locale": "en"},
+    {"id": "retire-about", "source": "/about", "destination": "/", "permanent": true, "targets": ["mintlify", "vercel"], "status": "active", "owner_page": "home", "locale": "en"},
+    {"id": "zh-retire-about", "source": "/zh/about", "destination": "/zh", "permanent": true, "targets": ["mintlify", "vercel"], "status": "active", "owner_page": "home", "locale": "zh"},
     {"id": "manifest", "source": "/manifest.json", "destination": "/site.webmanifest", "permanent": true, "targets": ["mintlify", "vercel"], "status": "active", "owner_page": null, "locale": null},
     {"id": "messenger-approvals", "source": "/concepts/messenger-approvals", "destination": "/concepts/chat-messenger", "permanent": true, "targets": ["mintlify", "vercel"], "status": "active", "owner_page": "chat-messenger", "locale": "en"},
     {"id": "zh-messenger-approvals", "source": "/zh/concepts/messenger-approvals", "destination": "/zh/concepts/chat-messenger", "permanent": true, "targets": ["mintlify", "vercel"], "status": "active", "owner_page": "chat-messenger", "locale": "zh"},

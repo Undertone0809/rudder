@@ -51,10 +51,9 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
     '<a href="/concepts/built-in-browser">Built-in Browser</a>',
     '<a href="/concepts/calendar">Calendar</a>',
     "<h3>Project</h3>",
-    '<a href="/about">About</a>',
     '<a href="/contact">Contact</a>',
     '<a href="/releases">Changelog</a>',
-    '<script>self.__next_f.push([1,"\\\"footer\\\":{\\\"links\\\":[{\\\"header\\\":\\\"Docs\\\",\\\"items\\\":[{\\\"label\\\":\\\"Quick Start\\\",\\\"href\\\":\\\"/get-started/installation\\\"}]},{\\\"header\\\":\\\"Product\\\",\\\"items\\\":[{\\\"label\\\":\\\"Built-in Browser\\\",\\\"href\\\":\\\"/concepts/built-in-browser\\\"},{\\\"label\\\":\\\"Calendar\\\",\\\"href\\\":\\\"/concepts/calendar\\\"}]},{\\\"header\\\":\\\"Project\\\",\\\"items\\\":[{\\\"label\\\":\\\"About\\\",\\\"href\\\":\\\"/about\\\"},{\\\"label\\\":\\\"Contact\\\",\\\"href\\\":\\\"/contact\\\"},{\\\"label\\\":\\\"Changelog\\\",\\\"href\\\":\\\"/releases\\\"}]}]}"])</script>',
+    '<script>self.__next_f.push([1,"\\\"footer\\\":{\\\"links\\\":[{\\\"header\\\":\\\"Docs\\\",\\\"items\\\":[{\\\"label\\\":\\\"Quick Start\\\",\\\"href\\\":\\\"/get-started/installation\\\"}]},{\\\"header\\\":\\\"Product\\\",\\\"items\\\":[{\\\"label\\\":\\\"Built-in Browser\\\",\\\"href\\\":\\\"/concepts/built-in-browser\\\"},{\\\"label\\\":\\\"Calendar\\\",\\\"href\\\":\\\"/concepts/calendar\\\"}]},{\\\"header\\\":\\\"Project\\\",\\\"items\\\":[{\\\"label\\\":\\\"Contact\\\",\\\"href\\\":\\\"/contact\\\"},{\\\"label\\\":\\\"Changelog\\\",\\\"href\\\":\\\"/releases\\\"}]}]}"])</script>',
   ].join("");
 
   const englishPath = writePage(exportDir, "/", fixturePage("/index.md", footer));
@@ -69,7 +68,11 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
     "/zh/get-started/installation",
     fixturePage("/zh/get-started/installation.md", footer),
   );
-  const unpairedPath = writePage(exportDir, "/about", fixturePage("/about.md"));
+  const unpairedPath = writePage(
+    exportDir,
+    "/benchmarks/gdpval-harness",
+    fixturePage("/benchmarks/gdpval-harness.md"),
+  );
 
   const result = spawnSync(process.execPath, [SCRIPT_PATH, exportDir], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
@@ -125,7 +128,6 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   assert.match(chinese, /href="\/zh\/get-started\/installation">快速开始/);
   assert.match(chinese, /href="\/zh\/concepts\/built-in-browser">内置浏览器/);
   assert.match(chinese, /href="\/zh\/concepts\/calendar">日历/);
-  assert.match(chinese, /href="\/zh\/about">关于/);
   assert.match(chinese, /href="\/zh\/contact">联系方式/);
   assert.match(chinese, /href="\/zh\/releases">更新日志/);
   assert.match(chinese, /\\"label\\":\\"快速开始\\",\\"href\\":\\"\/zh\/get-started\/installation\\"/);
@@ -134,7 +136,6 @@ test("postprocesses paired English and Simplified Chinese export pages", () => {
   assert.match(chinese, /\\"header\\":\\"项目\\"/);
   assert.match(chinese, /\\"label\\":\\"内置浏览器\\",\\"href\\":\\"\/zh\/concepts\/built-in-browser\\"/);
   assert.match(chinese, /\\"label\\":\\"日历\\",\\"href\\":\\"\/zh\/concepts\/calendar\\"/);
-  assert.match(chinese, /\\"label\\":\\"关于\\",\\"href\\":\\"\/zh\/about\\"/);
   assert.match(chinese, /\\"label\\":\\"联系方式\\",\\"href\\":\\"\/zh\/contact\\"/);
   assert.match(chinese, /\\"label\\":\\"更新日志\\",\\"href\\":\\"\/zh\/releases\\"/);
   assert.match(runtimeChunk, /ENV:"production"/);
@@ -325,7 +326,8 @@ test("public health, package scripts, CI, and staging cover static docs search",
   );
   assert.match(healthCheck, /path: "\/rudder-search-index\.json"/);
   assert.match(healthCheck, /path: "\/rudder-search\.js"/);
-  assert.match(healthCheck, /path: "\/zh\/about"/);
+  assert.match(healthCheck, /source: "\/about", destination: "\/"/);
+  assert.match(healthCheck, /source: "\/zh\/about", destination: "\/zh"/);
   assert.match(healthCheck, /path: "\/zh\/contact"/);
   assert.match(healthCheck, /bodyIncludes: \["GitHub", "Bug reports"\]/);
   assert.match(healthCheck, /fetchText\(url, timeoutMs, "manual"\)/);
