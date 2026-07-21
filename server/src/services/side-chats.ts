@@ -4,20 +4,27 @@ import {
   chatContextLinks,
   chatConversations,
   chatMessages,
-  messengerCustomGroupEntries,
-  messengerCustomGroups,
 } from "@rudderhq/db";
 import type { ChatConversation } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 
 export const SIDE_CHAT_TTL_MS = 2 * 60 * 60 * 1000;
+const SIDE_CHAT_TITLE_PREFIX = "Side chat from: ";
+const CHAT_TITLE_MAX_LENGTH = 200;
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 
 function expiresAtFrom(at: Date) {
   return new Date(at.getTime() + SIDE_CHAT_TTL_MS);
+}
+
+function sideChatTitleFromSource(sourceTitle: string) {
+  const availableSourceLength = CHAT_TITLE_MAX_LENGTH - SIDE_CHAT_TITLE_PREFIX.length;
+  const boundedSourceTitle = sourceTitle.trim().slice(0, availableSourceLength).trimEnd() || "Chat";
+  return `${SIDE_CHAT_TITLE_PREFIX}${boundedSourceTitle}`;
 }
 
 export function sideChatService(db: Db) {
@@ -197,7 +204,7 @@ export function sideChatService(db: Db) {
           sideChatState: "active",
           sideChatExpiresAt: expiresAtFrom(now),
           sideChatClientMutationId: input.clientMutationId,
-          title: "Side Chat",
+          title: sideChatTitleFromSource(source.title),
           summary: source.summary,
           preferredAgentId: source.preferredAgentId,
           routedAgentId: source.routedAgentId,
@@ -399,47 +406,31 @@ export function sideChatService(db: Db) {
       }
 
       const sourceConversationId = conversation.forkedFromConversationId;
-      if (!sourceConversationId) return "kept" as const;
-      const sourceThreadKey = `chat:${sourceConversationId}`;
-      const existingGroup = await tx
-        .select({ id: messengerCustomGroups.id })
-        .from(messengerCustomGroups)
-        .innerJoin(
-          messengerCustomGroupEntries,
-          eq(messengerCustomGroupEntries.groupId, messengerCustomGroups.id),
-        )
-        .where(and(
-          eq(messengerCustomGroups.orgId, conversation.orgId),
-          eq(messengerCustomGroups.userId, input.userId),
-          eq(messengerCustomGroupEntries.threadKey, sourceThreadKey),
-        ))
-        .orderBy(asc(messengerCustomGroups.sortOrder), asc(messengerCustomGroups.createdAt))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      if (!existingGroup) return "kept" as const;
-
-      const lastEntry = await tx
-        .select({ sortOrder: messengerCustomGroupEntries.sortOrder })
-        .from(messengerCustomGroupEntries)
-        .where(and(
-          eq(messengerCustomGroupEntries.orgId, conversation.orgId),
-          eq(messengerCustomGroupEntries.userId, input.userId),
-          eq(messengerCustomGroupEntries.groupId, existingGroup.id),
-        ))
-        .orderBy(desc(messengerCustomGroupEntries.sortOrder))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      await tx
-        .insert(messengerCustomGroupEntries)
-        .values({
-          orgId: conversation.orgId,
-          userId: input.userId,
-          groupId: existingGroup.id,
-          threadKey: `chat:${conversation.id}`,
-          sortOrder: (lastEntry?.sortOrder ?? -1) + 1,
-          updatedAt: now,
+      if (!sourceConversationId) {
+        throw conflict("Side Chat source is no longer available");
+      }
+      const source = await tx
+        .select({
+          id: chatConversations.id,
+          title: chatConversations.title,
+          forkRootConversationId: chatConversations.forkRootConversationId,
         })
-        .onConflictDoNothing();
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.id, sourceConversationId),
+          eq(chatConversations.orgId, conversation.orgId),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!source) throw conflict("Side Chat source is no longer available");
+      await ensureChatFamilyGroup(tx, {
+        orgId: conversation.orgId,
+        userId: input.userId,
+        rootConversationId: conversation.forkRootConversationId ?? source.forkRootConversationId ?? source.id,
+        sourceConversationId: source.id,
+        childConversationId: conversation.id,
+        groupName: source.title,
+      });
       return "kept" as const;
     });
 

@@ -10,7 +10,7 @@ import {
   messengerCustomGroups,
   organizations,
 } from "@rudderhq/db";
-import { deriveOrganizationUrlKey } from "@rudderhq/shared";
+import { deriveOrganizationUrlKey, MESSENGER_FORK_GROUP_DEFAULT_ICON } from "@rudderhq/shared";
 import { asc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -110,7 +110,7 @@ describe("sideChatService", () => {
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  async function createSource(userId = "side-chat-owner") {
+  async function createSource(userId = "side-chat-owner", title = "Source answer") {
     const orgId = randomUUID();
     const sourceConversationId = randomUUID();
     const anchorMessageId = randomUUID();
@@ -125,7 +125,7 @@ describe("sideChatService", () => {
     await db.insert(chatConversations).values({
       id: sourceConversationId,
       orgId,
-      title: "Source answer",
+      title,
       createdByUserId: userId,
       issueCreationMode: "manual_approval",
       planMode: false,
@@ -187,6 +187,7 @@ describe("sideChatService", () => {
 
     expect(second.id).toBe(first.id);
     expect(first).toMatchObject({
+      title: "Side chat from: Source answer",
       conversationKind: "side_chat",
       messengerVisible: false,
       sideChatState: "active",
@@ -208,6 +209,27 @@ describe("sideChatService", () => {
     expect(copied.map((message) => message.body)).not.toContain("Must not be copied");
     const copiedAnchor = copied.find((message) => message.body === "Anchored answer");
     expect(copiedAnchor).toMatchObject({ runId: null, approvalId: null, structuredPayload: null });
+    expect(await db.select().from(messengerCustomGroups)).toHaveLength(0);
+    expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(0);
+  });
+
+  it("snapshots and bounds the direct source title when the Side Chat is created", async () => {
+    const sourceTitle = "S".repeat(250);
+    const source = await createSource("side-chat-title-owner", sourceTitle);
+    const sideChat = await createSideChat(source);
+
+    await db
+      .update(chatConversations)
+      .set({ title: "Renamed after Side Chat creation" })
+      .where(eq(chatConversations.id, source.sourceConversationId));
+
+    expect(sideChat.title).toBe(`Side chat from: ${sourceTitle.slice(0, 184)}`);
+    expect(sideChat.title).toHaveLength(200);
+    const [persisted] = await db
+      .select({ title: chatConversations.title })
+      .from(chatConversations)
+      .where(eq(chatConversations.id, sideChat.id));
+    expect(persisted?.title).toBe(sideChat.title);
   });
 
   it("destroys an unkept Side Chat and turns an elapsed Side Chat read-only", async () => {
@@ -294,5 +316,164 @@ describe("sideChatService", () => {
       `chat:${sideChat.id}`,
     ]);
     await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("creates a fork-family Messenger group when the source is not grouped", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+
+    await service.keepInMessenger({ conversationId: sideChat.id, userId: source.userId });
+
+    const groups = await db
+      .select()
+      .from(messengerCustomGroups)
+      .where(eq(messengerCustomGroups.userId, source.userId));
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      name: "Source answer",
+      icon: MESSENGER_FORK_GROUP_DEFAULT_ICON,
+    });
+    const entries = await db
+      .select()
+      .from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.groupId, groups[0]!.id))
+      .orderBy(asc(messengerCustomGroupEntries.sortOrder));
+    expect(entries.map((entry) => entry.threadKey)).toEqual([
+      `chat:${source.sourceConversationId}`,
+      `chat:${sideChat.id}`,
+    ]);
+  });
+
+  it("rolls back the move when the direct source no longer exists", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    await db
+      .delete(chatConversations)
+      .where(eq(chatConversations.id, source.sourceConversationId));
+
+    await expect(service.keepInMessenger({ conversationId: sideChat.id, userId: source.userId }))
+      .rejects.toMatchObject({ status: 409 });
+
+    const [persisted] = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.id, sideChat.id));
+    expect(persisted).toMatchObject({
+      sideChatState: "active",
+      messengerVisible: false,
+    });
+    expect(await db.select().from(messengerCustomGroups)).toHaveLength(0);
+    expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(0);
+  });
+
+  it("serializes concurrent moves into one fork-family Messenger group", async () => {
+    const source = await createSource();
+    const [first, second] = await Promise.all([
+      service.create({
+        ...source,
+        sourceMessageId: source.anchorMessageId,
+        clientMutationId: "side-chat-concurrent-move-1",
+      }),
+      service.create({
+        ...source,
+        sourceMessageId: source.anchorMessageId,
+        clientMutationId: "side-chat-concurrent-move-2",
+      }),
+    ]);
+
+    await Promise.all([
+      service.keepInMessenger({ conversationId: first.id, userId: source.userId }),
+      service.keepInMessenger({ conversationId: second.id, userId: source.userId }),
+    ]);
+
+    const groups = await db
+      .select()
+      .from(messengerCustomGroups)
+      .where(eq(messengerCustomGroups.userId, source.userId));
+    expect(groups).toHaveLength(1);
+    const entries = await db
+      .select()
+      .from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.groupId, groups[0]!.id));
+    expect(new Set(entries.map((entry) => entry.threadKey))).toEqual(new Set([
+      `chat:${source.sourceConversationId}`,
+      `chat:${first.id}`,
+      `chat:${second.id}`,
+    ]));
+  });
+
+  it("reuses the root fork-family group for a Side Chat created from a nested source", async () => {
+    const source = await createSource();
+    const rootConversationId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: rootConversationId,
+      orgId: source.orgId,
+      title: "Root conversation",
+      createdByUserId: source.userId,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db
+      .update(chatConversations)
+      .set({
+        forkedFromConversationId: rootConversationId,
+        forkRootConversationId: rootConversationId,
+      })
+      .where(eq(chatConversations.id, source.sourceConversationId));
+    const [group] = await db.insert(messengerCustomGroups).values({
+      orgId: source.orgId,
+      userId: source.userId,
+      name: "Existing fork family",
+      icon: "rocket::teal",
+      sortOrder: 0,
+    }).returning();
+    const [sourceGroup] = await db.insert(messengerCustomGroups).values({
+      orgId: source.orgId,
+      userId: source.userId,
+      name: "Source's former group",
+      icon: "folder::amber",
+      sortOrder: 1,
+    }).returning();
+    await db.insert(messengerCustomGroupEntries).values([
+      {
+        orgId: source.orgId,
+        userId: source.userId,
+        groupId: group!.id,
+        threadKey: `chat:${rootConversationId}`,
+        sortOrder: 0,
+      },
+      {
+        orgId: source.orgId,
+        userId: source.userId,
+        groupId: sourceGroup!.id,
+        threadKey: `chat:${source.sourceConversationId}`,
+        sortOrder: 0,
+      },
+    ]);
+    const sideChat = await createSideChat(source);
+
+    await service.keepInMessenger({ conversationId: sideChat.id, userId: source.userId });
+
+    const groups = await db
+      .select()
+      .from(messengerCustomGroups)
+      .where(eq(messengerCustomGroups.userId, source.userId));
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({ name: "Existing fork family", icon: "rocket::teal" });
+    const entries = await db
+      .select()
+      .from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.groupId, group!.id))
+      .orderBy(asc(messengerCustomGroupEntries.sortOrder));
+    expect(entries.map((entry) => [entry.threadKey, entry.sortOrder])).toEqual([
+      [`chat:${rootConversationId}`, 0],
+      [`chat:${source.sourceConversationId}`, 1],
+      [`chat:${sideChat.id}`, 2],
+    ]);
+    const sourceGroupEntries = await db
+      .select()
+      .from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.groupId, sourceGroup!.id));
+    expect(sourceGroupEntries).toHaveLength(0);
   });
 });

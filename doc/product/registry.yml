@@ -1119,6 +1119,7 @@ contracts:
       - packages/shared/src/validators/chat.ts
       - server/src/routes/chats.stream-routes.ts
       - server/src/routes/chats.ts
+      - server/src/services/chat-family-groups.ts
       - server/src/services/chat-title-generation.ts
       - server/src/services/chats.ts
       - ui/src/api/chats.ts
@@ -1152,6 +1153,7 @@ contracts:
       - packages/shared/src/validators/chat.ts
       - server/src/routes/chats.ts
       - server/src/routes/chats.stream-routes.ts
+      - server/src/services/chat-family-groups.ts
       - server/src/services/side-chats.ts
       - ui/src/api/chats.ts
       - ui/src/lib/side-chat.ts
@@ -1163,6 +1165,7 @@ contracts:
       - ui/src/pages/Chat.side-panel.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
+      - server/src/__tests__/side-chats.test.ts
       - ui/src/lib/side-chat.test.ts
       - ui/src/lib/side-panel-targets.test.ts
       - ui/src/pages/Chat.messages.test.tsx
@@ -1170,6 +1173,7 @@ contracts:
       - tests/e2e/chat-side-chat.spec.ts
     related_plans:
       - doc/plans/2026-07-19-side-chat.md
+      - doc/plans/2026-07-21-side-chat-title-and-fork-grouping.md
   CHAT.RICH.REFERENCE.RENDERING.001:
     owner: product
     domain: collaboration
