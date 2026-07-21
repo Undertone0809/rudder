@@ -43,6 +43,7 @@ const mockState = vi.hoisted(() => ({
   abortChatStream: vi.fn(),
   conversationId: "chat-1" as string | null,
   conversations: [] as ChatConversation[],
+  failAgents: false,
   messagesByChatId: {} as Record<string, ChatMessage[]>,
   fetchingChatDetailIds: new Set<string>(),
   failedChatDetailIds: new Set<string>(),
@@ -294,6 +295,9 @@ vi.mock("@tanstack/react-query", () => ({
       return { data: { user: { id: "local-board" }, userId: "local-board" }, isPending: false, isLoading: false, error: null };
     }
     if (queryKey[0] === "agents") {
+      if (mockState.failAgents) {
+        return { data: undefined, isPending: false, isLoading: false, error: new Error("Internal server error") };
+      }
       return {
         data: mockState.agents,
         isPending: false,
@@ -1358,6 +1362,7 @@ beforeEach(() => {
   });
   resetChatPendingAttachmentsForTests();
   mockState.conversationId = "chat-1";
+  mockState.failAgents = false;
   mockState.abortChatStream.mockReset();
   mockState.conversations = [
     chat({ id: "chat-1", title: "Pending proposal chat" }),
@@ -6387,6 +6392,36 @@ describe("Chat attachment previews", () => {
     expect(shell?.className).not.toContain("md:-mx-3.5");
     expect(shell?.className).not.toContain("lg:-mx-5");
     expect(container.querySelector("main.workspace-main-card")).not.toBeNull();
+  });
+
+  it("keeps load errors inside the main chat workspace card", () => {
+    mockState.failedChatDetailIds.add("chat-1");
+    const { container } = renderChat();
+
+    const mainCard = container.querySelector("main[data-testid='chat-main-workspace-card']");
+    const mobileClearance = container.querySelector("[data-testid='chat-load-error-mobile-clearance']");
+    const loadError = Array.from(container.querySelectorAll("div")).find(
+      (element) => element.textContent?.trim() === "Side Chat status failed to load",
+    );
+
+    expect(mobileClearance).not.toBeNull();
+    expect(loadError).toBeDefined();
+    expect(mainCard?.contains(loadError ?? null)).toBe(true);
+  });
+
+  it("clears the collapsed Messenger opener when a new-chat load fails", () => {
+    mockState.conversationId = null;
+    mockState.failAgents = true;
+    mockState.sidebarOpen = false;
+    const { container } = renderChat();
+
+    const mainCard = container.querySelector("main[data-testid='chat-main-workspace-card']");
+    const loadError = container.querySelector("[data-testid='chat-load-error']");
+    const sidebarOpener = container.querySelector("[aria-label='Open Messenger sidebar']");
+
+    expect(sidebarOpener).not.toBeNull();
+    expect(mainCard?.contains(loadError)).toBe(true);
+    expect(loadError?.className).toContain("md:mt-14");
   });
 
   it("opens message image previews while a pending proposal hides the composer and clears on conversation change", () => {

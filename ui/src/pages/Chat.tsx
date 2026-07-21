@@ -2596,11 +2596,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       <input ref={fileInputRef} type="file" className="hidden"
         multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); void appendPendingFiles(files); event.currentTarget.value = "";
         }} />
-      {loadErrorMessage ? (
-        <div className="mx-6 mt-6 rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          {loadErrorMessage} </div> ) : null}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row md:gap-1.5">
-        <main className="workspace-main-card relative flex min-h-0 flex-1 flex-col overflow-hidden md:rounded-[var(--desktop-workspace-radius)]">
+        <main
+          data-testid="chat-main-workspace-card"
+          className="workspace-main-card relative flex min-h-0 flex-1 flex-col overflow-hidden md:rounded-[var(--desktop-workspace-radius)]"
+        >
           {conversationId ? (
             <div
               aria-hidden="true"
@@ -2608,6 +2608,23 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               className="workspace-main-header hidden h-11 shrink-0 md:block"
             />
           ) : null}
+          {loadErrorMessage && conversationId ? (
+            <div
+              aria-hidden="true"
+              data-testid="chat-load-error-mobile-clearance"
+              className="h-14 shrink-0 md:hidden"
+            />
+          ) : null}
+          {loadErrorMessage ? (
+            <div
+              role="alert"
+              data-testid="chat-load-error"
+              className={cn(
+                "mx-6 mt-6 rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive",
+                !conversationId && isMessengerChatRoute && !isMobile && !sidebarOpen && "md:mt-14",
+              )}
+            >
+              {loadErrorMessage} </div> ) : null}
           {!selectedOrganizationId ? (
             <div className="flex flex-1 items-center justify-center px-6 py-12 text-sm text-muted-foreground">
               Select a organization first. </div> ) : showConversationLoading ? (

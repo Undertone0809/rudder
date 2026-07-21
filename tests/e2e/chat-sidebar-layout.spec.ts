@@ -4,6 +4,75 @@ import { createE2EChatAgent } from "./support/chat-agent";
 const LIGHT_WORKSPACE_PAPER = "rgb(248, 244, 238)";
 
 test.describe("Chat sidebar layout", () => {
+  test("keeps chat load errors inside the main workspace card", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Load-Error-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Error Layout Agent" });
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Load error position",
+        summary: "Verify that a failed chat detail request stays within the chat workspace.",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Open this chat before simulating the detail load failure." },
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+
+    await page.route((url) => url.pathname === `/api/chats/${chat.id}/messages`, async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Internal server error" }),
+      });
+    });
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const mainCard = page.getByTestId("chat-main-workspace-card");
+    const loadError = mainCard.getByTestId("chat-load-error");
+    const toolbarButton = mainCard.getByTestId("chat-side-panel-trigger");
+    await expect(mainCard).toBeVisible();
+    await expect(loadError).toHaveText("Internal server error", { timeout: 15_000 });
+
+    const desktopErrorBox = await loadError.boundingBox();
+    const desktopToolbarBox = await toolbarButton.boundingBox();
+    expect(desktopErrorBox).not.toBeNull();
+    expect(desktopToolbarBox).not.toBeNull();
+    expect(desktopErrorBox!.y).toBeGreaterThanOrEqual(desktopToolbarBox!.y + desktopToolbarBox!.height);
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-load-error-position-desktop.png"),
+      fullPage: true,
+    });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(loadError).toHaveText("Internal server error", { timeout: 15_000 });
+    await expect(mainCard.getByTestId("chat-load-error-mobile-clearance")).toBeVisible();
+    const mobileErrorBox = await loadError.boundingBox();
+    const mobileToolbarBox = await toolbarButton.boundingBox();
+    expect(mobileErrorBox).not.toBeNull();
+    expect(mobileToolbarBox).not.toBeNull();
+    expect(mobileErrorBox!.y).toBeGreaterThanOrEqual(mobileToolbarBox!.y + mobileToolbarBox!.height);
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-load-error-position-mobile.png"),
+      fullPage: true,
+    });
+  });
+
   test("shows a compact title-first conversation list and a denser chat intake empty state", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
