@@ -790,13 +790,21 @@ async function startServerRuntime(
     name: row.name,
     urlKey: row.urlKey,
   }));
-  const liveOrganizationIds = liveOrganizationRows.map((row) => row.id);
   const organizationStorageReconciliation = await reconcileOrganizationStorageRoots(liveOrganizations);
   const organizationStorageMigrations = organizationStorageReconciliation.migrations;
+  const workspaceAvailableOrganizationIds = organizationStorageReconciliation.workspaceAvailableOrganizationIds;
   const migratedOrganizationStorage = organizationStorageMigrations.filter((result) => result.migrated);
   const skippedOrganizationStorageMigrations = organizationStorageMigrations.filter((result) =>
     result.skippedBecauseTargetExists
   );
+  if (organizationStorageReconciliation.workspacePermissionFailures.length > 0) {
+    logger.warn(
+      {
+        workspacePermissionFailures: organizationStorageReconciliation.workspacePermissionFailures,
+      },
+      "organization Library workspaces are unavailable until filesystem permissions are repaired",
+    );
+  }
   if (migratedOrganizationStorage.length > 0) {
     logger.info(
       {
@@ -835,7 +843,10 @@ async function startServerRuntime(
       "reconciled local organization storage on startup",
     );
   }
-  const workspaceBackupArtifactReconciliation = await reconcileWorkspaceBackupArtifactStorage(db, liveOrganizationIds);
+  const workspaceBackupArtifactReconciliation = await reconcileWorkspaceBackupArtifactStorage(
+    db,
+    workspaceAvailableOrganizationIds,
+  );
   if (workspaceBackupArtifactReconciliation.migrated.length > 0) {
     logger.info(
       {
@@ -859,7 +870,7 @@ async function startServerRuntime(
     );
   }
   const workspaceBackupRepairService = workspaceBackupService(db);
-  for (const orgId of liveOrganizationIds) {
+  for (const orgId of workspaceAvailableOrganizationIds) {
     try {
       const recovery = await workspaceBackupRepairService.recoverSparseWorkspaceFromLatestBackup(orgId);
       if (!recovery.recovered) continue;

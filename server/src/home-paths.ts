@@ -59,6 +59,12 @@ type OrganizationWorkspaceMapFileState = {
   exists: boolean;
 };
 
+type OrganizationWorkspacePermissionFailure = {
+  orgId: string;
+  code: string | null;
+  message: string;
+};
+
 function expandHomePrefix(value: string): string {
   if (value === "~") return os.homedir();
   if (value.startsWith("~/")) return path.resolve(os.homedir(), value.slice(2));
@@ -546,13 +552,40 @@ export async function reconcileOrganizationStorageRoots(
 ): Promise<{
   migrations: Array<Awaited<ReturnType<typeof migrateOrganizationStorageRoot>>>;
   pruned: Awaited<ReturnType<typeof pruneOrphanedOrganizationStorage>>;
+  workspaceAvailableOrganizationIds: string[];
+  workspacePermissionFailures: OrganizationWorkspacePermissionFailure[];
 }> {
   const liveOrgIds = liveOrganizations.map((org) => typeof org === "string" ? org : org.id);
   assertUniqueOrganizationStorageKeys(liveOrgIds);
   const migrations = await Promise.all(liveOrgIds.map((orgId) => migrateOrganizationStorageRoot(orgId)));
-  await Promise.all(liveOrganizations.map((org) => typeof org === "string" ? null : ensureOrganizationWorkspaceLayout(org)));
+  const workspaceAvailability = await Promise.all(liveOrganizations.map(async (org): Promise<{
+    orgId: string;
+    permissionFailure: OrganizationWorkspacePermissionFailure | null;
+  }> => {
+    if (typeof org === "string") return { orgId: org, permissionFailure: null };
+    try {
+      await ensureOrganizationWorkspaceLayout(org);
+      return { orgId: org.id, permissionFailure: null };
+    } catch (error) {
+      if (!isPermissionError(error)) throw error;
+      return {
+        orgId: org.id,
+        permissionFailure: {
+          orgId: org.id,
+          code: errorCode(error),
+          message: organizationWorkspacePermissionFailureMessage(error, org.id),
+        },
+      };
+    }
+  }));
+  const workspacePermissionFailures = workspaceAvailability.flatMap((result) =>
+    result.permissionFailure ? [result.permissionFailure] : []
+  );
+  const workspaceAvailableOrganizationIds = workspaceAvailability.flatMap((result) =>
+    result.permissionFailure ? [] : [result.orgId]
+  );
   const pruned = await pruneOrphanedOrganizationStorage(liveOrgIds);
-  return { migrations, pruned };
+  return { migrations, pruned, workspaceAvailableOrganizationIds, workspacePermissionFailures };
 }
 
 export async function ensureProjectLibraryLayout(input: {
@@ -679,6 +712,17 @@ async function readOrganizationWorkspaceMapFileState(): Promise<OrganizationWork
     };
   } catch (error) {
     if (errorCode(error) === "ENOENT") return { exists: false, map: { version: 1, organizations: [] } };
+    if (isPermissionError(error)) {
+      const code = errorCode(error);
+      const permissionError = new Error([
+        `Rudder could not read the organization workspace mapping${code ? ` (${code})` : ""}.`,
+        `Mapping: ${mapPath}.`,
+        "This usually means the operating system blocked access to the Documents workspace location.",
+        "Grant Rudder permission to access Documents or choose a writable folder with RUDDER_ORGANIZATION_WORKSPACE_HOME.",
+      ].join(" "), { cause: error });
+      if (code) Object.assign(permissionError, { code });
+      throw permissionError;
+    }
     throw error;
   }
 }
@@ -826,6 +870,17 @@ function errorCode(error: unknown): string | null {
 function isPermissionError(error: unknown): boolean {
   const code = errorCode(error);
   return code !== null && WORKSPACE_PERMISSION_ERROR_CODES.has(code);
+}
+
+function organizationWorkspacePermissionFailureMessage(error: unknown, orgId: string): string {
+  const existingMessage = error instanceof Error ? error.message : "";
+  if (/Grant Rudder permission to access Documents/i.test(existingMessage)) return existingMessage;
+  return formatOrganizationWorkspacePermissionMessage({
+    operation: "access",
+    code: errorCode(error),
+    legacyRootPath: resolveLegacyOrganizationWorkspaceRoot(orgId),
+    canonicalRootPath: resolveOrganizationWorkspaceHomeDir(),
+  });
 }
 
 function formatOrganizationWorkspacePermissionMessage(input: {
