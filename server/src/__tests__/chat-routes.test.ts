@@ -7,6 +7,7 @@ import { unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { chatRoutes } from "../routes/chats.js";
 import { claimChatGeneration, clearActiveChatGenerationsForTest, createChatRuntimeControlCoordinator, getActiveChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
+import { CHAT_TITLE_PROMPT_TOKEN_LIMIT, countChatTitlePromptTokens } from "../services/title-generation.js";
 
 const mockChatService = vi.hoisted(() => ({
   generationProtocol: {
@@ -38,6 +39,7 @@ const mockChatService = vi.hoisted(() => ({
   markUnread: vi.fn(),
   setPinned: vi.fn(),
   listMessages: vi.fn(),
+  listRecentUserMessages: vi.fn(),
   getMessageTranscript: vi.fn(),
   getMessage: vi.fn(),
   addMessage: vi.fn(),
@@ -3061,9 +3063,8 @@ describe("chat routes", () => {
   it("regenerates an existing chat title with the organization lightweight model", async () => {
     const conversation = createConversation({ title: "Old vague title" });
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatService.listMessages.mockResolvedValue([
+    mockChatService.listRecentUserMessages.mockResolvedValue([
       createMessage("message-user", "user", "message", "Audit recent user feedback and runtime failures"),
-      createMessage("message-assistant", "assistant", "message", "I found three product gaps."),
     ]);
     mockProductIntelligenceService.execute.mockResolvedValueOnce({
       exitCode: 0,
@@ -3096,14 +3097,16 @@ describe("chat routes", () => {
     }));
   });
 
-  it("bounds the regenerate title prompt to the latest chat messages", async () => {
+  it("loads only the latest five user messages for title regeneration", async () => {
     const conversation = createConversation({ title: "Old title" });
     mockChatService.getById.mockResolvedValue(conversation);
+    const recentUserMessages = Array.from({ length: 5 }, (_, index) =>
+      createMessage(`recent-user-${index}`, "user", "message", `Recent user request ${index + 1}`),
+    );
+    mockChatService.listRecentUserMessages.mockResolvedValue(recentUserMessages);
     mockChatService.listMessages.mockResolvedValue([
-      ...Array.from({ length: 12 }, (_, index) =>
-        createMessage(`old-message-${index}`, "user", "message", `Older context ${index}`),
-      ),
-      createMessage("latest-user", "user", "message", "Latest migration request"),
+      createMessage("older-user", "user", "message", "Older context that must not be loaded"),
+      ...recentUserMessages,
       createMessage("latest-assistant", "assistant", "message", "Latest migration answer"),
     ]);
     mockProductIntelligenceService.execute.mockResolvedValueOnce({
@@ -3119,17 +3122,19 @@ describe("chat routes", () => {
       .send();
 
     expect(res.status).toBe(200);
+    expect(mockChatService.listRecentUserMessages).toHaveBeenCalledWith("chat-1", 5);
+    expect(mockChatService.listMessages).not.toHaveBeenCalled();
     const prompt = mockProductIntelligenceService.execute.mock.calls[0]?.[0]?.prompt as string;
-    expect(prompt).toContain("Latest migration request");
-    expect(prompt).toContain("Latest migration answer");
-    expect(prompt).not.toContain("Older context 0");
-    expect(prompt.length).toBeLessThanOrEqual(1500);
+    expect(prompt).toContain("Recent user request 1");
+    expect(prompt).toContain("Recent user request 5");
+    expect(prompt).not.toContain("Latest migration answer");
+    expect(prompt).not.toContain("Older context that must not be loaded");
   });
 
   it("returns 422 without updating when Fast Intelligence is not configured for title regeneration", async () => {
     const conversation = createConversation({ title: "Existing title" });
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatService.listMessages.mockResolvedValue([
+    mockChatService.listRecentUserMessages.mockResolvedValue([
       createMessage("message-user", "user", "message", "Find the right title"),
     ]);
     mockProductIntelligenceService.execute.mockRejectedValueOnce(unprocessable("Fast Intelligence is not configured"));
@@ -3164,9 +3169,8 @@ describe("chat routes", () => {
 
   it("regenerates titles for Feishu-bound chat conversations without enabling local chat mutation", async () => {
     mockChatService.getById.mockResolvedValue(createFeishuBackedConversation());
-    mockChatService.listMessages.mockResolvedValue([
+    mockChatService.listRecentUserMessages.mockResolvedValue([
       createMessage("message-user", "user", "message", "hi, what skill do you have?"),
-      createMessage("message-assistant", "assistant", "message", "flomo-local-api skill-creator"),
     ]);
     mockProductIntelligenceService.execute.mockResolvedValueOnce({
       exitCode: 0,
@@ -3181,7 +3185,7 @@ describe("chat routes", () => {
       .send();
 
     expect(res.status).toBe(200);
-    expect(mockChatService.listMessages).toHaveBeenCalledWith("chat-1", { includeTranscript: false });
+    expect(mockChatService.listRecentUserMessages).toHaveBeenCalledWith("chat-1", 5);
     expect(mockProductIntelligenceService.execute).toHaveBeenCalledWith(expect.objectContaining({
       orgId: "organization-1",
       purpose: "lightweight",
@@ -3324,7 +3328,7 @@ describe("chat routes", () => {
 
   it("bounds long chat title generation prompts", async () => {
     const conversation = createConversation();
-    const longBody = "x".repeat(5000);
+    const longBody = `BEGINNING_MARKER ${"发布计划与回归检查 ".repeat(500)} ENDING_MARKER`;
     const userMessage = createMessage("message-user", "user", "message", longBody);
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "Working on it");
 
@@ -3359,8 +3363,10 @@ describe("chat routes", () => {
       expect(mockProductIntelligenceService.execute).toHaveBeenCalled();
     });
     const prompt = mockProductIntelligenceService.execute.mock.calls[0]?.[0]?.prompt;
-    expect(prompt).toContain("[Input truncated for title generation.]");
-    expect(prompt.length).toBeLessThan(2200);
+    expect(prompt).toContain("BEGINNING_MARKER");
+    expect(prompt).toContain(" ... ");
+    expect(prompt).toContain("ENDING_MARKER");
+    expect(countChatTitlePromptTokens(prompt)).toBeLessThanOrEqual(CHAT_TITLE_PROMPT_TOKEN_LIMIT);
   });
 
   it("does not use process transcript text as the failed non-stream message body", async () => {

@@ -3359,6 +3359,111 @@ describe("messengerService and issue follows", () => {
     expect(transcript?.transcript).toHaveLength(2);
   });
 
+  it("lists only the latest five eligible user messages for title generation", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Title Source Org",
+      urlKey: deriveOrganizationUrlKey("Chat Title Source Org"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Title source",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+
+    const startedAt = new Date("2026-07-21T08:00:00.000Z").getTime();
+    await db.insert(chatMessages).values([
+      ...Array.from({ length: 7 }, (_, index) => ({
+        id: randomUUID(),
+        orgId,
+        conversationId,
+        role: "user" as const,
+        kind: "message" as const,
+        body: `User request ${index + 1}`,
+        createdAt: new Date(startedAt + index * 1_000),
+        updatedAt: new Date(startedAt + index * 1_000),
+      })),
+      {
+        id: randomUUID(),
+        orgId,
+        conversationId,
+        role: "assistant",
+        kind: "message",
+        body: "Assistant noise",
+        createdAt: new Date(startedAt + 8_000),
+        updatedAt: new Date(startedAt + 8_000),
+      },
+      {
+        id: randomUUID(),
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        body: "   ",
+        createdAt: new Date(startedAt + 9_000),
+        updatedAt: new Date(startedAt + 9_000),
+      },
+      {
+        id: randomUUID(),
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        body: "\t\n",
+        createdAt: new Date(startedAt + 9_500),
+        updatedAt: new Date(startedAt + 9_500),
+      },
+      {
+        id: randomUUID(),
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        body: "\u3000",
+        createdAt: new Date(startedAt + 9_600),
+        updatedAt: new Date(startedAt + 9_600),
+      },
+      {
+        id: randomUUID(),
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "system_event",
+        body: "User event noise",
+        createdAt: new Date(startedAt + 10_000),
+        updatedAt: new Date(startedAt + 10_000),
+      },
+      {
+        id: randomUUID(),
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        body: "Superseded user noise",
+        supersededAt: new Date(startedAt + 12_000),
+        createdAt: new Date(startedAt + 11_000),
+        updatedAt: new Date(startedAt + 12_000),
+      },
+    ]);
+
+    const messages = await chatSvc.listRecentUserMessages(conversationId, 5);
+
+    expect(messages.map((message) => message.body)).toEqual([
+      "User request 3",
+      "User request 4",
+      "User request 5",
+      "User request 6",
+      "User request 7",
+    ]);
+  });
+
   it("does not mark a chat unread until an incoming message has visible content", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();

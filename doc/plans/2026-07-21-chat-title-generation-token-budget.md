@@ -2,7 +2,7 @@
 title: Chat title generation token budget
 date: 2026-07-21
 kind: implementation
-status: in_progress
+status: completed
 area: chat
 entities:
   - messenger_chat

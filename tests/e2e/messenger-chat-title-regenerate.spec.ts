@@ -40,29 +40,21 @@ async function createChatAgent(page: Page, orgId: string) {
   return agentRes.json() as Promise<{ id: string }>;
 }
 
-async function createChat(page: Page, orgId: string, title: string, preferredAgentId?: string) {
-  const chatRes = await page.request.post(`/api/orgs/${orgId}/chats`, {
-    data: {
-      title,
-      preferredAgentId,
-      issueCreationMode: "manual_approval",
-      planMode: false,
-    },
+async function createChat(_page: Page, orgId: string, title: string, preferredAgentId?: string) {
+  const id = randomUUID();
+  await e2eDb.insert(chatConversations).values({
+    id,
+    orgId,
+    title,
+    preferredAgentId: preferredAgentId ?? null,
+    issueCreationMode: "manual_approval",
+    planMode: false,
   });
-  expect(chatRes.ok()).toBe(true);
-  return chatRes.json() as Promise<{ id: string; title: string }>;
+  return { id, title };
 }
 
 async function createDefaultTitleChat(page: Page, orgId: string, preferredAgentId: string) {
-  const chatRes = await page.request.post(`/api/orgs/${orgId}/chats`, {
-    data: {
-      preferredAgentId,
-      issueCreationMode: "manual_approval",
-      planMode: false,
-    },
-  });
-  expect(chatRes.ok()).toBe(true);
-  return chatRes.json() as Promise<{ id: string; title: string }>;
+  return createChat(page, orgId, "New chat", preferredAgentId);
 }
 
 async function configureFastTitleProfile(page: Page, orgId: string, title = "Generated sidebar title") {
@@ -133,16 +125,37 @@ test.describe("Messenger chat title regeneration", () => {
     await expect(page.getByRole("menuitem", { name: "Regenerate title" })).toBeVisible();
   });
 
-  test("regenerates the visible Messenger chat title from the actions menu", async ({ page }) => {
+  test("regenerates the visible title from a long chat with more than five user messages", async ({ page }) => {
     const organization = await createOrganization(page, `Chat-Title-Regenerate-Click-${Date.now()}`);
     const agent = await createChatAgent(page, organization.id);
     const chat = await createChat(page, organization.id, "Old sidebar title", agent.id);
-    const sendRes = await page.request.post(`/api/chats/${chat.id}/messages`, {
-      data: {
-        body: "Use this migration planning discussion to generate a better sidebar title.",
+    const startedAt = new Date("2026-07-21T08:00:00.000Z").getTime();
+    await e2eDb.insert(chatMessages).values([
+      ...Array.from({ length: 7 }, (_, index) => ({
+        id: randomUUID(),
+        orgId: organization.id,
+        conversationId: chat.id,
+        role: "user" as const,
+        kind: "message" as const,
+        status: "completed" as const,
+        body: index === 6
+          ? `LATEST_USER_BEGIN <|fim_prefix|> <|endoftext|> <|endofprompt|> ${"发布计划与回归检查 ".repeat(500)} LATEST_USER_END`
+          : `User title context ${index + 1}`,
+        createdAt: new Date(startedAt + index * 1_000),
+        updatedAt: new Date(startedAt + index * 1_000),
+      })),
+      {
+        id: randomUUID(),
+        orgId: organization.id,
+        conversationId: chat.id,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: "Assistant title noise must not be selected.",
+        createdAt: new Date(startedAt + 8_000),
+        updatedAt: new Date(startedAt + 8_000),
       },
-    });
-    expect(sendRes.ok()).toBe(true);
+    ]);
     await configureFastTitleProfile(page, organization.id);
 
     await page.goto("/");

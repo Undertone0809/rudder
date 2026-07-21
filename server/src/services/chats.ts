@@ -3815,6 +3815,35 @@ export function chatService(db: Db) {
     `;
   }
 
+  async function listRecentUserMessages(conversationId: string, limit: number) {
+      const ecmascriptTrimWhitespace = "\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF";
+      const boundedLimit = Math.min(5, Math.max(1, Math.trunc(limit)));
+      const conversationOrgIds = db
+        .select({ orgId: chatConversations.orgId })
+        .from(chatConversations)
+        .where(eq(chatConversations.id, conversationId));
+      const rows = await db
+        .select({
+          id: chatMessages.id,
+          role: chatMessages.role,
+          kind: chatMessages.kind,
+          body: chatMessages.body,
+          createdAt: chatMessages.createdAt,
+        })
+        .from(chatMessages)
+        .where(and(
+          eq(chatMessages.conversationId, conversationId),
+          inArray(chatMessages.orgId, conversationOrgIds),
+          isNull(chatMessages.supersededAt),
+          eq(chatMessages.role, "user"),
+          eq(chatMessages.kind, "message"),
+          sql<boolean>`btrim(${chatMessages.body}, ${ecmascriptTrimWhitespace}) <> ''`,
+        ))
+        .orderBy(desc(chatMessages.createdAt), desc(chatMessages.id))
+        .limit(boundedLimit);
+      return rows.reverse();
+  }
+
   async function listMessages(conversationId: string, options: { includeTranscript?: boolean } = {}) {
       const includeTranscript = options.includeTranscript !== false;
       const conversationOrgIds = db
@@ -4929,6 +4958,7 @@ export function chatService(db: Db) {
     update,
     updateDefaultTitle,
     replaceSystemGeneratedTitle,
+    listRecentUserMessages,
     listAttachmentsForConversation,
     assetHasAttachments,
     remove,
