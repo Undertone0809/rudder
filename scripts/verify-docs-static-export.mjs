@@ -1,16 +1,36 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { activePages, loadManifest } from "./docs-content-map.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
-const requireFromServer = createRequire(new URL("../server/package.json", import.meta.url));
-const { JSDOM } = requireFromServer("jsdom");
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+function staticMarkup(html) {
+  return html
+    .replace(/<!--[\s\S]*?-->/gu, "")
+    .replace(/<(?:script|template)\b[^>]*>[\s\S]*?<\/(?:script|template)\s*>/giu, "");
+}
+
+function tagAttributes(tag) {
+  const attributes = new Map();
+  for (const match of tag.matchAll(/\s([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/gu)) {
+    attributes.set(match[1].toLowerCase(), match[2] ?? match[3] ?? match[4] ?? "");
+  }
+  return attributes;
+}
+
+function tagsByName(markup, name) {
+  const pattern = new RegExp(`<${name}\\b[^>]*>`, "giu");
+  return [...markup.matchAll(pattern)].map((match) => tagAttributes(match[0]));
+}
+
+function hasRel(attributes, value) {
+  return (attributes.get("rel") ?? "").split(/\s+/u).includes(value);
+}
 
 function wildcardValue(pattern, value) {
   const marker = ":path*";
@@ -53,10 +73,10 @@ export function staticVerificationChecks({
 }
 
 export function assertDocumentMetadata(html, entry, manifest) {
-  const document = new JSDOM(html).window.document;
+  const markup = staticMarkup(html);
+  const links = tagsByName(markup, "link");
   const canonical = `${manifest.base_url}${entry.route === "/" ? "" : entry.route}`;
-  const canonicalMatches = [...document.querySelectorAll('link[rel~="canonical"]')]
-    .some((link) => link.getAttribute("href") === canonical);
+  const canonicalMatches = links.some((link) => hasRel(link, "canonical") && link.get("href") === canonical);
   if (!canonicalMatches) throw new Error(`${entry.route} is missing canonical ${canonical}`);
 
   const englishRoute = entry.locale === "zh"
@@ -65,19 +85,22 @@ export function assertDocumentMetadata(html, entry, manifest) {
   const chineseRoute = entry.locale === "zh"
     ? entry.route
     : (entry.route === "/" ? "/zh" : `/zh${entry.route}`);
-  const alternates = [...document.querySelectorAll('link[rel~="alternate"][hreflang]')];
+  const alternates = links.filter((link) => hasRel(link, "alternate") && link.has("hreflang"));
   const requiredAlternates = [
     ["en", `${manifest.base_url}${englishRoute === "/" ? "" : englishRoute}`],
     ["zh-CN", `${manifest.base_url}${chineseRoute}`],
   ];
   for (const [language, href] of requiredAlternates) {
-    const matches = alternates.some((link) =>
-      link.getAttribute("hreflang") === language && link.getAttribute("href") === href
-    );
+    const matches = alternates.some((link) => link.get("hreflang") === language && link.get("href") === href);
     if (!matches) throw new Error(`${entry.route} is missing ${language} hreflang ${href}`);
   }
+  const renderedIds = new Set(
+    [...markup.matchAll(/<[A-Za-z][^>]*>/gu)]
+      .map((match) => tagAttributes(match[0]).get("id"))
+      .filter(Boolean),
+  );
   for (const anchor of entry.anchors) {
-    if (!document.getElementById(anchor)) {
+    if (!renderedIds.has(anchor)) {
       throw new Error(`${entry.route} is missing required anchor #${anchor}`);
     }
   }

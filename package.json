@@ -49,7 +49,7 @@
     "docs:integrity": "node scripts/docs-content-map.mjs integrity",
     "docs:alignment": "node scripts/docs-content-map.mjs alignment",
     "docs:static:verify": "node scripts/verify-docs-static-export.mjs",
-    "docs:structure:test": "node --test scripts/docs-content-map.test.mjs",
+    "docs:structure:test": "node --test scripts/docs-content-map.test.mjs scripts/postprocess-docs-export.test.mjs",
     "docs:health": "node scripts/check-docs-public-health.mjs",
     "desktop:build": "pnpm --filter @rudderhq/desktop build",
     "desktop:dist": "pnpm --filter @rudderhq/desktop dist",
