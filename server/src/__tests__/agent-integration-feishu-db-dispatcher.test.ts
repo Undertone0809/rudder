@@ -1254,7 +1254,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       status: "stopped",
       terminalReason: "stopped",
     });
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
       { role: "user", kind: "message", body: "start a session" },
       { role: "system", kind: "system_event", body: "Feishu session stop requested." },
@@ -1299,7 +1299,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       status: "stopped",
       terminalReason: "stopped",
     });
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
       { role: "user", kind: "message", body: "start a session before a repeated stop command" },
       { role: "system", kind: "system_event", body: "Feishu session stop requested." },
@@ -2105,7 +2105,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
     });
     expect(sent).toEqual([{ chatId: "oc_runtime_nonblocking_stop", text: "Stop requested." }]);
 
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
       { role: "user", kind: "message", body: "please start a reply that I will stop before it completes" },
       { role: "system", kind: "system_event", body: "Feishu session stop requested." },
