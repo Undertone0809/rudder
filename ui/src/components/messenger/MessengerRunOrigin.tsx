@@ -1,11 +1,22 @@
-import { CopyText } from "@/components/CopyText";
+import { AgentIdentity } from "@/components/AgentAvatar";
 import { StatusBadge } from "@/components/StatusBadge";
-import { useSearchParams } from "@/lib/router";
+import { Link } from "@/lib/router";
 import type {
   MessengerFailedRunThreadItem,
   MessengerRunOriginDescriptor,
+  MessengerRunOriginSource,
   MessengerSystemThreadItem,
 } from "@rudderhq/shared";
+import {
+  Activity,
+  ArrowUpRight,
+  CircleAlert,
+  FileText,
+  MessageSquareText,
+  ShieldCheck,
+  Workflow,
+  type LucideIcon,
+} from "lucide-react";
 
 const sceneLabels: Record<MessengerRunOriginDescriptor["scene"], string> = {
   chat: "Chat Run",
@@ -15,18 +26,30 @@ const sceneLabels: Record<MessengerRunOriginDescriptor["scene"], string> = {
   automation: "Automation Run",
 };
 
-const targetLabels: Record<MessengerRunOriginDescriptor["targetType"], string> = {
+const sourceLabels: Record<MessengerRunOriginDescriptor["scene"], string> = {
+  chat: "Chat",
+  heartbeat: "Heartbeat",
   issue: "Issue",
-  chat_conversation: "Chat conversation",
-  chat_message: "Chat message",
-  automation_run: "Automation run",
-  wakeup_request: "Wakeup request",
-  manual: "Manual",
+  review: "Review",
+  automation: "Automation",
+};
+
+const sceneIcons: Record<MessengerRunOriginDescriptor["scene"], LucideIcon> = {
+  chat: MessageSquareText,
+  heartbeat: Activity,
+  issue: FileText,
+  review: ShieldCheck,
+  automation: Workflow,
 };
 
 export function failedRunOrigin(item: MessengerSystemThreadItem): MessengerRunOriginDescriptor | null {
   if (item.kind !== "failed-runs" || !("origin" in item)) return null;
   return (item as MessengerFailedRunThreadItem).origin;
+}
+
+function humanize(value: string) {
+  const label = value.replaceAll("_", " ").trim();
+  return label ? `${label[0]?.toUpperCase() ?? ""}${label.slice(1)}` : "Run trigger";
 }
 
 function triggerLabel(origin: MessengerRunOriginDescriptor) {
@@ -35,7 +58,7 @@ function triggerLabel(origin: MessengerRunOriginDescriptor) {
   if (origin.scene === "automation") {
     return origin.triggerKind === "system"
       ? "Automation trigger"
-      : origin.triggerKind.replaceAll("_", " ");
+      : humanize(origin.triggerKind);
   }
   if (origin.scene === "heartbeat") {
     if (origin.invocationSource === "timer") return "Timer";
@@ -45,93 +68,113 @@ function triggerLabel(origin: MessengerRunOriginDescriptor) {
     if (origin.triggerKind.includes("comment")) return "Issue comment";
     if (origin.invocationSource === "assignment") return "Issue assignment";
   }
-  return origin.triggerKind.replaceAll("_", " ");
+  return humanize(origin.triggerKind);
+}
+
+function unavailableTitle(origin: MessengerRunOriginDescriptor) {
+  return origin.sourceState === "source_unavailable" ? "Source unavailable" : "Legacy/unknown origin";
+}
+
+function unavailableDescription(origin: MessengerRunOriginDescriptor) {
+  return origin.sourceState === "source_unavailable"
+    ? `The originating ${sourceLabels[origin.scene].toLowerCase()} is no longer available.`
+    : "This older run does not include a linked source.";
+}
+
+function sourceTitle(source: MessengerRunOriginSource) {
+  if (source.kind === "unavailable") return null;
+  if (source.kind === "heartbeat") return source.agent.name;
+  return source.title;
+}
+
+function sourceStatus(source: MessengerRunOriginSource) {
+  if (source.kind === "issue" || source.kind === "review" || source.kind === "automation") {
+    return source.status;
+  }
+  if (source.kind === "heartbeat") return source.agent.status;
+  return null;
+}
+
+function sourceActionLabel(source: Exclude<MessengerRunOriginSource, { kind: "unavailable" }>) {
+  if (source.kind === "chat") return "Open chat message";
+  if (source.kind === "issue") return "Open issue";
+  if (source.kind === "review") return "Open review";
+  if (source.kind === "automation") return "Open automation";
+  return "Open agent";
 }
 
 export function MessengerRunOrigin({ origin }: { origin: MessengerRunOriginDescriptor }) {
-  const [searchParams] = useSearchParams();
-  const focused = searchParams.get("originRunId") === origin.runId;
-  const metadataRows = [
-    ["Run ID", origin.runId],
-    ["Scene", sceneLabels[origin.scene]],
-    ["Target type", targetLabels[origin.targetType]],
-    ["Target ID", origin.targetId],
-    ["Trigger", origin.triggerKind],
-    ["Invocation source", origin.invocationSource],
-    ["Conversation ID", origin.conversationId],
-    ["Message ID", origin.messageId],
-    ["Issue ID", origin.issueId],
-    ["Automation ID", origin.automationId],
-    ["Automation run ID", origin.automationRunId],
-    ["Wakeup request ID", origin.wakeupRequestId],
-  ].filter((row): row is [string, string] => typeof row[1] === "string" && row[1].length > 0);
+  const availableSource = origin.source.kind === "unavailable" ? null : origin.source;
+  const SourceIcon = availableSource ? sceneIcons[origin.scene] : CircleAlert;
+  const title = availableSource ? sourceTitle(availableSource)! : unavailableTitle(origin);
+  const status = availableSource ? sourceStatus(availableSource) : null;
+  const description = availableSource
+    ? availableSource.kind === "heartbeat"
+      ? `${triggerLabel(origin)} · ${humanize(availableSource.agent.title ?? availableSource.agent.role)}`
+      : triggerLabel(origin)
+    : unavailableDescription(origin);
 
-  return (
-    <div className="space-y-2.5 text-xs" data-testid={`messenger-run-origin-${origin.runId}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span
-          className="rounded-[calc(var(--radius-sm)-1px)] bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
-          data-testid={`messenger-run-scene-${origin.runId}`}
-        >
-          {sceneLabels[origin.scene]}
-        </span>
-        <CopyText
-          text={origin.runId}
-          ariaLabel={`Copy full run ID ${origin.runId}`}
-          title="Copy full run ID"
-          className="rounded-[calc(var(--radius-sm)-1px)] bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground"
-        >
-          Run {origin.runId.slice(0, 8)}
-        </CopyText>
-        <span className="text-[11px] text-muted-foreground" data-testid={`messenger-run-trigger-${origin.runId}`}>
-          {triggerLabel(origin)}
-        </span>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        {origin.sourceState === "available" ? (
-          <>
-            <span>Origin</span>
-            <span className="font-medium text-foreground" data-testid={`messenger-run-target-${origin.runId}`}>
-              {origin.targetLabel ?? targetLabels[origin.targetType]}
-            </span>
-            {origin.targetStatus ? <StatusBadge status={origin.targetStatus} /> : null}
-          </>
-        ) : (
-          <span className="font-medium text-foreground" data-testid={`messenger-run-source-fallback-${origin.runId}`}>
-            {origin.sourceState === "source_unavailable" ? "Source unavailable" : "Legacy/unknown origin"}
+  const content = (
+    <div className="flex min-w-0 items-start gap-3">
+      {availableSource?.kind === "heartbeat" ? null : (
+        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-border/70 bg-background text-muted-foreground shadow-[var(--shadow-xs)]">
+          <SourceIcon className="h-4 w-4" aria-hidden />
+        </div>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className="text-[11px] font-medium text-muted-foreground"
+            data-testid={`messenger-run-scene-${origin.runId}`}
+          >
+            {sceneLabels[origin.scene]}
           </span>
-        )}
+          {(availableSource?.kind === "issue" || availableSource?.kind === "review") && availableSource.identifier ? (
+            <span className="font-mono text-[11px] font-medium text-foreground">{availableSource.identifier}</span>
+          ) : null}
+          {status ? <StatusBadge status={status} /> : null}
+        </div>
+        <div
+          className="mt-0.5 truncate text-sm font-medium leading-5 text-foreground"
+          data-testid={availableSource
+            ? `messenger-run-target-${origin.runId}`
+            : `messenger-run-source-fallback-${origin.runId}`}
+        >
+          {availableSource?.kind === "heartbeat" ? (
+            <AgentIdentity
+              name={availableSource.agent.name}
+              icon={availableSource.agent.icon}
+              role={availableSource.agent.role}
+              size="sm"
+              className="max-w-full [&>span:last-child]:text-sm [&>span:last-child]:font-medium"
+            />
+          ) : title}
+        </div>
+        <div
+          className="mt-0.5 text-xs text-muted-foreground"
+          data-testid={`messenger-run-trigger-${origin.runId}`}
+        >
+          {description}
+        </div>
       </div>
+      {availableSource ? <ArrowUpRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden /> : null}
+    </div>
+  );
 
-      <details
-        id={`run-origin-${origin.runId}`}
-        open={focused || undefined}
-        className="rounded-[calc(var(--radius-sm)-1px)] border border-border/60 bg-muted/35 px-3 py-2"
-        data-testid={`messenger-run-origin-details-${origin.runId}`}
-      >
-        <summary className="cursor-pointer select-none text-[11px] font-medium text-muted-foreground">
-          Origin metadata
-        </summary>
-        <dl className="mt-2 grid gap-x-4 gap-y-1.5 sm:grid-cols-[max-content_minmax(0,1fr)]">
-          {metadataRows.map(([label, value]) => (
-            <div key={label} className="contents">
-              <dt className="text-[11px] text-muted-foreground">{label}</dt>
-              <dd className="break-all font-mono text-[11px] text-foreground">{value}</dd>
-            </div>
-          ))}
-          <div className="contents">
-            <dt className="text-[11px] text-muted-foreground">Source</dt>
-            <dd className="text-[11px] text-foreground">
-              {origin.sourceState === "available"
-                ? origin.targetLabel ?? "Available"
-                : origin.sourceState === "source_unavailable"
-                  ? "Source unavailable"
-                  : "Legacy/unknown origin"}
-            </dd>
-          </div>
-        </dl>
-      </details>
+  const cardClassName = "block rounded-[calc(var(--radius-sm)-1px)] border border-border/70 bg-[color:color-mix(in_oklab,var(--surface-inset)_72%,transparent)] px-3 py-2.5 text-left";
+
+  return availableSource ? (
+    <Link
+      to={availableSource.href}
+      className={`${cardClassName} transition-colors hover:border-[color:var(--accent-strong)]/40 hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
+      aria-label={`${sourceActionLabel(availableSource)}: ${title}`}
+      data-testid={`messenger-run-origin-${origin.runId}`}
+    >
+      {content}
+    </Link>
+  ) : (
+    <div className={cardClassName} data-testid={`messenger-run-origin-${origin.runId}`}>
+      {content}
     </div>
   );
 }

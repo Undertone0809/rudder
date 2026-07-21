@@ -894,6 +894,10 @@ function MessengerSystemCard({
   const { pushToast } = useToast();
   const metadata = item.metadata as Record<string, unknown>;
   const origin = failedRunOrigin(item);
+  const sourceHref = origin?.source.kind === "unavailable" ? null : origin?.source.href;
+  const sourceAction = sourceHref
+    ? item.actions.find((action) => action.method === "GET" && action.href === sourceHref) ?? null
+    : null;
 
   const actionMutation = useMutation({
     mutationFn: async (action: MessengerEvent["actions"][number]) => runSystemAction(action),
@@ -936,7 +940,7 @@ function MessengerSystemCard({
         testId={`messenger-system-card-${item.kind}-${item.id}`}
         footer={
           <div className="flex flex-wrap items-center gap-2">
-            {item.actions.map((action) => {
+            {item.actions.filter((action) => action !== sourceAction).map((action) => {
               if (action.method === "GET" && action.href) {
                 return (
                   <Button key={`${item.id}-${action.label}`} asChild size="sm" variant="outline">

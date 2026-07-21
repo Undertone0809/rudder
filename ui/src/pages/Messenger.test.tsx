@@ -99,7 +99,7 @@ describe("Messenger page headers", () => {
     messengerModel.issueThreadDetail = {
       title: "Issues",
       description: "Followed issues, issues I created, and issues assigned to me.",
-      unreadCount: 3,
+      unreadCount: 5,
       items: [
         {
           id: "issue-item-1",
@@ -380,7 +380,7 @@ describe("Messenger page headers", () => {
           latestActivityAt: "2026-04-11T10:00:00.000Z",
           actions: [
             { label: "Retry", href: "/api/agent-runs/run-1/retry", method: "POST" },
-            { label: "Open issue", href: "/issues/issue-1", method: "GET" },
+            { label: "Open issue", href: "/issues/RUD-1", method: "GET" },
             { label: "Open run", href: "/heartbeats/run-1", method: "GET" },
           ],
           metadata: {
@@ -402,6 +402,13 @@ describe("Messenger page headers", () => {
             targetLabel: "RUD-1 · Recover the failed workspace bootstrap",
             targetStatus: "blocked",
             sourceState: "available",
+            source: {
+              kind: "issue",
+              identifier: "RUD-1",
+              title: "Recover the failed workspace bootstrap",
+              status: "blocked",
+              href: "/issues/RUD-1",
+            },
           },
         },
       ],
@@ -413,19 +420,19 @@ describe("Messenger page headers", () => {
     expect(html).toContain("Recent failed agent runs");
     expect(html).toContain("Run failed for Messenger worker");
     expect(html).toContain("Issue Run");
-    expect(html).toContain("Run run-1");
     expect(html).toContain("Recover the failed workspace bootstrap");
     expect(html).toContain("blocked");
-    expect(html).toContain('href="/issues/issue-1"');
-    expect(html).toContain("Origin metadata");
-    expect(html).toContain("Wakeup request ID");
-    expect(html).toContain('aria-label="Copy full run ID run-1"');
+    expect(html).toContain('href="/issues/RUD-1"');
+    expect(html).toContain('aria-label="Open issue: Recover the failed workspace bootstrap"');
+    expect(html).not.toContain("Origin metadata");
+    expect(html).not.toContain("Wakeup request ID");
+    expect(html).not.toContain("Copy full run ID");
     expect(html).toContain('data-variant="outline"');
     expect(html).toContain("Open issue");
     expect(html).not.toContain("1 items");
   });
 
-  it("renders exact Chat deep links, heartbeat details, and missing-source fallbacks", () => {
+  it("renders exact source-card links, heartbeat agent identity, and missing-source fallbacks", () => {
     messengerModel.systemThreadDetail = {
       title: "Failed runs",
       description: "Recent failed agent runs",
@@ -465,6 +472,11 @@ describe("Messenger page headers", () => {
             targetLabel: "Failed deployment chat",
             targetStatus: null,
             sourceState: "available",
+            source: {
+              kind: "chat",
+              title: "Failed deployment chat",
+              href: "/messenger/chat/chat-1?messageId=message-1",
+            },
           },
         },
         {
@@ -477,11 +489,8 @@ describe("Messenger page headers", () => {
           href: "/agents/agent-1/runs/heartbeat-run-12345678",
           latestActivityAt: "2026-04-11T09:00:00.000Z",
           actions: [
-            {
-              label: "Open heartbeat details",
-              href: "/messenger/system/failed-runs?originRunId=heartbeat-run-12345678#run-origin-heartbeat-run-12345678",
-              method: "GET",
-            },
+            { label: "Open agent", href: "/agents/agent-1", method: "GET" },
+            { label: "Open run", href: "/agents/agent-1/runs/heartbeat-run-12345678", method: "GET" },
           ],
           metadata: { status: "failed" },
           origin: {
@@ -500,6 +509,95 @@ describe("Messenger page headers", () => {
             targetLabel: "Timer self-check",
             targetStatus: null,
             sourceState: "available",
+            source: {
+              kind: "heartbeat",
+              agent: {
+                id: "agent-1",
+                name: "Ops agent",
+                icon: null,
+                role: "engineer",
+                status: "idle",
+                title: null,
+              },
+              href: "/agents/agent-1",
+            },
+          },
+        },
+        {
+          id: "review-run-12345678",
+          kind: "failed-runs",
+          title: "Reviewer · Failed run",
+          subtitle: "failed",
+          body: "The run hit a system-level execution problem.",
+          preview: "The run hit a system-level execution problem.",
+          href: "/agents/agent-1/runs/review-run-12345678",
+          latestActivityAt: "2026-04-11T09:15:00.000Z",
+          actions: [
+            { label: "Open review", href: "/issues/RUD-2", method: "GET" },
+            { label: "Open run", href: "/agents/agent-1/runs/review-run-12345678", method: "GET" },
+          ],
+          metadata: { status: "failed" },
+          origin: {
+            runId: "review-run-12345678",
+            scene: "review",
+            targetType: "issue",
+            targetId: "issue-2",
+            triggerKind: "review_routing",
+            invocationSource: "review",
+            conversationId: null,
+            messageId: null,
+            issueId: "issue-2",
+            automationId: null,
+            automationRunId: null,
+            wakeupRequestId: null,
+            targetLabel: "RUD-2 · Verify the repair",
+            targetStatus: "in_review",
+            sourceState: "available",
+            source: {
+              kind: "review",
+              identifier: "RUD-2",
+              title: "Verify the repair",
+              status: "in_review",
+              href: "/issues/RUD-2",
+            },
+          },
+        },
+        {
+          id: "automation-run-12345678",
+          kind: "failed-runs",
+          title: "Automation agent · Failed run",
+          subtitle: "failed",
+          body: "The run hit a system-level execution problem.",
+          preview: "The run hit a system-level execution problem.",
+          href: "/agents/agent-1/runs/automation-run-12345678",
+          latestActivityAt: "2026-04-11T09:30:00.000Z",
+          actions: [
+            { label: "Open automation", href: "/automations/automation-1", method: "GET" },
+            { label: "Open run", href: "/agents/agent-1/runs/automation-run-12345678", method: "GET" },
+          ],
+          metadata: { status: "failed" },
+          origin: {
+            runId: "automation-run-12345678",
+            scene: "automation",
+            targetType: "automation_run",
+            targetId: "automation-execution-1",
+            triggerKind: "schedule",
+            invocationSource: "automation",
+            conversationId: null,
+            messageId: null,
+            issueId: null,
+            automationId: "automation-1",
+            automationRunId: "automation-execution-1",
+            wakeupRequestId: null,
+            targetLabel: "Nightly deployment check",
+            targetStatus: "active",
+            sourceState: "available",
+            source: {
+              kind: "automation",
+              title: "Nightly deployment check",
+              status: "active",
+              href: "/automations/automation-1",
+            },
           },
         },
         {
@@ -529,6 +627,7 @@ describe("Messenger page headers", () => {
             targetLabel: null,
             targetStatus: null,
             sourceState: "source_unavailable",
+            source: { kind: "unavailable", state: "source_unavailable" },
           },
         },
       ],
@@ -540,9 +639,24 @@ describe("Messenger page headers", () => {
     expect(html).toContain("Chat turn");
     expect(html).toContain('href="/messenger/chat/chat-1?messageId=message-1"');
     expect(html).toContain("Heartbeat Run");
-    expect(html).toContain("Timer self-check");
-    expect(html).toContain("Open heartbeat details");
+    expect(html).toContain("Ops agent");
+    expect(html).toContain("Timer · Engineer");
+    expect(html).toContain('aria-label="Open agent: Ops agent"');
+    expect(html).toContain('href="/agents/agent-1"');
+    expect(html).toContain("Review Run");
+    expect(html).toContain("RUD-2");
+    expect(html).toContain("Verify the repair");
+    expect(html).toContain('aria-label="Open review: Verify the repair"');
+    expect(html).toContain('href="/issues/RUD-2"');
+    expect(html).toContain("Automation Run");
+    expect(html).toContain("Nightly deployment check");
+    expect(html).toContain("Schedule");
+    expect(html).toContain('aria-label="Open automation: Nightly deployment check"');
+    expect(html).toContain('href="/automations/automation-1"');
     expect(html).toContain("Source unavailable");
+    expect(html).not.toContain("wakeup-1");
+    expect(html).not.toContain("Origin metadata");
+    expect(html).not.toContain("Copy full run ID");
     expect(html).not.toContain("contextSnapshot");
   });
 
