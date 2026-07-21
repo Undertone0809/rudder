@@ -41,6 +41,9 @@ edit_policy: user_confirmed_only
 
 - `CHAT.LIFECYCLE.001`: chat is a conversation-driven task execution surface
   with durable messages, runs, outputs, and references.
+- `CHAT.INLINE.VISUAL.001`: provider-neutral, message-owned scriptless visuals
+  render inside completed assistant answers without becoming Library files or
+  Chat Work manifest items.
 - `CHAT.TITLE.GENERATION.001`: chat titles use a first-user-message fallback
   plus organization Fast Intelligence generation/regeneration without blocking
   replies or overwriting explicit operator names.

@@ -132,6 +132,7 @@ describe("ChatInlineVisualContent", () => {
 
     expect(parsed.querySelector("#widget")).not.toBeNull();
     expect(parsed.querySelector('svg[role="img"]')).not.toBeNull();
+    expect(parsed.querySelector('svg[role="img"]')?.getAttribute("aria-label")).toBeTruthy();
     expect(parsed.querySelector("details > summary[data-tooltip]")).not.toBeNull();
     expect(parsed.querySelector("script, a, button, form, input, img")).toBeNull();
     expect(srcdoc).toContain(".example-chart-bar:nth-child(4)");
@@ -184,6 +185,35 @@ describe("ChatInlineVisualContent", () => {
     expect(srcdoc).not.toContain("window.openai");
   });
 
+  it("renders the provider-neutral canonical placement with a trusted v1 mapping", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('<div id="widget">Runtime neutral</div>', { status: 200 })));
+    const base = message();
+    const view = renderVisual(message({
+      body: 'Capacity\n::rudder-inline-vis{slot="0"}',
+      structuredPayload: {
+        inlineVisualsV1: [{
+          version: 1,
+          slot: 0,
+          file: "inline-visual-1.html",
+          status: "ready",
+          attachmentId: "attachment-1",
+          contentType: "text/html",
+          byteSize: 100,
+          sha256: "a".repeat(64),
+        }],
+      },
+      attachments: base.attachments.map((attachment) => ({
+        ...attachment,
+        originalFilename: "inline-visual-1.html",
+        sha256: "a".repeat(64),
+      })),
+    }));
+
+    await waitFor(() => expect(view.querySelector("iframe")).not.toBeNull());
+    expect(view.textContent).toContain("Capacity");
+    expect(view.textContent).not.toContain("::rudder-inline-vis");
+  });
+
   it("removes every active or network-capable construct while preserving safe HTML and SVG", () => {
     const srcdoc = buildInlineVisualSrcDoc([
       '<meta http-equiv="refresh" content="0;url=https://evil.invalid">',
@@ -199,7 +229,7 @@ describe("ChatInlineVisualContent", () => {
       '<a href="https://evil.invalid/link">External link</a>',
       '<div id="widget" class="card viz-grid" style="background:url(https://evil.invalid/css)" onclick="alert(1)">',
       '<details open><summary data-tooltip="Safe tooltip">Details</summary><p>Safe content</p></details>',
-      '<svg role="img" aria-label="Safe chart" viewBox="0 0 10 10"><clipPath id="unsafe-clip"><rect width="10" height="10"/></clipPath><foreignObject><img src="https://evil.invalid/svg-image"></foreignObject><use href="https://evil.invalid/use.svg#shape"/><animate attributeName="opacity" values="0;1"/><animateMotion path="M0 0L10 10"/><animateTransform attributeName="transform" type="rotate"/><circle cx="5" cy="5" r="4" fill="url(https://evil.invalid/paint)"/></svg>',
+      '<svg role="img" aria-label="Safe chart" aria-owns="forbidden-relationship" viewBox="0 0 10 10"><clipPath id="unsafe-clip"><rect width="10" height="10"/></clipPath><foreignObject><img src="https://evil.invalid/svg-image"></foreignObject><use href="https://evil.invalid/use.svg#shape"/><animate attributeName="opacity" values="0;1"/><animateMotion path="M0 0L10 10"/><animateTransform attributeName="transform" type="rotate"/><circle cx="5" cy="5" r="4" fill="url(https://evil.invalid/paint)"/></svg>',
       '</div>',
     ].join(""), "light");
     const renderedBody = srcdoc.slice(srcdoc.indexOf("<body>"));
@@ -208,6 +238,8 @@ describe("ChatInlineVisualContent", () => {
     expect(renderedBody).toContain("<details");
     expect(renderedBody).toContain("data-tooltip=\"Safe tooltip\"");
     expect(renderedBody).toContain("<svg");
+    expect(renderedBody).toContain('aria-label="Safe chart"');
+    expect(renderedBody).not.toContain("aria-owns");
     expect(renderedBody).toContain("<circle");
     expect(renderedBody).not.toContain("evil.invalid");
     expect(renderedBody).not.toMatch(/<script|<style|<link|<img|<iframe|<object|<embed|<form|<a\b|<clipPath|<foreignObject|<use|<animate/i);
@@ -300,14 +332,12 @@ describe("ChatInlineVisualContent", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("shows an unavailable fallback with a forced-download source link when loading fails", async () => {
+  it("shows an unavailable fallback without exposing the internal source as a download", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("no", { status: 500 })));
     const view = renderVisual(message());
     await waitFor(() => expect(elementWithExactText(view, "Visual artifact unavailable")).toBeTruthy());
-    const link = [...view.querySelectorAll<HTMLAnchorElement>("a")].find((element) => element.textContent === "Download source")!;
-    expect(link.getAttribute("href")).toBe("/api/assets/asset-1/content?download=1");
-    expect(link.getAttribute("download")).toBe("chart.html");
-    expect(link.getAttribute("target")).toBeNull();
+    expect(view.textContent).not.toContain("Download source");
+    expect(view.querySelector("a")).toBeNull();
   });
 
   it("rerenders the runtime with the current Rudder theme", async () => {

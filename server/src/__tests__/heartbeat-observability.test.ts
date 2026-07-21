@@ -44,6 +44,28 @@ describe("heartbeat execution event observability", () => {
     });
   });
 
+  it("redacts inline visual source from persisted adapter prompts", () => {
+    const payload = buildHeartbeatAdapterInvokePayload({
+      meta: {
+        agentRuntimeType: "process",
+        command: "agent-process",
+        prompt: [
+          "Repair this reply:",
+          ":::rudder-inline-visual:v1",
+          '<div id="widget">PRIVATE_PERSISTED_PROMPT</div>',
+          ":::rudder-inline-visual:end",
+          "Keep this sentence.",
+        ].join("\n"),
+      },
+      runtimeSkills: [],
+    });
+
+    expect(payload.prompt).toBe("Repair this reply:\nKeep this sentence.");
+    expect(JSON.stringify(payload)).not.toContain("PRIVATE_PERSISTED_PROMPT");
+    expect(JSON.stringify(payload)).not.toContain(":::rudder-inline-visual");
+    expect(payload.promptSanitizedForPersistence).toBe(true);
+  });
+
   it("persists forbidden runtime skill evidence from adapter results", () => {
     const markers = resolveForbiddenRuntimeSkillMarkers({
       runtimeSkillIsolation: {

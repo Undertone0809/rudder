@@ -2,8 +2,9 @@
 
 Read this reference when producing a Rudder inline visual. The runtime is
 scriptless, sanitized, isolated from Rudder state, and has no network access.
-Every fragment must be under 2 MiB, and one assistant message may reference at
-most three fragments.
+Every fragment must be at or below 64 KiB UTF-8, all fragment bodies together
+must be at or below 128 KiB, the complete visual-bearing final reply must be at
+or below 256 KiB, and one assistant message may contain at most three fragments.
 
 ## Output Envelope
 
@@ -12,16 +13,25 @@ Write a fragment with one top-level markup root, `<div id="widget">`. Bounded
 `head`, or `body`; Rudder extracts and sanitizes the CSS before it sanitizes the
 markup.
 
-The assistant message must place this exact directive on its own line:
+The final Rudder Chat message places the fragment inside this exact v1 envelope:
 
 ```text
-::codex-inline-vis{file="<title>.html"}
+:::rudder-inline-visual:v1
+<style>#widget .series { color: var(--viz-series-1); }</style>
+<div id="widget">...</div>
+:::rudder-inline-visual:end
 ```
 
-Only a current-run file from the exact thread-scoped visualization directory is
-eligible for capture. Rudder rejects absolute paths, separators, traversal,
-symlink escapes, missing files, stale files, oversized files, malformed
-directives, unknown attributes, and duplicate attributes.
+Both marker lines must be unindented, exact, and free of trailing text. Rudder
+rejects nested, empty, unterminated, excessive, and oversized envelopes. It
+buffers the fragment during streaming, publishes it only after a successful
+complete result, and replaces it with a Server-owned trusted placement. The
+Agent never writes a provider visualization directory, file directive,
+attachment id, canonical placement, iframe, or source link.
+
+The v1 authoring protocol is the same for every conforming Rudder Agent Runtime.
+Legacy `::codex-inline-vis{file="..."}` input remains readable during migration,
+but new output must never emit it.
 
 ## Preserved Markup
 

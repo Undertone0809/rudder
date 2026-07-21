@@ -5,6 +5,11 @@ import type {
   ChatContextLink,
   ChatConversation
 } from "@rudderhq/shared";
+import {
+  createRudderInlineVisualStreamSuppressor,
+  redactRudderInlineVisualSources,
+  stripRudderInlineVisualPlacements,
+} from "@rudderhq/shared";
 import { randomUUID } from "node:crypto";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import { findServerAdapter } from "../agent-runtimes/index.js";
@@ -12,7 +17,7 @@ import type { StorageService } from "../storage/types.js";
 import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
-import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
 import { enrichConversationRuntimeDescriptors } from "./chat-assistant.runtime-batch.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
 import {
@@ -151,6 +156,29 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
     const agentAdapterType = agent.agentRuntimeType as AgentRuntimeType;
     const agentAdapterConfig = (agent.agentRuntimeConfig ?? {}) as Record<string, unknown>;
+    const registeredAdapter = findServerAdapter(agentAdapterType);
+
+    if (!registeredAdapter) {
+      return {
+        descriptor: unavailableAgentDescriptor({
+          sourceLabel: agent.name,
+          runtimeAgentId: agent.id,
+          agentRuntimeType: agentAdapterType,
+          model: modelLabel(agentAdapterConfig) ?? null,
+          error: "The selected agent runtime is not registered with Rudder Chat.",
+        }),
+        runtimeAgent: {
+          id: agent.id,
+          orgId: agent.orgId,
+          name: agent.name,
+          agentRuntimeType: agentAdapterType,
+          agentRuntimeConfig: agentAdapterConfig,
+        },
+        agentRuntimeType: agentAdapterType,
+        agentRuntimeConfig: null,
+        runtimeSkills: [],
+      };
+    }
 
     if (CHAT_UNSUPPORTED_ADAPTER_TYPES.has(agentAdapterType)) {
       return {
@@ -316,10 +344,16 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const finalizeUnhandledRunFailure = async (error: unknown) => {
       if (runFinalized) return;
       const errorCode = (error as { errorCode?: unknown } | null)?.errorCode;
+      const safeError = redactChatInlineVisualDiagnosticText(
+        error instanceof Error ? error.message : String(error),
+        "Chat runtime failed while handling private presentation data",
+      );
       await finalizeChatRun({
         status: "failed",
-        error: error instanceof Error ? error.message : String(error),
-        errorCode: typeof errorCode === "string" ? errorCode : "chat_runtime_exception",
+        error: safeError,
+        errorCode: typeof errorCode === "string"
+          ? redactChatInlineVisualDiagnosticText(errorCode, "chat_runtime_exception")
+          : "chat_runtime_exception",
         resultJson: {
           outcome: "failed",
           recoverable: true,
@@ -329,12 +363,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     };
     const assistantTextAccumulator = createAssistantTextAccumulator();
     const sentinelStream = createSentinelStream(resultSentinel);
+    const inlineVisualStream = createRudderInlineVisualStreamSuppressor();
+    const transcriptInlineVisualStream = createRudderInlineVisualStreamSuppressor();
+    let transcriptDeltaOpen = false;
+    let transcriptDeltaCarry = "";
     let stopCutoffPartialBody: string | null = null;
     const freezeStopCutoff = () => {
       if (stopCutoffPartialBody !== null) return;
-      stopCutoffPartialBody =
+      stopCutoffPartialBody = redactRudderInlineVisualSources(
         partialBodyFromRawAssistantText(assistantTextAccumulator.fullText, resultSentinel)
-        || (safeTrim(sentinelStream.visibleText) ?? "");
+        || (safeTrim(sentinelStream.visibleText) ?? ""),
+      );
     };
     const isStopped = () => input.abortSignal?.aborted === true;
     let removeAbortListener: (() => void) | null = null;
@@ -416,7 +455,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           if (entry.kind === "assistant") {
             const delta = assistantTextAccumulator.push(entry.text, entry.delta === true);
             if (!delta) continue;
-            const visibleDelta = sentinelStream.push(delta);
+            const visibleDelta = inlineVisualStream.push(sentinelStream.push(delta));
             const textBlock = parseAssistantTextBlock(assistantTextAccumulator.fullText);
             if (visibleDelta && !textBlock) {
               const assistantTranscriptEntry: TranscriptEntry = {
@@ -433,21 +472,192 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             }
             continue;
           }
+          const suppressTranscriptSource = (text: string, delta = false) => {
+            const hideResidualWidgetSource = (output: string) => (
+              /<div\b[^>]*\bid\s*=\s*["']widget["']/i.test(output)
+                ? `[private inline visual source omitted]${output.endsWith("\n") ? "\n" : ""}`
+                : output
+            );
+            if (delta) {
+              // Thinking deltas are arbitrary stream fragments. Preserve continuity
+              // and admit only complete logical lines so raw widget markup cannot be
+              // projected before an opening marker or tag finishes across chunks.
+              transcriptDeltaOpen = true;
+              transcriptDeltaCarry += text;
+              if (Buffer.byteLength(transcriptDeltaCarry, "utf8") > 256 * 1024) {
+                transcriptDeltaCarry = "";
+                transcriptDeltaOpen = false;
+                return "[oversized transcript delta omitted]";
+              }
+              let output = "";
+              let newline = transcriptDeltaCarry.indexOf("\n");
+              while (newline >= 0) {
+                output += hideResidualWidgetSource(
+                  transcriptInlineVisualStream.push(transcriptDeltaCarry.slice(0, newline + 1)),
+                );
+                transcriptDeltaCarry = transcriptDeltaCarry.slice(newline + 1);
+                newline = transcriptDeltaCarry.indexOf("\n");
+              }
+              return output;
+            }
+            // Complete transcript entries are logical records. The synthetic newline
+            // lets own-line markers advance the shared state machine when a runtime
+            // reports START/body/END as separate non-delta entries.
+            let output = "";
+            if (transcriptDeltaOpen) {
+              if (transcriptDeltaCarry) {
+                output += hideResidualWidgetSource(
+                  transcriptInlineVisualStream.push(`${transcriptDeltaCarry}\n`),
+                );
+                transcriptDeltaCarry = "";
+              }
+              transcriptDeltaOpen = false;
+            }
+            const admittedRecord = transcriptInlineVisualStream.push(`${text}\n`);
+            const recordOutput = admittedRecord.endsWith("\n")
+              ? admittedRecord.slice(0, -1)
+              : admittedRecord;
+            return output + hideResidualWidgetSource(recordOutput);
+          };
+          let structuredTranscriptNodes = 0;
+          let structuredTranscriptBytes = 0;
+          const suppressStructuredTranscriptValue = (value: unknown, depth = 0): unknown => {
+            structuredTranscriptNodes += 1;
+            if (structuredTranscriptNodes > 1_000) return "[bounded transcript value omitted]";
+            if (typeof value === "string") {
+              structuredTranscriptBytes += Buffer.byteLength(value, "utf8");
+              if (structuredTranscriptBytes > 256 * 1024) return "[bounded transcript value omitted]";
+              return suppressTranscriptSource(value);
+            }
+            if (depth >= 8) return "[bounded transcript value omitted]";
+            if (Array.isArray(value)) {
+              return value.slice(0, 100).map((item) => suppressStructuredTranscriptValue(item, depth + 1));
+            }
+            if (value && typeof value === "object") {
+              const output: Record<string, unknown> = {};
+              for (const [index, [key, item]] of Object.entries(value as Record<string, unknown>)
+                .slice(0, 100)
+                .entries()) {
+                structuredTranscriptBytes += Buffer.byteLength(key, "utf8");
+                const sanitizedKey = structuredTranscriptBytes > 256 * 1024
+                  ? `[bounded-key-${index}]`
+                  : suppressTranscriptSource(key) || `[redacted-key-${index}]`;
+                let uniqueKey = sanitizedKey;
+                let suffix = 1;
+                while (Object.hasOwn(output, uniqueKey)) {
+                  uniqueKey = `${sanitizedKey}-${suffix}`;
+                  suffix += 1;
+                }
+                output[uniqueKey] = suppressStructuredTranscriptValue(item, depth + 1);
+              }
+              return output;
+            }
+            return value;
+          };
+          const safeEntry: TranscriptEntry = (() => {
+            switch (entry.kind) {
+              case "thinking":
+                return {
+                  kind: entry.kind,
+                  ts: entry.ts,
+                  text: suppressTranscriptSource(entry.text, entry.delta === true),
+                  ...(entry.delta === true ? { delta: true } : {}),
+                };
+              case "user":
+              case "stderr":
+              case "system":
+              case "stdout":
+                return {
+                  kind: entry.kind,
+                  ts: entry.ts,
+                  text: suppressTranscriptSource(entry.text),
+                };
+              case "result":
+                return {
+                  kind: entry.kind,
+                  ts: entry.ts,
+                  text: suppressTranscriptSource(entry.text),
+                  inputTokens: entry.inputTokens,
+                  outputTokens: entry.outputTokens,
+                  cachedTokens: entry.cachedTokens,
+                  costUsd: entry.costUsd,
+                  subtype: suppressTranscriptSource(entry.subtype),
+                  isError: entry.isError,
+                  errors: entry.errors.slice(0, 100).map((message) => suppressTranscriptSource(message)),
+                };
+              case "tool_result":
+                return {
+                  kind: entry.kind,
+                  ts: entry.ts,
+                  content: suppressTranscriptSource(entry.content),
+                  ...(entry.toolName ? { toolName: suppressTranscriptSource(entry.toolName) } : {}),
+                  toolUseId: suppressTranscriptSource(entry.toolUseId),
+                  isError: entry.isError,
+                };
+              case "tool_call":
+                return {
+                  kind: entry.kind,
+                  ts: entry.ts,
+                  name: suppressTranscriptSource(entry.name),
+                  input: suppressStructuredTranscriptValue(entry.input),
+                  ...(entry.toolUseId ? { toolUseId: suppressTranscriptSource(entry.toolUseId) } : {}),
+                };
+              case "todo_list":
+                return {
+                  kind: entry.kind,
+                  ts: entry.ts,
+                  ...(entry.todoListId ? { todoListId: suppressTranscriptSource(entry.todoListId) } : {}),
+                  items: entry.items.slice(0, 100).map((item) => ({
+                    text: suppressTranscriptSource(item.text),
+                    status: item.status,
+                  })),
+                };
+              case "init":
+                return {
+                  kind: entry.kind,
+                  ts: entry.ts,
+                  model: suppressTranscriptSource(entry.model),
+                  sessionId: suppressTranscriptSource(entry.sessionId),
+                };
+              default:
+                return {
+                  kind: "system",
+                  ts: new Date().toISOString(),
+                  text: "Unsupported runtime transcript entry omitted",
+                };
+            }
+          })();
           if (entry.kind === "result") {
-            await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, {
-              ...entry,
-              text: partialBodyFromRawAssistantText(entry.text, resultSentinel),
-            });
-          } else if (!(entry.kind === "stdout" && entry.text.includes(resultSentinel))) {
-            await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, entry);
+            const safeResultEntry = safeEntry.kind === "result" ? safeEntry : null;
+            const observedText = partialBodyFromRawAssistantText(safeResultEntry?.text ?? "", resultSentinel);
+            if (observedText) {
+              await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, {
+                ...safeResultEntry!,
+                text: observedText,
+              });
+            }
+          } else if (
+            !(entry.kind === "stdout" && entry.text.includes(resultSentinel))
+            && !(
+              ("text" in safeEntry && typeof safeEntry.text === "string" && safeEntry.text.length === 0)
+              || (safeEntry.kind === "tool_result" && safeEntry.content.length === 0)
+            )
+          ) {
+            await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, safeEntry);
           }
           if (isStopped()) return;
           if (shouldSuppressChatTranscriptEntry(entry, resultSentinel)) {
             continue;
           }
-          await maybeEmitTranscriptEntry(input.onTranscriptEntry, entry);
+          if (
+            ("text" in safeEntry && typeof safeEntry.text === "string" && safeEntry.text.length === 0)
+            || (safeEntry.kind === "tool_result" && safeEntry.content.length === 0)
+          ) {
+            continue;
+          }
+          await maybeEmitTranscriptEntry(input.onTranscriptEntry, safeEntry);
           if (isStopped()) return;
-          await chatRunsSvc.appendTranscriptEntry(chatRun, entry);
+          await chatRunsSvc.appendTranscriptEntry(chatRun, safeEntry);
         }
       };
 
@@ -514,6 +724,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             chatPrompt,
             chatConversationId: input.conversation.id,
             chatMode: true,
+            rudderChatInlineVisualProtocolVersion: 1,
             rudderScene,
             rudderWorkspace,
             rudderWorkspaces,
@@ -547,16 +758,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             if (isStopped()) return;
             if (stream === "stdout") {
               if (chunk.startsWith("[rudder]")) {
-                const entry: TranscriptEntry = {
+                await processTranscriptEntries([{
                   kind: "stdout",
                   ts: new Date().toISOString(),
                   text: chunk,
-                };
-                await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, entry);
-                if (isStopped()) return;
-                await maybeEmitTranscriptEntry(input.onTranscriptEntry, entry);
-                if (isStopped()) return;
-                await chatRunsSvc.appendTranscriptEntry(chatRun, entry);
+                }]);
                 return;
               }
               await flushStdoutChunk(chunk);
@@ -601,6 +807,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             chatConversationId: input.conversation.id,
             chatMode: true,
             rudderChatResultRepair: true,
+            rudderChatInlineVisualProtocolVersion: 1,
             rudderScene,
             rudderWorkspace,
             rudderWorkspaces,
@@ -638,20 +845,23 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       if (isStopped()) return finalizeStoppedReply();
       await guardActiveRun(() => flushStdoutChunk("", true));
       if (isStopped()) return finalizeStoppedReply();
-      await guardActiveRun(() => maybeEmitAssistantDelta(input.onAssistantDelta, sentinelStream.finish()));
+      const terminalVisibleDelta = `${inlineVisualStream.push(sentinelStream.finish())}${inlineVisualStream.finish()}`;
+      await guardActiveRun(() => maybeEmitAssistantDelta(input.onAssistantDelta, terminalVisibleDelta));
       if (isStopped()) return finalizeStoppedReply();
 
       const rawResultText = resultText(result);
       const rawAssistantText = assistantTextAccumulator.fullText;
       const partialBody =
-        partialBodyFromRawAssistantText(
+        redactRudderInlineVisualSources(partialBodyFromRawAssistantText(
           rawAssistantText,
           resultSentinel,
-        ) ||
-        (safeTrim(sentinelStream.visibleText) ?? "");
+        )) ||
+        (safeTrim(inlineVisualStream.visibleText) ?? "");
       const finalPartialBody =
-        finalBodyFromRawAssistantText(rawResultText, resultSentinel)
-        || finalBodyFromRawAssistantText(rawAssistantText, resultSentinel);
+        redactRudderInlineVisualSources(
+          finalBodyFromRawAssistantText(rawResultText, resultSentinel)
+          || finalBodyFromRawAssistantText(rawAssistantText, resultSentinel),
+        );
 
       if (isStopped()) return finalizeStoppedReply();
 
@@ -689,9 +899,13 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           ? "chat_adapter_failed"
           : "chat_runtime_boot_failed";
         const retryable = errorCode !== "chat_runtime_boot_failed";
+        const adapterErrorMessage = redactChatInlineVisualDiagnosticText(
+          result.errorMessage,
+          "Chat adapter execution failed while handling private presentation data",
+        );
         await finalizeChatRun({
           status: "failed",
-          error: result.errorMessage ?? "Chat adapter execution failed",
+          error: adapterErrorMessage,
           errorCode,
           resultJson: {
             outcome: "failed",
@@ -705,7 +919,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           },
         });
         throw new ChatAssistantStreamError(
-          result.errorMessage ?? "Chat adapter execution failed",
+          adapterErrorMessage,
           finalPartialBody,
           [],
           {
@@ -824,6 +1038,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       if (!reply) {
         throw new Error("Chat adapter returned an invalid final reply");
       }
+      const runtimeNeutralInlineVisuals = reply.kind === "message"
+        ? extractRudderInlineVisualArtifacts(reply.body, {
+          reservedSlots: inlineVisualArtifacts.inlineVisuals.length,
+        })
+        : {
+          body: redactRudderInlineVisualSources(reply.body),
+          attachments: [],
+          inlineVisualsV1: [],
+        };
+      reply.body = runtimeNeutralInlineVisuals.body;
+      generatedAttachments.push(...runtimeNeutralInlineVisuals.attachments);
       const finalBody = reply.body;
       reply.replyingAgentId = runtimeAgentId;
       if (generatedAttachments.length > 0) {
@@ -832,11 +1057,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       if (inlineVisualArtifacts.inlineVisuals.length > 0) {
         reply.inlineVisuals = inlineVisualArtifacts.inlineVisuals;
       }
+      if (runtimeNeutralInlineVisuals.inlineVisualsV1.length > 0) {
+        reply.inlineVisualsV1 = runtimeNeutralInlineVisuals.inlineVisualsV1;
+      }
 
-      const streamedBody = safeTrim(sentinelStream.visibleText) ?? "";
+      const streamedBody = safeTrim(inlineVisualStream.visibleText) ?? "";
       if (!sentinelRepairSucceeded && finalBody && finalBody !== streamedBody) {
         if (isStopped()) return finalizeStoppedReply();
-        await guardActiveRun(() => maybeEmitAssistantDelta(input.onAssistantDelta, finalBody));
+        await guardActiveRun(() => maybeEmitAssistantDelta(
+          input.onAssistantDelta,
+          stripRudderInlineVisualPlacements(finalBody),
+        ));
         if (isStopped()) return finalizeStoppedReply();
       }
 
@@ -872,9 +1103,13 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       if (error instanceof ChatAssistantStreamError) {
         throw error;
       }
-      const partialBody = safeTrim(sentinelStream.visibleText) ?? "";
+      const partialBody = redactRudderInlineVisualSources(safeTrim(sentinelStream.visibleText) ?? "");
+      const safeErrorMessage = redactChatInlineVisualDiagnosticText(
+        error instanceof Error ? error.message : String(error),
+        "Chat runtime failed while handling private presentation data",
+      );
       throw new ChatAssistantStreamError(
-        error instanceof Error ? error.message : "Chat runtime failed before producing a final reply",
+        safeErrorMessage,
         partialBody,
         [],
         {

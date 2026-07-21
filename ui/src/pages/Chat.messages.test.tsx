@@ -550,6 +550,56 @@ describe("assistant chat message rendering", () => {
     expect(container.querySelector('iframe[sandbox*="allow-scripts"]')).toBeNull();
   });
 
+  it("renders a runtime-neutral visual without exposing its backing HTML attachment", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      '<div id="widget"><section class="card">Balanced</section></div>',
+      { status: 200 },
+    )));
+    const container = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: 'Q4 Capacity Scenarios\n::rudder-inline-vis{slot="0"}',
+      structuredPayload: {
+        inlineVisualsV1: [{
+          version: 1,
+          slot: 0,
+          file: "inline-visual-1.html",
+          status: "ready",
+          attachmentId: "visual-v1",
+          contentType: "text/html",
+          byteSize: 64,
+          sha256: "a".repeat(64),
+        }],
+      },
+      attachments: [{
+        id: "visual-v1",
+        orgId: "org-1",
+        conversationId: "chat-1",
+        messageId: "message-1",
+        assetId: "asset-v1",
+        contentType: "text/html",
+        byteSize: 64,
+        sha256: "a".repeat(64),
+        originalFilename: "inline-visual-1.html",
+        createdByAgentId: "agent-1",
+        createdByUserId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        contentPath: "/api/assets/asset-v1/content",
+      }],
+    }));
+
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    expect(container.textContent).toContain("Q4 Capacity Scenarios");
+    expect(container.textContent).not.toContain("::rudder-inline-vis");
+    expect(container.textContent).not.toContain("inline-visual-1.html");
+    expect(container.querySelector('iframe[sandbox="allow-same-origin"]')).not.toBeNull();
+    expect(container.querySelector('iframe[sandbox*="allow-scripts"]')).toBeNull();
+  });
+
   it("does not use an attachment owned by another branch message", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

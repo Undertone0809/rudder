@@ -200,6 +200,98 @@ describe("chatWorkManifestService", () => {
     expect(manifest.sources.filter((item) => item.url === "https://example.com/report")).toHaveLength(1);
   });
 
+  it("excludes trusted message-owned inline visuals and removes historical misclassified outputs", async () => {
+    const { orgId, agentId, conversationId } = await seedBase("InlineVisual");
+    const messageId = randomUUID();
+    await db.insert(chatMessages).values({
+      id: messageId,
+      orgId,
+      conversationId,
+      role: "assistant",
+      body: 'Capacity\n::rudder-inline-vis{slot="0"}',
+      replyingAgentId: agentId,
+    });
+    const [asset] = await db.insert(assets).values({
+      orgId,
+      provider: "local",
+      objectKey: `visual-${randomUUID()}`,
+      contentType: "text/html",
+      byteSize: 42,
+      sha256: "a".repeat(64),
+      originalFilename: "inline-visual-1.html",
+      createdByAgentId: agentId,
+    }).returning();
+    const [attachment] = await db.insert(chatAttachments).values({
+      orgId,
+      conversationId,
+      messageId,
+      assetId: asset!.id,
+    }).returning();
+
+    await svc.reconcileConversation(conversationId);
+    expect((await svc.getConversationManifest(conversationId)).outputs.map((item) => item.title))
+      .toContain("inline-visual-1.html");
+
+    await db.update(chatMessages).set({
+      structuredPayload: {
+        inlineVisualsV1: [{
+          version: 1,
+          slot: 0,
+          file: "inline-visual-1.html",
+          status: "ready",
+          attachmentId: attachment!.id,
+          contentType: "text/html",
+          byteSize: 42,
+          sha256: "a".repeat(64),
+        }],
+      },
+    }).where(eq(chatMessages.id, messageId));
+    await svc.reconcileConversation(conversationId);
+
+    expect((await svc.getConversationManifest(conversationId)).outputs).toEqual([]);
+    expect(await db.select().from(chatWorkManifestItems)).toEqual([]);
+  });
+
+  it("does not hide ordinary or forged Agent HTML attachments", async () => {
+    const { orgId, agentId, conversationId } = await seedBase("OrdinaryHtml");
+    const messageId = randomUUID();
+    await db.insert(chatMessages).values({
+      id: messageId,
+      orgId,
+      conversationId,
+      role: "assistant",
+      body: 'Report\n::rudder-inline-vis{slot="0"}',
+      replyingAgentId: agentId,
+      structuredPayload: {
+        inlineVisualsV1: [{
+          version: 1,
+          slot: 0,
+          file: "inline-visual-1.html",
+          status: "ready",
+          attachmentId: randomUUID(),
+          contentType: "text/html",
+          byteSize: 42,
+          sha256: "b".repeat(64),
+        }],
+      },
+    });
+    const [asset] = await db.insert(assets).values({
+      orgId,
+      provider: "local",
+      objectKey: `report-${randomUUID()}`,
+      contentType: "text/html",
+      byteSize: 42,
+      sha256: "a".repeat(64),
+      originalFilename: "report.html",
+      createdByAgentId: agentId,
+    }).returning();
+    await db.insert(chatAttachments).values({ orgId, conversationId, messageId, assetId: asset!.id });
+
+    await svc.reconcileConversation(conversationId);
+    expect((await svc.getConversationManifest(conversationId)).outputs.map((item) => item.title))
+      .toEqual(["report.html"]);
+  });
+
   it("removes stale derived items but preserves durable outputs", async () => {
     const { orgId, agentId, conversationId } = await seedBase("Reconcile");
     const runId = randomUUID();

@@ -87,13 +87,32 @@ import { processAdapter } from "./process/index.js";
 import type { ServerAgentRuntimeModule } from "./types.js";
 
 const hermesExecuteCompat: ServerAgentRuntimeModule["execute"] = async (ctx) => {
-  return hermesExecute({
+  const chatPrompt = ctx.context.chatMode === true && typeof ctx.context.chatPrompt === "string"
+    ? ctx.context.chatPrompt
+    : null;
+  const compatConfig = chatPrompt === null
+    ? ctx.config
+    : { ...ctx.config, promptTemplate: chatPrompt };
+  const result = await hermesExecute({
     ...ctx,
+    config: compatConfig,
     agent: {
       ...ctx.agent,
       companyId: ctx.agent.orgId,
+      adapterConfig: compatConfig,
     },
   } as any);
+  if (chatPrompt === null) return result as Awaited<ReturnType<ServerAgentRuntimeModule["execute"]>>;
+  const resultJson = result.resultJson && typeof result.resultJson === "object" && !Array.isArray(result.resultJson)
+    ? result.resultJson as Record<string, unknown>
+    : null;
+  const fullResult = typeof resultJson?.result === "string" && resultJson.result.trim().length > 0
+    ? resultJson.result.trim()
+    : null;
+  return {
+    ...result,
+    ...(fullResult ? { summary: fullResult } : {}),
+  } as Awaited<ReturnType<ServerAgentRuntimeModule["execute"]>>;
 };
 
 const hermesTestEnvironmentCompat: ServerAgentRuntimeModule["testEnvironment"] = async (ctx) => {

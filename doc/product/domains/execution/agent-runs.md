@@ -177,40 +177,45 @@ Flow:
 4. Runtime output must end with the Rudder chat result sentinel. If the primary
    runtime output has useful text but is missing that sentinel, Rudder may run an
    internal same-adapter repair call marked as chat result repair.
-5. When repair succeeds, Rudder persists the repaired assistant message as the
+5. For ordinary message results, every registered built-in adapter carries the
+   same bounded Chat prompt and normalized final body. When that body contains a
+   v1 inline visual under `CHAT.INLINE.VISUAL.001`, Rudder suppresses fragment
+   source before any visible transcript/event/result projection and publishes it
+   only after successful final-result normalization.
+6. When repair succeeds, Rudder persists the repaired assistant message as the
    successful chat result, combines primary and repair usage, and records repair
    evidence on the run result.
-6. When repair is not attempted or fails, Rudder records a failed chat result
+7. When repair is not attempted or fails, Rudder records a failed chat result
    with any safe partial body and structured failure metadata.
-7. If the adapter exits before Rudder observes any model-output evidence,
+8. If the adapter exits before Rudder observes any model-output evidence,
    Rudder classifies the failed chat result as a runtime boot failure:
    `chat_runtime_boot_failed`, `phase: "runtime_boot"`,
    `action: "repair_runtime"`, and `retryable: false`. Messenger shows this as
    a runtime-unavailable failure and does not offer an immediate Retry action,
    because the operator needs to fix the runtime command or environment first.
-8. If the adapter fails after Rudder observes model-output evidence but before a
+9. If the adapter fails after Rudder observes model-output evidence but before a
    successful final chat result, Rudder classifies the failed chat result as a
    model-generation failure: `chat_adapter_failed`,
    `phase: "model_generation"`, `action: "retry"`, and retryable by default.
    Messenger may show a Retry action for that failed assistant response.
-9. Each runtime-backed turn has one durable generation attempt and one fenced
+10. Each runtime-backed turn has one durable generation attempt and one fenced
    runtime-control owner. Steer and Stop actions target the expected generation,
    attempt epoch, and control version rather than whichever process is current
    when the request eventually arrives.
-10. A Steer accepted by a native interactive runtime is submitted to that same
+11. A Steer accepted by a native interactive runtime is submitted to that same
     provider turn. When native Steer is unavailable, Rudder interrupts the old
     attempt and starts one server-owned feedback continuation only after the old
     owner reaches a safe terminal boundary.
-11. If the operator stops an in-flight chat run, Rudder first commits the
+12. If the operator stops an in-flight chat run, Rudder first commits the
     visible-output cutoff and then interrupts the runtime. The stopped message
     may contain only the accepted assistant prefix at that cutoff. Provider
     reasoning, late deltas, final output, and incomplete summaries remain
     diagnostic evidence and cannot change the visible result.
-12. Runtime terminal evidence is projected through a retryable outbox so the
+13. Runtime terminal evidence is projected through a retryable outbox so the
     generation, Agent Run, assistant message, queue item, and control action
     converge. Retry exhaustion must release active ownership and preserve an
     actionable failure rather than blocking later turns indefinitely.
-13. The assistant message stores a reverse link to the run, and Agent Detail Run
+14. The assistant message stores a reverse link to the run, and Agent Detail Run
     context and Messenger can navigate between run evidence and chat transcript.
 
 Invariants:
@@ -222,6 +227,9 @@ Invariants:
   not be surfaced as normal assistant chat content.
 - Stopped chat runs must not turn provider reasoning/thinking transcript entries
   or incomplete runtime summaries into user-visible assistant message bodies.
+- Inline visual fragment source is private presentation input. Stop, timeout,
+  adapter failure, repair, transcript projection, and client-event replay must
+  not expose or persist it as visible Chat/run text.
 - Once a Stop cutoff is accepted, no callback, final result, projector retry,
   reconnect, or page reload may admit later bytes into the chat-visible body or
   result summary.

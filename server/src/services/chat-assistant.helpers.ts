@@ -15,11 +15,16 @@ import type {
 } from "@rudderhq/shared";
 import {
   MAX_CODEX_INLINE_VISUALS,
+  MAX_RUDDER_INLINE_VISUAL_FRAGMENT_BYTES,
   chatAskUserRequestFromStructuredPayload,
   chatAutomationCreateFromStructuredPayload,
   chatIssueProposalFromStructuredPayload,
   parseCodexInlineVisualDirectives,
+  parseRudderInlineVisualEnvelopes,
+  redactRudderInlineVisualSources,
+  replaceRudderInlineVisualSources,
   sanitizeChatStructuredPayload,
+  stripRudderInlineVisualPlacements,
 } from "@rudderhq/shared";
 import { createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -31,7 +36,7 @@ import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "
 import type { StorageService } from "../storage/types.js";
 import { type AgentRunContextAgent } from "./agent-run-context.js";
 
-export const CHAT_UNSUPPORTED_ADAPTER_TYPES = new Set<AgentRuntimeType>(["process", "http"]);
+export const CHAT_UNSUPPORTED_ADAPTER_TYPES = new Set<AgentRuntimeType>();
 export const CHAT_RESULT_SENTINEL_PREFIX = "__RUDDER_RESULT_";
 export const CHAT_RESULT_TEXT_BLOCK_BEGIN = "RUDDER_RESULT_BEGIN";
 export const CHAT_RESULT_TEXT_BLOCK_END = "RUDDER_RESULT_END";
@@ -80,6 +85,7 @@ export interface ChatAssistantResult {
   replyingAgentId?: string | null;
   generatedAttachments?: ChatGeneratedAttachment[];
   inlineVisuals?: ChatInlineVisualResult[];
+  inlineVisualsV1?: ChatInlineVisualV1Result[];
 }
 
 export type ChatGeneratedAttachment =
@@ -97,11 +103,22 @@ export type ChatGeneratedAttachment =
     body: Buffer;
     directiveIndex: number;
     directiveFile: string;
+  }
+  | {
+    source: "rudder_inline_visual";
+    originalFilename: string;
+    contentType: "text/html";
+    body: Buffer;
+    slot: number;
   };
 
 export type ChatInlineVisualResult =
   | { directiveIndex: number; file: string; status: "captured" }
   | { directiveIndex: number; file: string; status: "unavailable"; reason: string };
+
+export type ChatInlineVisualV1Result =
+  | { version: 1; slot: number; file: string; status: "captured"; byteSize: number }
+  | { version: 1; slot: number; file: string; status: "unavailable"; reason: string };
 
 export interface GenerateChatAssistantReplyInput {
   conversation: ChatConversation;
@@ -143,7 +160,7 @@ export type StreamChatAssistantReplyResult =
 export class ChatAssistantStreamError extends Error {
   partialBody: string;
   partialBodyUserVisible: boolean;
-  generatedAttachments: ChatGeneratedAttachment[];
+  generatedAttachments!: ChatGeneratedAttachment[];
   errorCode: ChatRecoverableFailureCode;
   userMessage: string;
   retryable?: boolean;
@@ -167,7 +184,12 @@ export class ChatAssistantStreamError extends Error {
     this.name = "ChatAssistantStreamError";
     this.partialBody = partialBody;
     this.partialBodyUserVisible = options.partialBodyUserVisible === true;
-    this.generatedAttachments = generatedAttachments;
+    Object.defineProperty(this, "generatedAttachments", {
+      value: generatedAttachments,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
     this.errorCode = options.errorCode ?? "chat_runtime_exception";
     this.userMessage = options.userMessage ?? recoverableFailureMessage(this.errorCode);
     this.retryable = options.retryable;
@@ -199,7 +221,7 @@ export function buildMissingResultSentinelRepairPrompt(input: {
   resultSentinel: string;
   priorText: string;
 }) {
-  const priorText = input.priorText.trim();
+  const priorText = redactRudderInlineVisualSources(input.priorText);
   return [
     "Rudder internal repair request:",
     "- Your previous chat turn ended without the required Rudder result sentinel.",
@@ -219,6 +241,58 @@ export function buildMissingResultSentinelRepairPrompt(input: {
 export function safeTrim(value: string | null | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+export function chatAssistantErrorForLog(error: unknown) {
+  if (!(error instanceof Error)) {
+    return {
+      name: "Error",
+      message: redactChatInlineVisualDiagnosticText(
+        String(error),
+        "Chat runtime failed while handling private presentation data",
+      ),
+    };
+  }
+  const candidate = error as Error & {
+    errorCode?: unknown;
+    retryable?: unknown;
+    failurePhase?: unknown;
+    action?: unknown;
+  };
+  const message = redactChatInlineVisualDiagnosticText(
+    error.message,
+    "Chat runtime failed while handling private presentation data",
+  );
+  const stack = error.stack
+    ? redactChatInlineVisualDiagnosticText(error.stack, message)
+    : undefined;
+  return {
+    name: redactChatInlineVisualDiagnosticText(error.name, "Error"),
+    message,
+    stack,
+    ...(typeof candidate.errorCode === "string"
+      ? { errorCode: redactChatInlineVisualDiagnosticText(candidate.errorCode, "chat_runtime_exception") }
+      : {}),
+    ...(typeof candidate.retryable === "boolean" ? { retryable: candidate.retryable } : {}),
+    ...(typeof candidate.failurePhase === "string"
+      ? { failurePhase: redactChatInlineVisualDiagnosticText(candidate.failurePhase, "runtime") }
+      : {}),
+    ...(typeof candidate.action === "string"
+      ? { action: redactChatInlineVisualDiagnosticText(candidate.action, "retry") }
+      : {}),
+  };
+}
+
+export function redactChatInlineVisualDiagnosticText(
+  value: string | null | undefined,
+  fallback: string,
+) {
+  const source = value?.trim();
+  if (!source) return fallback;
+  const sourceWithoutEnvelopes = redactRudderInlineVisualSources(source);
+  if (/<div\b[^>]*\bid\s*=\s*["']widget["']/i.test(sourceWithoutEnvelopes)) return fallback;
+  const redacted = stripRudderInlineVisualPlacements(sourceWithoutEnvelopes).trim();
+  return redacted || fallback;
 }
 
 export function asString(value: unknown): string {
@@ -515,6 +589,21 @@ export function buildAutomationRunInputPromptSection(messages: ChatMessage[]) {
   return lines.join("\n");
 }
 
+export function buildChatInlineVisualPromptSection() {
+  return [
+    "Resolved Rudder built-in skill projection: visualize (Chat v1). This common prompt projection is authoritative even when the runtime has no native skill directory or skill-sync API.",
+    "Rudder Chat supports runtime-neutral, message-owned inline visuals. Use this only when an interactive or structured visual materially improves the answer.",
+    "Wrap each complete scriptless HTML fragment in this exact v1 envelope:",
+    ":::rudder-inline-visual:v1",
+    '<div id="widget">...</div>',
+    ":::rudder-inline-visual:end",
+    "The opening and closing markers must each be on their own line. The fragment must have exactly one <div id=\"widget\"> root, use inline CSS only, contain no JavaScript, event handlers, network requests, external resources, fonts, URLs, or forms, and remain useful without interaction.",
+    "Emit at most three fragments. Each fragment must be at most 64 KiB UTF-8, all fragments together at most 128 KiB, and the complete final reply at most 256 KiB.",
+    "Do not emit an iframe, file path, attachment id, or provider-specific directive. Do not emit Rudder's canonical placement syntax; Rudder replaces each valid envelope with that internal placement after capture.",
+    "If the runtime cannot produce this envelope, return an equivalent Markdown or fenced HTML explanation instead of inventing another embedding protocol.",
+  ].join("\n");
+}
+
 export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntimeSource, resultSentinel: string) {
   return [
     buildChatSpeakerPromptSection(runtimeSource),
@@ -524,6 +613,7 @@ export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntime
     "Always prefer clarification before proposing issue creation when requirements are incomplete.",
     "Treat message attachments as part of the user's message. If an image attachment includes localPath metadata, inspect that local file before claiming you cannot see the image.",
     "Do not expose internal attachment retrieval commands or auth-bearing asset fetch instructions to the user.",
+    buildChatInlineVisualPromptSection(),
     buildChatResponseQualityPromptSection(),
     "Use result kind 'message' for clarification, summaries, and small requests that can stay in chat.",
     "Use result kind 'ask_user' only when one to three short structured questions are blocked on the user's decision before the conversation can continue safely.",
@@ -825,6 +915,94 @@ export function extractCodexInlineVisualArtifacts(result: AgentRuntimeExecutionR
   return { attachments, inlineVisuals };
 }
 
+function rudderInlineVisualFragmentIssue(fragment: string) {
+  if (!/<div\b[^>]*\bid\s*=\s*["']widget["'][^>]*>/i.test(fragment)) return "missing_widget";
+  if (/<\/?(?:html|head|body|base|script|iframe|frame|object|embed|form|input|button|select|textarea|a|img|image|video|audio|source|link|meta)\b/i.test(fragment)) {
+    return "unsafe_fragment";
+  }
+  if (/\s(?:on[a-z]+|href|src|srcset|action|formaction|poster|data|xlink:href)\s*=/i.test(fragment)) {
+    return "unsafe_fragment";
+  }
+  if (/<style\b[^>]*>[\s\S]*?(?:@import|@font-face|url\s*\(|expression\s*\(|javascript:)[\s\S]*?<\/style>/i.test(fragment)) {
+    return "unsafe_fragment";
+  }
+  return null;
+}
+
+export function extractRudderInlineVisualArtifacts(
+  body: string,
+  options: { reservedSlots?: number } = {},
+): {
+  body: string;
+  attachments: ChatGeneratedAttachment[];
+  inlineVisualsV1: ChatInlineVisualV1Result[];
+} {
+  const parsed = parseRudderInlineVisualEnvelopes(body);
+  const reservedSlots = Math.max(0, Math.min(MAX_CODEX_INLINE_VISUALS, options.reservedSlots ?? 0));
+  const attachments: ChatGeneratedAttachment[] = [];
+  const inlineVisualsV1: ChatInlineVisualV1Result[] = [];
+  const replacements: Array<{ start: number; end: number; replacement: string }> = [];
+
+  for (const envelope of parsed.envelopes) {
+    const slot = envelope.slot + reservedSlots;
+    if (slot >= MAX_CODEX_INLINE_VISUALS) {
+      replacements.push({ start: envelope.start, end: envelope.end, replacement: "" });
+      continue;
+    }
+    const file = `inline-visual-${slot + 1}.html`;
+    const fragmentIssue = rudderInlineVisualFragmentIssue(envelope.fragment);
+    replacements.push({
+      start: envelope.start,
+      end: envelope.end,
+      replacement: `::rudder-inline-vis{slot="${slot}"}`,
+    });
+    if (fragmentIssue) {
+      inlineVisualsV1.push({ version: 1, slot, file, status: "unavailable", reason: fragmentIssue });
+      continue;
+    }
+    const fragmentBody = Buffer.from(envelope.fragment, "utf8");
+    if (fragmentBody.length !== envelope.byteSize || fragmentBody.length > MAX_RUDDER_INLINE_VISUAL_FRAGMENT_BYTES) {
+      inlineVisualsV1.push({ version: 1, slot, file, status: "unavailable", reason: "fragment_size_limit" });
+      continue;
+    }
+    inlineVisualsV1.push({ version: 1, slot, file, status: "captured", byteSize: fragmentBody.length });
+    attachments.push({
+      source: "rudder_inline_visual",
+      originalFilename: file,
+      contentType: "text/html",
+      body: fragmentBody,
+      slot,
+    });
+  }
+
+  for (const visualIssue of parsed.issues) {
+    const slot = visualIssue.slot === null ? null : visualIssue.slot + reservedSlots;
+    if (slot === null || slot >= MAX_CODEX_INLINE_VISUALS) {
+      replacements.push({ start: visualIssue.start, end: visualIssue.end, replacement: "" });
+      continue;
+    }
+    const file = `inline-visual-${slot + 1}.html`;
+    replacements.push({
+      start: visualIssue.start,
+      end: visualIssue.end,
+      replacement: `::rudder-inline-vis{slot="${slot}"}`,
+    });
+    inlineVisualsV1.push({ version: 1, slot, file, status: "unavailable", reason: visualIssue.code });
+  }
+
+  inlineVisualsV1.sort((a, b) => a.slot - b.slot);
+  attachments.sort((a, b) =>
+    a.source === "rudder_inline_visual" && b.source === "rudder_inline_visual"
+      ? a.slot - b.slot
+      : 0
+  );
+  return {
+    body: replaceRudderInlineVisualSources(body, replacements),
+    attachments,
+    inlineVisualsV1,
+  };
+}
+
 export function isImageAttachment(attachment: Pick<ChatMessage["attachments"][number], "contentType">) {
   return attachment.contentType.toLowerCase().startsWith("image/");
 }
@@ -938,7 +1116,11 @@ export function validateAssistantResult(
     ? sanitizeChatStructuredPayload(rawStructuredPayload)
     : null;
   const structuredPayload = sanitizedStructuredPayload
-    ? (({ inlineVisuals: _untrustedInlineVisuals, ...trustedPayload }) =>
+    ? (({
+      inlineVisuals: _untrustedInlineVisuals,
+      inlineVisualsV1: _untrustedInlineVisualsV1,
+      ...trustedPayload
+    }) =>
       Object.keys(trustedPayload).length > 0 ? trustedPayload : null)(sanitizedStructuredPayload)
     : null;
 

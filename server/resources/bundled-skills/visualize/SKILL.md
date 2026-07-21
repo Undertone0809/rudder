@@ -1,7 +1,7 @@
 ---
 name: visualize
-description: "Create safe inline visual explanations in Rudder Chat. Use when asked for a chart, plot, diagram, timeline, comparison, static map, simulator, scenario view, or compact visual that materially improves understanding. Prefer Mermaid for static node-and-edge structures; use Rudder's HTML/SVG/CSS artifact path only when thread-scoped output is available. Rudder visuals are declarative and scriptless: convert simulator requests to static scenarios or disclosure-based comparisons and never rely on JavaScript, network access, or external assets."
-compatibility: "Rudder Chat inline visual capture. HTML artifacts require a thread-scoped visualization directory exposed by the current runtime."
+description: "Create safe inline visual explanations in Rudder Chat. Use when asked for a chart, plot, diagram, timeline, comparison, static map, simulator, scenario view, or compact visual that materially improves understanding. Prefer Mermaid for static node-and-edge structures; use Rudder's runtime-neutral HTML/SVG/CSS message envelope for custom geometry. Rudder visuals are declarative and scriptless: convert simulator requests to static scenarios or disclosure-based comparisons and never rely on JavaScript, network access, or external assets."
+compatibility: "Rudder Chat v1 inline visual message protocol. Provider-neutral and filesystem-independent; outside Rudder Chat, fall back to Mermaid, Markdown, or prose."
 ---
 
 # Visualize
@@ -16,38 +16,40 @@ access, so design for a useful first render with declarative HTML, SVG, and CSS.
    a static structure or flow. Do not create an HTML artifact for that case.
 2. Use an inline visual for charts, timelines, comparisons, spatial layouts,
    static scenario views, or compact reports that benefit from custom geometry.
-3. Create an HTML artifact only when the current run exposes a writable,
-   thread-scoped visualization directory ending in
-   `visualizations/YYYY/MM/DD/<thread-id>`. Use the exact directory from the
-   runtime's writable roots. Never infer, scan for, or create another thread's
-   directory.
-4. If that directory is unavailable, fall back to Mermaid, Markdown tables, or
-   concise prose. Do not emit a directive that Rudder cannot resolve.
+3. Use the v1 message envelope only in Rudder Chat. It is a Rudder protocol,
+   independent of Codex, Claude, Gemini, Cursor, OpenCode, Pi, Hermes, process,
+   HTTP, or gateway filesystem conventions.
+4. Outside Rudder Chat, fall back to Mermaid, Markdown tables, or concise prose.
+   Do not emit a Rudder envelope on a surface that cannot render it.
 
-## File And Directive
+## Message Envelope
 
-- Choose a concise ASCII lowercase-hyphenated title and write
-  `<title>.html` inside the current thread-scoped visualization directory.
 - Write only an HTML fragment. Do not include a doctype or `html`, `head`, or
   `body` elements.
-- Keep every fragment under 2 MiB and emit at most three visuals in one
-  assistant message.
+- Keep every fragment at or below 64 KiB UTF-8, all fragments together at or
+  below 128 KiB, and the complete visual-bearing final reply at or below
+  256 KiB. Emit at most three visuals in one assistant message.
 - Give the fragment one top-level markup root, `<div id="widget">`. Bounded
   `<style>` blocks may precede that root.
 - Put any custom CSS in bounded `<style>` elements. Inline `style` attributes
   are removed.
-- Read the file back before replying. Fix escaped markup such as literal `\"`
+- Check the fragment before replying. Fix escaped markup such as literal `\"`
   or `\n`, missing labels, clipped content, and malformed SVG.
-- Add this exact directive on its own line where the visual should render:
+- Put this exact opening marker on its own line where the visual should render,
+  then the fragment, then the exact closing marker on its own line:
 
 ```text
-::codex-inline-vis{file="<title>.html"}
+:::rudder-inline-visual:v1
+<style>#widget .series { color: var(--viz-series-1); }</style>
+<div id="widget">...</div>
+:::rudder-inline-visual:end
 ```
 
-Use only the `file` attribute. The value must be a basename ending in `.html`;
-paths, separators, traversal, extra attributes, and alternate quoting are
-rejected. Keep any necessary explanation outside the fragment and do not add a
-second Markdown link to the file.
+The markers must have no indentation, attributes, or trailing text. Keep any
+necessary explanation outside the envelope. Never emit
+`::codex-inline-vis{...}`, `::rudder-inline-vis{...}`, a file path, an iframe,
+or a second link to source HTML; Rudder owns capture, trusted placement,
+persistence, sandboxing, and rendering.
 
 ## Rudder Safety Boundary
 
@@ -120,13 +122,13 @@ not as data or copy to repeat.
 
 Before replying:
 
-1. Confirm the file is in the exact current-thread visualization directory,
-   uses an allowed basename, is below 2 MiB, and the message has no more than
-   three directives.
+1. Confirm each envelope uses the exact v1 markers, satisfies the 64/128/256 KiB
+   limits, and the message has no more than three visuals.
 2. Confirm the fragment contains no scripts, handlers, URLs, external assets,
    active controls, document-level elements, or unsupported embeds.
 3. Confirm SVG view boxes, labels, referenced IDs, table semantics, and CSS
    selectors are valid.
 4. Check both narrow and wide layout when a preview path is available. If not,
    keep the geometry responsive and the composition conservative.
-5. Emit the directive only after the file is complete and readable.
+5. Emit the envelope only after the fragment is complete and valid. Never leave
+   an opening marker unterminated.

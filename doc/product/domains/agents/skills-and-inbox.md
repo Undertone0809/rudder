@@ -63,6 +63,11 @@ Product model:
   Rudder-resolved set unless they are introduced through a non-bundled
   selection path. The retired `skill-optimizer` package is not shipped or
   available for selection.
+- `visualize` uses `CHAT.INLINE.VISUAL.001` for custom declarative Chat visuals.
+  Its authoring contract is a provider-neutral Rudder message envelope, never a
+  provider filesystem directory, iframe, attachment id, or provider-named
+  directive. Outside a conforming Rudder Chat surface it falls back to Mermaid,
+  Markdown, or prose.
 - `rudder-docs` is a self-gating documentation router. It is always enabled so
   supported runtimes can discover it, but the agent should consult it only when
   the task needs Rudder product behavior, exact CLI/API details, official docs,

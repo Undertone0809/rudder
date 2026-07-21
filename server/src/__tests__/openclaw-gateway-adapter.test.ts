@@ -396,6 +396,42 @@ describe("openclaw gateway ui stdout parser", () => {
 });
 
 describe("openclaw gateway adapter execute", () => {
+  it("uses the runtime-neutral Chat prompt instead of heartbeat wake instructions", async () => {
+    const gateway = await createMockGatewayServer();
+
+    try {
+      const result = await execute(
+        buildContext(
+          {
+            url: gateway.url,
+            headers: {
+              "x-openclaw-token": "gateway-token",
+            },
+            payloadTemplate: {
+              message: "Gateway persona",
+            },
+            waitTimeoutMs: 2000,
+          },
+          {
+            context: {
+              chatMode: true,
+              chatPrompt: "Rudder runtime-neutral Chat prompt",
+            },
+          },
+        ),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(gateway.getAgentPayload()?.message).toBe(
+        "Gateway persona\n\nRudder runtime-neutral Chat prompt",
+      );
+      expect(String(gateway.getAgentPayload()?.message ?? ""))
+        .not.toContain("# Rudder Heartbeat Instruction");
+    } finally {
+      await gateway.close();
+    }
+  });
+
   it("runs connect -> agent -> agent.wait and forwards wake payload", async () => {
     const gateway = await createMockGatewayServer();
     const logs: string[] = [];

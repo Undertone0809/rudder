@@ -10,7 +10,7 @@ import {
 } from "../utils.js";
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
-  const { runId, agent, config, onLog, onMeta, onSpawn, abortSignal } = ctx;
+  const { runId, agent, config, context, onLog, onMeta, onSpawn, abortSignal } = ctx;
   const command = asString(config.command, "");
   if (!command) throw new Error("Process adapter missing command");
 
@@ -24,6 +24,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 15);
+  const chatPrompt = context.chatMode === true && typeof context.chatPrompt === "string"
+    ? context.chatPrompt
+    : null;
 
   if (onMeta) {
     await onMeta({
@@ -32,6 +35,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       cwd,
       commandArgs: args,
       env: redactEnvForLogs(env),
+      ...(chatPrompt !== null ? { prompt: chatPrompt } : {}),
     });
   }
 
@@ -42,6 +46,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     graceSec,
     onLog,
     onSpawn,
+    ...(chatPrompt !== null ? { stdin: chatPrompt } : {}),
     abortSignal,
   });
 
@@ -71,6 +76,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     exitCode: proc.exitCode,
     signal: proc.signal,
     timedOut: false,
+    ...(chatPrompt !== null && proc.stdout.trim().length > 0
+      ? { summary: proc.stdout.trim() }
+      : {}),
     resultJson: {
       stdout: proc.stdout,
       stderr: proc.stderr,

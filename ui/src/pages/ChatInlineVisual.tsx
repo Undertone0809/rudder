@@ -1,8 +1,11 @@
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { useTheme } from "@/context/ThemeContext";
 import {
+  MAX_RUDDER_INLINE_VISUAL_FRAGMENT_BYTES,
   chatInlineVisualMappingsFromStructuredPayload,
   parseCodexInlineVisualDirectives,
+  parseRudderInlineVisualPlacements,
+  rudderInlineVisualMappingsFromStructuredPayload,
   type ChatAttachment,
   type ChatMessage,
 } from "@rudderhq/shared";
@@ -13,7 +16,7 @@ import {
   type CssNode,
 } from "css-tree";
 import createDOMPurify from "dompurify";
-import { AlertTriangle, Download } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 
 export const INLINE_VISUAL_CSP = [
@@ -58,6 +61,9 @@ const INLINE_VISUAL_ALLOWED_ATTRIBUTES = [
   "text-anchor", "title", "transform", "value", "vector-effect", "viewBox", "width", "x", "x1",
   "x2", "y", "y1", "y2",
 ] as const;
+const INLINE_VISUAL_ALLOWED_ARIA_ATTRIBUTES = new Set([
+  "aria-describedby", "aria-hidden", "aria-label", "aria-labelledby",
+]);
 const INLINE_VISUAL_FORBIDDEN_TAGS = [
   "a", "animate", "animateMotion", "animateTransform", "audio", "base", "button", "embed",
   "clipPath", "foreignObject", "form", "iframe", "image", "img", "input", "link", "math", "meta",
@@ -293,6 +299,10 @@ function sanitizeArtifact(fragment: string) {
       data.keepAttr = false;
       return;
     }
+    if (name.startsWith("aria-") && !INLINE_VISUAL_ALLOWED_ARIA_ATTRIBUTES.has(name)) {
+      data.keepAttr = false;
+      return;
+    }
     if (name === "id" && !INLINE_VISUAL_SAFE_TOKEN.test(value)) {
       data.keepAttr = false;
       return;
@@ -315,7 +325,7 @@ function sanitizeArtifact(fragment: string) {
   const safeFragment = purifier.sanitize(template.innerHTML, {
     ALLOWED_TAGS: [...INLINE_VISUAL_ALLOWED_TAGS],
     ALLOWED_ATTR: [...INLINE_VISUAL_ALLOWED_ATTRIBUTES],
-    ALLOW_ARIA_ATTR: false,
+    ALLOW_ARIA_ATTR: true,
     ALLOW_DATA_ATTR: false,
     FORBID_TAGS: [...INLINE_VISUAL_FORBIDDEN_TAGS],
     SAFE_FOR_TEMPLATES: true,
@@ -351,20 +361,29 @@ function ownedVisualAttachment(message: ChatMessage, attachmentId: string, file:
   ) ?? null;
 }
 
-function InlineVisualFallback({ attachment }: { attachment: ChatAttachment | null }) {
-  const downloadPath = attachment
-    ? `${attachment.contentPath}${attachment.contentPath.includes("?") ? "&" : "?"}download=1`
-    : null;
+function ownedRudderVisualAttachment(
+  message: ChatMessage,
+  mapping: Extract<ReturnType<typeof rudderInlineVisualMappingsFromStructuredPayload>[number], { status: "ready" }>,
+) {
+  return message.attachments.find((attachment) =>
+    attachment.id === mapping.attachmentId
+    && attachment.messageId === message.id
+    && attachment.contentType === mapping.contentType
+    && attachment.originalFilename === mapping.file
+    && attachment.byteSize === mapping.byteSize
+    && attachment.sha256.toLowerCase() === mapping.sha256
+    && Boolean(attachment.createdByAgentId)
+    && !attachment.createdByUserId
+    && attachment.byteSize > 0
+    && attachment.byteSize <= MAX_RUDDER_INLINE_VISUAL_FRAGMENT_BYTES
+  ) ?? null;
+}
+
+function InlineVisualFallback() {
   return (
     <div className="my-2 flex min-h-16 items-center gap-3 rounded-md border border-border/70 bg-muted/25 px-3 py-2 text-sm">
       <AlertTriangle className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="min-w-0 flex-1 text-foreground">Visual artifact unavailable</span>
-      {attachment && downloadPath ? (
-        <a className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-foreground underline-offset-4 hover:underline" href={downloadPath} download={attachment.originalFilename ?? "visual.html"}>
-          Download source
-          <Download className="size-3.5" aria-hidden="true" />
-        </a>
-      ) : null}
     </div>
   );
 }
@@ -448,7 +467,7 @@ function InlineVisualFrame({ attachment, theme }: { attachment: ChatAttachment; 
     resizeObserverRef.current = observer;
   };
 
-  if (failed) return <InlineVisualFallback attachment={attachment} />;
+  if (failed) return <InlineVisualFallback />;
   if (!srcDoc) return <div className="my-2 h-32 animate-pulse rounded-md bg-muted/25" aria-label="Loading visual artifact" />;
   return (
     <iframe
@@ -475,19 +494,38 @@ export function ChatInlineVisualContent({ message, markdownProps }: {
   const { resolvedTheme } = useTheme();
   const renderModel = useMemo(() => {
     if (message.role !== "assistant" || message.kind !== "message") return null;
-    const parsed = parseCodexInlineVisualDirectives(message.body);
-    if (parsed.directives.length === 0) return null;
-    const mappings = chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload);
-    return { directives: parsed.directives, mappings, completed: message.status === "completed" };
+    const legacy = parseCodexInlineVisualDirectives(message.body).directives.map((directive) => ({
+      kind: "legacy" as const,
+      key: `legacy-${directive.index}`,
+      index: directive.index,
+      file: directive.file,
+      start: directive.start,
+      end: directive.end,
+    }));
+    const canonical = parseRudderInlineVisualPlacements(message.body).placements.map((placement) => ({
+      kind: "rudder" as const,
+      key: `rudder-${placement.slot}`,
+      slot: placement.slot,
+      start: placement.start,
+      end: placement.end,
+    }));
+    const directives = [...legacy, ...canonical].sort((a, b) => a.start - b.start);
+    if (directives.length === 0) return null;
+    return {
+      directives,
+      legacyMappings: chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload),
+      rudderMappings: rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload),
+      completed: message.status === "completed",
+    };
   }, [message]);
 
   if (!renderModel) return <MarkdownBody {...markdownProps}>{message.body}</MarkdownBody>;
 
-  const pieces: Array<{ kind: "markdown"; body: string } | { kind: "visual"; index: number }> = [];
+  const pieces: Array<{ kind: "markdown"; body: string } | { kind: "visual"; directiveKey: string }> = [];
   let cursor = 0;
   for (const directive of renderModel.directives) {
     if (directive.start > cursor) pieces.push({ kind: "markdown", body: message.body.slice(cursor, directive.start) });
-    pieces.push({ kind: "visual", index: directive.index });
+    pieces.push({ kind: "visual", directiveKey: directive.key });
     cursor = directive.end;
   }
   if (cursor < message.body.length) pieces.push({ kind: "markdown", body: message.body.slice(cursor) });
@@ -498,21 +536,28 @@ export function ChatInlineVisualContent({ message, markdownProps }: {
         if (piece.kind === "markdown") {
           return piece.body.trim() ? <MarkdownBody key={`markdown-${pieceIndex}`} {...markdownProps}>{piece.body}</MarkdownBody> : null;
         }
-        const directive = renderModel.directives[piece.index]!;
+        const directive = renderModel.directives.find((entry) => entry.key === piece.directiveKey)!;
         if (!renderModel.completed) {
           return message.status === "failed" || message.status === "stopped"
-            ? <InlineVisualFallback key={`visual-${piece.index}`} attachment={null} />
+            ? <InlineVisualFallback key={`visual-${directive.key}`} />
             : null;
         }
-        const mapping = renderModel.mappings.find((entry) =>
-          entry.directiveIndex === directive.index && entry.file === directive.file
-        );
-        const attachment = mapping?.status === "ready"
-          ? ownedVisualAttachment(message, mapping.attachmentId, mapping.file)
-          : null;
+        const attachment = directive.kind === "legacy"
+          ? (() => {
+            const mapping = renderModel.legacyMappings.find((entry) =>
+              entry.directiveIndex === directive.index && entry.file === directive.file
+            );
+            return mapping?.status === "ready"
+              ? ownedVisualAttachment(message, mapping.attachmentId, mapping.file)
+              : null;
+          })()
+          : (() => {
+            const mapping = renderModel.rudderMappings.find((entry) => entry.slot === directive.slot);
+            return mapping?.status === "ready" ? ownedRudderVisualAttachment(message, mapping) : null;
+          })();
         return attachment
-          ? <InlineVisualFrame key={`visual-${piece.index}`} attachment={attachment} theme={resolvedTheme} />
-          : <InlineVisualFallback key={`visual-${piece.index}`} attachment={null} />;
+          ? <InlineVisualFrame key={`visual-${directive.key}`} attachment={attachment} theme={resolvedTheme} />
+          : <InlineVisualFallback key={`visual-${directive.key}`} />;
       })}
     </div>
   );

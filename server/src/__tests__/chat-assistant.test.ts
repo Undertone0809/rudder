@@ -10,13 +10,26 @@ const mockAdapter = vi.hoisted(() => ({
   supportsLocalAgentJwt: true,
   execute: vi.fn(),
   parseStdoutLine: vi.fn((line: string, ts: string) => {
-    const parsed = JSON.parse(line) as { type?: string; item?: Record<string, unknown> };
+    const parsed = JSON.parse(line) as {
+      type?: string;
+      item?: Record<string, unknown>;
+      errors?: unknown;
+      result?: unknown;
+      subtype?: unknown;
+      is_error?: unknown;
+    };
     const item = parsed.item ?? {};
     if (parsed.type === "item.completed" && item.type === "agent_message" && typeof item.text === "string") {
-      return [{ kind: "assistant", ts, text: item.text }];
+      return [{ kind: "assistant", ts, text: item.text, ...(item.delta === true ? { delta: true } : {}) }];
     }
     if (parsed.type === "item.completed" && item.type === "reasoning" && typeof item.text === "string") {
-      return [{ kind: "thinking", ts, text: item.text }];
+      return [{
+        kind: "thinking",
+        ts,
+        text: item.text,
+        ...(item.delta === true ? { delta: true } : {}),
+        ...(typeof item.extra === "string" ? { extra: item.extra } : {}),
+      }];
     }
     if (parsed.type === "item.started" && item.type === "tool_use") {
       return [{
@@ -36,6 +49,13 @@ const mockAdapter = vi.hoisted(() => ({
         isError: item.status === "error",
       }];
     }
+    if (parsed.type === "item.completed" && item.type === "todo_list" && Array.isArray(item.items)) {
+      return [{
+        kind: "todo_list",
+        ts,
+        items: item.items as Array<{ text: string; status: "pending" | "in_progress" | "completed" }>,
+      }];
+    }
     if (parsed.type === "result") {
       return [{
         kind: "result",
@@ -47,7 +67,9 @@ const mockAdapter = vi.hoisted(() => ({
         costUsd: 0,
         subtype: typeof parsed.subtype === "string" ? parsed.subtype : "result",
         isError: parsed.is_error === true,
-        errors: [],
+        errors: Array.isArray(parsed.errors)
+          ? parsed.errors.filter((value): value is string => typeof value === "string")
+          : [],
       }];
     }
     return [];
@@ -512,7 +534,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     ]);
   });
 
-  it("points process chat agents to model configuration instead of runtime details", async () => {
+  it("keeps process chat agents available through the shared Chat contract", async () => {
     const svc = chatAssistantService({} as any);
     mockAgentService.getInternalById.mockResolvedValueOnce({
       id: "agent-1",
@@ -520,8 +542,14 @@ describe("chatAssistantService operator profile prompt injection", () => {
       name: "Navigator",
       status: "idle",
       agentRuntimeType: "process",
-      agentRuntimeConfig: {},
+      agentRuntimeConfig: { command: process.execPath },
       metadata: null,
+    });
+    mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
+      resolvedConfig: { command: process.execPath },
+      runtimeConfig: { command: process.execPath },
+      runtimeSkillEntries: [],
+      secretKeys: new Set(),
     });
 
     const availability = await svc.getChatAssistantAvailability(makeConversation({
@@ -530,8 +558,8 @@ describe("chatAssistantService operator profile prompt injection", () => {
         sourceLabel: "Navigator",
         runtimeAgentId: "agent-1",
         agentRuntimeType: "process",
-        model: null,
-        available: false,
+        model: "Default model",
+        available: true,
         error: null,
       },
     }));
@@ -541,11 +569,23 @@ describe("chatAssistantService operator profile prompt injection", () => {
       sourceLabel: "Navigator",
       runtimeAgentId: "agent-1",
       agentRuntimeType: "process",
-      model: null,
-      available: false,
-      error: "The current user has not configured a chat model yet.",
+      model: "Default model",
+      available: true,
+      error: null,
     });
     expect(mockAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("does not advertise Chat for an unregistered adapter type", async () => {
+    const svc = chatAssistantService({} as any);
+    mockFindServerAdapter.mockReturnValueOnce(undefined);
+
+    const availability = await svc.getChatAssistantAvailability(makeConversation());
+
+    expect(availability).toMatchObject({
+      available: false,
+      error: "The selected agent runtime is not registered with Rudder Chat.",
+    });
   });
 
   it("refuses to generate a reply without a preferred agent", async () => {
@@ -593,6 +633,15 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("Current board operator profile:");
     expect(prompt).toContain("- Preferred form of address: Zee");
     expect(prompt).toContain("- Background about the operator: Prefers concise, implementation-first responses.");
+    expect(prompt).toContain("Resolved Rudder built-in skill projection: visualize (Chat v1).");
+    expect(prompt).toContain(":::rudder-inline-visual:v1");
+    expect(prompt).toContain(":::rudder-inline-visual:end");
+    expect(prompt).toContain('<div id="widget">');
+    expect(prompt).toContain("Do not emit an iframe, file path, attachment id, or provider-specific directive");
+    expect(prompt).not.toContain("::codex-inline-vis");
+    expect(mockAdapter.execute.mock.calls[0]?.[0]?.context).toMatchObject({
+      rudderChatInlineVisualProtocolVersion: 1,
+    });
   });
 
   it("includes chat attachments in the runtime prompt as prepared local image paths without auth-bearing download commands", async () => {
@@ -1802,6 +1851,350 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(states).toEqual(["streaming", "finalizing"]);
   });
 
+  it("never projects raw runtime-neutral visual bytes to Chat-visible stream or run result surfaces", async () => {
+    const svc = chatAssistantService({} as any);
+    const deltas: string[] = [];
+    const entries: Array<{ kind: string; text?: string }> = [];
+    const observedEntries: Array<{ kind: string; text?: string }> = [];
+    const fragment = '<div id="widget"><span>PRIVATE_VISUAL_BYTES</span></div>';
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      const finalText = [
+        "RUDDER_RESULT_BEGIN",
+        "Q4 Capacity Scenarios",
+        ":::rudder-inline-visual:v1",
+        fragment,
+        ":::rudder-inline-visual:end",
+        "RUDDER_RESULT_END",
+      ].join("\n");
+      for (const chunk of [finalText.slice(0, 37), finalText.slice(37, 71), finalText.slice(71)]) {
+        await ctx.onLog(
+          "stdout",
+          `${JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: chunk },
+          })}\n`,
+        );
+      }
+      return {
+        summary: finalText,
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    const result = await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      onAssistantDelta: (delta) => deltas.push(delta),
+      onTranscriptEntry: (entry) => entries.push(entry),
+      onObservedTranscriptEntry: (entry) => observedEntries.push(entry),
+    });
+
+    expect(result.outcome).toBe("completed");
+    if (result.outcome !== "completed") throw new Error("expected completed");
+    expect(result.reply.body).toBe('Q4 Capacity Scenarios\n::rudder-inline-vis{slot="0"}');
+    expect(result.reply.generatedAttachments?.[0]?.body.toString("utf8")).toBe(fragment);
+    for (const publicSurface of [
+      deltas.join(""),
+      JSON.stringify(entries),
+      JSON.stringify(observedEntries),
+      JSON.stringify(mockChatAgentRuns.finalizeRun.mock.calls),
+    ]) {
+      expect(publicSurface).not.toContain("PRIVATE_VISUAL_BYTES");
+      expect(publicSurface).not.toContain("<div id=\"widget\"");
+    }
+  });
+
+  it("quarantines nested visual source through the matching outer end", async () => {
+    const svc = chatAssistantService({} as any);
+    const deltas: string[] = [];
+    const entries: Array<{ kind: string; text?: string }> = [];
+    const finalText = [
+      "RUDDER_RESULT_BEGIN",
+      "Before",
+      ":::rudder-inline-visual:v1",
+      "PRIVATE_OUTER",
+      ":::rudder-inline-visual:v1",
+      "PRIVATE_INNER",
+      ":::rudder-inline-visual:end",
+      "PRIVATE_AFTER_INNER_END",
+      ":::rudder-inline-visual:end",
+      "After",
+      "RUDDER_RESULT_END",
+    ].join("\n");
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      for (let index = 0; index < finalText.length; index += 7) {
+        await ctx.onLog(
+          "stdout",
+          `${JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: finalText.slice(index, index + 7) },
+          })}\n`,
+        );
+      }
+      return {
+        summary: finalText,
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    const result = await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      onAssistantDelta: (delta) => deltas.push(delta),
+      onTranscriptEntry: (entry) => entries.push(entry),
+    });
+
+    expect(result.outcome).toBe("completed");
+    if (result.outcome !== "completed") throw new Error("expected completed");
+    expect(result.reply.body).toBe('Before\n::rudder-inline-vis{slot="0"}\nAfter');
+    expect(result.reply.generatedAttachments).toBeUndefined();
+    expect(result.reply.inlineVisualsV1).toEqual([
+      expect.objectContaining({ slot: 0, status: "unavailable", reason: "nested" }),
+    ]);
+    for (const surface of [
+      deltas.join(""),
+      JSON.stringify(entries),
+      JSON.stringify(mockChatAgentRuns.appendTranscriptEntry.mock.calls),
+      JSON.stringify(mockChatAgentRuns.finalizeRun.mock.calls),
+    ]) {
+      expect(surface).not.toContain("PRIVATE_");
+      expect(surface).not.toContain(":::rudder-inline-visual");
+    }
+  });
+
+  it("uses one stateful source filter for diagnostic transcript entries and Rudder stdout", async () => {
+    const svc = chatAssistantService({} as any);
+    const transcriptEntries: Array<{ kind: string; text?: string; content?: string }> = [];
+    const observedEntries: Array<{ kind: string; text?: string; content?: string }> = [];
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      const diagnosticSource = [
+        ":::rudder-inline-visual:v1",
+        '<div id="widget">PRIVATE_SPLIT_TRANSCRIPT</div>',
+        ":::rudder-inline-visual:end",
+      ].join("\n") + "\n";
+      for (let index = 0; index < diagnosticSource.length; index += 7) {
+        await ctx.onLog(
+          "stdout",
+          `${JSON.stringify({
+            type: "item.completed",
+            item: {
+              type: "reasoning",
+              text: diagnosticSource.slice(index, index + 7),
+              delta: true,
+            },
+          })}\n`,
+        );
+      }
+      const standaloneDeltaSource = '<div id="widget">PRIVATE_STANDALONE_DELTA</div>';
+      for (let index = 0; index < standaloneDeltaSource.length; index += 7) {
+        await ctx.onLog(
+          "stdout",
+          `${JSON.stringify({
+            type: "item.completed",
+            item: {
+              type: "reasoning",
+              text: standaloneDeltaSource.slice(index, index + 7),
+              delta: true,
+            },
+          })}\n`,
+        );
+      }
+      await ctx.onLog(
+        "stdout",
+        [
+          "[rudder] diagnostic",
+          ":::rudder-inline-visual:v1",
+          '<div id="widget">PRIVATE_RUDDER_STDOUT</div>',
+          ":::rudder-inline-visual:end",
+          "Visible diagnostic",
+        ].join("\n"),
+      );
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.started",
+          item: {
+            type: "tool_use",
+            id: "tool-private",
+            name: "inspect",
+            input: {
+              [[
+                ":::rudder-inline-visual:v1",
+                '<div id="widget">PRIVATE_TOOL_KEY</div>',
+                ":::rudder-inline-visual:end",
+              ].join("\n")]: "key source",
+              payload: [
+                ":::rudder-inline-visual:v1",
+                '<div id="widget">PRIVATE_TOOL_INPUT</div>',
+                ":::rudder-inline-visual:end",
+              ].join("\n"),
+              mixed: [
+                ":::rudder-inline-visual:v1",
+                '<div id="widget">PRIVATE_TOOL_ENVELOPE</div>',
+                ":::rudder-inline-visual:end",
+                '<div id="widget">PRIVATE_TOOL_OUTSIDE</div>',
+              ].join("\n"),
+            },
+          },
+        })}\n`,
+      );
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: {
+            type: "reasoning",
+            text: "Visible structured diagnostic",
+            extra: '<div id="widget">PRIVATE_UNEXPECTED_FIELD</div>',
+          },
+        })}\n`,
+      );
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "result",
+          result: "Visible result diagnostic",
+          subtype: '<div id="widget">PRIVATE_RESULT_SUBTYPE</div>',
+          errors: [[
+            ":::rudder-inline-visual:v1",
+            '<div id="widget">PRIVATE_RESULT_ERROR</div>',
+            ":::rudder-inline-visual:end",
+          ].join("\n")],
+        })}\n`,
+      );
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: {
+            type: "todo_list",
+            items: [
+              { text: ":::rudder-inline-visual:v1", status: "pending" },
+              { text: '<div id="widget">PRIVATE_TODO_TEXT</div>', status: "pending" },
+              { text: ":::rudder-inline-visual:end", status: "pending" },
+            ],
+          },
+        })}\n`,
+      );
+      return {
+        summary: assistantSummary(ctx, "Safe final reply"),
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      onTranscriptEntry: (entry) => transcriptEntries.push(entry),
+      onObservedTranscriptEntry: (entry) => observedEntries.push(entry),
+    });
+
+    const surfaces = JSON.stringify({
+      transcriptEntries,
+      observedEntries,
+      persisted: mockChatAgentRuns.appendTranscriptEntry.mock.calls,
+    });
+    expect(surfaces).toContain("Visible diagnostic");
+    expect(surfaces).not.toContain("PRIVATE_SPLIT_TRANSCRIPT");
+    expect(surfaces).not.toContain("PRIVATE_STANDALONE_DELTA");
+    expect(surfaces).not.toContain("PRIVATE_RUDDER_STDOUT");
+    expect(surfaces).not.toContain("PRIVATE_TOOL_INPUT");
+    expect(surfaces).not.toContain("PRIVATE_TOOL_ENVELOPE");
+    expect(surfaces).not.toContain("PRIVATE_TOOL_OUTSIDE");
+    expect(surfaces).not.toContain("PRIVATE_TOOL_KEY");
+    expect(surfaces).not.toContain("PRIVATE_TODO_TEXT");
+    expect(surfaces).not.toContain("PRIVATE_RESULT_ERROR");
+    expect(surfaces).not.toContain("PRIVATE_RESULT_SUBTYPE");
+    expect(surfaces).not.toContain("PRIVATE_UNEXPECTED_FIELD");
+    expect(surfaces).not.toContain(":::rudder-inline-visual");
+  });
+
+  it("redacts inline visual source from adapter failure messages and run evidence", async () => {
+    const svc = chatAssistantService({} as any);
+    const privateError = [
+      "provider failed",
+      ":::rudder-inline-visual:v1",
+      '<div id="widget">PRIVATE_ADAPTER_ERROR</div>',
+      ":::rudder-inline-visual:end",
+    ].join("\n");
+
+    mockAdapter.execute.mockImplementationOnce(async () => ({
+      summary: "",
+      resultJson: null,
+      timedOut: false,
+      exitCode: 1,
+      errorMessage: privateError,
+    }));
+
+    const error = await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    }).catch((reason) => reason);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("provider failed");
+    expect(JSON.stringify(mockChatAgentRuns.finalizeRun.mock.calls)).not.toContain("PRIVATE_ADAPTER_ERROR");
+    expect(JSON.stringify(error)).not.toContain("PRIVATE_ADAPTER_ERROR");
+    expect(JSON.stringify(error)).not.toContain(":::rudder-inline-visual");
+  });
+
+  it("discards an unfinished visual buffer when the Chat run stops", async () => {
+    const svc = chatAssistantService({} as any);
+    const abortController = new AbortController();
+    const deltas: string[] = [];
+    const entries: Array<{ kind: string; text?: string }> = [];
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: {
+            type: "agent_message",
+            text: "RUDDER_RESULT_BEGIN\nVisible heading\n:::rudder-inline-visual:v1\n<div id=\"widget\">PRIVATE_STOP_BYTES",
+          },
+        })}\n`,
+      );
+      abortController.abort();
+      return {
+        summary: "",
+        resultJson: null,
+        timedOut: false,
+        exitCode: null,
+        signal: "SIGTERM",
+      };
+    });
+
+    const result = await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      abortSignal: abortController.signal,
+      onAssistantDelta: (delta) => deltas.push(delta),
+      onTranscriptEntry: (entry) => entries.push(entry),
+    });
+
+    expect(result).toMatchObject({ outcome: "stopped" });
+    expect(JSON.stringify({ result, deltas, entries })).not.toContain("PRIVATE_STOP_BYTES");
+    expect(JSON.stringify(mockChatAgentRuns.finalizeRun.mock.calls)).not.toContain("PRIVATE_STOP_BYTES");
+  });
+
   it("forwards process transcript entries while streaming", async () => {
     const svc = chatAssistantService({} as any);
     const entries: Array<{ kind: string; text?: string; name?: string; toolUseId?: string }> = [];
@@ -2206,6 +2599,56 @@ describe("chatAssistantService operator profile prompt injection", () => {
         }),
       }),
     );
+  });
+
+  it("redacts inline visual source before a missing-sentinel repair prompt is invoked or persisted", async () => {
+    const svc = chatAssistantService({} as any);
+    const rawPriorText = [
+      "Visible answer",
+      ":::rudder-inline-visual:v1",
+      '<div id="widget">PRIVATE_REPAIR_FRAGMENT</div>',
+      ":::rudder-inline-visual:end",
+    ].join("\n");
+
+    mockAdapter.execute
+      .mockImplementationOnce(async () => ({
+        summary: rawPriorText,
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      }))
+      .mockImplementationOnce(async (ctx) => {
+        await ctx.onMeta?.({
+          agentRuntimeType: "process",
+          command: "repair-process",
+          prompt: String(ctx.context.chatPrompt),
+        });
+        return {
+          summary: assistantSummary(ctx, "Visible answer"),
+          resultJson: null,
+          timedOut: false,
+          exitCode: 0,
+          errorMessage: null,
+        };
+      });
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).resolves.toMatchObject({
+      outcome: "completed",
+      reply: { body: "Visible answer" },
+    });
+
+    const repairPrompt = String(mockAdapter.execute.mock.calls[1]?.[0]?.context?.chatPrompt);
+    expect(repairPrompt).toContain("Previous response text:\nVisible answer");
+    expect(repairPrompt).not.toContain("PRIVATE_REPAIR_FRAGMENT");
+    expect(repairPrompt).not.toContain(":::rudder-inline-visual");
+    const persistedInvoke = JSON.stringify(mockChatAgentRuns.appendAdapterInvoke.mock.calls);
+    expect(persistedInvoke).not.toContain("PRIVATE_REPAIR_FRAGMENT");
+    expect(persistedInvoke).not.toContain(":::rudder-inline-visual");
   });
 
   it("repairs a completed plain-text chat reply with a text result block", async () => {

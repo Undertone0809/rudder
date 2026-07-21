@@ -18,11 +18,12 @@ describe("bundled Rudder visualize skill", () => {
 
     expect(skill.split("\n").length).toBeLessThan(500);
     expect(skill).toContain("name: visualize");
-    expect(skill).toContain('::codex-inline-vis{file="<title>.html"}');
+    expect(skill).toContain(":::rudder-inline-visual:v1");
+    expect(skill).toContain(":::rudder-inline-visual:end");
     expect(skill).toContain("references/runtime-contract.md");
     expect(skill).toContain("assets/example-chart.html");
-    expect(skill).toContain("thread-scoped visualization directory");
-    expect(skill).toContain("Do not emit a directive that Rudder cannot resolve");
+    expect(skill).toContain("Provider-neutral and filesystem-independent");
+    expect(skill).toContain("Never emit");
     expect(skill).toContain("declarative HTML, SVG, and CSS");
     expect(skill).toContain("Mermaid");
     expect(skill).not.toContain("allow-scripts");
@@ -30,7 +31,9 @@ describe("bundled Rudder visualize skill", () => {
     expect(skill).not.toMatch(/https:\/\/(?:cdnjs|cdn\.jsdelivr|esm\.sh|unpkg)/);
 
     for (const text of [skill, runtimeContract]) {
-      expect(text).toContain("2 MiB");
+      expect(text).toContain("64 KiB");
+      expect(text).toContain("128 KiB");
+      expect(text).toContain("256 KiB");
       expect(text).toContain("three");
       expect(text).toContain("scriptless");
       expect(text).toContain("data-tooltip");
@@ -45,6 +48,8 @@ describe("bundled Rudder visualize skill", () => {
     expect(runtimeContract).toContain("`@media`");
     expect(runtimeContract).toContain("Do not use clipping paths");
     expect(runtimeContract).not.toContain("`clipPath`");
+    expect(skill).not.toContain("thread-scoped visualization directory");
+    expect(skill).not.toContain('::codex-inline-vis{file="<title>.html"}');
     expect(openaiMetadata).toContain('display_name: "Visualize"');
     expect(openaiMetadata).toContain('default_prompt: "Use $visualize');
     expect(example).toContain('id="widget"');
