@@ -74,6 +74,7 @@ related_code:
   - ui/src/pages/Chat.side-panel.tsx
   - ui/src/pages/Chat.work-manifest.tsx
   - ui/src/pages/Chat.tsx
+  - ui/src/lib/chat-stream-state.ts
   - ui/src/pages/ProjectDetail.tsx
   - ui/src/lib/messenger-thread-organization.ts
   - ui/src/pages/Chat.messages.tsx
@@ -229,6 +230,11 @@ Product model:
   same-turn delivery and fallback continuation reuse that one persisted
   message, so the operator's input remains visible after the queue row leaves,
   across reloads, and without duplicate bubbles on retry.
+- During native same-turn Steer, the live assistant draft and its final
+  persisted assistant reply occupy one stable conversation-timeline slot. The
+  accepted Steer message and any later operator feedback stay after that slot
+  while the reply streams, when the final reply replaces the draft, and after
+  reload.
 - Every Steer reaches an inspectable disposition: delivered to the current
   provider turn, scheduled as the next continuation, provider acceptance
   unknown, or actionable failure. Provider receipt does not claim that the
@@ -302,6 +308,8 @@ Flow:
    activity evidence before attempting provider delivery. That
    message stays in the conversation whether delivery is native, deferred,
    unknown, or actionable failure; delivery status remains separate evidence.
+   For native same-turn delivery, the live assistant draft continues to occupy
+   the final assistant reply's timeline slot before that Steer message.
 14. When the current reply completes, a server-owned worker claims the next
    eligible queued follow-up, sends it as the next chat turn, and hides the
    queued row after it is linked to the delivered user message. Delivery does
@@ -389,6 +397,11 @@ Invariants:
   records operator input; it does not by itself claim provider compliance.
   Delivered or running queued rows are hidden from the running-queue UI once
   linked to a user message.
+- For native same-turn Steer, replacing the live assistant draft with its final
+  persisted reply, reconciling server acknowledgement timestamps, editing a
+  historical message, or reloading the conversation must not move accepted
+  Steer feedback across the active reply's timeline slot, hide that feedback,
+  or reorder later operator feedback.
 - Stopped or failed replies leave ordinary queued follow-ups parked. Rudder
   must not silently flush old queued work after an interrupted run. A retained
   row changes this rule only when the operator explicitly chooses Steer.
@@ -455,7 +468,10 @@ Evidence:
   stream, editing the queued body, native same-turn Codex Steer, fallback
   continuation, immediate Stop, server-owned Stop-then-Steer delivery, retained
   ordinary follow-ups after a stopped reply, and one durable native-Steer user
-  bubble that survives reload without duplication.
+  bubble that survives reload without duplication. Focused UI tests and the
+  native-Steer E2E also verify that accepted feedback remains after the active
+  assistant slot while streaming, after final persistence, during historical
+  message edit replacement, and after reload.
 - Chat route and UI tests cover queue snapshots, active-generation reporting,
   queued follow-up editing/cancellation/claiming, hidden delivered rows,
   retained parked rows, and Feishu-bound queue mutation rejection.

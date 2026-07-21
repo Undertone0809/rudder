@@ -1004,6 +1004,7 @@ contracts:
       - ui/src/pages/Chat.parts.tsx
       - ui/src/pages/Chat.scroll-map.tsx
       - ui/src/pages/Chat.tsx
+      - ui/src/lib/chat-stream-state.ts
       - ui/src/components/MarkdownEditor.tsx
       - ui/src/lib/chat-client-checkpoints.ts
       - ui/src/lib/chat-stop-recovery.ts
