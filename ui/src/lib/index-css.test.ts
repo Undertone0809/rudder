@@ -412,15 +412,21 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
   });
 
-  it("keeps macOS desktop glass on shell layers while workspace cards stay paper-like", () => {
+  it("keeps macOS desktop glass on shell layers while limiting the glass header to active Chat cards", () => {
     const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
     const darkDesktopBackdrop = cssBlock("html.dark.desktop-shell-macos .app-shell-backdrop");
     const lightPrimaryRail = cssBlock("html.desktop-shell-macos .primary-rail-shell");
     const lightWorkspaceShell = cssBlock("html.desktop-shell-macos .workspace-shell");
     const lightDesktopWorkspaceCards = cssBlock("html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
     const darkDesktopWorkspaceCards = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
-    const lightDesktopWorkspaceHeader = cssBlock("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
-    const darkDesktopWorkspaceHeader = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
+    const activeChatCardSelector = 'html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"])';
+    const activeDarkChatCardSelector = 'html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"])';
+    const chatHeaderSelector = 'html.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
+    const darkChatHeaderSelector = 'html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
+    const lightChatCard = cssBlock(activeChatCardSelector);
+    const darkChatCard = cssBlock(activeDarkChatCardSelector);
+    const lightChatHeader = cssBlock(chatHeaderSelector);
+    const darkChatHeader = cssBlock(darkChatHeaderSelector);
 
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
     expect(darkDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(138%)");
@@ -432,10 +438,15 @@ describe("index.css motion rules", () => {
     expect(darkDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-dark)");
     expect(lightDesktopWorkspaceCards).not.toContain("backdrop-filter");
     expect(darkDesktopWorkspaceCards).not.toContain("backdrop-filter");
-    expect(lightDesktopWorkspaceHeader).toContain("background: var(--desktop-content-surface-light)");
-    expect(darkDesktopWorkspaceHeader).toContain("background: var(--desktop-content-surface-dark)");
-    expect(lightDesktopWorkspaceHeader).not.toContain("rgb(250 247 242 / 0.58)");
-    expect(darkDesktopWorkspaceHeader).not.toContain("rgb(31 31 29 / 0.54)");
+    expect(lightChatCard).toContain("transparent 2.75rem");
+    expect(lightChatCard).toContain("var(--desktop-content-surface-light) 2.75rem");
+    expect(darkChatCard).toContain("var(--desktop-content-surface-dark) 2.75rem");
+    expect(lightChatHeader).toContain("var(--desktop-content-surface-light) 58%");
+    expect(lightChatHeader).toContain("backdrop-filter: blur(24px) saturate(124%)");
+    expect(darkChatHeader).toContain("var(--desktop-content-surface-dark) 54%");
+    expect(darkChatHeader).toContain("backdrop-filter: blur(24px) saturate(136%)");
+    expect(activeChatCardSelector).toContain(":has(>");
+    expect(indexCss).not.toContain("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
   });
 
   it("keeps frameless Library work surfaces transparent over the desktop shell", () => {
