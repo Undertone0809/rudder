@@ -202,7 +202,7 @@ test("delivers native Codex Steer into the active App Server turn", async ({ pag
   await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${chatAgent.id}`);
 
   const composer = page.locator(".rudder-mdxeditor-content").first();
-  await composer.fill("Start a controllable App Server turn");
+  await composer.fill("Keep Steer message position stable");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page).toHaveURL(/\/messenger\/chat\/[^/]+$/i, { timeout: 15_000 });
   const chatId = currentChatId(page.url());
@@ -220,10 +220,24 @@ test("delivers native Codex Steer into the active App Server turn", async ({ pag
 
   const steerMessage = page.getByTestId("chat-user-message-bubble").filter({ hasText: "Use the revised direction" });
   await expect(steerMessage).toHaveCount(1, { timeout: 20_000 });
-  await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
+  const activeAssistant = page.getByText("Thinking...", { exact: true });
+  await expect(activeAssistant).toBeVisible();
+  expect(await activeAssistant.evaluate((assistant, feedbackText) => {
+    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-user-message-bubble']")]
+      .find((element) => element.textContent?.includes(feedbackText));
+    return Boolean(feedback && (assistant.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING));
+  }, "Use the revised direction")).toBe(true);
+
+  const finalAssistant = page.getByTestId("chat-assistant-message").last();
+  await expect(finalAssistant).toContainText(
     "Native steer applied: Use the revised direction",
     { timeout: 20_000 },
   );
+  expect(await finalAssistant.evaluate((assistant, feedbackText) => {
+    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-user-message-bubble']")]
+      .find((element) => element.textContent?.includes(feedbackText));
+    return Boolean(feedback && (assistant.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING));
+  }, "Use the revised direction")).toBe(true);
   const queueRes = await page.request.get(`/api/chats/${chatId}/queue`);
   expect(queueRes.ok()).toBe(true);
   expect((await queueRes.json()).items).toHaveLength(0);
@@ -232,6 +246,95 @@ test("delivers native Codex Steer into the active App Server turn", async ({ pag
   await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Use the revised direction" })).toHaveCount(1, {
     timeout: 20_000,
   });
+  expect(await page.getByTestId("chat-assistant-message").last().evaluate((assistant, feedbackText) => {
+    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-user-message-bubble']")]
+      .find((element) => element.textContent?.includes(feedbackText));
+    return Boolean(feedback && (assistant.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING));
+  }, "Use the revised direction")).toBe(true);
+});
+
+test("keeps accepted Steer visible and ordered while an edited response is active", async ({ page }) => {
+  test.setTimeout(90_000);
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Edited-Native-Steer-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json();
+  const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Edited Native Steer Agent",
+    command: E2E_CODEX_STUB,
+  });
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${chatAgent.id}`);
+
+  const composer = page.getByTestId("chat-composer-editor-scroll").locator(".rudder-mdxeditor-content").first();
+  await composer.fill("Create Steer edit baseline");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
+    "Streaming reply for chat.",
+    { timeout: 20_000 },
+  );
+
+  const runtimeUpdateRes = await page.request.patch(`/api/agents/${chatAgent.id}`, {
+    data: {
+      agentRuntimeConfig: {
+        model: "gpt-5.4",
+        command: E2E_CODEX_APP_SERVER_STUB,
+        chatAppServerEnabled: true,
+      },
+      replaceAgentRuntimeConfig: true,
+    },
+  });
+  expect(runtimeUpdateRes.ok()).toBe(true);
+
+  const originalBubble = page.getByTestId("chat-user-message-bubble").filter({
+    hasText: "Create Steer edit baseline",
+  });
+  await originalBubble.hover();
+  await page.getByRole("button", { name: "Edit message" }).last().click();
+  const inlineEditor = page.getByTestId("chat-inline-message-editor");
+  await inlineEditor.locator(".rudder-mdxeditor-content").fill("Keep Steer message position stable");
+  await inlineEditor.getByRole("button", { name: "Send" }).click();
+
+  const chatId = currentChatId(page.url());
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/chats/${chatId}/queue`);
+    expect(response.ok()).toBe(true);
+    return (await response.json()).activeGenerationStatus;
+  }, { timeout: 15_000 }).toBe("running");
+
+  await composer.fill("Steer must stay visible after edit");
+  await composer.press("Enter");
+  const queueItem = page.getByTestId("chat-running-queue-item").first();
+  await expect(queueItem).toContainText("Steer must stay visible after edit", { timeout: 15_000 });
+  await queueItem.getByRole("button", { name: "Steer" }).click();
+
+  const steerMessage = page.getByTestId("chat-user-message-bubble").filter({
+    hasText: "Steer must stay visible after edit",
+  });
+  await expect(steerMessage).toBeVisible({ timeout: 20_000 });
+  const activeAssistant = page.getByText("Thinking...", { exact: true });
+  await expect(activeAssistant).toBeVisible();
+  expect(await activeAssistant.evaluate((assistant, feedbackText) => {
+    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-user-message-bubble']")]
+      .find((element) => element.textContent?.includes(feedbackText));
+    return Boolean(feedback && (assistant.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING));
+  }, "Steer must stay visible after edit")).toBe(true);
+
+  const finalAssistant = page.getByTestId("chat-assistant-message").last();
+  await expect(finalAssistant).toContainText(
+    "Native steer applied: Steer must stay visible after edit",
+    { timeout: 20_000 },
+  );
+  expect(await finalAssistant.evaluate((assistant, feedbackText) => {
+    const feedback = [...document.querySelectorAll<HTMLElement>("[data-testid='chat-user-message-bubble']")]
+      .find((element) => element.textContent?.includes(feedbackText));
+    return Boolean(feedback && (assistant.compareDocumentPosition(feedback) & Node.DOCUMENT_POSITION_FOLLOWING));
+  }, "Steer must stay visible after edit")).toBe(true);
 });
 
 test("renders one readable reasoning stream when App Server emits summary and raw deltas", async ({ page }) => {

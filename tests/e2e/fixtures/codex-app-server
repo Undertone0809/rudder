@@ -139,7 +139,12 @@ rl.on("line", (line) => {
     }
     const feedback = message.params?.input?.find((item) => item?.type === "text")?.text ?? "feedback";
     send({ id: message.id, result: { turnId } });
-    finish(`Native steer applied: ${feedback}`);
+    const finishSteeredTurn = () => finish(`Native steer applied: ${feedback}`);
+    if (prompt.includes("Keep Steer message position stable")) {
+      setTimeout(finishSteeredTurn, 2_000);
+    } else {
+      finishSteeredTurn();
+    }
     return;
   }
   if (message.method === "turn/interrupt") {

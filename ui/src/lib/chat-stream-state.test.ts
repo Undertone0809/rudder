@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeChatStreamTimelineInsertionIndex,
   readChatScopedFlag,
   readChatScopedState,
   setChatFlagState,
   setChatScopedState,
+  shouldShowMessageDuringActiveEdit,
   shouldShowMessageDuringActiveStream,
 } from "./chat-stream-state";
 
@@ -85,5 +87,65 @@ describe("chat stream state helpers", () => {
       chatTurnId: null,
       createdAt: new Date("2026-04-30T10:00:02.000Z"),
     }, activeStream)).toBe(false);
+  });
+
+  it("keeps the active response before user feedback persisted during that response", () => {
+    const messages = [
+      { id: "active-user", createdAt: new Date("2026-04-30T10:00:00.000Z") },
+      { id: "steer-user", createdAt: new Date("2026-04-30T10:00:02.000Z") },
+    ];
+
+    expect(activeChatStreamTimelineInsertionIndex(messages, {
+      userMessageId: "active-user",
+      userCreatedAt: messages[0]!.createdAt,
+    })).toBe(1);
+  });
+
+  it("places an optimistic active response before later feedback when its user message is not loaded yet", () => {
+    const messages = [
+      { id: "previous-message", createdAt: new Date("2026-04-30T09:59:59.000Z") },
+      { id: "steer-user", createdAt: new Date("2026-04-30T10:00:02.000Z") },
+    ];
+
+    expect(activeChatStreamTimelineInsertionIndex(messages, {
+      userMessageId: "active-user",
+      userCreatedAt: new Date("2026-04-30T10:00:00.000Z"),
+    })).toBe(1);
+  });
+
+  it("places an optimistic active response before feedback with the same persisted timestamp", () => {
+    const messages = [
+      { id: "previous-message", createdAt: new Date("2026-04-30T09:59:59.000Z") },
+      { id: "steer-user", createdAt: new Date("2026-04-30T10:00:00.000Z") },
+    ];
+
+    expect(activeChatStreamTimelineInsertionIndex(messages, {
+      userMessageId: "active-user",
+      userCreatedAt: new Date("2026-04-30T10:00:00.000Z"),
+    })).toBe(1);
+  });
+
+  it("keeps new Steer feedback visible across an active historical-message edit cutoff", () => {
+    const activeEdit = {
+      userMessageId: "edited-user",
+      userCreatedAt: new Date("2026-04-30T10:00:00.000Z"),
+      editedFromCreatedAt: new Date("2026-04-30T09:00:00.000Z"),
+    };
+
+    expect(shouldShowMessageDuringActiveEdit({
+      id: "historical-later-user",
+      role: "user",
+      createdAt: new Date("2026-04-30T09:30:00.000Z"),
+    }, activeEdit)).toBe(false);
+    expect(shouldShowMessageDuringActiveEdit({
+      id: "edited-user",
+      role: "user",
+      createdAt: activeEdit.userCreatedAt,
+    }, activeEdit)).toBe(false);
+    expect(shouldShowMessageDuringActiveEdit({
+      id: "steer-user",
+      role: "user",
+      createdAt: activeEdit.userCreatedAt,
+    }, activeEdit)).toBe(true);
   });
 });
