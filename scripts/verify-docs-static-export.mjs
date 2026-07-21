@@ -12,7 +12,11 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 function staticMarkup(html) {
   return html
     .replace(/<!--[\s\S]*?-->/gu, "")
-    .replace(/<(?:script|template)\b[^>]*>[\s\S]*?<\/(?:script|template)\s*>/giu, "");
+    .replace(
+      /<(script|style|textarea|title|xmp|iframe|noembed|noframes|noscript|template)\b[^>]*>[\s\S]*?<\/\1\s*>/giu,
+      "",
+    )
+    .replace(/<plaintext\b[^>]*>[\s\S]*$/iu, "");
 }
 
 function tagAttributes(tag) {
@@ -74,7 +78,8 @@ export function staticVerificationChecks({
 
 export function assertDocumentMetadata(html, entry, manifest) {
   const markup = staticMarkup(html);
-  const links = tagsByName(markup, "link");
+  const head = markup.match(/<head\b[^>]*>([\s\S]*?)<\/head\s*>/iu)?.[1] ?? "";
+  const links = tagsByName(head, "link");
   const canonical = `${manifest.base_url}${entry.route === "/" ? "" : entry.route}`;
   const canonicalMatches = links.some((link) => hasRel(link, "canonical") && link.get("href") === canonical);
   if (!canonicalMatches) throw new Error(`${entry.route} is missing canonical ${canonical}`);
