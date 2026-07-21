@@ -28,6 +28,10 @@ describe("resolveLocalFileTarget", () => {
     expect(resolveLocalFileTarget("/OUTA/agents/agent-1")).toBeNull();
     expect(resolveLocalFileTarget("/OUTA/projects/project-1")).toBeNull();
     expect(resolveLocalFileTarget("/OUTA/settings/profile")).toBeNull();
+    expect(resolveLocalFileTarget("/api/chats/chat-1")).toBeNull();
+    expect(resolveLocalFileTarget("/docs/getting-started")).toBeNull();
+    expect(resolveLocalFileTarget("/assets/logo.png")).toBeNull();
+    expect(resolveLocalFileTarget("/future-app-route/item-1")).toBeNull();
     expect(resolveLocalFileTarget("//example.com/result.md")).toBeNull();
     expect(resolveLocalFileTarget("file://attacker/tmp/evidence.md")).toBeNull();
     expect(resolveLocalFileTarget("file://localhost/tmp/evidence.md")).toBeNull();
