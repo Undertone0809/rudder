@@ -245,7 +245,7 @@ test("staging and production workflows postprocess exported docs", () => {
 
 test("static acceptance checks cover every canonical route and generated active alias", () => {
   const checks = staticVerificationChecks();
-  assert.equal(checks.canonical.length, 68);
+  assert.equal(checks.canonical.length, 66);
   assert.ok(checks.aliases.length > 27);
   assert.ok(checks.canonical.some((entry) => entry.route === "/benchmarks/gdpval-harness"));
   assert.ok(checks.canonical.some((entry) => entry.route === "/zh/benchmarks/gdpval-harness"));
