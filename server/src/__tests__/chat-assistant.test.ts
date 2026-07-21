@@ -1083,7 +1083,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     }));
   });
 
-  it("rejects ask_user final results without a valid requestUserInput payload", async () => {
+  it("downgrades ask_user without requestUserInput to a normal message", async () => {
     const svc = chatAssistantService({} as any);
     mockAdapter.execute.mockImplementationOnce(async (ctx) => ({
       summary: `${sentinelFromContext(ctx)}${JSON.stringify({
@@ -1102,7 +1102,24 @@ describe("chatAssistantService operator profile prompt injection", () => {
       messages: makeMessages(),
       contextLinks: [],
       operatorProfile: null,
-    })).rejects.toThrow("ask_user assistant responses require structuredPayload.requestUserInput");
+    })).resolves.toEqual(expect.objectContaining({
+      kind: "message",
+      body: "I need input.",
+      structuredPayload: null,
+    }));
+  });
+
+  it.each([
+    ["string", "requestUserInput"],
+    ["array", [{ requestUserInput: { questions: [] } }]],
+    ["number", 42],
+    ["empty object", {}],
+  ])("rejects ask_user with a present but invalid %s structuredPayload", (_label, structuredPayload) => {
+    expect(() => validateAssistantResult({
+      kind: "ask_user",
+      body: "I need input.",
+      structuredPayload,
+    })).toThrow("ask_user assistant responses require structuredPayload.requestUserInput");
   });
 
   it.each([

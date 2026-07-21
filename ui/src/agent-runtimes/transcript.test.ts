@@ -35,6 +35,87 @@ describe("buildTranscript", () => {
     ]);
   });
 
+  it("drops Claude redacted-thinking envelopes instead of exposing raw provider JSON", () => {
+    const rawEnvelope = JSON.stringify({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        model: "gpt-5.6-sol",
+        content: [
+          {
+            type: "redacted_thinking",
+            data: "ccswitch-openai-reasoning-v1:opaque-private-payload",
+          },
+        ],
+      },
+      session_id: "session-private",
+      uuid: "event-private",
+    });
+
+    expect(parseClaudeStdoutLine(rawEnvelope, ts)).toEqual([]);
+  });
+
+  it("hides persisted raw provider envelopes from normal transcript rendering", () => {
+    const rawEnvelope = JSON.stringify({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "redacted_thinking",
+            data: "ccswitch-openai-reasoning-v1:opaque-private-payload",
+          },
+        ],
+      },
+      session_id: "session-private",
+      uuid: "event-private",
+    });
+    const entries = [{ kind: "stdout" as const, ts, text: rawEnvelope }];
+
+    expect(filterRenderableTranscriptEntries(entries)).toEqual([]);
+    expect(filterRenderableTranscriptEntries(entries, { showDeveloperDiagnostics: true })).toEqual(entries);
+  });
+
+  it("keeps ordinary JSON stdout that only resembles a provider envelope", () => {
+    const entries = [
+      {
+        kind: "stdout" as const,
+        ts,
+        text: JSON.stringify({
+          type: "user",
+          message: { role: "success", content: "job finished" },
+        }),
+      },
+      {
+        kind: "stdout" as const,
+        ts,
+        text: JSON.stringify({
+          type: "system",
+          subtype: "status",
+          timestamp: "2026-07-21",
+          payload: { ok: true },
+        }),
+      },
+    ];
+
+    expect(filterRenderableTranscriptEntries(entries)).toEqual(entries);
+  });
+
+  it("hides pretty-printed persisted provider envelopes", () => {
+    const rawEnvelope = JSON.stringify({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "redacted_thinking", data: "PRIVATE" }],
+      },
+      session_id: "session-private",
+      uuid: "event-private",
+    }, null, 2);
+    const entries = [{ kind: "stdout" as const, ts, text: rawEnvelope }];
+
+    expect(filterRenderableTranscriptEntries(entries)).toEqual([]);
+  });
+
   it("builds structured transcript entries for Codex todo list started and completed events", () => {
     const entries = buildTranscript([
       {

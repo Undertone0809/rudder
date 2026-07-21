@@ -929,10 +929,14 @@ export function validateAssistantResult(
   const kind = typeof payload.kind === "string" ? payload.kind : "message";
   const payloadBody = typeof payload.body === "string" ? payload.body.trim() : "";
   const body = options.bodyOverride?.trim() || payloadBody || options.bodyFallback?.trim() || "";
-  const sanitizedStructuredPayload =
+  const hasStructuredPayload = Object.hasOwn(payload, "structuredPayload");
+  const rawStructuredPayload =
     payload.structuredPayload && typeof payload.structuredPayload === "object" && !Array.isArray(payload.structuredPayload)
-      ? sanitizeChatStructuredPayload(payload.structuredPayload as Record<string, unknown>)
+      ? payload.structuredPayload as Record<string, unknown>
       : null;
+  const sanitizedStructuredPayload = rawStructuredPayload
+    ? sanitizeChatStructuredPayload(rawStructuredPayload)
+    : null;
   const structuredPayload = sanitizedStructuredPayload
     ? (({ inlineVisuals: _untrustedInlineVisuals, ...trustedPayload }) =>
       Object.keys(trustedPayload).length > 0 ? trustedPayload : null)(sanitizedStructuredPayload)
@@ -953,7 +957,14 @@ export function validateAssistantResult(
   }
 
   if (kind === "ask_user" && !chatAskUserRequestFromStructuredPayload(structuredPayload)) {
-    throw new Error("ask_user assistant responses require structuredPayload.requestUserInput with 1-3 valid questions");
+    if (hasStructuredPayload && payload.structuredPayload !== null) {
+      throw new Error("ask_user assistant responses require structuredPayload.requestUserInput with 1-3 valid questions");
+    }
+    return {
+      kind: "message",
+      body,
+      structuredPayload: null,
+    };
   }
 
   if (kind === "issue_proposal" && !chatIssueProposalFromStructuredPayload(structuredPayload)) {
