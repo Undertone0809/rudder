@@ -4,6 +4,7 @@ import type {
   MessengerThreadKind,
 } from "../constants.js";
 import type { JoinRequest } from "./access.js";
+import type { Agent } from "./agent.js";
 import type { Approval } from "./approval.js";
 import type { BudgetIncident } from "./budget.js";
 import type { ChatConversation, ChatMessage } from "./chat.js";
@@ -223,10 +224,40 @@ export interface MessengerJoinRequestThreadItem extends MessengerThreadItem {
 
 export type MessengerRunOriginSourceState = "available" | "source_unavailable" | "legacy_unknown";
 
+export type MessengerRunOriginSource =
+  | {
+    kind: "chat";
+    title: string;
+    href: string;
+  }
+  | {
+    kind: "issue" | "review";
+    identifier: string | null;
+    title: string;
+    status: string;
+    href: string;
+  }
+  | {
+    kind: "automation";
+    title: string;
+    status: string;
+    href: string;
+  }
+  | {
+    kind: "heartbeat";
+    agent: Pick<Agent, "id" | "name" | "icon" | "role" | "status" | "title">;
+    href: string;
+  }
+  | {
+    kind: "unavailable";
+    state: Exclude<MessengerRunOriginSourceState, "available">;
+  };
+
 export interface MessengerRunOriginDescriptor extends AgentRunOrigin {
   targetLabel: string | null;
   targetStatus: string | null;
   sourceState: MessengerRunOriginSourceState;
+  source: MessengerRunOriginSource;
 }
 
 export interface MessengerFailedRunThreadItem extends MessengerThreadItem {

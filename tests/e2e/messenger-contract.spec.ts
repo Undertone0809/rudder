@@ -3482,36 +3482,53 @@ test.describe("Messenger unified threads contract", () => {
     await expect(issueCard).not.toContainText("Agent bootstrap failed before tool execution.");
     await expect(issueCard.getByTestId(`messenger-run-scene-${issueRunId}`)).toHaveText("Issue Run");
     await expect(issueCard.getByTestId(`messenger-run-target-${issueRunId}`)).toContainText("Create your first agent");
-    await expect(issueCard.getByRole("link", { name: "Open issue" })).toHaveAttribute("href", new RegExp(`/issues/${issue.id}$`));
-    await expect(issueCard.getByRole("button", { name: `Copy full run ID ${issueRunId}` })).toBeVisible();
+    await expect(issueCard.getByRole("link", { name: "Open issue" })).toHaveAttribute(
+      "href",
+      new RegExp(`/issues/${issue.identifier}$`),
+    );
+    await expect(issueCard).not.toContainText(issueRunId);
+    await expect(issueCard.getByText("Origin metadata")).toHaveCount(0);
+    await expect(issueCard.getByRole("button", { name: /Copy full run ID/ })).toHaveCount(0);
 
     const chatCard = page.getByTestId(`messenger-system-card-failed-runs-${chatRunId}`);
     await expect(chatCard.getByTestId(`messenger-run-scene-${chatRunId}`)).toHaveText("Chat Run");
     await expect(chatCard.getByTestId(`messenger-run-target-${chatRunId}`)).toHaveText("Investigate the failed deployment");
-    await expect(chatCard.getByRole("link", { name: "Open chat message" })).toHaveAttribute(
+    const chatSourceCard = chatCard.getByRole("link", { name: "Open chat message" });
+    await expect(chatSourceCard).toHaveAttribute(
       "href",
       new RegExp(`/messenger/chat/${chatConversationId}\\?messageId=${chatMessageId}$`),
     );
+    await expect(chatCard).not.toContainText(chatConversationId);
+    await expect(chatCard).not.toContainText(chatMessageId);
 
     const heartbeatCard = page.getByTestId(`messenger-system-card-failed-runs-${heartbeatRunId}`);
     await expect(heartbeatCard.getByTestId(`messenger-run-scene-${heartbeatRunId}`)).toHaveText("Heartbeat Run");
-    await expect(heartbeatCard.getByTestId(`messenger-run-target-${heartbeatRunId}`)).toHaveText("Timer self-check");
-    await expect(heartbeatCard).toContainText(heartbeatWakeupRequestId);
-    await heartbeatCard.getByRole("link", { name: "Open heartbeat details" }).click();
-    await expect(page).toHaveURL(new RegExp(`originRunId=${heartbeatRunId}#run-origin-${heartbeatRunId}$`));
-    await expect(heartbeatCard.getByTestId(`messenger-run-origin-details-${heartbeatRunId}`)).toHaveAttribute("open", "");
+    await expect(heartbeatCard.getByTestId(`messenger-run-target-${heartbeatRunId}`)).toContainText("Ops Runner");
+    await expect(heartbeatCard).toContainText("Timer · Engineer");
+    await expect(heartbeatCard.getByRole("link", { name: "Open agent: Ops Runner" })).toHaveAttribute(
+      "href",
+      new RegExp(`/agents/${agent.id}$`),
+    );
+    await expect(heartbeatCard).not.toContainText(heartbeatRunId);
+    await expect(heartbeatCard).not.toContainText(heartbeatWakeupRequestId);
+    await expect(heartbeatCard.getByText("Origin metadata")).toHaveCount(0);
 
     const missingSourceCard = page.getByTestId(`messenger-system-card-failed-runs-${missingSourceRunId}`);
     await expect(missingSourceCard.getByTestId(`messenger-run-source-fallback-${missingSourceRunId}`)).toHaveText("Source unavailable");
-    await expect(missingSourceCard.getByRole("link", { name: "Open issue" })).toHaveCount(0);
+    await expect(missingSourceCard.getByTestId(`messenger-run-origin-${missingSourceRunId}`).getByRole("link")).toHaveCount(0);
     await expect(mainContent).not.toContainText("private-issue-secret");
     await expect(mainContent).not.toContainText("/private/chat/workspace");
     await expect(mainContent).not.toContainText("/private/heartbeat/workspace");
+    await expect(mainContent).not.toContainText(missingIssueId);
+    await expect(mainContent.getByRole("button", { name: /Copy full run ID/ })).toHaveCount(0);
 
     await mainContent.screenshot({
       path: testInfo.outputPath("messenger-failed-run-origins.png"),
       animations: "disabled",
     });
+
+    await chatSourceCard.click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chatConversationId}\\?messageId=${chatMessageId}$`));
   });
 
   test("keeps a new organization Messenger directory empty except for the New chat entry", async ({ page }) => {

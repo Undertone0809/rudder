@@ -5289,6 +5289,7 @@ describe("messengerService and issue follows", () => {
       runId: olderRunId,
       scene: "heartbeat",
       sourceState: "legacy_unknown",
+      source: { kind: "unavailable", state: "legacy_unknown" },
     }));
     expect(thread.detail.items[1]?.origin).toEqual(expect.objectContaining({
       runId: newerRunId,
@@ -5301,6 +5302,7 @@ describe("messengerService and issue follows", () => {
       automationId: null,
       wakeupRequestId: null,
       sourceState: "source_unavailable",
+      source: { kind: "unavailable", state: "source_unavailable" },
     }));
     expect(thread.detail.items[1]?.metadata).not.toHaveProperty("contextSnapshot");
     expect(thread.detail.items[1]).not.toHaveProperty("run");
@@ -5552,6 +5554,11 @@ describe("messengerService and issue follows", () => {
       messageId,
       targetLabel: "Investigate deploy failure",
       sourceState: "available",
+      source: {
+        kind: "chat",
+        title: "Investigate deploy failure",
+        href: `/messenger/chat/${conversationId}?messageId=${messageId}`,
+      },
     }));
     expect(items.get(runIds.chat)?.actions).toContainEqual({
       label: "Open chat message",
@@ -5564,45 +5571,67 @@ describe("messengerService and issue follows", () => {
       wakeupRequestId: heartbeatWakeupRequestId,
       targetLabel: "Timer self-check",
       sourceState: "available",
+      source: {
+        kind: "heartbeat",
+        agent: {
+          id: agentId,
+          name: "Origin bot",
+          icon: null,
+          role: "engineer",
+          status: "active",
+          title: null,
+        },
+        href: `/agents/${agentId}`,
+      },
     }));
-    expect(items.get(runIds.heartbeat)?.actions).toContainEqual(expect.objectContaining({
-      label: "Open heartbeat details",
-    }));
+    expect(items.get(runIds.heartbeat)?.actions).toContainEqual({
+      label: "Open agent",
+      href: `/agents/${agentId}`,
+      method: "GET",
+    });
     expect(items.get(runIds.issue)?.origin).toEqual(expect.objectContaining({
       scene: "issue",
       issueId,
       targetLabel: expect.stringContaining("Repair the deployment"),
       targetStatus: "blocked",
       sourceState: "available",
+      source: expect.objectContaining({
+        kind: "issue",
+        identifier: expect.stringMatching(/^RO-/),
+        title: "Repair the deployment",
+        status: "blocked",
+        href: expect.stringMatching(/^\/issues\/RO-/),
+      }),
     }));
-    expect(items.get(runIds.issue)?.actions).toContainEqual({
-      label: "Open issue",
-      href: `/issues/${issueId}`,
-      method: "GET",
-    });
+    expect(items.get(runIds.issue)?.actions.map((action) => action.label)).toEqual(["Retry", "Open issue", "Open run"]);
     expect(items.get(runIds.review)?.origin).toEqual(expect.objectContaining({
       scene: "review",
       issueId: reviewIssueId,
       targetLabel: expect.stringContaining("Review the repair"),
       sourceState: "available",
+      source: expect.objectContaining({
+        kind: "review",
+        identifier: expect.stringMatching(/^RO-/),
+        title: "Review the repair",
+        status: "in_review",
+        href: expect.stringMatching(/^\/issues\/RO-/),
+      }),
     }));
-    expect(items.get(runIds.review)?.actions).toContainEqual({
-      label: "Open review",
-      href: `/issues/${reviewIssueId}`,
-      method: "GET",
-    });
+    expect(items.get(runIds.review)?.actions.map((action) => action.label)).toEqual(["Retry", "Open review", "Open run"]);
     expect(items.get(runIds.automation)?.origin).toEqual(expect.objectContaining({
       scene: "automation",
       automationId,
       automationRunId,
       targetLabel: "Nightly deployment check",
       sourceState: "available",
+      source: expect.objectContaining({
+        kind: "automation",
+        title: "Nightly deployment check",
+        status: "active",
+        href: `/automations/${automationId}`,
+      }),
     }));
-    expect(items.get(runIds.automation)?.actions).toContainEqual({
-      label: "Open automation",
-      href: `/automations/${automationId}`,
-      method: "GET",
-    });
+    expect(items.get(runIds.automation)?.actions.map((action) => action.label)).toEqual(["Retry", "Open automation", "Open run"]);
     expect(items.get(runIds.deleted)?.origin).toEqual(expect.objectContaining({
       scene: "issue",
       targetId: null,
@@ -5614,6 +5643,7 @@ describe("messengerService and issue follows", () => {
       wakeupRequestId: null,
       targetLabel: null,
       sourceState: "source_unavailable",
+      source: { kind: "unavailable", state: "source_unavailable" },
     }));
     expect(items.get(runIds.crossOrg)?.origin).toEqual(expect.objectContaining({
       scene: "issue",
@@ -5626,8 +5656,9 @@ describe("messengerService and issue follows", () => {
       wakeupRequestId: null,
       targetLabel: null,
       sourceState: "source_unavailable",
+      source: { kind: "unavailable", state: "source_unavailable" },
     }));
-    expect(items.get(runIds.crossOrg)?.actions).not.toContainEqual(expect.objectContaining({ label: "Open issue" }));
+    expect(items.get(runIds.crossOrg)?.actions.map((action) => action.label)).toEqual(["Retry", "Open run"]);
     expect(items.get(runIds.heartbeatCrossOrg)?.origin).toEqual(expect.objectContaining({
       scene: "heartbeat",
       targetId: null,
@@ -5638,10 +5669,9 @@ describe("messengerService and issue follows", () => {
       automationId: null,
       wakeupRequestId: null,
       sourceState: "source_unavailable",
+      source: { kind: "unavailable", state: "source_unavailable" },
     }));
-    expect(items.get(runIds.heartbeatCrossOrg)?.actions).not.toContainEqual(
-      expect.objectContaining({ label: "Open heartbeat details" }),
-    );
+    expect(items.get(runIds.heartbeatCrossOrg)?.actions.map((action) => action.label)).toEqual(["Retry", "Open run"]);
     expect(items.get(runIds.legacy)?.origin).toEqual(expect.objectContaining({
       scene: "heartbeat",
       targetId: null,
@@ -5653,6 +5683,7 @@ describe("messengerService and issue follows", () => {
       wakeupRequestId: null,
       targetLabel: null,
       sourceState: "legacy_unknown",
+      source: { kind: "unavailable", state: "legacy_unknown" },
     }));
     expect(JSON.stringify(thread.detail.items)).not.toMatch(
       /contextSnapshot|private-chat-secret|private\/heartbeat\/workspace|private-issue-key|private\/legacy\/workspace|private-legacy-token|Private other-organization issue/,
