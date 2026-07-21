@@ -259,6 +259,9 @@ Product model:
   replaces that icon in place with the clear action; the label and chip geometry
   stay fixed. Locked Project context keeps the icon visible and exposes no clear
   action.
+- When Plan mode is active, the composer chip shows the Plan icon at rest and
+  replaces it in the same fixed-size slot with the dismiss icon only while
+  hovered; the label and chip geometry remain fixed.
 - Conversations with more than five visible user messages show a compact
   message map for jumping to earlier user turns. The map samples at most 64
   markers and previews the user turn plus the following assistant reply without
