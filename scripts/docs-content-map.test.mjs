@@ -483,8 +483,14 @@ test("Batch 3 Project pages keep GDPval facts, release history, and the bilingua
     assert.doesNotMatch(source, /[\u2013\u2014]/u);
   }
 
+  const englishGdpval = fs.readFileSync(path.join(REPO_ROOT, gdpval.files.en), "utf8");
+  assert.match(englishGdpval, /randomly sampled 10 tasks from the 220-task GDPval dataset/u);
+  assert.match(englishGdpval, /Each task was run three times in\s+total: once in Rudder, once in Codex CLI, and once in Claude Code/u);
+
   const chineseGdpval = fs.readFileSync(path.join(REPO_ROOT, gdpval.files.zh), "utf8");
   assert.match(chineseGdpval, /证据边界/u);
+  assert.match(chineseGdpval, /从 GDPval 的 220 项任务中随机抽取 10 项/u);
+  assert.match(chineseGdpval, /每项任务总共\s*执行三遍：Rudder、Codex CLI 和 Claude Code 各执行一遍/u);
   const chineseGdpvalProse = chineseGdpval
     .replace(/^---\n[\s\S]*?\n---\n/u, "")
     .replace(/```[\s\S]*?```/gu, "")
