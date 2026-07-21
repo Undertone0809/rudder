@@ -86,6 +86,8 @@
   --control-padding-x: 1rem;
   --control-gap: 0.5rem;
   --control-radius: calc(var(--radius-sm) - 1px);
+  --segmented-control-radius: min(var(--radius-sm), 0.5rem);
+  --segmented-control-item-radius: calc(var(--segmented-control-radius) - 2px);
   --control-font-size: 0.875rem;
   --control-icon-size: 1rem;
   --input-background: color-mix(in oklab, var(--surface-elevated) 98%, transparent);
