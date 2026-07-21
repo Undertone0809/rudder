@@ -147,7 +147,9 @@ pnpm desktop:verify
 
 ## Community
 
-[LINUX DO](https://linux.do/)
+Join the [Rudder Discord](https://discord.gg/ZcfWwPVkUz) for setup help, build logs, product feedback, and a Build Review every two weeks. Use [GitHub Issues](https://github.com/Undertone0809/rudder/issues) for reproducible bugs and concrete code changes.
+
+You can also find Rudder on [LINUX DO](https://linux.do/).
 
 ## License
 
