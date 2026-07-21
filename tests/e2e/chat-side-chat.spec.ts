@@ -1,14 +1,22 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   chatConversations,
   chatMessages,
   createDb,
+  messengerCustomGroupEntries,
+  messengerCustomGroups,
 } from "../../packages/db/src/index.ts";
+import { MESSENGER_FORK_GROUP_DEFAULT_ICON } from "../../packages/shared/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
+
+function threadTestId(threadKey: string) {
+  return `messenger-thread-${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
 
 async function seedSideChatSource(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", { data: { name } });
@@ -216,7 +224,12 @@ test("the /side menu matches composer popovers and can move the same Side Chat t
   await moveItem.click();
   const keepResponse = await keepResponsePromise;
   expect(keepResponse.ok(), await keepResponse.text()).toBe(true);
-  expect(await keepResponse.json()).toMatchObject({ id: sideChat.id, messengerVisible: true, sideChatState: "kept" });
+  expect(await keepResponse.json()).toMatchObject({
+    id: sideChat.id,
+    title: "Side chat from: Main strategy chat",
+    messengerVisible: true,
+    sideChatState: "kept",
+  });
   await expect(page).toHaveURL(new RegExp(`/messenger/chat/${sideChat.id}$`));
   await expect(page.getByTestId("side-chat-panel-view")).toHaveCount(0);
   await expect(page.getByTestId("chat-composer-layout")).toBeVisible();
@@ -230,9 +243,39 @@ test("the /side menu matches composer popovers and can move the same Side Chat t
   );
   expect(visibleMessengerThread.ok(), await visibleMessengerThread.text()).toBe(true);
   expect(await visibleMessengerThread.json()).toMatchObject({
-    conversation: { id: sideChat.id, messengerVisible: true, sideChatState: "kept" },
+    conversation: {
+      id: sideChat.id,
+      title: "Side chat from: Main strategy chat",
+      messengerVisible: true,
+      sideChatState: "kept",
+    },
   });
-  await page.screenshot({ path: testInfo.outputPath("09-moved-to-messenger.png"), fullPage: true });
+
+  const groups = await e2eDb
+    .select()
+    .from(messengerCustomGroups)
+    .where(eq(messengerCustomGroups.orgId, source.organization.id));
+  expect(groups).toHaveLength(1);
+  expect(groups[0]).toMatchObject({
+    name: "Main strategy chat",
+    icon: MESSENGER_FORK_GROUP_DEFAULT_ICON,
+  });
+  const groupEntries = await e2eDb
+    .select()
+    .from(messengerCustomGroupEntries)
+    .where(eq(messengerCustomGroupEntries.groupId, groups[0]!.id));
+  expect(new Set(groupEntries.map((entry) => entry.threadKey))).toEqual(new Set([
+    `chat:${source.conversationId}`,
+    `chat:${sideChat.id}`,
+  ]));
+  const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${groups[0]!.id}`);
+  await expect(groupSection).toContainText("Main strategy chat", { timeout: 15_000 });
+  await expect(groupSection).toContainText(MESSENGER_FORK_GROUP_DEFAULT_ICON);
+  await expect(groupSection.getByTestId(threadTestId(`chat:${source.conversationId}`))).toBeVisible();
+  await expect(groupSection.getByTestId(threadTestId(`chat:${sideChat.id}`))).toContainText(
+    "Side chat from: Main strategy chat",
+  );
+  await page.screenshot({ path: "/tmp/rudder-side-chat-title-grouping.png", fullPage: true });
 
   await page.goto(`/${source.organization.issuePrefix}/messenger/chat/${sideChat.id}`);
   const sourceChatLink = page.getByRole("link", { name: "Open source chat Main strategy chat" });

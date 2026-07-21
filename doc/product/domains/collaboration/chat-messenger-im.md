@@ -686,9 +686,10 @@ Rudder non-fork chat titles use a deterministic first-user-message fallback
 plus the organization's `lightweight` Product Intelligence profile, surfaced
 as Fast Intelligence, for automatic generation and manual regeneration. Forked
 chats keep the source-family numbering defined by `CHAT.FORK.001` and do not
-enter automatic first-message title generation. The title pipeline must keep
-Messenger scannable without blocking chat replies, obscuring fork lineage, or
-overwriting explicit operator naming.
+enter automatic first-message title generation. Side Chats likewise keep the
+source-title snapshot defined by `CHAT.SIDE.CHAT.001`. The title pipeline must
+keep Messenger scannable without blocking chat replies, obscuring lineage, or
+overwriting workflow or operator naming.
 
 ## Intent / User Job
 
@@ -716,6 +717,8 @@ must remain stable when the child receives its first new message; otherwise a
 late fallback or Fast Intelligence result would erase the visible relationship
 between branches. Operators may still explicitly rename or manually regenerate
 a fork title when they want to replace that relationship-oriented default.
+The Side Chat source-title snapshot is the equivalent workflow title for an
+ephemeral branch and follows the same automatic-generation exclusion.
 
 ## Actors / Objects / State
 
@@ -743,6 +746,8 @@ a fork title when they want to replace that relationship-oriented default.
 - `POST /api/chats/:id/messages/stream` for streaming user messages.
 - `POST /api/chats/:id/fork`, which creates the stable family-numbered title
   governed by `CHAT.FORK.001`.
+- `POST /api/chats/:sourceId/side-chats`, which creates the source-title snapshot
+  governed by `CHAT.SIDE.CHAT.001` on first Send.
 - `POST /api/chats/:id/title/regenerate` for manual title regeneration.
 - Messenger chat actions menu, which exposes `Regenerate title` only when the
   selected organization has a configured `lightweight` intelligence profile.
@@ -768,6 +773,8 @@ a fork title when they want to replace that relationship-oriented default.
 7. When a conversation is created by the fork workflow, Rudder keeps its
    family-numbered title when new user messages arrive and does not invoke
    automatic fallback or Fast Intelligence title generation for that child.
+   A Side Chat similarly keeps its `Side chat from: {direct source title}`
+   workflow title.
 8. When the operator chooses `Regenerate title` from Messenger chat actions,
    Rudder reads at most the latest five eligible user messages, restores their
    chronological order, builds a bounded prompt, calls Fast Intelligence,
@@ -781,6 +788,7 @@ a fork title when they want to replace that relationship-oriented default.
 | First message, Fast Intelligence configured | Chat title is `New chat`; first user message is non-empty; `lightweight` profile is configured and returns usable output | User message persists, assistant flow continues, fallback title is stored, then usable Fast title replaces fallback | Chat send or assistant reply must not wait on title generation | `server/src/__tests__/chat-routes.test.ts` automatic title cases |
 | First message, Fast Intelligence unavailable | Chat title is `New chat`; first user message is non-empty; profile missing/disabled/failing/unusable | Fallback from first user message remains visible; send succeeds; warning may be logged | Chat title must not remain `New chat` when a fallback can be derived | Chat route fallback tests |
 | First new message in a fork | Conversation has `forkedFromConversationId`; title is the family-numbered fork title; Fast Intelligence may be configured or unavailable | Message and assistant flow continue while the numbered title remains unchanged; no automatic title runtime is invoked | First-message fallback or Fast Intelligence must not replace the fork title | Chat title service/route tests and chat fork E2E |
+| First message in a Side Chat | Conversation is created by the Side Chat first-Send flow with a bounded source-title snapshot | Message and assistant flow continue while `Side chat from: {direct source title}` remains unchanged; no automatic title runtime is invoked | First-message fallback or Fast Intelligence must not replace the Side Chat workflow title | Side Chat service and E2E tests |
 | Manual rename races async generation | Operator changes title after fallback but before async generation finishes | Late generated title is ignored unless current title is still fallback or `New chat` | Explicit operator title must not be overwritten | `server/src/__tests__/messenger-service.test.ts` manual rename guard |
 | Manual regeneration succeeds | Board operator triggers regenerate; chat has eligible source messages; Fast Intelligence returns usable title | Existing title is replaced, Messenger/chat caches refresh, activity records previous and new title | Regeneration must not create a new conversation or message | Chat route regeneration tests and E2E |
 | Manual regeneration lacks source | Chat has no eligible user messages | Request returns 422 and title is unchanged | Runtime must not be called with an empty prompt | Chat route missing-source test |
@@ -793,8 +801,8 @@ a fork title when they want to replace that relationship-oriented default.
 For automatic generation, the operator-visible input is the first non-empty
 message they send in a default-titled chat. Rudder does not ask the operator for
 extra title input and does not block the chat composer while generation runs.
-Sending a new message in a fork is not automatic title input; the child already
-has a stable title from the fork workflow.
+Sending a new message in a fork or Side Chat is not automatic title input; the
+child already has a stable title from its workflow.
 
 For manual regeneration, the operator sees a `Regenerate title` menu item in
 the Messenger chat actions menu only when Fast Intelligence is configured for
@@ -1134,9 +1142,10 @@ before the exploration proves useful.
   the first Send.
 - A persisted Side Chat is a `chat_conversations` row with
   `conversationKind=side_chat`, source lineage, `messengerVisible`, lifecycle
-  state, expiry/keep timestamps, and the client mutation id. The legacy
-  `completed` enum/value remains schema-compatible but is not produced by the
-  current Side Chat workflow.
+  state, expiry/keep timestamps, the client mutation id, and a bounded
+  `Side chat from: {direct source title}` title captured when the row is
+  created. The legacy `completed` enum/value remains schema-compatible but is
+  not produced by the current Side Chat workflow.
 - Current lifecycle states are `active`, `expired`, and `kept`.
 - `active` is hidden and mutable until its two-hour send window expires.
   `expired` is hidden and read-only. `kept` is durable, Messenger-visible, and
@@ -1164,7 +1173,9 @@ before the exploration proves useful.
    remain untouched.
 3. On first Send, the server validates organization access, operator ownership,
    and a completed assistant-message anchor. Creation is idempotent for the
-   organization, owner, and client mutation id.
+   organization, owner, and client mutation id. The persisted title snapshots
+   the direct source title with the `Side chat from: ` prefix and stays within
+   the 200-character Chat title limit.
 4. The server copies source context links, messages, and message attachments
    through the anchor. Copied messages do not acquire new run, approval, turn,
    or output ownership. A boundary system event records the Side Chat source.
@@ -1183,11 +1194,15 @@ before the exploration proves useful.
    intact and a later close conflict only reconciles the stale tab into
    Messenger.
 8. `Move to Messenger` changes an `active` Side Chat to `kept`, preserves the
-   same conversation id, removes expiry, and makes it visible. If the source
-   Chat already belongs to the operator's custom group, the kept Side Chat is
-   appended to that group; otherwise it remains an ungrouped Messenger Chat.
-   The Side Panel tab closes and that same id opens as an ordinary Messenger
-   Chat with the ordinary Chat UI.
+   same conversation id, removes expiry, and makes it visible. It reuses the
+   root conversation's existing custom group when present; otherwise it creates
+   the same default-leaf family group used by Fork. The family root, direct
+   source, and kept Side Chat are ensured in that group without overwriting an
+   existing group name or icon. The visibility transition and grouping commit
+   atomically. If the direct source no longer exists, Move fails and the Side
+   Chat remains hidden and `active`. The Side Panel tab closes only after a
+   successful Move, then that same id opens as an ordinary Messenger Chat with
+   the ordinary Chat UI.
 9. When the send window elapses, the open Side Chat becomes locally read-only
    immediately. The first server mutation at or after expiry atomically marks
    it `expired` and rejects the mutation without creating a message or run.
@@ -1201,12 +1216,12 @@ before the exploration proves useful.
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
 | Provisional open | Valid normal Chat; completed assistant anchor available | Open one unsaved Side Panel target | Create a conversation before first Send or change parent state | Side Chat E2E entry screenshots |
-| First Send | Owner and organization match; anchor is completed; mutation id is new or an identical retry | Create exactly one hidden active Side Chat and start the ordinary Chat runtime flow | Duplicate records, copy messages after the anchor, or expose the thread in Messenger | Service, route, and E2E tests |
+| First Send | Owner and organization match; anchor is completed; mutation id is new or an identical retry | Create exactly one hidden active Side Chat with the bounded direct-source title snapshot and start the ordinary Chat runtime flow | Duplicate records, copy messages after the anchor, expose the thread in Messenger, or run automatic title generation | Service, route, and E2E tests |
 | Active follow-up | Owner matches and expiry is in the future | Persist the message and refresh expiry to two hours | Let another user send or silently retain the old expiry | Service and route tests |
 | Close provisional | No persisted conversation id | Discard the client draft and close the tab | Create or retain a server record | UI and E2E tests |
 | Close persisted | Hidden Side Chat belongs to operator | Cancel any live generation, delete the temporary conversation, and close the tab | Leave a hidden recoverable thread or delete a kept Messenger Chat | Service, route, and E2E tests |
 | Expire | Active send window has elapsed | Transition to expired and reject mutation | Create a user message, generation, or other mutation side effect | Service and route tests |
-| Move to Messenger | State is active | Preserve id, transition to kept, expose in Messenger, and reuse source group only when it exists | Create a replacement Chat, invent a custom group, or move a completed/expired Side Chat | Service, route, and E2E tests |
+| Move to Messenger | State is active and the direct source exists | Preserve id, transition to kept, expose in Messenger, and atomically create or reuse the Fork-style family group | Create a replacement Chat, expose a half-grouped conversation, duplicate the family group, or move a completed/expired/orphaned Side Chat | Service, route, and E2E tests |
 | Unauthorized access | Wrong organization, non-board actor, or different user | Return not found/denied without revealing the record | Leak Side Chat existence or content | Service and route tests |
 
 ### Actor-Visible Input
@@ -1242,7 +1257,8 @@ before the exploration proves useful.
   label without any new row in Messenger.
 - Expiry replaces the composer with a read-only explanation.
 - Move closes the Side Chat tab, makes the same conversation available in the
-  normal Messenger list, and opens it with the normal Chat UI.
+  normal Messenger list under its automatic family group and source-title
+  snapshot, and opens it with the normal Chat UI.
 - In the kept conversation, the Side Chat source boundary is a direct return
   link to the source Chat rather than an adjacent Side Panel preview.
 - Send, close, and move failures surface as visible errors or toasts; they are
@@ -1252,7 +1268,8 @@ before the exploration proves useful.
 
 - The Side Chat conversation stores organization, creator, source conversation
   and message lineage, lifecycle state, visibility, expiry/keep timestamps,
-  legacy-compatible completion fields, and idempotency key.
+  legacy-compatible completion fields, idempotency key, and the bounded direct
+  source-title snapshot.
 - Copied source messages and attachments preserve the bounded context through
   the anchor. The `side_chat_started` system event records the source boundary.
 - Normal `chat_messages`, `chat_generations`, Agent Runs, transcripts, and cost
@@ -1274,9 +1291,10 @@ before the exploration proves useful.
    - Trigger: Type `/side`, enter through the composer menu, send, then choose
      `Move to Messenger` from the Side Chat tab menu.
    - Expected state/action: The hidden record becomes `kept` with the same id
-     and joins the source custom group only when one already exists.
+     and joins the existing Fork-style family group or creates one when absent.
    - Visible output: The Side Panel tab closes and the same id opens as a normal
-     editable Messenger Chat.
+     editable Messenger Chat titled `Side chat from: Main strategy chat` inside
+     the source family group.
    - Evidence: Side Chat service, route, and E2E keep tests.
 3. Expired hidden exploration:
    - Trigger: Attempt another send after the active two-hour window.
@@ -1302,16 +1320,17 @@ before the exploration proves useful.
 - Temporary Side Chat records are disposable and are destroyed through the
   Side Chat close endpoint. The normal Chat delete path accepts kept Side Chats
   because they are ordinary Messenger Chats after promotion.
-- Moving preserves the same conversation id and does not create a custom group
-  when the source has none.
+- Moving preserves the same conversation id and creates or reuses exactly one
+  Fork-style family group for new promotions. Existing kept Side Chats are not
+  retroactively regrouped by this behavior change.
 - Side Chat does not promise a history/archive UI or cross-device recovery of
   an unsent provisional draft.
 
 ### Drift Boundaries
 
-- Changes to entry points, anchoring, persistence timing, owner scope, copied
-  context, TTL, lifecycle transitions, close/destruction, visibility,
-  promotion grouping, source return navigation, immutability, or audit
+- Changes to entry points, anchoring, persistence timing, source-title snapshot,
+  owner scope, copied context, TTL, lifecycle transitions, close/destruction,
+  visibility, promotion grouping, source return navigation, immutability, or audit
   retention require updating this contract.
 - Pure visual tuning that preserves the shared composer-menu grammar and the
   interaction outcomes does not require a product-contract change.

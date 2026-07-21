@@ -14,17 +14,16 @@ import {
   chatGenerations,
   chatMessages,
   chatQueuedMessages,
-  messengerCustomGroupEntries,
-  messengerCustomGroups,
   organizations
 } from "@rudderhq/db";
-import { chatInlineVisualMappingsFromStructuredPayload, MESSENGER_FORK_GROUP_DEFAULT_ICON, parseCodexInlineVisualDirectives, parseRudderInlineVisualPlacements, rudderInlineVisualMappingsFromStructuredPayload, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
+import { chatInlineVisualMappingsFromStructuredPayload, parseCodexInlineVisualDirectives, parseRudderInlineVisualPlacements, rudderInlineVisualMappingsFromStructuredPayload, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
+import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 import { chatGenerationProtocolService } from "./chat-generation-protocol.js";
 import {
   ACTIVE_CHAT_GENERATION_STATUSES,
@@ -3073,108 +3072,6 @@ export function chatService(db: Db) {
     return `Forked from [${sourceConversation.title}](chat://${sourceConversation.id})${messageSuffix}.`;
   }
 
-  async function findForkFamilyGroup(
-    client: Pick<Db, "select">,
-    orgId: string,
-    userId: string,
-    rootConversationId: string,
-  ) {
-    const rootThreadKey = `chat:${rootConversationId}`;
-    return client
-      .select({ id: messengerCustomGroups.id })
-      .from(messengerCustomGroups)
-      .innerJoin(messengerCustomGroupEntries, eq(messengerCustomGroupEntries.groupId, messengerCustomGroups.id))
-      .where(and(
-        eq(messengerCustomGroups.orgId, orgId),
-        eq(messengerCustomGroups.userId, userId),
-        eq(messengerCustomGroupEntries.orgId, orgId),
-        eq(messengerCustomGroupEntries.userId, userId),
-        eq(messengerCustomGroupEntries.threadKey, rootThreadKey),
-      ))
-      .orderBy(asc(messengerCustomGroups.sortOrder), asc(messengerCustomGroups.createdAt))
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-  }
-
-  async function createForkFamilyGroup(
-    client: Pick<Db, "insert" | "select">,
-    orgId: string,
-    userId: string,
-    name: string,
-  ) {
-    const [lastGroup] = await client
-      .select({ sortOrder: messengerCustomGroups.sortOrder })
-      .from(messengerCustomGroups)
-      .where(and(eq(messengerCustomGroups.orgId, orgId), eq(messengerCustomGroups.userId, userId)))
-      .orderBy(desc(messengerCustomGroups.sortOrder))
-      .limit(1);
-    const now = new Date();
-    const [group] = await client
-      .insert(messengerCustomGroups)
-      .values({
-        orgId,
-        userId,
-        name: name.trim() || "Forked conversation",
-        icon: MESSENGER_FORK_GROUP_DEFAULT_ICON,
-        sortOrder: (lastGroup?.sortOrder ?? -1) + 1,
-        updatedAt: now,
-      })
-      .returning();
-    if (!group) throw new Error("Failed to create Messenger fork group");
-    return group;
-  }
-
-  async function assignForkThreadToGroup(
-    client: Pick<Db, "insert" | "select">,
-    orgId: string,
-    userId: string,
-    groupId: string,
-    threadKey: string,
-  ) {
-    const [lastEntry] = await client
-      .select({ sortOrder: messengerCustomGroupEntries.sortOrder })
-      .from(messengerCustomGroupEntries)
-      .where(and(
-        eq(messengerCustomGroupEntries.orgId, orgId),
-        eq(messengerCustomGroupEntries.userId, userId),
-        eq(messengerCustomGroupEntries.groupId, groupId),
-      ))
-      .orderBy(desc(messengerCustomGroupEntries.sortOrder))
-      .limit(1);
-    const now = new Date();
-    await client
-      .insert(messengerCustomGroupEntries)
-      .values({
-        orgId,
-        userId,
-        groupId,
-        threadKey,
-        sortOrder: (lastEntry?.sortOrder ?? -1) + 1,
-        updatedAt: now,
-      })
-      .onConflictDoNothing();
-  }
-
-  async function ensureForkFamilyGroup(
-    client: Pick<Db, "insert" | "select">,
-    orgId: string,
-    userId: string,
-    rootConversationId: string,
-    sourceConversationId: string,
-    childConversationId: string,
-    groupName: string,
-  ) {
-    const existing = await findForkFamilyGroup(client, orgId, userId, rootConversationId);
-    const group = existing ?? await createForkFamilyGroup(client, orgId, userId, groupName);
-    for (const threadKey of [
-      `chat:${rootConversationId}`,
-      `chat:${sourceConversationId}`,
-      `chat:${childConversationId}`,
-    ]) {
-      await assignForkThreadToGroup(client, orgId, userId, group.id, threadKey);
-    }
-  }
-
   async function forkConversation(input: {
     sourceConversationId: string;
     orgId: string;
@@ -3455,15 +3352,14 @@ export function chatService(db: Db) {
         })
         .where(eq(chatConversations.id, child.id));
 
-      await ensureForkFamilyGroup(
-        tx,
-        input.orgId,
-        input.userId,
+      await ensureChatFamilyGroup(tx, {
+        orgId: input.orgId,
+        userId: input.userId,
         rootConversationId,
-        source.id,
-        child.id,
-        source.title,
-      );
+        sourceConversationId: source.id,
+        childConversationId: child.id,
+        groupName: source.title,
+      });
 
       return child;
     });
