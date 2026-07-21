@@ -64,15 +64,18 @@ contracts:
       - ui/src/pages/Issues.tsx
     related_tests:
       - ui/src/components/InlineEditor.test.tsx
+      - ui/src/lib/index-css.test.ts
       - ui/src/lib/new-issue-dialog.test.ts
       - ui/src/pages/IssueDetail.test.tsx
       - tests/e2e/codex-model-order.spec.ts
+      - tests/e2e/issue-detail-properties-layout.spec.ts
       - tests/e2e/issue-detail-toolbar-actions.spec.ts
       - tests/e2e/issue-description-image-preview.spec.ts
       - tests/e2e/issue-board-display-properties.spec.ts
       - tests/e2e/new-issue-project-context.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-21-responsive-issue-detail-layout.md
   RUN.WAKEUP.001:
     owner: product
     domain: execution
