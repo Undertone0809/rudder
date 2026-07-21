@@ -855,6 +855,63 @@ test("alignment classifications suppress only the reviewed content fingerprint",
   }
 });
 
+test("alignment fingerprints include registry-resolved contract owner documents", () => {
+  const root = fs.mkdtempSync(path.join(process.env.TMPDIR || "/tmp", "rudder-docs-contract-alignment-"));
+  try {
+    fs.mkdirSync(path.join(root, "docs"));
+    fs.mkdirSync(path.join(root, "doc/product"), { recursive: true });
+    fs.writeFileSync(path.join(root, "docs/en.mdx"), "Dashboard facts\n");
+    fs.writeFileSync(path.join(root, "docs/zh.mdx"), "仪表盘事实\n");
+    fs.writeFileSync(
+      path.join(root, "doc/product/registry.yml"),
+      [
+        "contracts:",
+        "  DASHBOARD.SUMMARY.001:",
+        "    owner: product",
+        "    docs:",
+        "      - doc/product/dashboard.md",
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(path.join(root, "doc/product/dashboard.md"), "dashboard contract\n");
+    const manifest = {
+      alignment_reviews: "reviews.json",
+      pages: [{
+        id: "overview",
+        status: "active",
+        files: { en: "docs/en.mdx", zh: "docs/zh.mdx" },
+        source_docs: [],
+        contracts: { primary: ["DASHBOARD.SUMMARY.001"], supporting: [] },
+        pairing_exception: null,
+      }],
+    };
+    const first = runAlignment({
+      root,
+      manifest,
+      reviews: { allowed_classifications: ["false-positive"], classifications: [] },
+    });
+    const reviews = {
+      allowed_classifications: ["false-positive"],
+      classifications: first.records.map((record) => ({
+        ...record,
+        classification: "false-positive",
+        reviewed_revision: "contract-owner-test",
+      })),
+    };
+    assert.equal(runAlignment({ root, manifest, reviews }).warnings.length, 0);
+
+    fs.writeFileSync(path.join(root, "doc/product/dashboard.md"), "changed dashboard contract\n");
+    const changed = runAlignment({ root, manifest, reviews });
+    assert.equal(changed.exitCode, 0);
+    assert.deepEqual(changed.warnings, [
+      "overview: reviewer should compare English and Chinese counterparts",
+      "overview: reviewer should compare public facts with DASHBOARD.SUMMARY.001",
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("real examples require existing permission and evidence locators", () => {
   const missingPermission = structuredClone(loadManifest());
   missingPermission.examples.find((example) => example.id === "steer-fix").permission_evidence = [];

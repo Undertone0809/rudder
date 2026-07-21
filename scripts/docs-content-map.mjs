@@ -630,6 +630,37 @@ function collectRegistryIds(root) {
   return new Set([...source.matchAll(/^  ([A-Z][A-Z0-9_.]+):$/gm)].map((match) => match[1]));
 }
 
+function registryContractDocs(root) {
+  const registryPath = path.join(root, "doc/product/registry.yml");
+  if (!fs.existsSync(registryPath)) return new Map();
+  const result = new Map();
+  let contractId = null;
+  let readingDocs = false;
+  for (const line of fs.readFileSync(registryPath, "utf8").split(/\r?\n/u)) {
+    const contractMatch = line.match(/^  ([A-Z][A-Z0-9_.]+):\s*$/u);
+    if (contractMatch) {
+      contractId = contractMatch[1];
+      readingDocs = false;
+      result.set(contractId, []);
+      continue;
+    }
+    if (!contractId) continue;
+    if (/^    docs:\s*$/u.test(line)) {
+      readingDocs = true;
+      continue;
+    }
+    if (readingDocs) {
+      const docMatch = line.match(/^      -\s+(.+?)\s*$/u);
+      if (docMatch) {
+        result.get(contractId).push(docMatch[1].replace(/^(?:"(.*)"|'(.*)')$/u, "$1$2"));
+        continue;
+      }
+    }
+    if (/^    \S/u.test(line)) readingDocs = false;
+  }
+  return result;
+}
+
 function headingAnchor(text) {
   return text
     .toLowerCase()
@@ -1140,8 +1171,11 @@ function contentDigest(root, paths) {
 
 export function alignmentReminderRecords({ root = REPO_ROOT, manifest = loadManifest(root) } = {}) {
   const records = [];
+  const contractDocs = registryContractDocs(root);
   for (const page of activePages(manifest)) {
-    const inputs = [...Object.values(page.files), ...page.source_docs];
+    const resolvedContractDocs = [...page.contracts.primary, ...page.contracts.supporting]
+      .flatMap((contractId) => contractDocs.get(contractId) ?? []);
+    const inputs = [...Object.values(page.files), ...page.source_docs, ...resolvedContractDocs];
     const fingerprint = contentDigest(root, inputs);
     if (Object.keys(page.files).length > 1) records.push({
       reminder: `${page.id}: reviewer should compare English and Chinese counterparts`,
