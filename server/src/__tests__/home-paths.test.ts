@@ -366,6 +366,84 @@ describe("home paths", () => {
     await expect(fs.stat(layout.root)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("keeps startup reconciliation available when macOS blocks the organization workspace map", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-reconcile-permission-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-reconcile-permission-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const org = {
+      id: orgId,
+      name: "Permission Blocked Org",
+      urlKey: "permission-blocked-org",
+    };
+    const layout = await ensureOrganizationWorkspaceLayout(org);
+    const mapPath = resolveOrganizationWorkspaceMapPath();
+    const originalReadFile = fs.readFile;
+    const permissionError = Object.assign(new Error("operation not permitted"), {
+      code: "EPERM",
+      path: mapPath,
+    });
+    fs.readFile = vi.fn(async (targetPath, options) => {
+      if (path.resolve(String(targetPath)) === mapPath) throw permissionError;
+      return originalReadFile.call(fs, targetPath, options as never);
+    }) as typeof fs.readFile;
+
+    try {
+      const result = await reconcileOrganizationStorageRoots([org]);
+
+      expect(result.workspacePermissionFailures).toEqual([
+        expect.objectContaining({
+          orgId,
+          code: "EPERM",
+          message: expect.stringMatching(/grant Rudder permission to access Documents/i),
+        }),
+      ]);
+      expect(result.workspaceAvailableOrganizationIds).toEqual([]);
+      await expect(fs.stat(layout.root)).resolves.toBeDefined();
+    } finally {
+      fs.readFile = originalReadFile;
+    }
+  });
+
+  it("explains how to repair a blocked organization workspace map", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-map-permission-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-map-permission-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const org = {
+      id: orgId,
+      name: "Permission Blocked Org",
+      urlKey: "permission-blocked-org",
+    };
+    await ensureOrganizationWorkspaceLayout(org);
+    const mapPath = resolveOrganizationWorkspaceMapPath();
+    const originalReadFile = fs.readFile;
+    const permissionError = Object.assign(new Error("operation not permitted"), {
+      code: "EPERM",
+      path: mapPath,
+    });
+    fs.readFile = vi.fn(async (targetPath, options) => {
+      if (path.resolve(String(targetPath)) === mapPath) throw permissionError;
+      return originalReadFile.call(fs, targetPath, options as never);
+    }) as typeof fs.readFile;
+
+    try {
+      await expect(ensureOrganizationWorkspaceLayout(org)).rejects.toThrow(
+        /could not read the organization workspace mapping.*EPERM.*grant Rudder permission to access Documents/i,
+      );
+    } finally {
+      fs.readFile = originalReadFile;
+    }
+  });
+
   it("reclaims an existing friendly folder when the mapping file is missing", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-reclaim-friendly-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-reclaim-friendly-");
@@ -754,6 +832,7 @@ describe("home paths", () => {
       }),
     ]);
     expect(result.pruned.removedOrganizationDirNames).toEqual(["orphan-org"]);
+    expect(result.workspaceAvailableOrganizationIds).toEqual([uuidOrgId]);
     await expect(fs.stat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.readFile(path.join(canonicalRoot, "workspaces", "projects", "plan.md"), "utf8"))
       .resolves.toBe("# Plan\n");
