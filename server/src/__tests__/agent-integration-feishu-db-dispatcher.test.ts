@@ -1580,7 +1580,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
     await waitUntil(() => {
       expect(sent).toEqual([{ chatId: "oc_sdk_chat", text: "Rudder Feishu reply" }]);
     });
-    const messages = await db.select().from(chatMessages);
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages.map((message) => ({ role: message.role, body: message.body }))).toEqual([
       { role: "user", body: "hello from sdk channel" },
       { role: "assistant", body: "Rudder Feishu reply" },

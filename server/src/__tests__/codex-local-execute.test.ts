@@ -2119,7 +2119,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
         provenance: "repo",
         serverName: "rudder-tools",
         toolCount: 77,
-        version: "0.5.0",
+        version: "0.5.1",
       });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
