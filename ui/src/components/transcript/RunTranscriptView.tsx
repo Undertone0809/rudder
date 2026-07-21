@@ -81,7 +81,6 @@ export function RunTranscriptView({
     [renderableEntries, streaming, showDeveloperDiagnostics],
   );
   const visibleBlocks = limit ? blocks.slice(-limit) : blocks;
-  const visibleEntries = limit ? renderableEntries.slice(-limit) : renderableEntries;
   const visibleNiceEntries = trailingEntriesByVisibleLimit(renderableEntries, limit);
 
   if (renderableEntries.length === 0) {
@@ -96,7 +95,7 @@ export function RunTranscriptView({
   if (mode === "raw") {
     return (
       <div className={className}>
-        <RawTranscriptView entries={visibleEntries} density={density} />
+        <RawTranscriptView entries={renderableEntries} density={density} limit={limit} />
       </div>
     );
   }

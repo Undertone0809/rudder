@@ -203,6 +203,12 @@ test.describe("Run transcript detail", () => {
     await page.getByRole("button", { name: "raw" }).click();
     await expect(detailPane.getByText(/reasoning started/i).first()).toBeVisible();
     await expect(detailPane.getByText(/reasoning completed/i).first()).toBeVisible();
+    const coalescedRawMessage = detailPane.locator("pre").filter({ hasText: "I read AGENTS.md and added E2E coverage." });
+    await expect(coalescedRawMessage).toHaveCount(1);
+    await expect(detailPane.getByText("I read AG", { exact: true })).toHaveCount(0);
+    await coalescedRawMessage.locator("..").screenshot({
+      path: "/tmp/rudder-run-transcript-raw-coalesced.png",
+    });
     await page.getByRole("button", { name: "nice" }).click();
 
     await page.getByRole("button", { name: "Expand transcript" }).click();
