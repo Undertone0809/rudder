@@ -265,6 +265,9 @@ Product model:
   replaces that icon in place with the clear action; the label and chip geometry
   stay fixed. Locked Project context keeps the icon visible and exposes no clear
   action.
+- When Plan mode is active, the composer chip shows the Plan icon at rest and
+  replaces it in the same fixed-size slot with the dismiss icon only while
+  hovered; the label and chip geometry remain fixed.
 - Conversations with more than five visible user messages show a compact
   message map for jumping to earlier user turns. The map samples at most 64
   markers and previews the user turn plus the following assistant reply without
@@ -710,8 +713,8 @@ a fork title when they want to replace that relationship-oriented default.
 - Fork lineage: `forkedFromConversationId` and `forkRootConversationId`
   distinguish numbered fork titles from default-titled chats eligible for
   automatic generation.
-- Chat messages: persisted user and assistant messages used as generation
-  source text.
+- Chat messages: the persisted first user message used for automatic generation
+  and the latest five eligible user messages used for manual regeneration.
 - Organization intelligence profile: the organization-scoped `lightweight`
   profile configured under `ORG.SETTINGS.001`.
 - Product Intelligence invocation: runtime execution with
@@ -731,7 +734,8 @@ a fork title when they want to replace that relationship-oriented default.
 - Messenger chat actions menu, which exposes `Regenerate title` only when the
   selected organization has a configured `lightweight` intelligence profile.
 - The first non-empty user message for automatic generation.
-- The latest bounded user/assistant message excerpt for manual regeneration.
+- The latest five non-empty, non-superseded ordinary user messages for manual
+  regeneration, ordered oldest to newest within that selected window.
 
 ## Product Logic Flow
 
@@ -752,9 +756,10 @@ a fork title when they want to replace that relationship-oriented default.
    family-numbered title when new user messages arrive and does not invoke
    automatic fallback or Fast Intelligence title generation for that child.
 8. When the operator chooses `Regenerate title` from Messenger chat actions,
-   Rudder builds a bounded excerpt from the latest user/assistant messages,
-   calls Fast Intelligence, persists the returned title, refreshes chat and
-   Messenger rows, and records `chat.title_regenerated` activity.
+   Rudder reads at most the latest five eligible user messages, restores their
+   chronological order, builds a bounded prompt, calls Fast Intelligence,
+   persists the returned title, refreshes chat and Messenger rows, and records
+   `chat.title_regenerated` activity.
 
 ## Decision Table
 
@@ -765,10 +770,10 @@ a fork title when they want to replace that relationship-oriented default.
 | First new message in a fork | Conversation has `forkedFromConversationId`; title is the family-numbered fork title; Fast Intelligence may be configured or unavailable | Message and assistant flow continue while the numbered title remains unchanged; no automatic title runtime is invoked | First-message fallback or Fast Intelligence must not replace the fork title | Chat title service/route tests and chat fork E2E |
 | Manual rename races async generation | Operator changes title after fallback but before async generation finishes | Late generated title is ignored unless current title is still fallback or `New chat` | Explicit operator title must not be overwritten | `server/src/__tests__/messenger-service.test.ts` manual rename guard |
 | Manual regeneration succeeds | Board operator triggers regenerate; chat has eligible source messages; Fast Intelligence returns usable title | Existing title is replaced, Messenger/chat caches refresh, activity records previous and new title | Regeneration must not create a new conversation or message | Chat route regeneration tests and E2E |
-| Manual regeneration lacks source | Chat has no eligible user/assistant messages | Request returns 422 and title is unchanged | Runtime must not be called with an empty prompt | Chat route missing-source test |
+| Manual regeneration lacks source | Chat has no eligible user messages | Request returns 422 and title is unchanged | Runtime must not be called with an empty prompt | Chat route missing-source test |
 | Manual regeneration unauthorized | Actor is not board access | Request is rejected before loading chat/product-intelligence state | Agent-auth actor must not regenerate chat title through board route | Chat route authorization test |
 | Messenger action visibility | Selected organization has no configured `lightweight` profile | `Regenerate title` action is hidden | UI must not offer an action that predictably fails due to missing Fast Intelligence | Messenger sidebar unit/E2E tests |
-| Long input/excerpt | First message or recent excerpt is large | Prompt is bounded/truncated before Product Intelligence invocation | Title generation must not send unbounded chat history | Chat route prompt-bound tests |
+| Long input/excerpt | First message or one or more recent user messages are large | The complete prompt is at most 1,500 `o200k_base` tokens; each truncated message keeps its beginning and end around ` ... ` | Title generation must not send unbounded chat history or discard every message ending | Chat title helper and route prompt-bound tests |
 
 ## Actor-Visible Input
 
@@ -780,13 +785,16 @@ has a stable title from the fork workflow.
 
 For manual regeneration, the operator sees a `Regenerate title` menu item in
 the Messenger chat actions menu only when Fast Intelligence is configured for
-the selected organization. The server uses a bounded excerpt of the latest
-eligible user and assistant messages; raw internal transcript data is not part
-of the title prompt contract.
+the selected organization. The server uses the latest five eligible user
+messages. Assistant, system-event, superseded, empty, transcript, and attachment
+content is not part of the title prompt contract.
 
 Product Intelligence receives a concise prompt instructing it to return only a
-title, with no quotes, markdown, or trailing punctuation, bounded to the chat
-title length limit.
+title, with no quotes, markdown, or trailing punctuation. Rudder measures the
+complete prompt, including instructions, labels, separators, and message bodies,
+with `o200k_base` and keeps it at or below 1,500 tokens. Short messages release
+unused budget to longer messages; a message that still exceeds its share keeps
+both ends around ` ... `.
 
 ## Operator-Visible Output
 
@@ -815,8 +823,8 @@ The operator sees the chat title update in the chat surface and Messenger row:
 - `chat_conversations.forkedFromConversationId` and
   `forkRootConversationId` persist why a numbered fork title is excluded from
   automatic generation.
-- `chat_messages` stores the user/assistant messages that form the title source
-  material.
+- `chat_messages` stores the user messages that form the title source material;
+  regeneration queries only the latest five eligible rows.
 - Successful manual regeneration writes `chat.title_regenerated` activity with
   `previousTitle` and `title`.
 - Product Intelligence runtime execution uses organization-scoped
@@ -882,8 +890,10 @@ The operator sees the chat title update in the chat surface and Messenger row:
 - Generated titles are sanitized for display: no markdown fences, heading/list
   prefixes, wrapping quotes, or trailing punctuation; titles are bounded to the
   chat title length limit.
-- Title-generation prompts must be bounded. First-message prompts truncate long
-  input, and regeneration prompts use only the latest eligible excerpt.
+- Every automatic or manual Chat title prompt must be at most 1,500
+  `o200k_base` tokens in full. Automatic generation uses only the first user
+  message. Manual regeneration uses only the latest five eligible user messages,
+  and long selected messages preserve both beginning and end around ` ... `.
 - Regeneration failure must not mutate the existing chat title or write a
   successful regeneration activity record.
 - This contract does not own intelligence-profile setup, provider selection,
@@ -914,6 +924,7 @@ contract update.
 
 Related plans:
 
+- `doc/plans/2026-07-21-chat-title-generation-token-budget.md`
 - `doc/plans/2026-06-18-chat-title-defaults.md`
 - `doc/plans/2026-05-22-organization-intelligence-profiles.md`
 
@@ -935,9 +946,11 @@ Related tests:
   bounded prompts, streaming sends, board-only regeneration, missing-source
   rejection, `chat.title_regenerated` activity, and numbered forks that skip
   automatic generation.
-- Chat title generation service tests cover the fork exclusion directly.
+- Chat title generation service tests cover the fork exclusion, latest-five
+  user-only selection, `o200k_base` prompt limit, and middle truncation.
 - Messenger service tests cover the manual-rename guard that prevents late
-  asynchronous generated titles from replacing an explicit operator title.
+  asynchronous generated titles from replacing an explicit operator title, and
+  the bounded recent-user-message query.
 - Messenger sidebar tests and E2E cover hiding/showing `Regenerate title` based
   on configured Fast Intelligence and updating the visible Messenger row after
   regeneration.

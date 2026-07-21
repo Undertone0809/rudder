@@ -2,12 +2,13 @@ import { logger } from "../middleware/logger.js";
 import type { ProductIntelligenceExecuteInput } from "./product-intelligence.js";
 import {
   buildChatTitlePrompt,
+  buildChatTitlePromptFromBodies,
   fallbackTitleFromText,
   runtimeResultText,
   sanitizeGeneratedTitle,
 } from "./title-generation.js";
 
-const CHAT_TITLE_REGENERATION_MESSAGE_LIMIT = 12;
+export const CHAT_TITLE_REGENERATION_MESSAGE_LIMIT = 5;
 
 type ChatTitleConversation = {
   id: string;
@@ -46,13 +47,15 @@ export type ChatTitleGenerationOptions = {
 };
 
 export function buildChatTitlePromptFromMessages(messages: ChatTitleMessage[]) {
-  const source = messages
-    .filter((message) => message.role === "user" || message.role === "assistant")
+  const bodies = messages
+    .filter((message) => (
+      message.role === "user"
+      && message.kind === "message"
+      && message.body.trim().length > 0
+    ))
     .slice(-CHAT_TITLE_REGENERATION_MESSAGE_LIMIT)
-    .map((message) => `${message.role}: ${message.body}`)
-    .join("\n\n")
-    .trim();
-  return source ? buildChatTitlePrompt(source, "Conversation excerpt") : null;
+    .map((message) => message.body);
+  return buildChatTitlePromptFromBodies(bodies);
 }
 
 export function chatTitleGenerationService(input: {
@@ -83,7 +86,6 @@ export function chatTitleGenerationService(input: {
     const body = userMessage.body;
     const expectedCurrentTitle = titleGenerationExpectedCurrentTitle(conversation, options);
     if (!expectedCurrentTitle || body.trim().length === 0) return;
-    const prompt = buildChatTitlePrompt(body);
     const fallbackTitle = fallbackTitleFromText(body);
     const updateTitleIfExpected = (title: string) =>
       expectedCurrentTitle === "New chat"
@@ -92,7 +94,10 @@ export function chatTitleGenerationService(input: {
     void (async () => {
       if (fallbackTitle) {
         await updateTitleIfExpected(fallbackTitle);
+      } else {
+        await Promise.resolve();
       }
+      const prompt = buildChatTitlePrompt(body);
       try {
         const result = await productIntelligence.execute({
           orgId: conversation.orgId,

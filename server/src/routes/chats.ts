@@ -1873,7 +1873,7 @@ export function chatRoutes(
       return;
     }
     await assertSideChatMutationAllowed(req, existing as ChatConversation);
-    const messages = await svc.listMessages(existing.id, { includeTranscript: false });
+    const messages = await svc.listRecentUserMessages(existing.id, 5);
     const prompt = buildChatTitlePromptFromMessages(messages as ChatMessage[]);
     if (!prompt) {
       throw unprocessable("No chat messages available to generate a title");
