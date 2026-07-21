@@ -714,6 +714,14 @@ describe("IssueDetail", () => {
     expect(html).not.toContain('class="space-y-3 xl:sticky xl:top-4"');
   });
 
+  it("keeps an embedded issue detail in its own scroll flow", () => {
+    const html = renderToStaticMarkup(<IssueDetail embedded embeddedIssueId="ORG2-1" />);
+
+    expect(html).toContain('data-testid="embedded-issue-detail"');
+    expect(html).toContain("h-full min-h-0 w-full scrollbar-auto-hide overflow-y-auto overscroll-contain");
+    expect(html).not.toContain('data-testid="issue-detail-main-scroll"');
+  });
+
   it("exposes issue pin and unpin actions in the detail more menu", () => {
     let html = renderToStaticMarkup(<IssueDetail />);
 

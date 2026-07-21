@@ -128,10 +128,15 @@ test.describe("Chat Side Panel", () => {
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
     await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
+    const longDescription = [
+      "Expanded Side Panel should render the same issue detail body.",
+      ...Array.from({ length: 48 }, (_, index) => `Scrollable issue detail row ${index + 1}.`),
+      "Expanded issue detail scroll sentinel.",
+    ].join("\n\n");
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
         title: "Expanded detail parity issue",
-        description: "Expanded Side Panel should render the same issue detail body.",
+        description: longDescription,
         status: "todo",
         priority: "high",
       },
@@ -149,6 +154,7 @@ test.describe("Chat Side Panel", () => {
         title: "Expanded issue side panel host chat",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Open the issue detail beside this chat." },
       },
     });
     expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
@@ -184,7 +190,8 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("chat-side-panel-issue-view")).toBeVisible();
 
     await sidePanel.getByLabel("Expand Side Panel").click();
-    await expect(sidePanel.getByTestId("embedded-issue-detail")).toBeVisible();
+    const embeddedIssueDetail = sidePanel.getByTestId("embedded-issue-detail");
+    await expect(embeddedIssueDetail).toBeVisible();
     await expect(sidePanel.getByTestId("chat-side-panel-issue-view")).toHaveCount(0);
     await expect(sidePanel).toContainText("Expanded detail parity issue");
     await expect(sidePanel).toContainText("Expanded Side Panel should render the same issue detail body.");
@@ -196,6 +203,33 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Activity");
     await expect(sidePanel).toContainText("Expanded detail activity should be visible.");
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${hostChat.id}$`));
+
+    await expect.poll(async () => embeddedIssueDetail.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      overflowY: window.getComputedStyle(element).overflowY,
+      scrollHeight: element.scrollHeight,
+    }))).toMatchObject({
+      overflowY: "auto",
+    });
+    const scrollMetrics = await embeddedIssueDetail.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+    await embeddedIssueDetail.hover();
+    await page.mouse.wheel(0, 900);
+    await expect.poll(async () => embeddedIssueDetail.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await page.mouse.wheel(0, 10_000);
+    await expect.poll(async () => embeddedIssueDetail.evaluate((element) => (
+      Math.abs(element.scrollTop - (element.scrollHeight - element.clientHeight)) <= 1
+    ))).toBe(true);
+    const scrollSentinel = sidePanel.getByText("Expanded issue detail scroll sentinel.", { exact: true });
+    await expect(scrollSentinel).toBeVisible();
+    expect(await scrollSentinel.evaluate((element) => {
+      const elementRect = element.getBoundingClientRect();
+      const scrollRect = element.closest('[data-testid="embedded-issue-detail"]')?.getBoundingClientRect();
+      return Boolean(scrollRect && elementRect.bottom > scrollRect.top && elementRect.top < scrollRect.bottom);
+    })).toBe(true);
 
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-expanded-issue-detail.png"),

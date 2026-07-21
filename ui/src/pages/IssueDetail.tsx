@@ -2072,10 +2072,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     <div
       ref={setIssueDetailRootRef}
       data-testid={embedded ? "embedded-issue-detail" : "issue-detail-main-scroll"}
-      className={cn(
-        "h-full min-h-0 w-full",
-        embedded ? "overflow-visible" : "scrollbar-auto-hide overflow-y-auto overscroll-contain",
-      )}
+      className="h-full min-h-0 w-full scrollbar-auto-hide overflow-y-auto overscroll-contain"
     >
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
       <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:gap-6">
