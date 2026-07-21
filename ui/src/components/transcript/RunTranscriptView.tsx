@@ -8,7 +8,7 @@ import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, 
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
 
-export { resolveTranscriptLocalFileTarget } from "./RunTranscriptView.common";
+export { resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget } from "./RunTranscriptView.common";
 export type { TranscriptDensity, TranscriptMode, TranscriptPresentation } from "./RunTranscriptView.common";
 export { normalizeTranscript } from "./RunTranscriptView.normalize";
 
@@ -42,6 +42,7 @@ export function RunTranscriptView({
   showDeveloperDiagnostics = false,
   hideAssistantMessages = false,
   hiddenAssistantMessageText = null,
+  onOpenFile,
 }: RunTranscriptViewProps) {
   const toastContext = useOptionalToast();
   const handleMarkdownLinkClick = useCallback<TranscriptMarkdownLinkClickHandler>(({ event, href }) => {
@@ -72,6 +73,30 @@ export function RunTranscriptView({
     });
     return true;
   }, [toastContext]);
+  const handleOpenFile = useCallback((targetPath: string, label: string) => {
+    if (onOpenFile) {
+      onOpenFile(targetPath, label);
+      return;
+    }
+
+    const desktopShell = readDesktopShell();
+    if (!desktopShell) {
+      toastContext?.pushToast({
+        title: "Open from Desktop",
+        body: "Local transcript files can only be opened from the Rudder Desktop app.",
+        tone: "warn",
+      });
+      return;
+    }
+
+    void desktopShell.openPath(targetPath).catch((error) => {
+      toastContext?.pushToast({
+        title: "Failed to open file",
+        body: error instanceof Error ? error.message : `Could not open ${label}.`,
+        tone: "error",
+      });
+    });
+  }, [onOpenFile, toastContext]);
   const renderableEntries = useMemo(
     () => filterRenderableTranscriptEntries(entries, { showDeveloperDiagnostics }),
     [entries, showDeveloperDiagnostics],
@@ -137,6 +162,7 @@ export function RunTranscriptView({
           hiddenAssistantMessageText={hiddenAssistantMessageText}
           showDeveloperDiagnostics={showDeveloperDiagnostics}
           onMarkdownLinkClick={handleMarkdownLinkClick}
+          onOpenFile={handleOpenFile}
         />
       </div>
     );

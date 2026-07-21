@@ -1,4 +1,4 @@
-import { asRecord, COMMON_FILENAME_TOKENS, compactWhitespace, humanizeLabel, pluralize, TranscriptDensity, TranscriptToolCategory, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
+import { asRecord, COMMON_FILENAME_TOKENS, compactWhitespace, humanizeLabel, pluralize, resolveTranscriptFileTarget, TranscriptDensity, TranscriptFileTarget, TranscriptToolCategory, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { classifyShellCommand, cleanShellToken, commandSegmentFrom, commandSegmentUsesInPlaceSed, extractStdoutWriteRedirectTarget, findStrongEditSegment, getShellPositionalArgsFromTokens, hasHelpSignal, isShellControlToken, shellTokensForCommand, stripWrappedShell, tokenizeShell } from "./RunTranscriptView.shell";
 
 export function normalizePathTarget(value: string): string | null {
@@ -76,7 +76,7 @@ export function getShellPositionalArgs(command: string): string[] {
 export function extractRecordPaths(record: Record<string, unknown> | null): string[] {
   if (!record) return [];
   const targets: string[] = [];
-  for (const key of ["path", "filePath", "file_path", "targetPath", "cwd", "directory", "dir", "url"]) {
+  for (const key of ["path", "filePath", "file_path", "targetPath", "directory", "dir"]) {
     const value = record[key];
     if (typeof value === "string" && value.trim()) {
       targets.push(value);
@@ -92,6 +92,21 @@ export function extractRecordPaths(record: Record<string, unknown> | null): stri
     }
   }
   return dedupeTargets(targets);
+}
+
+export function extractRecordWorkingDirectory(record: Record<string, unknown> | null): string | null {
+  return readStringField(record, ["workdir", "workingDirectory", "working_directory", "cwd"]);
+}
+
+export function createTranscriptFileTargets(
+  paths: string[],
+  record: Record<string, unknown> | null,
+): TranscriptFileTarget[] {
+  const workingDirectory = extractRecordWorkingDirectory(record);
+  return dedupeTargets(paths).map((label) => ({
+    label,
+    path: resolveTranscriptFileTarget(label, workingDirectory),
+  }));
 }
 
 export function extractRecordQuery(record: Record<string, unknown> | null): string | null {
@@ -505,7 +520,10 @@ export function describeRudderCommandSemanticInfo(command: string): TranscriptTo
   };
 }
 
-export function describeCommandSemanticInfo(command: string): TranscriptToolSemanticInfo {
+export function describeCommandSemanticInfo(
+  command: string,
+  record: Record<string, unknown> | null = null,
+): TranscriptToolSemanticInfo {
   const rudderInfo = describeRudderCommandSemanticInfo(command);
   if (rudderInfo) return rudderInfo;
 
@@ -561,7 +579,8 @@ export function describeCommandSemanticInfo(command: string): TranscriptToolSema
       ...action,
       category: invocation.category,
       label: invocation.label,
-      bucket: "explore",
+      bucket: "read",
+      fileTargets: createTranscriptFileTargets(targets, record),
     };
   }
 
@@ -614,6 +633,7 @@ export function describeCommandSemanticInfo(command: string): TranscriptToolSema
       category: invocation.category,
       label: invocation.label,
       bucket: "edit",
+      fileTargets: createTranscriptFileTargets(targets, record),
     };
   }
 
@@ -991,7 +1011,7 @@ export function describeToolSemanticInfo(name: string, input: unknown): Transcri
                 ? record.cmd
                 : "";
           })();
-    return describeCommandSemanticInfo(command);
+    return describeCommandSemanticInfo(command, record);
   }
 
   const mcpDetails = extractMcpToolDetails(name, input);
@@ -1037,7 +1057,8 @@ export function describeToolSemanticInfo(name: string, input: unknown): Transcri
       ...action,
       category: invocation.category,
       label: invocation.label,
-      bucket: "explore",
+      bucket: "read",
+      fileTargets: createTranscriptFileTargets(paths, record),
     };
   }
 
@@ -1069,6 +1090,7 @@ export function describeToolSemanticInfo(name: string, input: unknown): Transcri
       category: invocation.category,
       label: invocation.label,
       bucket: "edit",
+      fileTargets: createTranscriptFileTargets(paths, record),
     };
   }
 

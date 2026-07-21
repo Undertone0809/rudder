@@ -214,6 +214,15 @@ Product model:
   `reasoning started` / `reasoning completed` and Rudder result-envelope
   delimiters are hidden from the default Chat projection even when they arrive
   as fragmented streaming deltas.
+- Completed process activity uses progressive disclosure: the resting row is a
+  human-readable semantic digest with one stable icon, while its disclosure
+  indicator appears on hover or keyboard focus and stays available on coarse or
+  no-hover input. The control remains keyboard operable, and all-failure groups
+  remain expanded so actionable failure evidence is not hidden.
+- Expanded process activity exposes structured file reads and edits as direct
+  file actions when the transcript provides an absolute target or a relative
+  target plus a trusted absolute execution root. Unresolvable relative paths
+  remain text, and Chat does not infer file actions from assistant prose.
 - The process transcript presents each provider reasoning item once. Readable
   summary and raw streams for the same item are alternative representations,
   not separate progress events; streamed fragments coalesce and multiple
@@ -1804,8 +1813,13 @@ Product model:
   Browser targets. They use the shared image preview overlay so image inspection
   has one consistent toolbar and exit path across Chat surfaces.
 - Side Panel targets are typed objects: issue, automation, Library file,
-  Library directory, chat, browser tab, and explicit placeholders for target
-  classes that need a link/search before loading a concrete object.
+  Library directory, structured transcript local file, chat, browser tab, and
+  explicit placeholders for target classes that need a link/search before
+  loading a concrete object.
+- An ordinary click on an openable transcript file action opens or focuses a
+  local-file tab in the current Chat's Side Panel context without replacing the
+  Chat route. Desktop loads the target through the bounded local-file preview
+  bridge; Web and preview failures render an explicit in-panel fallback.
 - Issue targets render as a compact issue-detail workbench inside the panel,
   not as a read-only preview with a separate edit mode. The title and
   description are directly editable in place, and issue properties such as
@@ -1992,6 +2006,11 @@ Flow:
     to open or focus the saved target. A saved Browser target reuses the original
     live guest only while that guest exists; after restart, reset, or explicit
     tab close it opens a new Browser target from the last persisted URL.
+22. Selecting a structured transcript file action opens or focuses a local-file
+    tab keyed by its resolved absolute path. Desktop canonicalizes and validates
+    the target through its preview bridge before returning bounded text or binary
+    preview data; unsupported, missing, oversized, or Web-only targets fail in
+    the panel without changing the current Chat route.
 
 Invariants:
 
@@ -2026,6 +2045,11 @@ Invariants:
   output, run-history, and dispatch semantics from `AUTOMATION.*`.
 - Side Panel Library views must preserve `LIBRARY.FILES.001` path safety,
   protected paths, previews, and stable reference behavior.
+- Transcript local-file tabs are not Library files and must not reinterpret a
+  project-relative transcript path as an organization Library path. They accept
+  only structured absolute targets resolved by `RUN.RESULT.001`, use the Desktop
+  preview boundary, and do not weaken Library organization scoping or protected
+  path rules.
 - Side Panel Markdown editing must preserve `LIBRARY.FILES.001` conditional
   write semantics. External updates visible to the server's guarded comparison,
   failed responses, and overlapping in-process saves must not silently discard

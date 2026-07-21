@@ -70,6 +70,19 @@ rl.on("line", (line) => {
   if (message.method === "turn/start") {
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (process.env.RUDDER_TEST_COMMAND_TRANSCRIPT === "1") {
+      send({ method: "item/started", params: {
+        threadId,
+        turnId,
+        item: { type: "commandExecution", id: "command-1", command: "cat README.md", status: "inProgress" },
+      } });
+      send({ method: "item/completed", params: {
+        threadId,
+        turnId,
+        item: { type: "commandExecution", id: "command-1", command: "cat README.md", status: "completed", aggregatedOutput: "Rudder", exitCode: 0 },
+      } });
+      finish("completed");
+    }
     if (process.env.RUDDER_TEST_DUAL_REASONING_STREAM === "1") {
       for (const delta of ["I will use ", "visualize once."]) {
         send({ method: "item/reasoning/summaryTextDelta", params: {
@@ -138,6 +151,40 @@ afterEach(async () => {
 });
 
 describe("executeCodexAppServerChat", () => {
+  it("attaches the trusted runtime cwd to command transcript entries", async () => {
+    const stdoutLines: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+      } as Record<string, string>,
+      prompt: "Read README.md",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stdout") stdoutLines.push(chunk.trim());
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const entries = stdoutLines.flatMap((line) => parseCodexStdoutLine(line, "2026-07-21T00:00:00.000Z"));
+    expect(entries).toContainEqual({
+      kind: "tool_call",
+      ts: "2026-07-21T00:00:00.000Z",
+      name: "command_execution",
+      toolUseId: "command-1",
+      input: { id: "command-1", command: "cat README.md", cwd: root },
+    });
+  });
+
   it("does not leak dispose rejection when setup logging fails before awaiting the turn", async () => {
     const result = await executeCodexAppServerChat({
       command: fakeCodex,

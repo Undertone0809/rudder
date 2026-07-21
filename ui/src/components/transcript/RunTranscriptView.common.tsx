@@ -40,6 +40,7 @@ export type TranscriptToolCategory =
 
 export type TranscriptDigestBucket =
   | "explore"
+  | "read"
   | "search"
   | "edit"
   | "run"
@@ -61,6 +62,12 @@ export interface TranscriptToolSemanticInfo {
   bucket: TranscriptDigestBucket;
   quantity: number;
   noun: "file" | "location" | "item" | "tool" | "command" | "skill";
+  fileTargets?: TranscriptFileTarget[];
+}
+
+export interface TranscriptFileTarget {
+  label: string;
+  path: string | null;
 }
 
 export interface TranscriptToolCardEntry {
@@ -101,6 +108,8 @@ export interface RunTranscriptViewProps {
   hideAssistantMessages?: boolean;
   /** For embedded chat process logs, remove only the final answer suffix while keeping progress notes visible. */
   hiddenAssistantMessageText?: string | null;
+  /** Open a structured local-file target without inferring paths from rendered prose. */
+  onOpenFile?: (targetPath: string, label: string) => void;
 }
 
 export type TranscriptBlock =
@@ -228,7 +237,6 @@ export const LOCAL_POSIX_FILE_ROOTS = [
   "/mnt/",
   "/private/",
 ];
-
 export type TranscriptMarkdownLinkClickHandler = MarkdownLinkClickHandler;
 
 export function asRecord(value: unknown): Record<string, unknown> | null {
@@ -261,6 +269,56 @@ export function resolveTranscriptLocalFileTarget(href: string | null | undefined
   if (value.startsWith("//")) return null;
   if (LOCAL_POSIX_FILE_ROOTS.some((root) => value.startsWith(root))) return value;
   return null;
+}
+
+function normalizePosixAbsolutePath(value: string): string {
+  const parts: string[] = [];
+  for (const part of value.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  return `/${parts.join("/")}`;
+}
+
+function normalizeWindowsAbsolutePath(value: string): string {
+  const normalized = value.replace(/\//g, "\\");
+  const prefix = normalized.match(/^(?:[A-Za-z]:|\\\\[^\\]+\\[^\\]+)/)?.[0] ?? "";
+  const remainder = normalized.slice(prefix.length);
+  const parts: string[] = [];
+  for (const part of remainder.split("\\")) {
+    if (!part || part === ".") continue;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  return `${prefix}\\${parts.join("\\")}`;
+}
+
+function resolveStructuredAbsoluteFileTarget(value: string | null | undefined): string | null {
+  const localTarget = resolveTranscriptLocalFileTarget(value);
+  if (localTarget) return localTarget;
+  const normalized = value?.trim();
+  if (!normalized || normalized.startsWith("//")) return null;
+  return normalized.startsWith("/") ? normalizePosixAbsolutePath(normalized) : null;
+}
+
+export function resolveTranscriptFileTarget(
+  target: string | null | undefined,
+  workingDirectory?: string | null,
+): string | null {
+  const value = target?.trim();
+  if (!value || /[*?{}[\]]/.test(value) || value.startsWith("~")) return null;
+
+  const absoluteTarget = resolveStructuredAbsoluteFileTarget(value);
+  if (absoluteTarget) return absoluteTarget;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("//")) return null;
+
+  const root = resolveStructuredAbsoluteFileTarget(workingDirectory);
+  if (!root) return null;
+  if (/^[A-Za-z]:[\\/]/.test(root) || /^\\\\/.test(root)) {
+    return normalizeWindowsAbsolutePath(`${root}\\${value}`);
+  }
+  return normalizePosixAbsolutePath(`${root}/${value.replace(/\\/g, "/")}`);
 }
 
 export function shouldHandlePlainClick(event: Parameters<MarkdownLinkClickHandler>[0]["event"]) {

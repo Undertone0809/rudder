@@ -173,7 +173,13 @@ describe("codex_local ui stdout parser", () => {
       parseCodexStdoutLine(
         JSON.stringify({
           type: "item.started",
-          item: { id: "item_2", type: "command_execution", command: "/bin/zsh -lc ls", status: "in_progress" },
+          item: {
+            id: "item_2",
+            type: "command_execution",
+            command: "/bin/zsh -lc cat README.md",
+            cwd: "/workspace/rudder",
+            status: "in_progress",
+          },
         }),
         ts,
       ),
@@ -183,7 +189,11 @@ describe("codex_local ui stdout parser", () => {
         ts,
         name: "command_execution",
         toolUseId: "item_2",
-        input: { id: "item_2", command: "/bin/zsh -lc ls" },
+        input: {
+          id: "item_2",
+          command: "/bin/zsh -lc cat README.md",
+          cwd: "/workspace/rudder",
+        },
       },
     ]);
 

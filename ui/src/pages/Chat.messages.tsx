@@ -2662,6 +2662,7 @@ export function StreamTranscriptItem({
   showDeveloperDiagnostics,
   defaultOpen = false,
   onOpenChange,
+  onOpenFile,
 }: {
   entries: TranscriptEntry[];
   steerMessages?: ChatMessage[];
@@ -2672,6 +2673,7 @@ export function StreamTranscriptItem({
   showDeveloperDiagnostics?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onOpenFile?: (targetPath: string, label: string) => void;
 }) {
   const timelineEntries = useMemo(
     () => mergeNativeSteerTranscriptEntries(entries, steerMessages),
@@ -2763,6 +2765,7 @@ export function StreamTranscriptItem({
               presentation="chat"
               showDeveloperDiagnostics={showDeveloperDiagnostics}
               hiddenAssistantMessageText={assistantMessageBody}
+              onOpenFile={onOpenFile}
             />
           </div>
         ) : null}

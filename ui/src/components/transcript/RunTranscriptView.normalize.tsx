@@ -14,6 +14,7 @@ export function formatSemanticDigest(
   }
 
   let exploreCount = 0;
+  let readCount = 0;
   let searchCount = 0;
   let editCount = 0;
   let runCount = 0;
@@ -29,6 +30,10 @@ export function formatSemanticDigest(
     }
     if (info.bucket === "search") {
       searchCount += info.quantity;
+      continue;
+    }
+    if (info.bucket === "read") {
+      readCount += info.quantity;
       continue;
     }
     if (info.bucket === "edit") {
@@ -54,8 +59,11 @@ export function formatSemanticDigest(
         : `Explored ${exploreCount} ${pluralize(noun, exploreCount)}`,
     );
   }
+  if (readCount > 0) {
+    parts.push(`Read ${readCount} ${pluralize("file", readCount)}`);
+  }
   if (searchCount > 0) {
-    parts.push(`${searchCount} ${pluralize("search", searchCount)}`);
+    parts.push(searchCount === 1 ? "Searched once" : `Searched ${searchCount} times`);
   }
   if (editCount > 0) {
     const noun = editNouns.size === 1 ? [...editNouns][0] : "item";

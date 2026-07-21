@@ -64,6 +64,15 @@ Behavior:
   such as `reasoning started` / `reasoning completed` or Rudder's internal
   result-envelope delimiters. Those raw entries remain attached to the run for
   diagnostics and audit.
+- Consecutive completed tool activity is summarized as a compact semantic digest
+  such as skills used, files read or edited, searches performed, and commands
+  run. Expanding the digest reveals the individual structured actions and keeps
+  command/tool request and response evidence available behind its own disclosure.
+- Read and edit actions retain structured file targets from provider tool input.
+  An absolute local target, or a relative target resolved against a recorded
+  absolute `workdir` / `cwd`, is directly openable from the activity row. A
+  relative target without that trusted execution root remains readable but is
+  not treated as an openable file.
 - Hidden lifecycle entries still delimit adjacent streamed text groups in the
   readable projection. The projection preserves readable boundaries between a
   completed message and a later delta group, and its display limit counts
@@ -92,6 +101,10 @@ Invariant:
 - Result projection must be monotonic with the accepted visible-output cutoff.
   Retries and recovery may fill missing terminal metadata, but cannot replace a
   stopped prefix with a later provider result.
+- Readable activity summaries, expanded rows, and file actions must be derived
+  from the same structured transcript evidence; rendered prose must never be
+  reparsed to guess a path. Live and persisted transcripts must project the same
+  semantic actions.
 
 Rationale:
 
@@ -109,6 +122,7 @@ Related code:
 - `ui/src/components/transcript/RunTranscriptView.normalize.tsx`
 - `ui/src/components/transcript/RunTranscriptView.tsx`
 - `ui/src/components/transcript/RunTranscriptView.chat.tsx`
+- `ui/src/components/transcript/RunTranscriptView.semantic.tsx`
 - `packages/agent-runtimes/codex-local/src/server/app-server-chat.ts`
 - `packages/agent-runtimes/codex-local/src/ui/parse-stdout.ts`
 - `packages/agent-runtimes/codex-local/src/server/parse.ts`
@@ -125,4 +139,5 @@ Related tests:
 - `tests/e2e/run-transcript-detail.spec.ts`
 - `tests/e2e/chat-concurrent-streaming.spec.ts`
 - `ui/src/components/transcript/RunTranscriptView.test.tsx`
+- `ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx`
 - `tests/e2e/chat-transcript-internal-events.spec.ts`

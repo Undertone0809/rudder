@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStack, TranscriptActionIconStatus, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
+import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStatus, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
@@ -169,12 +169,14 @@ export function TranscriptChatToolActionRow({
   inline = false,
   defaultOpenOnError = false,
   highlightError = true,
+  onOpenFile,
 }: {
   block: TranscriptToolCardEntry;
   density: TranscriptDensity;
   inline?: boolean;
   defaultOpenOnError?: boolean;
   highlightError?: boolean;
+  onOpenFile?: (targetPath: string, label: string) => void;
 }) {
   const semantic = describeToolSemanticInfo(block.name, block.input);
   const displaySummary = formatChatToolActionSummary(block, semantic, density);
@@ -211,49 +213,96 @@ export function TranscriptChatToolActionRow({
   const rowGapClass = compact ? "gap-1.5" : "gap-2";
   const trailingOffsetClass = compact ? "" : "pt-0.5";
   const chevronOffsetClass = compact ? "" : "mt-0.5";
+  const fileTargets = semantic.fileTargets ?? [];
+  const hasOpenableFileTargets = fileTargets.some((target) => target.path);
+  const detailLabel = open
+    ? `Collapse ${isCommand ? "command" : "tool"} details`
+    : `Expand ${isCommand ? "command" : "tool"} details`;
+  const toggleDetails = () => {
+    if (inline || !canExpand) return;
+    setOpen((value) => !value);
+  };
 
   return (
     <div
       className={cn(rowPaddingClass, highlightError && block.status === "error" && "-mx-2 rounded-lg bg-red-500/[0.04] px-2")}
       title={getTranscriptTimestampTitle(block.ts)}
     >
-      <button
-        type="button"
-        className={cn("flex w-full text-left", rowAlignmentClass, rowGapClass)}
-        onClick={() => {
-          if (inline) return;
-          if (!canExpand) return;
-          setOpen((value) => !value);
-        }}
-        aria-expanded={canExpand && !inline ? open : undefined}
-        aria-label={
-          canExpand && !inline
-            ? open
-              ? `Collapse ${isCommand ? "command" : "tool"} details`
-              : `Expand ${isCommand ? "command" : "tool"} details`
-            : undefined
-        }
-      >
-        <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} />
-        <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
-          {displaySummary}
-        </span>
-        {duration ? (
-          <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
-            {duration}
+      {hasOpenableFileTargets ? (
+        <div className={cn("flex w-full text-left", rowAlignmentClass, rowGapClass)}>
+          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} />
+          <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
+            {semantic.category === "edit" ? "Edited " : "Read "}
+            {fileTargets.map((target, index) => (
+              <span key={`${target.label}-${index}`}>
+                {index > 0 ? ", " : null}
+                {target.path ? (
+                  <button
+                    type="button"
+                    className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                    aria-label={`Open file ${target.label}`}
+                    data-transcript-file-target={target.path}
+                    onClick={() => onOpenFile?.(target.path!, target.label)}
+                  >
+                    {target.label}
+                  </button>
+                ) : (
+                  <span title="This relative file path has no trusted workspace root.">{target.label}</span>
+                )}
+              </span>
+            ))}
           </span>
-        ) : null}
-        {statusText ? (
-          <span className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
-            {statusText}
+          {duration ? (
+            <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
+              {duration}
+            </span>
+          ) : null}
+          {statusText ? (
+            <span className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
+              {statusText}
+            </span>
+          ) : null}
+          {canExpand && !inline ? (
+            <button
+              type="button"
+              className={cn("inline-flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40", chevronOffsetClass)}
+              onClick={toggleDetails}
+              aria-expanded={open}
+              aria-label={detailLabel}
+            >
+              <DisclosureChevron open={open} className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <button
+          type="button"
+          className={cn("flex w-full text-left", rowAlignmentClass, rowGapClass)}
+          onClick={toggleDetails}
+          aria-expanded={canExpand && !inline ? open : undefined}
+          aria-label={canExpand && !inline ? detailLabel : undefined}
+        >
+          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} />
+          <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
+            {displaySummary}
           </span>
-        ) : null}
-        {canExpand && !inline ? (
-          <span className={cn("inline-flex h-5 w-5 items-center justify-center text-muted-foreground", chevronOffsetClass)}>
-            <DisclosureChevron open={open} className="h-4 w-4" />
-          </span>
-        ) : null}
-      </button>
+          {duration ? (
+            <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
+              {duration}
+            </span>
+          ) : null}
+          {statusText ? (
+            <span className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
+              {statusText}
+            </span>
+          ) : null}
+          {canExpand && !inline ? (
+            <span className={cn("inline-flex h-5 w-5 items-center justify-center text-muted-foreground", chevronOffsetClass)}>
+              <DisclosureChevron open={open} className="h-4 w-4" />
+            </span>
+          ) : null}
+        </button>
+      )}
       {canExpand && open ? (
         command ? (
           <CommandTerminalDetail
@@ -298,12 +347,14 @@ export function TranscriptChatActionRow({
   inline = false,
   defaultOpenOnError = false,
   highlightError = true,
+  onOpenFile,
 }: {
   action: ChatTranscriptAction;
   density: TranscriptDensity;
   inline?: boolean;
   defaultOpenOnError?: boolean;
   highlightError?: boolean;
+  onOpenFile?: (targetPath: string, label: string) => void;
 }) {
   if (action.type === "stdout") {
     return <TranscriptChatStdoutActionRow block={action.entry} density={density} inline={inline} />;
@@ -316,6 +367,7 @@ export function TranscriptChatActionRow({
       inline={inline}
       defaultOpenOnError={defaultOpenOnError}
       highlightError={highlightError}
+      onOpenFile={onOpenFile}
     />
   );
 }
@@ -399,12 +451,14 @@ export function TranscriptChatActionGroup({
   detailVariant,
   groupIndex,
   groupCount,
+  onOpenFile,
 }: {
   actions: ChatTranscriptAction[];
   density: TranscriptDensity;
   detailVariant: boolean;
   groupIndex: number;
   groupCount: number;
+  onOpenFile?: (targetPath: string, label: string) => void;
 }) {
   const compact = density === "compact";
   const singleAction = actions[0];
@@ -418,7 +472,7 @@ export function TranscriptChatActionGroup({
   const summary = formatChatActionSummary(actions);
   const highlightGroupError = allToolsErrored && !detailVariant;
   const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : allToolsErrored));
-  const visibleGroupIcons = actions.slice(0, 3).map(getChatActionIconInfo);
+  const summaryIcon = getChatActionIconInfo(actions[0]!);
 
   useEffect(() => {
     if (!detailVariant && allToolsErrored) {
@@ -446,6 +500,7 @@ export function TranscriptChatActionGroup({
           density={density}
           defaultOpenOnError={false}
           highlightError={!detailVariant}
+          onOpenFile={onOpenFile}
         />
       </div>
     );
@@ -461,14 +516,19 @@ export function TranscriptChatActionGroup({
       <button
         type="button"
         className={cn(
-          "-mx-2 flex w-[calc(100%+1rem)] items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
+          "group/activity -mx-2 flex w-[calc(100%+1rem)] items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
           highlightGroupError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
         )}
         onClick={() => setDetailsOpen((value) => !value)}
         aria-expanded={detailsOpen}
         aria-label={expandedLabel}
       >
-        <TranscriptActionIconStack icons={visibleGroupIcons} highlightError={highlightGroupError} />
+        <span
+          className={cn("mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center", highlightGroupError && "rounded-full bg-red-500/[0.08]")}
+          data-transcript-action-summary-icon="true"
+        >
+          <TranscriptActionIcon category={summaryIcon.category} status={highlightGroupError ? "error" : "neutral"} />
+        </span>
         <span className="min-w-0 flex-1">
           <span className={cn(
             "block break-words text-foreground/82",
@@ -477,7 +537,11 @@ export function TranscriptChatActionGroup({
             {summary || "Tool details"}
           </span>
         </span>
-        <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground">
+        <span
+          className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity:opacity-100 group-focus-visible/activity:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100"
+          data-testid="transcript-action-group-disclosure"
+          data-transcript-disclosure-chevron="true"
+        >
           <DisclosureChevron open={detailsOpen} className="h-4 w-4" />
         </span>
       </button>
@@ -489,6 +553,7 @@ export function TranscriptChatActionGroup({
               key={action.key}
               action={action}
               density={density}
+              onOpenFile={onOpenFile}
             />
           ))}
         </div>
@@ -503,12 +568,14 @@ export function TranscriptChatTurn({
   thinkingClassName,
   variant = "chat",
   onMarkdownLinkClick,
+  onOpenFile,
 }: {
   turn: ChatTranscriptTurn;
   density: TranscriptDensity;
   thinkingClassName?: string;
   variant?: "chat" | "detail";
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
+  onOpenFile?: (targetPath: string, label: string) => void;
 }) {
   const detailVariant = variant === "detail";
   const segments = segmentChatTranscriptBlocks(turn.blocks);
@@ -534,6 +601,7 @@ export function TranscriptChatTurn({
               detailVariant={detailVariant}
               groupIndex={segments.slice(0, index).filter((item) => item.type === "actions").length}
               groupCount={actionGroupCount}
+              onOpenFile={onOpenFile}
             />
           )
       ))}
@@ -726,6 +794,7 @@ export function TranscriptChatTimeline({
   hiddenAssistantMessageText,
   showDeveloperDiagnostics,
   onMarkdownLinkClick,
+  onOpenFile,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
@@ -736,6 +805,7 @@ export function TranscriptChatTimeline({
   hiddenAssistantMessageText?: string | null;
   showDeveloperDiagnostics: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
+  onOpenFile?: (targetPath: string, label: string) => void;
 }) {
   const timelineEntries = useMemo(
     () => filterChatAssistantTranscriptEntries(entries, {
@@ -769,6 +839,7 @@ export function TranscriptChatTimeline({
           density={density}
           thinkingClassName={thinkingClassName}
           onMarkdownLinkClick={onMarkdownLinkClick}
+          onOpenFile={onOpenFile}
         />
       ))}
     </div>

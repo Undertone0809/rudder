@@ -358,7 +358,9 @@ export async function executeCodexAppServerChat(
         }
         await emit({
           type: notification.method === "item/started" ? "item.started" : "item.completed",
-          item,
+          item: item.type === "command_execution"
+            ? { ...item, cwd: options.cwd }
+            : item,
         });
         return;
       }

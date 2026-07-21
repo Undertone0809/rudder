@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
-import { normalizeTranscript, resolveTranscriptLocalFileTarget, RunTranscriptView } from "./RunTranscriptView";
+import { normalizeTranscript, resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget, RunTranscriptView } from "./RunTranscriptView";
 import { filterChatAssistantTranscriptEntries, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
 
@@ -44,6 +44,23 @@ function renderCommandSummary(command: string) {
     </ThemeProvider>,
   );
 }
+
+describe("transcript file target resolution", () => {
+  it("accepts cross-platform absolute paths and resolves relative paths against a trusted cwd", () => {
+    expect(resolveTranscriptFileTarget("/workspace/src/index.ts")).toBe("/workspace/src/index.ts");
+    expect(resolveTranscriptFileTarget("/root/project/../README.md")).toBe("/root/README.md");
+    expect(resolveTranscriptFileTarget("src/../README.md", "/workspace/project")).toBe("/workspace/project/README.md");
+    expect(resolveTranscriptFileTarget("src\\index.ts", "C:\\work\\rudder")).toBe("C:\\work\\rudder\\src\\index.ts");
+  });
+
+  it("rejects untrusted relative, glob, home-relative, network, and non-file URL targets", () => {
+    expect(resolveTranscriptFileTarget("README.md")).toBeNull();
+    expect(resolveTranscriptFileTarget("src/*.ts", "/workspace/project")).toBeNull();
+    expect(resolveTranscriptFileTarget("~/secret.txt", "/workspace/project")).toBeNull();
+    expect(resolveTranscriptFileTarget("https://example.com/file.ts")).toBeNull();
+    expect(resolveTranscriptFileTarget("//server/share/file.ts")).toBeNull();
+  });
+});
 
 describe("RunTranscriptView", () => {
   it("recognizes only local file targets for transcript links", () => {
@@ -1869,9 +1886,46 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Explored 2 files, 1 search, ran 1 command");
-    expect(html).toContain('data-transcript-action-group-icon-slot="true"');
+    expect(html).toContain("Read 2 files, searched once, ran 1 command");
+    expect(html).toContain('data-transcript-action-summary-icon="true"');
+    expect(html).not.toContain('data-transcript-action-group-icon-slot="true"');
     expect(html).not.toContain("Executed 4 commands");
+  });
+
+  it("renders readable file actions as direct open controls", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "read_file",
+              toolUseId: "read-1",
+              input: {
+                path: "docs/PRODUCT.md",
+                workdir: "/Users/zeeland/work/rudder",
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "read-1",
+              content: "product contract",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Read ");
+    expect(html).toContain("docs/PRODUCT.md");
+    expect(html).toContain('aria-label="Open file docs/PRODUCT.md"');
+    expect(html).toContain('data-transcript-file-target="/Users/zeeland/work/rudder/docs/PRODUCT.md"');
+    expect(html).toContain("underline-offset-4");
   });
 
   it("keeps mixed-success chat tool groups neutral and collapsed", () => {
@@ -2730,7 +2784,7 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Explored 1 file, 1 search, edited 1 file");
+    expect(html).toContain("Read 1 file, searched once, edited 1 file");
     expect(html).toContain('data-transcript-action-icon="read"');
     expect(html).toContain('data-transcript-action-icon="search"');
     expect(html).toContain('data-transcript-action-icon="edit"');

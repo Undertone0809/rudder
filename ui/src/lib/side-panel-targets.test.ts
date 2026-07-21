@@ -100,6 +100,10 @@ describe("side panel targets", () => {
     expect(sidePanelTargetKey(browserTarget)).toBe("browser-tab:browser-1");
     expect(sidePanelFullPageHref(browserTarget)).toBe("https://example.com");
 
+    const localFileTarget = { kind: "local_file", filePath: "/tmp/evidence.md", label: "evidence.md" } as const;
+    expect(sidePanelTargetKey(localFileTarget)).toBe("local-file:/tmp/evidence.md");
+    expect(sidePanelFullPageHref(localFileTarget)).toBeNull();
+
     const issuePlaceholder = { kind: "placeholder", targetKind: "issue", label: "Issue" } as const;
     expect(sidePanelTargetKey(issuePlaceholder)).toBe("placeholder:issue");
     expect(sidePanelFullPageHref(issuePlaceholder)).toBe("/issues");

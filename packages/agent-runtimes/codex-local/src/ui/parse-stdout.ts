@@ -145,6 +145,7 @@ function parseCommandExecutionItem(
   const output = asString(item.aggregated_output).replace(/\s+$/, "");
 
   if (phase === "started") {
+    const cwd = asString(item.cwd);
     return [{
       kind: "tool_call",
       ts,
@@ -153,6 +154,7 @@ function parseCommandExecutionItem(
       input: {
         id,
         command: safeCommand,
+        ...(cwd ? { cwd } : {}),
       },
     }];
   }

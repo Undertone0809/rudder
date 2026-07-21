@@ -230,6 +230,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         pathname: chatConversationPath(chatMessageTarget.conversationId),
         search: `?messageId=${encodeURIComponent(chatMessageTarget.messageId)}`,
       }); return true; } const targetPath = resolveLocalFileTarget(href); if (!targetPath) return; event.preventDefault(); event.stopPropagation(); openLocalFile(targetPath); return true; }, [chatConversationPath, navigate, openLocalFile, openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const composerContextMenuOpen = projectMenuOpen || agentMenuOpen || skillMenuOpen;
+  const openTranscriptFile = useCallback((targetPath: string, label: string) => {
+    openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+      kind: "local_file",
+      filePath: targetPath,
+      label,
+    });
+  }, [openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]);
   useEffect(() => { activeDraftScopeRef.current = draftStorageScopeKey; }, [draftStorageScopeKey]); const closeComposerContextMenus = useCallback(() => { setProjectMenuOpen(false); setAgentMenuOpen(false); setSkillMenuOpen(false); setSkillSearchQuery(""); }, []); const openComposerContextMenu = useCallback((kind: "project" | "agent" | "skill") => { const anchor = composerSurfaceRef.current;
     if (anchor) {
       setComposerMenuPosition(composerMenuPositionForAnchor(anchor)); } setProjectMenuOpen(kind === "project"); setAgentMenuOpen(kind === "agent"); setSkillMenuOpen(kind === "skill");
@@ -2883,7 +2890,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     state={activeStream.state}
                                     streamStartedAt={activeStream.createdAt}
                                     assistantMessageBody={activeStream.body}
-                                    showDeveloperDiagnostics={showDeveloperDiagnostics} />
+                                    showDeveloperDiagnostics={showDeveloperDiagnostics}
+                                    onOpenFile={openTranscriptFile} />
                                   <AssistantDraftItem
                                     body={activeStream.body}
                                     createdAt={activeStream.createdAt}
@@ -2918,7 +2926,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     streamEndedAt={persistedProcessEndedAt}
                                     assistantMessageBody={message.body}
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
-                                    defaultOpen={Boolean(openProcessMessageIds[message.id])} onOpenChange={(open) => setProcessOpenForMessage(message.id, open)} /> ) : shouldRenderLazyTranscript && message.transcriptSummary ? (
+                                    defaultOpen={Boolean(openProcessMessageIds[message.id])} onOpenChange={(open) => setProcessOpenForMessage(message.id, open)}
+                                    onOpenFile={openTranscriptFile} /> ) : shouldRenderLazyTranscript && message.transcriptSummary ? (
                                   <LazyStreamTranscriptItem
                                     summary={message.transcriptSummary}
                                     state={message.status}
