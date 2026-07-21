@@ -226,7 +226,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const handleChatMarkdownLinkClick = useCallback<MarkdownLinkClickHandler>(({ event, href, label }) => { if (!shouldHandlePlainChatLinkClick(event)) return; const sidePanelTarget = chatSidePanelTargetFromHref(href, label); if (sidePanelTarget) { event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), sidePanelTarget); return true; } const chatMessageTarget = chatMessageJumpTargetFromHref(href); if (chatMessageTarget) { event.preventDefault(); event.stopPropagation(); navigate({
         pathname: chatConversationPath(chatMessageTarget.conversationId),
         search: `?messageId=${encodeURIComponent(chatMessageTarget.messageId)}`,
-      }); return true; } const targetPath = resolveLocalFileTarget(href); if (!targetPath) return; event.preventDefault(); event.stopPropagation(); openLocalFile(targetPath); return true; }, [chatConversationPath, navigate, openLocalFile, openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const composerContextMenuOpen = projectMenuOpen || agentMenuOpen || skillMenuOpen;
+      }); return true; } const targetPath = resolveLocalFileTarget(href, label); if (!targetPath) return; event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+        kind: "local_file",
+        filePath: targetPath,
+        label: label.trim() || targetPath.split(/[\\/]/u).at(-1) || targetPath,
+      }); return true; }, [chatConversationPath, navigate, openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const composerContextMenuOpen = projectMenuOpen || agentMenuOpen || skillMenuOpen;
   const openTranscriptFile = useCallback((targetPath: string, label: string) => {
     openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
       kind: "local_file",

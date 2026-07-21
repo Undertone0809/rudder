@@ -108,6 +108,8 @@ const mockState = vi.hoisted(() => ({
   streamDrafts: {} as Record<string, ChatStreamDraft>,
   intelligenceProfiles: [] as Array<{ id: string; orgId: string; purpose: string; status: string }>,
   browserShortcutListener: null as ((action: BrowserShortcutAction) => void) | null,
+  openPath: vi.fn(),
+  previewLocalFile: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -1540,6 +1542,8 @@ beforeEach(() => {
           if (mockState.browserShortcutListener === listener) mockState.browserShortcutListener = null;
         };
       }),
+      openPath: mockState.openPath,
+      previewLocalFile: mockState.previewLocalFile,
     },
   });
 });
@@ -1612,6 +1616,46 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel).not.toBeNull();
     return sidePanel!;
   }
+
+  it("opens a local file link with a source location in the Side Panel", async () => {
+    mockState.openPath.mockResolvedValue(undefined);
+    mockState.previewLocalFile.mockResolvedValue({
+      canonicalPath: "/Users/zeeland/projects/rudder-oss/ui/src/pages/Chat.parts.tsx",
+      fileName: "Chat.parts.tsx",
+      parentPath: "/Users/zeeland/projects/rudder-oss/ui/src/pages",
+      contentType: "image/png",
+      previewKind: "image",
+      content: null,
+      base64: "iVBORw0KGgo=",
+      sizeBytes: 28,
+      modifiedAt: "2026-07-21T00:00:00.000Z",
+      truncated: false,
+    });
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "assistant-local-file-link",
+        role: "assistant",
+        body: "Inspect [Chat.parts.tsx](/Users/zeeland/projects/rudder-oss/ui/src/pages/Chat.parts.tsx:656).",
+        replyingAgentId: "agent-1",
+      })],
+    };
+
+    const { container } = renderChat();
+    const link = container.querySelector<HTMLAnchorElement>('a[href$="Chat.parts.tsx:656"]');
+    expect(link).not.toBeNull();
+
+    await act(async () => {
+      link?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockState.previewLocalFile).toHaveBeenCalledWith(
+      "/Users/zeeland/projects/rudder-oss/ui/src/pages/Chat.parts.tsx",
+    );
+    expect(mockState.openPath).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Chat.parts.tsx");
+  });
 
   it("opens a supported chat reference in the Side Panel without leaving the current chat", async () => {
     mockState.messagesByChatId = {

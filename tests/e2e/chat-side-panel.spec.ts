@@ -86,6 +86,39 @@ async function installDesktopShellFileLauncherStub(page: Page) {
   });
 }
 
+async function installDesktopShellLocalFilePreviewStub(page: Page, expectedPath: string) {
+  await page.addInitScript((targetPath) => {
+    const previewCalls: string[] = [];
+    Object.defineProperty(window, "__rudderLocalFilePreviewCalls", {
+      configurable: true,
+      value: previewCalls,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        openPath: async () => {},
+        previewLocalFile: async (filePath: string) => {
+          previewCalls.push(filePath);
+          if (filePath !== targetPath) throw new Error(`Unexpected local file path: ${filePath}`);
+          return {
+            canonicalPath: targetPath,
+            fileName: "Chat.parts.tsx",
+            parentPath: targetPath.slice(0, targetPath.lastIndexOf("/")),
+            contentType: "text/plain; charset=utf-8",
+            previewKind: "text",
+            content: "export const localFileSidePanelEvidence = true;",
+            base64: null,
+            sizeBytes: 47,
+            modifiedAt: "2026-07-21T00:00:00.000Z",
+            truncated: false,
+          };
+        },
+        setSidePanelCloseShortcutActive: async () => {},
+      },
+    });
+  }, expectedPath);
+}
+
 async function installBrowserDesktopStub(page: Page) {
   await page.addInitScript(() => {
     Object.defineProperty(window, "desktopShell", {
@@ -117,6 +150,73 @@ async function installEnabledBrowserSettingsStub(page: Page) {
 }
 
 test.describe("Chat Side Panel", () => {
+  test("opens source-located local file links in the Side Panel with a file icon", async ({ page }, testInfo) => {
+    const localFilePath = "/Users/zeeland/projects/rudder-oss/ui/src/pages/Chat.parts.tsx";
+    await installDesktopShellLocalFilePreviewStub(page, localFilePath);
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Side-Panel-Local-File-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Local File Agent" });
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Local file side panel host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Show the referenced source file beside this chat." },
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Inspect [Chat.parts.tsx](${localFilePath}:656).`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    const localFileLink = assistantMessage.getByRole("link", { name: "Chat.parts.tsx" });
+    await expect(localFileLink).toBeVisible({ timeout: 15_000 });
+    await expect(localFileLink.locator('[data-local-file-icon="code"]')).toBeVisible();
+    await localFileLink.click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel.getByTestId("chat-side-panel-local-file-view")).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel).toContainText("Chat.parts.tsx");
+    await expect(sidePanel.getByTestId("transcript-local-file-code-preview")).toContainText(
+      "localFileSidePanelEvidence",
+    );
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __rudderLocalFilePreviewCalls?: string[] }).__rudderLocalFilePreviewCalls ?? []
+    ))).toEqual(expect.arrayContaining([localFilePath]));
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-local-file-link.png"),
+      fullPage: true,
+    });
+  });
+
   test("renders the full issue detail body when an issue Side Panel tab is expanded", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
