@@ -130,7 +130,7 @@ export async function discoverLocalAppDefinition(
     executable: await inferPackageManager(root),
     argv: ["run", scriptName],
     cwd: root,
-    inheritedEnvNames: ["PATH"],
+    inheritedEnvNames: [],
     readiness: {
       path: optionalRoute(readiness.path, documented.readinessPath ?? "/api/health"),
       timeoutMs: optionalTimeout(readiness.timeoutMs),

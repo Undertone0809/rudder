@@ -1,6 +1,8 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { constants as fsConstants } from "node:fs";
+import { access, realpath } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,6 +53,7 @@ type TerminationOptions = {
 
 type RuntimeManagerOptions = {
   registry: LocalAppRegistry;
+  hostExecutablePath?: string;
   platform?: NodeJS.Platform;
   maxLogBytes?: number;
   verifyListenerOwnership?: (input: { port: number; pid: number; pgid: number }) => Promise<boolean>;
@@ -166,12 +169,48 @@ async function defaultVerifyListenerOwnership(input: { port: number; pid: number
   }
 }
 
-function buildChildEnvironment(definition: LocalAppDefinition, port: number): NodeJS.ProcessEnv {
+async function trustedNodeBinForExecutable(executable: string): Promise<string | null> {
+  const marker = `${path.sep}lib${path.sep}node_modules${path.sep}`;
+  const markerIndex = executable.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const prefix = executable.slice(0, markerIndex) || path.parse(executable).root;
+  try {
+    const binDirectory = await realpath(path.join(prefix, "bin"));
+    const nodeExecutable = await realpath(path.join(binDirectory, "node"));
+    await access(nodeExecutable, fsConstants.X_OK);
+    return binDirectory;
+  } catch {
+    return null;
+  }
+}
+
+async function trustedExecutablePath(
+  definition: LocalAppDefinition,
+  hostExecutablePath: string,
+): Promise<string> {
+  const trustedNodeBin = await trustedNodeBinForExecutable(definition.executable);
+  return [...new Set([
+    path.dirname(definition.executable),
+    trustedNodeBin,
+    path.dirname(hostExecutablePath),
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ].filter((entry): entry is string => Boolean(entry)))].join(path.delimiter);
+}
+
+async function buildChildEnvironment(
+  definition: LocalAppDefinition,
+  port: number,
+  hostExecutablePath: string,
+): Promise<NodeJS.ProcessEnv> {
   const environment: NodeJS.ProcessEnv = {
-    PATH: [path.dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(path.delimiter),
+    PATH: await trustedExecutablePath(definition, hostExecutablePath),
     TMPDIR: process.env.TMPDIR ?? "/tmp",
   };
   for (const name of definition.inheritedEnvNames) {
+    if (name === "PATH") continue;
     const value = process.env[name];
     if (typeof value === "string") environment[name] = value;
   }
@@ -195,6 +234,7 @@ function publicView(record: RuntimeRecord): LocalAppRuntimeView {
 
 export class LocalAppRuntimeManager {
   private readonly registry: LocalAppRegistry;
+  private readonly hostExecutablePath: string;
   private readonly platform: NodeJS.Platform;
   private readonly maxLogBytes: number;
   private readonly verifyListenerOwnership: (input: { port: number; pid: number; pgid: number }) => Promise<boolean>;
@@ -206,6 +246,7 @@ export class LocalAppRuntimeManager {
 
   constructor(options: RuntimeManagerOptions) {
     this.registry = options.registry;
+    this.hostExecutablePath = options.hostExecutablePath ?? process.execPath;
     this.platform = options.platform ?? process.platform;
     this.maxLogBytes = Math.max(256, options.maxLogBytes ?? 64 * 1024);
     this.verifyListenerOwnership = options.verifyListenerOwnership ?? defaultVerifyListenerOwnership;
@@ -257,7 +298,8 @@ export class LocalAppRuntimeManager {
     return this.persistedStatus(id, definition);
   }
 
-  private spawnHelper(record: RuntimeRecord, port: number): Promise<{ pid: number; pgid: number }> {
+  private async spawnHelper(record: RuntimeRecord, port: number): Promise<{ pid: number; pgid: number }> {
+    const environment = await buildChildEnvironment(record.definition, port, this.hostExecutablePath);
     return new Promise((resolve, reject) => {
       const helper = this.spawnWatchdog(process.execPath, [this.watchdogRunnerPath], {
         env: { ELECTRON_RUN_AS_NODE: "1" },
@@ -308,7 +350,7 @@ export class LocalAppRuntimeManager {
         executable: record.definition.executable,
         argv: record.definition.argv,
         cwd: record.definition.cwd,
-        env: buildChildEnvironment(record.definition, port),
+        env: environment,
       }, (error) => { if (error) finish(error); });
     });
   }

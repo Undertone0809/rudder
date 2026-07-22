@@ -68,6 +68,7 @@ export class LocalAppsController {
   private readonly runtime: RuntimeController;
   private readonly selectFolder: () => Promise<string | null>;
   private readonly confirmDefinition: ControllerOptions["confirmDefinition"];
+  private readonly bindingOperations = new Map<string, Promise<void>>();
 
   constructor(options: ControllerOptions) {
     this.registry = options.registry;
@@ -96,38 +97,57 @@ export class LocalAppsController {
     }
   }
 
+  private async withBindingOperation<T>(id: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.bindingOperations.get(id) ?? Promise.resolve();
+    const result = previous.then(operation);
+    const completion = result.then(() => undefined, () => undefined);
+    this.bindingOperations.set(id, completion);
+    try {
+      return await result;
+    } finally {
+      if (this.bindingOperations.get(id) === completion) this.bindingOperations.delete(id);
+    }
+  }
+
   async createDefinition(input: unknown): Promise<LocalAppDefinition> {
     const prepared = await this.registry.prepareDefinition(rendererDraft(input));
     await this.requireNativeConfirmation(prepared, "create");
     const created = await this.registry.createDefinition(prepared);
-    return this.registry.approveDefinition(created.id, prepared.trustFingerprint);
+    return this.withBindingOperation(created.id, () =>
+      this.registry.approveDefinition(created.id, prepared.trustFingerprint));
   }
 
   async updateDefinition(id: string, input: unknown): Promise<LocalAppDefinition> {
-    ensureInactive((await this.runtime.status(id)).status, "update");
-    const prepared = await this.registry.prepareDefinition(rendererDraft(input));
-    const previous = await this.registry.getDefinition(id);
-    const requiresReview = previous.trustFingerprint !== prepared.trustFingerprint
-      || previous.approvedFingerprint !== prepared.trustFingerprint;
-    if (requiresReview) await this.requireNativeConfirmation(prepared, "update");
-    const updated = await this.registry.updateDefinition(id, prepared);
-    return requiresReview
-      ? this.registry.approveDefinition(updated.id, updated.trustFingerprint)
-      : updated;
+    return this.withBindingOperation(id, async () => {
+      ensureInactive((await this.runtime.status(id)).status, "update");
+      const prepared = await this.registry.prepareDefinition(rendererDraft(input));
+      const previous = await this.registry.getDefinition(id);
+      const requiresReview = previous.trustFingerprint !== prepared.trustFingerprint
+        || previous.approvedFingerprint !== prepared.trustFingerprint;
+      if (requiresReview) await this.requireNativeConfirmation(prepared, "update");
+      const updated = await this.registry.updateDefinition(id, prepared);
+      return requiresReview
+        ? this.registry.approveDefinition(updated.id, updated.trustFingerprint)
+        : updated;
+    });
   }
 
   async deleteDefinition(id: string): Promise<void> {
-    ensureInactive((await this.runtime.status(id)).status, "delete");
-    await this.registry.deleteDefinition(id);
+    await this.withBindingOperation(id, async () => {
+      ensureInactive((await this.runtime.status(id)).status, "delete");
+      await this.registry.deleteDefinition(id);
+    });
   }
 
   async start(id: string): Promise<LocalAppRuntimeView> {
-    const definition = await this.registry.getDefinition(id);
-    if (definition.approvedFingerprint !== definition.trustFingerprint) {
-      await this.requireNativeConfirmation(definition, "start");
-      await this.registry.approveDefinition(id, definition.trustFingerprint);
-    }
-    return this.runtime.start(id);
+    return this.withBindingOperation(id, async () => {
+      const definition = await this.registry.getDefinition(id);
+      if (definition.approvedFingerprint !== definition.trustFingerprint) {
+        await this.requireNativeConfirmation(definition, "start");
+        await this.registry.approveDefinition(id, definition.trustFingerprint);
+      }
+      return this.runtime.start(id);
+    });
   }
 
   async stop(id: string): Promise<LocalAppRuntimeView> {

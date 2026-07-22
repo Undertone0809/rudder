@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { mkdtemp } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { LocalAppRegistry } from "./local-apps-registry.js";
 import {
@@ -29,7 +29,11 @@ async function unusedLoopbackPort(): Promise<number> {
   });
 }
 
-async function approvedFixture(options: { readinessPath?: string; maxLogBytes?: number } = {}) {
+async function approvedFixture(options: {
+  inheritedEnvNames?: string[];
+  readinessPath?: string;
+  readinessTimeoutMs?: number;
+} = {}) {
   const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-runtime-"));
   const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
   const prepared = await registry.prepareDefinition({
@@ -37,8 +41,8 @@ async function approvedFixture(options: { readinessPath?: string; maxLogBytes?: 
     executable: process.execPath,
     argv: [fixturePath],
     cwd: root,
-    inheritedEnvNames: [],
-    readiness: { path: options.readinessPath ?? "/health", timeoutMs: 4_000 },
+    inheritedEnvNames: options.inheritedEnvNames ?? [],
+    readiness: { path: options.readinessPath ?? "/health", timeoutMs: options.readinessTimeoutMs ?? 4_000 },
     openPath: "/app",
   });
   const definition = await registry.createDefinition({ ...prepared, approvedFingerprint: prepared.trustFingerprint });
@@ -47,6 +51,92 @@ async function approvedFixture(options: { readinessPath?: string; maxLogBytes?: 
 }
 
 describe("Desktop Local App runtime", () => {
+  it("derives a trusted Node bin for a realpathed npm CLI when the Desktop executable has no node", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-npm-prefix-"));
+    const prefix = path.join(root, "node-prefix");
+    const npmBin = path.join(prefix, "lib", "node_modules", "npm", "bin");
+    const trustedBin = path.join(prefix, "bin");
+    await mkdir(npmBin, { recursive: true });
+    await mkdir(trustedBin, { recursive: true });
+    const trustedNode = path.join(trustedBin, "node");
+    await writeFile(trustedNode, [
+      "#!/bin/sh",
+      "export RUDDER_TRUSTED_NODE_PREFIX=1",
+      `exec '${process.execPath}' "$@"`,
+      "",
+    ].join("\n"));
+    await chmod(trustedNode, 0o755);
+    const npmCli = path.join(npmBin, "npm-cli.js");
+    await writeFile(npmCli, [
+      "#!/usr/bin/env node",
+      "if (process.env.RUDDER_TRUSTED_NODE_PREFIX !== '1') process.exit(86);",
+      `await import(${JSON.stringify(pathToFileURL(fixturePath).href)});`,
+      "",
+    ].join("\n"));
+    await chmod(npmCli, 0o755);
+
+    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+    const prepared = await registry.prepareDefinition({
+      title: "npm shebang fixture",
+      executable: npmCli,
+      argv: [],
+      cwd: root,
+      inheritedEnvNames: [],
+      readiness: { path: "/health", timeoutMs: 4_000 },
+      openPath: "/app",
+    });
+    const definition = await registry.createDefinition({ ...prepared, approvedFingerprint: prepared.trustFingerprint });
+    await registry.approveDefinition(definition.id, prepared.trustFingerprint);
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      hostExecutablePath: path.join(root, "Rudder.app", "Contents", "MacOS", "Rudder"),
+    });
+    try {
+      const running = await manager.start(definition.id);
+      expect((await fetch(`${running.origin}/health`)).status).toBe(200);
+    } finally {
+      await manager.stop(definition.id).catch(() => undefined);
+    }
+  });
+
+  it("keeps an inherited attacker PATH from replacing the trusted executable path", async () => {
+    const attackerRoot = await mkdtemp(path.join(tmpdir(), "rudder-local-app-path-attacker-"));
+    const attackerExecutable = path.join(attackerRoot, "node");
+    const attackerMarker = path.join(attackerRoot, "executed");
+    await writeFile(attackerExecutable, [
+      "#!/bin/sh",
+      `printf attacked > '${attackerMarker}'`,
+      "printf attacker-node",
+      "",
+    ].join("\n"));
+    await chmod(attackerExecutable, 0o755);
+
+    const previousPath = process.env.PATH;
+    process.env.PATH = attackerRoot;
+    const { registry, definition } = await approvedFixture({ inheritedEnvNames: ["PATH"] });
+    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+    try {
+      const running = await manager.start(definition.id);
+      const probe = await fetch(`${running.origin}/path-probe`).then((response) => response.text());
+      const childEnvironment = await fetch(`${running.origin}/env`).then((response) => response.json()) as {
+        path?: string;
+      };
+      const childPath = childEnvironment.path?.split(path.delimiter) ?? [];
+
+      expect(probe).toBe(await realpath(process.execPath));
+      expect(childPath[0]).toBe(path.dirname(definition.executable));
+      expect(childPath).toContain(path.dirname(process.execPath));
+      expect(childPath).toEqual(expect.arrayContaining(["/usr/bin", "/bin", "/usr/sbin", "/sbin"]));
+      expect(childPath).not.toContain(attackerRoot);
+      await expect(access(attackerMarker)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await manager.stop(definition.id).catch(() => undefined);
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+  });
+
   it("spawns shell-free on an automatic loopback port, deduplicates start, bounds logs, and attests origin/partition", async () => {
     const { registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({ registry, platform: "darwin", maxLogBytes: 256 });
@@ -70,7 +160,7 @@ describe("Desktop Local App runtime", () => {
   });
 
   it("fails closed on readiness failure or unproven listener ownership", async () => {
-    const wrongHealth = await approvedFixture({ readinessPath: "/never" });
+    const wrongHealth = await approvedFixture({ readinessPath: "/never", readinessTimeoutMs: 1_000 });
     const timeoutManager = new LocalAppRuntimeManager({ registry: wrongHealth.registry, platform: "darwin" });
     await expect(timeoutManager.start(wrongHealth.definition.id)).rejects.toThrow("readiness");
     expect((await timeoutManager.status(wrongHealth.definition.id)).status).toBe("failed");

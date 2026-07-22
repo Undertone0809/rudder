@@ -26,6 +26,7 @@ describe("Desktop Local App discovery", () => {
       title: "safe-dashboard",
       cwd: await import("node:fs/promises").then(({ realpath }) => realpath(root)),
       argv: ["run", "dev"],
+      inheritedEnvNames: [],
       readiness: { path: "/api/health" },
       openPath: "/",
     });

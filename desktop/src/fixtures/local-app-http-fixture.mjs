@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import http from "node:http";
 
 const port = Number.parseInt(process.env.PORT ?? "0", 10);
@@ -11,6 +12,11 @@ const server = http.createServer((request, response) => {
   if (request.url === "/env") {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ path: process.env.PATH }));
+    return;
+  }
+  if (request.url === "/path-probe") {
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.end(execFileSync("node", ["-p", "process.execPath"], { encoding: "utf8" }).trim());
     return;
   }
   if (request.url === "/app" || request.url === "/") {
