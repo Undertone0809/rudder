@@ -484,6 +484,7 @@ async function createChat(baseUrl, companyId) {
       title: "Desktop browser smoke chat",
       issueCreationMode: "manual_approval",
       planMode: false,
+      initialMessage: { body: "Open a browser beside this chat." },
     }),
   });
   if (response.status !== 201) {
@@ -1666,14 +1667,72 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
     "resize smoke requires a real Electron Browser webview",
   );
 
+  const originalContentSize = await electronApp.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    if (!window) throw new Error("native resize smoke requires a BrowserWindow");
+    const [width, height] = window.getContentSize();
+    const [minimumWidth, minimumHeight] = window.getMinimumSize();
+    return { width, height, minimumWidth, minimumHeight };
+  });
+  const setNativeViewportWidth = async (width, height = 900) => {
+    await electronApp.evaluate(({ BrowserWindow }, nextSize) => {
+      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!window) throw new Error("native resize smoke requires a BrowserWindow");
+      window.setMinimumSize(nextSize.minimumWidth, nextSize.minimumHeight);
+      window.setContentSize(nextSize.width, nextSize.height);
+    }, {
+      width,
+      height,
+      minimumWidth: Math.min(width, originalContentSize.minimumWidth),
+      minimumHeight: Math.min(height, originalContentSize.minimumHeight),
+    });
+    await page.waitForFunction(
+      (expectedWidth) => Math.abs(window.innerWidth - expectedWidth) <= 2,
+      width,
+      { timeout: 5_000 },
+    );
+  };
+  const waitForSidePanelGeometryToSettle = async () => {
+    await page.evaluate(async () => {
+      let previous = null;
+      let stableFrames = 0;
+      for (let frame = 0; frame < 120; frame += 1) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const panel = document.querySelector("[data-testid='chat-side-panel']");
+        const resizer = document.querySelector("[data-testid='side-panel-resizer']");
+        if (!(panel instanceof HTMLElement) || !(resizer instanceof HTMLElement)) {
+          stableFrames = 0;
+          previous = null;
+          continue;
+        }
+        const panelBox = panel.getBoundingClientRect();
+        const resizerBox = resizer.getBoundingClientRect();
+        const current = [panelBox.width, resizerBox.x];
+        if (previous
+          && Math.abs(current[0] - previous[0]) <= 0.25
+          && Math.abs(current[1] - previous[1]) <= 0.25) {
+          stableFrames += 1;
+          if (stableFrames >= 6) return;
+        } else {
+          stableFrames = 0;
+        }
+        previous = current;
+      }
+      throw new Error("Side Panel geometry did not settle after the native window resize");
+    });
+  };
+
   const beginResizeDrag = async (box) => {
-    const pointerY = box.y + box.height / 2;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
-      await page.mouse.move(box.x + box.width / 2, pointerY);
+      const hitTargetBox = await page.getByTestId("side-panel-resizer-hit-target").boundingBox();
+      const pointerBox = hitTargetBox ?? box;
+      const pointerX = pointerBox.x + pointerBox.width / 2;
+      const pointerY = pointerBox.y + pointerBox.height / 2;
+      await page.mouse.move(pointerX, pointerY);
       await page.mouse.down();
       try {
         await page.getByTestId("side-panel-resize-shield").waitFor({ state: "visible", timeout: 2_000 });
-        return pointerY;
+        return { pointerX, pointerY };
       } catch (error) {
         await page.mouse.up();
         if (attempt === 3) throw error;
@@ -1687,11 +1746,125 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
     const resizer = page.getByTestId("side-panel-resizer");
     const box = await resizer.boundingBox();
     assert.ok(box, "Side Panel resizer should have geometry");
-    const pointerY = await beginResizeDrag(box);
+    const { pointerY } = await beginResizeDrag(box);
     await page.mouse.move(targetX, pointerY, { steps: 12 });
     await page.mouse.up();
     await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
   };
+
+  for (const viewportWidth of [994, 1440]) {
+    await setNativeViewportWidth(viewportWidth);
+    await waitForSidePanelGeometryToSettle();
+    assert.equal(
+      await waitForActiveWebview(),
+      expectedUrl,
+      `resizing the native window to ${viewportWidth}px should preserve the Browser guest`,
+    );
+
+    const resizer = page.getByTestId("side-panel-resizer");
+    await page.waitForFunction(() => {
+      const divider = document.querySelector("[data-testid='side-panel-resizer']");
+      const hitTarget = document.querySelector("[data-testid='side-panel-resizer-hit-target']");
+      if (!(divider instanceof HTMLElement) || !(hitTarget instanceof HTMLElement)) return false;
+      const rect = hitTarget.getBoundingClientRect();
+      const edgeTarget = document.elementFromPoint(rect.left + 0.5, rect.top + rect.height / 2);
+      return divider.offsetWidth === 4
+        && hitTarget.offsetWidth >= 10
+        && (edgeTarget === hitTarget || hitTarget.contains(edgeTarget));
+    }, null, { timeout: 5_000 });
+    const [stackBox, initialPanelBox, initialResizerBox] = await Promise.all([
+      page.getByTestId("workspace-main-panel-stack").boundingBox(),
+      sidePanel.boundingBox(),
+      resizer.boundingBox(),
+    ]);
+    assert.ok(stackBox && initialPanelBox && initialResizerBox, `Side Panel should be docked at ${viewportWidth}px`);
+
+    const { stackLayoutWidth, resizerLayoutWidth } = await page.evaluate(() => ({
+      stackLayoutWidth: document.querySelector("[data-testid='workspace-main-panel-stack']")?.offsetWidth ?? 0,
+      resizerLayoutWidth: document.querySelector("[data-testid='side-panel-resizer']")?.offsetWidth ?? 0,
+    }));
+    assert.ok(
+      stackLayoutWidth > 0 && resizerLayoutWidth > 0,
+      "Side Panel layout geometry should be measurable",
+    );
+    const visualScale = stackBox.width / stackLayoutWidth;
+    const boundaryWidth = (stackLayoutWidth - resizerLayoutWidth) * (2 / 3) * visualScale;
+    assert.ok(initialPanelBox.width < boundaryWidth - 8, `Side Panel should start below the 2:1 boundary at ${viewportWidth}px`);
+    const { pointerX: startPointerX, pointerY } = await beginResizeDrag(initialResizerBox);
+    let pointerX = startPointerX;
+    let previousPanelWidth = initialPanelBox.width;
+    let previousResizerX = initialResizerBox.x;
+
+    for (const targetPanelWidth of [boundaryWidth - 16, boundaryWidth - 8]) {
+      let reachedTarget = false;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const currentPanelBox = await sidePanel.boundingBox();
+        assert.ok(currentPanelBox, "Side Panel should remain measurable during boundary drag");
+        const widthError = targetPanelWidth - currentPanelBox.width;
+        if (Math.abs(widthError) <= 4) {
+          reachedTarget = true;
+          break;
+        }
+        pointerX -= widthError;
+        await page.mouse.move(pointerX, pointerY, { steps: 12 });
+        await page.waitForTimeout(100);
+        assert.equal(
+          await page.getByTestId("side-panel-expanded-overlay").count(),
+          0,
+          "feedback drag should remain docked before the 2:1 boundary",
+        );
+      }
+      assert.ok(reachedTarget, `Side Panel should reach the ${targetPanelWidth}px pre-boundary target`);
+      const [panelBox, resizerBox, mainBox] = await Promise.all([
+        sidePanel.boundingBox(),
+        resizer.boundingBox(),
+        page.getByTestId("workspace-main-card").boundingBox(),
+      ]);
+      assert.ok(panelBox && resizerBox && mainBox, "pre-threshold resize geometry should remain measurable");
+      assert.ok(panelBox.width >= previousPanelWidth - 2, "pre-threshold panel width should grow monotonically");
+      assert.ok(resizerBox.x <= previousResizerX + 2, "pre-threshold resizer should move monotonically left");
+      assert.ok(
+        panelBox.width <= boundaryWidth + 4,
+        "the exact 2:1 workspace boundary should remain docked",
+      );
+      previousPanelWidth = panelBox.width;
+      previousResizerX = resizerBox.x;
+    }
+
+    const preCrossPanelBox = await sidePanel.boundingBox();
+    assert.ok(preCrossPanelBox, "Side Panel should remain measurable before boundary crossing");
+    pointerX -= boundaryWidth + 8 - preCrossPanelBox.width;
+    await page.mouse.move(pointerX, pointerY, { steps: 8 });
+    await page.getByTestId("side-panel-expanded-overlay").waitFor({ state: "visible", timeout: 5_000 });
+    await resizer.waitFor({ state: "hidden", timeout: 5_000 });
+    await page.mouse.up();
+    await page.getByTestId("side-panel-resize-shield").waitFor({ state: "detached", timeout: 5_000 });
+    await page.waitForFunction(() => {
+      const stack = document.querySelector("[data-testid='workspace-main-panel-stack']");
+      const panel = document.querySelector("[data-testid='chat-side-panel']");
+      const main = document.querySelector("[data-testid='workspace-main-card']");
+      if (!(stack instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(main instanceof HTMLElement)) return false;
+      const stackBox = stack.getBoundingClientRect();
+      const panelBox = panel.getBoundingClientRect();
+      const mainBox = main.getBoundingClientRect();
+      return Math.abs(panelBox.x - stackBox.x) <= 2
+        && Math.abs(panelBox.right - stackBox.right) <= 2
+        && mainBox.width <= 2
+        && main.hasAttribute("inert");
+    }, null, { timeout: 5_000 });
+    assert.equal(
+      await waitForActiveWebview(),
+      expectedUrl,
+      `crossing the 2:1 boundary at ${viewportWidth}px should preserve the Browser guest`,
+    );
+
+    await sidePanel.getByLabel("Restore Side Panel width").click();
+    await page.getByTestId("side-panel-expanded-overlay").waitFor({ state: "detached", timeout: 5_000 });
+    await resizer.waitFor({ state: "visible", timeout: 5_000 });
+    await waitForSidePanelGeometryToSettle();
+  }
+  await setNativeViewportWidth(originalContentSize.width, originalContentSize.height);
+  await waitForSidePanelGeometryToSettle();
 
   const initialPanelBox = await sidePanel.boundingBox();
   const initialResizerBox = await page.getByTestId("side-panel-resizer").boundingBox();
@@ -1710,7 +1883,7 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
 
   const cancelResizerBox = await page.getByTestId("side-panel-resizer").boundingBox();
   assert.ok(cancelResizerBox, "Side Panel resizer should remain available after widening");
-  const cancelY = await beginResizeDrag(cancelResizerBox);
+  const { pointerY: cancelY } = await beginResizeDrag(cancelResizerBox);
   await page.mouse.move(cancelResizerBox.x + 36, cancelY, { steps: 4 });
   const releasedPointerId = await page.getByTestId("side-panel-resizer").evaluate((element) => {
     window.__rudderDesktopSmokeLostCaptureCount = 0;
@@ -2523,6 +2696,7 @@ async function runCleanScenario(mode) {
     const secondCompany = await createCompany(firstRun.baseUrl, "DS2");
     const secondCompanyRouteKey = secondCompany.urlKey ?? secondCompany.issuePrefix;
     await verifyBundledSkills(firstRun.baseUrl, secondCompany.id);
+    await createCeo(firstRun.baseUrl, secondCompany.id);
     firstRun.page = await verifyChatSidePanelBrowser(
       firstRun.page,
       firstRun.baseUrl,
@@ -2649,6 +2823,7 @@ async function runBrowserScenario(mode) {
   const fixture = await startBrowserSmokeFixture();
   try {
     const company = await createCompany(run.baseUrl);
+    await createCeo(run.baseUrl, company.id);
     await verifyChatSidePanelBrowser(
       run.page,
       run.baseUrl,

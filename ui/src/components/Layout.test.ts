@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   clampWorkspaceColumnWidth,
   getWorkspaceColumnMaxWidth,
+  preserveRememberedSidePanelWidth,
   resolveDefaultSidePanelWidth,
   resolveProportionalSidePanelWidth,
   resolveProportionalWorkspaceColumnWidth,
+  resolveSidePanelCollapseWidth,
   resolveSidePanelContextKey,
+  resolveSidePanelDragWidth,
   resolveSidePanelRouteContextKey,
   shouldAutoExpandSidePanel,
   shouldUseFramelessWorkspaceMain,
@@ -40,35 +43,62 @@ describe("workspace context column sizing", () => {
     expect(resolveProportionalWorkspaceColumnWidth("issues", 900 / 1440, 2400)).toBe(800);
   });
 
-  it("scales the side panel from the saved viewport ratio", () => {
-    const ratio = 420 / 1440;
+  it("scales the side panel from the saved workspace ratio", () => {
+    const ratio = 420 / 1204;
 
-    expect(resolveProportionalSidePanelWidth(ratio, 1200)).toBe(350);
-    expect(resolveProportionalSidePanelWidth(ratio, 1440)).toBe(420);
+    expect(resolveProportionalSidePanelWidth(ratio, 1004)).toBe(350);
+    expect(resolveProportionalSidePanelWidth(ratio, 1204)).toBe(420);
   });
 
   it("defaults the side panel to half of the shared main workspace", () => {
-    expect(resolveDefaultSidePanelWidth(1204, 1440)).toBe(600);
+    expect(resolveDefaultSidePanelWidth(1204)).toBe(600);
   });
 
-  it("only auto-expands after the side panel exceeds a 2:1 ratio over main content", () => {
-    expect(shouldAutoExpandSidePanel(800, 1200)).toBe(false);
-    expect(shouldAutoExpandSidePanel(801, 1200)).toBe(true);
+  it("lets a compact workspace reach the docked 2:1 boundary", () => {
+    expect(resolveProportionalSidePanelWidth(1, 653)).toBeCloseTo(649 * (2 / 3), 5);
   });
 
-  it("keeps proportional side panel width inside min and viewport limits", () => {
-    const ratio = 420 / 1440;
-
-    expect(resolveProportionalSidePanelWidth(ratio, 1000)).toBe(340);
-    expect(resolveProportionalSidePanelWidth(720 / 1440, 1440)).toBe(604);
-    expect(resolveProportionalSidePanelWidth(1, 2400)).toBe(720);
+  it("lets a wide workspace exceed the old fixed panel cap", () => {
+    expect(resolveProportionalSidePanelWidth(1, 1440)).toBeCloseTo(1436 * (2 / 3), 5);
   });
 
-  it("uses the actual workspace width while preserving room for main content", () => {
-    expect(resolveProportionalSidePanelWidth(720 / 1440, 1440, 1320)).toBe(720);
-    expect(resolveProportionalSidePanelWidth(900 / 1440, 1440, 980)).toBe(636);
+  it("only auto-expands strictly beyond the 2:1 boundary after the 4px resizer", () => {
+    expect(shouldAutoExpandSidePanel(800, 1204)).toBe(false);
+    expect(shouldAutoExpandSidePanel(800.01, 1204)).toBe(true);
   });
 
+  it("restores custom widths proportionally from the measured workspace", () => {
+    expect(resolveProportionalSidePanelWidth(900 / 1440, 1320)).toBe(825);
+    expect(resolveProportionalSidePanelWidth(900 / 1440, 980)).toBe(613);
+  });
+
+  it("preserves remembered pixels until the workspace is measured", () => {
+    expect(preserveRememberedSidePanelWidth(238)).toBe(238);
+    expect(preserveRememberedSidePanelWidth(900)).toBe(900);
+  });
+
+  it("keeps the docked maximum on the same 2:1 boundary in extremely narrow stacks", () => {
+    const boundaryWidth = 476 * (2 / 3);
+
+    expect(resolveDefaultSidePanelWidth(480)).toBe(238);
+    expect(resolveProportionalSidePanelWidth(1, 480)).toBeCloseTo(boundaryWidth, 5);
+    expect(shouldAutoExpandSidePanel(boundaryWidth, 480)).toBe(false);
+    expect(shouldAutoExpandSidePanel(boundaryWidth + 0.01, 480)).toBe(true);
+  });
+
+  it("keeps the collapse threshold below the effective minimum in narrow stacks", () => {
+    expect(resolveSidePanelCollapseWidth(1204)).toBe(292);
+    expect(resolveSidePanelCollapseWidth(480)).toBe(190);
+    expect(resolveDefaultSidePanelWidth(480)).toBeGreaterThan(resolveSidePanelCollapseWidth(480));
+  });
+
+  it("keeps pointer deltas unchanged without visual scaling", () => {
+    expect(resolveSidePanelDragWidth(420, -100, 1000, 1000)).toBe(520);
+  });
+
+  it("converts visually scaled pointer deltas into layout-width deltas", () => {
+    expect(resolveSidePanelDragWidth(420, -73, 730, 1000)).toBe(520);
+  });
 });
 
 describe("side panel route context", () => {

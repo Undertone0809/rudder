@@ -1675,7 +1675,8 @@ test.describe("Chat Side Panel", () => {
     expect(resizerBox).not.toBeNull();
     expect(sidePanelBox).not.toBeNull();
     expect(sidePanelHeaderBox).not.toBeNull();
-    expect(resizerBox!.width).toBeGreaterThanOrEqual(10);
+    expect(await page.getByTestId("side-panel-resizer").evaluate((element) => element.offsetWidth)).toBe(4);
+    expect(await page.getByTestId("side-panel-resizer-hit-target").evaluate((element) => element.offsetWidth)).toBeGreaterThanOrEqual(10);
     expect(Math.round(resizerBox!.x - (mainCardBox!.x + mainCardBox!.width))).toBeLessThanOrEqual(2);
     expect(Math.round(sidePanelBox!.x - (resizerBox!.x + resizerBox!.width))).toBe(0);
     expect(Math.round(sidePanelHeaderBox!.x - (mainCardBox!.x + mainCardBox!.width))).toBeLessThanOrEqual(6);
@@ -1880,7 +1881,7 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
   });
 
-  test("only auto-expands after a resize makes the Side Panel wider than 2:1", async ({ page }) => {
+  test("keeps resize continuous through the 2:1 auto-expand boundary", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Side-Panel-Auto-Expand-${Date.now()}`,
@@ -1889,43 +1890,143 @@ test.describe("Chat Side Panel", () => {
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Boundary Agent" });
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Side Panel boundary host",
+        initialMessage: { body: "Verify the Side Panel resize boundary." },
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
 
-    await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
-    await page.goto(`/${organization.issuePrefix}/dashboard`);
-    await page.getByTestId("side-panel-hover-edge").hover();
-    await page.getByTestId("global-side-panel-trigger").click();
 
-    const sidePanel = page.getByTestId("chat-side-panel");
-    const resizer = page.getByTestId("side-panel-resizer");
-    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
-    await expect.poll(async () => {
-      const [mainBox, panelBox] = await Promise.all([
-        page.getByTestId("workspace-main-card").boundingBox(),
-        sidePanel.boundingBox(),
-      ]);
-      if (!mainBox || !panelBox) return Number.POSITIVE_INFINITY;
-      return Math.abs(mainBox.width - panelBox.width);
-    }).toBeLessThanOrEqual(2);
-    const stackBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
-    const resizerBox = await resizer.boundingBox();
-    expect(stackBox).not.toBeNull();
-    expect(resizerBox).not.toBeNull();
+    const cases = [
+      {
+        label: "Dashboard at 994 CSS pixels",
+        path: `/${organization.issuePrefix}/dashboard`,
+        viewportWidth: 994,
+        open: async () => {
+          await page.getByTestId("side-panel-hover-edge").hover();
+          await page.getByTestId("global-side-panel-trigger").click();
+        },
+      },
+      {
+        label: "Messenger three-column workspace at 1440 CSS pixels",
+        path: `/${organization.issuePrefix}/messenger/chat/${chat.id}`,
+        viewportWidth: 1440,
+        open: async () => page.getByTestId("chat-side-panel-trigger").click(),
+      },
+    ];
 
-    const pointerY = resizerBox!.y + resizerBox!.height / 2;
-    await page.mouse.move(resizerBox!.x + resizerBox!.width / 2, pointerY);
-    await page.mouse.down();
-    await page.mouse.move(stackBox!.x + stackBox!.width * 0.4, pointerY, { steps: 8 });
-    await expect(page.getByTestId("side-panel-expanded-overlay")).toHaveCount(0);
-    await expect(resizer).toBeVisible();
+    for (const resizeCase of cases) {
+      await test.step(resizeCase.label, async () => {
+        await page.setViewportSize({ width: resizeCase.viewportWidth, height: 900 });
+        await page.evaluate(() => {
+          window.localStorage.removeItem("rudder.workspace.sidePanelWidth.v2");
+        });
+        await page.goto(resizeCase.path);
+        await resizeCase.open();
 
-    await page.mouse.move(stackBox!.x + stackBox!.width * 0.3, pointerY, { steps: 8 });
-    await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
-    await expect(resizer).toBeHidden();
-    await page.mouse.up();
+        const sidePanel = page.getByTestId("chat-side-panel");
+        const resizer = page.getByTestId("side-panel-resizer");
+        const resizerHitTarget = page.getByTestId("side-panel-resizer-hit-target");
+        const main = page.getByTestId("workspace-main-card");
+        await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+        await expect(resizer).toBeVisible();
+        await expect.poll(() => resizer.evaluate((element) => element.offsetWidth)).toBe(4);
+        expect(await resizerHitTarget.evaluate((element) => element.offsetWidth)).toBeGreaterThanOrEqual(10);
+        expect(await resizerHitTarget.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const edgeTarget = document.elementFromPoint(rect.left + 0.5, rect.top + rect.height / 2);
+          return edgeTarget === element || element.contains(edgeTarget);
+        })).toBe(true);
+
+        const [initialStackBox, initialPanelBox, initialResizerBox] = await Promise.all([
+          page.getByTestId("workspace-main-panel-stack").boundingBox(),
+          sidePanel.boundingBox(),
+          resizer.boundingBox(),
+        ]);
+        expect(initialStackBox).not.toBeNull();
+        expect(initialPanelBox).not.toBeNull();
+        expect(initialResizerBox).not.toBeNull();
+
+        const [stackLayoutWidth, resizerLayoutWidth] = await Promise.all([
+          page.getByTestId("workspace-main-panel-stack").evaluate((element) => element.offsetWidth),
+          resizer.evaluate((element) => element.offsetWidth),
+        ]);
+        const visualScale = initialStackBox!.width / stackLayoutWidth;
+        const boundaryWidth = (stackLayoutWidth - resizerLayoutWidth) * (2 / 3) * visualScale;
+        const pointerY = initialResizerBox!.y + initialResizerBox!.height / 2;
+        const startPointerX = initialResizerBox!.x + initialResizerBox!.width / 2;
+        await page.mouse.move(startPointerX, pointerY);
+        await page.mouse.down();
+        await expect(page.getByTestId("side-panel-resize-shield")).toBeVisible();
+
+        let pointerX = startPointerX;
+        let previousPanelWidth = initialPanelBox!.width;
+        let previousResizerX = initialResizerBox!.x;
+        for (const targetPanelWidth of [boundaryWidth - 8, boundaryWidth - 2]) {
+          const currentPanelBox = await sidePanel.boundingBox();
+          expect(currentPanelBox).not.toBeNull();
+          pointerX -= targetPanelWidth - currentPanelBox!.width;
+          await page.mouse.move(pointerX, pointerY, { steps: 12 });
+          await expect.poll(async () => {
+            const panelBox = await sidePanel.boundingBox();
+            return panelBox ? Math.abs(panelBox.width - targetPanelWidth) : Number.POSITIVE_INFINITY;
+          }).toBeLessThanOrEqual(2);
+          await expect(page.getByTestId("side-panel-expanded-overlay")).toHaveCount(0);
+          await expect(resizer).toBeVisible();
+
+          const [panelBox, mainBox, resizerBox] = await Promise.all([
+            sidePanel.boundingBox(),
+            main.boundingBox(),
+            resizer.boundingBox(),
+          ]);
+          expect(panelBox).not.toBeNull();
+          expect(mainBox).not.toBeNull();
+          expect(resizerBox).not.toBeNull();
+          expect(panelBox!.width).toBeGreaterThanOrEqual(previousPanelWidth - 2);
+          expect(resizerBox!.x).toBeLessThanOrEqual(previousResizerX + 2);
+          expect(panelBox!.width).toBeLessThanOrEqual(2 * mainBox!.width + 2);
+          previousPanelWidth = panelBox!.width;
+          previousResizerX = resizerBox!.x;
+        }
+
+        const preCrossPanelBox = await sidePanel.boundingBox();
+        expect(preCrossPanelBox).not.toBeNull();
+        pointerX -= boundaryWidth + 6 - preCrossPanelBox!.width;
+        await page.mouse.move(pointerX, pointerY, { steps: 8 });
+        await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
+        await expect(resizer).toBeHidden();
+        await page.mouse.up();
+        await expect(page.getByTestId("side-panel-resize-shield")).toHaveCount(0);
+        await expect(main).toHaveAttribute("aria-hidden", "true");
+        await expect(main).toHaveAttribute("inert", "");
+        await expect.poll(async () => {
+          const [stackBox, panelBox, mainBox] = await Promise.all([
+            page.getByTestId("workspace-main-panel-stack").boundingBox(),
+            sidePanel.boundingBox(),
+            main.boundingBox(),
+          ]);
+          if (!stackBox || !panelBox || !mainBox) return Number.POSITIVE_INFINITY;
+          return Math.max(
+            Math.abs(panelBox.x - stackBox.x),
+            Math.abs((panelBox.x + panelBox.width) - (stackBox.x + stackBox.width)),
+            mainBox.width,
+          );
+        }).toBeLessThanOrEqual(2);
+
+        await sidePanel.getByLabel("Close Side Panel").click();
+        await expect(sidePanel).toHaveCount(0);
+      });
+    }
   });
 
   test("keeps desktop chat controls clear of interrupted messages beside the Side Panel", async ({ page }) => {
