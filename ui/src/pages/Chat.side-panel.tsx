@@ -1128,8 +1128,7 @@ function ChatSidePanelLibraryFileView({
   const { selectedOrganization } = useOrganization();
   const location = useLocation();
   const navigate = useNavigate();
-  const html = isWorkspaceHtmlPreviewFile(libraryFile);
-  const media = libraryFile.previewKind === "video" || libraryFile.previewKind === "audio";
+  const html = isWorkspaceHtmlPreviewFile(libraryFile); const media = libraryFile.previewKind === "video" || libraryFile.previewKind === "audio";
   const csv = isWorkspaceCsvPreviewFile(libraryFile);
   const markdown = isWorkspaceMarkdownPreviewFile(libraryFile);
   const [previewMode, setPreviewMode] = useState<WorkspaceFilePreviewMode>("preview");
@@ -1273,13 +1272,7 @@ function ChatSidePanelLibraryFileView({
       </Tooltip>
     </TooltipProvider>
   ) : null;
-  const LibraryFileIcon = html
-    ? Globe2
-    : libraryFile.previewKind === "video"
-      ? FileVideo2
-      : libraryFile.previewKind === "audio"
-        ? FileAudio2
-        : FileText;
+  const LibraryFileIcon = html ? Globe2 : libraryFile.previewKind === "video" ? FileVideo2 : libraryFile.previewKind === "audio" ? FileAudio2 : FileText;
 
   return (
     <div className="flex h-full min-h-[420px] flex-col" data-testid="chat-side-panel-library-file-view">
@@ -1361,11 +1354,7 @@ function ChatSidePanelLibraryFileView({
                 {openInMenu}
               </div>
             ) : undefined}
-            mediaOpenAction={media ? (
-              <div className="shrink-0" data-testid="chat-side-panel-library-media-open-in">
-                {openInMenu}
-              </div>
-            ) : undefined}
+            mediaOpenAction={media ? <div className="shrink-0" data-testid="chat-side-panel-library-media-open-in">{openInMenu}</div> : undefined}
             testIdPrefix="chat-side-panel-library"
           />
         </>

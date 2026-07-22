@@ -1,4 +1,5 @@
 import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { type ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { formatAssigneeUserLabel } from "@/lib/assignees";
@@ -27,6 +28,7 @@ import {
   BookOpen,
   Clock3,
   FilePlus2,
+  ListChecks,
   ListFilter,
   Loader2
 } from "lucide-react";
@@ -35,6 +37,20 @@ export { ChatAttachmentList, ChatFileAttachmentChip, ChatImageAttachmentTile, Pe
 export { AskUserAnswerBubble, AskUserHistoryRecord, AskUserPanel, AssistantDraftItem, ChatAssistantAttributionRow, chatIssueApprovalPayloadWithProposalOverride, ChatLongMessageBody, chatMessageHoverBarClass, ChatMessageItem, ChatMessagesLoadingState, ChatSystemMessageBody, issueCreatedSystemMessageParts, LazyStreamTranscriptItem, OptimisticUserDraftItem, ProposalCard, readStructuredPayloadString, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, StreamTranscriptItem } from "./Chat.messages";
 
 export type ApprovalAction = "approve" | "reject" | "requestRevision";
+
+export function ChatAgentRunMenuItem({
+  loading,
+  target,
+  onOpen,
+}: {
+  loading: boolean;
+  target: { agentId: string; runId: string } | null;
+  onOpen: (target: { agentId: string; runId: string }) => void;
+}) {
+  if (loading) return <DropdownMenuItem disabled><Loader2 className="h-4 w-4 animate-spin" />Loading agent runs...</DropdownMenuItem>;
+  if (!target) return <DropdownMenuItem disabled><ListChecks className="h-4 w-4" />No agent runs yet</DropdownMenuItem>;
+  return <DropdownMenuItem onClick={() => onOpen(target)}><ListChecks className="h-4 w-4" />View agent runs</DropdownMenuItem>;
+}
 export const EMPTY_STATE_PROMPT_GROUPS = [
   {
     id: "create",

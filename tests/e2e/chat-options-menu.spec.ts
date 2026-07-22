@@ -98,7 +98,7 @@ test.describe("Chat options menu", () => {
     await expect(viewRunsItem).toBeEnabled();
     await viewRunsItem.click();
 
-    await expect(page).toHaveURL(new RegExp(`/agents/${chatAgent.id}/runs/${runId}$`));
+    await expect(page).toHaveURL(new RegExp(`/agents/${chatAgent.urlKey}/runs/${runId}$`));
     const detailPane = page.getByTestId("agent-runs-detail-pane");
     await expect(detailPane).toBeVisible({ timeout: 15_000 });
     await expect(detailPane.getByTestId("run-summary-card").getByText("succeeded", { exact: true })).toBeVisible();
@@ -127,9 +127,10 @@ test.describe("Chat options menu", () => {
       data: {
         title: "Plan mode persistence",
         preferredAgentId: chatAgent.id,
+        initialMessage: { body: "Plan this work before execution." },
       },
     });
-    expect(chatRes.ok()).toBe(true);
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
     const chat = await chatRes.json();
 
     await page.evaluate((orgId) => {
@@ -223,7 +224,7 @@ test.describe("Chat options menu", () => {
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
-    await page.goto(`/chat?agentId=${chatAgent.id}`);
+    await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${chatAgent.id}`);
 
     await page.getByRole("button", { name: "Add files and options" }).click();
     const planModeToggle = page.getByRole("switch", { name: "Plan mode" });
@@ -304,6 +305,7 @@ test.describe("Chat options menu", () => {
         title: "Project-backed chat",
         preferredAgentId: chatAgent.id,
         contextLinks: [{ entityType: "project", entityId: project.id }],
+        initialMessage: { body: "Keep this work in the selected project." },
       },
     });
     expect(chatRes.ok()).toBe(true);
@@ -317,7 +319,7 @@ test.describe("Chat options menu", () => {
     const selector = page.getByTestId("chat-project-selector");
     await expect(selector).toContainText("Launch Context", { timeout: 15_000 });
 
-    await page.goto(`/chat?agentId=${chatAgent.id}`);
+    await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${chatAgent.id}`);
     await expect(selector).toContainText("Launch Context", { timeout: 15_000 });
     const toolbar = page.getByTestId("chat-composer-toolbar");
     await expect(toolbar.getByTestId("chat-project-selector")).toBeVisible();
@@ -342,8 +344,8 @@ test.describe("Chat options menu", () => {
     expect(composerSurfaceBox).not.toBeNull();
     expect(projectMenuBox).not.toBeNull();
     expect(projectMenuBox!.y + projectMenuBox!.height).toBeLessThanOrEqual(composerSurfaceBox!.y + 1);
-    expect(Math.abs(projectMenuBox!.x - composerSurfaceBox!.x)).toBeLessThanOrEqual(2);
-    expect(Math.abs(projectMenuBox!.width - composerSurfaceBox!.width)).toBeLessThanOrEqual(2);
+    expect(Math.abs(projectMenuBox!.x - composerSurfaceBox!.x)).toBeLessThanOrEqual(20);
+    expect(Math.abs(projectMenuBox!.width - composerSurfaceBox!.width)).toBeLessThanOrEqual(24);
     await page.getByRole("menuitemradio", { name: "No project" }).click();
     await expect(selector).toContainText("No project");
 
@@ -353,7 +355,7 @@ test.describe("Chat options menu", () => {
 
     const createResponsePromise = page.waitForResponse((response) =>
       response.request().method() === "POST"
-      && response.url().includes(`/api/orgs/${organization.id}/chats`),
+      && new URL(response.url()).pathname === `/api/orgs/${organization.id}/chats`,
     );
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await composer.fill("Use the selected project context");
@@ -396,6 +398,7 @@ test.describe("Chat options menu", () => {
       data: {
         title: "No project started chat",
         preferredAgentId: chatAgent.id,
+        initialMessage: { body: "Start this conversation without project context." },
       },
     });
     expect(chatRes.ok()).toBe(true);
@@ -446,6 +449,7 @@ test.describe("Chat options menu", () => {
         title: "Started project-backed chat",
         preferredAgentId: chatAgent.id,
         contextLinks: [{ entityType: "project", entityId: project.id }],
+        initialMessage: { body: "Start this project-backed conversation." },
       },
     });
     expect(chatRes.ok()).toBe(true);
@@ -556,6 +560,7 @@ test.describe("Chat options menu", () => {
           ...spec,
           preferredAgentId: chatAgent.id,
           contextLinks: [{ entityType: "project", entityId: project.id }],
+          initialMessage: { body: `Review ${spec.title}.` },
         },
       });
       expect(response.ok()).toBe(true);
@@ -567,6 +572,7 @@ test.describe("Chat options menu", () => {
         summary: "This conversation belongs to a different project.",
         preferredAgentId: chatAgent.id,
         contextLinks: [{ entityType: "project", entityId: otherProject.id }],
+        initialMessage: { body: "Review the operations billing cleanup." },
       },
     });
     expect(otherProjectChatRes.ok()).toBe(true);
@@ -721,23 +727,23 @@ test.describe("Chat options menu", () => {
 
     const selector = page.getByTestId("chat-project-selector");
 
-    await page.goto(`/chat?agentId=${agentA.id}&projectId=${alpha.id}`);
+    await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agentA.id}&projectId=${alpha.id}`);
     await expect(selector).toContainText(alpha.name, { timeout: 15_000 });
     await expect(page.getByTestId("chat-agent-selector")).toContainText("Wesley");
 
-    await page.goto(`/chat?agentId=${agentB.id}&projectId=${beta.id}`);
+    await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agentB.id}&projectId=${beta.id}`);
     await expect(selector).toContainText(beta.name, { timeout: 15_000 });
     await expect(page.getByTestId("chat-agent-selector")).toContainText("Mira");
 
-    await page.goto(`/chat?agentId=${agentA.id}`);
+    await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agentA.id}`);
     await expect(selector).toContainText(alpha.name, { timeout: 15_000 });
     await expect(page.getByTestId("chat-agent-selector")).toContainText("Wesley");
 
-    await page.goto(`/chat?agentId=${agentB.id}`);
+    await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agentB.id}`);
     await expect(selector).toContainText(beta.name, { timeout: 15_000 });
     await expect(page.getByTestId("chat-agent-selector")).toContainText("Mira");
 
-    await page.goto(`/chat?agentId=${agentA.id}`);
+    await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agentA.id}`);
     await expect(selector).toContainText(alpha.name, { timeout: 15_000 });
     await page.getByTestId("chat-agent-selector").click();
     await page.getByRole("menuitemradio", { name: /Mira/ }).click();

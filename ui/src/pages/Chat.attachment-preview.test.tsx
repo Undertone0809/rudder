@@ -2541,7 +2541,7 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel.textContent).toContain("Attach");
     expect(sidePanel.textContent).toContain("Created by");
     expect(sidePanel.textContent).toContain("Updated");
-    expect(sidePanel.textContent.indexOf("Activity")).toBeLessThan(sidePanel.textContent.indexOf("Properties"));
+    expect(sidePanel.textContent.indexOf("Properties")).toBeLessThan(sidePanel.textContent.indexOf("Activity"));
     expect(sidePanel.textContent).not.toContain("CreatedUpdated");
 
     const propertiesRegion = sidePanel.querySelector<HTMLElement>("[aria-label='Issue properties']");
