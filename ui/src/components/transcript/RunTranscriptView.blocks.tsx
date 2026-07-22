@@ -18,6 +18,7 @@ import { asRecord, compactWhitespace, formatTranscriptDuration, formatTranscript
 import { formatSemanticDigest, getTodoListCompletedCount } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
 import { formatMemoryScopeLabel, stripWrappedShell } from "./RunTranscriptView.shell";
+import { getTranscriptAgentAvatarInfo, TranscriptAgentAvatarIcon } from "./TranscriptAgentAvatarIcon";
 
 async function writeTranscriptClipboardText(text: string) {
   const desktopShell = readDesktopShell();
@@ -504,6 +505,7 @@ export function TranscriptToolCard({
     detail && "rounded-xl border border-border/40 bg-background/60 p-3",
   );
   const summary = semantic.summary;
+  const agentAvatarInfo = getTranscriptAgentAvatarInfo(block.name, block.input);
   const outerClass = cn(
     detail && "rounded-xl border border-border/60 bg-background/80 p-3 shadow-sm",
     block.status === "error" && "rounded-xl border border-red-500/20 bg-red-500/[0.04] p-3",
@@ -512,7 +514,13 @@ export function TranscriptToolCard({
   return (
     <div className={outerClass} title={getTranscriptTimestampTitle(block.ts)}>
       <div className="flex items-start gap-2">
-        <TranscriptActionIconSlot category={semantic.category} status={block.status} />
+        {agentAvatarInfo ? (
+          <span className="relative mt-0.5 h-5 w-8 shrink-0" data-transcript-action-icon-slot="true">
+            <TranscriptAgentAvatarIcon info={agentAvatarInfo} status={block.status} />
+          </span>
+        ) : (
+          <TranscriptActionIconSlot category={semantic.category} status={block.status} />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground">

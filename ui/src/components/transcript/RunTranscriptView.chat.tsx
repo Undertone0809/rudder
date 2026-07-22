@@ -6,6 +6,7 @@ import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, Transcr
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
+import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
 
 export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTranscriptAction[] {
   const actions: ChatTranscriptAction[] = [];
@@ -81,11 +82,26 @@ function TranscriptChatActionIconCell({
   category,
   status,
   compact,
+  toolName,
+  input,
 }: {
   category: TranscriptActionIconCategory;
   status: TranscriptActionIconStatus;
   compact: boolean;
+  toolName?: string;
+  input?: unknown;
 }) {
+  const agentAvatarInfo = toolName ? getTranscriptAgentAvatarInfo(toolName, input) : null;
+  if (agentAvatarInfo) {
+    return compact ? (
+      <TranscriptAgentAvatarIcon info={agentAvatarInfo} status={status} />
+    ) : (
+      <span className="inline-flex h-5 w-8 shrink-0" data-transcript-action-icon-slot="true">
+        <TranscriptAgentAvatarIcon info={agentAvatarInfo} status={status} />
+      </span>
+    );
+  }
+
   if (!compact) {
     return <TranscriptActionIconSlot category={category} status={status} />;
   }
@@ -241,7 +257,7 @@ export function TranscriptChatToolActionRow({
     >
       {hasOpenableFileTargets ? (
         <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
-          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} />
+          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
           <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
             {semantic.category === "edit" ? "Edited " : "Read "}
             {fileTargets.map((target, index) => (
@@ -298,7 +314,7 @@ export function TranscriptChatToolActionRow({
           aria-expanded={canExpand && !inline ? open : undefined}
           aria-label={canExpand && !inline ? detailLabel : undefined}
         >
-          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} />
+          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
           <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
             {displaySummary}
           </span>
@@ -499,6 +515,9 @@ export function TranscriptChatActionGroup({
   const highlightGroupError = allToolsErrored && !detailVariant;
   const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : allToolsErrored));
   const summaryIcon = getChatActionIconInfo(actions[0]!);
+  const summaryAgentAvatar = actions[0]?.type === "tool"
+    ? getTranscriptAgentAvatarInfo(actions[0].entry.name, actions[0].entry.input)
+    : null;
 
   useEffect(() => {
     if (!detailVariant && allToolsErrored) {
@@ -554,7 +573,14 @@ export function TranscriptChatActionGroup({
           className={cn("mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center", highlightGroupError && "rounded-full bg-red-500/[0.08]")}
           data-transcript-action-summary-icon="true"
         >
-          <TranscriptActionIcon category={summaryIcon.category} status={highlightGroupError ? "error" : "neutral"} />
+          {summaryAgentAvatar ? (
+            <TranscriptAgentAvatarIcon
+              info={summaryAgentAvatar}
+              status={highlightGroupError ? "error" : summaryIcon.status}
+            />
+          ) : (
+            <TranscriptActionIcon category={summaryIcon.category} status={highlightGroupError ? "error" : "neutral"} />
+          )}
         </span>
         <span className="min-w-0">
           <span className={cn(
