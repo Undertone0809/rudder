@@ -799,7 +799,7 @@ export function OnboardingWizard() {
                     <span>
                       <span className="block font-medium text-foreground">I’m new to Rudder</span>
                       <span className="block text-muted-foreground">
-                        Create guided Getting Started issues. Turn this off to seed only the welcome issue. </span> </span>
+                        Create two guided actions for your first real work loop. Turn this off to seed only the Welcome reference. </span> </span>
                   </label> </div>
               )}
               {step === 2 && (

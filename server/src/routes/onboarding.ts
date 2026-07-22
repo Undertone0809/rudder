@@ -13,13 +13,8 @@ import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 const ONBOARDING_PROJECT_NAME = "Getting Started";
 const ONBOARDING_MESSENGER_GROUP_ICON = "folder::teal";
-const ONBOARDING_PROJECT_DESCRIPTION = `Learn how Rudder works by completing one guided collaboration loop.
-
-This project is not a generic product tour. It teaches the core Rudder workflow:
-
-choose Chat or an issue → agent execution → inspectable results → review → context → better work.
-
-Complete the core issues to experience the basic loop. Then use the next issues to bring real work and reusable context into Rudder.`;
+const ONBOARDING_PROJECT_DESCRIPTION =
+  "Complete one real work loop: start a small task in Chat or an Issue, inspect the result, and decide what happens next.";
 
 type OnboardingIssueGroup = "welcome" | "core" | "recommended" | "advanced";
 
@@ -30,10 +25,13 @@ type OnboardingIssueTemplate = {
   priority: "low" | "medium" | "high";
   group: OnboardingIssueGroup;
   nextTitle?: string;
+  nextLabel?: string;
   chatPrompt?: string;
+  openIssues?: boolean;
+  openMessenger?: boolean;
 };
 
-const WELCOME_DESCRIPTION = `Welcome to Rudder.
+const LEGACY_WELCOME_DESCRIPTION = `Welcome to Rudder.
 
 Rudder is where you collaborate with agents the way you would work with a human team.
 
@@ -65,13 +63,13 @@ It will guide you through your first collaboration loop:
 
 No action is required on this welcome issue. Keep it as a quick reference while you learn how Rudder works.`;
 
-const ONBOARDING_ISSUES: OnboardingIssueTemplate[] = [
+const LEGACY_ONBOARDING_ISSUES: OnboardingIssueTemplate[] = [
   {
     title: "👋 Welcome to Rudder — work with agents like a team",
     status: "done",
     priority: "high",
     group: "welcome",
-    description: WELCOME_DESCRIPTION,
+    description: LEGACY_WELCOME_DESCRIPTION,
   },
   {
     title: "1. Understand how Rudder work happens",
@@ -412,6 +410,58 @@ You’ll know it worked when one recurring loop exists, the cadence is clear, th
   },
 ];
 
+const LEGACY_ONBOARDING_TITLES = new Set(
+  LEGACY_ONBOARDING_ISSUES.map((template) => template.title),
+);
+
+const ONBOARDING_ISSUES: OnboardingIssueTemplate[] = [
+  {
+    title: "👋 Welcome to Rudder — quick reference",
+    status: "done",
+    priority: "low",
+    group: "welcome",
+    nextTitle: "1. Run one real task",
+    description: `Rudder moves real work through agent execution and human review.
+
+Chat is conversation-driven; Issues add structured ownership, status, and review when that structure helps.
+
+Start with the first guided action below.`,
+  },
+  {
+    title: "1. Run one real task",
+    status: "todo",
+    priority: "high",
+    group: "core",
+    nextTitle: "2. Review the result and close the loop",
+    nextLabel: "Review the result",
+    chatPrompt: "Help me start one small, useful, low-risk task I can review today. Ask for any context, files, or constraints you need before you begin.",
+    openIssues: true,
+    description: `Choose a small, useful, low-risk task you can review today.
+
+1. Describe the result you want.
+2. Add the context, files, and constraints the agent needs.
+3. Start in Chat, or create an Issue when ownership, status, or structured review will help.
+
+Done when the agent leaves a result or clear progress update you can inspect. Mark this guide issue Done, then review the result.`,
+  },
+  {
+    title: "2. Review the result and close the loop",
+    status: "todo",
+    priority: "high",
+    group: "core",
+    openMessenger: true,
+    description: `Open the Chat or Issue where the agent worked. Inspect the result and its Activity or run evidence. Accept it, request a specific revision, or create a clear follow-up.
+
+Done when both the result and your decision are recorded on the real work item. Mark this guide issue Done.
+
+Next things to try: connect a project or goal, add shared context, capture a workflow, add a specialist agent, or automate a recurring loop.`,
+  },
+];
+
+const ONBOARDING_V2_TITLES = new Set(
+  ONBOARDING_ISSUES.map((template) => template.title),
+);
+
 function issueRef(issue: { identifier?: string | null; id: string }) {
   return issue.identifier ?? issue.id;
 }
@@ -426,6 +476,12 @@ function issueHref(
   return `${routePrefix}/issues/${encodeURIComponent(issueRef(issue))}`;
 }
 
+function organizationRoutePrefix(organizationPrefix?: string | null) {
+  return organizationPrefix
+    ? `/${encodeURIComponent(organizationPrefix)}`
+    : "";
+}
+
 function buildChatHref(input: {
   prompt: string;
   projectId: string;
@@ -438,10 +494,20 @@ function buildChatHref(input: {
   if (input.agentId) {
     params.set("agentId", input.agentId);
   }
-  const routePrefix = input.organizationPrefix
-    ? `/${encodeURIComponent(input.organizationPrefix)}`
-    : "";
+  const routePrefix = organizationRoutePrefix(input.organizationPrefix);
   return `${routePrefix}/messenger/chat?${params.toString()}`;
+}
+
+function buildIssuesHref(input: {
+  projectId: string;
+  organizationPrefix?: string | null;
+}) {
+  const params = new URLSearchParams({ projectId: input.projectId });
+  return `${organizationRoutePrefix(input.organizationPrefix)}/issues?${params.toString()}`;
+}
+
+function buildMessengerHref(organizationPrefix?: string | null) {
+  return `${organizationRoutePrefix(organizationPrefix)}/messenger`;
 }
 
 function appendActionLinks(
@@ -459,20 +525,29 @@ function appendActionLinks(
     const nextIssue = input.issueByTitle.get(template.nextTitle);
     if (nextIssue) {
       lines.push(
-        `Next issue: [${template.nextTitle}](${issueHref(nextIssue, input.organizationPrefix)}).`,
+        `[${template.nextLabel ?? template.nextTitle}](${issueHref(nextIssue, input.organizationPrefix)})`,
       );
     }
   }
   if (template.chatPrompt) {
-    lines.push(`Open chat ready to continue: [Start from this prompt](${buildChatHref({
+    lines.push(`[Start in Chat](${buildChatHref({
       prompt: template.chatPrompt,
       projectId: input.projectId,
       agentId: input.agentId,
       organizationPrefix: input.organizationPrefix,
-    })}).`);
+    })})`);
+  }
+  if (template.openIssues) {
+    lines.push(`[Open Issues](${buildIssuesHref({
+      projectId: input.projectId,
+      organizationPrefix: input.organizationPrefix,
+    })})`);
+  }
+  if (template.openMessenger) {
+    lines.push(`[Open Messenger](${buildMessengerHref(input.organizationPrefix)})`);
   }
   if (lines.length === 0) return description;
-  return `${description.trim()}\n\n${lines.join("\n")}`;
+  return `${description.trim()}\n\n${lines.map((line) => `- ${line}`).join("\n")}`;
 }
 
 function normalizeDate(value: Date | string | null | undefined) {
@@ -678,6 +753,50 @@ export function onboardingRoutes(db: Db) {
     const existingIssues = await issues.list(orgId, { projectId: project.id });
     type ExistingIssue = (typeof existingIssues)[number];
     type CreatedIssue = Awaited<ReturnType<typeof issues.create>>;
+
+    /**
+     * Existing starter content is operator-owned once it predates v2 or any
+     * issue has been deliberately hidden. Return before every write so explicit
+     * reseeds cannot partially modernize issue fields, project metadata,
+     * Messenger membership, or read markers.
+     *
+     * Traceability:
+     * - doc/plans/2026-07-22-getting-started-onboarding-issues-simplification.md
+     * - ORG.ONBOARDING.001
+     */
+    const allProjectIssueRows = await db
+      .select({ title: issueRows.title, hiddenAt: issueRows.hiddenAt })
+      .from(issueRows)
+      .where(and(
+        eq(issueRows.orgId, orgId),
+        eq(issueRows.projectId, project.id),
+      ));
+    const hasLegacyTitle = allProjectIssueRows.some((issue) =>
+      LEGACY_ONBOARDING_TITLES.has(issue.title),
+    );
+    const hasV2Title = allProjectIssueRows.some((issue) =>
+      ONBOARDING_V2_TITLES.has(issue.title),
+    );
+    const hasHiddenIssue = allProjectIssueRows.some((issue) => issue.hiddenAt !== null);
+    const shouldFreezeExistingProject = allProjectIssueRows.length > 0
+      && (hasLegacyTitle || !hasV2Title || hasHiddenIssue);
+    if (shouldFreezeExistingProject) {
+      res.status(200).json({
+        project,
+        issues: existingIssues,
+        createdProject: false,
+        createdIssueCount: 0,
+        includeTutorial,
+      });
+      return;
+    }
+
+    if (!createdProject && project.description !== ONBOARDING_PROJECT_DESCRIPTION) {
+      project = await projects.update(project.id, {
+        description: ONBOARDING_PROJECT_DESCRIPTION,
+      }) ?? project;
+    }
+
     const issueByTitle = new Map<string, ExistingIssue | CreatedIssue>(
       existingIssues.map((issue) => [issue.title, issue]),
     );

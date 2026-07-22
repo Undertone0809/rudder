@@ -1824,6 +1824,7 @@ contracts:
       - ui/src/components/Layout.tsx
       - ui/src/components/MobileBottomNav.tsx
       - ui/src/components/OnboardingWizard.tsx
+      - ui/src/components/IssuesList.tsx
       - ui/src/pages/InstanceGeneralSettings.tsx
       - ui/src/pages/OrganizationImport.tsx
       - ui/src/pages/OrganizationSettings.tsx
@@ -1832,12 +1833,14 @@ contracts:
     related_tests:
       - server/src/__tests__/invite-onboarding-text.test.ts
       - ui/src/components/OnboardingWizard.runtime-config.test.tsx
+      - ui/src/components/IssuesList.test.tsx
       - ui/src/hooks/useOrganizationPageMemory.test.ts
       - ui/src/lib/organization-routes.test.ts
       - ui/src/pages/InstanceGeneralSettings.test.tsx
       - tests/e2e/onboarding.spec.ts
     related_plans:
       - doc/plans/2026-05-08-onboarding-getting-started-dashboard.md
+      - doc/plans/2026-07-22-getting-started-onboarding-issues-simplification.md
   ORG.DESKTOP.UPDATE.001:
     owner: product
     domain: organizations-and-goals

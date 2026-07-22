@@ -104,6 +104,7 @@ const issueSearchFieldOptions: Array<{ value: IssueSearchField; label: string }>
 ];
 
 const ONBOARDING_PROJECT_NAME = "Getting Started";
+const ONBOARDING_V2_ACTION_TITLE = "1. Run one real task";
 
 const onboardingGroupOrder = ["welcome", "core", "recommended", "advanced", "other"] as const;
 
@@ -129,6 +130,9 @@ const onboardingGroupCopy: Record<(typeof onboardingGroupOrder)[number], { label
     description: "Additional issues in this project."
   }
 };
+
+const onboardingV2CoreDescription =
+  "Complete these issues to run one real task, inspect its result, and record your decision.";
 
 function onboardingIssueGroup(issue: Issue): (typeof onboardingGroupOrder)[number] {
   if (issue.title.startsWith("👋 Welcome to Rudder")) return "welcome";
@@ -433,6 +437,8 @@ export function IssuesList({
     [projectId, projects],
   );
   const isGettingStartedProject = selectedProjectName === ONBOARDING_PROJECT_NAME;
+  const isGettingStartedV2 = isGettingStartedProject
+    && issues.some((issue) => issue.title === ONBOARDING_V2_ACTION_TITLE);
   const activeViewFilterCount = activeFilterCount + (showWorkingOnly ? 1 : 0);
   const emptyStateMessage = useMemo(() => {
     if (normalizedIssueSearch.length > 0) {
@@ -467,7 +473,9 @@ export function IssuesList({
         .map((key) => ({
           key: `onboarding:${key}`,
           label: onboardingGroupCopy[key].label,
-          description: onboardingGroupCopy[key].description,
+          description: key === "core" && isGettingStartedV2
+            ? onboardingV2CoreDescription
+            : onboardingGroupCopy[key].description,
           items: sortOnboardingIssues(groups[key]!),
         }));
     }
@@ -519,7 +527,7 @@ export function IssuesList({
             : (agentLabel(key) ?? key.slice(0, 8)),
       items: groups[key]!,
     }));
-  }, [agentLabel, currentUserId, filtered, isGettingStartedProject, projects, viewState.groupBy]);
+  }, [agentLabel, currentUserId, filtered, isGettingStartedProject, isGettingStartedV2, projects, viewState.groupBy]);
 
   const contextNewIssueDefaults = useMemo<NewIssueDefaults>(() => {
     const defaults: NewIssueDefaults = {};

@@ -41,6 +41,7 @@ related_code:
   - ui/src/components/Layout.tsx
   - ui/src/components/MobileBottomNav.tsx
   - ui/src/components/OnboardingWizard.tsx
+  - ui/src/components/IssuesList.tsx
   - ui/src/components/PageTabBar.tsx
   - ui/src/components/SettingsSidebar.tsx
   - ui/src/components/settings/SettingsPageSkeleton.tsx
@@ -82,6 +83,7 @@ related_tests:
   - server/src/__tests__/organization-intelligence-profiles-routes.test.ts
   - server/src/__tests__/export-jobs.test.ts
   - ui/src/components/OnboardingWizard.runtime-config.test.tsx
+  - ui/src/components/IssuesList.test.tsx
   - ui/src/components/ImagePreviewDialog.test.tsx
   - ui/src/context/ImagePreviewContext.test.tsx
   - ui/src/components/SettingsSidebar.browser.test.tsx
@@ -362,14 +364,18 @@ Product model:
 - Messenger is the organization home and default landing surface for root app
   startup, first organization entry, and newly created onboarding organizations.
   Dashboard remains an explicit observability page, not the organization home.
-- The full tutorial seed creates a `Getting Started` project with one welcome
-  issue and eleven numbered tutorial issues. The experienced-user seed may
-  create only the welcome issue.
-- Seeded tutorial issues carry grouped status/priority intent: the welcome issue
-  starts done, core-loop issues start todo, and later recommended/advanced
-  issues start backlog.
-- Seeded issue descriptions may include next-issue links and chat CTA links that
-  prefill a prompt, selected project, and first available agent.
+- A new full seed creates a `Getting Started` project with one completed Welcome
+  reference plus two high-priority Todo guide issues: run one real task, then
+  review the result and close the loop. The experienced-user seed creates only
+  the Welcome reference. No advanced tutorial backlog is seeded.
+- The seeded completion standard is a real task followed by an inspectable
+  result or progress update and a recorded human decision: accept, request a
+  specific revision, or create a clear follow-up.
+- Guide completion is manual. The guide issue statuses do not automatically
+  synchronize with the status of the real Chat or Issue where work happened.
+- Seeded issue descriptions use existing organization routes for a prefilled
+  Chat with the first agent and Getting Started project, a project-filtered
+  Issues page, the next guide issue, and Messenger.
 - Seeded guidance presents Chat and issues as parallel task workflows: Chat is
   conversation-driven, while issues add structured tracking. It must not teach
   that real or durable work requires conversion from Chat into an issue.
@@ -391,8 +397,8 @@ Flow:
    evidence, and leaves failing profiles disabled/invalid with visible error
    state instead of silently enabling them.
 6. Server seeds starter work when needed, including the `Getting Started`
-   project, tutorial issues, next-step links, chat CTA links, Messenger grouping,
-   and read-state markers required for the starter set.
+   project, Welcome plus two guide issues for a full seed, existing-route CTAs,
+   Messenger grouping, and read-state markers required for the starter set.
 7. User lands in the organization's Messenger home with starter work or clear
    next action.
 
@@ -427,9 +433,23 @@ Invariants:
 - Getting Started issue links must stay organization-route-aware so next-step
   links and chat CTAs open inside the newly created organization, not a global
   or stale organization route.
-- Onboarding seed must be idempotent for an existing active `Getting Started`
-  project: repeated seed calls reuse matching starter issues instead of creating
-  duplicates.
+- Onboarding seed must be idempotent for a new, empty, or v2 `Getting Started`
+  project: repeated seed calls reuse matching starter issue IDs, expanding a
+  Welcome-only seed adds only the two action guides, and later Welcome-only
+  calls delete nothing.
+- The original twelve seeded titles form a legacy-title set. If any legacy
+  title exists in an active `Getting Started` project, reseeding must return its
+  current project and issues with HTTP 200 before mutating project metadata,
+  issue content or fields, issue ordering, Messenger grouping, follows, or read
+  state.
+- A non-empty pre-existing `Getting Started` project containing neither a
+  legacy title nor a v2 title is frozen by the same rule. Existing-organization
+  agent onboarding must not mutate or seed that project.
+- Any `Getting Started` project containing a hidden issue is also frozen so a
+  reseed cannot recreate, reveal, or otherwise rewrite intentionally hidden
+  legacy, unrelated, or v2 content.
+- Manual completion of either v2 action guide must persist across reloads and
+  must not be inferred from or overwritten by the real work item's state.
 - Auth/deployment mode constraints remain respected.
 
 Evidence:
@@ -438,10 +458,10 @@ Evidence:
   the name-only organization payload, absence of Issue Key and mission/goal
   fields, post-onboarding Messenger landing, and root startup redirect to
   Messenger.
-- `tests/e2e/onboarding.spec.ts` covers Getting Started project creation,
-  tutorial issue grouping/statuses, next-issue links, chat CTA prefill with
-  project/agent context, Messenger custom group membership, and cleared unread
-  sidebar state for seeded starter issues.
+- `tests/e2e/onboarding.spec.ts` covers the three-issue Getting Started seed,
+  guide statuses and priorities, Chat and Issues route context, manual guide
+  completion, Messenger order/read state, v2 idempotency, and immutable legacy
+  or unrelated pre-existing projects.
 - `ui/src/lib/organization-routes.test.ts`,
   `ui/src/hooks/useOrganizationPageMemory.test.ts`,
   `ui/src/components/OnboardingWizard.runtime-config.test.tsx`, and

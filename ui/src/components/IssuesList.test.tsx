@@ -471,7 +471,58 @@ describe("IssuesList", () => {
     expect(container.textContent).toContain("Project grouped issue");
   });
 
-  it("describes Chat and issue structure as parallel onboarding workflows", () => {
+  it("keeps the new Getting Started core copy when filters hide the first action", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({ groupBy: "none", viewMode: "list", priorities: ["low"] }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[
+            issueFixture({
+              id: "getting-started-core-one",
+              projectId: "getting-started",
+              title: "1. Run one real task",
+              priority: "high",
+            }),
+            issueFixture({
+              id: "getting-started-core-two",
+              projectId: "getting-started",
+              title: "2. Review the result and close the loop",
+              priority: "low",
+            }),
+          ]}
+          projects={[{ id: "getting-started", name: "Getting Started" }]}
+          projectId="getting-started"
+          viewStateKey="test:issues"
+          toolbarMode="hidden"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain(
+      "run one real task, inspect its result, and record your decision",
+    );
+    expect(container.textContent).not.toContain("1. Run one real task");
+    expect(container.textContent).toContain("2. Review the result and close the loop");
+    expect(container.textContent).not.toContain("chat → issue");
+  });
+
+  it("retains recommended and advanced grouping for legacy onboarding issues", () => {
     window.localStorage.setItem(
       "test:issues:org-1",
       JSON.stringify({ groupBy: "none", viewMode: "list" }),
@@ -493,9 +544,19 @@ describe("IssuesList", () => {
         <IssuesList
           issues={[
             issueFixture({
-              id: "getting-started-core",
+              id: "legacy-core",
               projectId: "getting-started",
               title: "1. Understand how Rudder work happens",
+            }),
+            issueFixture({
+              id: "legacy-recommended",
+              projectId: "getting-started",
+              title: "6. Add shared context your agent should remember",
+            }),
+            issueFixture({
+              id: "legacy-advanced",
+              projectId: "getting-started",
+              title: "11. Set up a recurring loop or automation",
             }),
           ]}
           projects={[{ id: "getting-started", name: "Getting Started" }]}
@@ -507,10 +568,11 @@ describe("IssuesList", () => {
       );
     });
 
-    expect(container.textContent).toContain(
-      "choose Chat or issue structure, execute work, review results, and add project context",
-    );
-    expect(container.textContent).not.toContain("chat → issue");
+    expect(container.textContent).toContain("Core loop");
+    expect(container.textContent).toContain("Recommended next");
+    expect(container.textContent).toContain("Advanced");
+    expect(container.textContent).toContain("Add shared context your agent should remember");
+    expect(container.textContent).toContain("Set up a recurring loop or automation");
   });
 
   it("moves zero-issue statuses into a hidden rail while keeping lane creation available", () => {
