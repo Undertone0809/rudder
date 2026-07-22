@@ -1254,6 +1254,12 @@ describe("claude execute", { timeout: 20_000 }, () => {
           diagnosticCode: "browser_bundle_version_mismatch",
           toolCount: 69,
         });
+        expect(meta.browserMcp).toMatchObject({
+          available: false,
+          diagnosticCode: "browser_bundle_version_mismatch",
+          serverName: "rudder-browser",
+          toolCount: 8,
+        });
         const managedConfig = JSON.parse(capture.managedClaudeMcpConfig) as {
           mcpServers: Record<string, {
             command: string;
@@ -1261,12 +1267,9 @@ describe("claude execute", { timeout: 20_000 }, () => {
             env?: Record<string, string>;
           }>;
         };
-        expect(managedConfig).toMatchObject({
-          mcpServers: {
-            "rudder-tools": { env: { RUDDER_BROWSER_ENABLED: "false" } },
-          },
-        });
+        expect(Object.keys(managedConfig.mcpServers)).toEqual(["rudder-tools"]);
         const generatedMcpConfig = managedConfig.mcpServers["rudder-tools"];
+        expect(generatedMcpConfig.env?.RUDDER_BROWSER_ENABLED).toBeUndefined();
         expect(generatedMcpConfig.command).toBe(installedDesktopMcp.command);
         expect(generatedMcpConfig.args).toEqual(installedDesktopMcp.args);
         expect(await readMcpToolNames({

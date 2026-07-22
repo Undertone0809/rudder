@@ -246,7 +246,7 @@ describe("agent-v1 MCP server", () => {
     }
   });
 
-  it("advertises Browser tools only for runs with the managed Browser capability flag", async () => {
+  it("keeps Browser tools out of rudder-tools and exposes them only from enabled rudder-browser", async () => {
     const baseEnv = {
       RUDDER_API_URL: "http://127.0.0.1:3100",
       RUDDER_API_KEY: "runtime-key",
@@ -254,20 +254,30 @@ describe("agent-v1 MCP server", () => {
       RUDDER_AGENT_ID: "runtime-agent",
       RUDDER_RUN_ID: "runtime-run",
     };
-    const disabled = await runAgentV1McpJsonRpcMessage(
+    const core = await runAgentV1McpJsonRpcMessage(
       { jsonrpc: "2.0", id: 1, method: "tools/list" },
-      buildMcpServerEnv(baseEnv),
-    );
-    const enabled = await runAgentV1McpJsonRpcMessage(
-      { jsonrpc: "2.0", id: 2, method: "tools/list" },
       buildMcpServerEnv({ ...baseEnv, RUDDER_BROWSER_ENABLED: "true" }),
     );
+    const disabledBrowser = await runAgentV1McpJsonRpcMessage(
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      buildMcpServerEnv(baseEnv),
+      "browser",
+    );
+    const enabledBrowser = await runAgentV1McpJsonRpcMessage(
+      { jsonrpc: "2.0", id: 3, method: "tools/list" },
+      buildMcpServerEnv({ ...baseEnv, RUDDER_BROWSER_ENABLED: "true" }),
+      "browser",
+    );
 
-    const disabledNames = ((disabled?.result as { tools: Array<{ name: string }> }).tools).map((tool) => tool.name);
-    const enabledNames = ((enabled?.result as { tools: Array<{ name: string }> }).tools).map((tool) => tool.name);
-    expect(disabledNames).not.toContain("rudder_browser_open");
-    expect(enabledNames).toContain("rudder_browser_open");
-    expect(enabledNames).toHaveLength(disabledNames.length + 8);
+    const coreNames = ((core?.result as { tools: Array<{ name: string }> }).tools).map((tool) => tool.name);
+    const disabledBrowserNames = ((disabledBrowser?.result as { tools: Array<{ name: string }> }).tools)
+      .map((tool) => tool.name);
+    const enabledBrowserNames = ((enabledBrowser?.result as { tools: Array<{ name: string }> }).tools)
+      .map((tool) => tool.name);
+    expect(coreNames).not.toContain("rudder_browser_open");
+    expect(disabledBrowserNames).toEqual([]);
+    expect(enabledBrowserNames).toContain("rudder_browser_open");
+    expect(enabledBrowserNames).toHaveLength(8);
   });
 
   it("rejects Browser calls without a runtime-owned run and capability flag", async () => {
@@ -284,6 +294,7 @@ describe("agent-v1 MCP server", () => {
         RUDDER_ORG_ID: "runtime-org",
         RUDDER_AGENT_ID: "runtime-agent",
       }),
+      "browser",
     );
 
     const result = response!.result as { content: Array<{ text: string }>; isError: boolean };
@@ -335,7 +346,7 @@ describe("agent-v1 MCP server", () => {
       RUDDER_BROWSER_ENABLED: "true",
     };
 
-    for (const tool of buildAgentV1McpToolsManifest("agent-v1").tools) {
+    for (const tool of buildAgentV1McpToolsManifest("agent-v1", { surface: "all" }).tools) {
       const input = SAMPLE_INPUT_BY_TOOL[tool.name] ?? {};
       expect(() => buildAgentV1ToolCallPlan(tool.name, input, env), tool.name).not.toThrow();
     }
@@ -371,7 +382,7 @@ describe("agent-v1 MCP server", () => {
   });
 
   it("advertises every sampled MCP tool input argument in strict schemas", () => {
-    for (const tool of buildAgentV1McpToolsManifest("agent-v1").tools) {
+    for (const tool of buildAgentV1McpToolsManifest("agent-v1", { surface: "all" }).tools) {
       const input = SAMPLE_INPUT_BY_TOOL[tool.name] ?? {};
       for (const key of Object.keys(input)) {
         expect(tool.inputSchema.properties, `${tool.name}.${key}`).toHaveProperty(key);
@@ -400,7 +411,7 @@ describe("agent-v1 MCP server", () => {
     }
 
     const schemaKeys = new Set<string>();
-    for (const tool of buildAgentV1McpToolsManifest("agent-v1").tools) {
+    for (const tool of buildAgentV1McpToolsManifest("agent-v1", { surface: "all" }).tools) {
       for (const key of Object.keys(tool.inputSchema.properties)) schemaKeys.add(key);
     }
 
@@ -457,6 +468,50 @@ describe("agent-v1 MCP server", () => {
         },
         serverInfo: { name: "rudder-tools", version: "0.5.1" },
       },
+    });
+  });
+
+  it("identifies the isolated Browser MCP server", async () => {
+    const response = await runAgentV1McpJsonRpcMessage(
+      { jsonrpc: "2.0", id: 2, method: "initialize", params: {} },
+      buildMcpServerEnv({ RUDDER_BROWSER_ENABLED: "true" }),
+      "browser",
+    );
+
+    expect(response).toMatchObject({
+      result: { serverInfo: { name: "rudder-browser", version: "0.5.1" } },
+    });
+  });
+
+  it("rejects calls that cross the core and Browser server boundaries", async () => {
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_RUN_ID: "runtime-run",
+      RUDDER_BROWSER_ENABLED: "true",
+    });
+    const browserThroughCore = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: { name: "rudder_browser_tabs", arguments: {} },
+    }, env);
+    const coreThroughBrowser = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 6,
+      method: "tools/call",
+      params: { name: "rudder_agent_me", arguments: {} },
+    }, env, "browser");
+
+    expect(browserThroughCore?.result).toMatchObject({
+      isError: true,
+      structuredContent: { code: "rudder_mcp_tool_not_available" },
+    });
+    expect(coreThroughBrowser?.result).toMatchObject({
+      isError: true,
+      structuredContent: { code: "rudder_mcp_tool_not_available" },
     });
   });
 
@@ -691,7 +746,7 @@ describe("agent-v1 MCP server", () => {
       RUDDER_RUN_ID: "22222222-2222-4222-8222-222222222222",
       RUDDER_BROWSER_ENABLED: "true",
       RUDDER_MCP_RUDDER_BIN: "/missing/rudder",
-    }));
+    }), "browser");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(response?.result).toMatchObject({

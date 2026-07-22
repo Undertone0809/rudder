@@ -176,6 +176,27 @@ export interface AgentRuntimeInvocationMeta {
     diagnosticCode?: string | null;
     fallbackReason?: string | null;
   };
+  browserMcp?: {
+    available: boolean;
+    serverName: string;
+    toolCount: number;
+    provenance?: "desktop_bundle" | "external_runtime" | "repo" | "path" | null;
+    version?: string | null;
+    contractVersion?: string | null;
+    contractHash?: string | null;
+    diagnosticCode?: string | null;
+    fallbackReason?: string | null;
+  };
+  browserNativeTools?: {
+    available: boolean;
+    transport: string;
+    serverName?: string | null;
+    toolCount: number;
+    toolNames?: string[];
+    authMode?: string | null;
+    modelVisibleCliFallback?: boolean;
+    fallbackReason?: string | null;
+  };
   rudderNativeTools?: {
     available: boolean;
     transport: string;

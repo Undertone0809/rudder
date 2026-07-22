@@ -1551,6 +1551,12 @@ describe("opencode execute", { timeout: 20_000 }, () => {
           diagnosticCode: "browser_bundle_version_mismatch",
           toolCount: 69,
         });
+        expect(meta.browserMcp).toMatchObject({
+          available: false,
+          diagnosticCode: "browser_bundle_version_mismatch",
+          serverName: "rudder-browser",
+          toolCount: 8,
+        });
         const managedSkills = path.join(
           rudderHome,
           "instances",
@@ -1568,7 +1574,8 @@ describe("opencode execute", { timeout: 20_000 }, () => {
             environment?: Record<string, string>;
           }>;
         };
-        expect(managedConfig.mcp?.["rudder-tools"]?.environment?.RUDDER_BROWSER_ENABLED).toBe("false");
+        expect(Object.keys(managedConfig.mcp ?? {})).toEqual(["rudder-tools"]);
+        expect(managedConfig.mcp?.["rudder-tools"]?.environment?.RUDDER_BROWSER_ENABLED).toBeUndefined();
         const generatedMcpConfig = managedConfig.mcp?.["rudder-tools"];
         expect(generatedMcpConfig?.command?.[0]).toBe(installedDesktopMcp.command);
         expect(generatedMcpConfig?.command?.slice(1)).toEqual(installedDesktopMcp.args);

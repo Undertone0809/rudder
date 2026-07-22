@@ -2,21 +2,27 @@ import { describe, expect, it } from "vitest";
 import { resolvePiRudderMcpToolEntries } from "./execute.js";
 
 describe("Pi Browser capability", () => {
-  it("filters Browser tools from the fallback list when Browser is disabled", () => {
-    const disabled = resolvePiRudderMcpToolEntries([], false);
-    const enabled = resolvePiRudderMcpToolEntries([], true);
+  it("splits core and Browser manifests into separate native bridges", () => {
+    const manifest = [
+      { name: "rudder_issue_get" },
+      { name: "rudder_browser_open" },
+      { name: "rudder_browser_close" },
+    ];
 
-    expect(disabled.map((entry) => entry.name)).not.toContain("rudder_browser_open");
-    expect(disabled).toHaveLength(69);
-    expect(enabled.map((entry) => entry.name)).toContain("rudder_browser_open");
-    expect(enabled).toHaveLength(77);
+    expect(resolvePiRudderMcpToolEntries(manifest, "core")).toEqual([
+      { name: "rudder_issue_get" },
+    ]);
+    expect(resolvePiRudderMcpToolEntries(manifest, "browser")).toEqual([
+      { name: "rudder_browser_open" },
+      { name: "rudder_browser_close" },
+    ]);
   });
 
-  it("defensively filters Browser tools from a returned manifest when disabled", () => {
+  it("defensively keeps Browser tools out of the core bridge", () => {
     expect(resolvePiRudderMcpToolEntries([
       { name: "rudder_issue_get" },
       { name: "rudder_browser_open" },
-    ], false)).toEqual([
+    ], "core")).toEqual([
       { name: "rudder_issue_get" },
     ]);
   });
@@ -26,7 +32,7 @@ describe("Pi Browser capability", () => {
       { name: "rudder_agent_me" },
       { name: " rudder_browser_open " },
       { name: "rudder_browser_read" },
-    ], false)).toEqual([
+    ], "core")).toEqual([
       { name: "rudder_agent_me" },
     ]);
   });

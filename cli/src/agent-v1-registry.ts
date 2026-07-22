@@ -58,9 +58,11 @@ export interface AgentV1McpToolManifestEntry extends AgentCliCapabilitiesManifes
 export interface AgentV1McpToolsManifest {
   schema: "rudder.agent-mcp-tools/v1";
   contract: AgentCliCapabilityContract | "all";
-  serverName: "rudder-tools";
+  serverName: "rudder-tools" | "rudder-browser";
   tools: AgentV1McpToolManifestEntry[];
 }
+
+export type AgentV1McpSurface = "core" | "browser" | "all";
 
 const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   {
@@ -1190,10 +1192,15 @@ export function agentCliCapabilityIdToMcpToolName(id: string): string {
 
 export function buildAgentV1McpToolsManifest(
   contract: AgentCliCapabilityContract | "all" = "agent-v1",
-  options: { browserEnabled?: boolean } = {},
+  options: { browserEnabled?: boolean; surface?: AgentV1McpSurface } = {},
 ): AgentV1McpToolsManifest {
+  const surface = options.surface ?? "core";
   const capabilities = buildAgentCliCapabilitiesManifest(contract).capabilities
-    .filter((entry) => options.browserEnabled !== false || entry.category !== "browser");
+    .filter((entry) => {
+      if (surface === "all") return true;
+      if (surface === "browser") return entry.category === "browser";
+      return entry.category !== "browser";
+    });
 
   const semanticContractByCapability = new Map<string, (typeof RUDDER_MCP_CANONICAL_TOOL_DEFINITIONS)[number]>(
     RUDDER_MCP_CANONICAL_TOOL_DEFINITIONS.map((tool) => [tool.capabilityId, tool]),
@@ -1202,7 +1209,7 @@ export function buildAgentV1McpToolsManifest(
   return {
     schema: "rudder.agent-mcp-tools/v1",
     contract,
-    serverName: "rudder-tools",
+    serverName: surface === "browser" ? "rudder-browser" : "rudder-tools",
     tools: capabilities.map((entry) => {
       const semanticContract = semanticContractByCapability.get(entry.id);
       if (!semanticContract) {
@@ -1222,7 +1229,7 @@ export function buildAgentV1McpToolsManifest(
 
 export function renderAgentCliReferenceMarkdown(): string {
   const manifest = buildAgentCliCapabilitiesManifest("agent-v1");
-  const mcpManifest = buildAgentV1McpToolsManifest("agent-v1");
+  const mcpManifest = buildAgentV1McpToolsManifest("agent-v1", { surface: "all" });
   const mcpByCapability = new Map(mcpManifest.tools.map((tool) => [tool.capabilityId, tool]));
   const lines: string[] = [
     "# Rudder Agent CLI Reference",

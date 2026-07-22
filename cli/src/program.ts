@@ -1,5 +1,5 @@
 import { Command, CommanderError } from "commander";
-import { runMcpStdioServer } from "./agent-v1-mcp-server.js";
+import { runMcpStdioServer, type RudderMcpServerSurface } from "./agent-v1-mcp-server.js";
 import { addAllowedHostname } from "./commands/allowed-hostname.js";
 import { bootstrapCeoInvite } from "./commands/auth-bootstrap-ceo.js";
 import { registerActivityCommands } from "./commands/client/activity.js";
@@ -132,8 +132,12 @@ export function createProgram(): Command {
   program
     .command("mcp-server")
     .description("Run the first-party Rudder Agent V1 MCP server over stdio")
-    .action(async () => {
-      await runMcpStdioServer();
+    .option("--server <surface>", "MCP surface to expose (core or browser)", "core")
+    .action(async (opts: { server: string }) => {
+      if (opts.server !== "core" && opts.server !== "browser") {
+        throw new Error(`Unsupported Rudder MCP server surface: ${opts.server}`);
+      }
+      await runMcpStdioServer(undefined, opts.server as RudderMcpServerSurface);
     });
 
   program

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertRudderMcpCoreAvailable,
+  preflightRudderBrowserMcpServer,
   preflightRudderMcpServer,
 } from "./rudder-mcp-preflight.js";
 import {
@@ -37,6 +38,7 @@ function advertisedName(name) {
   if (mode === "whitespace-browser-name" && name === browserTools[0]) return " " + name + " ";
   return name;
 }
+
 function advertisedDescription(name) {
   const description = canonicalByName.get(name)?.description ?? "Forged Rudder MCP tool.";
   if (mode === "semantic-core-description" && name === coreTools[0]) return description + " changed";
@@ -139,7 +141,60 @@ for await (const line of lines) {
   };
 }
 
+async function browserFixtureCommand(expectedVersion = "0.4.6") {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-browser-mcp-preflight-"));
+  roots.push(root);
+  const script = path.join(root, "server.mjs");
+  const browserContracts = RUDDER_MCP_CANONICAL_TOOL_CONTRACTS
+    .filter((tool) => tool.name.startsWith("rudder_browser_"));
+  await fs.writeFile(script, `
+import readline from "node:readline";
+const tools = ${JSON.stringify(browserContracts)};
+const lines = readline.createInterface({ input: process.stdin });
+for await (const line of lines) {
+  const request = JSON.parse(line);
+  if (request.id == null) continue;
+  if (request.method === "initialize") {
+    console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
+      protocolVersion: "2024-11-05",
+      capabilities: { tools: {}, experimental: { rudder: {
+        contractVersion: ${JSON.stringify(RUDDER_MCP_CONTRACT_VERSION)},
+        coreContractHash: ${JSON.stringify(RUDDER_CORE_MCP_CONTRACT_HASH)},
+        browserContractHash: ${JSON.stringify(RUDDER_BROWSER_MCP_CONTRACT_HASH)},
+      } } },
+      serverInfo: { name: "rudder-browser", version: "0.4.6" },
+    } }));
+  }
+  if (request.method === "tools/list") {
+    console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { tools } }));
+  }
+}
+`, "utf8");
+  return {
+    command: process.execPath,
+    args: [script],
+    provenance: "repo" as const,
+    expectedVersion,
+  };
+}
+
 describe("preflightRudderMcpServer", () => {
+  it("verifies the isolated Browser server identity and exact semantic manifest", async () => {
+    const result = await preflightRudderBrowserMcpServer({
+      command: await browserFixtureCommand(),
+      runtimeEnv: {},
+    });
+
+    expect(result).toMatchObject({
+      available: true,
+      browserAvailable: true,
+      contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+      contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+      diagnosticCode: null,
+    });
+    expect(result.tools.map((tool) => tool.name)).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
+  });
+
   it("accepts the exact version, contract hash, and eight Browser tools", async () => {
     const result = await preflightRudderMcpServer({
       command: await fixtureCommand("ok"),

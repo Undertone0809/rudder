@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { fingerprintRudderMcpToolManifest } from "./rudder-mcp-fingerprint.js";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_BROWSER_MCP_SERVER_NAME,
   RUDDER_BROWSER_MCP_TOOL_NAMES,
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_TOOL_NAMES,
@@ -431,5 +432,131 @@ export async function preflightRudderMcpServer(
   return {
     ...requested,
     tools: coreOnly.tools,
+  };
+}
+
+type RudderBrowserMcpPreflightInput = Omit<RudderMcpPreflightInput, "browserEnabled">;
+
+export async function preflightRudderBrowserMcpServer(
+  input: RudderBrowserMcpPreflightInput,
+): Promise<RudderMcpPreflightResult> {
+  const env = Object.fromEntries(
+    Object.entries({ ...input.runtimeEnv, ...(input.command.env ?? {}), ...(input.managedEnv ?? {}) })
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  delete env.RUDDER_DESKTOP_CLI_ENTRY;
+  env.RUDDER_BROWSER_ENABLED = "true";
+
+  let responses: Map<string | number, JsonRpcResponse>;
+  try {
+    responses = await exchange(input.command, env, input.timeoutMs ?? PREFLIGHT_TIMEOUT_MS);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return failed(
+      input.command,
+      "browser_bundle_handshake_failed",
+      `Rudder Browser MCP initialize/tools-list handshake failed: ${detail}; optional Browser capability was disabled.`,
+      { available: true },
+    );
+  }
+
+  const initialize = responses.get("initialize");
+  const toolsList = responses.get("tools-list");
+  if (initialize?.error || toolsList?.error) {
+    return failed(
+      input.command,
+      "browser_bundle_handshake_failed",
+      "Rudder Browser MCP initialize/tools-list returned a protocol error; optional Browser capability was disabled.",
+      { available: true },
+    );
+  }
+
+  const initializeResult = asRecord(initialize?.result);
+  const serverInfo = asRecord(initializeResult.serverInfo);
+  const rudder = asRecord(asRecord(asRecord(initializeResult.capabilities).experimental).rudder);
+  const version = asExactString(serverInfo.version);
+  const contractVersion = asExactString(rudder.contractVersion);
+  const coreContractHash = asExactString(rudder.coreContractHash);
+  const contractHash = asExactString(rudder.browserContractHash);
+  const listed = asRecord(toolsList?.result).tools;
+  const partialBase = { available: true, version, contractVersion, coreContractHash, contractHash };
+  if (!Array.isArray(listed)) {
+    return failed(
+      input.command,
+      "browser_bundle_handshake_failed",
+      "Rudder Browser MCP tools/list returned an invalid manifest; optional Browser capability was disabled.",
+      partialBase,
+    );
+  }
+
+  const parsedTools = listed.map((entry) => {
+    const tool = asRecord(entry);
+    const name = asExactString(tool.name);
+    if (!name) return null;
+    const description = asExactString(tool.description);
+    const inputSchema = asRecord(tool.inputSchema);
+    return {
+      name,
+      hasCanonicalInputSchema: hasCanonicalInputSchema(tool.inputSchema),
+      ...(description ? { description } : {}),
+      ...(Object.keys(inputSchema).length > 0 ? { inputSchema } : {}),
+    };
+  });
+  const tools = parsedTools
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .map(({ hasCanonicalInputSchema: _hasCanonicalInputSchema, ...tool }) => tool);
+  const partial = { ...partialBase, tools };
+
+  if (asExactString(serverInfo.name) !== RUDDER_BROWSER_MCP_SERVER_NAME) {
+    return failed(
+      input.command,
+      "browser_bundle_server_mismatch",
+      "Rudder Browser MCP server identity did not match the managed bundle; optional Browser capability was disabled.",
+      partial,
+    );
+  }
+  if (input.command.expectedVersion && version !== input.command.expectedVersion) {
+    return failed(
+      input.command,
+      "browser_bundle_version_mismatch",
+      `Rudder Browser MCP bundle version mismatch (expected ${input.command.expectedVersion}, received ${version ?? "unknown"}); optional Browser capability was disabled.`,
+      partial,
+    );
+  }
+  if (contractVersion !== RUDDER_MCP_CONTRACT_VERSION || contractHash !== RUDDER_BROWSER_MCP_CONTRACT_HASH) {
+    return failed(
+      input.command,
+      "browser_bundle_contract_mismatch",
+      "Rudder Browser MCP contract hash did not match the runtime bundle; optional Browser capability was disabled.",
+      partial,
+    );
+  }
+
+  const observedContractHash = semanticManifestHash(parsedTools.filter((tool) => tool !== null));
+  if (
+    parsedTools.some((tool) => tool === null)
+    || !hasExactNames(tools.map((tool) => tool.name), RUDDER_BROWSER_MCP_TOOL_NAMES)
+    || parsedTools.some((tool) => tool !== null && !tool.hasCanonicalInputSchema)
+    || observedContractHash !== RUDDER_BROWSER_MCP_CONTRACT_HASH
+  ) {
+    return failed(
+      input.command,
+      "browser_bundle_tools_mismatch",
+      "Rudder Browser MCP tools/list did not expose the exact canonical Browser manifest; optional Browser capability was disabled.",
+      partial,
+    );
+  }
+
+  return {
+    available: true,
+    browserAvailable: true,
+    provenance: input.command.provenance,
+    version,
+    contractVersion,
+    coreContractHash,
+    contractHash,
+    diagnosticCode: null,
+    diagnostic: null,
+    tools,
   };
 }

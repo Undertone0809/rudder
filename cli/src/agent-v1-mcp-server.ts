@@ -1,4 +1,5 @@
 import {
+  RUDDER_BROWSER_MCP_SERVER_NAME,
   RUDDER_MCP_CONTRACT_VERSION,
   RUDDER_MCP_SERVER_NAME,
   rudderMcpSemanticToolContract,
@@ -19,7 +20,7 @@ import {
 import { RudderApiClient } from "./client/http.js";
 import { resolveCliVersion } from "./version.js";
 
-export { RUDDER_MCP_SERVER_NAME };
+export { RUDDER_BROWSER_MCP_SERVER_NAME, RUDDER_MCP_SERVER_NAME };
 const RUDDER_MCP_MAX_TOOL_RESULT_BYTES = 1_000_000;
 const RUDDER_MCP_MAX_INLINE_TEXT_BYTES = 32_000;
 
@@ -45,6 +46,7 @@ interface McpServerEnv {
 }
 
 type McpStdioMode = "framed" | "newline";
+export type RudderMcpServerSurface = "core" | "browser";
 const RESERVED_MODEL_ARGUMENTS = new Set([
   "orgId",
   "org_id",
@@ -136,6 +138,7 @@ export function buildAgentV1ToolCallPlan(
 export async function runAgentV1McpJsonRpcMessage(
   message: JsonRpcRequest,
   env: McpServerEnv = buildMcpServerEnv(),
+  surface: RudderMcpServerSurface = "core",
 ): Promise<Record<string, unknown> | null> {
   const isNotification = message.id === undefined;
   const id = message.id ?? null;
@@ -144,7 +147,7 @@ export async function runAgentV1McpJsonRpcMessage(
       case "notifications/initialized":
         return isNotification ? null : rpcResult(id, {});
       case "initialize":
-        const contractManifest = buildAgentV1McpToolsManifest("agent-v1").tools
+        const contractManifest = buildAgentV1McpToolsManifest("agent-v1", { surface: "all" }).tools
           .map(rudderMcpSemanticToolContract);
         const coreContractHash = fingerprintRudderMcpToolManifest(
           contractManifest.filter((tool) => !tool.name.startsWith("rudder_browser_")),
@@ -164,16 +167,19 @@ export async function runAgentV1McpJsonRpcMessage(
               },
             },
           },
-          serverInfo: { name: RUDDER_MCP_SERVER_NAME, version: resolveCliVersion() },
+          serverInfo: {
+            name: surface === "browser" ? RUDDER_BROWSER_MCP_SERVER_NAME : RUDDER_MCP_SERVER_NAME,
+            version: resolveCliVersion(),
+          },
         });
       case "tools/list":
         return rpcResult(id, {
-          tools: buildAgentV1McpToolsManifest("agent-v1", {
-            browserEnabled: browserCapabilityEnabled(env),
-          }).tools.map(toMcpToolListEntry),
+          tools: surface === "browser" && !browserCapabilityEnabled(env)
+            ? []
+            : buildAgentV1McpToolsManifest("agent-v1", { surface }).tools.map(toMcpToolListEntry),
         });
       case "tools/call":
-        return boundedToolCallRpcResponse(id, await callToolSafely(message.params, env));
+        return boundedToolCallRpcResponse(id, await callToolSafely(message.params, env, surface));
       default:
         if (isNotification) return null;
         return rpcError(id, -32601, `Unsupported JSON-RPC method: ${String(message.method ?? "")}`);
@@ -184,7 +190,10 @@ export async function runAgentV1McpJsonRpcMessage(
   }
 }
 
-export async function runMcpStdioServer(env: McpServerEnv = buildMcpServerEnv()): Promise<void> {
+export async function runMcpStdioServer(
+  env: McpServerEnv = buildMcpServerEnv(),
+  surface: RudderMcpServerSurface = "core",
+): Promise<void> {
   let buffer = "";
   let mode: McpStdioMode | null = null;
   process.stdin.setEncoding("utf8");
@@ -194,7 +203,7 @@ export async function runMcpStdioServer(env: McpServerEnv = buildMcpServerEnv())
     mode = parsed.mode ?? mode;
     buffer = parsed.remainder;
     for (const message of parsed.messages) {
-      const response = await runAgentV1McpJsonRpcMessage(message, env);
+      const response = await runAgentV1McpJsonRpcMessage(message, env, surface);
       if (!response) continue;
       const payload = JSON.stringify(response);
       process.stdout.write(parsed.mode === "framed"
@@ -252,8 +261,13 @@ function detectMcpStdioMode(buffer: string): McpStdioMode | null {
   return "newline";
 }
 
-async function callToolSafely(params: unknown, env: McpServerEnv): Promise<Record<string, unknown>> {
+async function callToolSafely(
+  params: unknown,
+  env: McpServerEnv,
+  surface: RudderMcpServerSurface,
+): Promise<Record<string, unknown>> {
   try {
+    assertToolAvailableOnSurface(params, surface);
     return await callTool(params, env);
   } catch (err) {
     const details = errorDetails(err);
@@ -272,6 +286,17 @@ async function callToolSafely(params: unknown, env: McpServerEnv): Promise<Recor
       isError: true,
     };
   }
+}
+
+function assertToolAvailableOnSurface(params: unknown, surface: RudderMcpServerSurface): void {
+  const record = isRecord(params) ? params : {};
+  const toolName = typeof record.name === "string" ? record.name : "";
+  const capabilityId = toolNameToCapabilityId(toolName);
+  const isBrowserTool = capabilityId?.startsWith("browser.") === true;
+  if ((surface === "browser") === isBrowserTool) return;
+  const error = new Error(`Rudder MCP tool is not available from the ${surface} server: ${toolName}`);
+  (error as Error & { code?: string }).code = "rudder_mcp_tool_not_available";
+  throw error;
 }
 
 async function callTool(params: unknown, env: McpServerEnv): Promise<Record<string, unknown>> {
@@ -955,7 +980,7 @@ function requestedProtocolVersion(params: unknown): string | null {
 }
 
 function toolNameToCapabilityId(toolName: string): string | null {
-  const manifest = buildAgentV1McpToolsManifest("agent-v1");
+  const manifest = buildAgentV1McpToolsManifest("agent-v1", { surface: "all" });
   return manifest.tools.find((tool) => tool.name === toolName)?.id ?? null;
 }
 
@@ -1055,7 +1080,8 @@ function rejectModelProvidedRuntimeIdentity(input: Record<string, unknown>): voi
 }
 
 function rejectUnsupportedToolArguments(toolName: string, input: Record<string, unknown>): void {
-  const tool = buildAgentV1McpToolsManifest("agent-v1").tools.find((entry) => entry.name === toolName);
+  const tool = buildAgentV1McpToolsManifest("agent-v1", { surface: "all" }).tools
+    .find((entry) => entry.name === toolName);
   if (!tool) return;
   const supported = new Set(Object.keys(tool.inputSchema.properties));
   const unsupported = Object.keys(input).filter((key) => !supported.has(key)).sort();

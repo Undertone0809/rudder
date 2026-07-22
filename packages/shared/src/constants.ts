@@ -257,6 +257,7 @@ export const AGENT_INTEGRATION_OUTBOUND_STATUSES = ["pending", "streaming", "fin
 export type AgentIntegrationOutboundStatus = (typeof AGENT_INTEGRATION_OUTBOUND_STATUSES)[number];
 
 export const RUDDER_AGENT_V1_MCP_SERVER_NAME = "rudder-tools" as const;
+export const RUDDER_BROWSER_MCP_SERVER_NAME = "rudder-browser" as const;
 export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_agent_me",
   "rudder_agent_inbox",
@@ -337,6 +338,12 @@ export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_runs_retry",
 ] as const;
 export type RudderAgentV1McpToolName = (typeof RUDDER_AGENT_V1_MCP_TOOL_NAMES)[number];
+export const RUDDER_BROWSER_MCP_TOOL_NAMES = RUDDER_AGENT_V1_MCP_TOOL_NAMES
+  .filter((name) => name.startsWith("rudder_browser_"));
+export const RUDDER_CORE_MCP_TOOL_NAMES = RUDDER_AGENT_V1_MCP_TOOL_NAMES
+  .filter((name) => !name.startsWith("rudder_browser_"));
+export type RudderBrowserMcpToolName = (typeof RUDDER_BROWSER_MCP_TOOL_NAMES)[number];
+export type RudderCoreMcpToolName = (typeof RUDDER_CORE_MCP_TOOL_NAMES)[number];
 
 export const CUSTOM_INTEGRATION_KINDS = ["custom_api", "mcp_server"] as const;
 export type CustomIntegrationKind = (typeof CUSTOM_INTEGRATION_KINDS)[number];

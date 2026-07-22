@@ -3705,11 +3705,18 @@ describe("codex execute", { timeout: 20_000 }, () => {
           diagnosticCode: "browser_bundle_version_mismatch",
           toolCount: 69,
         });
+        expect(meta.browserMcp).toMatchObject({
+          available: false,
+          diagnosticCode: "browser_bundle_version_mismatch",
+          serverName: "rudder-browser",
+          toolCount: 8,
+        });
         const managedConfig = await fs.readFile(
           path.join(managedCodexHomePath({ rudderHome }), "config.toml"),
           "utf8",
         );
-        expect(managedConfig).toContain('RUDDER_BROWSER_ENABLED = "false"');
+        expect(managedConfig).not.toContain('RUDDER_BROWSER_ENABLED = "false"');
+        expect(managedConfig).not.toContain("[mcp_servers.rudder-browser]");
         const generatedMcpConfig = parseCodexRudderMcpConfig(managedConfig);
         expect(generatedMcpConfig.command).toBe(installedDesktopMcp.command);
         expect(generatedMcpConfig.args).toEqual(installedDesktopMcp.args);

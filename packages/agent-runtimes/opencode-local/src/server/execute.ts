@@ -1,9 +1,11 @@
 import {
+  RUDDER_BROWSER_MCP_SERVER_NAME,
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
   applyRudderBrowserCapabilityEnv,
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
+  rudderBrowserMcpRuntimeMetadata,
   rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
@@ -13,9 +15,13 @@ import {
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   assertRudderMcpCoreAvailable,
+  preflightRudderBrowserMcpServer,
   preflightRudderMcpServer,
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
-import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
+import {
+  resolveRudderBrowserMcpCliCommand,
+  resolveRudderMcpCliCommand,
+} from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import {
   asBoolean,
   asNumber,
@@ -234,6 +240,7 @@ export async function resolveRudderOpenCodeMcpConfig(
     ...(rudderMcp.env ?? {}),
     ...managedEnv,
   };
+  delete env.RUDDER_BROWSER_ENABLED;
   return {
     type: "local",
     command: [rudderMcp.command, ...rudderMcp.args],
@@ -242,11 +249,33 @@ export async function resolveRudderOpenCodeMcpConfig(
   };
 }
 
+export async function resolveRudderOpenCodeMcpConfigs(
+  managedEnv: RudderMcpManagedEnv = {},
+  verifiedCommand?: RudderMcpCliCommand,
+  verifiedBrowserCommand?: RudderMcpCliCommand,
+): Promise<Record<string, Record<string, unknown>>> {
+  const configs: Record<string, Record<string, unknown>> = {
+    [RUDDER_MCP_SERVER_NAME]: await resolveRudderOpenCodeMcpConfig(managedEnv, verifiedCommand),
+  };
+  if (managedEnv.RUDDER_BROWSER_ENABLED === "true") {
+    const browserMcp = verifiedBrowserCommand ?? await resolveRudderBrowserMcpCliCommand(__moduleDir);
+    const env = { ...(browserMcp.env ?? {}), ...managedEnv };
+    configs[RUDDER_BROWSER_MCP_SERVER_NAME] = {
+      type: "local",
+      command: [browserMcp.command, ...browserMcp.args],
+      enabled: true,
+      ...(Object.keys(env).length > 0 ? { environment: env } : {}),
+    };
+  }
+  return configs;
+}
+
 async function ensureManagedOpenCodeConfig(input: {
   sourceHome: string;
   targetHome: string;
   managedEnv?: RudderMcpManagedEnv;
   verifiedCommand?: RudderMcpCliCommand;
+  verifiedBrowserCommand?: RudderMcpCliCommand;
   onLog: AgentRuntimeExecutionContext["onLog"];
 }) {
   const configDir = path.join(input.targetHome, ".config", "opencode");
@@ -259,12 +288,11 @@ async function ensureManagedOpenCodeConfig(input: {
   await removeManagedOpenCodeConfigExtensions(configDir);
 
   const config = await readOpenCodeConfigFile(input.sourceHome);
-  config.mcp = {
-    [RUDDER_MCP_SERVER_NAME]: await resolveRudderOpenCodeMcpConfig(
-      input.managedEnv ?? {},
-      input.verifiedCommand,
-    ),
-  };
+  config.mcp = await resolveRudderOpenCodeMcpConfigs(
+    input.managedEnv ?? {},
+    input.verifiedCommand,
+    input.verifiedBrowserCommand,
+  );
   await fs.writeFile(
     path.join(configDir, MANAGED_OPENCODE_CONFIG_FILE),
     `${JSON.stringify(config, null, 2)}\n`,
@@ -534,16 +562,24 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     command: rudderMcpCommand,
     runtimeEnv,
     managedEnv: pickRudderMcpManagedEnv(env),
-    browserEnabled,
+    browserEnabled: false,
   });
   assertRudderMcpCoreAvailable(rudderMcpPreflight);
   delete runtimeEnv.RUDDER_DESKTOP_CLI_ENTRY;
   delete runtimeEnv.RUDDER_MCP_RUDDER_BIN;
-  if (browserEnabled && !rudderMcpPreflight?.browserAvailable) {
+  const browserMcpCommand = browserEnabled ? await resolveRudderBrowserMcpCliCommand(__moduleDir) : null;
+  const browserMcpPreflight = browserMcpCommand
+    ? await preflightRudderBrowserMcpServer({
+        command: browserMcpCommand,
+        runtimeEnv,
+        managedEnv: pickRudderMcpManagedEnv(env),
+      })
+    : null;
+  if (browserEnabled && !browserMcpPreflight?.browserAvailable) {
     browserEnabled = false;
     env.RUDDER_BROWSER_ENABLED = "false";
     runtimeEnv.RUDDER_BROWSER_ENABLED = "false";
-    await onLog("stderr", `[rudder] ${rudderMcpPreflight?.diagnostic}\n`);
+    await onLog("stderr", `[rudder] ${browserMcpPreflight?.diagnostic}\n`);
   }
   const effectiveDesiredOpenCodeSkillNames = filterRudderDesiredSkillsForBrowserCapability(
     openCodeSkillEntries,
@@ -577,6 +613,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     targetHome: managedHome,
     managedEnv: pickRudderMcpManagedEnv(env),
     verifiedCommand: rudderMcpCommand,
+    verifiedBrowserCommand: browserMcpCommand ?? undefined,
     onLog,
   });
   await ensureCommandResolvable(command, cwd, runtimeEnv);
@@ -756,6 +793,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         realizedSkills: loadedSkills,
         promptInjectedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
+        browserMcp: rudderBrowserMcpRuntimeMetadata({
+          available: browserEnabled,
+          preflight: browserMcpPreflight,
+        }),
         context,
       });
     }
