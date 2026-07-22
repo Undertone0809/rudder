@@ -7,6 +7,7 @@ import { createConnection, createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { isSafeLocalAppProcessId } from "./local-app-process-identity.mjs";
 import type {
   LocalAppDefinition,
   LocalAppRegistry,
@@ -99,6 +100,9 @@ export function installControlPipeEofCleanup(
 }
 
 function defaultKillGroup(pgid: number, signal: NodeJS.Signals): void {
+  if (!isSafeLocalAppProcessId(pgid)) {
+    throw new Error("Refusing to terminate an unverified Local App process group");
+  }
   try {
     process.kill(-pgid, signal);
   } catch (error) {
@@ -107,6 +111,7 @@ function defaultKillGroup(pgid: number, signal: NodeJS.Signals): void {
 }
 
 function defaultIsGroupAlive(pgid: number): boolean {
+  if (!isSafeLocalAppProcessId(pgid)) return true;
   try {
     process.kill(-pgid, 0);
     return true;
@@ -115,10 +120,10 @@ function defaultIsGroupAlive(pgid: number): boolean {
   }
 }
 
-function probeProcessLiveness(target: number | null): LivenessState {
-  if (!Number.isInteger(target) || target === null || target === 0) return "unknown";
+function probeProcessLiveness(processId: number | null, processGroup = false): LivenessState {
+  if (!isSafeLocalAppProcessId(processId)) return "unknown";
   try {
-    process.kill(target, 0);
+    process.kill(processGroup ? -processId : processId, 0);
     return "alive";
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ESRCH" ? "dead" : "unknown";
@@ -154,7 +159,7 @@ async function defaultProbePersistedRuntimeLiveness(input: {
 }): Promise<PersistedRuntimeLiveness> {
   return {
     pid: probeProcessLiveness(input.pid),
-    processGroup: probeProcessLiveness(input.pgid === null ? null : -input.pgid),
+    processGroup: probeProcessLiveness(input.pgid, true),
     listener: await probeLoopbackListenerLiveness(input.port),
   };
 }
@@ -163,7 +168,7 @@ export async function terminateOwnedProcessGroup(
   pgid: number | null,
   options: TerminationOptions = {},
 ): Promise<void> {
-  if (!Number.isInteger(pgid) || pgid === null || pgid <= 0) {
+  if (!isSafeLocalAppProcessId(pgid)) {
     throw new Error("Refusing to terminate an unverified Local App process group");
   }
   const killGroup = options.killGroup ?? defaultKillGroup;
@@ -306,6 +311,8 @@ export class LocalAppRuntimeManager {
   private readonly records = new Map<string, RuntimeRecord>();
   private readonly recordPromises = new Map<string, Promise<RuntimeRecord>>();
   private readonly bindingOperations = new Map<string, Promise<void>>();
+  private acceptingLifecycleOperations = true;
+  private shutdownPromise: Promise<void> | null = null;
 
   constructor(options: RuntimeManagerOptions) {
     this.registry = options.registry;
@@ -409,6 +416,16 @@ export class LocalAppRuntimeManager {
     }
   }
 
+  private ensureLifecycleAdmission(): void {
+    if (!this.acceptingLifecycleOperations) throw new Error("Local Apps are shutting down");
+  }
+
+  private async drainBindingOperations(): Promise<void> {
+    while (this.bindingOperations.size > 0) {
+      await Promise.allSettled([...this.bindingOperations.values()]);
+    }
+  }
+
   private async spawnHelper(record: RuntimeRecord, port: number): Promise<{ pid: number; pgid: number }> {
     const environment = await buildChildEnvironment(record.definition, port, this.hostExecutablePath);
     return new Promise((resolve, reject) => {
@@ -435,8 +452,14 @@ export class LocalAppRuntimeManager {
       helper.on("message", (message: unknown) => {
         if (!message || typeof message !== "object") return;
         const typed = message as { type?: unknown; pid?: unknown; pgid?: unknown; message?: unknown };
-        if (typed.type === "spawned" && Number.isInteger(typed.pid) && Number.isInteger(typed.pgid)) {
-          finish(undefined, { pid: typed.pid as number, pgid: typed.pgid as number });
+        if (typed.type === "spawned") {
+          if (!isSafeLocalAppProcessId(typed.pid)
+            || !isSafeLocalAppProcessId(typed.pgid)
+            || typed.pid !== typed.pgid) {
+            finish(new Error("Local App watchdog process identity is invalid"));
+            return;
+          }
+          finish(undefined, { pid: typed.pid, pgid: typed.pgid });
         } else if (typed.type === "error") {
           finish(new Error(typeof typed.message === "string" ? typed.message : "Local App watchdog failed"));
         }
@@ -512,6 +535,7 @@ export class LocalAppRuntimeManager {
   }
 
   async start(id: string): Promise<LocalAppRuntimeView> {
+    this.ensureLifecycleAdmission();
     return this.withBindingOperation(id, () => this.startInternal(id));
   }
 
@@ -576,6 +600,7 @@ export class LocalAppRuntimeManager {
   }
 
   async stop(id: string): Promise<LocalAppRuntimeView> {
+    this.ensureLifecycleAdmission();
     return this.withBindingOperation(id, () => this.stopInternal(id));
   }
 
@@ -685,11 +710,20 @@ export class LocalAppRuntimeManager {
     }
   }
 
-  async shutdown(): Promise<void> {
-    await Promise.allSettled([...this.bindingOperations.values()]);
+  private async shutdownInternal(): Promise<void> {
+    await this.drainBindingOperations();
     const ids = [...this.records.entries()]
       .filter(([, record]) => record.status === "running" && record.verified)
       .map(([id]) => id);
-    await Promise.allSettled(ids.map((id) => this.stop(id)));
+    await Promise.allSettled(ids.map((id) =>
+      this.withBindingOperation(id, () => this.stopInternal(id))));
+    await this.drainBindingOperations();
+  }
+
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    this.acceptingLifecycleOperations = false;
+    this.shutdownPromise = this.shutdownInternal();
+    return this.shutdownPromise;
   }
 }

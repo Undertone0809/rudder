@@ -11,6 +11,7 @@ import {
   rm,
 } from "node:fs/promises";
 import path from "node:path";
+import { isSafeLocalAppProcessId } from "./local-app-process-identity.mjs";
 
 export type LocalAppDefinitionDraft = {
   title: string;
@@ -167,8 +168,8 @@ function isRuntimeDescriptor(value: unknown): value is LocalAppRuntimeDescriptor
   if (!value || typeof value !== "object") return false;
   const descriptor = value as Partial<LocalAppRuntimeDescriptor>;
   return typeof descriptor.status === "string"
-    && (descriptor.pid === null || (Number.isInteger(descriptor.pid) && descriptor.pid! > 0))
-    && (descriptor.pgid === null || (Number.isInteger(descriptor.pgid) && descriptor.pgid! > 0))
+    && (descriptor.pid === null || isSafeLocalAppProcessId(descriptor.pid))
+    && (descriptor.pgid === null || isSafeLocalAppProcessId(descriptor.pgid))
     && typeof descriptor.generation === "string"
     && (descriptor.port === undefined
       || (Number.isInteger(descriptor.port) && descriptor.port! > 0 && descriptor.port! <= 65_535));

@@ -69,6 +69,9 @@ export class LocalAppsController {
   private readonly selectFolder: () => Promise<string | null>;
   private readonly confirmDefinition: ControllerOptions["confirmDefinition"];
   private readonly bindingOperations = new Map<string, Promise<void>>();
+  private readonly activeOperations = new Set<Promise<unknown>>();
+  private acceptingOperations = true;
+  private shutdownPromise: Promise<void> | null = null;
 
   constructor(options: ControllerOptions) {
     this.registry = options.registry;
@@ -109,49 +112,90 @@ export class LocalAppsController {
     }
   }
 
+  private ensureAcceptingOperations(): void {
+    if (!this.acceptingOperations) throw new Error("Local Apps are shutting down");
+  }
+
+  private withAdmittedOperation<T>(operation: () => Promise<T>): Promise<T> {
+    this.ensureAcceptingOperations();
+    const result = Promise.resolve().then(operation);
+    this.activeOperations.add(result);
+    void result.then(
+      () => this.activeOperations.delete(result),
+      () => this.activeOperations.delete(result),
+    );
+    return result;
+  }
+
+  private async drainActiveOperations(): Promise<void> {
+    while (this.activeOperations.size > 0) {
+      await Promise.allSettled([...this.activeOperations]);
+    }
+  }
+
   async createDefinition(input: unknown): Promise<LocalAppDefinition> {
-    const prepared = await this.registry.prepareDefinition(rendererDraft(input));
-    await this.requireNativeConfirmation(prepared, "create");
-    const created = await this.registry.createDefinition(prepared);
-    return this.withBindingOperation(created.id, () =>
-      this.registry.approveDefinition(created.id, prepared.trustFingerprint));
+    return this.withAdmittedOperation(async () => {
+      const prepared = await this.registry.prepareDefinition(rendererDraft(input));
+      this.ensureAcceptingOperations();
+      await this.requireNativeConfirmation(prepared, "create");
+      this.ensureAcceptingOperations();
+      const created = await this.registry.createDefinition(prepared);
+      return this.withBindingOperation(created.id, () =>
+        this.registry.approveDefinition(created.id, prepared.trustFingerprint));
+    });
   }
 
   async updateDefinition(id: string, input: unknown): Promise<LocalAppDefinition> {
-    return this.withBindingOperation(id, async () => {
-      ensureInactive((await this.runtime.status(id)).status, "update");
-      const prepared = await this.registry.prepareDefinition(rendererDraft(input));
-      const previous = await this.registry.getDefinition(id);
-      const requiresReview = previous.trustFingerprint !== prepared.trustFingerprint
-        || previous.approvedFingerprint !== prepared.trustFingerprint;
-      if (requiresReview) await this.requireNativeConfirmation(prepared, "update");
-      const updated = await this.registry.updateDefinition(id, prepared);
-      return requiresReview
-        ? this.registry.approveDefinition(updated.id, updated.trustFingerprint)
-        : updated;
-    });
+    return this.withAdmittedOperation(() =>
+      this.withBindingOperation(id, async () => {
+        this.ensureAcceptingOperations();
+        ensureInactive((await this.runtime.status(id)).status, "update");
+        const prepared = await this.registry.prepareDefinition(rendererDraft(input));
+        const previous = await this.registry.getDefinition(id);
+        const requiresReview = previous.trustFingerprint !== prepared.trustFingerprint
+          || previous.approvedFingerprint !== prepared.trustFingerprint;
+        this.ensureAcceptingOperations();
+        if (requiresReview) await this.requireNativeConfirmation(prepared, "update");
+        this.ensureAcceptingOperations();
+        const updated = await this.registry.updateDefinition(id, prepared);
+        return requiresReview
+          ? this.registry.approveDefinition(updated.id, updated.trustFingerprint)
+          : updated;
+      }));
   }
 
   async deleteDefinition(id: string): Promise<void> {
-    await this.withBindingOperation(id, async () => {
-      ensureInactive((await this.runtime.status(id)).status, "delete");
-      await this.registry.deleteDefinition(id);
-    });
+    await this.withAdmittedOperation(() =>
+      this.withBindingOperation(id, async () => {
+        this.ensureAcceptingOperations();
+        ensureInactive((await this.runtime.status(id)).status, "delete");
+        this.ensureAcceptingOperations();
+        await this.registry.deleteDefinition(id);
+      }));
   }
 
   async start(id: string): Promise<LocalAppRuntimeView> {
-    return this.withBindingOperation(id, async () => {
-      const definition = await this.registry.getDefinition(id);
-      if (definition.approvedFingerprint !== definition.trustFingerprint) {
-        await this.requireNativeConfirmation(definition, "start");
-        await this.registry.approveDefinition(id, definition.trustFingerprint);
-      }
-      return this.runtime.start(id);
-    });
+    return this.withAdmittedOperation(() =>
+      this.withBindingOperation(id, async () => {
+        this.ensureAcceptingOperations();
+        const definition = await this.registry.getDefinition(id);
+        this.ensureAcceptingOperations();
+        if (definition.approvedFingerprint !== definition.trustFingerprint) {
+          await this.requireNativeConfirmation(definition, "start");
+          this.ensureAcceptingOperations();
+          await this.registry.approveDefinition(id, definition.trustFingerprint);
+        }
+        this.ensureAcceptingOperations();
+        return this.runtime.start(id);
+      }));
   }
 
   async stop(id: string): Promise<LocalAppRuntimeView> {
-    return this.withBindingOperation(id, () => this.runtime.stop(id));
+    return this.withAdmittedOperation(() =>
+      this.withBindingOperation(id, async () => {
+        this.ensureAcceptingOperations();
+        return this.runtime.stop(id);
+      }));
   }
 
   async status(id: string): Promise<LocalAppRuntimeView> {
@@ -166,7 +210,11 @@ export class LocalAppsController {
     return this.runtime.attestedTarget(id);
   }
 
-  async shutdown(): Promise<void> {
-    await this.runtime.shutdown();
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    this.acceptingOperations = false;
+    this.shutdownPromise = this.drainActiveOperations()
+      .then(() => this.runtime.shutdown());
+    return this.shutdownPromise;
   }
 }

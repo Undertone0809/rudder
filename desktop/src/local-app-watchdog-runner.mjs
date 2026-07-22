@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { isSafeLocalAppProcessId } from "./local-app-process-identity.mjs";
 
 const MAX_ARGUMENTS = 64;
 const MAX_ARGUMENT_LENGTH = 4_096;
@@ -28,6 +29,7 @@ function validConfig(value) {
 }
 
 function groupAlive(pgid) {
+  if (!isSafeLocalAppProcessId(pgid)) return true;
   try {
     process.kill(-pgid, 0);
     return true;
@@ -39,7 +41,7 @@ function groupAlive(pgid) {
 async function terminateGroup() {
   if (cleanupPromise) return cleanupPromise;
   cleanupPromise = (async () => {
-    if (!Number.isInteger(appPgid) || appPgid <= 0) return;
+    if (!isSafeLocalAppProcessId(appPgid)) return;
     try { process.kill(-appPgid, "SIGTERM"); } catch (error) {
       if (error?.code !== "ESRCH") throw error;
     }
@@ -99,7 +101,12 @@ process.on("message", (message) => {
       send({ type: "error", message: error.message });
       void cleanupAndExit(1);
     });
-    if (!appProcess.pid) return;
+    if (!isSafeLocalAppProcessId(appProcess.pid)) {
+      send({ type: "error", message: "Invalid Local App child process identity" });
+      appProcess = null;
+      void cleanupAndExit(1);
+      return;
+    }
     appPgid = appProcess.pid;
     appProcess.once("exit", (code, signal) => {
       send({ type: "app-exit", code, signal });

@@ -60,6 +60,27 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
+function watchdogEmitting(message: unknown) {
+  const helper = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    stdin: { end: ReturnType<typeof vi.fn> };
+    exitCode: number | null;
+    signalCode: NodeJS.Signals | null;
+    send: ReturnType<typeof vi.fn>;
+  };
+  helper.stdout = new EventEmitter();
+  helper.stderr = new EventEmitter();
+  helper.stdin = { end: vi.fn() };
+  helper.exitCode = null;
+  helper.signalCode = null;
+  helper.send = vi.fn((_payload: unknown, callback?: (error: Error | null) => void) => {
+    queueMicrotask(() => helper.emit("message", message));
+    callback?.(null);
+  });
+  return helper;
+}
+
 describe("Desktop Local App runtime", () => {
   it("derives a trusted Node bin for a realpathed npm CLI when the Desktop executable has no node", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-npm-prefix-"));
@@ -268,6 +289,50 @@ describe("Desktop Local App runtime", () => {
     }
   }, 10_000);
 
+  it("closes runtime admission while shutdown drains a blocked stop and leaves no later generation", async () => {
+    const { registry, definition } = await approvedFixture();
+    const terminationEntered = deferred<void>();
+    const releaseTermination = deferred<void>();
+    const killGroup = vi.fn((pgid: number, signal: NodeJS.Signals) => {
+      if (signal === "SIGTERM") {
+        terminationEntered.resolve();
+        void releaseTermination.promise.then(() => {
+          try {
+            process.kill(-pgid, "SIGTERM");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          }
+        });
+        return;
+      }
+      process.kill(-pgid, signal);
+    });
+    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin", killGroup });
+    const first = await manager.start(definition.id);
+    const ownedPid = (await registry.getRuntimeDescriptor(definition.id))?.pid;
+    try {
+      const stopping = manager.stop(definition.id);
+      await terminationEntered.promise;
+      const shuttingDown = manager.shutdown();
+      const restarting = manager.start(definition.id);
+      const restartRejected = expect(restarting).rejects.toThrow("shutting down");
+      releaseTermination.resolve();
+
+      await expect(stopping).resolves.toMatchObject({ status: "stopped" });
+      await restartRejected;
+      await expect(shuttingDown).resolves.toBeUndefined();
+      expect((await manager.status(definition.id)).status).toBe("stopped");
+      expect(await registry.getRuntimeDescriptor(definition.id)).toBeNull();
+      expect(first.status).toBe("running");
+      expect(ownedPid).toBeTypeOf("number");
+      await vi.waitFor(() => expect(() => process.kill(ownedPid!, 0)).toThrow());
+    } finally {
+      releaseTermination.resolve();
+      await manager.stop(definition.id).catch(() => undefined);
+      await manager.shutdown();
+    }
+  }, 10_000);
+
   it("atomically reconciles nonexistent persisted PID, PGID, and listener once, then permits a new start", async () => {
     const { registry, definition } = await approvedFixture();
     await registry.recordRuntimeDescriptor(definition.id, {
@@ -372,6 +437,41 @@ describe("Desktop Local App runtime", () => {
     await expect(terminateOwnedProcessGroup(null, {
       killGroup: vi.fn(), isGroupAlive: () => false, delay: async () => undefined,
     })).rejects.toThrow("unverified");
+  });
+
+  it.each([1, Number.MAX_SAFE_INTEGER + 1])(
+    "never signals an unsafe process group identity %s",
+    async (pgid) => {
+      const killGroup = vi.fn();
+      const isGroupAlive = vi.fn(() => false);
+      await expect(terminateOwnedProcessGroup(pgid, {
+        killGroup,
+        isGroupAlive,
+        delay: async () => undefined,
+      })).rejects.toThrow("unverified");
+      expect(killGroup).not.toHaveBeenCalled();
+      expect(isGroupAlive).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { pid: 2, pgid: 1 },
+    { pid: 1, pgid: 1 },
+    { pid: Number.MAX_SAFE_INTEGER + 1, pgid: Number.MAX_SAFE_INTEGER + 1 },
+  ])("rejects an unsafe watchdog IPC ownership result without signaling $pid/$pgid", async (message) => {
+    const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
+    const helper = watchdogEmitting({ type: "spawned", ...message });
+    const killGroup = vi.fn();
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      killGroup,
+      spawnWatchdog: (() => helper) as unknown as typeof spawn,
+    });
+
+    await expect(manager.start(definition.id)).rejects.toThrow("watchdog process identity");
+    expect(killGroup).not.toHaveBeenCalled();
+    expect(await registry.getRuntimeDescriptor(definition.id)).toBeNull();
   });
 
   it("treats control-pipe EOF as idempotent cleanup and never guesses about a legacy orphan without a port", async () => {

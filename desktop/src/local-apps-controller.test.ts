@@ -122,6 +122,48 @@ describe("Desktop Local Apps native controller", () => {
     expect(calls).toEqual(["start-entered", "start-finished", "stop"]);
   });
 
+  it("closes admission before waiting for a blocked native start approval during shutdown", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-shutdown-approval-"));
+    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    const created = await registry.createDefinition(prepared);
+    const approvalEntered = deferred<void>();
+    const releaseApproval = deferred<boolean>();
+    const runtime = {
+      start: vi.fn(async () => ({ status: "running" as const })),
+      stop: vi.fn(),
+      status: vi.fn(async () => ({ status: "stopped" as const })),
+      logs: vi.fn(),
+      attestedTarget: vi.fn(),
+      shutdown: vi.fn(async () => undefined),
+    };
+    const controller = new LocalAppsController({
+      registry,
+      runtime,
+      selectFolder: vi.fn(async () => null),
+      confirmDefinition: vi.fn(async (_definition, action) => {
+        if (action === "start") {
+          approvalEntered.resolve();
+          return releaseApproval.promise;
+        }
+        return true;
+      }),
+    });
+
+    const starting = controller.start(created.id);
+    await approvalEntered.promise;
+    const shuttingDown = controller.shutdown();
+    await nextTurn();
+    expect(runtime.shutdown).not.toHaveBeenCalled();
+
+    releaseApproval.resolve(true);
+    await expect(starting).rejects.toThrow("shutting down");
+    await expect(shuttingDown).resolves.toBeUndefined();
+    expect(runtime.start).not.toHaveBeenCalled();
+    expect((await registry.getDefinition(created.id)).approvedFingerprint).toBeNull();
+    await expect(controller.start(created.id)).rejects.toThrow("shutting down");
+  });
+
   it("does not let delete overtake an in-flight start for the same binding", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-start-delete-"));
     const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });

@@ -156,6 +156,18 @@ describe("Desktop Local App registry", () => {
     await expect(registry.recordRuntimeDescriptor(created.id, {
       status: "running", pid: 101, pgid: 0, generation: "invalid", port: 31_001,
     })).rejects.toThrow("Invalid Local App runtime descriptor");
+    await expect(registry.recordRuntimeDescriptor(created.id, {
+      status: "running", pid: 101, pgid: 1, generation: "invalid", port: 31_001,
+    })).rejects.toThrow("Invalid Local App runtime descriptor");
+    await expect(registry.recordRuntimeDescriptor(created.id, {
+      status: "running", pid: 1, pgid: 101, generation: "invalid", port: 31_001,
+    })).rejects.toThrow("Invalid Local App runtime descriptor");
+    await expect(registry.recordRuntimeDescriptor(created.id, {
+      status: "running", pid: Number.MAX_SAFE_INTEGER + 1, pgid: 101, generation: "invalid", port: 31_001,
+    })).rejects.toThrow("Invalid Local App runtime descriptor");
+    await expect(registry.recordRuntimeDescriptor(created.id, {
+      status: "running", pid: 101, pgid: Number.MAX_SAFE_INTEGER + 1, generation: "invalid", port: 31_001,
+    })).rejects.toThrow("Invalid Local App runtime descriptor");
   });
 
   it("recovers without execution when persisted trusted launch fields do not match their fingerprint", async () => {
