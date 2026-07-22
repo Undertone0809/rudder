@@ -7,6 +7,7 @@ const organizationWorkspaceSidebarSource = readFileSync(
   "utf8",
 );
 const organizationWorkspacesSource = readFileSync(new URL("../pages/OrganizationWorkspaces.tsx", import.meta.url), "utf8");
+const issueDetailSource = readFileSync(new URL("../pages/IssueDetail.tsx", import.meta.url), "utf8");
 
 function cssBlock(selector: string) {
   const start = indexCss.indexOf(selector);
@@ -497,6 +498,36 @@ describe("index.css motion rules", () => {
     expect(narrowContainer).toContain("max-width: 880px");
     expect(narrowContainer).toContain(".rudder-library-document-outline");
     expect(narrowContainer).toContain("display: none");
+  });
+
+  it("switches Issue Detail hierarchy from its named work-surface container", () => {
+    const issueContainer = cssBlock(".issue-detail-container");
+    const compactLayout = cssBlock(".issue-detail-layout");
+    const issueComposer = cssBlock(".issue-detail-body .comment-thread-fixed-composer");
+    const compactProperties = cssBlock(".issue-detail-properties-panel");
+    const wideContainer = cssBlock("@container issue-detail (min-width: 56rem)");
+    const phoneException = cssBlock("@media (max-width: 47.999rem)");
+
+    expect(issueContainer).toContain("container-name: issue-detail");
+    expect(issueContainer).toContain("container-type: inline-size");
+    expect(compactLayout).toContain('"heading"');
+    expect(compactLayout).toContain("width: calc(100% - 0.5rem)");
+    expect(compactLayout).toContain('"rail"');
+    expect(compactLayout).toContain('"body"');
+    expect(compactProperties).toContain("border-left-width: 0");
+    expect(compactProperties).toContain("background: transparent");
+    expect(issueComposer).toContain("margin-right: 0");
+    expect(issueComposer).toContain("margin-left: 0");
+    expect(wideContainer).toContain("grid-template-columns: minmax(0, 1fr) 280px");
+    expect(wideContainer).toContain('"heading rail"');
+    expect(wideContainer).toContain('"body rail"');
+    expect(wideContainer).toContain("position: sticky");
+    expect(wideContainer).toContain("top: 1rem");
+    expect(phoneException).toContain(".issue-detail-rail");
+    expect(phoneException).toContain("display: none");
+    expect(issueDetailSource).not.toContain("window.innerWidth");
+    expect(issueDetailSource).not.toContain("xl:grid");
+    expect(issueDetailSource).not.toContain("xl:sticky");
   });
 
   it("keeps desktop workspace shell and work-card corners aligned", () => {

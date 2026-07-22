@@ -2,6 +2,8 @@ const WORKSPACE_IMAGE_FILE_EXTENSIONS = new Set([".avif", ".bmp", ".gif", ".ico"
 const WORKSPACE_CSV_FILE_EXTENSIONS = new Set([".csv"]);
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx"]);
 const WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx", ".txt", ".text"]);
+const WORKSPACE_VIDEO_FILE_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".webm", ".ogv", ".avi", ".mkv"]);
+const WORKSPACE_AUDIO_FILE_EXTENSIONS = new Set([".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".flac"]);
 const EMBEDDED_IMAGE_DATA_URL_RE = /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[a-z0-9.+_-]+)?)*,/i;
 
 export const EMBEDDED_IMAGE_DATA_URL_ERROR =
@@ -55,6 +57,16 @@ export function isWorkspaceCsvContentType(contentType: string | null | undefined
 export function isWorkspaceTextDocumentFilePath(filePath: string | null) {
   const extension = getWorkspaceFileExtension(filePath);
   return extension !== null && WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS.has(extension);
+}
+
+export function isWorkspaceVideoFilePath(filePath: string | null) {
+  const extension = getWorkspaceFileExtension(filePath);
+  return extension !== null && WORKSPACE_VIDEO_FILE_EXTENSIONS.has(extension);
+}
+
+export function isWorkspaceAudioFilePath(filePath: string | null) {
+  const extension = getWorkspaceFileExtension(filePath);
+  return extension !== null && WORKSPACE_AUDIO_FILE_EXTENSIONS.has(extension);
 }
 
 export function displayWorkspaceDocumentKind(filePath: string | null) {

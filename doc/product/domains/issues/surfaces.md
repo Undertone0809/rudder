@@ -18,9 +18,11 @@ related_code:
   - ui/src/pages/Issues.tsx
 related_tests:
   - ui/src/components/InlineEditor.test.tsx
+  - ui/src/lib/index-css.test.ts
   - ui/src/lib/new-issue-dialog.test.ts
   - ui/src/pages/IssueDetail.test.tsx
   - tests/e2e/codex-model-order.spec.ts
+  - tests/e2e/issue-detail-properties-layout.spec.ts
   - tests/e2e/issue-detail-toolbar-actions.spec.ts
   - tests/e2e/issue-description-image-preview.spec.ts
   - tests/e2e/issue-board-display-properties.spec.ts
@@ -44,6 +46,13 @@ Behavior:
   transitions clearly through disabled states or server errors.
 - Issue detail may show run evidence, comments, review state, and activity, but
   those semantics remain owned by their domains.
+- Issue Detail chooses one- versus two-column layout from the width of the issue
+  work surface, not the browser viewport. In compact desktop/tablet mode,
+  operational properties join the primary issue scroll after issue
+  identity/context and before the description; issue actions and all detail
+  evidence remain available. Opening or resizing the global Side Panel must not
+  leave Issue Detail in unreadable columns or lose editable state. Phone layouts
+  retain the dedicated Properties sheet.
 - Issue detail description reading and editing are the same content surface:
   headings, lists, paragraphs, links, images, and multiline spacing must keep
   the same readable rhythm when the operator enters edit mode.
@@ -95,6 +104,10 @@ Rationale:
 - Operators treat issue descriptions as durable task context. Switching between
   reading and editing must not make the content jump, change paragraph grouping,
   or make the user re-parse the work item.
+- Issue Detail is embedded in work surfaces whose width can change independently
+  of the browser. A container-owned hierarchy keeps operational metadata and
+  editable evidence readable without substituting a reduced-capability view or
+  remounting stateful controls.
 - A local override lets an operator tune one job without cloning or permanently
   reconfiguring the agent that owns the broader class of work.
 - Newly created work should land in the operator's current work system: Issues
@@ -117,9 +130,11 @@ Related code:
 Related tests:
 
 - `ui/src/components/InlineEditor.test.tsx`
+- `ui/src/lib/index-css.test.ts`
 - `ui/src/lib/new-issue-dialog.test.ts`
 - `ui/src/pages/IssueDetail.test.tsx`
 - `tests/e2e/codex-model-order.spec.ts`
+- `tests/e2e/issue-detail-properties-layout.spec.ts`
 - `tests/e2e/issue-detail-toolbar-actions.spec.ts`
 - `tests/e2e/issue-description-image-preview.spec.ts`
 - `tests/e2e/issue-board-display-properties.spec.ts`

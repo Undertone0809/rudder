@@ -69,8 +69,10 @@ import {
   CirclePlus,
   Compass,
   ExternalLink,
+  FileAudio2,
   FileCode2,
   FileText,
+  FileVideo2,
   FileWarning,
   Folder,
   Globe2,
@@ -1127,6 +1129,7 @@ function ChatSidePanelLibraryFileView({
   const location = useLocation();
   const navigate = useNavigate();
   const html = isWorkspaceHtmlPreviewFile(libraryFile);
+  const media = libraryFile.previewKind === "video" || libraryFile.previewKind === "audio";
   const csv = isWorkspaceCsvPreviewFile(libraryFile);
   const markdown = isWorkspaceMarkdownPreviewFile(libraryFile);
   const [previewMode, setPreviewMode] = useState<WorkspaceFilePreviewMode>("preview");
@@ -1270,6 +1273,13 @@ function ChatSidePanelLibraryFileView({
       </Tooltip>
     </TooltipProvider>
   ) : null;
+  const LibraryFileIcon = html
+    ? Globe2
+    : libraryFile.previewKind === "video"
+      ? FileVideo2
+      : libraryFile.previewKind === "audio"
+        ? FileAudio2
+        : FileText;
 
   return (
     <div className="flex h-full min-h-[420px] flex-col" data-testid="chat-side-panel-library-file-view">
@@ -1277,11 +1287,7 @@ function ChatSidePanelLibraryFileView({
         className="flex h-11 shrink-0 items-center gap-3 border-b border-[color:var(--border-soft)] px-4"
         data-testid="chat-side-panel-library-file-toolbar"
       >
-        {html ? (
-          <Globe2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        ) : (
-          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        )}
+        <LibraryFileIcon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         <TooltipProvider delayDuration={120}>
           <Tooltip
             open={pathTooltipOpen && !openMenuOpen}
@@ -1322,7 +1328,7 @@ function ChatSidePanelLibraryFileView({
           </Tooltip>
         </TooltipProvider>
         {fileModeToggle}
-        {!html ? (
+        {!html && !media ? (
           <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
             {openInMenu}
           </div>
@@ -1352,6 +1358,11 @@ function ChatSidePanelLibraryFileView({
             onModeChange={setPreviewMode}
             htmlOpenAction={html ? (
               <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
+                {openInMenu}
+              </div>
+            ) : undefined}
+            mediaOpenAction={media ? (
+              <div className="shrink-0" data-testid="chat-side-panel-library-media-open-in">
                 {openInMenu}
               </div>
             ) : undefined}

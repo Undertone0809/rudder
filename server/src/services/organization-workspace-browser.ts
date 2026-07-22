@@ -48,6 +48,25 @@ const WORKSPACE_IMAGE_CONTENT_TYPES = new Map([
 const WORKSPACE_BINARY_CONTENT_TYPES = new Map([
   [".pdf", "application/pdf"],
 ]);
+const WORKSPACE_VIDEO_CONTENT_TYPES = new Map([
+  [".mp4", "video/mp4"],
+  [".m4v", "video/x-m4v"],
+  [".mov", "video/quicktime"],
+  [".webm", "video/webm"],
+  [".ogv", "video/ogg"],
+  [".avi", "video/x-msvideo"],
+  [".mkv", "video/x-matroska"],
+]);
+const WORKSPACE_AUDIO_CONTENT_TYPES = new Map([
+  [".mp3", "audio/mpeg"],
+  [".m4a", "audio/mp4"],
+  [".aac", "audio/aac"],
+  [".wav", "audio/wav"],
+  [".ogg", "audio/ogg"],
+  [".oga", "audio/ogg"],
+  [".opus", "audio/ogg"],
+  [".flac", "audio/flac"],
+]);
 const DEFAULT_MENTIONABLE_WORKSPACE_FILES_LIMIT = 200;
 const MAX_MENTIONABLE_WORKSPACE_FILES_LIMIT = 500;
 
@@ -96,6 +115,24 @@ function resolveWithinRoot(rootPath: string, requestedPath: string) {
     resolvedTarget,
     normalizedPath: toPortableRelativePath(relative === "" ? "" : relative),
   };
+}
+
+async function resolveCanonicalFileWithinRoot(resolvedRoot: string, resolvedTarget: string) {
+  const canonicalRoot = await fs.realpath(resolvedRoot);
+  let canonicalTarget: string;
+  try {
+    canonicalTarget = await fs.realpath(resolvedTarget);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw notFound("File not found inside the organization Library");
+    }
+    throw error;
+  }
+  const canonicalRelative = path.relative(canonicalRoot, canonicalTarget);
+  if (canonicalRelative.startsWith("..") || path.isAbsolute(canonicalRelative)) {
+    throw unprocessable("Requested path must stay inside the organization Library root");
+  }
+  return canonicalTarget;
 }
 
 function isProtectedAgentWorkspaceContainerPath(normalizedPath: string) {
@@ -245,13 +282,17 @@ function getWorkspaceFileContentType(filePath: string, buffer?: Buffer) {
   const extension = path.extname(filePath).toLowerCase();
   const mapped = WORKSPACE_TEXT_CONTENT_TYPES.get(extension)
     ?? WORKSPACE_IMAGE_CONTENT_TYPES.get(extension)
-    ?? WORKSPACE_BINARY_CONTENT_TYPES.get(extension);
+    ?? WORKSPACE_BINARY_CONTENT_TYPES.get(extension)
+    ?? WORKSPACE_VIDEO_CONTENT_TYPES.get(extension)
+    ?? WORKSPACE_AUDIO_CONTENT_TYPES.get(extension);
   if (mapped) return mapped;
   if (!buffer) return null;
   return hasBinaryBytes(buffer) ? "application/octet-stream" : "text/plain";
 }
 
 const WORKSPACE_IMAGE_CONTENT_TYPE_VALUES = new Set(WORKSPACE_IMAGE_CONTENT_TYPES.values());
+const WORKSPACE_VIDEO_CONTENT_TYPE_VALUES = new Set(WORKSPACE_VIDEO_CONTENT_TYPES.values());
+const WORKSPACE_AUDIO_CONTENT_TYPE_VALUES = new Set(WORKSPACE_AUDIO_CONTENT_TYPES.values());
 const WORKSPACE_PDF_CONTENT_TYPE = "application/pdf";
 
 function isWorkspaceImageContentType(contentType: string | null | undefined) {
@@ -262,15 +303,25 @@ function isWorkspacePdfContentType(contentType: string | null | undefined) {
   return typeof contentType === "string" && contentType.toLowerCase() === WORKSPACE_PDF_CONTENT_TYPE;
 }
 
+function isWorkspaceVideoContentType(contentType: string | null | undefined) {
+  return typeof contentType === "string" && WORKSPACE_VIDEO_CONTENT_TYPE_VALUES.has(contentType.toLowerCase());
+}
+
+function isWorkspaceAudioContentType(contentType: string | null | undefined) {
+  return typeof contentType === "string" && WORKSPACE_AUDIO_CONTENT_TYPE_VALUES.has(contentType.toLowerCase());
+}
+
 function getWorkspaceFileContentPath(orgId: string, normalizedPath: string) {
   const search = new URLSearchParams({ path: normalizedPath });
   return `/api/orgs/${orgId}/workspace/file/content?${search.toString()}`;
 }
 
-function getWorkspaceFilePreviewKind(contentType: string, buffer: Buffer): OrganizationWorkspaceFileDetail["previewKind"] {
+function getWorkspaceFilePreviewKind(contentType: string, buffer?: Buffer): OrganizationWorkspaceFileDetail["previewKind"] {
   if (isWorkspaceImageContentType(contentType)) return "image";
   if (isWorkspacePdfContentType(contentType)) return "pdf";
-  return hasBinaryBytes(buffer) ? "binary" : "text";
+  if (isWorkspaceVideoContentType(contentType)) return "video";
+  if (isWorkspaceAudioContentType(contentType)) return "audio";
+  return buffer && hasBinaryBytes(buffer) ? "binary" : "text";
 }
 
 export function organizationWorkspaceBrowserService(db: Db) {
@@ -537,11 +588,21 @@ export function organizationWorkspaceBrowserService(db: Db) {
         throw notFound("File not found inside the organization Library");
       }
 
-      const buffer = await fs.readFile(resolvedTarget);
-      const contentType = getWorkspaceFileContentType(normalizedPath || resolvedTarget, buffer) ?? "application/octet-stream";
-      const previewKind = getWorkspaceFilePreviewKind(contentType, buffer);
+      const mappedContentType = getWorkspaceFileContentType(normalizedPath || resolvedTarget);
+      const mappedPreviewKind = mappedContentType
+        ? getWorkspaceFilePreviewKind(mappedContentType)
+        : null;
+      const streamsInline = mappedPreviewKind === "image"
+        || mappedPreviewKind === "pdf"
+        || mappedPreviewKind === "video"
+        || mappedPreviewKind === "audio";
+      const buffer = streamsInline ? null : await fs.readFile(resolvedTarget);
+      const contentType = mappedContentType
+        ?? getWorkspaceFileContentType(normalizedPath || resolvedTarget, buffer ?? undefined)
+        ?? "application/octet-stream";
+      const previewKind = mappedPreviewKind ?? getWorkspaceFilePreviewKind(contentType, buffer ?? undefined);
       const libraryEntry = await libraryEntries.getOrCreateWorkspaceFileEntry(orgId, normalizedPath);
-      if (previewKind === "image" || previewKind === "pdf") {
+      if (previewKind === "image" || previewKind === "pdf" || previewKind === "video" || previewKind === "audio") {
         return {
           source: root.source,
           rootPath: resolvedRoot,
@@ -584,7 +645,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
         libraryEntryId: libraryEntry.id,
         ...workspaceFileReferenceFields(normalizedPath, libraryEntry.id),
         rootExists: true,
-        content: buffer.toString("utf8"),
+        content: buffer?.toString("utf8") ?? "",
         contentType,
         previewKind,
         contentPath: null,
@@ -615,6 +676,32 @@ export function organizationWorkspaceBrowserService(db: Db) {
         originalFilename: path.basename(resolvedTarget),
         contentType: getWorkspaceFileContentType(normalizedPath || resolvedTarget, buffer) ?? "application/octet-stream",
         buffer,
+      };
+    },
+
+    async resolveContentFile(orgId: string, filePath: string): Promise<{
+      normalizedPath: string;
+      originalFilename: string;
+      contentType: string;
+      resolvedPath: string;
+      byteSize: number;
+    }> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, filePath);
+      if (!(await pathExistsAsDirectory(resolvedRoot))) {
+        throw notFound("The shared Library root is not available on this machine yet.");
+      }
+      const canonicalTarget = await resolveCanonicalFileWithinRoot(resolvedRoot, resolvedTarget);
+      const entry = await statWorkspaceEntry(canonicalTarget);
+      if (!entry?.isFile()) {
+        throw notFound("File not found inside the organization Library");
+      }
+      return {
+        normalizedPath,
+        originalFilename: path.basename(resolvedTarget),
+        contentType: getWorkspaceFileContentType(normalizedPath || resolvedTarget) ?? "application/octet-stream",
+        resolvedPath: canonicalTarget,
+        byteSize: entry.size,
       };
     },
 
