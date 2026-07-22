@@ -345,8 +345,10 @@ Flow:
    interjection. Continuation delivery keeps the message outside the old run.
 15. When the current reply completes, a server-owned worker claims the next
    eligible queued follow-up, sends it as the next chat turn, and hides the
-   queued row after it is linked to the delivered user message. Delivery does
-   not depend on the originating page remaining open.
+   queued row after it is linked to the delivered user message. The row leaves
+   the composer as soon as that user message is visible, even while the new
+   assistant reply is still running. Delivery does not depend on the
+   originating page remaining open.
 16. If the current reply is stopped, fails, or is otherwise not completed,
    ordinary queued follow-ups stay parked and are not silently flushed. The
    operator may explicitly Steer retained feedback; Rudder then persists a
@@ -429,7 +431,11 @@ Invariants:
   retries, and reloads must reuse that same message. A visible Steer message
   records operator input; it does not by itself claim provider compliance.
   Delivered or running queued rows are hidden from the running-queue UI once
-  linked to a user message.
+  linked to a user message. In particular, linked `dequeue_claimed` and
+  `running_next` rows must not remain in the composer after their user message
+  is visible. A recovery back to `queued` or `failed_actionable` remains visible
+  even when linkage metadata is retained, so editable or actionable work is not
+  silently hidden.
 - For native same-turn Steer, the visible Work Timeline is runtime transcript
   evidence before the durable Steer boundary, the anchored operator
   interjection, runtime evidence after it, then the final assistant response.
@@ -509,12 +515,15 @@ Evidence:
 - Chat concurrent-streaming E2E covers queueing a follow-up during an active
   stream, editing the queued body, native same-turn Codex Steer, fallback
   continuation, immediate Stop, server-owned Stop-then-Steer delivery, retained
-  ordinary follow-ups after a stopped reply, and one durable native-Steer
-  interjection that survives reload without duplication. Focused UI tests and
-  the native-Steer E2E verify the production-shaped ordering `reasoning A ->
-  Steer -> reasoning/tool B -> final response` while streaming, after final
-  persistence, during historical message edit replacement, and after reload;
-  fallback continuation remains outside the old run.
+  ordinary follow-ups after a stopped reply, removal of the linked Queue row
+  while its delivered turn is still running, and one durable native-Steer
+  interjection that survives reload without duplication. Focused UI tests
+  distinguish linked in-flight rows from linked rows recovered to `queued` or
+  `failed_actionable`. The focused UI tests and native-Steer E2E also verify the
+  production-shaped ordering `reasoning A -> Steer -> reasoning/tool B -> final
+  response` while streaming, after final persistence, during historical message
+  edit replacement, and after reload; fallback continuation remains outside the
+  old run.
 - Chat route and UI tests cover queue snapshots, active-generation reporting,
   queued follow-up editing/cancellation/claiming, hidden delivered rows,
   retained parked rows, and Feishu-bound queue mutation rejection.
