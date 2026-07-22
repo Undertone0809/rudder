@@ -30,6 +30,18 @@ type ExposedDesktopShell = {
   clearBrowserData(): Promise<void>;
   setBrowserEnabled(enabled: boolean): Promise<void>;
   onBrowserReset(listener: (event: unknown) => void): () => void;
+  localApps: {
+    list(): Promise<unknown[]>;
+    discover(): Promise<unknown>;
+    create(definition: unknown): Promise<unknown>;
+    update(id: string, definition: unknown): Promise<unknown>;
+    delete(id: string): Promise<void>;
+    start(id: string): Promise<unknown>;
+    stop(id: string): Promise<unknown>;
+    status(id: string): Promise<unknown>;
+    logs(id: string): Promise<string[]>;
+    attestedTarget(id: string): Promise<unknown>;
+  };
 };
 
 function desktopShell(): ExposedDesktopShell {
@@ -118,5 +130,33 @@ describe("Rudder Browser preload bridge", () => {
     expect(listener).toHaveBeenCalledWith(request);
     remove();
     expect(electronMocks.removeListener).toHaveBeenCalledWith("desktop:open-web-link", registration?.[1]);
+  });
+
+  it("exposes only narrow Local App DTO and opaque-id IPC calls", async () => {
+    const localApps = desktopShell().localApps;
+    const definition = { title: "fixture" };
+    await localApps.list();
+    await localApps.discover();
+    await localApps.create(definition);
+    await localApps.update("binding-1", definition);
+    await localApps.delete("binding-1");
+    await localApps.start("binding-1");
+    await localApps.stop("binding-1");
+    await localApps.status("binding-1");
+    await localApps.logs("binding-1");
+    await localApps.attestedTarget("binding-1");
+
+    expect(electronMocks.invoke.mock.calls).toEqual([
+      ["desktop:local-apps:list"],
+      ["desktop:local-apps:discover"],
+      ["desktop:local-apps:create", { definition }],
+      ["desktop:local-apps:update", { id: "binding-1", definition }],
+      ["desktop:local-apps:delete", { id: "binding-1" }],
+      ["desktop:local-apps:start", { id: "binding-1" }],
+      ["desktop:local-apps:stop", { id: "binding-1" }],
+      ["desktop:local-apps:status", { id: "binding-1" }],
+      ["desktop:local-apps:logs", { id: "binding-1" }],
+      ["desktop:local-apps:attested-target", { id: "binding-1" }],
+    ]);
   });
 });

@@ -6,7 +6,8 @@
     "types": ["node"],
     "declaration": false,
     "declarationMap": false,
-    "sourceMap": false
+    "sourceMap": false,
+    "allowJs": true
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"]

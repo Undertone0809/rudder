@@ -4,6 +4,12 @@ import type { BrowserImportSource } from "./browser-import-sources.js";
 import type { DesktopBrowserResetEvent } from "./browser-profile.js";
 import { isDesktopBrowserShortcutAction, type DesktopBrowserShortcutAction } from "./browser-shortcuts.js";
 import { readDesktopCapabilities, type DesktopCapabilities } from "./desktop-capabilities.js";
+import type {
+  LocalAppDefinition,
+  LocalAppDefinitionDraft,
+  PreparedLocalAppDefinition,
+} from "./local-apps-registry.js";
+import type { LocalAppRuntimeView } from "./local-apps-runtime.js";
 import type { DesktopLocalFilePreview } from "./local-file-preview.js";
 import type { DesktopSystemPermissions } from "./system-permissions.js";
 
@@ -171,6 +177,12 @@ type DesktopWorkspaceLaunchTarget = {
   iconDataUrl?: string;
 };
 
+type DesktopLocalAppDraftInput = LocalAppDefinitionDraft & { trustFingerprint?: string };
+type DesktopLocalAppDiscoveryResult =
+  | { canceled: true }
+  | { canceled: false; draft: PreparedLocalAppDefinition };
+type DesktopLocalAppAttestedTarget = { origin: string; openPath: string; partition: string };
+
 let desktopCapabilitiesPromise: Promise<DesktopCapabilities> | null = null;
 
 async function getDesktopCapabilities(): Promise<DesktopCapabilities> {
@@ -323,6 +335,21 @@ contextBridge.exposeInMainWorld("desktopShell", {
       ipcRenderer.removeListener("desktop:browser-reset", wrapped);
     };
   },
+  localApps: {
+    list: () => ipcRenderer.invoke("desktop:local-apps:list") as Promise<LocalAppDefinition[]>,
+    discover: () => ipcRenderer.invoke("desktop:local-apps:discover") as Promise<DesktopLocalAppDiscoveryResult>,
+    create: (definition: DesktopLocalAppDraftInput) =>
+      ipcRenderer.invoke("desktop:local-apps:create", { definition }) as Promise<LocalAppDefinition>,
+    update: (id: string, definition: DesktopLocalAppDraftInput) =>
+      ipcRenderer.invoke("desktop:local-apps:update", { id, definition }) as Promise<LocalAppDefinition>,
+    delete: (id: string) => ipcRenderer.invoke("desktop:local-apps:delete", { id }) as Promise<void>,
+    start: (id: string) => ipcRenderer.invoke("desktop:local-apps:start", { id }) as Promise<LocalAppRuntimeView>,
+    stop: (id: string) => ipcRenderer.invoke("desktop:local-apps:stop", { id }) as Promise<LocalAppRuntimeView>,
+    status: (id: string) => ipcRenderer.invoke("desktop:local-apps:status", { id }) as Promise<LocalAppRuntimeView>,
+    logs: (id: string) => ipcRenderer.invoke("desktop:local-apps:logs", { id }) as Promise<string[]>,
+    attestedTarget: (id: string) =>
+      ipcRenderer.invoke("desktop:local-apps:attested-target", { id }) as Promise<DesktopLocalAppAttestedTarget | null>,
+  },
 });
 
 declare global {
@@ -375,6 +402,18 @@ declare global {
       clearBrowserData(): Promise<void>;
       setBrowserEnabled(enabled: boolean): Promise<void>;
       onBrowserReset(listener: (event: DesktopBrowserResetEvent) => void): () => void;
+      localApps: {
+        list(): Promise<LocalAppDefinition[]>;
+        discover(): Promise<DesktopLocalAppDiscoveryResult>;
+        create(definition: DesktopLocalAppDraftInput): Promise<LocalAppDefinition>;
+        update(id: string, definition: DesktopLocalAppDraftInput): Promise<LocalAppDefinition>;
+        delete(id: string): Promise<void>;
+        start(id: string): Promise<LocalAppRuntimeView>;
+        stop(id: string): Promise<LocalAppRuntimeView>;
+        status(id: string): Promise<LocalAppRuntimeView>;
+        logs(id: string): Promise<string[]>;
+        attestedTarget(id: string): Promise<DesktopLocalAppAttestedTarget | null>;
+      };
     };
   }
 }

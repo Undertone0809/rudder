@@ -9,6 +9,7 @@ import {
   installBrowserSessionPolicy,
   installBrowserWebviewPolicy,
   installDefaultWindowOpenDenyPolicy,
+  installLocalAppSessionPolicy,
 } from "./browser-webview-policy.js";
 
 describe("Rudder Browser webview preferences", () => {
@@ -152,7 +153,94 @@ describe("Rudder Browser session policy", () => {
   });
 });
 
+describe("Desktop Local App session policy", () => {
+  it("allows only the currently attested loopback origin in the per-app partition", () => {
+    let requestHandler: ((
+      details: { url: string; resourceType?: string },
+      callback: (response: { cancel: boolean }) => void,
+    ) => void) | undefined;
+    const localSession = {
+      setPermissionCheckHandler: vi.fn(),
+      setPermissionRequestHandler: vi.fn(),
+      on: vi.fn(),
+      webRequest: {
+        onBeforeRequest: vi.fn((_filter, handler) => { requestHandler = handler; }),
+      },
+    };
+    installLocalAppSessionPolicy(localSession, {
+      getAttestedOrigin: () => "http://127.0.0.1:43123",
+    });
+    for (const target of [
+      "http://127.0.0.1:43123/outreach",
+      "ws://127.0.0.1:43123/hmr",
+    ]) {
+      const callback = vi.fn();
+      requestHandler?.({ url: target }, callback);
+      expect(callback).toHaveBeenCalledWith({ cancel: false });
+    }
+    for (const target of [
+      "http://127.0.0.1:43124/outreach",
+      "http://localhost:43123/outreach",
+      "https://example.com/script.js",
+      "data:text/plain,secret",
+    ]) {
+      const callback = vi.fn();
+      requestHandler?.({ url: target }, callback);
+      expect(callback).toHaveBeenCalledWith({ cancel: true });
+    }
+  });
+});
+
 describe("Rudder Browser guest policy", () => {
+  it("preserves only an attested per-app partition and confines its guest to that origin", () => {
+    const hostHandlers = new Map<string, (...args: any[]) => void>();
+    const hostContents = { on: (event: string, handler: (...args: any[]) => void) => hostHandlers.set(event, handler) };
+    const prepareLocalAppPartition = vi.fn();
+    const localSession = {};
+    installBrowserWebviewPolicy(hostContents, {
+      partition: "persist:rudder-browser-v1-safe",
+      getRudderAppOrigins: () => ["http://127.0.0.1:3100"],
+      isBrowserAvailable: () => true,
+      registerGuest: vi.fn(),
+      resolveLocalAppBootstrap: (url, partition) =>
+        url === "http://127.0.0.1:43123/outreach" && partition === "persist:rudder-local-app-safe",
+      prepareLocalAppPartition,
+      isLocalAppGuest: (guest) => guest.session === localSession,
+      isAllowedLocalAppNavigation: (_guest, url) => new URL(url).origin === "http://127.0.0.1:43123",
+    });
+    const params = {
+      src: "http://127.0.0.1:43123/outreach",
+      partition: "persist:rudder-local-app-safe",
+      allowpopups: "true",
+    };
+    const preferences: Record<string, unknown> = { nodeIntegration: true };
+    const attachEvent = { preventDefault: vi.fn() };
+    hostHandlers.get("will-attach-webview")?.(attachEvent, preferences, params);
+    expect(attachEvent.preventDefault).not.toHaveBeenCalled();
+    expect(params.partition).toBe("persist:rudder-local-app-safe");
+    expect(params).not.toHaveProperty("allowpopups");
+    expect(preferences).toMatchObject({ partition: "persist:rudder-local-app-safe", nodeIntegration: false, sandbox: true });
+    expect(prepareLocalAppPartition).toHaveBeenCalledWith("persist:rudder-local-app-safe");
+
+    const guestHandlers = new Map<string, (...args: any[]) => void>();
+    let popupHandler: ((details: { url: string }) => { action: string }) | undefined;
+    const guest = {
+      session: localSession,
+      isDestroyed: () => false,
+      close: vi.fn(),
+      setWindowOpenHandler: (handler: typeof popupHandler) => { popupHandler = handler; },
+      on: (event: string, handler: (...args: any[]) => void) => guestHandlers.set(event, handler),
+    };
+    hostHandlers.get("did-attach-webview")?.({}, guest);
+    expect(popupHandler?.({ url: "http://127.0.0.1:43123/new" })).toEqual({ action: "deny" });
+    const sameOrigin = { preventDefault: vi.fn() };
+    guestHandlers.get("will-navigate")?.(sameOrigin, "http://127.0.0.1:43123/next");
+    expect(sameOrigin.preventDefault).not.toHaveBeenCalled();
+    const otherOrigin = { preventDefault: vi.fn() };
+    guestHandlers.get("will-redirect")?.(otherOrigin, "http://127.0.0.1:43124/next");
+    expect(otherOrigin.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
   it("blocks unsafe initial URLs, navigation, and redirects while routing safe popups", async () => {
     const hostHandlers = new Map<string, (...args: any[]) => void>();
     const hostContents = {

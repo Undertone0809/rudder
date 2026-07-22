@@ -36,6 +36,7 @@ type BrowserSessionPolicyTarget = {
 };
 
 export type BrowserGuest = {
+  session?: unknown;
   isDestroyed(): boolean;
   close(options?: { waitForBeforeUnload?: boolean }): void;
   on(event: string, handler: (...args: any[]) => void): unknown;
@@ -123,6 +124,33 @@ export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicy
   });
 }
 
+function requestMatchesAttestedLocalAppOrigin(target: string, attestedOrigin: string | null): boolean {
+  if (!attestedOrigin) return false;
+  try {
+    const expected = new URL(attestedOrigin);
+    if (expected.protocol !== "http:" || expected.hostname !== "127.0.0.1" || expected.origin !== attestedOrigin) return false;
+    const candidate = new URL(target);
+    if (candidate.protocol === "ws:") candidate.protocol = "http:";
+    if (candidate.protocol !== "http:" || candidate.hostname !== "127.0.0.1") return false;
+    return candidate.origin === expected.origin;
+  } catch {
+    return false;
+  }
+}
+
+export function installLocalAppSessionPolicy(browserSession: BrowserSessionPolicyTarget, options: {
+  getAttestedOrigin(): string | null;
+}): void {
+  browserSession.setPermissionCheckHandler(denyBrowserPermissionCheck);
+  browserSession.setPermissionRequestHandler((_webContents, _permission, callback: (granted: boolean) => void) => {
+    denyBrowserPermissionRequest(callback);
+  });
+  browserSession.on("will-download", denyBrowserDownload);
+  browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
+    callback({ cancel: !requestMatchesAttestedLocalAppOrigin(details.url, options.getAttestedOrigin()) });
+  });
+}
+
 export function createBrowserGuestRegistry(): {
   register(guest: BrowserGuest): void;
   closeAll(): Promise<void>;
@@ -154,15 +182,29 @@ export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, op
   isBrowserAvailable(): boolean;
   registerGuest(guest: BrowserGuest): void;
   openBrowserPopup?(url: string): void;
+  resolveLocalAppBootstrap?(url: string, partition: string): boolean;
+  prepareLocalAppPartition?(partition: string): void;
+  isLocalAppGuest?(guest: BrowserGuest): boolean;
+  isAllowedLocalAppNavigation?(guest: BrowserGuest, url: string): boolean;
+  registerLocalAppGuest?(guest: BrowserGuest): void;
 }): void {
   hostContents.on("will-attach-webview", (
     event: PreventableEvent,
     preferences: BrowserWebPreferences,
     params: Record<string, string>,
   ) => {
+    const initialUrl = params.src || "about:blank";
+    const requestedPartition = params.partition;
+    if (requestedPartition
+      && options.resolveLocalAppBootstrap?.(initialUrl, requestedPartition)) {
+      hardenBrowserWebviewPreferences(preferences, requestedPartition);
+      hardenBrowserWebviewParams(params, requestedPartition);
+      delete params.allowpopups;
+      options.prepareLocalAppPartition?.(requestedPartition);
+      return;
+    }
     hardenBrowserWebviewPreferences(preferences, options.partition);
     hardenBrowserWebviewParams(params, options.partition);
-    const initialUrl = params.src || "about:blank";
     if (!options.isBrowserAvailable()
       || !isAllowedBrowserBootstrapUrl(initialUrl, options.getRudderAppOrigins())) {
       event.preventDefault();
@@ -170,6 +212,24 @@ export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, op
   });
 
   hostContents.on("did-attach-webview", (_event: unknown, guest: BrowserGuest) => {
+    if (options.isLocalAppGuest?.(guest)) {
+      (options.registerLocalAppGuest ?? options.registerGuest)(guest);
+      guest.setWindowOpenHandler(() => ({ action: "deny" }));
+      const preventUnsafeLocalAppNavigation = (event: PreventableEvent, targetUrl: string) => {
+        if (!options.isAllowedLocalAppNavigation?.(guest, targetUrl)) event.preventDefault();
+      };
+      guest.on("will-navigate", preventUnsafeLocalAppNavigation);
+      guest.on("will-redirect", preventUnsafeLocalAppNavigation);
+      guest.on("will-frame-navigate", (
+        event: PreventableEvent & { url?: string },
+        legacyDetails?: { url?: string },
+      ) => {
+        const targetUrl = legacyDetails?.url ?? event.url;
+        if (!targetUrl) event.preventDefault();
+        else preventUnsafeLocalAppNavigation(event, targetUrl);
+      });
+      return;
+    }
     if (!options.isBrowserAvailable()) {
       if (!guest.isDestroyed()) guest.close({ waitForBeforeUnload: false });
       return;

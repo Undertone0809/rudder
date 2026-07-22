@@ -1,4 +1,4 @@
-import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, OpenDialogOptions, WebContents } from "electron";
+import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, OpenDialogOptions, Session, WebContents } from "electron";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, session, shell, systemPreferences, Tray } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -35,6 +35,7 @@ import {
   installBrowserSessionPolicy,
   installBrowserWebviewPolicy,
   installDefaultWindowOpenDenyPolicy,
+  installLocalAppSessionPolicy,
 } from "./browser-webview-policy.js";
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import { runDesktopCliMode } from "./cli-runner.js";
@@ -48,6 +49,10 @@ import {
   type DesktopFileLaunchTargetId,
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
+import { LocalAppsController } from "./local-apps-controller.js";
+import { registerLocalAppsIpcHandlers } from "./local-apps-ipc.js";
+import { LocalAppRegistry, type PreparedLocalAppDefinition } from "./local-apps-registry.js";
+import { LocalAppRuntimeManager } from "./local-apps-runtime.js";
 import { previewLocalFile } from "./local-file-preview.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import {
@@ -432,10 +437,14 @@ let currentAppearance: DesktopAppearance = resolveAppearanceForThemePreference(
 const sidePanelCloseShortcutWebContents = new WeakSet<WebContents>();
 const operatorBrowserShortcutWebContents = new WeakSet<WebContents>();
 const browserGuestRegistry = createBrowserGuestRegistry();
+const localAppGuestRegistry = createBrowserGuestRegistry();
+const localAppSessions = new Map<string, Session>();
 const acceptBrowserPopup = createBrowserPopupRateLimiter();
 let browserProfileController: BrowserProfileController | null = null;
 let browserAgentTabController: ReturnType<typeof createBrowserAgentTabController> | null = null;
 let browserRuntimeLifecycle: ReturnType<typeof createDesktopBrowserRuntimeLifecycle> | null = null;
+let localAppsController: LocalAppsController | null = null;
+let localAppsRuntime: LocalAppRuntimeManager | null = null;
 let browserCookieImporter: {
   listBrowserImportSources(): Promise<BrowserImportSource[]>;
   importBrowserData(input: { sourceId: string; importCookies: true }): Promise<BrowserDataImportResult>;
@@ -496,7 +505,13 @@ const desktopQuitFlow = createDesktopQuitFlow({
   getMainWindow: () => mainWindow,
   setMainWindow: (value) => { mainWindow = value; },
   getServerHandle: () => serverHandle,
-  prepareForQuit: () => browserProfileController?.shutdown() ?? Promise.resolve(),
+  prepareForQuit: async () => {
+    await Promise.all([
+      browserProfileController?.shutdown() ?? Promise.resolve(),
+      localAppsController?.shutdown() ?? Promise.resolve(),
+      localAppGuestRegistry.closeAll(),
+    ]);
+  },
   stopLocalRudder,
   destroyResidentTray: () => { residentTray?.destroy(); residentTray = null; },
 });
@@ -695,6 +710,94 @@ function requireBrowserRuntimeLifecycle() {
     throw new Error("Rudder Browser runtime has not been initialized.");
   }
   return browserRuntimeLifecycle;
+}
+
+function requireLocalAppsController(): LocalAppsController {
+  if (!localAppsController) throw new Error("Desktop Local Apps have not been initialized.");
+  return localAppsController;
+}
+
+function formatLocalAppConfirmationDetail(definition: PreparedLocalAppDefinition): string {
+  const argumentsDetail = definition.argv.length > 0
+    ? definition.argv.map((argument) => JSON.stringify(argument)).join(" ")
+    : "(none)";
+  const environmentDetail = definition.inheritedEnvNames.length > 0
+    ? definition.inheritedEnvNames.join(", ")
+    : "(none)";
+  return [
+    `Working directory: ${definition.cwd}`,
+    `Executable: ${definition.executable}`,
+    `Arguments: ${argumentsDetail}`,
+    `Inherited environment variable names: ${environmentDetail}`,
+    `Readiness: ${definition.readiness.path} (${definition.readiness.timeoutMs} ms)`,
+    `Open path: ${definition.openPath}`,
+    "",
+    "Selected project code and commands may modify local files or data.",
+    "Rudder itself will not install dependencies, build assets, or run migrations.",
+  ].join("\n");
+}
+
+function initializeLocalApps(desktopInstallationId: string): void {
+  if (localAppsController) return;
+  const userDataPath = app.getPath("userData");
+  const registry = new LocalAppRegistry({
+    registryPath: path.join(userDataPath, "local-apps", "registry.json"),
+    installationId: desktopInstallationId,
+  });
+  const runtime = new LocalAppRuntimeManager({ registry });
+  localAppsRuntime = runtime;
+  localAppsController = new LocalAppsController({
+    registry,
+    runtime,
+    selectFolder: async () => {
+      const options: OpenDialogOptions = {
+        title: "Choose a local app folder",
+        buttonLabel: "Review App",
+        properties: ["openDirectory"],
+      };
+      const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      const result = owner
+        ? await dialog.showOpenDialog(owner, options)
+        : await dialog.showOpenDialog(options);
+      return result.canceled ? null : result.filePaths[0] ?? null;
+    },
+    confirmDefinition: async (definition, action) => {
+      const confirmLabel = action === "start" ? "Start App" : "Approve App";
+      const options = {
+        type: "warning" as const,
+        title: `${APP_NAME} Local App`,
+        buttons: [confirmLabel, "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+        message: action === "start"
+          ? `Start “${definition.title}”?`
+          : `${action === "create" ? "Add" : "Update"} “${definition.title}”?`,
+        detail: formatLocalAppConfirmationDetail(definition),
+      };
+      const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      const result = owner
+        ? await dialog.showMessageBox(owner, options)
+        : await dialog.showMessageBox(options);
+      return result.response === 0;
+    },
+  });
+}
+
+function prepareLocalAppPartition(partition: string): void {
+  if (localAppSessions.has(partition)) return;
+  const localAppSession = session.fromPartition(partition);
+  installLocalAppSessionPolicy(localAppSession, {
+    getAttestedOrigin: () => localAppsRuntime?.attestedTargetForPartition(partition)?.origin ?? null,
+  });
+  localAppSessions.set(partition, localAppSession);
+}
+
+function resolveLocalAppGuestPartition(guest: { session?: unknown }): string | null {
+  for (const [partition, localAppSession] of localAppSessions) {
+    if (guest.session === localAppSession) return partition;
+  }
+  return null;
 }
 
 function getCurrentMainRenderer(): WebContents | null {
@@ -1135,6 +1238,15 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
         operatorBrowserShortcutWebContents.add(guest as WebContents);
       },
       openBrowserPopup: (url) => routeDesktopWebLink(url, "browser_popup"),
+      resolveLocalAppBootstrap: (url, partition) =>
+        localAppsRuntime?.isAttestedBootstrap(url, partition) ?? false,
+      prepareLocalAppPartition,
+      isLocalAppGuest: (guest) => resolveLocalAppGuestPartition(guest) !== null,
+      isAllowedLocalAppNavigation: (guest, url) => {
+        const partition = resolveLocalAppGuestPartition(guest);
+        return partition !== null && (localAppsRuntime?.isAttestedNavigation(url, partition) ?? false);
+      },
+      registerLocalAppGuest: localAppGuestRegistry.register,
     });
   }
 
@@ -1753,6 +1865,10 @@ function registerIpc(): void {
     controller: requireBrowserProfileController(),
     importer: requireBrowserCookieImporter(),
   });
+  registerLocalAppsIpcHandlers(ipcMain, {
+    getMainRenderer: getCurrentMainRenderer,
+    controller: requireLocalAppsController(),
+  });
   ipcMain.handle("desktop:get-boot-state", async (event) => {
     assertCurrentMainFrame(event, "Desktop boot state");
     refreshDesktopSystemPermissions();
@@ -2151,6 +2267,7 @@ async function bootstrap(): Promise<void> {
       instanceId: profile.instanceId,
     },
   };
+  initializeLocalApps(profile.instanceId);
   registerIpc();
   installApplicationMenu(appName);
   createResidentShellControls();

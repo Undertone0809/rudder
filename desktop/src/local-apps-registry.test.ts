@@ -1,0 +1,143 @@
+import { chmod, mkdtemp, readFile, readdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  LocalAppRegistry,
+  computeLocalAppTrustFingerprint,
+  type LocalAppDefinitionDraft,
+} from "./local-apps-registry.js";
+
+const draft = (cwd: string): LocalAppDefinitionDraft => ({
+  title: "Fixture app",
+  executable: process.execPath,
+  argv: ["fixture.mjs"],
+  cwd,
+  inheritedEnvNames: ["NODE_ENV", "RUDDER_TEST_TOKEN"],
+  readiness: { path: "/health", timeoutMs: 5_000 },
+  openPath: "/app",
+});
+
+describe("Desktop Local App registry", () => {
+  it("writes a versioned atomic mode-0600 registry and leaves no temporary file", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-registry-"));
+    const registryPath = path.join(root, "local-apps.json");
+    const registry = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    const discovered = await registry.prepareDefinition(draft(root));
+    await registry.createDefinition({ ...discovered, approvedFingerprint: discovered.trustFingerprint });
+
+    const raw = JSON.parse(await readFile(registryPath, "utf8")) as Record<string, unknown>;
+    expect(raw).toMatchObject({ version: 1, installationId: "install-a" });
+    expect((await stat(registryPath)).mode & 0o777).toBe(0o600);
+    expect((await readdir(root)).filter((name) => name.includes(".tmp"))).toEqual([]);
+  });
+
+  it("recovers a corrupt registry without returning definitions or executing anything", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-corrupt-"));
+    const registryPath = path.join(root, "local-apps.json");
+    await writeFile(registryPath, "{ definitely not json", { mode: 0o644 });
+    const registry = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+
+    await expect(registry.listDefinitions()).resolves.toEqual([]);
+    expect((await readdir(root)).some((name) => name.startsWith("local-apps.json.corrupt-"))).toBe(true);
+    expect((await stat(registryPath)).mode & 0o777).toBe(0o600);
+  });
+
+  it("uses canonical cwd and invalidates approval when any trusted launch field changes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-fingerprint-"));
+    const actual = path.join(root, "actual");
+    const alias = path.join(root, "alias");
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(actual));
+    await symlink(actual, alias);
+    const canonical = await realpath(actual);
+    const first = await computeLocalAppTrustFingerprint(draft(alias));
+    const same = await computeLocalAppTrustFingerprint({ ...draft(canonical), inheritedEnvNames: ["RUDDER_TEST_TOKEN", "NODE_ENV"] });
+    const changed = await computeLocalAppTrustFingerprint({ ...draft(actual), openPath: "/changed" });
+    expect(first.fingerprint).toBe(same.fingerprint);
+    expect(changed.fingerprint).not.toBe(first.fingerprint);
+
+    const registryPath = path.join(root, "local-apps.json");
+    const registry = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    const created = await registry.createDefinition({ ...first.definition, approvedFingerprint: first.fingerprint });
+    const updated = await registry.updateDefinition(created.id, { ...first.definition, openPath: "/changed" });
+    expect(updated.approvedFingerprint).toBeNull();
+    await expect(registry.requireApprovedDefinition(created.id)).rejects.toThrow("Review changes");
+  });
+
+  it("never exposes inherited environment values in renderer-facing definitions", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-env-"));
+    process.env.RUDDER_TEST_TOKEN = "do-not-expose";
+    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    await registry.createDefinition({ ...prepared, approvedFingerprint: prepared.trustFingerprint });
+    const serialized = JSON.stringify(await registry.listDefinitions());
+    expect(serialized).toContain("RUDDER_TEST_TOKEN");
+    expect(serialized).not.toContain("do-not-expose");
+    await chmod(path.join(root, "registry.json"), 0o600);
+  });
+
+  it("never treats a renderer-supplied approved fingerprint as native approval", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-untrusted-approval-"));
+    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    const created = await registry.createDefinition({
+      ...prepared,
+      approvedFingerprint: prepared.trustFingerprint,
+    });
+    expect(created.approvedFingerprint).toBeNull();
+    await expect(registry.requireApprovedDefinition(created.id)).rejects.toThrow("Review changes");
+    await registry.approveDefinition(created.id, prepared.trustFingerprint);
+    await expect(registry.requireApprovedDefinition(created.id)).resolves.toMatchObject({
+      approvedFingerprint: prepared.trustFingerprint,
+    });
+  });
+
+  it("persists three distinct stable opaque identities in renderer DTOs", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-identities-"));
+    const registryPath = path.join(root, "registry.json");
+    const registry = new LocalAppRegistry({ registryPath, installationId: "desktop-installation-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    const created = await registry.createDefinition(prepared);
+    expect(created.desktopInstallationId).toBe("desktop-installation-a");
+    expect(created.localBindingId).toBe(created.id);
+    expect(new Set([created.desktopInstallationId, created.appPublicId, created.localBindingId]).size).toBe(3);
+
+    const updated = await registry.updateDefinition(created.id, { ...draft(root), openPath: "/changed" });
+    const reloaded = new LocalAppRegistry({ registryPath, installationId: "desktop-installation-a" });
+    const [persisted] = await reloaded.listDefinitions();
+    expect(updated).toMatchObject({
+      desktopInstallationId: created.desktopInstallationId,
+      appPublicId: created.appPublicId,
+      localBindingId: created.localBindingId,
+    });
+    expect(persisted).toMatchObject({
+      desktopInstallationId: created.desktopInstallationId,
+      appPublicId: created.appPublicId,
+      localBindingId: created.localBindingId,
+    });
+  });
+
+  it("recovers without execution when persisted trusted launch fields do not match their fingerprint", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-tampered-"));
+    const registryPath = path.join(root, "registry.json");
+    const registry = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    const created = await registry.createDefinition(prepared);
+    await registry.approveDefinition(created.id, prepared.trustFingerprint);
+    const state = JSON.parse(await readFile(registryPath, "utf8")) as { definitions: Array<{ openPath: string }> };
+    state.definitions[0].openPath = "/tampered";
+    await writeFile(registryPath, JSON.stringify(state), { mode: 0o600 });
+
+    const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    await expect(reloaded.listDefinitions()).resolves.toEqual([]);
+    expect((await readdir(root)).some((name) => name.startsWith("registry.json.corrupt-"))).toBe(true);
+  });
+
+  it("rejects routes that URL parsing could reinterpret outside the attested loopback origin", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-route-"));
+    await expect(computeLocalAppTrustFingerprint({ ...draft(root), openPath: "/\\example.com" }))
+      .rejects.toThrow("open path");
+    await expect(computeLocalAppTrustFingerprint({ ...draft(root), readiness: { path: "/health\nInjected", timeoutMs: 5_000 } }))
+      .rejects.toThrow("readiness path");
+  });
+});
