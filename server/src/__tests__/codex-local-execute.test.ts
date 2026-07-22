@@ -2139,7 +2139,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
         diagnosticCode: null,
         provenance: "desktop_bundle",
         serverName: "rudder-browser",
-        toolCount: 26,
+        toolCount: RUDDER_BROWSER_MCP_TOOL_NAMES.length,
         version: "0.4.6",
       });
       const managedConfig = await fs.readFile(
@@ -3744,7 +3744,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
           available: false,
           diagnosticCode: "browser_bundle_version_mismatch",
           serverName: "rudder-browser",
-          toolCount: 26,
+          toolCount: RUDDER_BROWSER_MCP_TOOL_NAMES.length,
         });
         const managedConfig = await fs.readFile(
           path.join(managedCodexHomePath({ rudderHome }), "config.toml"),

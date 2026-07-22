@@ -1564,7 +1564,11 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         expect(await readMcpToolNames({ command: core.command[0], args: core.command.slice(1), env: core.environment })).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
         expect(await readMcpToolNames({ command: browser.command[0], args: browser.command.slice(1), env: browser.environment })).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
         expect(meta.rudderMcp).toMatchObject({ available: true, serverName: "rudder-tools", toolCount: 69 });
-        expect(meta.browserMcp).toMatchObject({ available: true, serverName: "rudder-browser", toolCount: 26 });
+        expect(meta.browserMcp).toMatchObject({
+          available: true,
+          serverName: "rudder-browser",
+          toolCount: RUDDER_BROWSER_MCP_TOOL_NAMES.length,
+        });
         await expect(fs.stat(path.dirname(capture.opencodeConfig))).rejects.toMatchObject({ code: "ENOENT" });
       } finally {
         installedDesktopMcp.restore();
@@ -1795,7 +1799,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
           available: false,
           diagnosticCode: "browser_bundle_version_mismatch",
           serverName: "rudder-browser",
-          toolCount: 26,
+          toolCount: RUDDER_BROWSER_MCP_TOOL_NAMES.length,
         });
         const managedSkills = path.join(
           rudderHome,

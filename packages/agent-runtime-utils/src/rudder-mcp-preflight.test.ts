@@ -387,7 +387,7 @@ describe("preflightRudderMcpServer", () => {
 });
 
 describe("preflightRudderBrowserMcpServer", () => {
-  it("accepts the exact separate Browser server identity and 26-tool semantic manifest", async () => {
+  it("accepts the exact separate Browser server identity and semantic manifest", async () => {
     const result = await preflightRudderBrowserMcpServer({
       command: await fixtureCommand("ok", "0.4.6", "browser"),
       runtimeEnv: {},
