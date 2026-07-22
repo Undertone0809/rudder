@@ -45,6 +45,7 @@ const mockState = vi.hoisted(() => ({
   conversations: [] as ChatConversation[],
   failAgents: false,
   messagesByChatId: {} as Record<string, ChatMessage[]>,
+  pendingMessageChatIds: new Set<string>(),
   fetchingChatDetailIds: new Set<string>(),
   failedChatDetailIds: new Set<string>(),
   pendingChatDetailIds: new Set<string>(),
@@ -175,6 +176,14 @@ vi.mock("@tanstack/react-query", () => ({
       };
     }
     if (queryKey[0] === "chats" && queryKey[2] === "messages") {
+      if (mockState.pendingMessageChatIds.has(String(queryKey[3]))) {
+        return {
+          data: undefined,
+          isPending: true,
+          isLoading: true,
+          error: null,
+        };
+      }
       return {
         data: mockState.messagesByChatId[String(queryKey[3])] ?? [],
         isPending: false,
@@ -1365,6 +1374,8 @@ beforeEach(() => {
   });
   resetChatPendingAttachmentsForTests();
   mockState.conversationId = "chat-1";
+  mockState.openPath.mockReset();
+  mockState.previewLocalFile.mockReset();
   mockState.failAgents = false;
   mockState.abortChatStream.mockReset();
   mockState.conversations = [
@@ -1406,6 +1417,7 @@ beforeEach(() => {
     "chat-1": [imageMessage(), pendingIssueProposal()],
     "chat-2": [message({ id: "other-message-1", conversationId: "chat-2", body: "Other chat" })],
   };
+  mockState.pendingMessageChatIds = new Set();
   mockState.queueSnapshot = queueSnapshot();
   mockState.cancelQueuedMessage.mockReset();
   mockState.cancelQueuedMessage.mockResolvedValue(queuedMessage({ status: "cancelled" }));
@@ -6430,6 +6442,77 @@ describe("Feishu-backed chat controls", () => {
   });
 });
 
+describe("persisted chat Agent Run action", () => {
+  async function openChatActions(container: HTMLElement) {
+    const actionsTrigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-actions-trigger"]');
+    expect(actionsTrigger).not.toBeNull();
+    await act(async () => {
+      actionsTrigger?.dispatchEvent(new MouseEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+      }));
+      await Promise.resolve();
+    });
+  }
+
+  function findMenuItem(label: string) {
+    return Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .find((candidate) => candidate.textContent?.trim() === label) ?? null;
+  }
+
+  it("navigates to the newest resolvable Chat Agent Run", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "assistant-run",
+        role: "assistant",
+        runId: "run-latest",
+        replyingAgentId: "agent-replying",
+        createdAt: new Date("2026-05-12T10:00:00.000Z"),
+      })],
+    };
+    const { container } = renderChat();
+
+    await openChatActions(container);
+    const runItem = findMenuItem("View agent runs");
+    expect(runItem).not.toBeNull();
+    expect(runItem?.hasAttribute("aria-disabled")).toBe(false);
+    const actionLabels = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .map((candidate) => candidate.textContent?.trim());
+    expect(actionLabels.indexOf("Copy Chat Link")).toBeLessThan(actionLabels.indexOf("View agent runs"));
+    expect(actionLabels.indexOf("View agent runs")).toBeLessThan(actionLabels.indexOf("Fork"));
+
+    await act(async () => {
+      runItem?.click();
+      await Promise.resolve();
+    });
+    expect(mockState.navigate).toHaveBeenCalledWith("/agents/agent-replying/runs/run-latest");
+  });
+
+  it("shows a disabled loading state while messages are loading", async () => {
+    mockState.pendingMessageChatIds.add("chat-1");
+    const { container } = renderChat();
+
+    await openChatActions(container);
+    const runItem = findMenuItem("Loading agent runs...");
+    expect(runItem).not.toBeNull();
+    expect(runItem?.getAttribute("aria-disabled")).toBe("true");
+    expect(runItem?.querySelector(".animate-spin")).not.toBeNull();
+  });
+
+  it("shows a disabled empty state when no Agent Run target is available", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-only", role: "user", runId: null })],
+    };
+    const { container } = renderChat();
+
+    await openChatActions(container);
+    const runItem = findMenuItem("No agent runs yet");
+    expect(runItem).not.toBeNull();
+    expect(runItem?.getAttribute("aria-disabled")).toBe("true");
+  });
+});
+
 describe("Chat attachment previews", () => {
   it("renders the chat workspace as an internal card without negative shell margins", () => {
     const { container } = renderChat();
@@ -6554,9 +6637,8 @@ describe("Chat attachment previews", () => {
 
     expect(container.querySelector("[data-testid='chat-pending-attachments']")).not.toBeNull();
     expect(container.querySelector("[data-testid='chat-pending-attachment']")).not.toBeNull();
-    expect(container.textContent).not.toContain("Scope a new feature");
-    expect(container.textContent).not.toContain("Clarify a vague request");
-    expect(container.textContent).not.toContain("Turn a chat into an issue");
+    expect(container.querySelector("[data-testid='chat-empty-state-prompt-flow']")?.getAttribute("data-state")).toBe("hidden");
+    expect(container.querySelector("[data-testid='chat-empty-state-starters']")?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("keeps multiple pasted images with identical clipboard metadata staged", async () => {

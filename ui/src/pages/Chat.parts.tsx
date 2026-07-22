@@ -658,6 +658,26 @@ export const PLAN_MODE_HELP_TEXT =
 
 export type ChatBranchPreview = { chatTurnId: string; turnVariant: number };
 
+export type ChatAgentRunTarget = { runId: string; agentId: string };
+
+export function resolveLatestChatAgentRunTarget(
+  messages: readonly ChatMessage[],
+  conversation: Pick<ChatConversation, "chatRuntime" | "preferredAgentId">,
+): ChatAgentRunTarget | null {
+  let latestMessage: ChatMessage | null = null;
+  for (const message of messages) {
+    if (message.role !== "assistant" || !message.runId) continue;
+    if (!latestMessage || new Date(message.createdAt).getTime() > new Date(latestMessage.createdAt).getTime()) {
+      latestMessage = message;
+    }
+  }
+  if (!latestMessage?.runId) return null;
+  const agentId = latestMessage.replyingAgentId
+    ?? conversation.chatRuntime.runtimeAgentId
+    ?? conversation.preferredAgentId;
+  return agentId ? { runId: latestMessage.runId, agentId } : null;
+}
+
 export function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage[]) {
   const merged = new Map<string, ChatMessage>();
   for (const message of current) {

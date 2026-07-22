@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { chatConversations, chatMessages, createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
@@ -8,6 +8,102 @@ const ORG_NAME = `Plan-Mode-Chat-${Date.now()}`;
 const e2eDb = createDb(E2E_DATABASE_URL);
 
 test.describe("Chat options menu", () => {
+  test("opens the latest Chat Agent Run from the persisted conversation menu", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Agent-Run-Menu-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string };
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Run Inspector",
+      command: E2E_CODEX_STUB,
+    });
+
+    const conversationId = randomUUID();
+    const runId = randomUUID();
+    const turnId = randomUUID();
+    const userMessageId = randomUUID();
+    const startedAt = new Date("2026-07-21T08:00:00.000Z");
+    const finishedAt = new Date("2026-07-21T08:01:00.000Z");
+
+    await e2eDb.insert(chatConversations).values({
+      id: conversationId,
+      orgId: organization.id,
+      title: "Inspect completed agent run",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      preferredAgentId: chatAgent.id,
+      lastMessageAt: finishedAt,
+      createdAt: startedAt,
+      updatedAt: finishedAt,
+    });
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: chatAgent.id,
+      invocationSource: "chat",
+      triggerDetail: "chat_assistant_reply",
+      status: "succeeded",
+      startedAt,
+      finishedAt,
+      chatConversationId: conversationId,
+      contextSnapshot: {
+        scene: "chat",
+        conversationId,
+        userMessageId,
+        chatTurnId: turnId,
+      },
+      resultJson: { summary: "Completed the requested inspection." },
+      createdAt: startedAt,
+      updatedAt: finishedAt,
+    });
+    await e2eDb.insert(chatMessages).values([
+      {
+        id: userMessageId,
+        orgId: organization.id,
+        conversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Inspect the latest run.",
+        chatTurnId: turnId,
+        turnVariant: 0,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      },
+      {
+        id: randomUUID(),
+        orgId: organization.id,
+        conversationId,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: "The inspection is complete.",
+        runId,
+        replyingAgentId: chatAgent.id,
+        chatTurnId: turnId,
+        turnVariant: 0,
+        createdAt: finishedAt,
+        updatedAt: finishedAt,
+      },
+    ]);
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/chat/${conversationId}`, { waitUntil: "domcontentloaded" });
+
+    await page.getByTestId("chat-actions-trigger").click();
+    const viewRunsItem = page.getByRole("menuitem", { name: "View agent runs" });
+    await expect(viewRunsItem).toBeEnabled();
+    await viewRunsItem.click();
+
+    await expect(page).toHaveURL(new RegExp(`/agents/${chatAgent.id}/runs/${runId}$`));
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(detailPane).toBeVisible({ timeout: 15_000 });
+    await expect(detailPane.getByTestId("run-summary-card").getByText("succeeded", { exact: true })).toBeVisible();
+  });
+
   test("toggles plan mode from the composer menu and persists it", async ({ page }) => {
     await page.addInitScript(() => {
       window.localStorage.setItem("rudder.theme", "dark");

@@ -102,6 +102,11 @@ export const zhCN: Messages = {
   "chat.composer.placeholder": "尽管问",
   "chat.composer.issuePlaceholder": "询问 {{issue}}",
   "chat.composer.planModePlaceholder": "询问后续调整",
+  "agentRuns.conversation": "会话",
+  "agentRuns.runCount.one": "{{count}} 次运行",
+  "agentRuns.runCount.many": "{{count}} 次运行",
+  "agentRuns.openAgentRunForConversation.one": "打开会话 {{shortId}} 的智能体运行，共 {{count}} 次运行",
+  "agentRuns.openAgentRunForConversation.many": "打开会话 {{shortId}} 的智能体运行，共 {{count}} 次运行",
   "organizations.description": "管理这个 Rudder 实例下的组织。",
   "organizationSkills.createSkillChatPrompt":
     "帮我为这个 Rudder organization 设计一个新的 Agent skill。\n\n参考 [$office-hours]({{officeHoursPath}}) 的结构和严谨度。\n\n请：\n1. 先问最少的问题来澄清这个 skill 的职责。\n2. 提议 skill 名称、触发描述和工作流。\n3. 最后起草完整的 `SKILL.md` 内容，最终的 `SKILL.md` 用英文写。",

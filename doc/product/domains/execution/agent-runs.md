@@ -22,6 +22,7 @@ related_tests:
   - server/src/__tests__/heartbeat-process-recovery.test.ts
   - server/src/__tests__/heartbeat-workspace-preflight.test.ts
   - tests/e2e/codex-model-order.spec.ts
+  - tests/e2e/agent-run-conversation-grouping.spec.ts
 edit_policy: user_confirmed_only
 ---
 
@@ -117,8 +118,12 @@ Flow:
 2. Execution stores scene and target context in the run snapshot.
 3. Shared conversion code maps the stored run to the Agent Run shape.
 4. Agent Detail and run filters present scene and target facts to the operator.
-5. Transcript/result pages link back to the originating target where possible.
-6. Runtime instruction loading uses the derived scene: only `scene=heartbeat`
+5. After run filtering and sorting, Agent Detail groups runs with the same
+   normalized conversation identity into one navigation entry. The selected
+   member remains the representative when present; otherwise the first matching
+   run in the current sort order represents the group.
+6. Transcript/result pages link back to the originating target where possible.
+7. Runtime instruction loading uses the derived scene: only `scene=heartbeat`
    receives `RUDDER_AGENT_HEARTBEAT_INSTRUCTION`.
 
 Invariants:
@@ -133,6 +138,10 @@ Invariants:
   work.
 - Compatibility naming must not leak into product copy when the UI is describing
   the unified run model.
+- Conversation grouping is a navigation projection only. It must not merge run
+  identity, status, transcript, result, or retry evidence. Its count reflects
+  the members that match the current filters, including when a selected member
+  is retained outside those filters.
 - Heartbeat-only instruction text must not be loaded into issue, review, chat,
   or automation runs.
 
@@ -140,6 +149,8 @@ Evidence:
 
 - Agent run list can filter/display scenes.
 - Run detail exposes linked target context.
+- Agent Detail shows one navigation entry per normalized conversation while
+  `Chat Replies` continues to open each individual run.
 - Shared type conversion is the single place for facade semantics.
 - Prompt metrics and adapter command notes show heartbeat instruction only for
   heartbeat scene runs.
@@ -160,6 +171,7 @@ Related tests:
 - `ui/src/pages/AgentDetail.run-filters.test.ts`
 - `ui/src/pages/AgentDetail.runs.test.ts`
 - `tests/e2e/agent-runs-filter-menu.spec.ts`
+- `tests/e2e/agent-run-conversation-grouping.spec.ts`
 
 ## RUN.CHAT.AGENT.001
 
@@ -215,8 +227,10 @@ Flow:
     generation, Agent Run, assistant message, queue item, and control action
     converge. Retry exhaustion must release active ownership and preserve an
     actionable failure rather than blocking later turns indefinitely.
-14. The assistant message stores a reverse link to the run, and Agent Detail Run
-    context and Messenger can navigate between run evidence and chat transcript.
+14. The assistant message stores a reverse link to the run. The conversation
+    menu opens the newest linked Agent Run, and Agent Detail Run context links
+    back to Messenger. Within a conversation group, `Chat Replies` opens each
+    individual attempt without duplicating the group in Agent Runs navigation.
 
 Invariants:
 
@@ -256,6 +270,9 @@ Invariants:
 Evidence:
 
 - Chat assistant messages expose run attribution.
+- The Chat conversation menu exposes a stable Agent Runs action that opens the
+  newest linked attempt and remains disabled while loading or before any run
+  exists.
 - Agent Detail Run context can open the source conversation.
 - Chat assistant tests cover missing-result-sentinel repair, persisted repair
   metadata, stopped-run partial body filtering, runtime boot failure
@@ -299,6 +316,8 @@ Related tests:
 - `tests/e2e/chat-runtime-boot-failure.spec.ts`
 - `tests/e2e/chat-streaming.spec.ts`
 - `tests/e2e/chat-concurrent-streaming.spec.ts`
+- `tests/e2e/chat-options-menu.spec.ts`
+- `tests/e2e/agent-run-conversation-grouping.spec.ts`
 
 ## RUN.EXECUTION.001
 

@@ -30,6 +30,7 @@ import { CopyText } from "../components/CopyText";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusBadge } from "../components/StatusBadge";
 import { useDialog } from "../context/DialogContext";
+import { useI18n } from "../context/I18nContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useToast } from "../context/ToastContext";
 import { retryAgentRun } from "../lib/agent-run-retry";
@@ -111,6 +112,85 @@ export function runDetailFacts(run: HeartbeatRun) {
   }
   if (agentRun.messageId) facts.push({ label: "Message", value: agentRun.messageId });
   return facts;
+}
+
+export type RunRailEntry =
+  | {
+    kind: "run";
+    run: HeartbeatRun;
+    isSelected: boolean;
+  }
+  | {
+    kind: "conversation";
+    conversationId: string;
+    runs: HeartbeatRun[];
+    matchingRunCount: number;
+    representativeRun: HeartbeatRun;
+    isSelected: boolean;
+  };
+
+export function buildRunRailEntries(
+  matchingRuns: HeartbeatRun[],
+  selectedRunId: string | null,
+  outsideSelectedRun: HeartbeatRun | null = null,
+): RunRailEntry[] {
+  const entries: RunRailEntry[] = [];
+  const conversations = new Map<string, Extract<RunRailEntry, { kind: "conversation" }>>();
+  const outsideSelection = outsideSelectedRun
+    && outsideSelectedRun.id === selectedRunId
+    && !matchingRuns.some((run) => run.id === outsideSelectedRun.id)
+    ? outsideSelectedRun
+    : null;
+
+  if (outsideSelection) {
+    const conversationId = toAgentRun(outsideSelection).conversationId;
+    if (conversationId) {
+      const entry: Extract<RunRailEntry, { kind: "conversation" }> = {
+        kind: "conversation",
+        conversationId,
+        runs: [outsideSelection],
+        matchingRunCount: 0,
+        representativeRun: outsideSelection,
+        isSelected: true,
+      };
+      conversations.set(conversationId, entry);
+      entries.push(entry);
+    } else {
+      entries.push({ kind: "run", run: outsideSelection, isSelected: true });
+    }
+  }
+
+  for (const run of matchingRuns) {
+    const conversationId = toAgentRun(run).conversationId;
+    if (!conversationId) {
+      entries.push({ kind: "run", run, isSelected: run.id === selectedRunId });
+      continue;
+    }
+
+    const existing = conversations.get(conversationId);
+    if (existing) {
+      existing.runs.push(run);
+      existing.matchingRunCount += 1;
+      if (run.id === selectedRunId) {
+        existing.representativeRun = run;
+        existing.isSelected = true;
+      }
+      continue;
+    }
+
+    const entry: Extract<RunRailEntry, { kind: "conversation" }> = {
+      kind: "conversation",
+      conversationId,
+      runs: [run],
+      matchingRunCount: 1,
+      representativeRun: run,
+      isSelected: run.id === selectedRunId,
+    };
+    conversations.set(conversationId, entry);
+    entries.push(entry);
+  }
+
+  return entries;
 }
 
 export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelected: boolean; agentId: string }) {
@@ -226,6 +306,118 @@ export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; i
   );
 }
 
+export function RunConversationListItem({
+  entry,
+  agentId,
+}: {
+  entry: Extract<RunRailEntry, { kind: "conversation" }>;
+  agentId: string;
+}) {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { t } = useI18n();
+  const run = entry.representativeRun;
+  const statusInfo = runStatusIcons[run.status] ?? { icon: Clock, color: "text-neutral-400" };
+  const StatusIcon = statusInfo.icon;
+  const metrics = runMetrics(run);
+  const summary = getRunListSummary(run);
+  const shortConversationId = entry.conversationId.slice(0, 8);
+  const runCountKey = entry.matchingRunCount === 1 ? "agentRuns.runCount.one" : "agentRuns.runCount.many";
+  const openAgentRunKey = entry.matchingRunCount === 1
+    ? "agentRuns.openAgentRunForConversation.one"
+    : "agentRuns.openAgentRunForConversation.many";
+  const destination = appendRunSearchParams(
+    `/agents/${agentId}/runs/${run.id}`,
+    searchParams,
+  );
+  const isActive = run.status === "running" || run.status === "queued";
+  const now = useRunDurationNow(isActive);
+  const durationLabel = formatRunDurationLabel(run, now) ?? relativeTime(run.createdAt);
+  const occurrenceLabel = formatRunOccurrenceLabel(run, now);
+  const timingTitle = formatRunTimingTitle(run);
+
+  const openRun = () => navigate(destination);
+  const handleRowKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    openRun();
+  };
+
+  return (
+    <div
+      role="link"
+      tabIndex={0}
+      aria-current={entry.isSelected ? "page" : undefined}
+      aria-label={t(openAgentRunKey, { shortId: shortConversationId, count: entry.matchingRunCount })}
+      data-testid="agent-run-conversation-group-row"
+      className={cn(
+        "flex w-full flex-col gap-1 border-b border-border px-3 py-2.5 text-left text-inherit no-underline transition-colors last:border-b-0",
+        entry.isSelected ? "bg-accent/40" : "hover:bg-accent/20",
+      )}
+      onClick={openRun}
+      onKeyDown={handleRowKeyDown}
+    >
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+        <span className="flex min-w-0 items-center gap-2">
+          <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", statusInfo.color, run.status === "running" && "animate-spin")} />
+          <span className="truncate text-xs font-medium text-foreground">
+            {t("agentRuns.conversation")}{" "}
+            <span className="font-mono text-muted-foreground">{shortConversationId}</span>
+          </span>
+          <span className="shrink-0 rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground">
+            {t(runCountKey, { count: entry.matchingRunCount })}
+          </span>
+        </span>
+        <span
+          className="flex shrink-0 flex-col items-end gap-0.5 text-right tabular-nums"
+          title={timingTitle || undefined}
+          data-testid="run-list-timing"
+        >
+          {occurrenceLabel && (
+            <span className="whitespace-nowrap text-[11px] font-semibold leading-none text-foreground">
+              {occurrenceLabel}
+            </span>
+          )}
+          {durationLabel && (
+            <span className="whitespace-nowrap text-[10px] font-medium leading-none text-muted-foreground">
+              {durationLabel}
+            </span>
+          )}
+        </span>
+      </div>
+      {summary && (
+        <span className="truncate pl-5.5 text-xs text-muted-foreground">
+          {summary.slice(0, 60)}
+        </span>
+      )}
+      {(metrics.totalTokens > 0 || metrics.cost > 0) && (
+        <div className="flex items-center gap-2 pl-5.5 text-[11px] tabular-nums text-muted-foreground">
+          {metrics.totalTokens > 0 && <span>{formatCompactTokenLabel(metrics.totalTokens)}</span>}
+          {metrics.cost > 0 && <span>${metrics.cost.toFixed(3)}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function RunRailList({ entries, agentId }: { entries: RunRailEntry[]; agentId: string }) {
+  return entries.map((entry) => entry.kind === "conversation" ? (
+    <RunConversationListItem
+      key={`conversation:${entry.conversationId}`}
+      entry={entry}
+      agentId={agentId}
+    />
+  ) : (
+    <RunListItem
+      key={`run:${entry.run.id}`}
+      run={entry.run}
+      isSelected={entry.isSelected}
+      agentId={agentId}
+    />
+  ));
+}
+
 export function RunsTab({
   runs,
   orgId,
@@ -278,9 +470,11 @@ export function RunsTab({
   const effectiveRunId = isMobile ? selectedRunId : (selectedRunId ?? filtered[0]?.id ?? sorted[0]?.id ?? null);
   const selectedRun = sorted.find((r) => r.id === effectiveRunId) ?? null;
   const selectedRunOutsideFilters = Boolean(selectedRun && filtersActive && !filtered.some((run) => run.id === selectedRun.id));
-  const listRuns = selectedRunOutsideFilters && selectedRun
-    ? [selectedRun, ...filtered.filter((run) => run.id !== selectedRun.id)]
-    : filtered;
+  const railEntries = buildRunRailEntries(
+    filtered,
+    effectiveRunId,
+    selectedRunOutsideFilters ? selectedRun : null,
+  );
   const listEmptyMessage = filtersActive
     ? "No runs match the current filters."
     : "No runs yet.";
@@ -318,9 +512,9 @@ export function RunsTab({
           <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
         )}
         <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
-          {listRuns.length > 0 ? listRuns.map((run) => (
-            <RunListItem key={run.id} run={run} isSelected={false} agentId={agentRouteId} />
-          )) : (
+          {railEntries.length > 0 ? (
+            <RunRailList entries={railEntries} agentId={agentRouteId} />
+          ) : (
             <RunListEmptyState message={listEmptyMessage} />
           )}
         </div>
@@ -336,9 +530,9 @@ export function RunsTab({
           <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
         )}
         <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
-          {listRuns.length > 0 ? listRuns.map((run) => (
-            <RunListItem key={run.id} run={run} isSelected={false} agentId={agentRouteId} />
-          )) : (
+          {railEntries.length > 0 ? (
+            <RunRailList entries={railEntries} agentId={agentRouteId} />
+          ) : (
             <RunListEmptyState message={listEmptyMessage} />
           )}
         </div>
@@ -368,9 +562,9 @@ export function RunsTab({
                 Selected run is outside the current filters.
               </div>
             )}
-            {listRuns.length > 0 ? listRuns.map((run) => (
-              <RunListItem key={run.id} run={run} isSelected={run.id === effectiveRunId} agentId={agentRouteId} />
-            )) : (
+            {railEntries.length > 0 ? (
+              <RunRailList entries={railEntries} agentId={agentRouteId} />
+            ) : (
               <RunListEmptyState message={listEmptyMessage} />
             )}
           </div>
