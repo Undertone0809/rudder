@@ -92,6 +92,12 @@ test.describe("shared Library media preview", () => {
     await expect(libraryVideo).not.toHaveAttribute("autoplay", "");
     await expect.poll(() => libraryVideo.evaluate((element) => (element as HTMLVideoElement).duration || 0))
       .toBeGreaterThan(0);
+    await expect.poll(async () => {
+      const frame = page.locator("[data-workspace-media-preview='video']");
+      const [videoBox, frameBox] = await Promise.all([libraryVideo.boundingBox(), frame.boundingBox()]);
+      if (!videoBox || !frameBox) return 0;
+      return videoBox.width / frameBox.width;
+    }).toBeGreaterThan(0.75);
     await expect(libraryVideo.evaluate(async (element) => {
       const video = element as HTMLVideoElement;
       video.muted = true;
@@ -153,8 +159,15 @@ test.describe("shared Library media preview", () => {
     await expect(mediaMessage).toContainText("demo.mp4", { timeout: 15_000 });
     await mediaMessage.getByRole("link", { name: "demo.mp4" }).click();
     const sidePanel = page.getByTestId("chat-side-panel");
-    await expect(sidePanel.getByTestId("chat-side-panel-library-video-preview")).toBeVisible({ timeout: 15_000 });
-    await expect(sidePanel.locator("[data-workspace-media-preview='video']")).toBeVisible();
+    const sidePanelVideo = sidePanel.getByTestId("chat-side-panel-library-video-preview");
+    const sidePanelVideoFrame = sidePanel.locator("[data-workspace-media-preview='video']");
+    await expect(sidePanelVideo).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanelVideoFrame).toBeVisible();
+    await expect.poll(async () => {
+      const [videoBox, frameBox] = await Promise.all([sidePanelVideo.boundingBox(), sidePanelVideoFrame.boundingBox()]);
+      if (!videoBox || !frameBox) return 0;
+      return videoBox.width / frameBox.width;
+    }).toBeGreaterThan(0.75);
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
     await page.mouse.move(30, 700);
     await page.waitForTimeout(500);
