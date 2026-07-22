@@ -96,7 +96,6 @@ operating-practices guide for operating behavior:
 | `rudder_browser_locator` | `rudder browser locator <tab-id> --input <json>` | Read or interact with a bounded Browser locator by CSS, test id, href, role, label, placeholder, or text. | yes | required | required | required |
 | `rudder_browser_cua` | `rudder browser cua <tab-id> --input <json>` | Perform trusted coordinate mouse, scroll, drag, keyboard, and text input in a run-owned Browser tab. | yes | required | required | required |
 | `rudder_browser_dom_cua` | `rudder browser dom-cua <tab-id> --input <json>` | Inspect visible DOM node ids and perform node-based click, scroll, keyboard, or text input. | yes | required | required | required |
-| `rudder_browser_evaluate` | `rudder browser evaluate <tab-id> --input <json>` | Evaluate a bounded page or locator function with Chromium side-effect checks enabled. | no | required | required | required |
 | `rudder_browser_dialog` | `rudder browser dialog <tab-id> --input <json>` | Inspect, accept, or dismiss the active JavaScript dialog in a run-owned Browser tab. | yes | required | required | required |
 | `rudder_browser_clipboard` | `rudder browser clipboard --input <json>` | Read or write the isolated virtual clipboard for the current Browser run without touching the OS clipboard. | yes | required | required | required |
 | `rudder_browser_logs` | `rudder browser logs <tab-id> [--input <json>]` | Read bounded console and runtime logs captured for a run-owned Browser tab. | yes | required | required | required |

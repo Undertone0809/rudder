@@ -101,7 +101,6 @@ export type BrowserAdvancedAction =
   | "locator"
   | "cua"
   | "dom_cua"
-  | "evaluate"
   | "dialog"
   | "clipboard"
   | "logs"
@@ -120,7 +119,6 @@ const ADVANCED_WORLD_ID = 10_002;
 const MAX_RESULT_BYTES = 2_000_000;
 const MAX_ASSET_BYTES = 25_000_000;
 const MAX_ASSET_BUNDLE_BYTES = 100_000_000;
-const MAX_UPLOAD_BYTES = 25_000_000;
 const MAX_CONTENT_EXPORT_BYTES = 25_000_000;
 const MAX_LOG_ENTRIES = 500;
 
@@ -140,7 +138,7 @@ function normalizeVirtualClipboardItems(value: unknown): VirtualClipboardItem[] 
       const candidate = entry as Record<string, unknown>;
       const mimeType = typeof candidate.mimeType === "string" ? candidate.mimeType.slice(0, 200) : "";
       const text = typeof candidate.text === "string" ? candidate.text.slice(0, 500_000) : undefined;
-      const base64 = typeof candidate.base64 === "string" ? candidate.base64.slice(0, 1_400_000) : undefined;
+      const base64 = typeof candidate.base64 === "string" ? candidate.base64.slice(0, 650_000) : undefined;
       if (!mimeType || (text === undefined) === (base64 === undefined)) throw new Error("Browser clipboard entry is invalid.");
       if (base64 !== undefined) {
         const bytes = Buffer.from(base64, "base64");
@@ -161,7 +159,7 @@ function normalizeVirtualClipboardItems(value: unknown): VirtualClipboardItem[] 
         : {}),
     };
   });
-  if (Buffer.byteLength(JSON.stringify(items), "utf8") > 1_500_000) throw new Error("Browser clipboard exceeded the session limit.");
+  if (Buffer.byteLength(JSON.stringify(items), "utf8") > 750_000) throw new Error("Browser clipboard exceeded the session limit.");
   return items;
 }
 
@@ -242,7 +240,7 @@ function googleWorkspaceExport(rawUrl: string, format: string): { url: string; f
 }
 
 function domScript(
-  action: "snapshot" | "locator" | "dom_cua" | "assets" | "wait" | "element_info",
+  action: "snapshot" | "locator" | "dom_cua" | "assets" | "wait" | "element_info" | "clipboard_copy" | "clipboard_paste",
   args: Record<string, unknown>,
 ): string {
   const payload = encodedPayload({ action, args });
@@ -251,6 +249,8 @@ function domScript(
     const binary = atob("${payload}");
     const input = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0))));
     const normalize = (value) => String(value ?? "").trim().replace(/\\s+/g, " ");
+    const isCredentialControl = (element) => element instanceof HTMLInputElement
+      && ["password", "hidden"].includes(String(element.type || "").toLowerCase());
     const exactMatch = (actual, expected, exact) => exact ? normalize(actual) === normalize(expected) : normalize(actual).toLowerCase().includes(normalize(expected).toLowerCase());
     const visible = (element) => {
       if (!(element instanceof Element) || !element.isConnected) return false;
@@ -276,7 +276,7 @@ function domScript(
         if (label) return normalize(label.textContent);
       }
       const wrappingLabel = element.closest("label");
-      return normalize(wrappingLabel?.textContent || element.textContent || element.value || "");
+      return normalize(wrappingLabel?.textContent || element.textContent || "");
     };
     const implicitRole = (element) => {
       const explicit = element.getAttribute("role");
@@ -410,6 +410,13 @@ function domScript(
       }
       return { x, y, width: rect.width, height: rect.height };
     };
+    const interactionFingerprint = (element) => JSON.stringify({
+      tag: element.tagName.toLowerCase(),
+      role: implicitRole(element),
+      name: accessibleName(element),
+      type: element.getAttribute("type") || "",
+      href: element.getAttribute("href") || "",
+    });
     const nodeStore = globalThis.__RUDDER_BROWSER_ADVANCED_NODES_V1__ instanceof Map ? globalThis.__RUDDER_BROWSER_ADVANCED_NODES_V1__ : new Map();
     globalThis.__RUDDER_BROWSER_ADVANCED_NODES_V1__ = nodeStore;
     const snapshot = (options = {}) => {
@@ -424,7 +431,7 @@ function domScript(
         const role = implicitRole(element);
         const interactive = role !== "generic" || element.matches("input,textarea,select,button,a[href],[contenteditable=true],[tabindex]");
         const nodeId = interactive ? "node-" + count : undefined;
-        if (nodeId) nodeStore.set(nodeId, element);
+        if (nodeId) nodeStore.set(nodeId, { element, fingerprint: interactionFingerprint(element) });
         const attributes = {};
         for (const name of ["id", "name", "type", "href", "placeholder", "data-testid", "aria-label", "aria-checked", "aria-selected", "aria-expanded"]) {
           const value = element.getAttribute(name);
@@ -434,7 +441,7 @@ function domScript(
           ...(nodeId ? { nodeId } : {}),
           tag: element.tagName.toLowerCase(),
           role,
-          name: accessibleName(element).slice(0, 500),
+          name: isCredentialControl(element) ? "" : accessibleName(element).slice(0, 500),
           text: normalize(element.childElementCount === 0 ? element.textContent : "").slice(0, 1000),
           visible: visible(element),
           attributes,
@@ -487,8 +494,15 @@ function domScript(
       const element = strict(args.locator || {});
       if (operation === "textContent") return { value: element.textContent === null ? null : String(element.textContent).slice(0, 50000) };
       if (operation === "innerText") return { value: String(element.innerText || "").slice(0, 50000) };
-      if (operation === "value") return { value: "value" in element ? String(element.value ?? "").slice(0, 50000) : null };
-      if (operation === "attribute") return { value: element.getAttribute(String(args.name || "")) };
+      if (operation === "value") {
+        return { value: null, redacted: true };
+      }
+      if (operation === "attribute") {
+        const name = String(args.name || "").toLowerCase();
+        const readable = new Set(["id", "name", "type", "href", "placeholder", "data-testid", "aria-label", "aria-checked", "aria-selected", "aria-expanded"]);
+        if (!readable.has(name)) return { value: null, redacted: true };
+        return { value: element.getAttribute(name) };
+      }
       if (operation === "visible") return { value: visible(element) };
       if (operation === "enabled") return { value: !("disabled" in element && element.disabled) && element.getAttribute("aria-disabled") !== "true" };
       if (operation === "checked") return { value: Boolean(element.checked ?? element.getAttribute("aria-checked") === "true") };
@@ -571,9 +585,11 @@ function domScript(
     };
     const domCua = async (args) => {
       if (args.action === "get") return snapshot({ boxes: true, depth: args.depth, maxNodes: args.maxNodes });
-      const element = args.nodeId ? nodeStore.get(String(args.nodeId)) : null;
+      const entry = args.nodeId ? nodeStore.get(String(args.nodeId)) : null;
+      const element = entry?.element;
       if (args.action === "keypress" || args.action === "type") return { focused: document.activeElement !== null };
       if (!(element instanceof Element) || !element.isConnected) throw new Error("Browser DOM node is missing or stale.");
+      if (entry.fingerprint !== interactionFingerprint(element)) throw new Error("Browser DOM node is stale; capture a fresh snapshot.");
       if (args.action === "click" || args.action === "doubleClick") {
         element.scrollIntoView?.({ block: "center", inline: "center" });
         element.focus?.();
@@ -631,7 +647,7 @@ function domScript(
         elements: document.elementsFromPoint(x, y).slice(0, 20).map((element) => ({
           tag: element.tagName.toLowerCase(),
           role: implicitRole(element),
-          name: accessibleName(element).slice(0, 500),
+          name: isCredentialControl(element) ? "" : accessibleName(element).slice(0, 500),
           text: normalize(element.textContent || "").slice(0, 1_000),
           box: box(element),
           attributes: Object.fromEntries(Array.from(element.attributes)
@@ -641,12 +657,57 @@ function domScript(
         })),
       };
     };
+    const clipboardCopy = (args) => {
+      const target = document.activeElement;
+      let text = "";
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        if (isCredentialControl(target)) throw new Error("Browser credential controls cannot be copied to the virtual clipboard.");
+        const start = target.selectionStart ?? 0;
+        const end = target.selectionEnd ?? start;
+        text = target.value.slice(start, end);
+        if (args.cut === true) {
+          target.setRangeText("", start, end, "end");
+          target.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "deleteByCut" }));
+        }
+      } else {
+        text = globalThis.getSelection?.()?.toString() || "";
+        if (args.cut === true) globalThis.getSelection?.()?.deleteFromDocument();
+      }
+      return { text: String(text).slice(0, 500000) };
+    };
+    const clipboardPaste = (args) => {
+      const target = document.activeElement;
+      const text = String(args.text || "").slice(0, 500000);
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        if (isCredentialControl(target)) throw new Error("Browser virtual clipboard cannot paste into credential controls.");
+        const start = target.selectionStart ?? target.value.length;
+        const end = target.selectionEnd ?? start;
+        target.setRangeText(text, start, end, "end");
+        target.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertFromPaste", data: text }));
+        return { performed: true };
+      }
+      if (!target?.isContentEditable) throw new Error("Browser clipboard paste target is not editable.");
+      const selection = globalThis.getSelection?.();
+      if (!selection?.rangeCount) throw new Error("Browser clipboard paste selection is unavailable.");
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      const node = document.createTextNode(text);
+      range.insertNode(node);
+      range.setStartAfter(node);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      target.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertFromPaste", data: text }));
+      return { performed: true };
+    };
     if (input.action === "snapshot") return snapshot(input.args);
     if (input.action === "locator") return locatorAction(input.args);
     if (input.action === "dom_cua") return domCua(input.args);
     if (input.action === "assets") return listAssets();
     if (input.action === "wait") return wait(input.args);
     if (input.action === "element_info") return elementInfo(input.args);
+    if (input.action === "clipboard_copy") return clipboardCopy(input.args);
+    if (input.action === "clipboard_paste") return clipboardPaste(input.args);
     throw new Error("Browser DOM operation is unsupported.");
   })()`;
 }
@@ -696,195 +757,13 @@ export async function createBrowserAdvancedDriver(options: {
   const dialogClosedWaiters = new Set<(params: Record<string, unknown>) => void>();
   let dialog: BrowserDialogState | null = null;
   let electronDialogCallback: ((accepted: boolean, promptText: string) => void) | null = null;
-  let dialogFrameUrl: string | null = null;
   let armedDialogResponse: { accept: boolean; promptText: string } | null = null;
+  let armedDialogSettlement: Promise<void> | null = null;
   let armedDialogError: Error | null = null;
   let observedMainFrameId: string | null = null;
   let navigationSequence = 0;
   let disposed = false;
-  const promptBridgeToken = randomUUID().replace(/-/g, "");
-  const promptMarker = `__RUDDER_BROWSER_PROMPT_${promptBridgeToken}__:`;
-  const promptCookiePrefix = `__rudder_prompt_${promptBridgeToken}`;
-  const clipboardBindingName = `__rudder_clipboard_${promptBridgeToken}`;
-  const clipboardStateName = `__RUDDER_BROWSER_CLIPBOARD_${promptBridgeToken}__`;
-  const defaultExecutionContexts = new Map<number, string>();
   let virtualClipboardItems: VirtualClipboardItem[] = [];
-  const promptBridgeSource = `(() => {
-    const marker = ${JSON.stringify(promptMarker)};
-    const cookiePrefix = ${JSON.stringify(promptCookiePrefix)};
-    const nativeConfirm = globalThis.confirm.bind(globalThis);
-    const readCookie = (name) => {
-      const prefix = name + "=";
-      const entry = document.cookie.split("; ").find((item) => item.startsWith(prefix));
-      return entry ? entry.slice(prefix.length) : null;
-    };
-    const deleteCookie = (name) => { document.cookie = name + "=; Max-Age=0; Path=/; SameSite=Lax"; };
-    const rudderPrompt = (message = "", defaultPrompt = "") => {
-      const normalizedDefault = String(defaultPrompt).slice(0, 10000);
-      const payload = JSON.stringify({ message: String(message).slice(0, 10000), defaultPrompt: normalizedDefault });
-      const accepted = nativeConfirm(marker + payload);
-      if (!accepted) return null;
-      const rawCount = readCookie(cookiePrefix + "_count");
-      const count = Math.max(0, Math.min(Number(rawCount || 0), 8));
-      let encoded = "";
-      for (let index = 0; index < count; index += 1) {
-        encoded += readCookie(cookiePrefix + "_" + index) || "";
-        deleteCookie(cookiePrefix + "_" + index);
-      }
-      deleteCookie(cookiePrefix + "_count");
-      if (!encoded || encoded[0] !== "1") return normalizedDefault;
-      try {
-        const binary = atob(encoded.slice(1));
-        return new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
-      } catch {
-        return normalizedDefault;
-      }
-    };
-    Object.defineProperty(globalThis, "prompt", { configurable: true, writable: true, value: rudderPrompt });
-  })()`;
-  const clipboardBridgeSource = `(() => {
-    const stateName = ${JSON.stringify(clipboardStateName)};
-    const bindingName = ${JSON.stringify(clipboardBindingName)};
-    if (globalThis[stateName]) return;
-    let items = [];
-    const clone = (value) => JSON.parse(JSON.stringify(value));
-    const report = () => {
-      try { globalThis[bindingName](JSON.stringify(items)); } catch {}
-    };
-    const setItems = (value, notify = false) => {
-      items = Array.isArray(value) ? clone(value) : [];
-      if (notify) report();
-      return clone(items);
-    };
-    const textValue = () => items.flatMap((item) => item.entries || []).find((entry) => entry.mimeType === "text/plain" && typeof entry.text === "string")?.text || "";
-    const setText = (text, notify = true) => setItems([{ entries: [{ mimeType: "text/plain", text: String(text).slice(0, 500000) }] }], notify);
-    const entryBlob = (entry) => {
-      if (typeof entry.text === "string") return new Blob([entry.text], { type: entry.mimeType });
-      const binary = atob(String(entry.base64 || ""));
-      return new Blob([Uint8Array.from(binary, (character) => character.charCodeAt(0))], { type: entry.mimeType });
-    };
-    const api = {
-      readText: async () => textValue(),
-      writeText: async (text) => { setText(text); },
-      read: async () => items.map((item) => ({
-        types: (item.entries || []).map((entry) => entry.mimeType),
-        presentationStyle: item.presentationStyle || "unspecified",
-        getType: async (mimeType) => {
-          const entry = (item.entries || []).find((candidate) => candidate.mimeType === mimeType);
-          if (!entry) throw new DOMException("Clipboard type is unavailable.", "NotFoundError");
-          return entryBlob(entry);
-        },
-      })),
-      write: async (clipboardItems) => {
-        const converted = [];
-        for (const item of Array.from(clipboardItems || []).slice(0, 20)) {
-          const entries = [];
-          for (const mimeType of Array.from(item.types || []).slice(0, 20)) {
-            const blob = await item.getType(mimeType);
-            if (String(mimeType).startsWith("text/")) entries.push({ mimeType: String(mimeType), text: (await blob.text()).slice(0, 500000) });
-            else {
-              const bytes = new Uint8Array(await blob.arrayBuffer());
-              let binary = "";
-              for (let index = 0; index < bytes.length; index += 32768) binary += String.fromCharCode(...bytes.subarray(index, index + 32768));
-              entries.push({ mimeType: String(mimeType), base64: btoa(binary) });
-            }
-          }
-          converted.push({ entries, presentationStyle: item.presentationStyle || "unspecified" });
-        }
-        setItems(converted, true);
-      },
-    };
-    const dataTransfer = (text) => {
-      try { const data = new DataTransfer(); data.setData("text/plain", text); return data; } catch { return null; }
-    };
-    const selectedText = (target) => {
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        const start = target.selectionStart ?? 0;
-        const end = target.selectionEnd ?? start;
-        return target.value.slice(start, end);
-      }
-      return globalThis.getSelection?.()?.toString() || "";
-    };
-    const deleteSelection = (target) => {
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        const start = target.selectionStart ?? 0;
-        const end = target.selectionEnd ?? start;
-        target.setRangeText("", start, end, "end");
-        target.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "deleteByCut" }));
-        return;
-      }
-      globalThis.getSelection?.()?.deleteFromDocument();
-      target?.dispatchEvent?.(new InputEvent("input", { bubbles: true, composed: true, inputType: "deleteByCut" }));
-    };
-    const insertText = (target, text) => {
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        const start = target.selectionStart ?? target.value.length;
-        const end = target.selectionEnd ?? start;
-        target.setRangeText(text, start, end, "end");
-        target.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertFromPaste", data: text }));
-        return;
-      }
-      if (target?.isContentEditable) {
-        const selection = globalThis.getSelection?.();
-        if (selection?.rangeCount) {
-          const range = selection.getRangeAt(0);
-          range.deleteContents();
-          const node = document.createTextNode(text);
-          range.insertNode(node);
-          range.setStartAfter(node);
-          range.collapse(true);
-          selection.removeAllRanges();
-          selection.addRange(range);
-        }
-        target.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertFromPaste", data: text }));
-      }
-    };
-    const shortcut = async (kind) => {
-      const target = document.activeElement;
-      if (kind === "copy" || kind === "cut") {
-        const initial = selectedText(target);
-        const transfer = dataTransfer(initial);
-        const event = typeof ClipboardEvent === "function" ? new ClipboardEvent(kind, { bubbles: true, cancelable: true, clipboardData: transfer }) : null;
-        if (event) target?.dispatchEvent?.(event);
-        setText(transfer?.getData("text/plain") || initial);
-        if (kind === "cut") deleteSelection(target);
-      } else if (kind === "paste") {
-        const text = textValue();
-        const transfer = dataTransfer(text);
-        const event = typeof ClipboardEvent === "function" ? new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: transfer }) : null;
-        const shouldInsert = event ? target?.dispatchEvent?.(event) !== false : true;
-        if (shouldInsert) insertText(target, transfer?.getData("text/plain") || text);
-      }
-      return clone(items);
-    };
-    const state = { get: () => clone(items), set: (value) => setItems(value, false), shortcut };
-    Object.defineProperty(globalThis, stateName, { configurable: false, enumerable: false, value: state });
-    try { Object.defineProperty(navigator, "clipboard", { configurable: false, enumerable: true, get: () => api }); } catch {}
-  })()`;
-
-  const writePromptResponse = async (frameUrl: string, promptText: string) => {
-    const parsedFrameUrl = new URL(frameUrl);
-    if (parsedFrameUrl.protocol !== "http:" && parsedFrameUrl.protocol !== "https:") {
-      throw new Error("Browser prompt response requires an HTTP(S) frame.");
-    }
-    const encoded = `1${Buffer.from(promptText, "utf8").toString("base64")}`;
-    const chunks = encoded.match(/.{1,3000}/g) ?? [""];
-    const cookieBase = {
-      url: frameUrl,
-      path: "/",
-      secure: parsedFrameUrl.protocol === "https:",
-      sameSite: "lax" as const,
-      expirationDate: Date.now() / 1000 + 60,
-    };
-    await Promise.all([
-      contents.session.cookies.set({ ...cookieBase, name: `${promptCookiePrefix}_count`, value: String(chunks.length) }),
-      ...chunks.map((value, index) => contents.session.cookies.set({
-        ...cookieBase,
-        name: `${promptCookiePrefix}_${index}`,
-        value,
-      })),
-    ]);
-  };
 
   const onElectronDialog = (
     info: { dialogType?: unknown; messageText?: unknown; defaultPromptText?: unknown; frame?: { url?: unknown } },
@@ -893,69 +772,37 @@ export async function createBrowserAdvancedDriver(options: {
     if (electronDialogCallback) electronDialogCallback(false, "");
     const rawType = String(info.dialogType || "alert");
     const rawMessage = String(info.messageText || "");
-    let bridgedPrompt: { message?: unknown; defaultPrompt?: unknown } | null = null;
-    if (rawType === "confirm" && rawMessage.startsWith(promptMarker)) {
-      try {
-        const parsed = JSON.parse(rawMessage.slice(promptMarker.length));
-        if (parsed && typeof parsed === "object") bridgedPrompt = parsed as { message?: unknown; defaultPrompt?: unknown };
-      } catch {
-        bridgedPrompt = null;
-      }
-    }
     dialog = {
-      type: bridgedPrompt ? "prompt" : rawType === "confirm" ? "confirm" : "alert",
-      message: String(bridgedPrompt?.message ?? rawMessage).slice(0, 10_000),
-      ...(bridgedPrompt
-        ? { defaultPrompt: String(bridgedPrompt.defaultPrompt ?? "").slice(0, 10_000) }
-        : typeof info.defaultPromptText === "string"
-          ? { defaultPrompt: info.defaultPromptText.slice(0, 10_000) }
-          : {}),
+      type: rawType === "confirm" || rawType === "prompt" || rawType === "beforeunload" ? rawType : "alert",
+      message: rawMessage.slice(0, 10_000),
+      ...(typeof info.defaultPromptText === "string"
+        ? { defaultPrompt: info.defaultPromptText.slice(0, 10_000) }
+        : {}),
       openedAt: new Date().toISOString(),
     };
     electronDialogCallback = callback;
-    dialogFrameUrl = typeof info.frame?.url === "string" ? info.frame.url : contents.getURL();
     for (const resolve of dialogOpenedWaiters) resolve();
     dialogOpenedWaiters.clear();
     if (armedDialogResponse) {
       const response = armedDialogResponse;
       armedDialogResponse = null;
-      void (async () => {
-        try {
-          if (response.accept && dialog?.type === "prompt") {
-            await writePromptResponse(dialogFrameUrl ?? contents.getURL(), response.promptText);
-          }
-          electronDialogCallback = null;
-          dialogFrameUrl = null;
-          dialog = null;
-          callback(response.accept, response.promptText);
-        } catch (error) {
-          armedDialogError = error instanceof Error ? error : new Error("Browser dialog response failed.");
-          electronDialogCallback = null;
-          dialogFrameUrl = null;
-          dialog = null;
-          callback(false, "");
-        }
-      })();
+      if (dialog.type === "prompt") {
+        callback(false, "");
+        electronDialogCallback = null;
+        dialog = null;
+        if (response.accept) armedDialogError = new Error("Browser prompt acceptance is unavailable in Electron; the prompt was dismissed safely.");
+        armedDialogSettlement = Promise.resolve();
+      } else {
+        electronDialogCallback = null;
+        dialog = null;
+        callback(response.accept, response.promptText);
+        armedDialogSettlement = Promise.resolve();
+      }
     }
   };
   const onElectronDialogsCancelled = () => {
     electronDialogCallback = null;
-    dialogFrameUrl = null;
     dialog = null;
-  };
-
-  const clipboardSyncExpression = () => {
-    const payload = encodedPayload(virtualClipboardItems);
-    return `${clipboardBridgeSource}; globalThis[${JSON.stringify(clipboardStateName)}]?.set(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(${JSON.stringify(payload)}), (character) => character.charCodeAt(0)))));`;
-  };
-
-  const syncClipboardContext = async (contextId?: number) => {
-    await debug.sendCommand("Runtime.evaluate", {
-      expression: clipboardSyncExpression(),
-      ...(typeof contextId === "number" ? { contextId } : {}),
-      awaitPromise: true,
-      returnByValue: true,
-    });
   };
 
   // Electron handles dialogs before CDP and rejects prompt() by default. This
@@ -965,25 +812,6 @@ export async function createBrowserAdvancedDriver(options: {
   contents.on("-cancel-dialogs", onElectronDialogsCancelled);
 
   const onDebuggerMessage: DebuggerMessageListener = (_event, method, params) => {
-    if (method === "Runtime.executionContextCreated") {
-      const context = params.context as Record<string, unknown> | undefined;
-      const auxData = context?.auxData as Record<string, unknown> | undefined;
-      if (typeof context?.id === "number" && auxData?.isDefault === true && typeof auxData.frameId === "string") {
-        defaultExecutionContexts.set(context.id, auxData.frameId);
-        void syncClipboardContext(context.id).catch(() => undefined);
-      }
-    }
-    if (method === "Runtime.executionContextDestroyed" && typeof params.executionContextId === "number") {
-      defaultExecutionContexts.delete(params.executionContextId);
-    }
-    if (method === "Runtime.executionContextsCleared") defaultExecutionContexts.clear();
-    if (method === "Runtime.bindingCalled" && params.name === clipboardBindingName && typeof params.payload === "string") {
-      try {
-        virtualClipboardItems = normalizeVirtualClipboardItems(JSON.parse(params.payload));
-      } catch {
-        // Invalid page-originated clipboard writes are ignored rather than crossing the run boundary.
-      }
-    }
     if (method === "Page.frameNavigated") {
       const frame = params.frame as Record<string, unknown> | undefined;
       if (frame && typeof frame.id === "string" && !frame.parentId) {
@@ -1015,6 +843,22 @@ export async function createBrowserAdvancedDriver(options: {
       };
       for (const resolve of dialogOpenedWaiters) resolve();
       dialogOpenedWaiters.clear();
+      if (armedDialogResponse) {
+        const response = armedDialogResponse;
+        const promptAcceptanceUnsupported = dialog.type === "prompt" && response.accept;
+        armedDialogResponse = null;
+        armedDialogSettlement = debug.sendCommand("Page.handleJavaScriptDialog", {
+          accept: dialog.type === "prompt" ? false : response.accept,
+          ...(dialog.type !== "prompt" && response.accept ? { promptText: response.promptText } : {}),
+        }).then(() => {
+          dialog = null;
+          if (promptAcceptanceUnsupported) {
+            armedDialogError = new Error("Browser prompt acceptance is unavailable in Electron; the prompt was dismissed safely.");
+          }
+        }).catch((error) => {
+          armedDialogError = error instanceof Error ? error : new Error("Browser dialog response failed.");
+        });
+      }
     }
     if (method === "Page.javascriptDialogClosed") {
       if (!electronDialogCallback) dialog = null;
@@ -1068,19 +912,9 @@ export async function createBrowserAdvancedDriver(options: {
   await Promise.all([
     debug.sendCommand("Page.enable").catch(() => undefined),
     debug.sendCommand("Runtime.enable").catch(() => undefined),
-    debug.sendCommand("Runtime.addBinding", { name: clipboardBindingName }).catch(() => undefined),
     debug.sendCommand("Log.enable").catch(() => undefined),
     debug.sendCommand("Network.enable").catch(() => undefined),
   ]);
-  await Promise.all([
-    debug.sendCommand("Page.addScriptToEvaluateOnNewDocument", {
-      source: `${promptBridgeSource};${clipboardBridgeSource}`,
-    }).catch(() => undefined),
-    contents.executeJavaScript(`${promptBridgeSource};${clipboardBridgeSource}`, true),
-  ]);
-  await Promise.all(Array.from(defaultExecutionContexts.keys(), (contextId) => (
-    syncClipboardContext(contextId).catch(() => undefined)
-  )));
 
   const mainFrameId = async (): Promise<string> => {
     const frameTree = await debug.sendCommand("Page.getFrameTree");
@@ -1165,7 +999,7 @@ export async function createBrowserAdvancedDriver(options: {
   };
 
   const executeDom = async (
-    action: "snapshot" | "locator" | "dom_cua" | "assets" | "wait" | "element_info",
+    action: "snapshot" | "locator" | "dom_cua" | "assets" | "wait" | "element_info" | "clipboard_copy" | "clipboard_paste",
     args: Record<string, unknown>,
   ) => {
     const selectors = frameSelectors(args.locator);
@@ -1196,108 +1030,18 @@ export async function createBrowserAdvancedDriver(options: {
     return boundedResult(result);
   };
 
-  const executeSnapshot = async (args: Record<string, unknown>) => {
-    const primary = await executeDom("snapshot", args) as Record<string, unknown>;
-    const maxNodes = Math.max(1, Math.min(Number(args.maxNodes || 1_500), 3_000));
-    const [domSnapshot, accessibilityTree] = await Promise.all([
-      debug.sendCommand("DOMSnapshot.captureSnapshot", {
-        computedStyles: [],
-        includePaintOrder: false,
-        includeDOMRects: args.boxes === true,
-        includeBlendedBackgroundColors: false,
-        includeTextColorOpacities: false,
-      }).catch(() => null),
-      debug.sendCommand("Accessibility.getFullAXTree", { depth: Math.max(1, Math.min(Number(args.depth || 12), 30)) }).catch(() => null),
-    ]);
-    const strings = Array.isArray(domSnapshot?.strings) ? domSnapshot.strings.map(String) : [];
-    const stringAt = (index: unknown) => typeof index === "number" && index >= 0 ? String(strings[index] ?? "") : "";
-    let remaining = maxNodes;
-    const frameDocuments = (Array.isArray(domSnapshot?.documents) ? domSnapshot.documents : []).map((documentSnapshot: any) => {
-      const nodes = documentSnapshot?.nodes ?? {};
-      const nodeNames = Array.isArray(nodes.nodeName) ? nodes.nodeName : [];
-      const nodeValues = Array.isArray(nodes.nodeValue) ? nodes.nodeValue : [];
-      const parentIndexes = Array.isArray(nodes.parentIndex) ? nodes.parentIndex : [];
-      const backendIds = Array.isArray(nodes.backendNodeId) ? nodes.backendNodeId : [];
-      const attributeRows = Array.isArray(nodes.attributes) ? nodes.attributes : [];
-      const layoutIndexes = Array.isArray(documentSnapshot?.layout?.nodeIndex) ? documentSnapshot.layout.nodeIndex : [];
-      const layoutBounds = Array.isArray(documentSnapshot?.layout?.bounds) ? documentSnapshot.layout.bounds : [];
-      const boundsByNode = new Map<number, unknown>();
-      layoutIndexes.forEach((nodeIndex: number, index: number) => boundsByNode.set(nodeIndex, layoutBounds[index]));
-      const count = Math.min(nodeNames.length, remaining);
-      remaining -= count;
-      return {
-        frameId: String(documentSnapshot?.frameId || "").slice(0, 500),
-        url: stringAt(documentSnapshot?.documentURL).slice(0, 8_192),
-        baseUrl: stringAt(documentSnapshot?.baseURL).slice(0, 8_192),
-        contentLanguage: stringAt(documentSnapshot?.contentLanguage).slice(0, 200),
-        nodes: Array.from({ length: count }, (_unused, index) => {
-          const rawAttributes = Array.isArray(attributeRows[index]) ? attributeRows[index] : [];
-          const attributes: Record<string, string> = {};
-          for (let attributeIndex = 0; attributeIndex + 1 < rawAttributes.length && attributeIndex < 40; attributeIndex += 2) {
-            attributes[stringAt(rawAttributes[attributeIndex]).slice(0, 200)] = stringAt(rawAttributes[attributeIndex + 1]).slice(0, 1_000);
-          }
-          return {
-            index,
-            parentIndex: Number(parentIndexes[index] ?? -1),
-            backendNodeId: Number(backendIds[index] ?? 0),
-            name: stringAt(nodeNames[index]).slice(0, 200),
-            value: stringAt(nodeValues[index]).slice(0, 2_000),
-            attributes,
-            ...(args.boxes === true && boundsByNode.has(index) ? { bounds: boundsByNode.get(index) } : {}),
-          };
-        }),
-      };
-    });
-    const accessibility = (Array.isArray(accessibilityTree?.nodes) ? accessibilityTree.nodes : [])
-      .slice(0, maxNodes)
-      .map((node: any) => ({
-        nodeId: String(node?.nodeId || "").slice(0, 160),
-        parentId: typeof node?.parentId === "string" ? node.parentId.slice(0, 160) : undefined,
-        backendNodeId: typeof node?.backendDOMNodeId === "number" ? node.backendDOMNodeId : undefined,
-        role: String(node?.role?.value || "").slice(0, 200),
-        name: String(node?.name?.value || "").slice(0, 1_000),
-        description: String(node?.description?.value || "").slice(0, 2_000),
-        value: String(node?.value?.value || "").slice(0, 2_000),
-        ignored: node?.ignored === true,
-      }));
-    return boundedResult({
-      ...primary,
-      frameDocuments,
-      accessibility,
-      chromiumSnapshot: domSnapshot !== null,
-    });
-  };
-
-  const syncVirtualClipboardToAllContexts = async () => {
-    const contextIds = Array.from(defaultExecutionContexts.keys());
-    if (contextIds.length === 0) {
-      await syncClipboardContext();
-      return;
-    }
-    await Promise.all(contextIds.map((contextId) => syncClipboardContext(contextId)));
-  };
+  const executeSnapshot = async (args: Record<string, unknown>) => executeDom("snapshot", args);
 
   const executeVirtualClipboardShortcut = async (kind: "copy" | "cut" | "paste") => {
-    await syncVirtualClipboardToAllContexts();
-    const candidates = Array.from(defaultExecutionContexts.keys());
-    let focusedContextId: number | undefined;
-    for (const contextId of candidates) {
-      const focused = await debug.sendCommand("Runtime.evaluate", {
-        expression: "document.hasFocus() && !(document.activeElement instanceof HTMLIFrameElement)",
-        contextId,
-        returnByValue: true,
-        throwOnSideEffect: true,
-      }).catch(() => null);
-      if (focused?.result?.value === true) focusedContextId = contextId;
+    if (kind === "paste") {
+      const text = virtualClipboardItems
+        .flatMap((item) => item.entries)
+        .find((entry) => entry.mimeType === "text/plain" && entry.text !== undefined)?.text ?? "";
+      await executeDom("clipboard_paste", { text });
+    } else {
+      const copied = await executeDom("clipboard_copy", { cut: kind === "cut" }) as { text?: unknown };
+      virtualClipboardItems = [{ entries: [{ mimeType: "text/plain", text: String(copied.text || "") }] }];
     }
-    const result = await debug.sendCommand("Runtime.evaluate", {
-      expression: `globalThis[${JSON.stringify(clipboardStateName)}].shortcut(${JSON.stringify(kind)})`,
-      ...(typeof focusedContextId === "number" ? { contextId: focusedContextId } : {}),
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails) throw new Error("Browser virtual clipboard shortcut failed.");
-    virtualClipboardItems = normalizeVirtualClipboardItems(result.result?.value);
     return { performed: true, clipboard: "virtual" };
   };
 
@@ -1378,35 +1122,7 @@ export async function createBrowserAdvancedDriver(options: {
     if (action === "write") virtualClipboardItems = normalizeVirtualClipboardItems(args.items);
     else if (action === "clear") virtualClipboardItems = [];
     else if (action !== "read") throw new Error("Browser virtual clipboard action is unsupported.");
-    if (action !== "read") await syncVirtualClipboardToAllContexts();
     return { items: structuredClone(virtualClipboardItems) };
-  };
-
-  const executeEvaluate = async (args: Record<string, unknown>) => {
-    const functionSource = String(args.function || "").trim();
-    if (!functionSource || functionSource.length > 50_000) throw new Error("Browser evaluate function is invalid.");
-    const targetFrame = await resolveFrameContext(frameSelectors(args.locator));
-    let targetPrefix = "";
-    if (args.locator && typeof args.locator === "object") {
-      const resolution = await executeDom("locator", { action: "resolveSelector", locator: args.locator }) as { selector?: string };
-      if (!resolution.selector) throw new Error("Browser evaluate target could not be resolved.");
-      targetPrefix = `const __target = document.querySelector(${JSON.stringify(resolution.selector)}); if (!__target) throw new Error("Browser evaluate target is stale.");`;
-    }
-    const serializedArg = JSON.stringify(args.arg ?? null);
-    const expression = `(() => { ${targetPrefix} const __fn = (${functionSource}); return __fn(${targetPrefix ? "__target, " : ""}${serializedArg}); })()`;
-    const result = await debug.sendCommand("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-      throwOnSideEffect: true,
-      timeout: Math.max(100, Math.min(Number(args.timeoutMs || 10_000), 30_000)),
-      contextId: targetFrame.contextId,
-    });
-    if (result.exceptionDetails) {
-      const description = String(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "Browser read-only evaluation failed.");
-      throw new Error(description.slice(0, 500));
-    }
-    return boundedResult({ value: result.result?.value ?? null });
   };
 
   type NavigationCheckpoint = {
@@ -1497,16 +1213,19 @@ export async function createBrowserAdvancedDriver(options: {
         : null;
       if (requestedDialogResponse) {
         armedDialogError = null;
+        armedDialogSettlement = null;
         armedDialogResponse = {
           accept: requestedDialogResponse.accept === true,
           promptText: typeof requestedDialogResponse.promptText === "string" ? requestedDialogResponse.promptText.slice(0, 10_000) : "",
         };
         try {
           await executeCua({ ...clickArgs, waitForRelease: true });
+          if (armedDialogSettlement) await armedDialogSettlement;
           if (armedDialogError) throw armedDialogError;
           return complete({ performed: true, box: located.value });
         } finally {
           armedDialogResponse = null;
+          armedDialogSettlement = null;
         }
       }
       let resolveDialogOpened: (() => void) | null = null;
@@ -1563,55 +1282,7 @@ export async function createBrowserAdvancedDriver(options: {
       return complete({ performed: true, checked: verified.value });
     }
     if (action === "setFiles") {
-      const paths = Array.isArray(args.paths) ? args.paths.map(String) : [];
-      if (paths.length === 0 || paths.length > 10) throw new Error("Browser file upload requires one to ten paths.");
-      const resolvedPaths: string[] = [];
-      let totalBytes = 0;
-      for (const requestedPath of paths) {
-        if (!path.isAbsolute(requestedPath)) throw new Error("Browser upload paths must be absolute.");
-        const resolvedPath = await fs.realpath(requestedPath);
-        const file = await fs.stat(resolvedPath);
-        if (!file.isFile()) throw new Error("Browser upload paths must reference regular files.");
-        totalBytes += file.size;
-        if (totalBytes > MAX_UPLOAD_BYTES) throw new Error("Browser upload exceeded the aggregate size limit.");
-        resolvedPaths.push(resolvedPath);
-      }
-      const resolution = await executeDom("locator", {
-        action: "resolveFileInputSelector",
-        locator: args.locator,
-      }) as { selector?: string };
-      if (!resolution.selector) throw new Error("Browser file input selector could not be resolved.");
-      const selectors = frameSelectors(args.locator);
-      if (selectors.length > 0) {
-        const context = await resolveFrameContext(selectors);
-        const evaluated = await debug.sendCommand("Runtime.evaluate", {
-          expression: `document.querySelector(${JSON.stringify(resolution.selector)})`,
-          contextId: context.contextId,
-          returnByValue: false,
-        });
-        const objectId = evaluated.result?.objectId;
-        if (evaluated.exceptionDetails || typeof objectId !== "string" || !objectId) {
-          throw new Error("Browser file input is missing or stale.");
-        }
-        try {
-          const described = await debug.sendCommand("DOM.describeNode", { objectId, depth: 0, pierce: true });
-          const backendNodeId = described?.node?.backendNodeId;
-          if (typeof backendNodeId !== "number" || backendNodeId <= 0) {
-            throw new Error("Browser file input is missing or stale.");
-          }
-          await debug.sendCommand("DOM.setFileInputFiles", { backendNodeId, files: resolvedPaths });
-        } finally {
-          await debug.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined);
-        }
-      } else {
-        const documentNode = await debug.sendCommand("DOM.getDocument", { depth: -1, pierce: true });
-        const rootNodeId = documentNode.root?.nodeId;
-        if (typeof rootNodeId !== "number") throw new Error("Browser file input document is unavailable.");
-        const queried = await debug.sendCommand("DOM.querySelector", { nodeId: rootNodeId, selector: resolution.selector });
-        if (typeof queried.nodeId !== "number" || queried.nodeId <= 0) throw new Error("Browser file input is missing or stale.");
-        await debug.sendCommand("DOM.setFileInputFiles", { nodeId: queried.nodeId, files: resolvedPaths });
-      }
-      return complete({ performed: true, fileCount: resolvedPaths.length, names: resolvedPaths.map((value) => path.basename(value)) });
+      throw new Error("Browser file upload is disabled until a run-owned staged file handle is available.");
     }
     if (action === "drag") {
       const source = await executeDom("locator", { action: "box", locator: args.locator }) as { value?: { x: number; y: number; width: number; height: number } };
@@ -1742,7 +1413,7 @@ export async function createBrowserAdvancedDriver(options: {
       return { mode, directoryPath: directory, url: media.url, state: "completed", ...file };
     }
     if (mode === "trigger") {
-      const pending = armAgentBrowserDownload(contents, directory, Math.max(100, Math.min(Number(args.timeoutMs || 30_000), 60_000)));
+      const pending = armAgentBrowserDownload(contents, directory, Math.max(100, Math.min(Number(args.timeoutMs || 30_000), 30_000)));
       try {
         await executeLocator({ action: "click", locator: args.locator });
         const result = await pending;
@@ -1844,13 +1515,14 @@ export async function createBrowserAdvancedDriver(options: {
   };
 
   const executeContent = async (args: Record<string, unknown>) => {
-    const format = String(args.format || "html");
+    const format = String(args.format || "text");
+    if (format === "html") throw new Error("Browser HTML export is disabled because raw markup can contain credentials.");
     const directory = await newArtifactDirectory();
     let filename = `page.${format === "text" ? "txt" : format}`;
-    let mimeType = format === "html" ? "text/html" : format === "text" ? "text/plain" : "application/octet-stream";
+    let mimeType = format === "text" ? "text/plain" : "application/octet-stream";
     let bytes: Buffer;
-    if (format === "html" || format === "text") {
-      const expression = format === "html" ? "document.documentElement.outerHTML" : "document.body?.innerText || ''";
+    if (format === "text") {
+      const expression = "document.body?.innerText || ''";
       const result = await debug.sendCommand("Runtime.evaluate", {
         expression,
         returnByValue: true,
@@ -1900,7 +1572,6 @@ export async function createBrowserAdvancedDriver(options: {
         if (args.action === "type") return executeCua({ action: "type", text: args.text });
         return result;
       }
-      if (action === "evaluate") return executeEvaluate(args);
       if (action === "clipboard") return executeClipboard(args);
       if (action === "dialog") {
         if (args.action === "get") return { dialog };
@@ -1908,14 +1579,20 @@ export async function createBrowserAdvancedDriver(options: {
         const accept = args.action === "accept";
         const handled = dialog;
         const promptText = accept && typeof args.promptText === "string" ? args.promptText.slice(0, 10_000) : "";
-        if (electronDialogCallback) {
-          if (accept && handled.type === "prompt") {
-            const frameUrl = dialogFrameUrl ?? contents.getURL();
-            await writePromptResponse(frameUrl, promptText);
+        if (handled.type === "prompt") {
+          if (electronDialogCallback) {
+            const callback = electronDialogCallback;
+            electronDialogCallback = null;
+            dialog = null;
+            callback(false, "");
+          } else {
+            await debug.sendCommand("Page.handleJavaScriptDialog", { accept: false });
+            dialog = null;
           }
+          if (accept) throw new Error("Browser prompt acceptance is unavailable in Electron; the prompt was dismissed safely.");
+        } else if (electronDialogCallback) {
           const callback = electronDialogCallback;
           electronDialogCallback = null;
-          dialogFrameUrl = null;
           dialog = null;
           let resolveClosed: ((params: Record<string, unknown>) => void) | null = null;
           const closed = new Promise<Record<string, unknown> | null>((resolve) => {
@@ -1939,6 +1616,7 @@ export async function createBrowserAdvancedDriver(options: {
             accept,
             ...(accept && typeof args.promptText === "string" ? { promptText } : {}),
           });
+          electronDialogCallback = null;
           dialog = null;
         }
         return { handled: true, action: accept ? "accept" : "dismiss", type: handled.type };
@@ -1966,8 +1644,8 @@ export async function createBrowserAdvancedDriver(options: {
       cancelAgentBrowserDownload(contents);
       if (electronDialogCallback) electronDialogCallback(false, "");
       electronDialogCallback = null;
-      dialogFrameUrl = null;
       armedDialogResponse = null;
+      armedDialogSettlement = null;
       armedDialogError = null;
       contents.removeListener("-run-dialog", onElectronDialog);
       contents.removeListener("-cancel-dialogs", onElectronDialogsCancelled);

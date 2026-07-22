@@ -68,7 +68,6 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   },
   rudder_browser_cua: { tabId: "tab-1", action: "move", x: 20, y: 30 },
   rudder_browser_dom_cua: { tabId: "tab-1", action: "get" },
-  rudder_browser_evaluate: { tabId: "tab-1", function: "() => document.title" },
   rudder_browser_dialog: { tabId: "tab-1", action: "get" },
   rudder_browser_clipboard: { action: "read" },
   rudder_browser_logs: { tabId: "tab-1", limit: 20 },
@@ -78,7 +77,7 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
     locator: { strategy: "css", value: "img.hero" },
   },
   rudder_browser_assets: { tabId: "tab-1", action: "list" },
-  rudder_browser_content: { tabId: "tab-1", format: "html" },
+  rudder_browser_content: { tabId: "tab-1", format: "text" },
   rudder_browser_wait: { tabId: "tab-1", timeMs: 1 },
   rudder_browser_read: { tabId: "tab-1" },
   rudder_browser_click: { tabId: "tab-1", ref: "ref-1" },
@@ -307,7 +306,7 @@ describe("agent-v1 MCP server", () => {
     expect(coreNames).not.toContain("rudder_browser_open");
     expect(disabledBrowserNames).toEqual([]);
     expect(enabledBrowserNames).toContain("rudder_browser_open");
-    expect(enabledBrowserNames).toHaveLength(26);
+    expect(enabledBrowserNames).toHaveLength(25);
   });
 
   it("permanently revokes a running Browser MCP process after live disable", async () => {

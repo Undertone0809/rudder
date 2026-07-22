@@ -527,7 +527,6 @@ async function callToolDirectlyIfSupported(
     case "browser.snapshot":
     case "browser.locator":
     case "browser.cua":
-    case "browser.evaluate":
     case "browser.dialog":
     case "browser.clipboard":
     case "browser.logs":
@@ -908,7 +907,6 @@ function cliArgsForCapability(
     case "browser.locator":
     case "browser.cua":
     case "browser.dom-cua":
-    case "browser.evaluate":
     case "browser.dialog":
     case "browser.logs":
     case "browser.download":

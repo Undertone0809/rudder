@@ -54,7 +54,6 @@ const expectedBrowserToolNames = [
   "rudder_browser_locator",
   "rudder_browser_cua",
   "rudder_browser_dom_cua",
-  "rudder_browser_evaluate",
   "rudder_browser_dialog",
   "rudder_browser_clipboard",
   "rudder_browser_logs",
@@ -191,7 +190,9 @@ async function getAvailablePort() {
 }
 
 async function startBrowserSmokeFixture() {
+  const observedCookies = [];
   const server = http.createServer((request, response) => {
+    observedCookies.push(String(request.headers.cookie || ""));
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
     if (requestUrl.pathname === "/asset.png") {
       const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
@@ -229,6 +230,7 @@ async function startBrowserSmokeFixture() {
     response.writeHead(200, {
       "cache-control": "no-store",
       "content-type": "text/html; charset=utf-8",
+      "set-cookie": "rudder_browser_credential=server-cookie-secret; HttpOnly; SameSite=Lax",
     });
     response.end(`<!doctype html>
       <html>
@@ -250,6 +252,8 @@ async function startBrowserSmokeFixture() {
             <button id="dialog-button" type="button">Open prompt</button>
             <label for="smoke-input">Smoke input</label>
             <input id="smoke-input" data-testid="smoke-input" placeholder="Search fixture" />
+            <input id="password-secret" type="password" value="password-secret-value" />
+            <input id="hidden-secret" type="hidden" value="hidden-secret-value" data-auth-token="attribute-secret-value" />
             <label for="smoke-upload">Smoke upload</label>
             <input id="smoke-upload" type="file" />
             <label><input id="smoke-check" type="checkbox" /> Accept smoke terms</label>
@@ -263,6 +267,8 @@ async function startBrowserSmokeFixture() {
             <p id="trusted-result">untrusted</p>
             <p id="upload-result">none</p>
             <p id="prompt-result">none</p>
+            <p id="cookie-probe">none</p>
+            <p id="clipboard-probe">unreadable</p>
             <p id="cua-result">0</p>
             <p id="dom-result">0</p>
             <div class="spacer"></div>
@@ -287,9 +293,17 @@ async function startBrowserSmokeFixture() {
               result.textContent = String(Number(result.textContent || "0") + 1);
             });
             document.querySelector("#dialog-button").addEventListener("click", () => {
-              const value = prompt("Smoke prompt", "default");
-              document.querySelector("#prompt-result").textContent = value === null ? "dismissed" : value;
+              const accepted = confirm("Smoke confirmation");
+              document.querySelector("#prompt-result").textContent = accepted ? "accepted" : "dismissed";
             });
+            localStorage.setItem("auth-token", "local-storage-secret");
+            sessionStorage.setItem("auth-token", "session-storage-secret");
+            setInterval(() => {
+              document.querySelector("#cookie-probe").textContent = document.cookie || "none";
+              navigator.clipboard?.readText?.().then((value) => {
+                document.querySelector("#clipboard-probe").textContent = value || "empty";
+              }).catch(() => undefined);
+            }, 50);
             console.log("fixture-ready");
           </script>
         </body>
@@ -306,6 +320,7 @@ async function startBrowserSmokeFixture() {
   }
   return {
     url: `http://127.0.0.1:${address.port}`,
+    observedCookies,
     stop: () => new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     }),
@@ -976,6 +991,7 @@ async function verifyPackagedExternalRuntimeAdapterBrowser(input) {
   try {
     const adapter = await import(pathToFileURL(input.packagedRuntime.codexAdapterEntry).href);
     let rudderMcpMetadata = null;
+    let browserMcpMetadata = null;
     const result = await adapter.execute({
       runId: input.runId,
       agent: {
@@ -1007,6 +1023,7 @@ async function verifyPackagedExternalRuntimeAdapterBrowser(input) {
       onLog: async () => {},
       onMeta: async (metadata) => {
         rudderMcpMetadata = metadata.rudderMcp;
+        browserMcpMetadata = metadata.browserMcp;
       },
     });
     assert.equal(result.exitCode, 0, `packaged external-runtime Codex adapter failed: ${result.errorMessage ?? "unknown"}`);
@@ -1015,10 +1032,11 @@ async function verifyPackagedExternalRuntimeAdapterBrowser(input) {
     assert.equal(capture.command, input.packagedRuntime.executablePath, "provider MCP config must use packaged Desktop CLI");
     assert.deepEqual(capture.browserToolNames, expectedBrowserToolNames, "provider MCP config should expose exact Browser tools");
     assert.match(capture.snapshotText, /Rudder Browser fixture/, "provider MCP config should read the Browser fixture");
-    assert.equal(capture.contract.browserContractHash, rudderMcpMetadata.contractHash, "provider handshake and adapter metadata must agree");
-    assert.equal(rudderMcpMetadata.browserAvailable, true, "packaged adapter metadata should keep Browser available");
-    assert.equal(rudderMcpMetadata.provenance, "desktop_bundle", "packaged adapter metadata should report Desktop provenance");
-    assert.equal(rudderMcpMetadata.version, input.packagedRuntime.serverVersion, "packaged adapter metadata version should match runtime cache");
+    assert.equal(rudderMcpMetadata.available, true, "packaged adapter metadata should keep core Rudder MCP available");
+    assert.equal(capture.contract.browserContractHash, browserMcpMetadata.contractHash, "provider Browser handshake and Browser adapter metadata must agree");
+    assert.equal(browserMcpMetadata.available, true, "packaged adapter metadata should keep Browser MCP available");
+    assert.equal(browserMcpMetadata.provenance, "desktop_bundle", "packaged Browser metadata should report Desktop provenance");
+    assert.equal(browserMcpMetadata.version, input.packagedRuntime.serverVersion, "packaged Browser metadata version should match runtime cache");
   } finally {
     for (const [key, value] of previousEnv.entries()) {
       if (value === undefined) delete process.env[key];
@@ -1090,7 +1108,7 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
       const browserToolNames = listed.result.tools
         .map((tool) => tool.name)
         .filter((name) => name.startsWith("rudder_browser_"));
-      assert.equal(browserToolNames.length, 26, "Agent Browser MCP should expose the complete Browser parity tool surface");
+      assert.equal(browserToolNames.length, 25, "Agent Browser MCP should expose the safe Browser tool surface");
       const userTabs = readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_user_tabs",
         arguments: {},
@@ -1132,9 +1150,10 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
         name: "rudder_browser_snapshot",
         arguments: { tabId: opened.tabId, boxes: true, depth: 20, maxNodes: 2000 },
       }), "rudder_browser_snapshot");
-      assert.equal(domSnapshot.chromiumSnapshot, true, "Agent Browser should include a real Chromium DOM snapshot");
-      assert.ok(domSnapshot.frameDocuments.length >= 1, "Agent Browser should include frame document metadata");
-      assert.ok(domSnapshot.accessibility.length > 0, "Agent Browser should include accessibility nodes");
+      const serializedSnapshot = JSON.stringify(domSnapshot);
+      for (const secret of ["password-secret-value", "hidden-secret-value", "attribute-secret-value", "server-cookie-secret", "local-storage-secret", "session-storage-secret"]) {
+        assert.equal(serializedSnapshot.includes(secret), false, `Agent Browser snapshot should not expose ${secret}`);
+      }
       const cuaButton = findBrowserSnapshotNode(domSnapshot.root, (node) => node.name === "CUA action");
       const domButton = findBrowserSnapshotNode(domSnapshot.root, (node) => node.name === "DOM action");
       assert.ok(cuaButton?.box, "Agent Browser snapshot should include a CUA target box");
@@ -1200,37 +1219,16 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
       }), "rudder_browser_locator trusted click result");
       assert.equal(trusted.value, "trusted", "semantic locator click should use trusted Chromium input");
 
-      const uploadPath = path.join(tmpRoot, "browser-upload-fixture.txt");
-      await writeFile(uploadPath, "browser upload payload", "utf8");
-      readSmokeMcpToolResult(await mcp.request("tools/call", {
+      const checkedState = readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_locator",
-        arguments: {
-          tabId: opened.tabId,
-          action: "setFiles",
-          locator: { strategy: "css", value: "#smoke-upload" },
-          paths: [uploadPath],
-        },
-      }), "rudder_browser_locator setFiles");
-      const uploaded = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        arguments: { tabId: opened.tabId, action: "checked", locator: { strategy: "css", value: "#smoke-check" } },
+      }), "rudder_browser_locator checked state");
+      const selectedState = readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_locator",
-        arguments: { tabId: opened.tabId, action: "innerText", locator: { strategy: "css", value: "#upload-result" } },
-      }), "rudder_browser_locator upload result");
-      assert.equal(uploaded.value, "browser-upload-fixture.txt", "file upload should reach the real Chromium file input");
-
-      const state = readSmokeMcpToolResult(await mcp.request("tools/call", {
-        name: "rudder_browser_evaluate",
-        arguments: {
-          tabId: opened.tabId,
-          function: "() => ({ input: document.querySelector('#smoke-input').value, checked: document.querySelector('#smoke-check').checked, selected: document.querySelector('#smoke-select').value, status: document.querySelector('#status').textContent, viewport: [innerWidth, innerHeight] })",
-        },
-      }), "rudder_browser_evaluate");
-      assert.deepEqual(state.value, {
-        input: "rudder locator",
-        checked: true,
-        selected: "blue",
-        status: "continued",
-        viewport: [390, 844],
-      }, "read-only evaluate should observe locator and viewport results");
+        arguments: { tabId: opened.tabId, action: "selected", locator: { strategy: "css", value: "#smoke-select" } },
+      }), "rudder_browser_locator selected state");
+      assert.equal(checkedState.value, true, "locator checked should observe checkbox state");
+      assert.deepEqual(selectedState.value, ["blue"], "locator selected should observe select state");
 
       readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_dom_cua",
@@ -1278,6 +1276,12 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
         arguments: { action: "readText" },
       }), "rudder_browser_clipboard readText");
       assert.equal(clipboard.text, "virtual clipboard only", "virtual Browser clipboard should round-trip text");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const clipboardProbe = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: { tabId: opened.tabId, action: "innerText", locator: { strategy: "css", value: "#clipboard-probe" } },
+      }), "rudder_browser_locator hostile clipboard probe");
+      assert.equal(clipboardProbe.value, "unreadable", "page JavaScript must not read the run clipboard");
 
       const logs = readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_logs",
@@ -1299,7 +1303,7 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
       assert.equal(await pathExists(bundle.manifestPath), true, "page asset bundle should write a manifest");
       const contentExport = readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_content",
-        arguments: { tabId: opened.tabId, format: "html" },
+        arguments: { tabId: opened.tabId, format: "text" },
       }), "rudder_browser_content");
       assert.equal(await pathExists(contentExport.path), true, "page content export should write a run-owned artifact");
       assert.match(await readFile(contentExport.path, "utf8"), /Rudder Browser fixture/, "content export should contain the current page");
@@ -1322,13 +1326,24 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
           tabId: opened.tabId,
           action: "click",
           locator: { strategy: "css", value: "#dialog-button" },
-          dialogResponse: { accept: true, promptText: "accepted" },
+          dialogResponse: { accept: true },
         },
       }), "rudder_browser_locator dialog click");
       readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_wait",
         arguments: { tabId: opened.tabId, text: "accepted", timeoutMs: 5000 },
       }), "rudder_browser_wait prompt result");
+      const promptResult = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: { tabId: opened.tabId, action: "innerText", locator: { strategy: "css", value: "#prompt-result" } },
+      }), "rudder_browser_locator prompt result");
+      assert.equal(promptResult.value, "accepted", "Electron confirmation should use the native dialog callback");
+      const cookieProbe = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: { tabId: opened.tabId, action: "innerText", locator: { strategy: "css", value: "#cookie-probe" } },
+      }), "rudder_browser_locator prompt cookie probe");
+      assert.equal(cookieProbe.value, "none", "prompt response must not leave a page-readable cookie");
+      assert.equal(fixture.observedCookies.some((value) => value.includes("__rudder_prompt") || value.includes("YWNjZXB0ZWQ")), false, "prompt response must not be sent to the origin");
 
       const viewportScreenshot = readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_screenshot",

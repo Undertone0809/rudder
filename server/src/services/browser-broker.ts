@@ -12,7 +12,6 @@ export const BROWSER_ACTIONS = [
   "locator",
   "cua",
   "dom_cua",
-  "evaluate",
   "dialog",
   "clipboard",
   "logs",
@@ -152,9 +151,16 @@ export function createBrowserBrokerRegistry(options: {
   const requestTimeoutMs = options.requestTimeoutMs ?? 40_000;
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_BROWSER_BROKER_MAX_RESPONSE_BYTES;
   let registration: BrowserBrokerRegistration | null = null;
+  const activeRequests = new Set<AbortController>();
+  const revoke = () => {
+    registration = null;
+    for (const controller of activeRequests) controller.abort();
+    activeRequests.clear();
+  };
 
   return {
     register(input: BrowserBrokerRegistration): void {
+      revoke();
       registration = {
         endpoint: normalizeLoopbackBrokerEndpoint(input.endpoint),
         token: normalizeBrokerCredential(input.token),
@@ -163,9 +169,11 @@ export function createBrowserBrokerRegistry(options: {
 
     unregister(token: string): boolean {
       if (!registration || registration.token !== token) return false;
-      registration = null;
+      revoke();
       return true;
     },
+
+    revoke,
 
     isAvailable(): boolean {
       return registration !== null;
@@ -178,6 +186,7 @@ export function createBrowserBrokerRegistry(options: {
       }
 
       const controller = new AbortController();
+      activeRequests.add(controller);
       let timeout: NodeJS.Timeout | null = null;
       const deadline = new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => {
@@ -224,6 +233,7 @@ export function createBrowserBrokerRegistry(options: {
         return await Promise.race([request(), deadline]);
       } finally {
         if (timeout) clearTimeout(timeout);
+        activeRequests.delete(controller);
       }
     },
   };

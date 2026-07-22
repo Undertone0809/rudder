@@ -16,7 +16,6 @@ export const BROWSER_AGENT_ACTIONS = [
   "locator",
   "cua",
   "dom_cua",
-  "evaluate",
   "dialog",
   "clipboard",
   "logs",
@@ -44,6 +43,7 @@ export type BrowserAgentCommand = {
   action: BrowserAgentAction;
   args: Record<string, unknown>;
   deadlineAt?: number;
+  signal?: AbortSignal;
 };
 
 export type BrowserAgentTab = {
@@ -150,7 +150,7 @@ function boundedClipboardItems(value: unknown): BrowserRunState["clipboard"] {
       if (!isRecord(entry)) throw new BrowserAgentError("browser_invalid_argument", "Browser clipboard entry is invalid.");
       const mimeType = requiredString(entry.mimeType, "clipboard MIME type", 200);
       const text = optionalString(entry.text, "clipboard text", 500_000);
-      const base64 = optionalString(entry.base64, "clipboard binary payload", 1_400_000);
+      const base64 = optionalString(entry.base64, "clipboard binary payload", 650_000);
       if ((text === undefined) === (base64 === undefined)) {
         throw new BrowserAgentError("browser_invalid_argument", "Browser clipboard entry requires exactly one text or Base64 payload.");
       }
@@ -171,7 +171,7 @@ function boundedClipboardItems(value: unknown): BrowserRunState["clipboard"] {
       ...(presentationStyle !== undefined ? { presentationStyle: presentationStyle as "unspecified" | "inline" | "attachment" } : {}),
     };
   });
-  if (Buffer.byteLength(JSON.stringify(items), "utf8") > 1_500_000) {
+  if (Buffer.byteLength(JSON.stringify(items), "utf8") > 750_000) {
     throw new BrowserAgentError("browser_result_too_large", "Browser clipboard exceeded the session limit.");
   }
   return items;
@@ -553,6 +553,7 @@ export function createBrowserAgentTabController(options: {
   const withDeadline = async <T>(
     record: BrowserTabRecord,
     deadlineAt: number,
+    signal: AbortSignal | undefined,
     operation: () => Promise<T>,
   ): Promise<T> => {
     const remainingMs = deadlineAt - clock();
@@ -560,39 +561,53 @@ export function createBrowserAgentTabController(options: {
       throw new BrowserAgentError("browser_timeout", "Browser action expired before execution.");
     }
     let timeout: NodeJS.Timeout | null = null;
+    let abortListener: (() => void) | null = null;
+    const revoke = (reject: (error: BrowserAgentError) => void, error: BrowserAgentError) => {
+      try {
+        record.tab.stop();
+      } catch {
+        // The tab is closed below even when Chromium cannot stop an operation.
+      }
+      void closeRecord(record).catch(() => undefined);
+      reject(error);
+    };
     try {
       return await Promise.race([
         operation(),
         new Promise<never>((_resolve, reject) => {
           timeout = setTimeout(() => {
-            try {
-              record.tab.stop();
-            } catch {
-              // The tab is closed below even when Chromium cannot stop a pending load.
-            }
-            void closeRecord(record).catch(() => undefined);
-            reject(new BrowserAgentError(
+            revoke(reject, new BrowserAgentError(
               "browser_timeout",
               "Browser action timed out and the tab was closed.",
             ));
           }, remainingMs);
         }),
+        new Promise<never>((_resolve, reject) => {
+          abortListener = () => revoke(reject, new BrowserAgentError(
+            "browser_unavailable",
+            "Browser action was cancelled and the tab was closed.",
+          ));
+          if (signal?.aborted) abortListener();
+          else signal?.addEventListener("abort", abortListener, { once: true });
+        }),
       ]);
     } finally {
       if (timeout) clearTimeout(timeout);
+      if (abortListener) signal?.removeEventListener("abort", abortListener);
     }
   };
 
   const runRecordOperation = <T>(
     record: BrowserTabRecord,
     deadlineAt: number,
+    signal: AbortSignal | undefined,
     operation: () => Promise<T>,
   ): Promise<T> => {
     const result = record.operationQueue.then(() => {
       if (records.get(record.tabId) !== record || record.tab.isDestroyed()) {
         throw new BrowserAgentError("browser_tab_not_found", "Browser tab was not found.");
       }
-      return withDeadline(record, deadlineAt, operation);
+      return withDeadline(record, deadlineAt, signal, operation);
     });
     record.operationQueue = result.then(() => undefined, () => undefined);
     return result;
@@ -615,6 +630,7 @@ export function createBrowserAgentTabController(options: {
     identity: BrowserRuntimeIdentity,
     rawUrl: unknown,
     deadlineAt = clock() + commandTimeoutMs,
+    signal?: AbortSignal,
   ) => {
     const url = safeWebUrl(requiredString(rawUrl, "URL"), options.getRudderAppOrigins());
     const key = ownerKey(identity);
@@ -655,7 +671,7 @@ export function createBrowserAgentTabController(options: {
       tab.setVisible(state.visible);
       tab.onDestroyed(() => records.delete(tabId));
       try {
-        await withDeadline(record, deadlineAt, () => tab.loadURL(url));
+        await withDeadline(record, deadlineAt, signal, () => tab.loadURL(url));
       } catch (error) {
         await closeRecord(record);
         if (error instanceof BrowserAgentError) throw error;
@@ -723,6 +739,8 @@ export function createBrowserAgentTabController(options: {
       throw new BrowserAgentError("browser_invalid_argument", "Browser action is invalid.");
     }
     const args = isRecord(rawCommand.args) ? rawCommand.args : {};
+    const signal = rawCommand.signal;
+    if (signal?.aborted) throw new BrowserAgentError("browser_unavailable", "Browser action was cancelled.");
 
     if (action === "user_tabs") {
       return { tabs: privacySafeUserTabs(options.listUserTabs?.() ?? []) };
@@ -790,7 +808,7 @@ export function createBrowserAgentTabController(options: {
       } else if (operation === "readText") {
         const selected = state.selectedTabId ? records.get(state.selectedTabId) : null;
         if (selected && selected.ownerKey === ownerKey(identity) && !selected.tab.isDestroyed()) {
-          const result = await runRecordOperation(selected, deadlineAt, () => (
+          const result = await runRecordOperation(selected, deadlineAt, signal, () => (
             selected.tab.advanced("clipboard", { action: "read" })
           ));
           if (isRecord(result)) state.clipboard = boundedClipboardItems(result.items);
@@ -805,7 +823,7 @@ export function createBrowserAgentTabController(options: {
       if (operation === "read") {
         const selected = state.selectedTabId ? records.get(state.selectedTabId) : null;
         if (selected && selected.ownerKey === ownerKey(identity) && !selected.tab.isDestroyed()) {
-          const result = await runRecordOperation(selected, deadlineAt, () => (
+          const result = await runRecordOperation(selected, deadlineAt, signal, () => (
             selected.tab.advanced("clipboard", { action: "read" })
           ));
           if (isRecord(result)) state.clipboard = boundedClipboardItems(result.items);
@@ -814,13 +832,13 @@ export function createBrowserAgentTabController(options: {
         const ownedTabs = Array.from(records.values()).filter((record) => (
           record.ownerKey === ownerKey(identity) && !record.tab.isDestroyed()
         ));
-        await Promise.all(ownedTabs.map((record) => runRecordOperation(record, deadlineAt, () => (
+        await Promise.all(ownedTabs.map((record) => runRecordOperation(record, deadlineAt, signal, () => (
           record.tab.advanced("clipboard", { action: "write", items: state.clipboard })
         ))));
       }
       return { items: structuredClone(state.clipboard) };
     }
-    if (action === "open") return openTab(identity, args.url, deadlineAt);
+    if (action === "open") return openTab(identity, args.url, deadlineAt, signal);
 
     const tabId = requiredString(args.tabId, "tab ID", 160);
     const record = ownedRecord(tabId, identity);
@@ -832,7 +850,7 @@ export function createBrowserAgentTabController(options: {
       }
     }
     if (action === "navigate") {
-      return runRecordOperation(record, deadlineAt, async () => {
+      return runRecordOperation(record, deadlineAt, signal, async () => {
         const url = safeWebUrl(requiredString(args.url, "URL"), options.getRudderAppOrigins());
         record.snapshotId = null;
         record.refs.clear();
@@ -844,8 +862,8 @@ export function createBrowserAgentTabController(options: {
         return tabSummary(record);
       });
     }
-    if (["snapshot", "locator", "cua", "dom_cua", "evaluate", "dialog", "logs", "download", "assets", "content", "wait"].includes(action)) {
-      return runRecordOperation(record, deadlineAt, async () => {
+    if (["snapshot", "locator", "cua", "dom_cua", "dialog", "logs", "download", "assets", "content", "wait"].includes(action)) {
+      return runRecordOperation(record, deadlineAt, signal, async () => {
         const performAdvancedAction = async () => {
           try {
           const advancedArgs = action === "assets" && args.action === "bundle"
@@ -897,7 +915,7 @@ export function createBrowserAgentTabController(options: {
       });
     }
     if (action === "back" || action === "forward" || action === "reload") {
-      return runRecordOperation(record, deadlineAt, async () => {
+      return runRecordOperation(record, deadlineAt, signal, async () => {
         record.snapshotId = null;
         record.refs.clear();
         try {
@@ -911,7 +929,7 @@ export function createBrowserAgentTabController(options: {
       });
     }
     if (action === "read") {
-      return runRecordOperation(record, deadlineAt, async () => {
+      return runRecordOperation(record, deadlineAt, signal, async () => {
         const snapshotId = createSnapshotId();
         const result = normalizedReadResult(
           await record.tab.executeIsolatedJavaScript(browserReadScript(snapshotId)),
@@ -924,7 +942,7 @@ export function createBrowserAgentTabController(options: {
     }
     if (action === "click" || action === "type") {
       const ref = requiredString(args.ref, "element reference", 160);
-      return runRecordOperation(record, deadlineAt, async () => {
+      return runRecordOperation(record, deadlineAt, signal, async () => {
         if (!record.snapshotId || !record.refs.has(ref)) {
           throw new BrowserAgentError("browser_ref_not_found", "Browser element reference is missing or stale.");
         }
@@ -947,7 +965,7 @@ export function createBrowserAgentTabController(options: {
       });
     }
     if (action === "screenshot") {
-      return runRecordOperation(record, deadlineAt, async () => {
+      return runRecordOperation(record, deadlineAt, signal, async () => {
         let capture: {
           base64: string;
           mimeType: string;
@@ -975,7 +993,7 @@ export function createBrowserAgentTabController(options: {
         };
       });
     }
-    return runRecordOperation(record, deadlineAt, async () => {
+    return runRecordOperation(record, deadlineAt, signal, async () => {
       await closeRecord(record);
       return { tabId, closed: true };
     });

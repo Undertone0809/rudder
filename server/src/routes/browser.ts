@@ -72,7 +72,7 @@ const browserClipSchema = z.object({
 const browserClipboardEntrySchema = z.object({
   mimeType: z.string().min(1).max(200),
   text: z.string().max(500_000).optional(),
-  base64: z.string().max(1_400_000).optional(),
+  base64: z.string().max(650_000).optional(),
 }).strict().refine((value) => (value.text === undefined) !== (value.base64 === undefined), {
   message: "Clipboard entry requires exactly one text or Base64 payload.",
 });
@@ -108,10 +108,10 @@ const browserActionSchemas = {
   locator: z.object({
     tabId: tabIdSchema,
     action: z.enum([
-      "count", "allTextContents", "textContent", "innerText", "value", "attribute",
+      "count", "allTextContents", "textContent", "innerText", "attribute",
       "visible", "enabled", "checked", "selected", "click", "dblclick",
       "fill", "type", "press", "check", "uncheck", "setChecked", "select",
-      "wait", "hover", "scroll", "drag", "setFiles",
+      "wait", "hover", "scroll", "drag",
     ]),
     locator: browserLocatorSchema,
     targetLocator: browserLocatorSchema.optional(),
@@ -127,7 +127,6 @@ const browserActionSchemas = {
         index: z.number().int().min(0).max(100_000).optional(),
       }).strict(),
     ])).max(100).optional(),
-    paths: z.array(z.string().min(1).max(4_096)).min(1).max(10).optional(),
     button: z.enum(["left", "right", "middle"]).optional(),
     modifiers: z.array(z.enum(["Alt", "Control", "ControlOrMeta", "Meta", "Shift"])).max(5).optional(),
     state: z.enum(["attached", "detached", "visible", "hidden"]).optional(),
@@ -146,7 +145,6 @@ const browserActionSchemas = {
     }).strict().optional(),
   }).strict().superRefine((value, context) => {
     if (value.action === "drag" && !value.targetLocator) context.addIssue({ code: "custom", message: "Locator drag requires a target locator." });
-    if (value.action === "setFiles" && !value.paths?.length) context.addIssue({ code: "custom", message: "Locator setFiles requires one or more paths." });
     if (value.dialogResponse && value.action !== "click" && value.action !== "dblclick") {
       context.addIssue({ code: "custom", message: "Locator dialogResponse requires click or dblclick." });
     }
@@ -187,13 +185,6 @@ const browserActionSchemas = {
     if (value.action === "keypress" && !value.keys?.length) context.addIssue({ code: "custom", message: "Keypress requires keys." });
     if (value.action === "type" && value.text === undefined) context.addIssue({ code: "custom", message: "Type requires text." });
   }),
-  evaluate: z.object({
-    tabId: tabIdSchema,
-    function: z.string().min(1).max(50_000),
-    locator: browserLocatorSchema.optional(),
-    arg: z.unknown().optional(),
-    timeoutMs: z.number().int().min(100).max(30_000).optional(),
-  }).strict(),
   dialog: z.object({
     tabId: tabIdSchema,
     action: z.enum(["get", "accept", "dismiss"]),
@@ -218,7 +209,7 @@ const browserActionSchemas = {
     tabId: tabIdSchema,
     mode: z.enum(["media", "trigger"]),
     locator: browserLocatorSchema,
-    timeoutMs: z.number().int().min(100).max(60_000).optional(),
+    timeoutMs: z.number().int().min(100).max(30_000).optional(),
   }).strict(),
   assets: z.object({
     tabId: tabIdSchema,
@@ -234,7 +225,7 @@ const browserActionSchemas = {
   }),
   content: z.object({
     tabId: tabIdSchema,
-    format: z.enum(["html", "text", "pdf", "md", "docx", "xlsx", "csv", "pptx"]),
+    format: z.enum(["text", "pdf", "md", "docx", "xlsx", "csv", "pptx"]),
   }).strict(),
   wait: z.object({
     tabId: tabIdSchema,

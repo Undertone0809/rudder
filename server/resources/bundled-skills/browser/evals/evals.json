@@ -21,7 +21,7 @@
       "assertions": [
         "Uses a snapshot-grounded frame chain and a unique locator for the target input.",
         "Uses the run-scoped Browser clipboard or its intercepted ControlOrMeta copy/paste path, never the OS clipboard.",
-        "Understands that the virtual clipboard is bridged to navigator.clipboard in page frames rather than being an unrelated memory-only value.",
+        "Understands that the virtual clipboard remains outside page JavaScript and transfers data only through an explicit Browser action.",
         "Reads the virtual Browser clipboard and verifies the iframe input value with a targeted locator after paste."
       ]
     },

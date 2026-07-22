@@ -460,15 +460,6 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   },
   {
-    "capabilityId": "browser.evaluate",
-    "name": "rudder_browser_evaluate",
-    "description": "Evaluate a bounded page or locator function with Chromium side-effect checks enabled.",
-    "mutating": false,
-    "requiresOrgId": true,
-    "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
-  },
-  {
     "capabilityId": "browser.dialog",
     "name": "rudder_browser_dialog",
     "description": "Inspect, accept, or dismiss the active JavaScript dialog in a run-owned Browser tab.",
@@ -857,4 +848,4 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   }
 ] as const;
 export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "998b5f7a23d57634148a59a04f002b46b480570952d9f7eb4a9fa559f756cb7c";
-export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "46a562c729c303db9e5163114df8341137b1a541a4572e082f58a653004b9b83";
+export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "c2a9ba7231640c07ddee498e8f9baee8b5ed4404110eee62f91542db7e83c955";

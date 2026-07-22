@@ -16,7 +16,7 @@ describes the UI you are operating.
   one state check, or a smaller max depth answers the question.
 - Do not discover a page by iterating through broad results and reading each
   element separately. Take one bounded orientation snapshot, then narrow to the
-  relevant region or use one read-only evaluate projection.
+  relevant region with declarative locator reads.
 - Do not dump body text or embedded application-state JSON as exploratory
   search. Use a focused page, container, or result.
 
@@ -50,8 +50,8 @@ Use `frame` with outer-to-inner iframe CSS selectors for nested frames.
 - Use `check`, `uncheck`, or `setChecked` for a unique visible checkable control.
 - If a hidden checkbox does not change, locate its visible associated label or
   enclosing control once, click it, then verify checked state.
-- Use `setFiles` only with explicit absolute local paths and a unique file input.
-  The action directly assigns Chromium's file input; there is no native picker.
+- File upload is unavailable until Rudder can provide run-owned staged handles;
+  do not attempt to operate a native picker or pass local paths.
 
 For multi-field forms, fill fields one at a time or in small logical groups and
 verify the narrow values that matter before submission. Submission is an
@@ -106,6 +106,9 @@ A synchronous JavaScript dialog blocks the page action that opened it.
 
 - When a click or double-click is expected to open the dialog, pass
   `dialogResponse: { accept, promptText? }` in that same locator action.
+- JavaScript prompts can only be dismissed in the Electron runtime. An attempt
+  to accept one fails closed after dismissal; prompt text is never bridged
+  through page-visible state.
 - Use `rudder_browser_dialog` for a dialog opened independently by navigation,
   a timer, or page code.
 - Do not retry the opening click after a dialog timeout without inspecting the
@@ -137,8 +140,8 @@ streamed with per-asset, per-bundle, and per-run limits.
 
 ## Content Export
 
-- Use `html` for the current document markup and `text` for rendered readable
-  text.
+- Raw HTML export is unavailable because markup can contain credentials. Use
+  `text` for rendered readable text.
 - Use `pdf` for a page PDF.
 - On eligible Google Workspace URLs, use the requested `pdf`, `md`, `docx`,
   `xlsx`, `csv`, or `pptx` format.
@@ -152,10 +155,10 @@ the buffer only when subsequent reads should exclude prior entries.
 
 The clipboard belongs to the signed run. `writeText` and `readText` are the
 simple path; structured items support bounded MIME text or Base64 data. The
-same virtual state is exposed to `navigator.clipboard` in the page and its
-frames. CUA `ControlOrMeta+C`, `ControlOrMeta+X`, and `ControlOrMeta+V` are
-intercepted and use this bridge, so they never read or mutate the operating-
-system clipboard. Never describe it as the system clipboard.
+state remains outside the page world. CUA `ControlOrMeta+C`,
+`ControlOrMeta+X`, and `ControlOrMeta+V` explicitly transfer the focused
+selection without reading or mutating the operating-system clipboard. Never
+describe it as the system clipboard.
 
 ## Recovery Without Duplicate Side Effects
 

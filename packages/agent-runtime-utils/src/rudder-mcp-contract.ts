@@ -101,7 +101,7 @@ function browserMcpInputSchema(id: string): {
     }, ["tabId"]);
     case "browser.locator": return schema({
       ...baseTab,
-      action: string("Locator read or interaction action.", { enum: ["count", "allTextContents", "textContent", "innerText", "value", "attribute", "visible", "enabled", "checked", "selected", "click", "dblclick", "fill", "type", "press", "check", "uncheck", "setChecked", "select", "wait", "hover", "scroll", "drag", "setFiles"] }),
+      action: string("Locator read or interaction action.", { enum: ["count", "allTextContents", "textContent", "innerText", "attribute", "visible", "enabled", "checked", "selected", "click", "dblclick", "fill", "type", "press", "check", "uncheck", "setChecked", "select", "wait", "hover", "scroll", "drag"] }),
       locator,
       targetLocator: locator,
       name: string("Attribute name for attribute reads.", { maxLength: 200 }),
@@ -109,7 +109,6 @@ function browserMcpInputSchema(id: string): {
       key: string("Keyboard key for press.", { maxLength: 100 }),
       checked: boolean("Target checked state."),
       values: { type: "array", maxItems: 100, items: { oneOf: [string("Option value or label.", { maxLength: 2_000 }), schema({ value: string("Option value."), label: string("Option label."), index: number("Option index.") })] } },
-      paths: { type: "array", minItems: 1, maxItems: 10, items: string("Absolute path to a local upload file.", { minLength: 1, maxLength: 4_096 }) },
       button: string("Mouse button.", { enum: ["left", "right", "middle"] }),
       modifiers: { type: "array", maxItems: 5, items: string("Keyboard modifier.", { enum: ["Alt", "Control", "ControlOrMeta", "Meta", "Shift"] }) },
       state: string("Wait state.", { enum: ["attached", "detached", "visible", "hidden"] }),
@@ -150,13 +149,6 @@ function browserMcpInputSchema(id: string): {
       depth: number("Maximum DOM depth.", { minimum: 1, maximum: 30 }),
       maxNodes: number("Maximum DOM nodes.", { minimum: 1, maximum: 3_000 }),
     }, ["tabId", "action"]);
-    case "browser.evaluate": return schema({
-      ...baseTab,
-      function: string("Read-only JavaScript function source.", { minLength: 1, maxLength: 50_000 }),
-      locator,
-      arg: { description: "JSON-serializable function argument." },
-      timeoutMs: number("Evaluation timeout in milliseconds.", { minimum: 100, maximum: 30_000 }),
-    }, ["tabId", "function"]);
     case "browser.dialog": return schema({
       ...baseTab,
       action: string("Dialog action.", { enum: ["get", "accept", "dismiss"] }),
@@ -176,7 +168,7 @@ function browserMcpInputSchema(id: string): {
             items: schema({
               mimeType: string("Clipboard MIME type.", { minLength: 1, maxLength: 200 }),
               text: string("Text clipboard payload.", { maxLength: 500_000 }),
-              base64: string("Base64 clipboard payload.", { maxLength: 1_400_000 }),
+              base64: string("Base64 clipboard payload.", { maxLength: 650_000 }),
             }, ["mimeType"]),
           },
         }, ["entries"]),
@@ -193,7 +185,7 @@ function browserMcpInputSchema(id: string): {
       ...baseTab,
       mode: string("Download mode.", { enum: ["media", "trigger"] }),
       locator,
-      timeoutMs: number("Download timeout in milliseconds.", { minimum: 100, maximum: 60_000 }),
+      timeoutMs: number("Download timeout in milliseconds.", { minimum: 100, maximum: 30_000 }),
     }, ["tabId", "mode", "locator"]);
     case "browser.assets": return schema({
       ...baseTab,
@@ -204,7 +196,7 @@ function browserMcpInputSchema(id: string): {
     }, ["tabId", "action"]);
     case "browser.content": return schema({
       ...baseTab,
-      format: string("Content export format.", { enum: ["html", "text", "pdf", "md", "docx", "xlsx", "csv", "pptx"] }),
+      format: string("Content export format.", { enum: ["text", "pdf", "md", "docx", "xlsx", "csv", "pptx"] }),
     }, ["tabId", "format"]);
     case "browser.wait": return schema({
       ...baseTab,

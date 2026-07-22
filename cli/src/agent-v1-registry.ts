@@ -824,18 +824,6 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     attachesRunIdWhenAvailable: true,
   },
   {
-    id: "browser.evaluate",
-    command: "rudder browser evaluate <tab-id> --input <json>",
-    category: "browser",
-    description: "Evaluate a bounded page or locator function with Chromium side-effect checks enabled.",
-    mutating: false,
-    contract: "agent-v1",
-    requiresOrgId: true,
-    requiresAgentId: true,
-    requiresRunId: true,
-    attachesRunIdWhenAvailable: true,
-  },
-  {
     id: "browser.dialog",
     command: "rudder browser dialog <tab-id> --input <json>",
     category: "browser",

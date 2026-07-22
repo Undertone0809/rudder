@@ -30,7 +30,7 @@ targets the mapped core task outcomes below.
 | `tab.playwright.domSnapshot()` | `rudder_browser_snapshot` |
 | Playwright locator builders, filters, reads, and actions | `rudder_browser_locator` |
 | `frameLocator(...)` | locator `frame` chain |
-| `playwright.evaluate(...)`, `locator.evaluate(...)` | `rudder_browser_evaluate` |
+| `playwright.evaluate(...)`, `locator.evaluate(...)` | intentionally unavailable; use bounded declarative reads |
 | `expectNavigation`, URL/load waits | locator `expectNavigation`, `rudder_browser_wait` |
 | `tab.cua.*` | `rudder_browser_cua` |
 | `tab.dom_cua.*` | `rudder_browser_dom_cua` |
@@ -55,8 +55,8 @@ Rudder also intentionally rejects arbitrary `file:` navigation; both the
 origin-only user-tab view and local-file boundary require an explicit product
 permission decision before literal parity would be safe.
 
-Rudder additionally provides explicit bounded file upload, one-shot download,
-HTML/text/PDF and Google Workspace export, element-at-coordinate inspection,
+Rudder additionally provides one-shot download,
+text/PDF and Google Workspace export, element-at-coordinate inspection,
 and a compact legacy ref flow.
 
 ## Tool Inventory
@@ -85,34 +85,33 @@ User-visible tabs do not consume this Agent tab quota.
 ### Page Understanding
 
 - `rudder_browser_snapshot { tabId, boxes?, depth?, maxNodes? }` returns a
-  bounded DOM/accessibility tree, frame documents, optional boxes, and stable
-  DOM-CUA node ids. Depth is at most 30 and node count at most 3000.
+  bounded accessibility-oriented DOM tree, same-origin frame boundaries,
+  optional boxes, and stable DOM-CUA node ids. Depth is at most 30 and node
+  count at most 3000; Chromium full-tree capture is never materialized.
 - `rudder_browser_locator` accepts a locator strategy of `css`, `testId`,
   `href`, `role`, `label`, `placeholder`, or `text`. Locators may use a frame
   chain, a scoped parent, filters, `and`, `or`, and an explicit index or
   first/last position.
 - Locator read actions are `count`, `allTextContents`, `textContent`,
-  `innerText`, `value`, `attribute`, `visible`, `enabled`, `checked`, and
+  `innerText`, `attribute`, `visible`, `enabled`, `checked`, and
   `selected`.
-- `rudder_browser_evaluate { tabId, function, locator?, arg?, timeoutMs? }`
-  runs a JSON-returning page or element read in an isolated world. Chromium
-  side-effect checks remain enabled.
+- Arbitrary page or locator JavaScript evaluation is intentionally unavailable
+  because side-effect checks do not prevent credential reads.
 - `rudder_browser_read { tabId }` returns bounded visible text and opaque refs
   for the legacy compact flow.
 
 ### Interaction
 
 - Locator actions are `click`, `dblclick`, `fill`, `type`, `press`, `check`,
-  `uncheck`, `setChecked`, `select`, `wait`, `hover`, `scroll`, `drag`, and
-  `setFiles`.
+  `uncheck`, `setChecked`, `select`, `wait`, `hover`, `scroll`, and `drag`.
 - Click options include mouse button, modifiers, optional navigation
   expectation, and an atomic dialog response.
 - Locator navigation expectations capture the main-frame loader and event
   sequence before the action. Success requires a new main-frame commit (or
   same-document navigation) plus the requested load state; the old document
   cannot satisfy the wait.
-- `setFiles` accepts one to ten absolute paths. Files are resolved and checked
-  before Chromium receives them; aggregate upload size is capped at 25 MB.
+- File upload is disabled until Rudder can bind a run-owned staged handle rather
+  than trusting a model-supplied filesystem path.
 - `rudder_browser_cua` supports coordinate `click`, `doubleClick`, `move`,
   `scroll`, `drag`, `keypress`, `type`, and read-only `elementInfo`.
 - `rudder_browser_dom_cua` supports `get`, node `click`, `doubleClick`,
@@ -123,7 +122,8 @@ User-visible tabs do not consume this Agent tab quota.
 ### Dialogs, Evidence, And Artifacts
 
 - `rudder_browser_dialog { tabId, action, promptText? }` gets, accepts, or
-  dismisses an alert, confirm, prompt, or before-unload dialog.
+  dismisses an alert, confirm, or before-unload dialog. JavaScript prompts are
+  dismissal-only in Electron; acceptance fails closed after dismissal.
 - `rudder_browser_screenshot` supports viewport, full-page, explicit clip, or
   unique-locator PNG/JPEG captures. Decoded image bytes are capped at 10 MB.
   Full-page dimensions beyond Chromium's 16384-pixel limit fail explicitly
@@ -132,9 +132,9 @@ User-visible tabs do not consume this Agent tab quota.
   level or substring and clear the buffer.
 - `rudder_browser_clipboard` reads, writes, or clears a virtual run clipboard.
   Text, binary Base64 entries, MIME types, and presentation style are bounded.
-  The same state is bridged to `navigator.clipboard` in every page frame. CUA
-  copy, cut, and paste chords are intercepted and never reach the native OS
-  clipboard path.
+  State remains in Desktop memory and is never installed on
+  `navigator.clipboard`. Explicit CUA copy, cut, and paste chords transfer only
+  the focused selection and never reach the native OS clipboard path.
 - `rudder_browser_download` downloads explicit locator media or arms one
   download-trigger click. Each artifact is capped at 25 MB.
 - `rudder_browser_assets` first creates an inventory, then bundles an explicit
@@ -143,7 +143,7 @@ User-visible tabs do not consume this Agent tab quota.
   as soon as a byte limit is crossed; bundle admission is serialized per run.
   Navigation makes an inventory stale and unknown requested ids are rejected;
   callers must list the current page again.
-- `rudder_browser_content` exports HTML, text, or PDF, or an eligible Google
+- `rudder_browser_content` exports text or PDF, or an eligible Google
   Doc, Sheet, or Slides page to `pdf`, `md`, `docx`, `xlsx`, `csv`, or `pptx`.
   Content exports are capped at 25 MB.
 - `rudder_browser_wait` waits for a URL substring, text, text disappearance, or
@@ -160,7 +160,7 @@ API URL, or key. Browser authorization requires a run-scoped Agent JWT; a run
 header is only a matching assertion.
 
 Browser request bodies are marked sensitive before HTTP error logging. Values,
-clipboard data, evaluate arguments, prompt text, upload paths, and Broker tokens
+clipboard data, prompt text, and Broker tokens
 are never written as durable request-body diagnostics. Activity records contain
 only action, status, safe origin, tab id, and stable error code.
 

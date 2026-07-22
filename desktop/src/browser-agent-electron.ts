@@ -155,18 +155,32 @@ export function createElectronBrowserAgentTabFactory(options: {
       return new Promise<void>((resolve, reject) => {
         const cleanup = () => {
           contents.removeListener("did-finish-load", handleFinish);
+          contents.removeListener("did-navigate-in-page", handleInPageNavigation);
           contents.removeListener("did-fail-load", handleFailure);
         };
         const handleFinish = () => {
           cleanup();
           resolve();
         };
-        const handleFailure = () => {
+        const handleInPageNavigation = (_event: unknown, _url: string, isMainFrame: boolean) => {
+          if (!isMainFrame) return;
+          cleanup();
+          resolve();
+        };
+        const handleFailure = (
+          _event: unknown,
+          _errorCode?: number,
+          _errorDescription?: string,
+          _validatedURL?: string,
+          isMainFrame = true,
+        ) => {
+          if (!isMainFrame) return;
           cleanup();
           reject(new Error("Browser navigation failed."));
         };
         contents.once("did-finish-load", handleFinish);
-        contents.once("did-fail-load", handleFailure);
+        contents.on("did-navigate-in-page", handleInPageNavigation);
+        contents.on("did-fail-load", handleFailure);
         navigate();
       });
     };

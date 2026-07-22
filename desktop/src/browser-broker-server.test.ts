@@ -40,6 +40,7 @@ describe("Desktop Browser Broker server", () => {
       expect(execute).toHaveBeenCalledWith({
         ...command,
         deadlineAt: expect.any(Number),
+        signal: expect.any(AbortSignal),
       });
     } finally {
       await broker.stop();

@@ -97,7 +97,6 @@ describe("agent-v1 registry", () => {
       "browser.locator",
       "browser.cua",
       "browser.dom-cua",
-      "browser.evaluate",
       "browser.dialog",
       "browser.clipboard",
       "browser.logs",

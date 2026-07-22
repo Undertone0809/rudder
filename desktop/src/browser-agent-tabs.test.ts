@@ -349,6 +349,42 @@ describe("Browser Agent tab controller", () => {
     ]);
   });
 
+  it("keeps serialized clipboard commands below the one MiB Broker limit", async () => {
+    const { controller } = createHarness();
+    await expect(controller.execute({
+      identity: owner,
+      action: "clipboard",
+      args: {
+        action: "write",
+        items: [{ entries: [{ mimeType: "application/octet-stream", base64: "a".repeat(650_001) }] }],
+      },
+    })).rejects.toMatchObject({ code: "browser_invalid_argument" });
+  });
+
+  it("cancels an admitted operation immediately when its transport disconnects", async () => {
+    const { controller, tabs } = createHarness();
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+    tabs[0]!.assetBundleGate = new Promise<void>(() => undefined);
+    const abort = new AbortController();
+    const operation = controller.execute({
+      identity: owner,
+      action: "assets",
+      args: {
+        tabId: "tab-1",
+        action: "bundle",
+        inventoryId: "inventory-1",
+        assetIds: ["asset-1"],
+      },
+      signal: abort.signal,
+    });
+    await vi.waitFor(() => expect(tabs[0]?.advancedCalls).toHaveLength(1));
+
+    abort.abort();
+
+    await expect(operation).rejects.toMatchObject({ code: "browser_unavailable" });
+    await vi.waitFor(() => expect(tabs[0]?.destroyed).toBe(true));
+  });
+
   it("routes advanced Browser actions only through an owned tab", async () => {
     const { controller } = createHarness();
     await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });

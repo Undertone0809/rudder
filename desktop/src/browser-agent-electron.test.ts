@@ -170,6 +170,23 @@ describe("Electron Browser Agent tab adapter", () => {
     expect(safeEvent.preventDefault).not.toHaveBeenCalled();
   });
 
+  it("settles history navigation on main-frame SPA events and ignores subframe failures", async () => {
+    const { factory, handlers, webContents } = createHarness();
+    const tab = await factory({
+      tabId: "tab-1",
+      identity: { orgId: "org-1", agentId: "agent-1", runId: "run-1" },
+    });
+    webContents.navigationHistory.goBack.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        handlers.get("did-fail-load")?.({}, -3, "aborted", "https://example.com/frame", false);
+        handlers.get("did-navigate-in-page")?.({}, "https://example.com/previous#section", true);
+      });
+    });
+
+    await expect(tab.goBack()).resolves.toBeUndefined();
+    expect(webContents.navigationHistory.goBack).toHaveBeenCalledOnce();
+  });
+
   it("waits for the advanced driver to dispose before destroying the Browser window", async () => {
     const { browserWindow, factory, webContents } = createHarness();
     const tab = await factory({

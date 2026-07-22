@@ -295,7 +295,6 @@ describe("Browser routes", () => {
     }],
     ["cua", { tabId: "tab-1", action: "click", x: 20, y: 30, keys: ["Shift"] }],
     ["dom_cua", { tabId: "tab-1", action: "get", maxNodes: 500 }],
-    ["evaluate", { tabId: "tab-1", function: "() => document.title", arg: null }],
     ["dialog", { tabId: "tab-1", action: "get" }],
     ["clipboard", { action: "writeText", text: "session-only" }],
     ["logs", { tabId: "tab-1", levels: ["warn", "error"], limit: 20 }],
@@ -305,7 +304,7 @@ describe("Browser routes", () => {
       locator: { strategy: "css", value: "img.hero" },
     }],
     ["assets", { tabId: "tab-1", action: "list" }],
-    ["content", { tabId: "tab-1", format: "html" }],
+    ["content", { tabId: "tab-1", format: "text" }],
     ["wait", { tabId: "tab-1", text: "Ready", timeoutMs: 5_000 }],
     ["read", { tabId: "tab-1" }],
     ["click", { tabId: "tab-1", ref: "ref-1" }],
@@ -324,14 +323,26 @@ describe("Browser routes", () => {
     });
   });
 
+  it("does not expose arbitrary evaluation as a Browser route", async () => {
+    const response = await request(createApp(runtimeActor()))
+      .post("/api/browser/evaluate")
+      .send({ tabId: "tab-1", function: "() => document.cookie" });
+
+    expect(response.status).toBe(404);
+    expect(registry.forward).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["locator", { tabId: "tab-1", action: "click", locator: { strategy: "role", value: "button" }, rawCdp: "Runtime.evaluate" }],
     ["locator", { tabId: "tab-1", action: "count", locator: { strategy: "role", value: "button" }, dialogResponse: { accept: true } }],
+    ["locator", { tabId: "tab-1", action: "setFiles", locator: { strategy: "css", value: "input[type=file]" }, paths: ["/etc/hosts"] }],
     ["cua", { tabId: "tab-1", action: "click", x: 20 }],
     ["dom_cua", { tabId: "tab-1", action: "click" }],
     ["clipboard", { action: "write", items: [{ entries: [{ mimeType: "text/plain", text: "a", base64: "YQ==" }] }] }],
+    ["download", { tabId: "tab-1", mode: "trigger", locator: { strategy: "css", value: "a" }, timeoutMs: 30_001 }],
     ["assets", { tabId: "tab-1", action: "bundle" }],
     ["assets", { tabId: "tab-1", action: "bundle", inventoryId: "11111111-1111-4111-8111-111111111111" }],
+    ["content", { tabId: "tab-1", format: "html" }],
     ["wait", { tabId: "tab-1", url: "example", urlRegex: true }],
     ["locator", {
       tabId: "tab-1",

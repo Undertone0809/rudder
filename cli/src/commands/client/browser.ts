@@ -132,7 +132,6 @@ export function registerBrowserCommands(program: Command): void {
     "locator",
     "cua",
     "dom-cua",
-    "evaluate",
     "dialog",
     "logs",
     "download",

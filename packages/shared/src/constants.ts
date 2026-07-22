@@ -310,7 +310,6 @@ export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_browser_locator",
   "rudder_browser_cua",
   "rudder_browser_dom_cua",
-  "rudder_browser_evaluate",
   "rudder_browser_dialog",
   "rudder_browser_clipboard",
   "rudder_browser_logs",

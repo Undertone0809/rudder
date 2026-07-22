@@ -84,10 +84,18 @@ export async function startBrowserBrokerServer(options: {
       sendJson(response, 401, { ok: false, error: { code: "browser_broker_unauthorized", message: "Unauthorized." } });
       return;
     }
+    const operationAbort = new AbortController();
+    const abortOperation = () => operationAbort.abort();
+    const abortOnEarlyClose = () => {
+      if (!response.writableEnded) operationAbort.abort();
+    };
+    request.once("aborted", abortOperation);
+    response.once("close", abortOnEarlyClose);
     try {
       const command = {
         ...await readJsonBody(request) as BrowserAgentCommand,
         deadlineAt: Date.now() + BROWSER_COMMAND_DEADLINE_MS,
+        signal: operationAbort.signal,
       };
       const result = await options.execute(command);
       sendJson(response, 200, { ok: true, result });
@@ -97,6 +105,9 @@ export async function startBrowserBrokerServer(options: {
         ok: false,
         error: { code: safeError.code, message: safeError.message },
       });
+    } finally {
+      request.off("aborted", abortOperation);
+      response.off("close", abortOnEarlyClose);
     }
   });
 

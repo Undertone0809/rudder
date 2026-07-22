@@ -112,6 +112,8 @@ describe("Browser Agent advanced driver", () => {
         <button id="continue">Continue</button>
         <label for="query">Query</label>
         <input id="query" placeholder="Search" />
+        <input id="password-secret" type="password" value="hunter2" />
+        <input id="hidden-secret" type="hidden" value="hidden-token" data-auth-token="raw-token" />
         <input id="agree" type="checkbox" />
         <input id="upload" type="file" />
         <select id="color"><option value="red">Red</option><option value="blue">Blue</option></select>
@@ -197,7 +199,7 @@ describe("Browser Agent advanced driver", () => {
     expect(harness.browserDebugger.detach).toHaveBeenCalledTimes(1);
   });
 
-  it("uses CDP for trusted CUA, side-effect-checked evaluation, dialogs, and screenshots", async () => {
+  it("uses CDP for trusted CUA, isolated virtual clipboard shortcuts, dialogs, and screenshots", async () => {
     const harness = createHarness();
     const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
 
@@ -222,11 +224,8 @@ describe("Browser Agent advanced driver", () => {
     expect(query.value).toBe("private clipboardprivate");
     expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchKeyEvent", expect.objectContaining({ key: "v" }));
 
-    await expect(driver.execute("evaluate", { function: "() => document.title" })).resolves.toEqual({ value: "Example title" });
-    expect(harness.sendCommand).toHaveBeenCalledWith("Runtime.evaluate", expect.objectContaining({
-      throwOnSideEffect: true,
-      returnByValue: true,
-    }));
+    await expect(driver.execute("evaluate" as any, { function: "() => document.cookie" }))
+      .rejects.toThrow(/unsupported|disabled/i);
 
     harness.debuggerHandlers.get("message")?.({}, "Page.javascriptDialogOpening", {
       type: "prompt",
@@ -236,8 +235,8 @@ describe("Browser Agent advanced driver", () => {
     await expect(driver.execute("dialog", { action: "get" })).resolves.toMatchObject({
       dialog: { type: "prompt", message: "Name?" },
     });
-    await driver.execute("dialog", { action: "accept", promptText: "Agent" });
-    expect(harness.sendCommand).toHaveBeenCalledWith("Page.handleJavaScriptDialog", { accept: true, promptText: "Agent" });
+    await expect(driver.execute("dialog", { action: "accept", promptText: "Agent" })).rejects.toThrow(/unavailable.*dismissed/i);
+    expect(harness.sendCommand).toHaveBeenCalledWith("Page.handleJavaScriptDialog", { accept: false });
 
     const screenshot = await driver.execute("screenshot", { fullPage: true, format: "png" }) as any;
     expect(screenshot.base64).toBe(harness.png.toString("base64"));
@@ -256,31 +255,19 @@ describe("Browser Agent advanced driver", () => {
     const callback = vi.fn((accepted: boolean) => {
       harness.debuggerHandlers.get("message")?.({}, "Page.javascriptDialogClosed", { result: accepted });
     });
-    const promptBridgeSource = harness.contents.executeJavaScript.mock.calls[0]?.[0] as string;
-    const markerLiteral = /const marker = ("[^"]+");/.exec(promptBridgeSource)?.[1];
-    const promptMarker = markerLiteral ? JSON.parse(markerLiteral) as string : "";
-    expect(promptMarker).toContain("__RUDDER_BROWSER_PROMPT_");
-
     harness.contentHandlers.get("-run-dialog")?.({
-      dialogType: "confirm",
-      messageText: `${promptMarker}${JSON.stringify({ message: "Name?", defaultPrompt: "Rudder" })}`,
-      defaultPromptText: "",
+      dialogType: "prompt",
+      messageText: "Name?",
+      defaultPromptText: "Rudder",
       frame: { url: "https://example.com/frame" },
     }, callback);
 
     await expect(driver.execute("dialog", { action: "get" })).resolves.toMatchObject({
       dialog: { type: "prompt", message: "Name?", defaultPrompt: "Rudder" },
     });
-    await expect(driver.execute("dialog", { action: "accept", promptText: "Agent" })).resolves.toMatchObject({
-      handled: true,
-      action: "accept",
-      type: "prompt",
-    });
-    expect(callback).toHaveBeenCalledWith(true, "Agent");
-    expect(harness.setCookie).toHaveBeenCalledWith(expect.objectContaining({
-      url: "https://example.com/frame",
-      name: expect.stringContaining("__rudder_prompt_"),
-    }));
+    await expect(driver.execute("dialog", { action: "accept", promptText: "Agent" })).rejects.toThrow(/unavailable.*dismissed/i);
+    expect(callback).toHaveBeenCalledWith(false, "");
+    expect(harness.setCookie).not.toHaveBeenCalled();
     expect(electronDefaultHandler).not.toHaveBeenCalled();
     expect(harness.sendCommand).not.toHaveBeenCalledWith("Page.handleJavaScriptDialog", expect.anything());
 
@@ -323,25 +310,41 @@ describe("Browser Agent advanced driver", () => {
   it("handles an expected locator prompt atomically", async () => {
     const harness = createHarness();
     const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
-    const promptBridgeSource = harness.contents.executeJavaScript.mock.calls[0]?.[0] as string;
-    const markerLiteral = /const marker = ("[^"]+");/.exec(promptBridgeSource)?.[1];
-    const promptMarker = markerLiteral ? JSON.parse(markerLiteral) as string : "";
     const callback = vi.fn((accepted: boolean) => {
       if (accepted) harness.debuggerHandlers.get("message")?.({}, "Page.javascriptDialogClosed", { result: true });
     });
     harness.sendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
       if (method === "Input.dispatchMouseEvent" && params?.type === "mouseReleased") {
-        await new Promise<void>((resolve) => {
-          const settledCallback = vi.fn((accepted: boolean, promptText: string) => {
-            callback(accepted, promptText);
-            resolve();
-          });
-          harness.contentHandlers.get("-run-dialog")?.({
-            dialogType: "confirm",
-            messageText: `${promptMarker}${JSON.stringify({ message: "Name?", defaultPrompt: "Rudder" })}`,
-            defaultPromptText: "",
-            frame: { url: "https://example.com/form" },
-          }, settledCallback);
+        harness.contentHandlers.get("-run-dialog")?.({
+          dialogType: "prompt",
+          messageText: "Name?",
+          defaultPromptText: "Rudder",
+          frame: { url: "https://example.com/form" },
+        }, callback);
+      }
+      return { method, params };
+    });
+
+    await expect(driver.execute("locator", {
+      action: "click",
+      locator: { strategy: "css", value: "#continue" },
+      dialogResponse: { accept: true, promptText: "Agent" },
+    })).rejects.toThrow(/unavailable.*dismissed/i);
+    expect(callback).toHaveBeenCalledWith(false, "");
+    expect(harness.setCookie).not.toHaveBeenCalled();
+
+    await driver.dispose();
+  });
+
+  it("handles an expected locator prompt through CDP when Electron does not run its dialog callback", async () => {
+    const harness = createHarness();
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+    harness.sendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === "Input.dispatchMouseEvent" && params?.type === "mouseReleased") {
+        harness.debuggerHandlers.get("message")?.({}, "Page.javascriptDialogOpening", {
+          type: "prompt",
+          message: "Name?",
+          defaultPrompt: "Rudder",
         });
       }
       return { method, params };
@@ -351,12 +354,10 @@ describe("Browser Agent advanced driver", () => {
       action: "click",
       locator: { strategy: "css", value: "#continue" },
       dialogResponse: { accept: true, promptText: "Agent" },
-    })).resolves.toMatchObject({ performed: true, box: { x: 10, y: 20, width: 100, height: 30 } });
-    expect(callback).toHaveBeenCalledWith(true, "Agent");
-    expect(harness.setCookie).toHaveBeenCalledWith(expect.objectContaining({
-      url: "https://example.com/form",
-      value: expect.stringContaining(Buffer.from("Agent").toString("base64")),
-    }));
+    })).rejects.toThrow(/unavailable.*dismissed/i);
+    expect(harness.sendCommand).toHaveBeenCalledWith("Page.handleJavaScriptDialog", {
+      accept: false,
+    });
 
     await driver.dispose();
   });
@@ -387,7 +388,7 @@ describe("Browser Agent advanced driver", () => {
     await driver.dispose();
   });
 
-  it("uploads local files, inspects coordinates, and exports bounded page content", async () => {
+  it("fails closed for model-supplied upload paths, inspects coordinates, and exports bounded page content", async () => {
     const harness = createHarness();
     const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
     const directory = await fs.mkdtemp("/tmp/rudder-browser-upload-test-");
@@ -398,20 +399,17 @@ describe("Browser Agent advanced driver", () => {
         action: "setFiles",
         locator: { strategy: "css", value: "#upload" },
         paths: [uploadPath],
-      })).resolves.toMatchObject({ performed: true, fileCount: 1, names: ["fixture.txt"] });
-      const resolvedUploadPath = await fs.realpath(uploadPath);
-      expect(harness.sendCommand).toHaveBeenCalledWith("DOM.setFileInputFiles", {
-        nodeId: 2,
-        files: [resolvedUploadPath],
-      });
+      })).rejects.toThrow(/disabled|unsupported/i);
+      expect(harness.sendCommand).not.toHaveBeenCalledWith("DOM.setFileInputFiles", expect.anything());
 
       await expect(driver.execute("cua", { action: "elementInfo", x: 60, y: 35 })).resolves.toMatchObject({
         elements: [expect.objectContaining({ tag: "button", name: "Continue" })],
       });
 
-      const exported = await driver.execute("content", { format: "html" }) as any;
+      await expect(driver.execute("content", { format: "html" })).rejects.toThrow(/disabled|unsupported/i);
+      const exported = await driver.execute("content", { format: "text" }) as any;
       await expect(fs.readFile(exported.path, "utf8")).resolves.toBe("Example title");
-      expect(exported).toMatchObject({ format: "html", mimeType: "text/html" });
+      expect(exported).toMatchObject({ format: "text", mimeType: "text/plain" });
       await driver.dispose();
       await expect(fs.stat(exported.directoryPath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
@@ -419,7 +417,7 @@ describe("Browser Agent advanced driver", () => {
     }
   });
 
-  it("resolves locator, evaluation, and upload operations inside a cross-origin frame context", async () => {
+  it("resolves safe locator operations inside a cross-origin frame context", async () => {
     const harness = createHarness();
     const defaultImplementation = harness.sendCommand.getMockImplementation();
     harness.sendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
@@ -473,28 +471,76 @@ describe("Browser Agent advanced driver", () => {
       x: 28,
       y: 41,
     }));
-    await expect(driver.execute("evaluate", {
-      function: "(element) => element.textContent",
-      locator,
-    })).resolves.toEqual({ value: "Frame target" });
+    await driver.dispose();
+  });
 
-    const directory = await fs.mkdtemp("/tmp/rudder-browser-frame-upload-test-");
-    const uploadPath = `${directory}/frame.txt`;
-    await fs.writeFile(uploadPath, "frame upload", "utf8");
-    try {
-      await expect(driver.execute("locator", {
-        action: "setFiles",
-        locator,
-        paths: [uploadPath],
-      })).resolves.toMatchObject({ performed: true, fileCount: 1 });
-      expect(harness.sendCommand).toHaveBeenCalledWith("DOM.setFileInputFiles", {
-        backendNodeId: 91,
-        files: [await fs.realpath(uploadPath)],
-      });
-    } finally {
-      await driver.dispose();
-      await fs.rm(directory, { recursive: true, force: true });
-    }
+  it("never exposes credentials through snapshots, locator reads, or raw Chromium trees", async () => {
+    const harness = createHarness();
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+
+    const snapshot = await driver.execute("snapshot", { maxNodes: 20 }) as unknown;
+    const serialized = JSON.stringify(snapshot);
+    expect(serialized).not.toContain("hunter2");
+    expect(serialized).not.toContain("hidden-token");
+    expect(serialized).not.toContain("raw-token");
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("DOMSnapshot.captureSnapshot", expect.anything());
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Accessibility.getFullAXTree", expect.anything());
+
+    await expect(driver.execute("locator", {
+      action: "value",
+      locator: { strategy: "css", value: "#password-secret" },
+    })).resolves.toEqual({ value: null, redacted: true });
+    await expect(driver.execute("locator", {
+      action: "attribute",
+      name: "value",
+      locator: { strategy: "css", value: "#hidden-secret" },
+    })).resolves.toEqual({ value: null, redacted: true });
+    await driver.dispose();
+  });
+
+  it("stops DOM traversal at maxNodes without requesting a Chromium full-tree capture", async () => {
+    const harness = createHarness();
+    const container = document.createElement("section");
+    for (let index = 0; index < 10_000; index += 1) container.append(document.createElement("span"));
+    document.body.append(container);
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+
+    const snapshot = await driver.execute("snapshot", { depth: 30, maxNodes: 25 }) as any;
+
+    expect(snapshot.nodeCount).toBe(25);
+    expect(snapshot.truncated).toBe(true);
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("DOMSnapshot.captureSnapshot", expect.anything());
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Accessibility.getFullAXTree", expect.anything());
+    await driver.dispose();
+  }, 15_000);
+
+  it("does not install the run clipboard in the page world", async () => {
+    const harness = createHarness();
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+    const injectedSources = harness.sendCommand.mock.calls
+      .filter(([method]) => method === "Page.addScriptToEvaluateOnNewDocument")
+      .map(([, params]) => String(params?.source || ""))
+      .join("\n");
+    expect(injectedSources).not.toContain("navigator, \"clipboard\"");
+    expect(injectedSources).not.toContain("navigator.clipboard");
+    await driver.dispose();
+  });
+
+  it("rejects a connected DOM node whose immutable interaction fingerprint changed", async () => {
+    const harness = createHarness();
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+    const dom = await driver.execute("dom_cua", { action: "get" }) as any;
+    const serialized = JSON.stringify(dom.root);
+    const nodeId = /"nodeId":"([^"]+)"[^}]*"tag":"button"/.exec(serialized)?.[1];
+    const button = document.querySelector("#continue") as HTMLButtonElement;
+    const clicked = vi.fn();
+    button.addEventListener("click", clicked);
+    button.textContent = "Delete account";
+    button.setAttribute("aria-label", "Delete account");
+
+    await expect(driver.execute("dom_cua", { action: "click", nodeId })).rejects.toThrow(/stale|fresh snapshot/i);
+    expect(clicked).not.toHaveBeenCalled();
+    await driver.dispose();
   });
 
   it("buffers logs, inventories assets, downloads media, and removes artifacts on dispose", async () => {
