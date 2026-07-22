@@ -70,6 +70,15 @@ rl.on("line", (line) => {
   if (message.method === "turn/start") {
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (process.env.RUDDER_TEST_USER_MESSAGE_TRANSCRIPT === "1") {
+      const item = {
+        type: "userMessage",
+        id: "user-message-1",
+        content: [{ type: "text", text: "Initial request" }],
+      };
+      send({ method: "item/started", params: { threadId, turnId, item } });
+      send({ method: "item/completed", params: { threadId, turnId, item } });
+    }
     if (process.env.RUDDER_TEST_COMMAND_TRANSCRIPT === "1") {
       send({ method: "item/started", params: {
         threadId,
@@ -151,6 +160,32 @@ afterEach(async () => {
 });
 
 describe("executeCodexAppServerChat", () => {
+  it("does not emit provider user-message lifecycle items", async () => {
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_USER_MESSAGE_TRANSCRIPT: "1",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+      } as Record<string, string>,
+      prompt: "Initial request",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain('\"type\":\"userMessage\"');
+    expect(result.stdout).toContain('\"type\":\"command_execution\"');
+  });
+
   it("attaches the trusted runtime cwd to command transcript entries", async () => {
     const stdoutLines: string[] = [];
     const result = await executeCodexAppServerChat({

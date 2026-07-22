@@ -1,9 +1,9 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       source_ref:
@@ -22,75 +22,91 @@ on:
         type: string
 
 permissions:
-  actions: write
-  contents: write
-  id-token: write
-
-concurrency:
-  group: release-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || 'push' }}
-  cancel-in-progress: false
+  contents: read
 
 jobs:
-  verify:
-    name: Verify ${{ matrix.os }}
-    if: (github.event_name == 'push' && github.repository == 'Undertone0809/rudder' && !contains(github.event.head_commit.message, '[skip release]')) || github.event_name == 'workflow_dispatch'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            test: full
-          - os: macos-latest
-            test: full
-          - os: windows-latest
-            test: cli-start
-    env:
-      CI: true
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-    defaults:
-      run:
-        shell: bash
+  preflight:
+    name: Release preflight
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.repository.full_name == github.repository &&
+       !contains(github.event.workflow_run.head_commit.message, '[skip release]'))
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      version: ${{ steps.release-preflight.outputs.version }}
     steps:
+      - name: Confirm stable publish authorization
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
+        env:
+          CONFIRM_STABLE: ${{ inputs.confirm_stable }}
+        run: test "$CONFIRM_STABLE" = "PUBLISH STABLE"
+
+      - name: Require release repository safeguards
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_SAFEGUARDS_CONFIGURED: ${{ vars.RELEASE_SAFEGUARDS_CONFIGURED }}
+        run: |
+          if [ "$RELEASE_SAFEGUARDS_CONFIGURED" != "true" ]; then
+            echo "Configure npm-stable reviewers, main protection, and Actions PR creation, then set RELEASE_SAFEGUARDS_CONFIGURED=true." >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.event.workflow_run.head_sha }}
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
+      - name: Resolve immutable release source
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.15.4 --activate
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm -r typecheck
-
-      - name: Unit tests
-        if: matrix.test == 'full'
-        run: pnpm test:run --maxWorkers=1
-
-      - name: CLI start tests
-        if: matrix.test == 'cli-start'
-        run: pnpm -s exec vitest run cli/src/__tests__/start.test.ts
-
-      - name: Build
+      - name: Require successful CI for exact source
+        if: github.event_name == 'workflow_dispatch'
         env:
-          RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
-          RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
-        run: pnpm build
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          count="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f head_sha="$SOURCE_SHA" \
+            -f status=success \
+            -f per_page=100 \
+            --jq '.workflow_runs | length')"
+          if [ "$count" -lt 1 ]; then
+            echo "No successful CI workflow found for exact source $SOURCE_SHA." >&2
+            exit 1
+          fi
+
+      - name: Release preflight
+        id: release-preflight
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+            git checkout -B main "${{ steps.source.outputs.sha }}"
+            version="$(./scripts/release.sh canary --preflight)"
+          else
+            version="$(./scripts/release.sh stable --preflight)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Release source: ${{ steps.source.outputs.sha }}"
+          echo "Release version: $version"
 
   canary:
     name: Publish npm canary
-    needs: verify
-    if: github.event_name == 'push' && github.repository == 'Undertone0809/rudder' && !contains(github.event.head_commit.message, '[skip release]')
+    needs: preflight
+    if: github.event_name == 'workflow_run'
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment: npm-canary
     env:
@@ -103,6 +119,14 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.source_sha }}
+
+      - name: Pin canary source to main
+        run: git checkout -B main "${{ needs.preflight.outputs.source_sha }}"
+
+      - name: Locked canary preflight
+        id: locked-preflight
+        run: echo "version=$(./scripts/release.sh canary --preflight)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v6
         with:
@@ -117,22 +141,21 @@ jobs:
           npm --version
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B main "$GITHUB_SHA"
 
       - name: Publish canary
         id: publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          version="$(./scripts/release.sh canary --print-version)"
+          version="${{ steps.locked-preflight.outputs.version }}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          ./scripts/release.sh canary --skip-verify
+          ./scripts/release.sh canary --skip-verify --expected-version "$version"
           git push origin "refs/tags/canary/v${version}"
 
       - name: Start desktop release build
@@ -140,7 +163,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="canary/v${{ steps.publish.outputs.version }}"
-          gh workflow run desktop-release.yml --ref "$tag" -f release_tag="$tag"
+          gh workflow run desktop-release.yml \
+            --ref main \
+            -f release_tag="$tag" \
+            -f source_ref="$tag"
 
       - name: Wait for desktop release assets
         env:
@@ -164,8 +190,10 @@ jobs:
 
   stable-dry-run:
     name: Preview stable release
-    needs: verify
+    needs: preflight
     if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -175,7 +203,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ needs.preflight.outputs.source_sha }}
 
       - uses: actions/setup-node@v6
         with:
@@ -190,15 +218,22 @@ jobs:
           npm --version
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Preview stable publish
         run: ./scripts/release.sh stable --dry-run --skip-verify
 
   stable:
     name: Publish stable release
-    needs: verify
+    needs: preflight
     if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment: npm-stable
     env:
@@ -216,7 +251,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ needs.preflight.outputs.source_sha }}
 
       - uses: actions/setup-node@v6
         with:
@@ -231,7 +266,7 @@ jobs:
           npm --version
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Configure git identity
         run: |
@@ -244,16 +279,21 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="$(./scripts/release.sh stable --print-version)"
+          version="${{ needs.preflight.outputs.version }}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          ./scripts/release.sh stable --skip-verify
+          ./scripts/release.sh stable --skip-verify --expected-version "$version"
           git push origin "refs/tags/v${version}"
           PUBLISH_REMOTE=origin ./scripts/create-github-release.sh "${version}"
 
       - name: Start desktop release build
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run desktop-release.yml --ref "v${{ steps.publish.outputs.version }}" -f release_tag="v${{ steps.publish.outputs.version }}"
+        run: |
+          tag="v${{ steps.publish.outputs.version }}"
+          gh workflow run desktop-release.yml \
+            --ref main \
+            -f release_tag="$tag" \
+            -f source_ref="$tag"
 
       - name: Wait for desktop release assets
         env:
@@ -275,12 +315,59 @@ jobs:
             --remote origin \
             --stable-version "${{ steps.publish.outputs.version }}"
 
+  next-release-base:
+    name: Propose next release base
+    needs:
+      - preflight
+      - stable
+    if: needs.stable.result == 'success'
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.source_sha }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create next patch version pull request
+        id: next-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/prepare-next-release.mjs \
+            --stable-version "${{ needs.stable.outputs.version }}" \
+            --repo "$GITHUB_REPOSITORY"
+
+      - name: Start CI for next release base
+        if: steps.next-release.outputs.action == 'created' || steps.next-release.outputs.action == 'existing'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run ci.yml \
+            --ref main \
+            -f source_sha="${{ steps.next-release.outputs.head_sha }}"
+          {
+            echo "### Next release base"
+            echo "PR: ${{ steps.next-release.outputs.pull_request_url }}"
+            echo "Trusted CI dispatched for ${{ steps.next-release.outputs.head_sha }}."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   public-install-smoke:
     name: Public install smoke
     needs:
       - canary
       - stable
     if: always() && (needs.canary.result == 'success' || needs.stable.result == 'success')
+    permissions:
+      contents: read
     uses: ./.github/workflows/public-install-smoke.yml
     with:
       package_spec: "@rudderhq/cli@${{ needs.canary.outputs.version || needs.stable.outputs.version }}"

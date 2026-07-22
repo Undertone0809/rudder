@@ -1,7 +1,10 @@
 import { Button } from "@/components/ui/button";
+import { WorkspaceFileOpenMenu } from "@/components/workspaces/WorkspaceLaunchControls";
 import { cn } from "@/lib/utils";
+import type { WorkspaceOpenTargetId, WorkspaceUnsupportedFileLaunchTarget } from "@/lib/workspace-preferences";
 import { Download, FileAudio2, FileVideo2 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, type Ref } from "react";
+import { WorkspacePdfPreview } from "./WorkspacePdfPreview";
 
 export function WorkspaceMediaPreview({
   kind,
@@ -102,5 +105,46 @@ export function WorkspaceMediaPreview({
         {actions}
       </div>
     </div>
+  );
+}
+export function WorkspaceLibraryBinaryPreview({
+  cacheKey,
+  kind,
+  src,
+  contentType,
+  title,
+  targets,
+  openingTargetId,
+  onOpenTarget,
+  scrollRef,
+}: {
+  cacheKey: string;
+  kind: "pdf" | "video" | "audio";
+  src: string;
+  contentType: string | null;
+  title: string;
+  targets: WorkspaceUnsupportedFileLaunchTarget[];
+  openingTargetId: WorkspaceOpenTargetId | null;
+  onOpenTarget: (target: WorkspaceUnsupportedFileLaunchTarget) => void;
+  scrollRef?: Ref<HTMLDivElement>;
+}) {
+  if (kind === "pdf") {
+    return (
+      <div ref={scrollRef} data-testid="org-workspaces-pdf-preview-scroll" className="scrollbar-auto-hide flex h-full min-h-[420px] flex-col overflow-hidden bg-[color:var(--surface-page)]">
+        <WorkspacePdfPreview className="h-full min-h-[420px]" showOpenAction src={src} testId="org-workspaces-pdf-preview" title={title} />
+      </div>
+    );
+  }
+  return (
+    <WorkspaceMediaPreview
+      key={cacheKey}
+      kind={kind}
+      src={src}
+      contentType={contentType}
+      title={title}
+      openAction={<WorkspaceFileOpenMenu targets={targets} openingTargetId={openingTargetId} onOpenTarget={onOpenTarget} testId="org-workspaces-media-open-menu" />}
+      className="h-full min-h-[420px]"
+      testId={`org-workspaces-${kind}-preview`}
+    />
   );
 }

@@ -342,6 +342,7 @@ export async function executeCodexAppServerChat(
       }
       if (notification.method === "item/started" || notification.method === "item/completed") {
         const item = normalizeThreadItem(params.item);
+        if (item.type === "userMessage") return;
         if (notification.method === "item/completed" && item.type === "agent_message") {
           finalAgentText = asString(item.text) || finalAgentText;
         }

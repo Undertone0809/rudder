@@ -19,6 +19,8 @@ channel=""
 dry_run=false
 skip_verify=false
 print_version_only=false
+preflight_only=false
+expected_version=""
 tag_name=""
 
 cleanup_on_exit=false
@@ -26,7 +28,7 @@ cleanup_on_exit=false
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/release.sh <canary|stable> [--dry-run] [--skip-verify] [--print-version]
+  ./scripts/release.sh <canary|stable> [--dry-run] [--skip-verify] [--print-version] [--preflight] [--expected-version X.Y.Z]
 
 Examples:
   ./scripts/release.sh canary
@@ -34,6 +36,7 @@ Examples:
   ./scripts/release.sh stable
   ./scripts/release.sh stable --dry-run
   ./scripts/release.sh stable --print-version
+  ./scripts/release.sh stable --preflight
 
 Notes:
   - Stable releases publish the committed workspace semver under npm dist-tag
@@ -42,6 +45,10 @@ Notes:
     semver, publish under npm dist-tag "canary", and create git tag
     canary/v<version>-canary.N.
   - Stable release notes must already exist at releases/v<version>.md.
+  - --preflight checks the committed version, release notes, git tags, and npm
+    versions without installing dependencies, building, or publishing.
+  - --expected-version fails if a previously locked release version drifted
+    before the publish command acquired its release lock.
   - Canary publish payloads are version-rewritten temporarily and restored on
     exit. Stable releases publish the committed version directly.
 EOF
@@ -100,6 +107,12 @@ while [ $# -gt 0 ]; do
     --dry-run) dry_run=true ;;
     --skip-verify) skip_verify=true ;;
     --print-version) print_version_only=true ;;
+    --preflight) preflight_only=true ;;
+    --expected-version)
+      [ $# -ge 2 ] || release_fail "--expected-version requires a version."
+      expected_version="$2"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -166,6 +179,10 @@ else
   tag_name="$(stable_tag_name "$TARGET_STABLE_VERSION")"
 fi
 
+if [ -n "$expected_version" ] && [ "$TARGET_PUBLISH_VERSION" != "$expected_version" ]; then
+  release_fail "release version drifted after it was locked. Expected $expected_version but resolved $TARGET_PUBLISH_VERSION. Run preflight again under the release lock."
+fi
+
 if [ "$print_version_only" = true ]; then
   printf '%s\n' "$TARGET_PUBLISH_VERSION"
   exit 0
@@ -174,7 +191,6 @@ fi
 NOTES_FILE="$(release_notes_file "$TARGET_STABLE_VERSION")"
 
 require_clean_worktree
-require_npm_publish_auth "$dry_run"
 
 if [ "$channel" = "stable" ] && [ ! -f "$NOTES_FILE" ]; then
   release_fail "stable release notes file is required at $NOTES_FILE before publishing stable."
@@ -194,6 +210,13 @@ while IFS= read -r package_name; do
     release_fail "npm version ${package_name}@${TARGET_PUBLISH_VERSION} already exists."
   fi
 done <<< "$(printf '%s\n' "${PUBLIC_PACKAGE_NAMES[@]}")"
+
+if [ "$preflight_only" = true ]; then
+  printf '%s\n' "$TARGET_PUBLISH_VERSION"
+  exit 0
+fi
+
+require_npm_publish_auth "$dry_run"
 
 release_info ""
 release_info "==> Release plan"
@@ -216,6 +239,7 @@ if [ "$channel" = "stable" ]; then
 fi
 
 set_cleanup_trap
+workspace_built=false
 
 if [ "$skip_verify" = false ]; then
   release_info ""
@@ -224,6 +248,7 @@ if [ "$skip_verify" = false ]; then
   pnpm -r typecheck
   pnpm test:run
   pnpm build
+  workspace_built=true
 else
   release_info ""
   release_info "==> Step 1/7: Verification gate skipped (--skip-verify)"
@@ -232,7 +257,11 @@ fi
 release_info ""
 release_info "==> Step 2/7: Building workspace artifacts..."
 cd "$REPO_ROOT"
-pnpm build
+if [ "$workspace_built" = true ]; then
+  release_info "  ✓ Reusing workspace build from verification gate"
+else
+  pnpm build
+fi
 bash "$REPO_ROOT/scripts/prepare-server-ui-dist.sh"
 [ -d "$BUNDLED_SKILLS_DIR" ] || release_fail "bundled skills directory is missing: $BUNDLED_SKILLS_DIR"
 for pkg_dir in "${PUBLISH_SKILLS_PACKAGE_DIRS[@]}"; do

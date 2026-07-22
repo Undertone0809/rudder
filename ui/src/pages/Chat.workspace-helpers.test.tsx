@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
+import { chatsApi } from "@/api/chats";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chatsApi } from "@/api/chats";
 import { useChatDraftQueries } from "./Chat.workspace-helpers";
 
 (

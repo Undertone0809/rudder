@@ -77,6 +77,17 @@ function runPrintVersion(repo, env = {}) {
   });
 }
 
+function runPreflight(repo, channel, env = {}) {
+  return spawnSync("./scripts/release.sh", [channel, "--preflight"], {
+    cwd: repo,
+    env: {
+      ...process.env,
+      ...env,
+    },
+    encoding: "utf8",
+  });
+}
+
 function runWaitForNpmPackageVersions(repo, packageInfo, env = {}) {
   return spawnSync("bash", [
     "-c",
@@ -147,6 +158,41 @@ describe("release canary base guard", () => {
     expect(result.stderr).toContain("npm package @rudderhq/cli@0.2.2 exists");
     expect(result.stderr).toContain("0.2.2 -> 0.2.3");
   }, 15000);
+});
+
+describe("release fast preflight", () => {
+  it("rejects a version that drifted after the release lock was acquired", () => {
+    const { repo } = createReleaseRepo();
+
+    const result = spawnSync("./scripts/release.sh", [
+      "stable",
+      "--preflight",
+      "--expected-version",
+      "0.2.3",
+    ], { cwd: repo, env: process.env, encoding: "utf8" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Expected 0.2.3 but resolved 0.2.2");
+    expect(result.stdout).not.toContain("Building workspace artifacts");
+  });
+
+  it("rejects an already published stable before dependency installation or build", () => {
+    const { repo } = createReleaseRepo();
+    mkdirSync(join(repo, "releases"), { recursive: true });
+    writeFileSync(join(repo, "releases", "v0.2.2.md"), "# v0.2.2\n");
+    exec("git", ["add", "releases/v0.2.2.md"], { cwd: repo });
+    exec("git", ["commit", "-m", "notes"], { cwd: repo });
+    exec("git", ["push", "origin", "main"], { cwd: repo });
+    exec("git", ["tag", "v0.2.2"], { cwd: repo });
+    exec("git", ["push", "origin", "v0.2.2"], { cwd: repo });
+    exec("git", ["tag", "-d", "v0.2.2"], { cwd: repo });
+
+    const result = runPreflight(repo, "stable");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("git tag v0.2.2 already exists");
+    expect(result.stdout).not.toContain("Building workspace artifacts");
+  });
 });
 
 describe("npm publish verification", () => {

@@ -61,7 +61,14 @@ jobs:
           corepack prepare pnpm@9.15.4 --activate
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache PostgreSQL runtime payload
+        if: matrix.platform != 'linux'
+        uses: actions/cache@v5
+        with:
+          path: ~/.rudder/runtime-payloads/postgres-18.4
+          key: postgres-runtime-18.4-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('desktop/scripts/prepare-postgres-runtime.mjs') }}
 
       - name: Prepare PostgreSQL 18.4 runtime payload
         env:

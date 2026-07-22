@@ -124,7 +124,6 @@ import {
   FolderInput,
   FolderPlus,
   GitFork,
-  ListChecks,
   Loader2,
   Mail,
   MailOpen,
@@ -146,7 +145,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { createPortal } from "react-dom";
 import { PendingAttachmentPreview } from "./Chat.attachments";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
-import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, resolveLatestChatAgentRunTarget, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
+import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatAgentRunMenuItem, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
 import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-controls";
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
@@ -858,7 +857,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             queryKey: queryKeys.chats.queue(orgId, chatId),
           })),
         ]);
-
         if (streamKey && stopRecoveryMatchesCurrentStream(recovery)) {
           setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
           setChatSendInFlight(chatId, false);
@@ -1322,10 +1320,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         if (chatSendLockAcquired) {
           releaseChatSendLock(activeChatId); } }
       if (newConversationLockAcquired) { releaseNewConversationSendLock(); } } }; const conversations = useMemo(() => { const items = conversationsQuery.data ?? [];
-    return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]); const rawMessages = messagesQuery.data ?? []; const latestAgentRunTarget = useMemo(
-    () => selectedConversation ? resolveLatestChatAgentRunTarget(rawMessages, selectedConversation) : null,
-    [rawMessages, selectedConversation],
-  ); const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
+    return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]); const rawMessages = messagesQuery.data ?? []; const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
     () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined); const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => !(item.deliveredMessageId && ["dequeue_claimed", "running_next"].includes(item.status)) && !["delivered", "completed", "cancelled", "steered", "running"].includes(item.status)); const agentSelectionLocked = isChatAgentSelectionLocked({
     hasConversation: Boolean(selectedConversation),
     preferredAgentId: selectedConversation?.preferredAgentId,
@@ -2712,24 +2707,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       <Copy className="h-4 w-4" />
                       Copy Chat Link
                     </DropdownMenuItem>
-                    {showMessagesLoading ? (
-                      <DropdownMenuItem disabled>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Loading agent runs...
-                      </DropdownMenuItem>
-                    ) : latestAgentRunTarget ? (
-                      <DropdownMenuItem
-                        onClick={() => navigate(`/agents/${latestAgentRunTarget.agentId}/runs/${latestAgentRunTarget.runId}`)}
-                      >
-                        <ListChecks className="h-4 w-4" />
-                        View agent runs
-                      </DropdownMenuItem>
-                    ) : (
-                      <DropdownMenuItem disabled>
-                        <ListChecks className="h-4 w-4" />
-                        No agent runs yet
-                      </DropdownMenuItem>
-                    )}
+                    <ChatAgentRunMenuItem conversation={selectedConversation} isLoading={showMessagesLoading} messages={rawMessages} onOpen={({ agentId, runId }) => navigate(`/agents/${agentId}/runs/${runId}`)} />
                     <DropdownMenuItem
                       disabled={selectedConversationGenerating || forkConversationMutation.isPending}
                       onClick={() => forkConversationMutation.mutate({ chatId: selectedConversation.id })}

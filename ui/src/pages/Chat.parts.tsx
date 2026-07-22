@@ -1,4 +1,5 @@
 import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { type ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { formatAssigneeUserLabel } from "@/lib/assignees";
@@ -27,14 +28,16 @@ import {
   BookOpen,
   Clock3,
   FilePlus2,
+  ListChecks,
   ListFilter,
   Loader2
 } from "lucide-react";
-import { useCallback, useEffect, useRef, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, type CSSProperties } from "react";
 export { ChatAttachmentList, ChatFileAttachmentChip, ChatImageAttachmentTile, PendingAttachmentPreview } from "./Chat.attachments";
 export { AskUserAnswerBubble, AskUserHistoryRecord, AskUserPanel, AssistantDraftItem, ChatAssistantAttributionRow, chatIssueApprovalPayloadWithProposalOverride, ChatLongMessageBody, chatMessageHoverBarClass, ChatMessageItem, ChatMessagesLoadingState, ChatSystemMessageBody, issueCreatedSystemMessageParts, LazyStreamTranscriptItem, OptimisticUserDraftItem, ProposalCard, readStructuredPayloadString, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, StreamTranscriptItem } from "./Chat.messages";
 
 export type ApprovalAction = "approve" | "reject" | "requestRevision";
+
 export const EMPTY_STATE_PROMPT_GROUPS = [
   {
     id: "create",
@@ -676,6 +679,30 @@ export function resolveLatestChatAgentRunTarget(
     ?? conversation.chatRuntime.runtimeAgentId
     ?? conversation.preferredAgentId;
   return agentId ? { runId: latestMessage.runId, agentId } : null;
+}
+
+export function ChatAgentRunMenuItem({
+  conversation,
+  isLoading,
+  messages,
+  onOpen,
+}: {
+  conversation: Pick<ChatConversation, "chatRuntime" | "preferredAgentId">;
+  isLoading: boolean;
+  messages: readonly ChatMessage[];
+  onOpen: (target: ChatAgentRunTarget) => void;
+}) {
+  const target = useMemo(
+    () => resolveLatestChatAgentRunTarget(messages, conversation),
+    [conversation, messages],
+  );
+  if (isLoading) {
+    return <DropdownMenuItem disabled><Loader2 className="h-4 w-4 animate-spin" />Loading agent runs...</DropdownMenuItem>;
+  }
+  if (!target) {
+    return <DropdownMenuItem disabled><ListChecks className="h-4 w-4" />No agent runs yet</DropdownMenuItem>;
+  }
+  return <DropdownMenuItem onClick={() => onOpen(target)}><ListChecks className="h-4 w-4" />View agent runs</DropdownMenuItem>;
 }
 
 export function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage[]) {

@@ -6,12 +6,17 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Optional immutable source SHA to verify with the trusted main-branch CI workflow"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -27,6 +32,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
 
       - name: Architecture audit tests
         run: node --test scripts/architecture-audit.test.mjs scripts/architecture-boundaries.test.mjs
@@ -86,6 +92,8 @@ jobs:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
 
       - uses: actions/setup-node@v6
         with:

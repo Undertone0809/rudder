@@ -80,6 +80,13 @@ fail with instructions to commit an explicit base bump first, for example
 `X.Y.Z` remains newer than `X.Y.Z-canary.N`, so post-stable canaries must move
 to the next base to be visible as updates to stable users.
 
+`scripts/release.sh <channel> --preflight` performs these version, existing-tag,
+existing-npm-version, and stable-notes checks without installing dependencies
+or building the workspace. GitHub release automation runs it before expensive
+work. After a stable succeeds, `scripts/prepare-next-release.mjs` creates an
+idempotent next-patch pull request from current `main`; it never pushes the bump
+directly to protected `main`.
+
 ## Version formats
 
 Rudder uses committed semver:
