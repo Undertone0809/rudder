@@ -27,7 +27,7 @@ const mockProductIntelligence = vi.hoisted(() => ({
 const mockSavedViewsService = vi.hoisted(() => ({
   list: vi.fn(),
   get: vi.fn(),
-  create: vi.fn(),
+  keep: vi.fn(),
   update: vi.fn(),
   reorder: vi.fn(),
   remove: vi.fn(),
@@ -179,7 +179,7 @@ describe("Messenger Saved View and generic group routes", () => {
     vi.clearAllMocks();
     mockSavedViewsService.list.mockResolvedValue([]);
     mockSavedViewsService.get.mockResolvedValue({ id: "view-1" });
-    mockSavedViewsService.create.mockResolvedValue({ id: "view-1" });
+    mockSavedViewsService.keep.mockResolvedValue({ savedView: { id: "view-1" }, group: { id: "group-1", name: "Work" } });
     mockSavedViewsService.update.mockResolvedValue({ id: "view-1" });
     mockSavedViewsService.reorder.mockResolvedValue([]);
     mockSavedViewsService.remove.mockResolvedValue({ id: "view-1" });
@@ -197,15 +197,28 @@ describe("Messenger Saved View and generic group routes", () => {
       offset: 40,
     });
 
-    const created = await request(app)
+    const deprecatedCreate = await request(app)
       .post("/api/orgs/org-1/messenger/saved-views")
       .send({
-        target: { kind: "browser", tabId: "tab-1", url: "https://example.test" },
+        target: { kind: "browser", tabId: "tab-1", url: "https://example.test", viewInstanceId: "view-1" },
         title: "Example",
       });
-    expect(created.status).toBe(201);
-    expect(mockSavedViewsService.create).toHaveBeenCalledWith("org-1", "user-1", expect.objectContaining({
-      target: { kind: "browser", tabId: "tab-1", url: "https://example.test" },
+    expect(deprecatedCreate.status).toBe(409);
+    expect(deprecatedCreate.body.error).toContain("/keep");
+    expect(mockSavedViewsService.keep).not.toHaveBeenCalled();
+
+    const kept = await request(app)
+      .post("/api/orgs/org-1/messenger/saved-views/keep")
+      .send({
+        target: { kind: "browser", tabId: "tab-1", url: "https://example.test", viewInstanceId: "view-1" },
+        title: "Example",
+        clientMutationId: "44444444-4444-4444-8444-444444444444",
+        placement: { kind: "group", groupId: "55555555-5555-4555-8555-555555555555" },
+      });
+    expect(kept.status).toBe(201);
+    expect(mockSavedViewsService.keep).toHaveBeenCalledWith("org-1", "user-1", expect.objectContaining({
+      target: expect.objectContaining({ kind: "browser", viewInstanceId: "view-1" }),
+      placement: { kind: "group", groupId: "55555555-5555-4555-8555-555555555555" },
     }));
 
     expect((await request(app).get(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);
@@ -220,10 +233,15 @@ describe("Messenger Saved View and generic group routes", () => {
 
   it("rejects invalid Saved View targets and inaccessible organizations", async () => {
     const invalid = await request(createApp())
-      .post("/api/orgs/org-1/messenger/saved-views")
-      .send({ target: { kind: "browser", tabId: "tab-1", url: "about:blank" }, title: "Blank" });
+      .post("/api/orgs/org-1/messenger/saved-views/keep")
+      .send({
+        target: { kind: "browser", tabId: "tab-1", url: "about:blank", viewInstanceId: "view-1" },
+        title: "Blank",
+        clientMutationId: "44444444-4444-4444-8444-444444444444",
+        placement: { kind: "group", groupId: "55555555-5555-4555-8555-555555555555" },
+      });
     expect(invalid.status).toBe(400);
-    expect(mockSavedViewsService.create).not.toHaveBeenCalled();
+    expect(mockSavedViewsService.keep).not.toHaveBeenCalled();
 
     expect((await request(createApp()).get("/api/orgs/org-1/messenger/saved-views?limit=101")).status).toBe(400);
 

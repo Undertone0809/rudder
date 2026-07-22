@@ -50,12 +50,19 @@ export interface MessengerCustomGroupEntry {
 }
 
 export type MessengerSavedViewTarget =
-  | { kind: "browser"; tabId: string; url: string }
-  | { kind: "automation"; automationId: string }
-  | { kind: "library_document"; documentId: string }
-  | { kind: "library_entry"; entryId: string; path: string }
-  | { kind: "library_file"; filePath: string }
-  | { kind: "library_directory"; directoryPath: string };
+  | { kind: "browser"; tabId: string; url: string; viewInstanceId: string }
+  | { kind: "automation"; automationId: string; viewInstanceId: string }
+  | { kind: "library_document"; documentId: string; viewInstanceId: string }
+  | { kind: "library_entry"; entryId: string; path: string; viewInstanceId: string }
+  | { kind: "library_file"; filePath: string; viewInstanceId: string }
+  | { kind: "library_directory"; directoryPath: string; viewInstanceId: string }
+  | {
+    kind: "local_app";
+    desktopInstallationId: string;
+    appPublicId: string;
+    localBindingId: string;
+    viewInstanceId: string;
+  };
 
 export type MessengerSavedViewTargetKind = MessengerSavedViewTarget["kind"];
 
@@ -66,6 +73,9 @@ export interface MessengerSavedView {
   targetKind: MessengerSavedViewTargetKind;
   targetPayload: MessengerSavedViewTarget;
   resourceKey: string;
+  instanceId: string;
+  canonicalResourceKey: string;
+  clientMutationId: string | null;
   title: string;
   subtitle: string | null;
   favicon: string | null;
@@ -73,6 +83,15 @@ export interface MessengerSavedView {
   hiddenAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export type MessengerSavedViewPlacement =
+  | { kind: "anchor"; anchor: { kind: "chat"; conversationId: string } | { kind: "issue"; issueId: string } }
+  | { kind: "group"; groupId: string };
+
+export interface MessengerSavedViewKeepResult {
+  savedView: MessengerSavedView;
+  group: Pick<MessengerCustomGroup, "id" | "name">;
 }
 
 export interface MessengerSavedViewPageInfo {

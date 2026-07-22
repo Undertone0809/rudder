@@ -4,7 +4,7 @@ import {
   assignMessengerCustomGroupEntrySchema,
   createMessengerCustomGroupSchema,
   createMessengerCustomGroupWithEntriesSchema,
-  createMessengerSavedViewSchema,
+  keepMessengerSavedViewSchema,
   listMessengerSavedViewsQuerySchema,
   messengerSavedViewIdSchema,
   reorderMessengerCustomGroupEntriesSchema,
@@ -76,15 +76,24 @@ export function messengerRoutes(db: Db) {
   });
 
   router.post(
-    "/orgs/:orgId/messenger/saved-views",
-    validate(createMessengerSavedViewSchema),
+    "/orgs/:orgId/messenger/saved-views/keep",
+    validate(keepMessengerSavedViewSchema),
     async (req, res) => {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
       const userId = boardUserId(req);
-      res.status(201).json(await savedViews.create(orgId, userId, req.body));
+      res.status(201).json(await savedViews.keep(orgId, userId, req.body));
     },
   );
+
+  router.post("/orgs/:orgId/messenger/saved-views", (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    boardUserId(req);
+    res.status(409).json({
+      error: "Ungrouped Saved Views are no longer supported; use POST /api/orgs/:orgId/messenger/saved-views/keep with a group or anchor placement",
+    });
+  });
 
   router.patch(
     "/orgs/:orgId/messenger/saved-views/reorder",

@@ -1415,16 +1415,9 @@ export function messengerService(db: Db) {
           eq(messengerCustomGroupEntries.userId, userId),
           eq(messengerCustomGroupEntries.groupId, groupId),
         )))
-        .filter((entry) => Boolean(savedViewIdFromItemKey(entry.threadKey)));
-      for (const membership of savedMemberships) {
-        await logSavedViewPlacement(
-          txDb,
-          orgId,
-          userId,
-          membership.threadKey,
-          "messenger.saved_view_group_removed",
-          { groupId, source },
-        );
+        .filter((entry) => entry.threadKey.startsWith("saved-view:"));
+      if (savedMemberships.length > 0) {
+        throw conflict(`Cannot ${source === "group_delete" ? "delete" : "separate"} a Messenger group containing Saved Views; move or remove them first`);
       }
       const [group] = await txDb
         .delete(messengerCustomGroups)
@@ -1590,6 +1583,7 @@ export function messengerService(db: Db) {
         if (!await findMessengerSavedViewWithDb(txDb, orgId, userId, threadKey)) {
           throw notFound("Messenger Saved View not found");
         }
+        throw conflict("Saved Views cannot be removed from a group without a destination; move the Saved View or remove it instead");
       }
       const [membership] = await txDb
         .select({ id: messengerCustomGroupEntries.id, groupId: messengerCustomGroupEntries.groupId })

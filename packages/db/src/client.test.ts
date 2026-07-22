@@ -537,6 +537,8 @@ describe("applyPendingMigrations", () => {
           "0106_damp_amphibian.sql",
           "0107_daffy_luke_cage.sql",
           "0108_atomic_chat_first_turn_cleanup.sql",
+          "0109_many_carmella_unuscione.sql",
+          "0110_supreme_mathemanic.sql",
         ],
         reason: "pending-migrations",
       });
@@ -665,6 +667,8 @@ describe("applyPendingMigrations", () => {
           "0106_damp_amphibian.sql",
           "0107_daffy_luke_cage.sql",
           "0108_atomic_chat_first_turn_cleanup.sql",
+          "0109_many_carmella_unuscione.sql",
+          "0110_supreme_mathemanic.sql",
         ],
         reason: "pending-migrations",
       });

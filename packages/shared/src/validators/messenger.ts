@@ -3,6 +3,7 @@ import { z } from "zod";
 const uuid = z.string().uuid();
 export const messengerSavedViewIdSchema = uuid;
 const nonBlankId = z.string().trim().min(1).max(240);
+const viewInstanceIdSchema = z.string().trim().min(1).max(1000);
 
 function isCanonicalPortableLibraryPath(value: string, allowRoot: boolean) {
   if (allowRoot && value === "") return true;
@@ -31,12 +32,19 @@ const browserUrlSchema = z.string().trim().min(1).max(8192).refine((value) => {
 }, "Browser URL must be an absolute HTTP(S) URL");
 
 export const messengerSavedViewTargetSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("browser"), tabId: nonBlankId, url: browserUrlSchema }).strict(),
-  z.object({ kind: z.literal("automation"), automationId: uuid }).strict(),
-  z.object({ kind: z.literal("library_document"), documentId: uuid }).strict(),
-  z.object({ kind: z.literal("library_entry"), entryId: uuid, path: libraryPathSchema }).strict(),
-  z.object({ kind: z.literal("library_file"), filePath: libraryPathSchema }).strict(),
-  z.object({ kind: z.literal("library_directory"), directoryPath: libraryDirectoryPathSchema }).strict(),
+  z.object({ kind: z.literal("browser"), tabId: nonBlankId, url: browserUrlSchema, viewInstanceId: viewInstanceIdSchema }).strict(),
+  z.object({ kind: z.literal("automation"), automationId: uuid, viewInstanceId: viewInstanceIdSchema }).strict(),
+  z.object({ kind: z.literal("library_document"), documentId: uuid, viewInstanceId: viewInstanceIdSchema }).strict(),
+  z.object({ kind: z.literal("library_entry"), entryId: uuid, path: libraryPathSchema, viewInstanceId: viewInstanceIdSchema }).strict(),
+  z.object({ kind: z.literal("library_file"), filePath: libraryPathSchema, viewInstanceId: viewInstanceIdSchema }).strict(),
+  z.object({ kind: z.literal("library_directory"), directoryPath: libraryDirectoryPathSchema, viewInstanceId: viewInstanceIdSchema }).strict(),
+  z.object({
+    kind: z.literal("local_app"),
+    desktopInstallationId: nonBlankId,
+    appPublicId: nonBlankId,
+    localBindingId: nonBlankId,
+    viewInstanceId: viewInstanceIdSchema,
+  }).strict(),
 ]);
 
 const savedViewMetadataShape = {
@@ -48,6 +56,21 @@ const savedViewMetadataShape = {
 export const createMessengerSavedViewSchema = z.object({
   target: messengerSavedViewTargetSchema,
   ...savedViewMetadataShape,
+}).strict();
+
+const messengerSavedViewAnchorSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("chat"), conversationId: uuid }).strict(),
+  z.object({ kind: z.literal("issue"), issueId: uuid }).strict(),
+]);
+
+export const keepMessengerSavedViewSchema = z.object({
+  target: messengerSavedViewTargetSchema,
+  ...savedViewMetadataShape,
+  clientMutationId: uuid,
+  placement: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("anchor"), anchor: messengerSavedViewAnchorSchema }).strict(),
+    z.object({ kind: z.literal("group"), groupId: uuid }).strict(),
+  ]),
 }).strict();
 
 export const updateMessengerSavedViewSchema = z.object({
@@ -78,6 +101,7 @@ export const listMessengerSavedViewsQuerySchema = z.object({
 
 export type MessengerSavedViewTargetInput = z.infer<typeof messengerSavedViewTargetSchema>;
 export type CreateMessengerSavedView = z.infer<typeof createMessengerSavedViewSchema>;
+export type KeepMessengerSavedView = z.infer<typeof keepMessengerSavedViewSchema>;
 export type UpdateMessengerSavedView = z.infer<typeof updateMessengerSavedViewSchema>;
 export type ReorderMessengerSavedViews = z.infer<typeof reorderMessengerSavedViewsSchema>;
 export type ListMessengerSavedViewsQuery = z.infer<typeof listMessengerSavedViewsQuerySchema>;

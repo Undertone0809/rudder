@@ -3,6 +3,7 @@ import {
   assignMessengerCustomGroupEntrySchema,
   createMessengerCustomGroupWithEntriesSchema,
   createMessengerSavedViewSchema,
+  keepMessengerSavedViewSchema,
   listMessengerSavedViewsQuerySchema,
   messengerSavedViewIdSchema,
   reorderMessengerCustomGroupEntriesSchema,
@@ -13,16 +14,24 @@ import {
 const automationId = "11111111-1111-4111-8111-111111111111";
 const savedViewId = "22222222-2222-4222-8222-222222222222";
 const savedViewItemKey = `saved-view:${savedViewId}`;
+const viewInstanceId = "view-instance-1";
 
 describe("Messenger Saved View validators", () => {
   it("accepts every supported target identity", () => {
     const targets = [
-      { kind: "browser", tabId: "tab-1", url: "https://rudder.example/path" },
-      { kind: "automation", automationId },
-      { kind: "library_document", documentId: automationId },
-      { kind: "library_entry", entryId: automationId, path: "plans/launch.md" },
-      { kind: "library_file", filePath: "workspace/README.md" },
-      { kind: "library_directory", directoryPath: "workspace/docs" },
+      { kind: "browser", tabId: "tab-1", url: "https://rudder.example/path", viewInstanceId },
+      { kind: "automation", automationId, viewInstanceId },
+      { kind: "library_document", documentId: automationId, viewInstanceId },
+      { kind: "library_entry", entryId: automationId, path: "plans/launch.md", viewInstanceId },
+      { kind: "library_file", filePath: "workspace/README.md", viewInstanceId },
+      { kind: "library_directory", directoryPath: "workspace/docs", viewInstanceId },
+      {
+        kind: "local_app",
+        desktopInstallationId: "desktop-1",
+        appPublicId: "com.example.rudder-helper",
+        localBindingId: "binding-1",
+        viewInstanceId,
+      },
     ];
 
     for (const target of targets) {
@@ -33,24 +42,24 @@ describe("Messenger Saved View validators", () => {
   it("rejects blank and unsupported Browser URLs plus malformed resource identities", () => {
     for (const url of ["", "about:blank", "javascript:alert(1)", "file:///tmp/private"]) {
       expect(createMessengerSavedViewSchema.safeParse({
-        target: { kind: "browser", tabId: "tab-1", url },
+        target: { kind: "browser", tabId: "tab-1", url, viewInstanceId },
         title: "Browser",
       }).success).toBe(false);
     }
 
     expect(createMessengerSavedViewSchema.safeParse({
-      target: { kind: "automation", automationId: "not-a-uuid" },
+      target: { kind: "automation", automationId: "not-a-uuid", viewInstanceId },
       title: "Automation",
     }).success).toBe(false);
     expect(createMessengerSavedViewSchema.safeParse({
-      target: { kind: "library_file", filePath: "   " },
+      target: { kind: "library_file", filePath: "   ", viewInstanceId },
       title: "File",
     }).success).toBe(false);
   });
 
   it("accepts only canonical portable Library paths, including the Library root", () => {
     expect(createMessengerSavedViewSchema.safeParse({
-      target: { kind: "library_directory", directoryPath: "" },
+      target: { kind: "library_directory", directoryPath: "", viewInstanceId },
       title: "Library root",
     }).success).toBe(true);
 
@@ -67,10 +76,70 @@ describe("Messenger Saved View validators", () => {
       "folder/",
     ]) {
       expect(createMessengerSavedViewSchema.safeParse({
-        target: { kind: "library_file", filePath: invalidPath },
+        target: { kind: "library_file", filePath: invalidPath, viewInstanceId },
         title: "Invalid path",
       }).success).toBe(false);
     }
+  });
+
+  it("requires a nonblank view instance and keeps local app identity opaque", () => {
+    expect(createMessengerSavedViewSchema.safeParse({
+      target: { kind: "library_file", filePath: "README.md" },
+      title: "Missing instance",
+    }).success).toBe(false);
+    expect(createMessengerSavedViewSchema.safeParse({
+      target: {
+        kind: "local_app",
+        desktopInstallationId: "desktop-1",
+        appPublicId: "app-1",
+        localBindingId: "binding-1",
+        viewInstanceId: "   ",
+      },
+      title: "Blank instance",
+    }).success).toBe(false);
+
+    for (const forbidden of ["url", "route", "port", "cwd", "command", "env", "pid"] as const) {
+      expect(createMessengerSavedViewSchema.safeParse({
+        target: {
+          kind: "local_app",
+          desktopInstallationId: "desktop-1",
+          appPublicId: "app-1",
+          localBindingId: "binding-1",
+          viewInstanceId,
+          [forbidden]: forbidden === "port" || forbidden === "pid" ? 3100 : "secret",
+        },
+        title: "Unsafe app",
+      }).success).toBe(false);
+    }
+  });
+
+  it("validates strict Keep metadata and anchor or explicit group placement", () => {
+    const base = {
+      target: { kind: "library_file" as const, filePath: "README.md", viewInstanceId },
+      title: "README",
+      clientMutationId: "33333333-3333-4333-8333-333333333333",
+    };
+    expect(keepMessengerSavedViewSchema.safeParse({
+      ...base,
+      placement: { kind: "anchor", anchor: { kind: "chat", conversationId: automationId } },
+    }).success).toBe(true);
+    expect(keepMessengerSavedViewSchema.safeParse({
+      ...base,
+      placement: { kind: "anchor", anchor: { kind: "issue", issueId: automationId } },
+    }).success).toBe(true);
+    expect(keepMessengerSavedViewSchema.safeParse({
+      ...base,
+      placement: { kind: "group", groupId: automationId },
+    }).success).toBe(true);
+    expect(keepMessengerSavedViewSchema.safeParse({
+      ...base,
+      placement: { kind: "group", groupId: automationId, extra: true },
+    }).success).toBe(false);
+    expect(keepMessengerSavedViewSchema.safeParse({
+      ...base,
+      clientMutationId: "not-a-uuid",
+      placement: { kind: "group", groupId: automationId },
+    }).success).toBe(false);
   });
 
   it("validates metadata updates, visibility, and complete reorder identities", () => {

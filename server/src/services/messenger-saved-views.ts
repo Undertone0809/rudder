@@ -4,16 +4,25 @@
  * no read, unread, attention, or latest-activity state.
  */
 import type { Db } from "@rudderhq/db";
-import { messengerCustomGroupEntries, messengerSavedViews } from "@rudderhq/db";
+import {
+  chatConversations,
+  issues,
+  messengerCustomGroupEntries,
+  messengerCustomGroups,
+  messengerSavedViewMutations,
+  messengerSavedViews,
+} from "@rudderhq/db";
 import {
   messengerSavedViewIdSchema,
   messengerSavedViewTargetSchema,
-  type CreateMessengerSavedView,
+  type KeepMessengerSavedView,
   type MessengerSavedViewTarget,
   type UpdateMessengerSavedView,
 } from "@rudderhq/shared";
-import { and, asc, count, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
-import { badRequest, notFound } from "../errors.js";
+import { and, asc, count, desc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { badRequest, conflict, notFound } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 
 export type MessengerSavedViewVisibility = "visible" | "hidden" | "all";
@@ -61,11 +70,37 @@ function validatedTarget(target: MessengerSavedViewTarget) {
   return parsed.data;
 }
 
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function keepRequestFingerprint(input: KeepMessengerSavedView, target: MessengerSavedViewTarget) {
+  return createHash("sha256").update(stableJson({
+    version: 1,
+    target,
+    title: input.title,
+    subtitle: input.subtitle ?? null,
+    favicon: input.favicon ?? null,
+    placement: input.placement,
+  })).digest("hex");
+}
+
 export function messengerSavedViewItemKey(id: string) {
   return `saved-view:${assertSavedViewId(id)}`;
 }
 
 export function messengerSavedViewResourceKey(target: MessengerSavedViewTarget) {
+  return `view-instance:${target.viewInstanceId}`;
+}
+
+export function messengerSavedViewCanonicalResourceKey(target: MessengerSavedViewTarget) {
   switch (target.kind) {
     case "browser":
       return `browser:${target.tabId}`;
@@ -79,6 +114,12 @@ export function messengerSavedViewResourceKey(target: MessengerSavedViewTarget) 
       return `library-file:${target.filePath}`;
     case "library_directory":
       return `library-directory:${target.directoryPath}`;
+    case "local_app":
+      return `local-app:${JSON.stringify([
+        target.desktopInstallationId,
+        target.appPublicId,
+        target.localBindingId,
+      ])}`;
   }
 }
 
@@ -162,71 +203,6 @@ export function messengerSavedViewsService(db: Db) {
     return getWithDb(db, orgId, userId, id);
   }
 
-  async function create(orgId: string, userId: string, input: CreateMessengerSavedView) {
-    const target = validatedTarget(input.target);
-    const resourceKey = messengerSavedViewResourceKey(target);
-    return db.transaction(async (tx) => {
-      const txDb = tx as unknown as Db;
-      await lockMessengerSavedViewPlacement(txDb, orgId, userId);
-      const existing = await txDb
-        .select()
-        .from(messengerSavedViews)
-        .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.resourceKey, resourceKey)))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      const now = new Date();
-      if (existing) {
-        const wasHidden = Boolean(existing.hiddenAt);
-        const [updated] = await txDb
-          .update(messengerSavedViews)
-          .set({
-            targetKind: target.kind,
-            targetPayload: target,
-            title: input.title,
-            subtitle: input.subtitle ?? null,
-            favicon: input.favicon ?? null,
-            hiddenAt: null,
-            updatedAt: now,
-          })
-          .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, existing.id)))
-          .returning();
-        await logMutation(
-          txDb,
-          orgId,
-          userId,
-          wasHidden ? "messenger.saved_view_restored" : "messenger.saved_view_updated",
-          updated,
-          { source: "create" },
-        );
-        return updated;
-      }
-
-      const [last] = await txDb
-        .select({ sortOrder: messengerSavedViews.sortOrder })
-        .from(messengerSavedViews)
-        .where(ownerWhere(orgId, userId))
-        .orderBy(desc(messengerSavedViews.sortOrder))
-        .limit(1);
-      const [created] = await txDb
-        .insert(messengerSavedViews)
-        .values({
-          orgId,
-          userId,
-          targetKind: target.kind,
-          targetPayload: target,
-          resourceKey,
-          title: input.title,
-          subtitle: input.subtitle ?? null,
-          favicon: input.favicon ?? null,
-          sortOrder: (last?.sortOrder ?? -1) + 1,
-          updatedAt: now,
-        })
-        .returning();
-      await logMutation(txDb, orgId, userId, "messenger.saved_view_created", created);
-      return created;
-    });
-  }
-
   async function update(orgId: string, userId: string, id: string, patch: UpdateMessengerSavedView) {
     const validId = assertSavedViewId(id);
     const target = patch.target ? validatedTarget(patch.target) : undefined;
@@ -234,7 +210,10 @@ export function messengerSavedViewsService(db: Db) {
       const txDb = tx as unknown as Db;
       await lockMessengerSavedViewPlacement(txDb, orgId, userId);
       const existing = await getWithDb(txDb, orgId, userId, validId);
-      if (target && messengerSavedViewResourceKey(target) !== existing.resourceKey) {
+      if (target && (
+        target.viewInstanceId !== existing.instanceId
+        || messengerSavedViewCanonicalResourceKey(target) !== existing.canonicalResourceKey
+      )) {
         throw badRequest("Saved View target identity cannot be changed");
       }
       const wasHidden = Boolean(existing.hiddenAt);
@@ -335,5 +314,272 @@ export function messengerSavedViewsService(db: Db) {
     });
   }
 
-  return { list, get, create, update, reorder, remove };
+  async function keep(orgId: string, userId: string, input: KeepMessengerSavedView) {
+    const target = validatedTarget(input.target);
+    const instanceId = target.viewInstanceId;
+    const resourceKey = messengerSavedViewResourceKey(target);
+    const canonicalResourceKey = messengerSavedViewCanonicalResourceKey(target);
+    const requestFingerprint = keepRequestFingerprint(input, target);
+
+    return db.transaction(async (tx) => {
+      const txDb = tx as unknown as Db;
+      await lockMessengerSavedViewPlacement(txDb, orgId, userId);
+
+      const [receipt] = await txDb.select().from(messengerSavedViewMutations).where(and(
+        eq(messengerSavedViewMutations.orgId, orgId),
+        eq(messengerSavedViewMutations.userId, userId),
+        eq(messengerSavedViewMutations.clientMutationId, input.clientMutationId),
+      )).limit(1);
+      if (receipt) {
+        if (receipt.requestFingerprint !== requestFingerprint) {
+          throw conflict("This Saved View mutation id was already used with different input");
+        }
+        const [savedView, group, membership] = await Promise.all([
+          txDb.select().from(messengerSavedViews).where(and(
+            ownerWhere(orgId, userId),
+            eq(messengerSavedViews.id, receipt.savedViewId),
+          )).limit(1).then((rows) => rows[0] ?? null),
+          txDb.select().from(messengerCustomGroups).where(and(
+            eq(messengerCustomGroups.orgId, orgId),
+            eq(messengerCustomGroups.userId, userId),
+            eq(messengerCustomGroups.id, receipt.groupId),
+          )).limit(1).then((rows) => rows[0] ?? null),
+          txDb.select({ id: messengerCustomGroupEntries.id }).from(messengerCustomGroupEntries).where(and(
+            eq(messengerCustomGroupEntries.orgId, orgId),
+            eq(messengerCustomGroupEntries.userId, userId),
+            eq(messengerCustomGroupEntries.groupId, receipt.groupId),
+            eq(messengerCustomGroupEntries.threadKey, messengerSavedViewItemKey(receipt.savedViewId)),
+          )).limit(1).then((rows) => rows[0] ?? null),
+        ]);
+        if (!savedView || !group || !membership) {
+          throw conflict("The result of this Saved View mutation is no longer available");
+        }
+        return { savedView, group: { id: group.id, name: group.name } };
+      }
+
+      const [byMutation, byInstance] = await Promise.all([
+        txDb.select().from(messengerSavedViews).where(and(
+          ownerWhere(orgId, userId),
+          eq(messengerSavedViews.clientMutationId, input.clientMutationId),
+        )).limit(1).then((rows) => rows[0] ?? null),
+        txDb.select().from(messengerSavedViews).where(and(
+          ownerWhere(orgId, userId),
+          eq(messengerSavedViews.instanceId, instanceId),
+        )).limit(1).then((rows) => rows[0] ?? null),
+      ]);
+      if (byMutation && byMutation.instanceId !== instanceId) {
+        throw conflict("This Saved View mutation id was already used for a different view instance");
+      }
+      if (byMutation && byMutation.canonicalResourceKey !== canonicalResourceKey) {
+        throw conflict("This Saved View mutation id was already used for a different target");
+      }
+      if (byMutation && byInstance && byMutation.id !== byInstance.id) {
+        throw conflict("Saved View mutation and instance identities refer to different records");
+      }
+      const existing = byMutation ?? byInstance;
+      if (existing && existing.canonicalResourceKey !== canonicalResourceKey) {
+        throw conflict("This view instance is already associated with a different target");
+      }
+
+      let group: typeof messengerCustomGroups.$inferSelect;
+      if (input.placement.kind === "group") {
+        const [ownedGroup] = await txDb.select().from(messengerCustomGroups).where(and(
+          eq(messengerCustomGroups.orgId, orgId),
+          eq(messengerCustomGroups.userId, userId),
+          eq(messengerCustomGroups.id, input.placement.groupId),
+        )).limit(1);
+        if (!ownedGroup) throw notFound("Messenger custom group not found");
+        group = ownedGroup;
+      } else {
+        const anchor = input.placement.anchor;
+        let anchorKey: string;
+        let anchorTitle: string;
+        if (anchor.kind === "chat") {
+          const [conversation] = await txDb.select({
+            title: chatConversations.title,
+          }).from(chatConversations).where(and(
+            eq(chatConversations.id, anchor.conversationId),
+            eq(chatConversations.orgId, orgId),
+            eq(chatConversations.messengerVisible, true),
+            ne(chatConversations.status, "archived"),
+          )).limit(1);
+          if (!conversation) throw notFound("Messenger Chat anchor not found");
+          anchorKey = `chat:${anchor.conversationId}`;
+          anchorTitle = (conversation.title.trim() || "Chat").slice(0, 80);
+        } else {
+          const [issue] = await txDb.select({ title: issues.title }).from(issues).where(and(
+            eq(issues.id, anchor.issueId),
+            eq(issues.orgId, orgId),
+            isNull(issues.hiddenAt),
+          )).limit(1);
+          if (!issue) throw notFound("Messenger Issue anchor not found");
+          anchorKey = `issue:${anchor.issueId}`;
+          anchorTitle = (issue.title.trim() || "Issue").slice(0, 80);
+        }
+
+        const [anchorMembership] = await txDb.select({ groupId: messengerCustomGroupEntries.groupId })
+          .from(messengerCustomGroupEntries)
+          .where(and(
+            eq(messengerCustomGroupEntries.orgId, orgId),
+            eq(messengerCustomGroupEntries.userId, userId),
+            eq(messengerCustomGroupEntries.threadKey, anchorKey),
+          )).limit(1);
+        if (anchorMembership) {
+          const [ownedGroup] = await txDb.select().from(messengerCustomGroups).where(and(
+            eq(messengerCustomGroups.orgId, orgId),
+            eq(messengerCustomGroups.userId, userId),
+            eq(messengerCustomGroups.id, anchorMembership.groupId),
+          )).limit(1);
+          if (!ownedGroup) throw conflict("Messenger anchor group is unavailable");
+          group = ownedGroup;
+        } else {
+          const [lastGroup] = await txDb.select({ sortOrder: messengerCustomGroups.sortOrder })
+            .from(messengerCustomGroups)
+            .where(and(eq(messengerCustomGroups.orgId, orgId), eq(messengerCustomGroups.userId, userId)))
+            .orderBy(desc(messengerCustomGroups.sortOrder))
+            .limit(1);
+          const now = new Date();
+          [group] = await txDb.insert(messengerCustomGroups).values({
+            orgId,
+            userId,
+            name: anchorTitle,
+            sortOrder: (lastGroup?.sortOrder ?? -1) + 1,
+            updatedAt: now,
+          }).returning();
+          await lockMessengerCustomGroupPlacement(txDb, orgId, userId, group.id);
+          await txDb.insert(messengerCustomGroupEntries).values({
+            orgId,
+            userId,
+            groupId: group.id,
+            threadKey: anchorKey,
+            sortOrder: 0,
+            updatedAt: now,
+          });
+        }
+      }
+
+      await lockMessengerCustomGroupPlacement(txDb, orgId, userId, group.id);
+      const itemKey = existing ? messengerSavedViewItemKey(existing.id) : null;
+      const existingMembership = itemKey
+        ? await txDb.select({ groupId: messengerCustomGroupEntries.groupId })
+          .from(messengerCustomGroupEntries)
+          .where(and(
+            eq(messengerCustomGroupEntries.orgId, orgId),
+            eq(messengerCustomGroupEntries.userId, userId),
+            eq(messengerCustomGroupEntries.threadKey, itemKey),
+          )).limit(1).then((rows) => rows[0] ?? null)
+        : null;
+      if (existingMembership && existingMembership.groupId !== group.id) {
+        throw conflict("Saved View already belongs to another group; move or remove it first");
+      }
+      if (byMutation) {
+        const exactReplay = isDeepStrictEqual(byMutation.targetPayload, target)
+          && byMutation.title === input.title
+          && byMutation.subtitle === (input.subtitle ?? null)
+          && byMutation.favicon === (input.favicon ?? null);
+        if (!exactReplay) {
+          throw conflict("This Saved View mutation id was already used with different input");
+        }
+        if (!byMutation.hiddenAt && existingMembership?.groupId === group.id) {
+          await txDb.insert(messengerSavedViewMutations).values({
+            orgId,
+            userId,
+            clientMutationId: input.clientMutationId,
+            savedViewId: byMutation.id,
+            groupId: group.id,
+            requestFingerprint,
+          });
+          return { savedView: byMutation, group: { id: group.id, name: group.name } };
+        }
+      }
+      const now = new Date();
+      let savedView: typeof messengerSavedViews.$inferSelect;
+      let action: string | null;
+      if (existing) {
+        const wasHidden = Boolean(existing.hiddenAt);
+        const unchanged = !wasHidden
+          && existingMembership?.groupId === group.id
+          && isDeepStrictEqual(existing.targetPayload, target)
+          && existing.title === input.title
+          && existing.subtitle === (input.subtitle ?? null)
+          && existing.favicon === (input.favicon ?? null);
+        if (unchanged) {
+          savedView = existing;
+          action = null;
+        } else {
+          [savedView] = await txDb.update(messengerSavedViews).set({
+            targetKind: target.kind,
+            targetPayload: target,
+            canonicalResourceKey,
+            clientMutationId: existing.clientMutationId ?? input.clientMutationId,
+            title: input.title,
+            subtitle: input.subtitle ?? null,
+            favicon: input.favicon ?? null,
+            hiddenAt: null,
+            updatedAt: now,
+          }).where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, existing.id))).returning();
+          action = wasHidden ? "messenger.saved_view_restored" : "messenger.saved_view_updated";
+        }
+      } else {
+        const [last] = await txDb.select({ sortOrder: messengerSavedViews.sortOrder })
+          .from(messengerSavedViews)
+          .where(ownerWhere(orgId, userId))
+          .orderBy(desc(messengerSavedViews.sortOrder))
+          .limit(1);
+        [savedView] = await txDb.insert(messengerSavedViews).values({
+          orgId,
+          userId,
+          targetKind: target.kind,
+          targetPayload: target,
+          resourceKey,
+          instanceId,
+          canonicalResourceKey,
+          clientMutationId: input.clientMutationId,
+          title: input.title,
+          subtitle: input.subtitle ?? null,
+          favicon: input.favicon ?? null,
+          sortOrder: (last?.sortOrder ?? -1) + 1,
+          updatedAt: now,
+        }).returning();
+        action = "messenger.saved_view_created";
+      }
+      if (action) await logMutation(txDb, orgId, userId, action, savedView, { source: "keep" });
+
+      const savedItemKey = messengerSavedViewItemKey(savedView.id);
+      if (!existingMembership) {
+        const [lastEntry] = await txDb.select({ sortOrder: messengerCustomGroupEntries.sortOrder })
+          .from(messengerCustomGroupEntries)
+          .where(and(
+            eq(messengerCustomGroupEntries.orgId, orgId),
+            eq(messengerCustomGroupEntries.userId, userId),
+            eq(messengerCustomGroupEntries.groupId, group.id),
+          )).orderBy(desc(messengerCustomGroupEntries.sortOrder)).limit(1);
+        await txDb.insert(messengerCustomGroupEntries).values({
+          orgId,
+          userId,
+          groupId: group.id,
+          threadKey: savedItemKey,
+          sortOrder: (lastEntry?.sortOrder ?? -1) + 1,
+          updatedAt: now,
+        });
+        await logMutation(txDb, orgId, userId, "messenger.saved_view_group_assigned", savedView, {
+          groupId: group.id,
+          source: "keep",
+        });
+      }
+
+      await txDb.insert(messengerSavedViewMutations).values({
+        orgId,
+        userId,
+        clientMutationId: input.clientMutationId,
+        savedViewId: savedView.id,
+        groupId: group.id,
+        requestFingerprint,
+      });
+
+      return { savedView, group: { id: group.id, name: group.name } };
+    });
+  }
+
+  return { list, get, keep, update, reorder, remove };
 }

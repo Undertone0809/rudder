@@ -164,7 +164,7 @@ export type {
   LibraryDocumentIssueLink,
   LibraryDocumentRevision,
   LibraryDocumentSummary, LibraryEntry, LiveEvent, MessengerApprovalThreadItem,
-  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerFailedRunThreadItem, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerRunOriginDescriptor, MessengerRunOriginSource, MessengerRunOriginSourceState, MessengerSavedView, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadItem, MessengerThreadAction, MessengerThreadDetail,
+  MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerFailedRunThreadItem, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerRunOriginDescriptor, MessengerRunOriginSource, MessengerRunOriginSourceState, MessengerSavedView, MessengerSavedViewKeepResult, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewPlacement, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadItem, MessengerThreadAction, MessengerThreadDetail,
   MessengerThreadItem, MessengerThreadPageInfo,
   MessengerThreadSummary,
   MessengerThreadSummaryPage, MessengerThreadUserState, OperatorProfileSettings, Organization, OrganizationExportJob,
@@ -196,12 +196,14 @@ export type {
 } from "./types/index.js";
 export {
   createMessengerSavedViewSchema,
+  keepMessengerSavedViewSchema,
   listMessengerSavedViewsQuerySchema,
   messengerSavedViewIdSchema,
   messengerSavedViewTargetSchema,
   reorderMessengerSavedViewsSchema,
   updateMessengerSavedViewSchema,
   type CreateMessengerSavedView,
+  type KeepMessengerSavedView,
   type ListMessengerSavedViewsQuery,
   type MessengerSavedViewTargetInput,
   type ReorderMessengerSavedViews,

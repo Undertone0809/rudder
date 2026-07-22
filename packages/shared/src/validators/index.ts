@@ -45,12 +45,14 @@ export {
 } from "./chat.js";
 export {
   createMessengerSavedViewSchema,
+  keepMessengerSavedViewSchema,
   listMessengerSavedViewsQuerySchema,
   messengerSavedViewIdSchema,
   messengerSavedViewTargetSchema,
   reorderMessengerSavedViewsSchema,
   updateMessengerSavedViewSchema,
   type CreateMessengerSavedView,
+  type KeepMessengerSavedView,
   type ListMessengerSavedViewsQuery,
   type MessengerSavedViewTargetInput,
   type ReorderMessengerSavedViews,

@@ -30,14 +30,19 @@ import {
   joinRequests,
   messengerCustomGroupEntries,
   messengerCustomGroups,
+  messengerSavedViewMutations,
   messengerSavedViews,
   messengerThreadUserStates,
   organizations,
   organizationSecrets,
   projects,
 } from "@rudderhq/db";
-import { deriveOrganizationUrlKey, MESSENGER_FORK_GROUP_DEFAULT_ICON } from "@rudderhq/shared";
-import { eq, sql } from "drizzle-orm";
+import {
+  deriveOrganizationUrlKey,
+  MESSENGER_FORK_GROUP_DEFAULT_ICON,
+  type MessengerSavedViewTarget,
+} from "@rudderhq/shared";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -48,7 +53,11 @@ import { hashChatGenerationBody } from "../services/chat-generation-protocol.ts"
 import { chatSteerMessageService } from "../services/chat-steer-messages.ts";
 import { chatService } from "../services/chats.ts";
 import { issueService } from "../services/issues.ts";
-import { messengerSavedViewsService } from "../services/messenger-saved-views.ts";
+import {
+  messengerSavedViewCanonicalResourceKey,
+  messengerSavedViewResourceKey,
+  messengerSavedViewsService,
+} from "../services/messenger-saved-views.ts";
 import { messengerService } from "../services/messenger.ts";
 
 type EmbeddedPostgresInstance = {
@@ -146,6 +155,37 @@ describe("messengerService and issue follows", () => {
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
 
+  async function insertSavedViewFixture(
+    orgId: string,
+    userId: string,
+    input: {
+      target: MessengerSavedViewTarget;
+      title: string;
+      subtitle?: string | null;
+      favicon?: string | null;
+    },
+  ) {
+    const [last] = await db.select({ sortOrder: messengerSavedViews.sortOrder })
+      .from(messengerSavedViews)
+      .where(and(eq(messengerSavedViews.orgId, orgId), eq(messengerSavedViews.userId, userId)))
+      .orderBy(desc(messengerSavedViews.sortOrder))
+      .limit(1);
+    const [savedView] = await db.insert(messengerSavedViews).values({
+      orgId,
+      userId,
+      targetKind: input.target.kind,
+      targetPayload: input.target,
+      resourceKey: messengerSavedViewResourceKey(input.target),
+      instanceId: input.target.viewInstanceId,
+      canonicalResourceKey: messengerSavedViewCanonicalResourceKey(input.target),
+      title: input.title,
+      subtitle: input.subtitle ?? null,
+      favicon: input.favicon ?? null,
+      sortOrder: (last?.sortOrder ?? -1) + 1,
+    }).returning();
+    return savedView;
+  }
+
   beforeAll(async () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
@@ -161,6 +201,7 @@ describe("messengerService and issue follows", () => {
     await db.delete(issueFollows);
     await db.delete(messengerCustomGroupEntries);
     await db.delete(messengerCustomGroups);
+    await db.delete(messengerSavedViewMutations);
     await db.delete(messengerSavedViews);
     await db.delete(messengerThreadUserStates);
     await db.delete(chatQueuedMessages);
@@ -6943,7 +6984,240 @@ describe("messengerService and issue follows", () => {
     expect(persisted?.lastReadAt.toISOString()).toBe(readAt.toISOString());
   });
 
-  it("persists, deduplicates, restores, and isolates Messenger Saved Views by target identity", async () => {
+  it("keeps distinct instances of one resource and makes instance and mutation retries idempotent", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-instance-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Instances Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Instances Org"),
+      issuePrefix: "SVI",
+    });
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "References");
+    const mutationOne = randomUUID();
+    const first = await savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "library_file", filePath: "docs/guide.md", viewInstanceId: "file-view-1" },
+      title: "Guide one",
+      clientMutationId: mutationOne,
+      placement: { kind: "group", groupId: group.id },
+    });
+    const activityAfterFirst = await db.select().from(activityLog).where(eq(activityLog.entityId, first.savedView.id));
+    const retriedByMutation = await savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "library_file", filePath: "docs/guide.md", viewInstanceId: "file-view-1" },
+      title: "Guide one",
+      clientMutationId: mutationOne,
+      placement: { kind: "group", groupId: group.id },
+    });
+    expect(await db.select().from(activityLog).where(eq(activityLog.entityId, first.savedView.id)))
+      .toHaveLength(activityAfterFirst.length);
+    const mutationTwo = randomUUID();
+    const retriedByFreshMutation = await savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "library_file", filePath: "docs/guide.md", viewInstanceId: "file-view-1" },
+      title: "Guide one",
+      clientMutationId: mutationTwo,
+      placement: { kind: "group", groupId: group.id },
+    });
+    expect(retriedByFreshMutation.savedView.id).toBe(first.savedView.id);
+    expect(retriedByFreshMutation.savedView.updatedAt).toEqual(first.savedView.updatedAt);
+    expect(await db.select().from(activityLog).where(eq(activityLog.entityId, first.savedView.id)))
+      .toHaveLength(activityAfterFirst.length);
+    expect(await db.select().from(messengerSavedViewMutations).where(eq(
+      messengerSavedViewMutations.savedViewId,
+      first.savedView.id,
+    ))).toHaveLength(2);
+    const updatedByFreshMutation = await savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "library_file", filePath: "docs/guide.md", viewInstanceId: "file-view-1" },
+      title: "Guide one renamed",
+      clientMutationId: randomUUID(),
+      placement: { kind: "group", groupId: group.id },
+    });
+    expect(updatedByFreshMutation.savedView).toMatchObject({
+      id: first.savedView.id,
+      title: "Guide one renamed",
+    });
+    expect(await db.select().from(activityLog).where(eq(activityLog.entityId, first.savedView.id)))
+      .toHaveLength(activityAfterFirst.length + 1);
+    const second = await savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "library_file", filePath: "docs/guide.md", viewInstanceId: "file-view-2" },
+      title: "Guide two",
+      clientMutationId: randomUUID(),
+      placement: { kind: "group", groupId: group.id },
+    });
+
+    expect(retriedByMutation.savedView.id).toBe(first.savedView.id);
+    expect(second.savedView.id).not.toBe(first.savedView.id);
+    expect(first.savedView).toMatchObject({
+      instanceId: "file-view-1",
+      canonicalResourceKey: "library-file:docs/guide.md",
+      resourceKey: "view-instance:file-view-1",
+    });
+    expect(await db.select().from(messengerSavedViews)).toHaveLength(2);
+    expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(2);
+
+    const otherGroup = await messengerSvc.createCustomGroup(orgId, userId, "Other references");
+    await expect(savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "library_file", filePath: "docs/guide.md", viewInstanceId: "file-view-1" },
+      title: "Conflicting placement",
+      clientMutationId: mutationOne,
+      placement: { kind: "group", groupId: otherGroup.id },
+    })).rejects.toMatchObject({ status: 409 });
+    await expect(savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "library_file", filePath: "docs/other.md", viewInstanceId: "file-view-1" },
+      title: "Conflicting target",
+      clientMutationId: randomUUID(),
+      placement: { kind: "group", groupId: group.id },
+    })).rejects.toMatchObject({ status: 409 });
+    await expect(savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "library_file", filePath: "docs/other.md", viewInstanceId: "file-view-other" },
+      title: "Conflicting mutation",
+      clientMutationId: mutationOne,
+      placement: { kind: "group", groupId: group.id },
+    })).rejects.toMatchObject({ status: 409 });
+    await expect(savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "library_file", filePath: "docs/other.md", viewInstanceId: "fresh-mutation-other" },
+      title: "Conflicting fresh mutation replay",
+      clientMutationId: mutationTwo,
+      placement: { kind: "group", groupId: group.id },
+    })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("encodes opaque local app canonical identity without delimiter collisions", () => {
+    const first = messengerSavedViewCanonicalResourceKey({
+      kind: "local_app",
+      desktopInstallationId: "desktop:a",
+      appPublicId: "app",
+      localBindingId: "binding",
+      viewInstanceId: "local-view-a",
+    });
+    const second = messengerSavedViewCanonicalResourceKey({
+      kind: "local_app",
+      desktopInstallationId: "desktop",
+      appPublicId: "a:app",
+      localBindingId: "binding",
+      viewInstanceId: "local-view-b",
+    });
+    expect(first).not.toBe(second);
+  });
+
+  it("atomically creates or reuses anchor groups for Chat and Issue hosts", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-anchor-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Saved View Anchors Org",
+      urlKey: deriveOrganizationUrlKey("Saved View Anchors Org"),
+      issuePrefix: "SVA",
+    });
+    const conversationId = randomUUID();
+    const issueId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Launch research",
+      createdByUserId: userId,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Ship launch",
+      createdByUserId: userId,
+    });
+
+    const chatInput = {
+      target: { kind: "browser" as const, tabId: "research", url: "https://example.test/research", viewInstanceId: "browser-research" },
+      title: "Research page",
+      clientMutationId: randomUUID(),
+      placement: { kind: "anchor" as const, anchor: { kind: "chat" as const, conversationId } },
+    };
+    const concurrent = await Promise.all([
+      savedViewsSvc.keep(orgId, userId, chatInput),
+      savedViewsSvc.keep(orgId, userId, chatInput),
+    ]);
+    expect(new Set(concurrent.map((result) => result.savedView.id)).size).toBe(1);
+    expect(new Set(concurrent.map((result) => result.group.id)).size).toBe(1);
+    const chatGroup = concurrent[0]!.group;
+    expect(chatGroup.name).toBe("Launch research");
+    expect((await db.select().from(messengerCustomGroups).where(eq(messengerCustomGroups.id, chatGroup.id)))[0]?.pinnedAt).toBeNull();
+    expect((await db.select().from(messengerCustomGroupEntries).where(eq(messengerCustomGroupEntries.groupId, chatGroup.id)))
+      .map((entry) => entry.threadKey)).toEqual([`chat:${conversationId}`, `saved-view:${concurrent[0]!.savedView.id}`]);
+
+    const issueResult = await savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "automation", automationId: randomUUID(), viewInstanceId: "automation-view-1" },
+      title: "Launch automation",
+      clientMutationId: randomUUID(),
+      placement: { kind: "anchor", anchor: { kind: "issue", issueId } },
+    });
+    expect(issueResult.group.name).toBe("Ship launch");
+    expect((await db.select().from(messengerCustomGroupEntries).where(eq(messengerCustomGroupEntries.groupId, issueResult.group.id)))
+      .map((entry) => entry.threadKey)).toEqual([`issue:${issueId}`, `saved-view:${issueResult.savedView.id}`]);
+
+    const existing = await messengerSvc.createCustomGroup(orgId, userId, "Existing host group");
+    const groupedConversationId = randomUUID();
+    await db.insert(chatConversations).values({ id: groupedConversationId, orgId, title: "Grouped", createdByUserId: userId });
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, existing.id, `chat:${groupedConversationId}`);
+    const grouped = await savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "library_directory", directoryPath: "plans", viewInstanceId: "plans-view" },
+      title: "Plans",
+      clientMutationId: randomUUID(),
+      placement: { kind: "anchor", anchor: { kind: "chat", conversationId: groupedConversationId } },
+    });
+    expect(grouped.group.id).toBe(existing.id);
+  });
+
+  it("rolls back missing or cross-organization anchors and protects groups containing Saved Views", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const userId = "saved-view-protected-group-user";
+    await db.insert(organizations).values([
+      { id: orgId, name: "Protected Group Org", urlKey: deriveOrganizationUrlKey("Protected Group Org"), issuePrefix: "PGO" },
+      { id: otherOrgId, name: "Other Protected Group Org", urlKey: deriveOrganizationUrlKey("Other Protected Group Org"), issuePrefix: "OPG" },
+    ]);
+    const foreignChatId = randomUUID();
+    await db.insert(chatConversations).values({ id: foreignChatId, orgId: otherOrgId, title: "Foreign", createdByUserId: userId });
+    const invalidInput = {
+      target: { kind: "library_file" as const, filePath: "private.md", viewInstanceId: "private-view" },
+      title: "Private",
+      clientMutationId: randomUUID(),
+      placement: { kind: "anchor" as const, anchor: { kind: "chat" as const, conversationId: foreignChatId } },
+    };
+    await expect(savedViewsSvc.keep(orgId, userId, invalidInput)).rejects.toMatchObject({ status: 404 });
+    expect(await db.select().from(messengerSavedViews)).toEqual([]);
+    expect(await db.select().from(messengerCustomGroups)).toEqual([]);
+
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Protected");
+    const kept = await savedViewsSvc.keep(orgId, userId, {
+      target: {
+        kind: "local_app",
+        desktopInstallationId: "desktop-1",
+        appPublicId: "com.example.app",
+        localBindingId: "binding-1",
+        viewInstanceId: "local-app-view",
+      },
+      title: "Local app",
+      clientMutationId: randomUUID(),
+      placement: { kind: "group", groupId: group.id },
+    });
+    expect(kept.savedView.targetPayload).toEqual({
+      kind: "local_app",
+      desktopInstallationId: "desktop-1",
+      appPublicId: "com.example.app",
+      localBindingId: "binding-1",
+      viewInstanceId: "local-app-view",
+    });
+    await savedViewsSvc.update(orgId, userId, kept.savedView.id, { hidden: true });
+    await expect(messengerSvc.separateCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
+    await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
+    await expect(messengerSvc.removeThreadFromCustomGroups(
+      orgId,
+      userId,
+      `saved-view:${kept.savedView.id}`,
+    )).rejects.toMatchObject({ status: 409 });
+    expect(await db.select().from(messengerCustomGroupEntries).where(eq(messengerCustomGroupEntries.groupId, group.id))).toHaveLength(1);
+    await savedViewsSvc.remove(orgId, userId, kept.savedView.id);
+    await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).resolves.toMatchObject({ id: group.id });
+  });
+
+  it("persists, updates, restores, and isolates Messenger Saved Views by instance identity", async () => {
     const orgId = randomUUID();
     const otherOrgId = randomUUID();
     const userId = "saved-view-user";
@@ -6962,16 +7236,16 @@ describe("messengerService and issue follows", () => {
       },
     ]);
 
-    const firstBrowser = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "browser", tabId: "tab-a", url: "https://example.test/shared" },
+    const firstBrowser = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "browser", tabId: "tab-a", url: "https://example.test/shared", viewInstanceId: "tab-a" },
       title: "First browser",
     });
-    const repeatedTab = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "browser", tabId: "tab-a", url: "https://example.test/updated" },
+    const repeatedTab = await savedViewsSvc.update(orgId, userId, firstBrowser.id, {
+      target: { kind: "browser", tabId: "tab-a", url: "https://example.test/updated", viewInstanceId: "tab-a" },
       title: "Updated browser",
     });
-    const sameUrlDifferentTab = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "browser", tabId: "tab-b", url: "https://example.test/updated" },
+    const sameUrlDifferentTab = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "browser", tabId: "tab-b", url: "https://example.test/updated", viewInstanceId: "tab-b" },
       title: "Second browser",
     });
     expect(repeatedTab.id).toBe(firstBrowser.id);
@@ -6979,8 +7253,8 @@ describe("messengerService and issue follows", () => {
     expect(sameUrlDifferentTab.id).not.toBe(firstBrowser.id);
 
     const automationId = randomUUID();
-    const automation = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "automation", automationId },
+    const automation = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "automation", automationId, viewInstanceId: "automation-view" },
       title: "Missing automation remains saved",
     });
     const group = await messengerSvc.createCustomGroup(orgId, userId, "Saved tools");
@@ -6994,8 +7268,8 @@ describe("messengerService and issue follows", () => {
     expect((await messengerSvc.listCustomGroups(orgId, userId)).groups[0]?.entries).toEqual([]);
     expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(1);
 
-    const restored = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "automation", automationId },
+    const restored = await savedViewsSvc.update(orgId, userId, automation.id, {
+      hidden: false,
       title: "Restored missing automation",
     });
     expect(restored.id).toBe(automation.id);
@@ -7009,7 +7283,7 @@ describe("messengerService and issue follows", () => {
     expect(restoredEntry).not.toHaveProperty("thread");
 
     await expect(savedViewsSvc.update(orgId, userId, automation.id, {
-      target: { kind: "automation", automationId: randomUUID() },
+      target: { kind: "automation", automationId: randomUUID(), viewInstanceId: "different-automation-view" },
     })).rejects.toMatchObject({ status: 400 });
 
     await expect(savedViewsSvc.get(orgId, "another-user", automation.id)).rejects.toMatchObject({ status: 404 });
@@ -7020,7 +7294,7 @@ describe("messengerService and issue follows", () => {
       .select()
       .from(activityLog)
       .where(eq(activityLog.entityType, "messenger_saved_view"));
-    expect(savedViewActivity.length).toBeGreaterThanOrEqual(6);
+    expect(savedViewActivity.length).toBeGreaterThanOrEqual(3);
     expect(new Set(savedViewActivity.map((event) => event.actorId))).toEqual(new Set([userId]));
   });
 
@@ -7033,16 +7307,16 @@ describe("messengerService and issue follows", () => {
       urlKey: deriveOrganizationUrlKey("Saved View Order Org"),
       issuePrefix: `O${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
     });
-    const first = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "library_file", filePath: "missing/first.md" },
+    const first = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "library_file", filePath: "missing/first.md", viewInstanceId: "missing-first" },
       title: "First stale file",
     });
-    const second = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "library_directory", directoryPath: "missing/directory" },
+    const second = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "library_directory", directoryPath: "missing/directory", viewInstanceId: "missing-directory" },
       title: "Missing directory",
     });
-    const third = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "library_entry", entryId: randomUUID(), path: "missing/entry.md" },
+    const third = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "library_entry", entryId: randomUUID(), path: "missing/entry.md", viewInstanceId: "missing-entry" },
       title: "Missing library entry",
     });
 
@@ -7059,7 +7333,7 @@ describe("messengerService and issue follows", () => {
     await expect(savedViewsSvc.get(orgId, userId, first.id)).rejects.toMatchObject({ status: 404 });
   });
 
-  it("deduplicates and restores every Library Saved View by owning resource identity", async () => {
+  it("updates and restores every Library Saved View without changing instance identity", async () => {
     const orgId = randomUUID();
     const userId = "saved-view-library-user";
     await db.insert(organizations).values({
@@ -7073,31 +7347,31 @@ describe("messengerService and issue follows", () => {
     const entryId = randomUUID();
     const cases = [
       {
-        initial: { kind: "library_document" as const, documentId },
-        repeated: { kind: "library_document" as const, documentId },
+        initial: { kind: "library_document" as const, documentId, viewInstanceId: "library-document-view" },
+        repeated: { kind: "library_document" as const, documentId, viewInstanceId: "library-document-view" },
       },
       {
-        initial: { kind: "library_entry" as const, entryId, path: "docs/old-name.md" },
-        repeated: { kind: "library_entry" as const, entryId, path: "docs/new-name.md" },
+        initial: { kind: "library_entry" as const, entryId, path: "docs/old-name.md", viewInstanceId: "library-entry-view" },
+        repeated: { kind: "library_entry" as const, entryId, path: "docs/new-name.md", viewInstanceId: "library-entry-view" },
       },
       {
-        initial: { kind: "library_file" as const, filePath: "workspace/missing.md" },
-        repeated: { kind: "library_file" as const, filePath: "workspace/missing.md" },
+        initial: { kind: "library_file" as const, filePath: "workspace/missing.md", viewInstanceId: "library-file-view" },
+        repeated: { kind: "library_file" as const, filePath: "workspace/missing.md", viewInstanceId: "library-file-view" },
       },
       {
-        initial: { kind: "library_directory" as const, directoryPath: "workspace/missing" },
-        repeated: { kind: "library_directory" as const, directoryPath: "workspace/missing" },
+        initial: { kind: "library_directory" as const, directoryPath: "workspace/missing", viewInstanceId: "library-directory-view" },
+        repeated: { kind: "library_directory" as const, directoryPath: "workspace/missing", viewInstanceId: "library-directory-view" },
       },
     ];
 
     for (const [index, targetCase] of cases.entries()) {
-      const created = await savedViewsSvc.create(orgId, userId, {
+      const created = await insertSavedViewFixture(orgId, userId, {
         target: targetCase.initial,
         title: `Library target ${index}`,
         subtitle: "Initial metadata",
       });
       const originalSortOrder = created.sortOrder;
-      const repeated = await savedViewsSvc.create(orgId, userId, {
+      const repeated = await savedViewsSvc.update(orgId, userId, created.id, {
         target: targetCase.repeated,
         title: `Updated library target ${index}`,
         subtitle: "Updated metadata",
@@ -7111,8 +7385,8 @@ describe("messengerService and issue follows", () => {
       });
 
       await savedViewsSvc.update(orgId, userId, created.id, { hidden: true });
-      const restored = await savedViewsSvc.create(orgId, userId, {
-        target: targetCase.repeated,
+      const restored = await savedViewsSvc.update(orgId, userId, created.id, {
+        hidden: false,
         title: `Restored library target ${index}`,
       });
       expect(restored).toMatchObject({
@@ -7132,7 +7406,7 @@ describe("messengerService and issue follows", () => {
     ]);
   });
 
-  it("serializes concurrent Saved View creates with stable dedupe evidence and unique ordering", async () => {
+  it("serializes concurrent Saved View Keeps with stable instance identity and unique ordering", async () => {
     const orgId = randomUUID();
     const userId = "saved-view-concurrency-user";
     await db.insert(organizations).values({
@@ -7142,18 +7416,23 @@ describe("messengerService and issue follows", () => {
       issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
     });
 
-    const distinct = await Promise.all(Array.from({ length: 12 }, (_, index) => savedViewsSvc.create(orgId, userId, {
-      target: { kind: "browser", tabId: `concurrent-${index}`, url: `https://example.test/${index}` },
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Concurrent Keeps");
+    const distinct = await Promise.all(Array.from({ length: 12 }, (_, index) => savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "browser", tabId: `concurrent-${index}`, url: `https://example.test/${index}`, viewInstanceId: `concurrent-${index}` },
       title: `Concurrent ${index}`,
+      clientMutationId: randomUUID(),
+      placement: { kind: "group", groupId: group.id },
     })));
-    expect(new Set(distinct.map((view) => view.sortOrder)).size).toBe(12);
+    expect(new Set(distinct.map((result) => result.savedView.sortOrder)).size).toBe(12);
 
-    const sameTarget = await Promise.all(Array.from({ length: 8 }, (_, index) => savedViewsSvc.create(orgId, userId, {
-      target: { kind: "browser", tabId: "same-live-tab", url: `https://example.test/same/${index}` },
+    const sameTarget = await Promise.all(Array.from({ length: 8 }, (_, index) => savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "browser", tabId: "same-live-tab", url: `https://example.test/same/${index}`, viewInstanceId: "same-live-tab" },
       title: `Same target ${index}`,
+      clientMutationId: randomUUID(),
+      placement: { kind: "group", groupId: group.id },
     })));
-    expect(new Set(sameTarget.map((view) => view.id)).size).toBe(1);
-    const sameId = sameTarget[0]!.id;
+    expect(new Set(sameTarget.map((result) => result.savedView.id)).size).toBe(1);
+    const sameId = sameTarget[0]!.savedView.id;
     const actions = (await db.select().from(activityLog).where(eq(activityLog.entityId, sameId))).map((event) => event.action);
     expect(actions.filter((action) => action === "messenger.saved_view_created")).toHaveLength(1);
     expect(actions.filter((action) => action === "messenger.saved_view_updated")).toHaveLength(7);
@@ -7170,8 +7449,8 @@ describe("messengerService and issue follows", () => {
     });
     const orderedViews = [];
     for (const tabId of ["a", "b", "c", "d"]) {
-      orderedViews.push(await savedViewsSvc.create(orgId, userId, {
-        target: { kind: "browser", tabId, url: `https://example.test/${tabId}` },
+      orderedViews.push(await insertSavedViewFixture(orgId, userId, {
+        target: { kind: "browser", tabId, url: `https://example.test/${tabId}`, viewInstanceId: `ordered-${tabId}` },
         title: tabId.toUpperCase(),
       }));
     }
@@ -7235,8 +7514,8 @@ describe("messengerService and issue follows", () => {
       urlKey: deriveOrganizationUrlKey("Saved View Delete Assign Org"),
       issuePrefix: `DA${orgId.replace(/-/g, "").slice(0, 4).toUpperCase()}`,
     });
-    const savedView = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "browser", tabId: "delete-assign", url: "https://example.test/delete-assign" },
+    const savedView = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "browser", tabId: "delete-assign", url: "https://example.test/delete-assign", viewInstanceId: "delete-assign" },
       title: "Delete assign race",
     });
     const group = await messengerSvc.createCustomGroup(orgId, userId, "Race group");
@@ -7264,8 +7543,8 @@ describe("messengerService and issue follows", () => {
     });
     const savedViews = [];
     for (const index of Array.from({ length: 6 }, (_, value) => value)) {
-      savedViews.push(await savedViewsSvc.create(orgId, userId, {
-        target: { kind: "browser", tabId: `mixed-${index}`, url: `https://example.test/mixed/${index}` },
+      savedViews.push(await insertSavedViewFixture(orgId, userId, {
+        target: { kind: "browser", tabId: `mixed-${index}`, url: `https://example.test/mixed/${index}`, viewInstanceId: `mixed-${index}` },
         title: `Mixed saved ${index}`,
       }));
     }
@@ -7312,27 +7591,29 @@ describe("messengerService and issue follows", () => {
       urlKey: deriveOrganizationUrlKey("Saved View Removal Audit Org"),
       issuePrefix: `RA${orgId.replace(/-/g, "").slice(0, 4).toUpperCase()}`,
     });
-    const grouped = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "automation", automationId: randomUUID() },
+    const grouped = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "automation", automationId: randomUUID(), viewInstanceId: "grouped-removal" },
       title: "Grouped removal audit",
     });
-    const ungrouped = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "automation", automationId: randomUUID() },
+    const ungrouped = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "automation", automationId: randomUUID(), viewInstanceId: "ungrouped-removal" },
       title: "Ungrouped no-op",
     });
     const group = await messengerSvc.createCustomGroup(orgId, userId, "Delete audit group");
     await messengerSvc.assignThreadToCustomGroup(orgId, userId, group.id, `saved-view:${grouped.id}`);
 
-    await messengerSvc.deleteCustomGroup(orgId, userId, group.id);
+    await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
     const groupedRemovalEvents = await db
       .select()
       .from(activityLog)
       .where(eq(activityLog.entityId, grouped.id));
-    expect(groupedRemovalEvents.filter((event) => event.action === "messenger.saved_view_group_removed")).toHaveLength(1);
-    expect(groupedRemovalEvents.find((event) => event.action === "messenger.saved_view_group_removed")?.details)
-      .toMatchObject({ groupId: group.id, source: "group_delete" });
+    expect(groupedRemovalEvents.filter((event) => event.action === "messenger.saved_view_group_removed")).toHaveLength(0);
 
-    await messengerSvc.removeThreadFromCustomGroups(orgId, userId, `saved-view:${ungrouped.id}`);
+    await expect(messengerSvc.removeThreadFromCustomGroups(
+      orgId,
+      userId,
+      `saved-view:${ungrouped.id}`,
+    )).rejects.toMatchObject({ status: 409 });
     const missingSavedViewId = randomUUID();
     await expect(messengerSvc.removeThreadFromCustomGroups(
       orgId,
@@ -7360,8 +7641,10 @@ describe("messengerService and issue follows", () => {
       orgId,
       userId,
       targetKind: "browser" as const,
-      targetPayload: { kind: "browser" as const, tabId: `page-${index}`, url: `https://example.test/page/${index}` },
-      resourceKey: `browser:page-${index}`,
+      targetPayload: { kind: "browser" as const, tabId: `page-${index}`, url: `https://example.test/page/${index}`, viewInstanceId: `page-${index}` },
+      resourceKey: `view-instance:page-${index}`,
+      instanceId: `page-${index}`,
+      canonicalResourceKey: `browser:page-${index}`,
       title: `Page ${index.toString().padStart(3, "0")}`,
       sortOrder: index,
     })));
@@ -7388,15 +7671,17 @@ describe("messengerService and issue follows", () => {
       .rejects.toMatchObject({ status: 400 });
     await expect(messengerSvc.reorderCustomGroupEntries(orgId, userId, randomUUID(), ["chat:duplicate", "chat:duplicate"]))
       .rejects.toMatchObject({ status: 400 });
-    await expect(savedViewsSvc.create(orgId, userId, {
-      target: { kind: "library_file", filePath: "/absolute/path.md" },
+    await expect(savedViewsSvc.keep(orgId, userId, {
+      target: { kind: "library_file", filePath: "/absolute/path.md", viewInstanceId: "invalid-path" },
       title: "Invalid",
+      clientMutationId: randomUUID(),
+      placement: { kind: "group", groupId: randomUUID() },
     })).rejects.toMatchObject({ status: 400 });
-    const root = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "library_directory", directoryPath: "" },
+    const root = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "library_directory", directoryPath: "", viewInstanceId: "library-root" },
       title: "Library root",
     });
-    expect(root.resourceKey).toBe("library-directory:");
+    expect(root.canonicalResourceKey).toBe("library-directory:");
   });
 
   it("rolls back Saved View and placement mutations when their activity evidence cannot commit", async () => {
@@ -7408,8 +7693,8 @@ describe("messengerService and issue follows", () => {
       urlKey: deriveOrganizationUrlKey("Saved View Atomicity Org"),
       issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
     });
-    const existing = await savedViewsSvc.create(orgId, userId, {
-      target: { kind: "browser", tabId: "atomic-existing", url: "https://example.test/existing" },
+    const existing = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "browser", tabId: "atomic-existing", url: "https://example.test/existing", viewInstanceId: "atomic-existing" },
       title: "Existing",
     });
     const group = await messengerSvc.createCustomGroup(orgId, userId, "Atomic group");
@@ -7430,9 +7715,11 @@ describe("messengerService and issue follows", () => {
       for each row execute function fail_saved_view_activity_for_test();
     `));
     try {
-      await expect(savedViewsSvc.create(orgId, userId, {
-        target: { kind: "browser", tabId: "atomic-new", url: "https://example.test/new" },
+      await expect(savedViewsSvc.keep(orgId, userId, {
+        target: { kind: "browser", tabId: "atomic-new", url: "https://example.test/new", viewInstanceId: "atomic-new" },
         title: "Must roll back",
+        clientMutationId: randomUUID(),
+        placement: { kind: "group", groupId: group.id },
       })).rejects.toThrow();
       expect((await savedViewsSvc.list(orgId, userId, { visibility: "all" })).pageInfo.total).toBe(1);
 

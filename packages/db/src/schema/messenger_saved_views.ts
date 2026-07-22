@@ -12,6 +12,9 @@ export const messengerSavedViews = pgTable(
     targetKind: text("target_kind").$type<MessengerSavedViewTargetKind>().notNull(),
     targetPayload: jsonb("target_payload").$type<MessengerSavedViewTarget>().notNull(),
     resourceKey: text("resource_key").notNull(),
+    instanceId: text("instance_id").notNull(),
+    canonicalResourceKey: text("canonical_resource_key").notNull(),
+    clientMutationId: uuid("client_mutation_id"),
     title: text("title").notNull(),
     subtitle: text("subtitle"),
     favicon: text("favicon"),
@@ -23,10 +26,42 @@ export const messengerSavedViews = pgTable(
   (table) => ({
     orgUserResourceUnique: uniqueIndex("messenger_saved_views_org_user_resource_uq")
       .on(table.orgId, table.userId, table.resourceKey),
+    orgUserInstanceUnique: uniqueIndex("messenger_saved_views_org_user_instance_uq")
+      .on(table.orgId, table.userId, table.instanceId),
+    orgUserClientMutationUnique: uniqueIndex("messenger_saved_views_org_user_client_mutation_uq")
+      .on(table.orgId, table.userId, table.clientMutationId)
+      .where(sql`${table.clientMutationId} is not null`),
     orgUserOrderIdx: index("messenger_saved_views_org_user_order_idx")
       .on(table.orgId, table.userId, table.sortOrder, table.createdAt),
     orgUserVisibleOrderIdx: index("messenger_saved_views_org_user_visible_order_idx")
       .on(table.orgId, table.userId, table.sortOrder, table.createdAt)
       .where(sql`${table.hiddenAt} is null`),
+  }),
+);
+
+/**
+ * Durable idempotency receipts for the atomic Saved View Keep operation.
+ *
+ * Saved-view and group ids deliberately are not foreign keys: receipts must
+ * survive deletion so a previously consumed mutation id cannot later be
+ * replayed for a different intent.
+ */
+export const messengerSavedViewMutations = pgTable(
+  "messenger_saved_view_mutations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    clientMutationId: uuid("client_mutation_id").notNull(),
+    savedViewId: uuid("saved_view_id").notNull(),
+    groupId: uuid("group_id").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    orgUserMutationUnique: uniqueIndex("messenger_saved_view_mutations_org_user_mutation_uq")
+      .on(table.orgId, table.userId, table.clientMutationId),
+    savedViewIdx: index("messenger_saved_view_mutations_saved_view_idx")
+      .on(table.orgId, table.userId, table.savedViewId),
   }),
 );
