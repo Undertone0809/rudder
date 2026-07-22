@@ -28,7 +28,11 @@ related_code:
   - desktop/src/browser-agent-tabs.ts
   - desktop/src/browser-broker-server.ts
   - desktop/scripts/smoke.mjs
-commit_refs:\n  - "feat: separate Browser MCP runtime"\n  - "test: verify isolated Browser runtime adapters"\n  - "fix: isolate runtime MCP credentials per run"\n  - "fix: clean up run-scoped MCP credentials"
+commit_refs:
+  - "feat: separate Browser MCP runtime"
+  - "test: verify isolated Browser runtime adapters"
+  - "fix: isolate runtime MCP credentials per run"
+  - "fix: clean up run-scoped MCP credentials"
 updated_at: 2026-07-23
 ---
 
