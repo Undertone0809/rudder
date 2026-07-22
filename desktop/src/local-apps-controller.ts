@@ -151,7 +151,7 @@ export class LocalAppsController {
   }
 
   async stop(id: string): Promise<LocalAppRuntimeView> {
-    return this.runtime.stop(id);
+    return this.withBindingOperation(id, () => this.runtime.stop(id));
   }
 
   async status(id: string): Promise<LocalAppRuntimeView> {

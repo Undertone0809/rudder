@@ -3,11 +3,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { constants as fsConstants } from "node:fs";
 import { access, realpath } from "node:fs/promises";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import type { LocalAppDefinition, LocalAppRegistry } from "./local-apps-registry.js";
+import type {
+  LocalAppDefinition,
+  LocalAppRegistry,
+  LocalAppRuntimeDescriptor,
+} from "./local-apps-registry.js";
 
 const execFileAsync = promisify(execFile);
 const WATCHDOG_RUNNER_PATH = fileURLToPath(new URL("./local-app-watchdog-runner.mjs", import.meta.url));
@@ -60,6 +64,19 @@ type RuntimeManagerOptions = {
   killGroup?: (pgid: number, signal: NodeJS.Signals) => void;
   spawnWatchdog?: typeof spawn;
   watchdogRunnerPath?: string;
+  probePersistedRuntimeLiveness?: (input: {
+    pid: number | null;
+    pgid: number | null;
+    port: number | null;
+  }) => Promise<PersistedRuntimeLiveness>;
+};
+
+type LivenessState = "alive" | "dead" | "unknown";
+
+type PersistedRuntimeLiveness = {
+  pid: LivenessState;
+  processGroup: LivenessState;
+  listener: LivenessState;
 };
 
 export function localAppPartitionId(installationId: string, definitionId: string): string {
@@ -96,6 +113,50 @@ function defaultIsGroupAlive(pgid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+function probeProcessLiveness(target: number | null): LivenessState {
+  if (!Number.isInteger(target) || target === null || target === 0) return "unknown";
+  try {
+    process.kill(target, 0);
+    return "alive";
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH" ? "dead" : "unknown";
+  }
+}
+
+async function probeLoopbackListenerLiveness(port: number | null): Promise<LivenessState> {
+  if (!Number.isInteger(port) || port === null || port <= 0 || port > 65_535) return "unknown";
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port });
+    let settled = false;
+    const finish = (result: LivenessState) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.destroy();
+      resolve(result);
+    };
+    const timeout = setTimeout(() => finish("unknown"), 500);
+    timeout.unref();
+    socket.unref();
+    socket.once("connect", () => finish("alive"));
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      finish(error.code === "ECONNREFUSED" ? "dead" : "unknown");
+    });
+  });
+}
+
+async function defaultProbePersistedRuntimeLiveness(input: {
+  pid: number | null;
+  pgid: number | null;
+  port: number | null;
+}): Promise<PersistedRuntimeLiveness> {
+  return {
+    pid: probeProcessLiveness(input.pid),
+    processGroup: probeProcessLiveness(input.pgid === null ? null : -input.pgid),
+    listener: await probeLoopbackListenerLiveness(input.port),
+  };
 }
 
 export async function terminateOwnedProcessGroup(
@@ -241,8 +302,10 @@ export class LocalAppRuntimeManager {
   private readonly killGroup: (pgid: number, signal: NodeJS.Signals) => void;
   private readonly spawnWatchdog: typeof spawn;
   private readonly watchdogRunnerPath: string;
+  private readonly probePersistedRuntimeLiveness: NonNullable<RuntimeManagerOptions["probePersistedRuntimeLiveness"]>;
   private readonly records = new Map<string, RuntimeRecord>();
-  private readonly startPromises = new Map<string, Promise<LocalAppRuntimeView>>();
+  private readonly recordPromises = new Map<string, Promise<RuntimeRecord>>();
+  private readonly bindingOperations = new Map<string, Promise<void>>();
 
   constructor(options: RuntimeManagerOptions) {
     this.registry = options.registry;
@@ -253,6 +316,8 @@ export class LocalAppRuntimeManager {
     this.killGroup = options.killGroup ?? defaultKillGroup;
     this.spawnWatchdog = options.spawnWatchdog ?? spawn;
     this.watchdogRunnerPath = options.watchdogRunnerPath ?? WATCHDOG_RUNNER_PATH;
+    this.probePersistedRuntimeLiveness = options.probePersistedRuntimeLiveness
+      ?? defaultProbePersistedRuntimeLiveness;
   }
 
   private view(record: RuntimeRecord): LocalAppRuntimeView {
@@ -271,22 +336,48 @@ export class LocalAppRuntimeManager {
     record.logText = buffer.subarray(buffer.length - this.maxLogBytes).toString("utf8");
   }
 
-  private async persistedStatus(id: string, definition: LocalAppDefinition): Promise<RuntimeRecord> {
-    const descriptor = await this.registry.getRuntimeDescriptor(id);
-    const persistedRunning = descriptor && ["starting", "running", "stopping"].includes(descriptor.status);
+  private recordFromPersistedDescriptor(
+    definition: LocalAppDefinition,
+    descriptor: LocalAppRuntimeDescriptor | null,
+  ): RuntimeRecord {
+    const persistedRunning = Boolean(descriptor && ["starting", "running", "stopping"].includes(descriptor.status));
     const record: RuntimeRecord = {
       status: persistedRunning ? "orphaned_unverified" : descriptor?.status === "failed" ? "failed" : "stopped",
       generation: descriptor?.generation ?? randomUUID(),
       definition,
       helper: null,
-      pid: persistedRunning ? descriptor.pid : null,
-      pgid: persistedRunning ? descriptor.pgid : null,
-      port: null,
+      pid: persistedRunning ? descriptor?.pid ?? null : null,
+      pgid: persistedRunning ? descriptor?.pgid ?? null : null,
+      port: persistedRunning ? descriptor?.port ?? null : null,
       origin: null,
       verified: false,
       logText: "",
       error: persistedRunning ? "Previous Local App ownership cannot be verified after restart" : undefined,
     };
+    return record;
+  }
+
+  private async persistedStatus(id: string, definition: LocalAppDefinition): Promise<RuntimeRecord> {
+    let descriptor = await this.registry.getRuntimeDescriptor(id);
+    if (descriptor && ["starting", "running", "stopping"].includes(descriptor.status)) {
+      const liveness = await this.probePersistedRuntimeLiveness({
+        pid: descriptor.pid,
+        pgid: descriptor.pgid,
+        port: descriptor.port ?? null,
+      });
+      const provablyDead = liveness.pid === "dead"
+        && liveness.processGroup === "dead"
+        && liveness.listener === "dead";
+      if (provablyDead) {
+        const cleared = await this.registry.recordRuntimeDescriptorIfMatch(
+          id,
+          { generation: descriptor.generation, status: descriptor.status },
+          null,
+        );
+        descriptor = cleared ? null : await this.registry.getRuntimeDescriptor(id);
+      }
+    }
+    const record = this.recordFromPersistedDescriptor(definition, descriptor);
     this.records.set(id, record);
     return record;
   }
@@ -294,8 +385,28 @@ export class LocalAppRuntimeManager {
   private async getRecord(id: string): Promise<RuntimeRecord> {
     const existing = this.records.get(id);
     if (existing) return existing;
-    const definition = await this.registry.getDefinition(id);
-    return this.persistedStatus(id, definition);
+    const inFlight = this.recordPromises.get(id);
+    if (inFlight) return inFlight;
+    const promise = this.registry.getDefinition(id)
+      .then((definition) => this.persistedStatus(id, definition));
+    this.recordPromises.set(id, promise);
+    try {
+      return await promise;
+    } finally {
+      if (this.recordPromises.get(id) === promise) this.recordPromises.delete(id);
+    }
+  }
+
+  private async withBindingOperation<T>(id: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.bindingOperations.get(id) ?? Promise.resolve();
+    const result = previous.then(operation);
+    const completion = result.then(() => undefined, () => undefined);
+    this.bindingOperations.set(id, completion);
+    try {
+      return await result;
+    } finally {
+      if (this.bindingOperations.get(id) === completion) this.bindingOperations.delete(id);
+    }
   }
 
   private async spawnHelper(record: RuntimeRecord, port: number): Promise<{ pid: number; pgid: number }> {
@@ -333,12 +444,15 @@ export class LocalAppRuntimeManager {
       helper.once("exit", (code, signal) => {
         finish(new Error(`Local App watchdog exited before startup (${signal ?? code ?? "unknown"})`));
         if (["starting", "running"].includes(record.status)) {
+          const previousStatus = record.status;
           record.status = "failed";
           record.verified = false;
           record.error = "Local App process exited unexpectedly";
-          void this.registry.recordRuntimeDescriptor(record.definition.id, {
-            status: "failed", pid: null, pgid: null, generation: record.generation,
-          }).catch(() => undefined);
+          void this.registry.recordRuntimeDescriptorIfMatch(
+            record.definition.id,
+            { generation: record.generation, status: previousStatus },
+            { status: "failed", pid: null, pgid: null, generation: record.generation },
+          ).catch(() => undefined);
         }
       });
       if (typeof helper.send !== "function") {
@@ -373,7 +487,11 @@ export class LocalAppRuntimeManager {
     throw new Error(`Local App readiness check failed for ${record.definition.readiness.path}`);
   }
 
-  private async failStart(record: RuntimeRecord, error: unknown): Promise<never> {
+  private async failStart(
+    record: RuntimeRecord,
+    error: unknown,
+    generationClaimed: boolean,
+  ): Promise<never> {
     if (record.pgid) {
       await terminateOwnedProcessGroup(record.pgid, { killGroup: this.killGroup }).catch(() => undefined);
     }
@@ -381,22 +499,20 @@ export class LocalAppRuntimeManager {
     record.status = "failed";
     record.verified = false;
     record.error = error instanceof Error ? error.message : String(error);
-    await this.registry.recordRuntimeDescriptor(record.definition.id, {
-      status: "failed", pid: null, pgid: null, generation: record.generation,
-    });
+    if (generationClaimed) {
+      await this.registry.recordRuntimeDescriptorIfMatch(
+        record.definition.id,
+        { generation: record.generation, status: ["starting", "running"] },
+        { status: "failed", pid: null, pgid: null, generation: record.generation },
+      );
+    } else if (this.records.get(record.definition.id) === record) {
+      this.records.delete(record.definition.id);
+    }
     throw error instanceof Error ? error : new Error(String(error));
   }
 
   async start(id: string): Promise<LocalAppRuntimeView> {
-    const inFlight = this.startPromises.get(id);
-    if (inFlight) return inFlight;
-    const promise = this.startInternal(id);
-    this.startPromises.set(id, promise);
-    try {
-      return await promise;
-    } finally {
-      this.startPromises.delete(id);
-    }
+    return this.withBindingOperation(id, () => this.startInternal(id));
   }
 
   private async startInternal(id: string): Promise<LocalAppRuntimeView> {
@@ -406,7 +522,15 @@ export class LocalAppRuntimeManager {
     if (existing.status === "orphaned_unverified") {
       throw new Error("Refusing to start while previous Local App ownership is unverified");
     }
+    if (existing.status === "starting" || existing.status === "stopping") {
+      throw new Error("Refusing to start while a Local App lifecycle transition is in progress");
+    }
     const definition = await this.registry.requireApprovedDefinition(id);
+    const previousDescriptor = await this.registry.getRuntimeDescriptor(id);
+    if (previousDescriptor && ["starting", "running", "stopping"].includes(previousDescriptor.status)) {
+      this.records.delete(id);
+      throw new Error("Refusing to start while previous Local App ownership is unverified");
+    }
     const port = await allocateLoopbackPort();
     const record: RuntimeRecord = {
       status: "starting",
@@ -421,46 +545,86 @@ export class LocalAppRuntimeManager {
       logText: "",
     };
     this.records.set(id, record);
+    let generationClaimed = false;
     try {
       const spawned = await this.spawnHelper(record, port);
       record.pid = spawned.pid;
       record.pgid = spawned.pgid;
-      await this.registry.recordRuntimeDescriptor(id, {
-        status: "starting", pid: record.pid, pgid: record.pgid, generation: record.generation, port,
-      });
+      generationClaimed = await this.registry.recordRuntimeDescriptorIfMatch(
+        id,
+        previousDescriptor === null
+          ? null
+          : { generation: previousDescriptor.generation, status: previousDescriptor.status },
+        { status: "starting", pid: record.pid, pgid: record.pgid, generation: record.generation, port },
+      );
+      if (!generationClaimed) throw new Error("Local App runtime generation changed during startup");
       await this.waitForReadiness(record);
       const owned = await this.verifyListenerOwnership({ port, pid: record.pid, pgid: record.pgid });
       if (!owned) throw new Error("Local App listener ownership could not be proven");
       record.status = "running";
       record.verified = true;
-      await this.registry.recordRuntimeDescriptor(id, {
-        status: "running", pid: record.pid, pgid: record.pgid, generation: record.generation, port,
-      });
+      const markedRunning = await this.registry.recordRuntimeDescriptorIfMatch(
+        id,
+        { generation: record.generation, status: "starting" },
+        { status: "running", pid: record.pid, pgid: record.pgid, generation: record.generation, port },
+      );
+      if (!markedRunning) throw new Error("Local App runtime generation changed during startup");
       return this.view(record);
     } catch (error) {
-      return this.failStart(record, error);
+      return this.failStart(record, error, generationClaimed);
     }
   }
 
   async stop(id: string): Promise<LocalAppRuntimeView> {
+    return this.withBindingOperation(id, () => this.stopInternal(id));
+  }
+
+  private async stopInternal(id: string): Promise<LocalAppRuntimeView> {
     const record = await this.getRecord(id);
     if (record.status === "orphaned_unverified" || !record.verified || !record.pgid) {
       if (record.status === "stopped" || record.status === "failed") return this.view(record);
       throw new Error("Refusing to stop an unverified Local App process group");
     }
     record.status = "stopping";
-    await this.registry.recordRuntimeDescriptor(id, {
-      status: "stopping", pid: record.pid, pgid: record.pgid, generation: record.generation,
-    });
-    await terminateOwnedProcessGroup(record.pgid, { killGroup: this.killGroup });
+    const markedStopping = await this.registry.recordRuntimeDescriptorIfMatch(
+      id,
+      { generation: record.generation, status: "running" },
+      {
+        status: "stopping",
+        pid: record.pid,
+        pgid: record.pgid,
+        generation: record.generation,
+        ...(record.port === null ? {} : { port: record.port }),
+      },
+    );
+    if (!markedStopping) {
+      this.records.delete(id);
+      throw new Error("Local App runtime generation changed while stopping");
+    }
+    try {
+      await terminateOwnedProcessGroup(record.pgid, { killGroup: this.killGroup });
+    } catch (error) {
+      record.status = "orphaned_unverified";
+      record.verified = false;
+      record.error = "Local App process-group termination could not be verified";
+      throw error;
+    }
     record.helper?.stdin?.end();
+    const cleared = await this.registry.recordRuntimeDescriptorIfMatch(
+      id,
+      { generation: record.generation, status: "stopping" },
+      null,
+    );
+    if (!cleared) {
+      this.records.delete(id);
+      throw new Error("Local App runtime generation changed while stopping");
+    }
     record.status = "stopped";
     record.verified = false;
     record.pid = null;
     record.pgid = null;
     record.port = null;
     record.origin = null;
-    await this.registry.recordRuntimeDescriptor(id, null);
     return this.view(record);
   }
 
@@ -522,6 +686,7 @@ export class LocalAppRuntimeManager {
   }
 
   async shutdown(): Promise<void> {
+    await Promise.allSettled([...this.bindingOperations.values()]);
     const ids = [...this.records.entries()]
       .filter(([, record]) => record.status === "running" && record.verified)
       .map(([id]) => id);

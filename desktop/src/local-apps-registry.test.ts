@@ -117,6 +117,47 @@ describe("Desktop Local App registry", () => {
     });
   });
 
+  it("does not let an old runtime generation clear or overwrite a newer descriptor", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-runtime-generation-"));
+    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    const created = await registry.createDefinition(prepared);
+    await registry.recordRuntimeDescriptor(created.id, {
+      status: "stopping", pid: 101, pgid: 101, generation: "old", port: 31_001,
+    });
+
+    await expect(registry.recordRuntimeDescriptorIfGeneration(created.id, "old", {
+      status: "running", pid: 202, pgid: 202, generation: "new", port: 31_002,
+    })).resolves.toBe(true);
+    await expect(registry.recordRuntimeDescriptorIfGeneration(created.id, "old", null)).resolves.toBe(false);
+    await expect(registry.recordRuntimeDescriptorIfGeneration(created.id, "old", {
+      status: "failed", pid: null, pgid: null, generation: "old",
+    })).resolves.toBe(false);
+    await expect(registry.recordRuntimeDescriptorIfMatch(created.id, {
+      generation: "new",
+      status: "starting",
+    }, {
+      status: "running", pid: 202, pgid: 202, generation: "new", port: 31_002,
+    })).resolves.toBe(false);
+    await expect(registry.getRuntimeDescriptor(created.id)).resolves.toMatchObject({
+      status: "running", pid: 202, pgid: 202, generation: "new", port: 31_002,
+    });
+  });
+
+  it("rejects non-positive runtime process identities before any liveness probe can use them", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-runtime-identities-"));
+    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    const created = await registry.createDefinition(prepared);
+
+    await expect(registry.recordRuntimeDescriptor(created.id, {
+      status: "running", pid: -101, pgid: 101, generation: "invalid", port: 31_001,
+    })).rejects.toThrow("Invalid Local App runtime descriptor");
+    await expect(registry.recordRuntimeDescriptor(created.id, {
+      status: "running", pid: 101, pgid: 0, generation: "invalid", port: 31_001,
+    })).rejects.toThrow("Invalid Local App runtime descriptor");
+  });
+
   it("recovers without execution when persisted trusted launch fields do not match their fingerprint", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-tampered-"));
     const registryPath = path.join(root, "registry.json");

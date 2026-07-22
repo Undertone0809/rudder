@@ -50,6 +50,16 @@ async function approvedFixture(options: {
   return { root, registry, definition };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
 describe("Desktop Local App runtime", () => {
   it("derives a trusted Node bin for a realpathed npm CLI when the Desktop executable has no node", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-npm-prefix-"));
@@ -159,6 +169,179 @@ describe("Desktop Local App runtime", () => {
     expect((await manager.status(definition.id)).status).toBe("stopped");
   });
 
+  it("serializes a real start followed immediately by stop for one binding", async () => {
+    const { registry, definition } = await approvedFixture();
+    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+    try {
+      const starting = manager.start(definition.id);
+      const stopping = manager.stop(definition.id);
+      const [started, stopped] = await Promise.all([starting, stopping]);
+
+      expect(started.status).toBe("running");
+      expect(stopped.status).toBe("stopped");
+      expect((await manager.status(definition.id)).status).toBe("stopped");
+      expect(await registry.getRuntimeDescriptor(definition.id)).toBeNull();
+    } finally {
+      await manager.shutdown();
+    }
+  });
+
+  it("waits for an in-flight start and then stops it during shutdown", async () => {
+    const { registry, definition } = await approvedFixture();
+    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+    const starting = manager.start(definition.id);
+    const shuttingDown = manager.shutdown();
+
+    await expect(starting).resolves.toMatchObject({ status: "running" });
+    await expect(shuttingDown).resolves.toBeUndefined();
+    expect((await manager.status(definition.id)).status).toBe("stopped");
+    expect(await registry.getRuntimeDescriptor(definition.id)).toBeNull();
+  });
+
+  it("serializes a real stop followed immediately by a new start generation", async () => {
+    const { registry, definition } = await approvedFixture();
+    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+    try {
+      const first = await manager.start(definition.id);
+      const stopping = manager.stop(definition.id);
+      const restarting = manager.start(definition.id);
+      const [stopped, restarted] = await Promise.all([stopping, restarting]);
+
+      expect(stopped.status).toBe("stopped");
+      expect(restarted.status).toBe("running");
+      expect(restarted.generation).not.toBe(first.generation);
+      expect((await manager.status(definition.id)).generation).toBe(restarted.generation);
+      expect(await registry.getRuntimeDescriptor(definition.id)).toMatchObject({
+        status: "running",
+        generation: restarted.generation,
+      });
+    } finally {
+      await manager.shutdown();
+    }
+  });
+
+  it("does not start a new generation until an in-flight stop has finished clearing the old one", async () => {
+    const { registry, definition } = await approvedFixture();
+    const terminationEntered = deferred<void>();
+    const releaseTermination = deferred<void>();
+    const killGroup = vi.fn((pgid: number, signal: NodeJS.Signals) => {
+      if (signal === "SIGTERM") {
+        terminationEntered.resolve();
+        void releaseTermination.promise.then(() => {
+          try {
+            process.kill(-pgid, "SIGTERM");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          }
+        });
+        return;
+      }
+      process.kill(-pgid, signal);
+    });
+    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin", killGroup });
+    try {
+      const first = await manager.start(definition.id);
+      const stopping = manager.stop(definition.id);
+      await terminationEntered.promise;
+      const restarting = manager.start(definition.id);
+      let restartSettled = false;
+      void restarting.then(
+        () => { restartSettled = true; },
+        () => { restartSettled = true; },
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(restartSettled).toBe(false);
+      releaseTermination.resolve();
+
+      const [stopped, restarted] = await Promise.all([stopping, restarting]);
+      expect(stopped.status).toBe("stopped");
+      expect(restarted.status).toBe("running");
+      expect(restarted.generation).not.toBe(first.generation);
+      await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+        status: "running",
+        generation: restarted.generation,
+      });
+    } finally {
+      releaseTermination.resolve();
+      await manager.shutdown();
+    }
+  }, 10_000);
+
+  it("atomically reconciles nonexistent persisted PID, PGID, and listener once, then permits a new start", async () => {
+    const { registry, definition } = await approvedFixture();
+    await registry.recordRuntimeDescriptor(definition.id, {
+      status: "running", pid: 991_001, pgid: 991_001, generation: "dead-generation", port: 31_991,
+    });
+    const probeEntered = deferred<void>();
+    const releaseProbe = deferred<void>();
+    const probePersistedRuntimeLiveness = vi.fn(async () => {
+      probeEntered.resolve();
+      await releaseProbe.promise;
+      return { pid: "dead" as const, processGroup: "dead" as const, listener: "dead" as const };
+    });
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      probePersistedRuntimeLiveness,
+    });
+    try {
+      const firstStatus = manager.status(definition.id);
+      await probeEntered.promise;
+      const secondStatus = manager.status(definition.id);
+      releaseProbe.resolve();
+
+      await expect(Promise.all([firstStatus, secondStatus])).resolves.toEqual([
+        expect.objectContaining({ status: "stopped" }),
+        expect.objectContaining({ status: "stopped" }),
+      ]);
+      expect(probePersistedRuntimeLiveness).toHaveBeenCalledOnce();
+      expect(probePersistedRuntimeLiveness).toHaveBeenCalledWith({
+        pid: 991_001,
+        pgid: 991_001,
+        port: 31_991,
+      });
+      expect(await registry.getRuntimeDescriptor(definition.id)).toBeNull();
+
+      const restarted = await manager.start(definition.id);
+      expect(restarted.status).toBe("running");
+      expect(restarted.generation).not.toBe("dead-generation");
+    } finally {
+      await manager.shutdown();
+    }
+  });
+
+  it.each([
+    {
+      label: "a live process group",
+      liveness: { pid: "alive" as const, processGroup: "alive" as const, listener: "alive" as const },
+    },
+    {
+      label: "an EPERM or otherwise ambiguous probe",
+      liveness: { pid: "unknown" as const, processGroup: "unknown" as const, listener: "unknown" as const },
+    },
+  ])("keeps persisted ownership orphaned and never signals for $label", async ({ liveness }) => {
+    const { registry, definition } = await approvedFixture();
+    await registry.recordRuntimeDescriptor(definition.id, {
+      status: "running", pid: 991_002, pgid: 991_002, generation: "unverified-generation", port: 31_992,
+    });
+    const killGroup = vi.fn();
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      killGroup,
+      probePersistedRuntimeLiveness: vi.fn(async () => liveness),
+    });
+
+    expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
+    await expect(manager.start(definition.id)).rejects.toThrow("unverified");
+    await expect(manager.stop(definition.id)).rejects.toThrow("unverified");
+    expect(killGroup).not.toHaveBeenCalled();
+    await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+      generation: "unverified-generation",
+    });
+  });
+
   it("fails closed on readiness failure or unproven listener ownership", async () => {
     const wrongHealth = await approvedFixture({ readinessPath: "/never", readinessTimeoutMs: 1_000 });
     const timeoutManager = new LocalAppRuntimeManager({ registry: wrongHealth.registry, platform: "darwin" });
@@ -191,7 +374,7 @@ describe("Desktop Local App runtime", () => {
     })).rejects.toThrow("unverified");
   });
 
-  it("treats control-pipe EOF as idempotent cleanup and never kills an unverified orphan", async () => {
+  it("treats control-pipe EOF as idempotent cleanup and never guesses about a legacy orphan without a port", async () => {
     const pipe = new EventEmitter();
     const cleanup = vi.fn(async () => undefined);
     installControlPipeEofCleanup(pipe, cleanup);
@@ -208,13 +391,17 @@ describe("Desktop Local App runtime", () => {
     });
     const definition = await registry.createDefinition({ ...prepared, approvedFingerprint: prepared.trustFingerprint });
     await registry.approveDefinition(definition.id, prepared.trustFingerprint);
-    await registry.recordRuntimeDescriptor(definition.id, { status: "running", pid: 999_999, pgid: 999_999, generation: "old" });
+    await registry.recordRuntimeDescriptor(definition.id, { status: "stopping", pid: 999_999, pgid: 999_999, generation: "old" });
     const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
     const killGroup = vi.fn();
     const manager = new LocalAppRuntimeManager({ registry: reloaded, platform: "darwin", killGroup });
     expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
     await expect(manager.stop(definition.id)).rejects.toThrow("unverified");
     expect(killGroup).not.toHaveBeenCalled();
+    await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+      status: "stopping",
+      generation: "old",
+    });
   });
 
   it("uses a real watchdog whose parent control-pipe EOF cleans the owned app group", async () => {

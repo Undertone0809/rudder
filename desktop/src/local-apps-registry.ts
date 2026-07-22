@@ -167,9 +167,11 @@ function isRuntimeDescriptor(value: unknown): value is LocalAppRuntimeDescriptor
   if (!value || typeof value !== "object") return false;
   const descriptor = value as Partial<LocalAppRuntimeDescriptor>;
   return typeof descriptor.status === "string"
-    && (descriptor.pid === null || Number.isInteger(descriptor.pid))
-    && (descriptor.pgid === null || Number.isInteger(descriptor.pgid))
-    && typeof descriptor.generation === "string";
+    && (descriptor.pid === null || (Number.isInteger(descriptor.pid) && descriptor.pid! > 0))
+    && (descriptor.pgid === null || (Number.isInteger(descriptor.pgid) && descriptor.pgid! > 0))
+    && typeof descriptor.generation === "string"
+    && (descriptor.port === undefined
+      || (Number.isInteger(descriptor.port) && descriptor.port! > 0 && descriptor.port! <= 65_535));
 }
 
 function isDefinition(value: unknown): value is LocalAppDefinition {
@@ -407,6 +409,45 @@ export class LocalAppRegistry {
       if (descriptor === null) delete state.runtimeDescriptors[id];
       else if (!isRuntimeDescriptor(descriptor)) throw new Error("Invalid Local App runtime descriptor");
       else state.runtimeDescriptors[id] = structuredClone(descriptor);
+    });
+  }
+
+  async recordRuntimeDescriptorIfGeneration(
+    id: string,
+    expectedGeneration: string | null,
+    descriptor: LocalAppRuntimeDescriptor | null,
+  ): Promise<boolean> {
+    return this.recordRuntimeDescriptorIfMatch(
+      id,
+      expectedGeneration === null ? null : { generation: expectedGeneration },
+      descriptor,
+    );
+  }
+
+  async recordRuntimeDescriptorIfMatch(
+    id: string,
+    expected: { generation: string; status?: string | readonly string[] } | null,
+    descriptor: LocalAppRuntimeDescriptor | null,
+  ): Promise<boolean> {
+    return this.mutate((state) => {
+      if (!state.definitions.some((definition) => definition.id === id)) {
+        throw new Error("Local App definition not found");
+      }
+      if (descriptor !== null && !isRuntimeDescriptor(descriptor)) {
+        throw new Error("Invalid Local App runtime descriptor");
+      }
+      const current = state.runtimeDescriptors[id];
+      const matches = expected === null
+        ? current === undefined
+        : current?.generation === expected.generation
+          && (expected.status === undefined
+            || (Array.isArray(expected.status)
+              ? expected.status.includes(current.status)
+              : current.status === expected.status));
+      if (!matches) return false;
+      if (descriptor === null) delete state.runtimeDescriptors[id];
+      else state.runtimeDescriptors[id] = structuredClone(descriptor);
+      return true;
     });
   }
 

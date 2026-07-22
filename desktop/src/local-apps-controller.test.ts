@@ -32,6 +32,96 @@ function nextTurn(): Promise<void> {
 }
 
 describe("Desktop Local Apps native controller", () => {
+  it("does not let start overtake an in-flight stop for the same binding", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-stop-start-"));
+    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    const created = await registry.createDefinition(prepared);
+    await registry.approveDefinition(created.id, prepared.trustFingerprint);
+
+    const stopEntered = deferred<void>();
+    const releaseStop = deferred<void>();
+    const calls: string[] = [];
+    const runtime = {
+      start: vi.fn(async () => {
+        calls.push("start");
+        return { status: "running" as const };
+      }),
+      stop: vi.fn(async () => {
+        calls.push("stop-entered");
+        stopEntered.resolve();
+        await releaseStop.promise;
+        calls.push("stop-finished");
+        return { status: "stopped" as const };
+      }),
+      status: vi.fn(async () => ({ status: "stopped" as const })),
+      logs: vi.fn(),
+      attestedTarget: vi.fn(),
+      shutdown: vi.fn(),
+    };
+    const controller = new LocalAppsController({
+      registry, runtime, selectFolder: vi.fn(async () => null), confirmDefinition: vi.fn(async () => true),
+    });
+
+    const stopping = controller.stop(created.id);
+    await stopEntered.promise;
+    const starting = controller.start(created.id);
+    await nextTurn();
+    expect(runtime.start).not.toHaveBeenCalled();
+
+    releaseStop.resolve();
+    await expect(Promise.all([stopping, starting])).resolves.toEqual([
+      { status: "stopped" },
+      { status: "running" },
+    ]);
+    expect(calls).toEqual(["stop-entered", "stop-finished", "start"]);
+  });
+
+  it("does not let stop overtake an in-flight start for the same binding", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-start-stop-"));
+    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    const created = await registry.createDefinition(prepared);
+    await registry.approveDefinition(created.id, prepared.trustFingerprint);
+
+    const startEntered = deferred<void>();
+    const releaseStart = deferred<void>();
+    const calls: string[] = [];
+    const runtime = {
+      start: vi.fn(async () => {
+        calls.push("start-entered");
+        startEntered.resolve();
+        await releaseStart.promise;
+        calls.push("start-finished");
+        return { status: "running" as const };
+      }),
+      stop: vi.fn(async () => {
+        calls.push("stop");
+        return { status: "stopped" as const };
+      }),
+      status: vi.fn(async () => ({ status: "stopped" as const })),
+      logs: vi.fn(),
+      attestedTarget: vi.fn(),
+      shutdown: vi.fn(),
+    };
+    const controller = new LocalAppsController({
+      registry, runtime, selectFolder: vi.fn(async () => null), confirmDefinition: vi.fn(async () => true),
+    });
+
+    const starting = controller.start(created.id);
+    await startEntered.promise;
+    const stopping = controller.stop(created.id);
+    await nextTurn();
+    expect(runtime.stop).not.toHaveBeenCalled();
+
+    releaseStart.resolve();
+    await expect(Promise.all([starting, stopping])).resolves.toEqual([
+      { status: "running" },
+      { status: "stopped" },
+    ]);
+    expect(calls).toEqual(["start-entered", "start-finished", "stop"]);
+  });
+
   it("does not let delete overtake an in-flight start for the same binding", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-start-delete-"));
     const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
