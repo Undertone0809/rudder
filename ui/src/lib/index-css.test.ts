@@ -199,18 +199,18 @@ describe("index.css motion rules", () => {
     expect(feishuReadOnlyComposerInner).toContain("border-width: 0");
   });
 
-  it("keeps proposal action feedback from colliding with the review block fold", () => {
+  it("keeps proposal action feedback without a decorative review block fold", () => {
     const reviewBlock =
-      indexCss.match(/\n\s*\.chat-review-block \{\s*\n\s*--chat-review-fold-size:[\s\S]*?\n\s*\}/)?.[0] ?? "";
+      indexCss.match(/\n\s*\.chat-review-block \{[\s\S]*?\n\s*\}/)?.[0] ?? "";
     const actionPending =
       indexCss.match(/\n\s*\.chat-review-block--action-pending \{\s*\n\s*--chat-review-action-shadow:[\s\S]*?\n\s*\}/)?.[0] ?? "";
     const pendingKeyframes = cssBlock("@keyframes chat-review-action-pending-pulse");
     const reducedMotion =
       indexCss.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.chat-review-block--action-pending[\s\S]*?\n\s*\}/)?.[0] ?? "";
 
-    expect(reviewBlock).toContain("--chat-review-fold-size");
-    expect(indexCss).toContain(".chat-review-block::before");
-    expect(indexCss).toContain(".chat-review-block::after");
+    expect(reviewBlock).not.toContain("--chat-review-fold-size");
+    expect(indexCss).not.toContain(".chat-review-block::before");
+    expect(indexCss).not.toContain(".chat-review-block::after");
     expect(actionPending).toContain("animation: chat-review-action-pending-pulse 1.6s ease-in-out infinite");
     expect(actionPending).toContain("border-color: color-mix(in oklab, var(--ring) 34%, var(--border-base))");
     expect(actionPending).not.toContain("::before");
@@ -412,15 +412,21 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
   });
 
-  it("keeps macOS desktop glass on shell layers while workspace cards stay paper-like", () => {
+  it("keeps macOS desktop glass on shell layers while limiting the glass header to active Chat cards", () => {
     const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
     const darkDesktopBackdrop = cssBlock("html.dark.desktop-shell-macos .app-shell-backdrop");
     const lightPrimaryRail = cssBlock("html.desktop-shell-macos .primary-rail-shell");
     const lightWorkspaceShell = cssBlock("html.desktop-shell-macos .workspace-shell");
     const lightDesktopWorkspaceCards = cssBlock("html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
     const darkDesktopWorkspaceCards = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
-    const lightDesktopWorkspaceHeader = cssBlock("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
-    const darkDesktopWorkspaceHeader = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
+    const activeChatCardSelector = 'html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"])';
+    const activeDarkChatCardSelector = 'html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"])';
+    const chatHeaderSelector = 'html.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
+    const darkChatHeaderSelector = 'html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
+    const lightChatCard = cssBlock(activeChatCardSelector);
+    const darkChatCard = cssBlock(activeDarkChatCardSelector);
+    const lightChatHeader = cssBlock(chatHeaderSelector);
+    const darkChatHeader = cssBlock(darkChatHeaderSelector);
 
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
     expect(darkDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(138%)");
@@ -432,10 +438,15 @@ describe("index.css motion rules", () => {
     expect(darkDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-dark)");
     expect(lightDesktopWorkspaceCards).not.toContain("backdrop-filter");
     expect(darkDesktopWorkspaceCards).not.toContain("backdrop-filter");
-    expect(lightDesktopWorkspaceHeader).toContain("background: var(--desktop-content-surface-light)");
-    expect(darkDesktopWorkspaceHeader).toContain("background: var(--desktop-content-surface-dark)");
-    expect(lightDesktopWorkspaceHeader).not.toContain("rgb(250 247 242 / 0.58)");
-    expect(darkDesktopWorkspaceHeader).not.toContain("rgb(31 31 29 / 0.54)");
+    expect(lightChatCard).toContain("transparent 2.75rem");
+    expect(lightChatCard).toContain("var(--desktop-content-surface-light) 2.75rem");
+    expect(darkChatCard).toContain("var(--desktop-content-surface-dark) 2.75rem");
+    expect(lightChatHeader).toContain("var(--desktop-content-surface-light) 58%");
+    expect(lightChatHeader).toContain("backdrop-filter: blur(24px) saturate(124%)");
+    expect(darkChatHeader).toContain("var(--desktop-content-surface-dark) 54%");
+    expect(darkChatHeader).toContain("backdrop-filter: blur(24px) saturate(136%)");
+    expect(activeChatCardSelector).toContain(":has(>");
+    expect(indexCss).not.toContain("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
   });
 
   it("keeps frameless Library work surfaces transparent over the desktop shell", () => {
@@ -515,6 +526,7 @@ describe("index.css motion rules", () => {
 
     expect(jumpHighlight).toContain("border-width: 1px");
     expect(jumpHighlight).toContain("border-style: solid");
+    expect(jumpHighlight).toContain("border-radius: var(--radius-lg)");
     expect(jumpHighlight).toContain("border-color:");
     expect(jumpHighlight).toContain("background:");
     expect(jumpHighlight).toContain("box-shadow:");

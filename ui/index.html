@@ -25,6 +25,7 @@
         const defaultDesignStyle = "luma";
         const baseColorKey = "rudder.baseColor";
         const accentThemeKey = "rudder.accentTheme";
+        const defaultAccentTheme = "emerald";
         const darkThemeColor = "#1f1f1d";
         const lightThemeColor = "#f1f0ef";
         const darkBaseThemeColors = {
@@ -62,7 +63,7 @@
           document.documentElement.dataset.style =
             storedStyle === "default" || storedStyle === "mira" || storedStyle === "luma" ? storedStyle : defaultDesignStyle;
           document.documentElement.dataset.baseColor = baseColor;
-          document.documentElement.dataset.themeColor = accentThemes.includes(storedAccentTheme) ? storedAccentTheme : "neutral";
+          document.documentElement.dataset.themeColor = accentThemes.includes(storedAccentTheme) ? storedAccentTheme : defaultAccentTheme;
           document.documentElement.classList.toggle("dark", isDark);
           document.documentElement.style.colorScheme = isDark ? "dark" : "light";
           const themeColorMeta = document.querySelector('meta[name="theme-color"]');
@@ -73,7 +74,7 @@
           document.documentElement.classList.add("dark");
           document.documentElement.dataset.style = defaultDesignStyle;
           document.documentElement.dataset.baseColor = "neutral";
-          document.documentElement.dataset.themeColor = "neutral";
+          document.documentElement.dataset.themeColor = defaultAccentTheme;
           document.documentElement.style.colorScheme = "dark";
         }
 

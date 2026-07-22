@@ -28,11 +28,11 @@ type AccentTheme =
 
 const BASE_COLOR_OPTIONS: BaseColor[] = ["neutral", "stone", "zinc", "mauve", "olive", "mist", "taupe"];
 const ACCENT_THEME_OPTIONS: AccentTheme[] = [
+  "emerald",
   "neutral",
   "amber",
   "blue",
   "cyan",
-  "emerald",
   "fuchsia",
   "green",
   "indigo",
@@ -431,6 +431,13 @@ export function InstanceAppearanceSettings() {
       <SettingsSection title={t("general.appearance.designStyle")}>
         <SettingsChoiceGrid>
           <SettingsChoiceCard
+            label={t("general.appearance.luma.label")}
+            description={t("general.appearance.luma.description")}
+            selected={designStyle === "luma"}
+            onClick={() => setDesignStyle("luma")}
+            preview={<DesignStylePreview style="luma" />}
+          />
+          <SettingsChoiceCard
             label={t("general.appearance.defaultStyle.label")}
             description={t("general.appearance.defaultStyle.description")}
             selected={designStyle === "default"}
@@ -443,13 +450,6 @@ export function InstanceAppearanceSettings() {
             selected={designStyle === "mira"}
             onClick={() => setDesignStyle("mira")}
             preview={<DesignStylePreview style="mira" />}
-          />
-          <SettingsChoiceCard
-            label={t("general.appearance.luma.label")}
-            description={t("general.appearance.luma.description")}
-            selected={designStyle === "luma"}
-            onClick={() => setDesignStyle("luma")}
-            preview={<DesignStylePreview style="luma" />}
           />
         </SettingsChoiceGrid>
       </SettingsSection>

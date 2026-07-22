@@ -34,11 +34,11 @@ vi.mock("../context/I18nContext", () => ({
         "general.appearance.dark.label": "Dark",
         "general.appearance.dark.description": "Low-glare workspace",
         "general.appearance.designStyle": "Design style",
-        "general.appearance.defaultStyle.label": "Rudder",
-        "general.appearance.defaultStyle.description": "Rudder low-glare surfaces",
-        "general.appearance.mira.label": "Mira",
+        "general.appearance.defaultStyle.label": "Classic",
+        "general.appearance.defaultStyle.description": "Balanced low-glare surfaces",
+        "general.appearance.mira.label": "Compact",
         "general.appearance.mira.description": "Compact cards and controls",
-        "general.appearance.luma.label": "Luma",
+        "general.appearance.luma.label": "Rudder",
         "general.appearance.luma.description": "Soft spacious controls",
         "general.appearance.baseColor": "Base color",
         "general.appearance.base.neutral.label": "Neutral",
@@ -64,8 +64,8 @@ vi.mock("../context/I18nContext", () => ({
         "general.appearance.theme.blue.description": "Blue action color",
         "general.appearance.theme.cyan.label": "Cyan",
         "general.appearance.theme.cyan.description": "Cyan action color",
-        "general.appearance.theme.emerald.label": "Emerald",
-        "general.appearance.theme.emerald.description": "Jewel green action color",
+        "general.appearance.theme.emerald.label": "Rudder",
+        "general.appearance.theme.emerald.description": "Rudder green action color",
         "general.appearance.theme.fuchsia.label": "Fuchsia",
         "general.appearance.theme.fuchsia.description": "Fuchsia action color",
         "general.appearance.theme.green.label": "Green",
@@ -89,7 +89,7 @@ vi.mock("../context/ThemeContext", () => ({
     theme: "system",
     designStyle: "luma",
     baseColor: "neutral",
-    accentTheme: "neutral",
+    accentTheme: "emerald",
     setTheme,
     setDesignStyle,
     setBaseColor,
@@ -158,21 +158,28 @@ describe("InstanceAppearanceSettings", () => {
 
     expect(container.textContent).toContain("Design style");
     expect(container.textContent).toContain("Rudder");
-    expect(container.textContent).toContain("Mira");
-    expect(container.textContent).toContain("Luma");
+    expect(container.textContent).toContain("Classic");
+    expect(container.textContent).toContain("Compact");
+    expect(container.textContent).not.toContain("Luma");
+    expect(container.textContent).not.toContain("Mira");
     expect(Array.from(container.querySelectorAll("button[aria-pressed='true']")).some((button) => (
-      button.textContent?.includes("Luma")
+      button.textContent?.includes("Rudder")
     ))).toBe(true);
 
-    const buttons = Array.from(container.querySelectorAll("button"));
-    const miraButton = buttons.find((button) => button.textContent?.includes("Mira"));
-    const lumaButton = buttons.find((button) => button.textContent?.includes("Luma"));
-    expect(miraButton).toBeDefined();
-    expect(lumaButton).toBeDefined();
+    const sections = Array.from(container.querySelectorAll("section[data-slot='settings-section']"));
+    const designSection = sections.find((section) => section.querySelector("h2")?.textContent === "Design style");
+    const designButtons = Array.from(
+      designSection?.querySelectorAll<HTMLButtonElement>("button[data-slot='settings-choice-card']") ?? [],
+    );
+    expect(designButtons.map((button) => button.textContent)).toEqual([
+      expect.stringContaining("Rudder"),
+      expect.stringContaining("Classic"),
+      expect.stringContaining("Compact"),
+    ]);
 
     act(() => {
-      miraButton?.click();
-      lumaButton?.click();
+      designButtons[2]?.click();
+      designButtons[0]?.click();
     });
 
     expect(setDesignStyle).toHaveBeenCalledWith("mira");
@@ -190,21 +197,26 @@ describe("InstanceAppearanceSettings", () => {
     expect(container.textContent).toContain("Muted olive surfaces");
     expect(container.textContent).toContain("Warm taupe surfaces");
     expect(container.textContent).toContain("Theme");
-    expect(container.textContent).toContain("Jewel green action color");
+    expect(container.textContent).toContain("Rudder green action color");
     expect(container.textContent).toContain("Pink action color");
     expect(Array.from(container.querySelectorAll("button[aria-pressed='true']")).some((button) => (
-      button.textContent?.includes("Neutral")
+      button.textContent?.includes("Rudder green action color")
     ))).toBe(true);
 
     const buttons = Array.from(container.querySelectorAll("button"));
     const oliveButton = buttons.find((button) => button.textContent?.includes("Olive"));
-    const emeraldButton = buttons.find((button) => button.textContent?.includes("Emerald"));
+    const emeraldButton = buttons.find((button) => button.textContent?.includes("Rudder green action color"));
     const taupeButton = buttons.find((button) => button.textContent?.includes("Taupe"));
     const pinkButton = buttons.find((button) => button.textContent?.includes("Pink"));
     expect(oliveButton).toBeDefined();
     expect(emeraldButton).toBeDefined();
     expect(taupeButton).toBeDefined();
     expect(pinkButton).toBeDefined();
+
+    const sections = Array.from(container.querySelectorAll("section[data-slot='settings-section']"));
+    const themeSection = sections.find((section) => section.querySelector("h2")?.textContent === "Theme");
+    const themeButtons = Array.from(themeSection?.querySelectorAll("button[data-slot='settings-choice-card']") ?? []);
+    expect(themeButtons[0]?.textContent).toContain("Rudder green action color");
 
     act(() => {
       oliveButton?.click();

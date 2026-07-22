@@ -131,25 +131,39 @@ function renderThemeProvider() {
 }
 
 describe("ThemeProvider desktop shell bridge", () => {
-  it("uses Luma as the design style when no stored preference exists", () => {
+  it("uses the Rudder appearance preset when no stored preference exists", () => {
     installMatchMedia(true);
 
     const container = renderThemeProvider();
 
     expect(container.querySelector("[data-testid='design-style']")?.textContent).toBe("luma");
+    expect(container.querySelector("[data-testid='base-color']")?.textContent).toBe("neutral");
+    expect(container.querySelector("[data-testid='accent-theme']")?.textContent).toBe("emerald");
     expect(document.documentElement.dataset.style).toBe("luma");
+    expect(document.documentElement.dataset.baseColor).toBe("neutral");
+    expect(document.documentElement.dataset.themeColor).toBe("emerald");
     expect(localStorage.getItem("rudder.designStyle")).toBe("luma");
+    expect(localStorage.getItem("rudder.baseColor")).toBe("neutral");
+    expect(localStorage.getItem("rudder.accentTheme")).toBe("emerald");
   });
 
-  it("falls back to Luma when the stored design style is unsupported", () => {
+  it("falls back to the Rudder appearance preset for unsupported stored values", () => {
     installMatchMedia(true);
     localStorage.setItem("rudder.designStyle", "unsupported");
+    localStorage.setItem("rudder.baseColor", "unsupported");
+    localStorage.setItem("rudder.accentTheme", "unsupported");
 
     const container = renderThemeProvider();
 
     expect(container.querySelector("[data-testid='design-style']")?.textContent).toBe("luma");
+    expect(container.querySelector("[data-testid='base-color']")?.textContent).toBe("neutral");
+    expect(container.querySelector("[data-testid='accent-theme']")?.textContent).toBe("emerald");
     expect(document.documentElement.dataset.style).toBe("luma");
+    expect(document.documentElement.dataset.baseColor).toBe("neutral");
+    expect(document.documentElement.dataset.themeColor).toBe("emerald");
     expect(localStorage.getItem("rudder.designStyle")).toBe("luma");
+    expect(localStorage.getItem("rudder.baseColor")).toBe("neutral");
+    expect(localStorage.getItem("rudder.accentTheme")).toBe("emerald");
   });
 
   it("passes the stored light preference to the desktop shell even when the system is dark", () => {

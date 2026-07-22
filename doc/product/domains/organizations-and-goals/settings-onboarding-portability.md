@@ -222,6 +222,12 @@ Product model:
   - base color: `neutral`, `stone`, `zinc`, `mauve`, `olive`, `mist`, `taupe`
   - theme color: `neutral`, `amber`, `blue`, `cyan`, `emerald`, `fuchsia`,
     `green`, `indigo`, `lime`, `orange`, `pink`
+- The default presentation for a browser or local shell without valid saved
+  preferences is color mode `system`, design style `luma`, base color
+  `neutral`, and theme color `emerald`.
+- Appearance presentation names do not replace their stable values. Design
+  style `luma` is presented as Rudder, `default` as Classic, and `mira` as
+  Compact. Theme color `emerald` is presented as Rudder.
 
 Flow:
 
@@ -289,6 +295,8 @@ Invariants:
   outcome.
 - Stored appearance values outside the supported option sets must fall back to
   the default presentation instead of leaving the app in an undefined style.
+- Valid stored appearance values must remain selected across upgrades and must
+  not be overwritten when the default presentation changes.
 - The app shell must apply persisted appearance values early enough to avoid a
   first-paint mismatch between the saved local preference and the hydrated UI.
 
