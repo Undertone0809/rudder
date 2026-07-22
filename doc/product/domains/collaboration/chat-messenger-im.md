@@ -76,6 +76,7 @@ related_code:
   - ui/src/pages/Chat.side-panel.tsx
   - ui/src/pages/Chat.work-manifest.tsx
   - ui/src/pages/Chat.tsx
+  - ui/src/agent-runtimes/transcript.ts
   - ui/src/lib/chat-stream-state.ts
   - ui/src/pages/ProjectDetail.tsx
   - ui/src/lib/messenger-thread-organization.ts
@@ -138,6 +139,7 @@ related_tests:
   - tests/e2e/markdown-website-link-rendering.spec.ts
   - tests/e2e/messenger-contract.spec.ts
   - tests/e2e/messenger-hover-preview.spec.ts
+  - tests/e2e/chat-streaming.spec.ts
   - tests/e2e/chat-edit-stream-layout.spec.ts
   - tests/e2e/chat-concurrent-streaming.spec.ts
   - tests/e2e/chat-options-menu.spec.ts
@@ -231,6 +233,12 @@ Product model:
   summary and raw streams for the same item are alternative representations,
   not separate progress events; streamed fragments coalesce and multiple
   summary parts keep readable boundaries.
+- The live Work Transcript presents each accepted assistant or thinking delta
+  once. Client-side fragment coalescing must not mutate transcript state that
+  has already been published to the UI; React updater replay, remounts, or
+  equivalent render retries must not append the same fragment a second time.
+  The live projection and persisted replay preserve the same fragment order and
+  duplicate-free visible text.
 - When a user sends a local chat follow-up while that conversation already has
   an active assistant generation, Rudder parks the follow-up in a visible
   running queue instead of starting a second concurrent reply in the same chat.
@@ -501,6 +509,9 @@ Evidence:
 - Transcript component tests and Messenger E2E cover hiding internal reasoning
   lifecycle rows and fragmented Rudder result protocol markers while keeping
   meaningful tool activity visible.
+- Chat stream state tests and streaming E2E cover immutable live-delta
+  coalescing under updater replay and verify the active Work Transcript renders
+  each assistant fragment once before the final response is persisted.
 - Codex App Server adapter tests and concurrent-streaming E2E cover dual-stream
   reasoning deduplication, raw-only interrupted turns, multipart summary
   boundaries, and the completed Messenger process transcript.
