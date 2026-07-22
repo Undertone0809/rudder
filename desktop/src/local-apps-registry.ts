@@ -37,8 +37,16 @@ export type LocalAppDefinition = PreparedLocalAppDefinition & {
   updatedAt: string;
 };
 
+export type LocalAppPersistedRuntimeStatus =
+  | "starting"
+  | "running"
+  | "stopping"
+  | "failed"
+  | "orphaned_unverified"
+  | "quarantined";
+
 export type LocalAppRuntimeDescriptor = {
-  status: string;
+  status: LocalAppPersistedRuntimeStatus;
   pid: number | null;
   pgid: number | null;
   generation: string;
@@ -58,6 +66,16 @@ const MAX_ARGUMENTS = 64;
 const MAX_ARGUMENT_LENGTH = 4_096;
 const MAX_ENV_NAMES = 64;
 const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const OWNED_RUNTIME_STATUSES = new Set<LocalAppPersistedRuntimeStatus>([
+  "starting",
+  "running",
+  "stopping",
+  "orphaned_unverified",
+]);
+const OWNERLESS_RUNTIME_STATUSES = new Set<LocalAppPersistedRuntimeStatus>([
+  "failed",
+  "quarantined",
+]);
 
 function requireBoundedString(value: unknown, label: string, maxLength: number): string {
   if (typeof value !== "string" || value.length === 0 || value.length > maxLength || value.includes("\0")) {
@@ -167,12 +185,50 @@ export async function computeLocalAppTrustFingerprint(
 function isRuntimeDescriptor(value: unknown): value is LocalAppRuntimeDescriptor {
   if (!value || typeof value !== "object") return false;
   const descriptor = value as Partial<LocalAppRuntimeDescriptor>;
-  return typeof descriptor.status === "string"
-    && (descriptor.pid === null || isSafeLocalAppProcessId(descriptor.pid))
-    && (descriptor.pgid === null || isSafeLocalAppProcessId(descriptor.pgid))
-    && typeof descriptor.generation === "string"
-    && (descriptor.port === undefined
-      || (Number.isInteger(descriptor.port) && descriptor.port! > 0 && descriptor.port! <= 65_535));
+  if (typeof descriptor.status !== "string"
+    || (!OWNED_RUNTIME_STATUSES.has(descriptor.status as LocalAppPersistedRuntimeStatus)
+      && !OWNERLESS_RUNTIME_STATUSES.has(descriptor.status as LocalAppPersistedRuntimeStatus))
+    || typeof descriptor.generation !== "string"
+    || descriptor.generation.length === 0
+    || descriptor.generation.length > 200
+    || descriptor.generation.includes("\0")) return false;
+  if (OWNED_RUNTIME_STATUSES.has(descriptor.status as LocalAppPersistedRuntimeStatus)) {
+    return isSafeLocalAppProcessId(descriptor.pid)
+      && isSafeLocalAppProcessId(descriptor.pgid)
+      && Number.isInteger(descriptor.port)
+      && descriptor.port! > 0
+      && descriptor.port! <= 65_535;
+  }
+  return descriptor.pid === null && descriptor.pgid === null && descriptor.port === undefined;
+}
+
+function quarantinedRuntimeDescriptor(value: unknown): LocalAppRuntimeDescriptor {
+  const descriptor = value && typeof value === "object"
+    ? value as Partial<LocalAppRuntimeDescriptor>
+    : null;
+  const generation = typeof descriptor?.generation === "string"
+    && descriptor.generation.length > 0
+    && descriptor.generation.length <= 200
+    && !descriptor.generation.includes("\0")
+    ? descriptor.generation
+    : randomUUID();
+  const pid = descriptor?.pid;
+  const pgid = descriptor?.pgid;
+  const port = descriptor?.port;
+  if (isSafeLocalAppProcessId(pid)
+    && isSafeLocalAppProcessId(pgid)
+    && Number.isInteger(port)
+    && port! > 0
+    && port! <= 65_535) {
+    return {
+      status: "orphaned_unverified",
+      pid,
+      pgid,
+      port,
+      generation,
+    };
+  }
+  return { status: "quarantined", pid: null, pgid: null, generation };
 }
 
 function isDefinition(value: unknown): value is LocalAppDefinition {
@@ -227,19 +283,14 @@ export class LocalAppRegistry {
         || raw.installationId !== this.installationId
         || !Array.isArray(raw.definitions)
         || !raw.definitions.every(isDefinition)
-        || !raw.definitions.every((definition) => definition.desktopInstallationId === this.installationId)
-        || !raw.runtimeDescriptors
-        || typeof raw.runtimeDescriptors !== "object"
-        || !Object.values(raw.runtimeDescriptors).every(isRuntimeDescriptor)) {
+        || !raw.definitions.every((definition) => definition.desktopInstallationId === this.installationId)) {
         throw new Error("Invalid Local App registry");
       }
-      const state = raw as RegistryState;
-      const definitionIds = new Set(state.definitions.map((definition) => definition.id));
-      if (definitionIds.size !== state.definitions.length
-        || Object.keys(state.runtimeDescriptors).some((id) => !definitionIds.has(id))) {
+      const definitionIds = new Set(raw.definitions.map((definition) => definition.id));
+      if (definitionIds.size !== raw.definitions.length) {
         throw new Error("Invalid Local App registry identity references");
       }
-      for (const definition of state.definitions) {
+      for (const definition of raw.definitions) {
         const computed = await computeLocalAppTrustFingerprint(definition);
         if (computed.fingerprint !== definition.trustFingerprint
           || (definition.approvedFingerprint !== null && definition.approvedFingerprint !== computed.fingerprint)
@@ -255,7 +306,44 @@ export class LocalAppRegistry {
           throw new Error("Invalid Local App trust fingerprint");
         }
       }
-      await chmod(this.registryPath, 0o600);
+
+      let runtimeDescriptorCorruption = false;
+      const runtimeDescriptors: Record<string, LocalAppRuntimeDescriptor> = {};
+      const rawRuntimeDescriptors = raw.runtimeDescriptors;
+      if (!rawRuntimeDescriptors
+        || typeof rawRuntimeDescriptors !== "object"
+        || Array.isArray(rawRuntimeDescriptors)) {
+        runtimeDescriptorCorruption = true;
+        for (const definition of raw.definitions) {
+          runtimeDescriptors[definition.id] = quarantinedRuntimeDescriptor(null);
+        }
+      } else {
+        for (const [id, descriptor] of Object.entries(rawRuntimeDescriptors)) {
+          if (!definitionIds.has(id)) {
+            runtimeDescriptorCorruption = true;
+            continue;
+          }
+          if (isRuntimeDescriptor(descriptor)) runtimeDescriptors[id] = descriptor;
+          else {
+            runtimeDescriptorCorruption = true;
+            runtimeDescriptors[id] = quarantinedRuntimeDescriptor(descriptor);
+          }
+        }
+      }
+
+      const state: RegistryState = {
+        version: REGISTRY_VERSION,
+        installationId: this.installationId,
+        definitions: raw.definitions,
+        runtimeDescriptors,
+      };
+      if (runtimeDescriptorCorruption) {
+        await mkdir(path.dirname(this.registryPath), { recursive: true, mode: 0o700 });
+        await rename(this.registryPath, `${this.registryPath}.corrupt-${Date.now()}-${randomUUID()}`);
+        await this.persist(state);
+      } else {
+        await chmod(this.registryPath, 0o600);
+      }
       return state;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;

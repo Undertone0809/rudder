@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { access, chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -76,6 +76,15 @@ function watchdogEmitting(message: unknown) {
   helper.signalCode = null;
   helper.send = vi.fn((_payload: unknown, callback?: (error: Error | null) => void) => {
     queueMicrotask(() => helper.emit("message", message));
+    callback?.(null);
+  });
+  return helper;
+}
+
+function watchdogEmittingAfter(message: unknown, milliseconds: number) {
+  const helper = watchdogEmitting(message);
+  helper.send = vi.fn((_payload: unknown, callback?: (error: Error | null) => void) => {
+    setTimeout(() => helper.emit("message", message), milliseconds);
     callback?.(null);
   });
   return helper;
@@ -289,6 +298,80 @@ describe("Desktop Local App runtime", () => {
     }
   }, 10_000);
 
+  it("keeps complete ownership orphaned when stop cannot prove the group died", async () => {
+    const { registry, definition } = await approvedFixture();
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      killGroup: vi.fn(),
+      terminationOptions: {
+        isGroupAlive: () => true,
+        delay: async () => undefined,
+        termTimeoutMs: 1,
+        pollMs: 1,
+      },
+    });
+    const running = await manager.start(definition.id);
+    const ownership = await registry.getRuntimeDescriptor(definition.id);
+    try {
+      await expect(manager.stop(definition.id)).rejects.toThrow("could not be proven dead");
+      await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+        status: "orphaned_unverified",
+        pid: ownership?.pid,
+        pgid: ownership?.pgid,
+        port: ownership?.port,
+        generation: running.generation,
+      });
+      expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
+      await expect(manager.start(definition.id)).rejects.toThrow("unverified");
+    } finally {
+      if (ownership?.pgid) {
+        try {
+          process.kill(-ownership.pgid, "SIGKILL");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      }
+    }
+  });
+
+  it("aggregates shutdown cleanup failures with the binding id and preserves orphan ownership", async () => {
+    const { registry, definition } = await approvedFixture();
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      killGroup: vi.fn(),
+      terminationOptions: {
+        isGroupAlive: () => true,
+        delay: async () => undefined,
+        termTimeoutMs: 1,
+        pollMs: 1,
+      },
+    });
+    await manager.start(definition.id);
+    const ownership = await registry.getRuntimeDescriptor(definition.id);
+    try {
+      await expect(manager.shutdown()).rejects.toSatisfy((error: unknown) =>
+        error instanceof AggregateError
+        && error.message.includes(definition.id)
+        && error.errors.length === 1);
+      await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+        status: "orphaned_unverified",
+        pid: ownership?.pid,
+        pgid: ownership?.pgid,
+        port: ownership?.port,
+      });
+    } finally {
+      if (ownership?.pgid) {
+        try {
+          process.kill(-ownership.pgid, "SIGKILL");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      }
+    }
+  });
+
   it("closes runtime admission while shutdown drains a blocked stop and leaves no later generation", async () => {
     const { registry, definition } = await approvedFixture();
     const terminationEntered = deferred<void>();
@@ -423,6 +506,98 @@ describe("Desktop Local App runtime", () => {
     expect((await ownershipManager.status(unowned.definition.id)).status).toBe("failed");
   });
 
+  it("preserves full ownership and blocks restart when failed-start cleanup hits EPERM", async () => {
+    const { registry, definition } = await approvedFixture();
+    const permissionError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      verifyListenerOwnership: async () => false,
+      killGroup: () => { throw permissionError; },
+      cleanupTimeoutMs: 1_000,
+    });
+
+    await expect(manager.start(definition.id)).rejects.toThrow("cleanup could not be verified");
+    const descriptor = await registry.getRuntimeDescriptor(definition.id);
+    expect(descriptor).toMatchObject({
+      status: "orphaned_unverified",
+      pid: expect.any(Number),
+      pgid: expect.any(Number),
+      port: expect.any(Number),
+    });
+    expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
+    await expect(manager.start(definition.id)).rejects.toThrow("unverified");
+  });
+
+  it("captures a late watchdog spawn after startup timeout and never overlaps a new generation", async () => {
+    const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
+    const helper = watchdogEmittingAfter({ type: "spawned", pid: 88_881, pgid: 88_881 }, 30);
+    const spawnWatchdog = vi.fn(() => helper) as unknown as typeof spawn;
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      spawnWatchdog,
+      watchdogStartTimeoutMs: 10,
+      cleanupTimeoutMs: 60,
+      killGroup: vi.fn(),
+      terminationOptions: {
+        isGroupAlive: () => true,
+        delay: async () => undefined,
+        termTimeoutMs: 1,
+        pollMs: 1,
+      },
+    });
+
+    await expect(manager.start(definition.id)).rejects.toThrow("cleanup could not be verified");
+    await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+      status: "orphaned_unverified",
+      pid: 88_881,
+      pgid: 88_881,
+      port: expect.any(Number),
+    });
+    await expect(manager.start(definition.id)).rejects.toThrow("unverified");
+    expect(spawnWatchdog).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps ownership orphaned when a running watchdog exits without acknowledging cleanup", async () => {
+    const { registry, definition } = await approvedFixture();
+    let watchdog: ChildProcess | null = null;
+    const spawnWatchdog = ((command: string, args: readonly string[], options: SpawnOptions) => {
+      watchdog = spawn(command, [...args], options);
+      return watchdog;
+    }) as unknown as typeof spawn;
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      spawnWatchdog,
+      cleanupTimeoutMs: 100,
+    });
+    await manager.start(definition.id);
+    const ownership = await registry.getRuntimeDescriptor(definition.id);
+    try {
+      expect(watchdog).not.toBeNull();
+      watchdog!.kill("SIGKILL");
+      await vi.waitFor(async () => {
+        await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+          status: "orphaned_unverified",
+          pid: ownership?.pid,
+          pgid: ownership?.pgid,
+          port: ownership?.port,
+        });
+      }, { timeout: 3_000 });
+      expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
+      await expect(manager.start(definition.id)).rejects.toThrow("unverified");
+    } finally {
+      if (ownership?.pgid) {
+        try {
+          process.kill(-ownership.pgid, "SIGKILL");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      }
+    }
+  });
+
   it("uses TERM then bounded KILL only for a verified owned process group", async () => {
     const signals: Array<[number, NodeJS.Signals]> = [];
     let alive = true;
@@ -437,6 +612,18 @@ describe("Desktop Local App runtime", () => {
     await expect(terminateOwnedProcessGroup(null, {
       killGroup: vi.fn(), isGroupAlive: () => false, delay: async () => undefined,
     })).rejects.toThrow("unverified");
+  });
+
+  it("rejects when TERM and KILL cannot prove the process group is dead", async () => {
+    const signals: NodeJS.Signals[] = [];
+    await expect(terminateOwnedProcessGroup(42, {
+      killGroup: (_pgid, signal) => { signals.push(signal); },
+      isGroupAlive: () => true,
+      delay: async () => undefined,
+      termTimeoutMs: 1,
+      pollMs: 1,
+    })).rejects.toThrow("could not be proven dead");
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
 
   it.each([1, Number.MAX_SAFE_INTEGER + 1])(
@@ -467,11 +654,17 @@ describe("Desktop Local App runtime", () => {
       platform: "darwin",
       killGroup,
       spawnWatchdog: (() => helper) as unknown as typeof spawn,
+      cleanupTimeoutMs: 10,
     });
 
-    await expect(manager.start(definition.id)).rejects.toThrow("watchdog process identity");
+    await expect(manager.start(definition.id)).rejects.toThrow("cleanup could not be verified");
     expect(killGroup).not.toHaveBeenCalled();
-    expect(await registry.getRuntimeDescriptor(definition.id)).toBeNull();
+    await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+      status: "quarantined",
+      pid: null,
+      pgid: null,
+    });
+    await expect(manager.start(definition.id)).rejects.toThrow("unverified");
   });
 
   it("treats control-pipe EOF as idempotent cleanup and never guesses about a legacy orphan without a port", async () => {
@@ -491,16 +684,25 @@ describe("Desktop Local App runtime", () => {
     });
     const definition = await registry.createDefinition({ ...prepared, approvedFingerprint: prepared.trustFingerprint });
     await registry.approveDefinition(definition.id, prepared.trustFingerprint);
-    await registry.recordRuntimeDescriptor(definition.id, { status: "stopping", pid: 999_999, pgid: 999_999, generation: "old" });
+    await registry.recordRuntimeDescriptor(definition.id, {
+      status: "stopping", pid: 999_999, pgid: 999_999, generation: "old", port: 31_999,
+    });
+    const persisted = JSON.parse(await readFile(registryPath, "utf8")) as {
+      runtimeDescriptors: Record<string, { port?: number }>;
+    };
+    delete persisted.runtimeDescriptors[definition.id].port;
+    await writeFile(registryPath, JSON.stringify(persisted), { mode: 0o600 });
     const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
     const killGroup = vi.fn();
     const manager = new LocalAppRuntimeManager({ registry: reloaded, platform: "darwin", killGroup });
     expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
     await expect(manager.stop(definition.id)).rejects.toThrow("unverified");
     expect(killGroup).not.toHaveBeenCalled();
-    await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
-      status: "stopping",
+    await expect(reloaded.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+      status: "quarantined",
       generation: "old",
+      pid: null,
+      pgid: null,
     });
   });
 

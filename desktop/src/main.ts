@@ -508,9 +508,11 @@ const desktopQuitFlow = createDesktopQuitFlow({
   prepareForQuit: async () => {
     await Promise.all([
       browserProfileController?.shutdown() ?? Promise.resolve(),
-      localAppsController?.shutdown() ?? Promise.resolve(),
       localAppGuestRegistry.closeAll(),
     ]);
+  },
+  prepareLocalAppsForQuit: async () => {
+    await (localAppsController?.shutdown() ?? Promise.resolve());
   },
   stopLocalRudder,
   destroyResidentTray: () => { residentTray?.destroy(); residentTray = null; },

@@ -71,6 +71,40 @@ describe("desktop quit flow update handoff", () => {
     expect(appQuitMock).toHaveBeenCalledTimes(1);
   });
 
+  it("logs Local App cleanup failures distinctly and continues the watchdog-backed quit fallback", async () => {
+    const cleanupError = new AggregateError([new Error("binding-a: still alive")], "Local App cleanup failed");
+    const prepareForQuit = vi.fn(async () => undefined);
+    const prepareLocalAppsForQuit = vi.fn(async () => { throw cleanupError; });
+    const stopLocalRudder = vi.fn(async () => undefined);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const quitFlow = createDesktopQuitFlow({
+        appName: "Rudder",
+        getMainWindow: () => null,
+        setMainWindow: vi.fn(),
+        getServerHandle: () => null,
+        prepareForQuit,
+        prepareLocalAppsForQuit,
+        stopLocalRudder,
+        destroyResidentTray: vi.fn(),
+      });
+
+      await quitFlow.beginQuitFlow();
+
+      expect(prepareForQuit).toHaveBeenCalledOnce();
+      expect(prepareLocalAppsForQuit).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalledWith(
+        "[rudder-desktop] failed to verify Local App cleanup before quit; continuing with watchdog fallback",
+        cleanupError,
+      );
+      expect(warning.mock.calls.some(([message]) => String(message).includes("Browser cleanup"))).toBe(false);
+      expect(stopLocalRudder).toHaveBeenCalledOnce();
+      expect(appQuitMock).toHaveBeenCalledOnce();
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it("fails closed when update blocker inspection has no runtime handle", async () => {
     const quitFlow = createDesktopQuitFlow({
       appName: "Rudder",

@@ -1,12 +1,13 @@
 import { chmod, mkdtemp, readFile, readdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   LocalAppRegistry,
   computeLocalAppTrustFingerprint,
   type LocalAppDefinitionDraft,
 } from "./local-apps-registry.js";
+import { LocalAppRuntimeManager } from "./local-apps-runtime.js";
 
 const draft = (cwd: string): LocalAppDefinitionDraft => ({
   title: "Fixture app",
@@ -184,6 +185,46 @@ describe("Desktop Local App registry", () => {
     const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
     await expect(reloaded.listDefinitions()).resolves.toEqual([]);
     expect((await readdir(root)).some((name) => name.startsWith("registry.json.corrupt-"))).toBe(true);
+  });
+
+  it("quarantines an unknown persisted runtime status without losing the definition or treating it as stopped", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-runtime-status-"));
+    const registryPath = path.join(root, "registry.json");
+    const registry = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    const created = await registry.createDefinition(prepared);
+    await registry.approveDefinition(created.id, prepared.trustFingerprint);
+    await registry.recordRuntimeDescriptor(created.id, {
+      status: "running", pid: 77_701, pgid: 77_701, generation: "malformed-status", port: 31_701,
+    });
+    const state = JSON.parse(await readFile(registryPath, "utf8")) as {
+      runtimeDescriptors: Record<string, { status: string }>;
+    };
+    state.runtimeDescriptors[created.id].status = "running ";
+    await writeFile(registryPath, JSON.stringify(state), { mode: 0o600 });
+
+    const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    await expect(reloaded.listDefinitions()).resolves.toHaveLength(1);
+    await expect(reloaded.getRuntimeDescriptor(created.id)).resolves.toMatchObject({
+      status: "orphaned_unverified",
+      pid: 77_701,
+      pgid: 77_701,
+      port: 31_701,
+    });
+    expect((await readdir(root)).some((name) => name.startsWith("registry.json.corrupt-"))).toBe(true);
+
+    const spawnWatchdog = vi.fn(() => { throw new Error("must not spawn"); });
+    const killGroup = vi.fn();
+    const manager = new LocalAppRuntimeManager({
+      registry: reloaded,
+      platform: "darwin",
+      spawnWatchdog: spawnWatchdog as never,
+      killGroup,
+    });
+    expect((await manager.status(created.id)).status).toBe("orphaned_unverified");
+    await expect(manager.start(created.id)).rejects.toThrow("unverified");
+    expect(spawnWatchdog).not.toHaveBeenCalled();
+    expect(killGroup).not.toHaveBeenCalled();
   });
 
   it("rejects routes that URL parsing could reinterpret outside the attested loopback origin", async () => {

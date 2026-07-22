@@ -154,7 +154,7 @@ describe("Desktop Local Apps native controller", () => {
     await approvalEntered.promise;
     const shuttingDown = controller.shutdown();
     await nextTurn();
-    expect(runtime.shutdown).not.toHaveBeenCalled();
+    expect(runtime.shutdown).toHaveBeenCalledOnce();
 
     releaseApproval.resolve(true);
     await expect(starting).rejects.toThrow("shutting down");
@@ -162,6 +162,71 @@ describe("Desktop Local Apps native controller", () => {
     expect(runtime.start).not.toHaveBeenCalled();
     expect((await registry.getDefinition(created.id)).approvedFingerprint).toBeNull();
     await expect(controller.start(created.id)).rejects.toThrow("shutting down");
+  });
+
+  it("starts runtime cleanup promptly and bounds shutdown when native confirmation never resolves", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-shutdown-timeout-"));
+    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    const created = await registry.createDefinition(prepared);
+    const approvalEntered = deferred<void>();
+    const neverApprove = deferred<boolean>();
+    const runtime = {
+      start: vi.fn(async () => ({ status: "running" as const })),
+      stop: vi.fn(),
+      status: vi.fn(async () => ({ status: "stopped" as const })),
+      logs: vi.fn(),
+      attestedTarget: vi.fn(),
+      shutdown: vi.fn(async () => undefined),
+    };
+    const controller = new LocalAppsController({
+      registry,
+      runtime,
+      selectFolder: vi.fn(async () => null),
+      confirmDefinition: vi.fn(async () => {
+        approvalEntered.resolve();
+        return neverApprove.promise;
+      }),
+      shutdownDrainTimeoutMs: 10,
+    });
+
+    const starting = controller.start(created.id);
+    void starting.catch(() => undefined);
+    await approvalEntered.promise;
+    const shuttingDown = controller.shutdown();
+    const outcome = Promise.race([
+      shuttingDown.then(() => "resolved", () => "rejected"),
+      new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 100)),
+    ]);
+
+    await vi.waitFor(() => expect(runtime.shutdown).toHaveBeenCalledOnce());
+    await expect(outcome).resolves.toBe("rejected");
+    expect(runtime.start).not.toHaveBeenCalled();
+  });
+
+  it("surfaces runtime cleanup failures instead of reporting a successful controller shutdown", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-shutdown-failure-"));
+    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+    const cleanupError = new AggregateError([new Error("binding-a remains alive")], "runtime cleanup failed");
+    const runtime = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      status: vi.fn(async () => ({ status: "stopped" as const })),
+      logs: vi.fn(),
+      attestedTarget: vi.fn(),
+      shutdown: vi.fn(async () => { throw cleanupError; }),
+    };
+    const controller = new LocalAppsController({
+      registry,
+      runtime,
+      selectFolder: vi.fn(async () => null),
+      confirmDefinition: vi.fn(async () => true),
+    });
+
+    await expect(controller.shutdown()).rejects.toSatisfy((error: unknown) =>
+      error instanceof AggregateError
+      && error.message.includes("controller shutdown")
+      && (error.errors[0] as Error & { cause?: unknown }).cause === cleanupError);
   });
 
   it("does not let delete overtake an in-flight start for the same binding", async () => {

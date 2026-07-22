@@ -24,6 +24,7 @@ export function createDesktopQuitFlow(context: {
   setMainWindow: (value: BrowserWindow | null) => void;
   getServerHandle: () => { apiUrl: string; runtime: { mode: "owned" | "attached" } } | null;
   prepareForQuit?: () => Promise<void>;
+  prepareLocalAppsForQuit?: () => Promise<void>;
   stopLocalRudder: () => Promise<void>;
   destroyResidentTray: () => void;
 }) {
@@ -250,11 +251,17 @@ export function createDesktopQuitFlow(context: {
         mainWindow.destroy();
         context.setMainWindow(null);
       }
-      try {
-        await context.prepareForQuit?.();
-      } catch (error) {
-        console.warn("[rudder-desktop] failed to finish Browser cleanup before quit", error);
-      }
+      await Promise.all([
+        context.prepareForQuit?.().catch((error) => {
+          console.warn("[rudder-desktop] failed to finish Browser cleanup before quit", error);
+        }),
+        context.prepareLocalAppsForQuit?.().catch((error) => {
+          console.warn(
+            "[rudder-desktop] failed to verify Local App cleanup before quit; continuing with watchdog fallback",
+            error,
+          );
+        }),
+      ]);
       await context.stopLocalRudder();
     } finally {
       context.destroyResidentTray();

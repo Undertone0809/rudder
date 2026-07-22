@@ -19,6 +19,7 @@ type ControllerOptions = {
   runtime: RuntimeController;
   selectFolder: () => Promise<string | null>;
   confirmDefinition: (definition: PreparedLocalAppDefinition | LocalAppDefinition, action: ConfirmationAction) => Promise<boolean>;
+  shutdownDrainTimeoutMs?: number;
 };
 
 const DEFINITION_KEYS = new Set([
@@ -68,6 +69,7 @@ export class LocalAppsController {
   private readonly runtime: RuntimeController;
   private readonly selectFolder: () => Promise<string | null>;
   private readonly confirmDefinition: ControllerOptions["confirmDefinition"];
+  private readonly shutdownDrainTimeoutMs: number;
   private readonly bindingOperations = new Map<string, Promise<void>>();
   private readonly activeOperations = new Set<Promise<unknown>>();
   private acceptingOperations = true;
@@ -78,6 +80,7 @@ export class LocalAppsController {
     this.runtime = options.runtime;
     this.selectFolder = options.selectFolder;
     this.confirmDefinition = options.confirmDefinition;
+    this.shutdownDrainTimeoutMs = Math.max(1, options.shutdownDrainTimeoutMs ?? 2_000);
   }
 
   async listDefinitions(): Promise<LocalAppDefinition[]> {
@@ -131,6 +134,27 @@ export class LocalAppsController {
     while (this.activeOperations.size > 0) {
       await Promise.allSettled([...this.activeOperations]);
     }
+  }
+
+  private boundedActiveOperationDrain(): Promise<void> {
+    const drain = this.drainActiveOperations();
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (error) reject(error);
+        else resolve();
+      };
+      const timeout = setTimeout(() => {
+        finish(new Error(
+          `Timed out after ${this.shutdownDrainTimeoutMs}ms waiting for Local App controller operations to drain`,
+        ));
+      }, this.shutdownDrainTimeoutMs);
+      timeout.unref();
+      void drain.then(() => finish(), (error) => finish(error));
+    });
   }
 
   async createDefinition(input: unknown): Promise<LocalAppDefinition> {
@@ -213,8 +237,24 @@ export class LocalAppsController {
   shutdown(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
     this.acceptingOperations = false;
-    this.shutdownPromise = this.drainActiveOperations()
-      .then(() => this.runtime.shutdown());
+    let runtimeCleanup: Promise<void>;
+    try {
+      runtimeCleanup = this.runtime.shutdown();
+    } catch (error) {
+      runtimeCleanup = Promise.reject(error);
+    }
+    const operationDrain = this.boundedActiveOperationDrain();
+    this.shutdownPromise = Promise.allSettled([runtimeCleanup, operationDrain]).then((results) => {
+      const errors = results.flatMap((result, index) => result.status === "rejected"
+        ? [new Error(
+            index === 0
+              ? "Local App runtime cleanup failed"
+              : "Local App controller operation drain failed",
+            { cause: result.reason },
+          )]
+        : []);
+      if (errors.length > 0) throw new AggregateError(errors, "Local App controller shutdown failed");
+    });
     return this.shutdownPromise;
   }
 }
