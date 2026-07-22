@@ -1049,9 +1049,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         }),
         browserMcp: rudderBrowserMcpRuntimeMetadata({
           available: false,
-          fallbackReason: browserEnabled
-            ? "Pi CLI does not expose a supported MCP server configuration surface; Rudder Browser tools are injected through a separate managed Pi extension."
-            : "Rudder Browser is disabled for this run.",
+          preflight: attemptedBrowserPiExtension?.rudderMcpPreflight,
+          fallbackReason: attemptedBrowserPiExtension?.rudderMcpPreflight.diagnostic ?? (
+            browserEnabled
+              ? "Pi CLI does not expose a supported MCP server configuration surface; Rudder Browser tools are injected through a separate managed Pi extension."
+              : "Rudder Browser is disabled for this run."
+          ),
         }),
         rudderNativeTools: {
           available: rudderPiExtensionPath.schemaFallbackReason === null,
@@ -1070,6 +1073,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
               serverName: RUDDER_BROWSER_MCP_SERVER_NAME,
               toolCount: rudderBrowserPiExtensionPath.configuredToolCount,
               toolNames: rudderBrowserPiExtensionPath.toolNames,
+              provenance: rudderBrowserPiExtensionPath.rudderMcpPreflight.provenance,
+              version: rudderBrowserPiExtensionPath.rudderMcpPreflight.version,
+              diagnosticCode: rudderBrowserPiExtensionPath.rudderMcpPreflight.diagnosticCode,
               authMode: "runtime_managed",
               modelVisibleCliFallback: false,
               fallbackReason: rudderBrowserPiExtensionPath.schemaFallbackReason,
@@ -1080,9 +1086,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
               serverName: RUDDER_BROWSER_MCP_SERVER_NAME,
               toolCount: 0,
               toolNames: [],
+              provenance: attemptedBrowserPiExtension?.rudderMcpPreflight.provenance ?? null,
+              version: attemptedBrowserPiExtension?.rudderMcpPreflight.version ?? null,
+              diagnosticCode: attemptedBrowserPiExtension?.rudderMcpPreflight.diagnosticCode ?? null,
               authMode: "runtime_managed",
               modelVisibleCliFallback: false,
-              fallbackReason: "Rudder Browser is disabled for this run.",
+              fallbackReason: attemptedBrowserPiExtension?.rudderMcpPreflight.diagnostic
+                ?? "Rudder Browser is disabled for this run.",
             },
         context,
       });

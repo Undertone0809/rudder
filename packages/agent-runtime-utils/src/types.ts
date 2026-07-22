@@ -193,6 +193,9 @@ export interface AgentRuntimeInvocationMeta {
     serverName?: string | null;
     toolCount: number;
     toolNames?: string[];
+    provenance?: "desktop_bundle" | "external_runtime" | "repo" | "path" | null;
+    version?: string | null;
+    diagnosticCode?: string | null;
     authMode?: string | null;
     modelVisibleCliFallback?: boolean;
     fallbackReason?: string | null;

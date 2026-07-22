@@ -2,6 +2,7 @@ import { execute, resetOpenCodeModelsCacheForTests } from "@rudderhq/agent-runti
 import { buildOpenCodeLocalConfig } from "@rudderhq/agent-runtime-opencode-local/ui";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_BROWSER_MCP_TOOL_NAMES,
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CONTRACT_VERSION,
@@ -12,6 +13,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createRuntimeSkillFixture,
+  installCanonicalDesktopMcp,
   installVersionMismatchedDesktopMcp,
   readMcpToolNames,
 } from "./local-runtime-browser-mismatch-helpers";
@@ -1479,6 +1481,71 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "configures isolated core and Browser MCP servers for an eligible OpenCode run",
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-browser-enabled-"));
+      const workspace = path.join(root, "workspace");
+      const commandPath = path.join(root, "opencode");
+      const capturePath = path.join(root, "capture.json");
+      const rudderHome = path.join(root, ".rudder");
+      await fs.mkdir(workspace, { recursive: true });
+      await writeFakeOpenCodeCommand(commandPath);
+      const installedDesktopMcp = await installCanonicalDesktopMcp(root);
+      const previousHome = process.env.HOME;
+      const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+      const previousRudderHome = process.env.RUDDER_HOME;
+      const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
+      process.env.HOME = root;
+      process.env.RUDDER_OPERATOR_HOME = root;
+      process.env.RUDDER_HOME = rudderHome;
+      delete process.env.RUDDER_INSTANCE_ID;
+      let meta: Record<string, unknown> = {};
+      try {
+        const result = await execute({
+          runId: "run-opencode-browser-enabled",
+          agent: { id: "agent-1", orgId: "organization-1", name: "OpenCode Agent", agentRuntimeType: "opencode_local", agentRuntimeConfig: {} },
+          runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+          config: {
+            command: commandPath,
+            cwd: workspace,
+            model: "openai/gpt-4.1-mini",
+            rudderBrowserEnabled: true,
+            env: { RUDDER_TEST_CAPTURE_PATH: capturePath },
+            promptTemplate: "Follow the heartbeat.",
+          },
+          context: {},
+          authToken: "run-jwt-token",
+          onLog: async () => {},
+          onMeta: async (value) => { meta = value as Record<string, unknown>; },
+        });
+        expect(result.exitCode).toBe(0);
+        const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { opencodeConfig: string };
+        const managedConfig = JSON.parse(await fs.readFile(capture.opencodeConfig, "utf8")) as {
+          mcp: Record<string, { command: string[]; environment?: Record<string, string> }>;
+        };
+        expect(Object.keys(managedConfig.mcp)).toEqual(["rudder-tools", "rudder-browser"]);
+        const core = managedConfig.mcp["rudder-tools"];
+        const browser = managedConfig.mcp["rudder-browser"];
+        expect(await readMcpToolNames({ command: core.command[0], args: core.command.slice(1), env: core.environment })).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
+        expect(await readMcpToolNames({ command: browser.command[0], args: browser.command.slice(1), env: browser.environment })).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
+        expect(meta.rudderMcp).toMatchObject({ available: true, serverName: "rudder-tools", toolCount: 69 });
+        expect(meta.browserMcp).toMatchObject({ available: true, serverName: "rudder-browser", toolCount: 8 });
+      } finally {
+        installedDesktopMcp.restore();
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+        if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+        else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+        if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+        else process.env.RUDDER_HOME = previousRudderHome;
+        if (previousInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+        else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "removes Browser skill, prompt, tools, and metadata together after a bundle mismatch",
