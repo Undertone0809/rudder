@@ -93,7 +93,13 @@ type AssetInventory = {
   pageUrl: string | null;
   navigationSequence: number;
   assets: PageAsset[];
-  inlineSvgs: Array<{ id: string; markup: string; name: string }>;
+  inlineSvgs: Array<{
+    id: string;
+    type: "image/svg+xml";
+    origin: "inline";
+    width: number | null;
+    height: number | null;
+  }>;
 };
 
 export type BrowserAdvancedAction =
@@ -263,20 +269,47 @@ function domScript(
       const rect = element.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0;
     };
+    const boundedText = (element, maxChars = 500, maxNodes = 100) => {
+      if (!(element instanceof Element) || maxChars <= 0 || maxNodes <= 0) return "";
+      const parts = [];
+      let chars = 0;
+      let inspected = 0;
+      const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node && inspected < maxNodes && chars < maxChars) {
+        inspected += 1;
+        const parent = node.parentElement;
+        if (parent && !parent.closest("script,style,noscript,template")) {
+          const value = String(node.nodeValue || "").slice(0, maxChars - chars);
+          if (value) {
+            parts.push(value);
+            chars += value.length;
+          }
+        }
+        if (chars >= maxChars) break;
+        node = walker.nextNode();
+      }
+      return parts.join(" ").slice(0, maxChars);
+    };
     const accessibleName = (element) => {
       const labelledBy = element.getAttribute("aria-labelledby");
       if (labelledBy) {
-        const value = labelledBy.split(/\\s+/).map((id) => element.ownerDocument.getElementById(id)?.textContent || "").join(" ");
+        let value = "";
+        for (const id of labelledBy.slice(0, 2000).split(/\\s+/).slice(0, 20)) {
+          const label = element.ownerDocument.getElementById(id);
+          if (label) value += (value ? " " : "") + boundedText(label, 500 - value.length, 100);
+          if (value.length >= 500) break;
+        }
         if (normalize(value)) return normalize(value);
       }
       const direct = element.getAttribute("aria-label") || element.getAttribute("alt") || element.getAttribute("title") || element.getAttribute("placeholder");
-      if (direct) return normalize(direct);
+      if (direct) return normalize(direct.slice(0, 500));
       if (element.id) {
         const label = element.ownerDocument.querySelector('label[for="' + CSS.escape(element.id) + '"]');
-        if (label) return normalize(label.textContent);
+        if (label) return normalize(boundedText(label));
       }
       const wrappingLabel = element.closest("label");
-      return normalize(wrappingLabel?.textContent || element.textContent || "");
+      return normalize(boundedText(wrappingLabel || element));
     };
     const implicitRole = (element) => {
       const explicit = element.getAttribute("role");
@@ -410,13 +443,44 @@ function domScript(
       }
       return { x, y, width: rect.width, height: rect.height };
     };
-    const interactionFingerprint = (element) => JSON.stringify({
-      tag: element.tagName.toLowerCase(),
-      role: implicitRole(element),
-      name: accessibleName(element),
-      type: element.getAttribute("type") || "",
-      href: element.getAttribute("href") || "",
-    });
+    const owningForm = (element) => element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLButtonElement
+      ? element.form
+      : element.closest("form");
+    const interactionFingerprint = (element) => {
+      const form = owningForm(element);
+      return JSON.stringify({
+        tag: element.tagName.toLowerCase(),
+        type: element instanceof HTMLInputElement || element instanceof HTMLButtonElement ? element.type : "",
+        role: implicitRole(element),
+        name: accessibleName(element),
+        controlName: element.getAttribute("name") || "",
+        formAssociation: element.getAttribute("form") || "",
+        href: element instanceof HTMLAnchorElement ? String(element.href || "").slice(0, 8192) : "",
+        formId: form?.id || "",
+        formAction: String((element instanceof HTMLInputElement || element instanceof HTMLButtonElement ? element.getAttribute("formaction") : "") || form?.action || "").slice(0, 8192),
+        formMethod: String((element instanceof HTMLInputElement || element instanceof HTMLButtonElement ? element.getAttribute("formmethod") : "") || form?.method || "").toLowerCase().slice(0, 20),
+        formTarget: String((element instanceof HTMLInputElement || element instanceof HTMLButtonElement ? element.getAttribute("formtarget") : "") || form?.target || "").slice(0, 500),
+        formEnctype: String((element instanceof HTMLInputElement || element instanceof HTMLButtonElement ? element.getAttribute("formenctype") : "") || form?.enctype || "").toLowerCase().slice(0, 100),
+        readOnly: "readOnly" in element && Boolean(element.readOnly),
+        editable: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable,
+      });
+    };
+    const interactable = (element) => {
+      if (!visible(element) || element.closest("fieldset[disabled]")) return false;
+      let current = element;
+      while (current) {
+        if (getComputedStyle(current).pointerEvents === "none") return false;
+        current = current.parentElement;
+      }
+      if (("disabled" in element && Boolean(element.disabled)) || element.getAttribute("aria-disabled") === "true") return false;
+      const rect = element.getBoundingClientRect();
+      const view = element.ownerDocument.defaultView || window;
+      if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= view.innerHeight || rect.left >= view.innerWidth) return false;
+      const x = Math.min(Math.max(rect.left + rect.width / 2, 0), Math.max(view.innerWidth - 1, 0));
+      const y = Math.min(Math.max(rect.top + rect.height / 2, 0), Math.max(view.innerHeight - 1, 0));
+      const topmost = element.ownerDocument.elementFromPoint(x, y);
+      return Boolean(topmost && (topmost === element || element.contains(topmost)));
+    };
     const nodeStore = globalThis.__RUDDER_BROWSER_ADVANCED_NODES_V1__ instanceof Map ? globalThis.__RUDDER_BROWSER_ADVANCED_NODES_V1__ : new Map();
     globalThis.__RUDDER_BROWSER_ADVANCED_NODES_V1__ = nodeStore;
     const snapshot = (options = {}) => {
@@ -442,16 +506,19 @@ function domScript(
           tag: element.tagName.toLowerCase(),
           role,
           name: isCredentialControl(element) ? "" : accessibleName(element).slice(0, 500),
-          text: normalize(element.childElementCount === 0 ? element.textContent : "").slice(0, 1000),
+          text: element.childElementCount === 0 ? normalize(boundedText(element, 1000, 100)) : "",
           visible: visible(element),
           attributes,
           ...(options.boxes === true ? { box: box(element) } : {}),
           framePath,
           children: [],
         };
-        if (depth < maxDepth) {
-          for (const child of Array.from(element.children)) {
-            if (count >= maxNodes) { truncated = true; break; }
+        if (depth < maxDepth && count < maxNodes) {
+          const children = element.children;
+          let childIndex = 0;
+          for (; childIndex < children.length && count < maxNodes; childIndex += 1) {
+            const child = children.item(childIndex);
+            if (!(child instanceof Element)) continue;
             const childNode = visit(child, depth + 1, framePath);
             if (childNode) node.children.push(childNode);
             if (child.tagName.toLowerCase() === "iframe") {
@@ -468,6 +535,9 @@ function domScript(
               }
             }
           }
+          if (childIndex < children.length) truncated = true;
+        } else if (depth < maxDepth && element.childElementCount > 0) {
+          truncated = true;
         }
         return node;
       };
@@ -588,16 +658,34 @@ function domScript(
       const entry = args.nodeId ? nodeStore.get(String(args.nodeId)) : null;
       const element = entry?.element;
       if (args.action === "keypress" || args.action === "type") return { focused: document.activeElement !== null };
-      if (!(element instanceof Element) || !element.isConnected) throw new Error("Browser DOM node is missing or stale.");
-      if (entry.fingerprint !== interactionFingerprint(element)) throw new Error("Browser DOM node is stale; capture a fresh snapshot.");
+      const stale = (message) => {
+        nodeStore.clear();
+        throw new Error(message);
+      };
+      const revalidate = () => {
+        if (!(element instanceof Element) || !element.isConnected || element.ownerDocument !== document) stale("Browser DOM node is missing or stale; capture a fresh snapshot.");
+        if (entry.fingerprint !== interactionFingerprint(element)) stale("Browser DOM node is stale; capture a fresh snapshot.");
+        if (!interactable(element)) stale("Browser DOM node is not interactable or is covered; capture a fresh snapshot.");
+        return box(element);
+      };
+      if (!(element instanceof Element) || !element.isConnected || element.ownerDocument !== document) stale("Browser DOM node is missing or stale; capture a fresh snapshot.");
+      if (entry.fingerprint !== interactionFingerprint(element)) stale("Browser DOM node is stale; capture a fresh snapshot.");
       if (args.action === "click" || args.action === "doubleClick") {
         element.scrollIntoView?.({ block: "center", inline: "center" });
         element.focus?.();
-        return { performed: true, box: box(element) };
+        return { performed: true, box: revalidate() };
+      }
+      if (args.action === "validate") {
+        const currentBox = revalidate();
+        nodeStore.delete(String(args.nodeId));
+        return { performed: true, box: currentBox };
       }
       if (args.action === "scroll") {
+        revalidate();
         if (typeof element.scrollBy === "function") element.scrollBy({ left: Number(args.x || 0), top: Number(args.y || 0), behavior: "instant" });
         else window.scrollBy(Number(args.x || 0), Number(args.y || 0));
+        revalidate();
+        nodeStore.delete(String(args.nodeId));
         return { performed: true };
       }
       throw new Error("Browser DOM CUA action is unsupported.");
@@ -617,7 +705,24 @@ function domScript(
         add(element.currentSrc || element.getAttribute("src") || element.getAttribute("href"), element.tagName.toLowerCase(), element.getAttribute("rel") || "", { kind: "attribute", property: element.hasAttribute("href") ? "href" : "src" });
       }
       for (const entry of performance.getEntriesByType("resource").slice(0, 1000)) add(entry.name, "", "", { kind: "resource" });
-      const inlineSvgs = Array.from(document.querySelectorAll("svg")).slice(0, 100).map((svg, index) => ({ id: "svg-" + (index + 1), markup: svg.outerHTML.slice(0, 200000), name: svg.getAttribute("aria-label") || svg.id || "inline-svg-" + (index + 1) }));
+      const inlineSvgs = [];
+      const svgElements = document.querySelectorAll("svg");
+      for (let index = 0; index < svgElements.length && index < 100; index += 1) {
+        const svg = svgElements[index];
+        const rect = svg.getBoundingClientRect();
+        const dimension = (name, fallback) => {
+          const value = Number.parseFloat(String(svg.getAttribute(name) || ""));
+          const bounded = Number.isFinite(value) ? value : fallback;
+          return Number.isFinite(bounded) && bounded >= 0 && bounded <= 1_000_000 ? bounded : null;
+        };
+        inlineSvgs.push({
+          id: "inline-svg-" + (index + 1),
+          type: "image/svg+xml",
+          origin: "inline",
+          width: dimension("width", rect.width),
+          height: dimension("height", rect.height),
+        });
+      }
       return { entries: Array.from(entries.values()).slice(0, 1500), inlineSvgs };
     };
     const wait = async (args) => {
@@ -648,7 +753,7 @@ function domScript(
           tag: element.tagName.toLowerCase(),
           role: implicitRole(element),
           name: isCredentialControl(element) ? "" : accessibleName(element).slice(0, 500),
-          text: normalize(element.textContent || "").slice(0, 1_000),
+          text: normalize(boundedText(element, 1_000, 100)),
           box: box(element),
           attributes: Object.fromEntries(Array.from(element.attributes)
             .filter((attribute) => ["id", "name", "type", "href", "placeholder", "data-testid", "aria-label", "aria-checked", "aria-selected", "aria-expanded"].includes(attribute.name))
@@ -1560,7 +1665,8 @@ export async function createBrowserAdvancedDriver(options: {
       if (action === "dom_cua") {
         const result = await executeDom("dom_cua", args);
         if ((args.action === "click" || args.action === "doubleClick") && typeof result === "object" && result !== null) {
-          const box = (result as { box?: { x: number; y: number; width: number; height: number } }).box;
+          const validated = await executeDom("dom_cua", { action: "validate", nodeId: args.nodeId });
+          const box = (validated as { box?: { x: number; y: number; width: number; height: number } }).box;
           if (!box) throw new Error("Browser DOM node box is unavailable.");
           await executeCua({
             action: args.action === "doubleClick" ? "doubleClick" : "click",

@@ -102,6 +102,25 @@ function createHarness() {
   };
 }
 
+function snapshotNodeId(root: any, elementId: string): string {
+  const find = (node: any): string | null => {
+    if (node?.attributes?.id === elementId && typeof node.nodeId === "string") return node.nodeId;
+    for (const child of node?.children ?? []) {
+      const nodeId = find(child);
+      if (nodeId) return nodeId;
+    }
+    return null;
+  };
+  const nodeId = find(root);
+  if (!nodeId) throw new Error(`Snapshot node ${elementId} was not found.`);
+  return nodeId;
+}
+
+function advancedDomInput(code: string): { action?: string; args?: Record<string, unknown> } | null {
+  const encoded = /atob\("([^"]+)"\)/u.exec(code)?.[1];
+  return encoded ? JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) : null;
+}
+
 describe("Browser Agent advanced driver", () => {
   beforeEach(() => {
     document.title = "Advanced fixture";
@@ -135,6 +154,10 @@ describe("Browser Agent advanced driver", () => {
     Object.defineProperty(document, "elementsFromPoint", {
       configurable: true,
       value: () => [document.querySelector("#continue")],
+    });
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => document.querySelector("#continue"),
     });
   });
 
@@ -498,19 +521,79 @@ describe("Browser Agent advanced driver", () => {
     await driver.dispose();
   });
 
-  it("stops DOM traversal at maxNodes without requesting a Chromium full-tree capture", async () => {
+  it("does not inspect a huge live child collection after maxNodes is exhausted", async () => {
     const harness = createHarness();
-    const container = document.createElement("section");
-    for (let index = 0; index < 10_000; index += 1) container.append(document.createElement("span"));
-    document.body.append(container);
+    const root = document.documentElement;
+    let childCollectionReads = 0;
+    let indexedChildReads = 0;
+    const virtualChildren = new Proxy({ length: 1_000_000 }, {
+      get(target, property, receiver) {
+        if (typeof property === "string" && /^\d+$/u.test(property)) {
+          indexedChildReads += 1;
+          return document.head;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    Object.defineProperty(root, "children", {
+      configurable: true,
+      get() {
+        childCollectionReads += 1;
+        return virtualChildren;
+      },
+    });
     const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
 
-    const snapshot = await driver.execute("snapshot", { depth: 30, maxNodes: 25 }) as any;
+    let snapshot: any;
+    try {
+      snapshot = await driver.execute("snapshot", { depth: 30, maxNodes: 1 });
+    } finally {
+      delete (root as HTMLElement & { children?: HTMLCollection }).children;
+    }
 
-    expect(snapshot.nodeCount).toBe(25);
+    expect(snapshot.nodeCount).toBe(1);
     expect(snapshot.truncated).toBe(true);
+    expect(childCollectionReads).toBe(0);
+    expect(indexedChildReads).toBe(0);
     expect(harness.sendCommand).not.toHaveBeenCalledWith("DOMSnapshot.captureSnapshot", expect.anything());
     expect(harness.sendCommand).not.toHaveBeenCalledWith("Accessibility.getFullAXTree", expect.anything());
+    await driver.dispose();
+  }, 15_000);
+
+  it("bounds descendant text work while deriving an accessible name", async () => {
+    const harness = createHarness();
+    const label = document.createElement("div");
+    label.id = "huge-label";
+    let nodeValueReads = 0;
+    for (let index = 0; index < 10_000; index += 1) {
+      const value = index === 0 ? `Bounded target ${"x".repeat(200)}` : "x".repeat(200);
+      const text = document.createTextNode(value);
+      Object.defineProperty(text, "nodeValue", {
+        configurable: true,
+        get() {
+          nodeValueReads += 1;
+          return value;
+        },
+      });
+      label.append(text);
+    }
+    Object.defineProperty(label, "textContent", {
+      configurable: true,
+      get() {
+        throw new Error("unbounded descendant textContent access");
+      },
+    });
+    const button = document.createElement("button");
+    button.setAttribute("aria-labelledby", label.id);
+    document.body.append(label, button);
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+
+    await expect(driver.execute("locator", {
+      action: "count",
+      locator: { strategy: "role", value: "button", name: "Bounded target" },
+    })).resolves.toEqual({ count: 1 });
+    expect(nodeValueReads).toBeGreaterThan(0);
+    expect(nodeValueReads).toBeLessThan(20);
     await driver.dispose();
   }, 15_000);
 
@@ -540,6 +623,145 @@ describe("Browser Agent advanced driver", () => {
 
     await expect(driver.execute("dom_cua", { action: "click", nodeId })).rejects.toThrow(/stale|fresh snapshot/i);
     expect(clicked).not.toHaveBeenCalled();
+    await driver.dispose();
+  });
+
+  it("invalidates DOM nodes when their form destination or editability changes", async () => {
+    const harness = createHarness();
+    const form = document.createElement("form");
+    form.id = "checkout";
+    form.action = "https://example.com/review";
+    form.method = "post";
+    form.innerHTML = '<input id="order" name="order" /><button id="purchase" type="submit">Purchase</button>';
+    document.body.append(form);
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+    const firstSnapshot = await driver.execute("dom_cua", { action: "get" }) as any;
+    const purchaseNodeId = snapshotNodeId(firstSnapshot.root, "purchase");
+
+    form.action = "https://attacker.example/collect";
+    await expect(driver.execute("dom_cua", { action: "click", nodeId: purchaseNodeId }))
+      .rejects.toThrow(/stale|fresh snapshot/i);
+
+    const secondSnapshot = await driver.execute("dom_cua", { action: "get" }) as any;
+    const orderNodeId = snapshotNodeId(secondSnapshot.root, "order");
+    (form.querySelector("#order") as HTMLInputElement).readOnly = true;
+    await expect(driver.execute("dom_cua", { action: "click", nodeId: orderNodeId }))
+      .rejects.toThrow(/stale|fresh snapshot/i);
+    await driver.dispose();
+  });
+
+  it("revalidates a DOM node after focus changes its label and form action", async () => {
+    const harness = createHarness();
+    const form = document.createElement("form");
+    form.action = "https://example.com/review";
+    const button = document.createElement("button");
+    button.id = "focus-purchase";
+    button.textContent = "Review purchase";
+    form.append(button);
+    document.body.append(form);
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => button });
+    button.addEventListener("focus", () => {
+      button.setAttribute("aria-label", "Transfer funds");
+      form.action = "https://attacker.example/collect";
+    }, { once: true });
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+    const snapshot = await driver.execute("dom_cua", { action: "get" }) as any;
+    const nodeId = snapshotNodeId(snapshot.root, button.id);
+
+    await expect(driver.execute("dom_cua", { action: "click", nodeId }))
+      .rejects.toThrow(/stale|fresh snapshot/i);
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
+    await driver.dispose();
+  });
+
+  it("rejects invisible, zero-sized, disabled, and covered DOM nodes", async () => {
+    const harness = createHarness();
+    const cases = ["invisible-target", "zero-target", "disabled-target", "covered-target"];
+    for (const id of cases) {
+      const button = document.createElement("button");
+      button.id = id;
+      button.textContent = id;
+      document.body.append(button);
+    }
+    const invisible = document.querySelector("#invisible-target") as HTMLButtonElement;
+    invisible.style.visibility = "hidden";
+    const zero = document.querySelector("#zero-target") as HTMLButtonElement;
+    Object.defineProperty(zero, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ x: 10, y: 20, left: 10, top: 20, right: 10, bottom: 20, width: 0, height: 0 }),
+    });
+    const disabled = document.querySelector("#disabled-target") as HTMLButtonElement;
+    disabled.disabled = true;
+    const covered = document.querySelector("#covered-target") as HTMLButtonElement;
+    const overlay = document.createElement("div");
+    document.body.append(overlay);
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+
+    for (const target of [invisible, zero, disabled]) {
+      const snapshot = await driver.execute("dom_cua", { action: "get" }) as any;
+      await expect(driver.execute("dom_cua", { action: "click", nodeId: snapshotNodeId(snapshot.root, target.id) }))
+        .rejects.toThrow(/stale|interactable|fresh snapshot/i);
+    }
+
+    const snapshot = await driver.execute("dom_cua", { action: "get" }) as any;
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => overlay });
+    await expect(driver.execute("dom_cua", { action: "click", nodeId: snapshotNodeId(snapshot.root, covered.id) }))
+      .rejects.toThrow(/stale|interactable|fresh snapshot/i);
+    await driver.dispose();
+  });
+
+  it("revalidates the topmost DOM hit target immediately before trusted dispatch", async () => {
+    const harness = createHarness();
+    const button = document.querySelector("#continue") as HTMLButtonElement;
+    const overlay = document.createElement("div");
+    const evaluate = harness.contents.executeJavaScriptInIsolatedWorld.getMockImplementation();
+    harness.contents.executeJavaScriptInIsolatedWorld.mockImplementation(async (worldId, scripts, userGesture) => {
+      const result = await evaluate?.(worldId, scripts, userGesture);
+      const input = advancedDomInput(scripts[0]?.code ?? "");
+      if (input?.action === "dom_cua" && input.args?.action === "click") {
+        document.body.append(overlay);
+        Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => overlay });
+      }
+      return result;
+    });
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => button });
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+    const snapshot = await driver.execute("dom_cua", { action: "get" }) as any;
+
+    await expect(driver.execute("dom_cua", { action: "click", nodeId: snapshotNodeId(snapshot.root, button.id) }))
+      .rejects.toThrow(/stale|interactable|fresh snapshot/i);
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
+    await driver.dispose();
+  });
+
+  it("does not expose credential-bearing inline SVG markup in asset inventories or bundles", async () => {
+    const harness = createHarness();
+    document.body.insertAdjacentHTML("beforeend", `
+      <svg id="credential-svg" width="640" height="480" data-token="svg-secret" onload="steal()">
+        <a href="javascript:steal()"><text>public shape</text></a>
+        <foreignObject><input type="hidden" value="foreign-secret" /></foreignObject>
+      </svg>
+    `);
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+
+    const inventory = await driver.execute("assets", { action: "list" }) as any;
+    const serializedInventory = JSON.stringify(inventory);
+    expect(inventory.inlineSvgs).toEqual([
+      expect.objectContaining({ id: "inline-svg-1", type: "image/svg+xml", origin: "inline", width: 640, height: 480 }),
+    ]);
+    for (const leaked of ["svg-secret", "foreign-secret", "credential-svg", "foreignObject", "onload", "javascript:", "markup", "<svg"]) {
+      expect(serializedInventory).not.toContain(leaked);
+    }
+
+    const bundle = await driver.execute("assets", {
+      action: "bundle",
+      inventoryId: inventory.id,
+      assetIds: [inventory.assets[0].id],
+    }) as any;
+    const manifest = await fs.readFile(bundle.manifestPath, "utf8");
+    for (const leaked of ["svg-secret", "foreign-secret", "credential-svg", "foreignObject", "onload", "javascript:", "<svg"]) {
+      expect(manifest).not.toContain(leaked);
+    }
     await driver.dispose();
   });
 

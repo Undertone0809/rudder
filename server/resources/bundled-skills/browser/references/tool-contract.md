@@ -142,7 +142,9 @@ User-visible tabs do not consume this Agent tab quota.
   100 MB, and each run at 250 MB. Response bodies are canceled while streaming
   as soon as a byte limit is crossed; bundle admission is serialized per run.
   Navigation makes an inventory stale and unknown requested ids are rejected;
-  callers must list the current page again.
+  callers must list the current page again. Inline SVGs are inventory metadata
+  only (`id`, media `type`, `origin`, `width`, and `height`); raw markup and page
+  attributes are never returned or bundled.
 - `rudder_browser_content` exports text or PDF, or an eligible Google
   Doc, Sheet, or Slides page to `pdf`, `md`, `docx`, `xlsx`, `csv`, or `pptx`.
   Content exports are capped at 25 MB.

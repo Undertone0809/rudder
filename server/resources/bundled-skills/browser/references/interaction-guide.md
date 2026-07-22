@@ -135,7 +135,9 @@ Paths are opaque temporary artifacts and are removed on tab/run cleanup.
 4. Call `bundle` once. Inspect failures rather than repeatedly downloading the
    same asset.
 
-Inline SVG markup is returned by inventory and is not fetched. File assets are
+Inline SVG inventory entries contain only a stable inventory id, media type,
+inline origin, and bounded dimensions. Raw SVG/page markup, attributes, text,
+and embedded `foreignObject` content are never returned. File assets are
 streamed with per-asset, per-bundle, and per-run limits.
 
 ## Content Export
