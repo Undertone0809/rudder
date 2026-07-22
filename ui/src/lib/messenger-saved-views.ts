@@ -65,6 +65,15 @@ function targetPayloadFromSidePanelTarget(target: SidePanelTarget): MessengerSav
   if (target.kind === "library_directory") {
     return { kind: "library_directory", directoryPath: target.directoryPath, viewInstanceId: target.viewInstanceId };
   }
+  if (target.kind === "local_app") {
+    return {
+      kind: "local_app",
+      desktopInstallationId: target.desktopInstallationId,
+      appPublicId: target.appPublicId,
+      localBindingId: target.localBindingId,
+      viewInstanceId: target.viewInstanceId,
+    };
+  }
   return null;
 }
 
@@ -75,6 +84,7 @@ function savedViewSubtitle(target: SidePanelTarget) {
   if (target.kind === "library_entry") return target.path;
   if (target.kind === "library_file") return target.filePath;
   if (target.kind === "library_directory") return target.directoryPath || "Library";
+  if (target.kind === "local_app") return "Local app";
   return null;
 }
 
@@ -108,6 +118,15 @@ export function sidePanelTargetFromSavedView(savedView: MessengerSavedView): Sid
       tabId: target.tabId,
       url: target.url,
       favicon: savedView.favicon ?? undefined,
+      savedViewRecovery: {
+        id: savedView.id,
+        persistedMetadata: {
+          target,
+          title: savedView.title,
+          subtitle: savedView.subtitle,
+          favicon: savedView.favicon,
+        },
+      },
     };
   }
   if (target.kind === "automation") return { ...common, kind: "automation", automationId: target.automationId };
@@ -115,5 +134,14 @@ export function sidePanelTargetFromSavedView(savedView: MessengerSavedView): Sid
   if (target.kind === "library_entry") return { ...common, kind: "library_entry", entryId: target.entryId, path: target.path };
   if (target.kind === "library_file") return { ...common, kind: "library_file", filePath: target.filePath };
   if (target.kind === "library_directory") return { ...common, kind: "library_directory", directoryPath: target.directoryPath };
+  if (target.kind === "local_app") {
+    return {
+      ...common,
+      kind: "local_app",
+      desktopInstallationId: target.desktopInstallationId,
+      appPublicId: target.appPublicId,
+      localBindingId: target.localBindingId,
+    };
+  }
   return null;
 }

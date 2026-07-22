@@ -1,0 +1,264 @@
+import { Button } from "@/components/ui/button";
+import { readDesktopShell, type DesktopLocalAppRuntimeView } from "@/lib/desktop-shell";
+import { localAppIdentityMatches, resolveLocalAppAttestedWebview } from "@/lib/local-apps";
+import { queryKeys } from "@/lib/queryKeys";
+import type { SidePanelTarget } from "@/lib/side-panel-targets";
+import { cn } from "@/lib/utils";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AppWindow, CircleAlert, Loader2, Play, RotateCw, Square, TerminalSquare } from "lucide-react";
+import { createElement, useState } from "react";
+
+type LocalAppTarget = Extract<SidePanelTarget, { kind: "local_app" }>;
+
+function runtimeLabel(status: DesktopLocalAppRuntimeView["status"]) {
+  if (status === "orphaned_unverified") return "Needs attention";
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function errorMessage(value: unknown, fallback: string) {
+  return value instanceof Error ? value.message : fallback;
+}
+
+export function LocalAppPanelView({
+  active,
+  target,
+}: {
+  active: boolean;
+  target: LocalAppTarget;
+}) {
+  const queryClient = useQueryClient();
+  const [logsOpen, setLogsOpen] = useState(false);
+  const localApps = readDesktopShell()?.localApps;
+  const supported = Boolean(localApps?.supported);
+  const definitionsQuery = useQuery({
+    queryKey: queryKeys.localApps.definitions,
+    queryFn: () => localApps!.list(),
+    enabled: supported,
+    staleTime: 1_000,
+  });
+  const definition = definitionsQuery.data?.find((candidate) => localAppIdentityMatches(candidate, target)) ?? null;
+  const statusQuery = useQuery({
+    queryKey: queryKeys.localApps.status(target.localBindingId),
+    queryFn: () => localApps!.status(definition!.id),
+    enabled: supported && Boolean(definition),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "starting" || status === "stopping" ? 400 : false;
+    },
+  });
+  const status = statusQuery.data ?? null;
+  const attestedQuery = useQuery({
+    queryKey: [...queryKeys.localApps.status(target.localBindingId), "attested", status?.generation ?? "none"],
+    queryFn: async () => {
+      const attested = await localApps!.attestedTarget(definition!.id);
+      if (!attested) throw new Error("Desktop could not attest this Local App runtime.");
+      return resolveLocalAppAttestedWebview(attested);
+    },
+    enabled: supported && Boolean(definition) && status?.status === "running",
+    retry: false,
+  });
+  const startMutation = useMutation({
+    mutationFn: () => localApps!.start(definition!.id),
+    onSuccess: (nextStatus) => {
+      queryClient.setQueryData(queryKeys.localApps.status(target.localBindingId), nextStatus);
+      void queryClient.invalidateQueries({
+        queryKey: [...queryKeys.localApps.status(target.localBindingId), "attested"],
+      });
+    },
+  });
+  const stopMutation = useMutation({
+    mutationFn: () => localApps!.stop(definition!.id),
+    onSuccess: (nextStatus) => {
+      queryClient.setQueryData(queryKeys.localApps.status(target.localBindingId), nextStatus);
+      queryClient.removeQueries({
+        queryKey: [...queryKeys.localApps.status(target.localBindingId), "attested"],
+      });
+    },
+  });
+  const logsQuery = useQuery({
+    queryKey: queryKeys.localApps.logs(target.localBindingId),
+    queryFn: () => localApps!.logs(definition!.id),
+    enabled: supported && Boolean(definition) && (logsOpen || status?.status === "failed" || Boolean(startMutation.error)),
+    retry: false,
+  });
+
+  const queryError = definitionsQuery.error
+    ?? statusQuery.error
+    ?? startMutation.error
+    ?? stopMutation.error
+    ?? attestedQuery.error;
+  const unavailable = !supported || (definitionsQuery.isSuccess && !definition);
+  const orphaned = status?.status === "orphaned_unverified";
+  const canStart = status?.status === "stopped" || status?.status === "failed";
+  const canStop = status?.status === "running" || status?.status === "starting" || status?.status === "stopping";
+
+  return (
+    <section
+      className="flex h-full min-h-0 flex-col bg-[color:var(--surface-panel)]"
+      data-testid="local-app-view"
+      data-active={active ? "true" : "false"}
+      aria-label={target.label}
+    >
+      <header className="flex shrink-0 items-center gap-3 border-b border-[color:var(--border-soft)] px-3 py-2">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[color:var(--surface-active)] text-muted-foreground">
+          <AppWindow className="h-4 w-4" aria-hidden />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-foreground">{target.label}</span>
+          <span className="block text-xs text-muted-foreground">
+            {status ? runtimeLabel(status.status) : unavailable ? "Unavailable" : "Checking local runtime…"}
+          </span>
+        </span>
+        {canStop ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="local-app-stop"
+            disabled={stopMutation.isPending || status?.status === "stopping"}
+            onClick={() => stopMutation.mutate()}
+          >
+            {stopMutation.isPending || status?.status === "stopping"
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              : <Square className="h-3.5 w-3.5" aria-hidden />}
+            Stop
+          </Button>
+        ) : null}
+      </header>
+
+      {definitionsQuery.isPending || (definition && statusQuery.isPending) ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+          Checking this device…
+        </div>
+      ) : unavailable ? (
+        <div className="m-auto max-w-sm px-6 py-10 text-center" data-testid="local-app-error" role="status">
+          <CircleAlert className="mx-auto h-9 w-9 text-muted-foreground" aria-hidden />
+          <h3 className="mt-4 text-base font-semibold text-foreground">Local App not available</h3>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            This saved Local App is not available on this Desktop installation. You can still move or remove it in Messenger.
+          </p>
+        </div>
+      ) : orphaned ? (
+        <div className="m-auto max-w-sm px-6 py-10 text-center" data-testid="local-app-error" role="alert">
+          <CircleAlert className="mx-auto h-9 w-9 text-amber-500" aria-hidden />
+          <h3 className="mt-4 text-base font-semibold text-foreground">Runtime ownership could not be verified</h3>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            Rudder will not guess which process to control. Restart Rudder Desktop, then review the Local App before trying again.
+          </p>
+        </div>
+      ) : queryError ? (
+        <div className="m-auto max-w-sm px-6 py-10 text-center" data-testid="local-app-error" role="alert">
+          <CircleAlert className="mx-auto h-9 w-9 text-destructive" aria-hidden />
+          <h3 className="mt-4 text-base font-semibold text-foreground">Could not open Local App</h3>
+          <p className="mt-2 break-words text-sm leading-6 text-muted-foreground">
+            {errorMessage(queryError, "The local runtime did not respond.")}
+          </p>
+          {startMutation.error ? (
+            <pre
+              data-testid="local-app-logs"
+              className="mt-4 max-h-40 overflow-auto whitespace-pre-wrap rounded-[var(--radius-md)] bg-[color:var(--surface-inset)] p-3 text-left font-mono text-[11px] leading-5 text-muted-foreground"
+              tabIndex={0}
+              aria-label={`${target.label} runtime logs`}
+            >
+              {logsQuery.isPending ? "Loading logs…" : logsQuery.data?.join("\n") || "No runtime logs yet."}
+            </pre>
+          ) : null}
+          <Button
+            type="button"
+            className="mt-5"
+            variant="outline"
+            data-testid={startMutation.error ? "local-app-start" : undefined}
+            onClick={() => {
+              if (startMutation.error) {
+                startMutation.reset();
+                startMutation.mutate();
+                return;
+              }
+              startMutation.reset();
+              stopMutation.reset();
+              void definitionsQuery.refetch();
+              if (definition) void statusQuery.refetch();
+              if (status?.status === "running") void attestedQuery.refetch();
+            }}
+          >
+            {startMutation.error
+              ? <Play className="h-3.5 w-3.5" aria-hidden />
+              : <RotateCw className="h-3.5 w-3.5" aria-hidden />}
+            {startMutation.error ? "Retry & open" : "Retry"}
+          </Button>
+        </div>
+      ) : status?.status === "running" ? (
+        attestedQuery.data ? (
+          <div className="flex min-h-0 flex-1">
+            {createElement("webview", {
+              src: attestedQuery.data.src,
+              partition: attestedQuery.data.partition,
+              className: cn("min-h-[52vh] flex-1 bg-[color:var(--surface-panel)]", !active && "pointer-events-none"),
+              "data-testid": "local-app-webview",
+              "data-local-binding-id": target.localBindingId,
+              "data-view-instance-id": target.viewInstanceId,
+              "data-active": active ? "true" : "false",
+            })}
+          </div>
+        ) : (
+          <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+            Verifying the local listener…
+          </div>
+        )
+      ) : (
+        <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 py-6">
+          <div className="mx-auto max-w-md rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] p-5">
+            <AppWindow className="h-9 w-9 text-muted-foreground" aria-hidden />
+            <h3 className="mt-4 text-base font-semibold text-foreground">
+              {status?.status === "failed" ? "Local App stopped after an error" : "Ready when you are"}
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Starting runs the reviewed project service on this device. Merely opening or restoring this view never executes it.
+            </p>
+            {status?.error ? <p className="mt-3 text-sm text-destructive" role="alert">{status.error}</p> : null}
+            {canStart ? (
+              <Button
+                type="button"
+                className="mt-5"
+                data-testid="local-app-start"
+                disabled={startMutation.isPending}
+                onClick={() => startMutation.mutate()}
+              >
+                {startMutation.isPending
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  : <Play className="h-3.5 w-3.5" aria-hidden />}
+                {status?.status === "failed" ? "Retry & open" : "Start & open"}
+              </Button>
+            ) : (
+              <div className="mt-5 flex items-center text-sm text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                {status ? runtimeLabel(status.status) : "Checking status"}…
+              </div>
+            )}
+            <button
+              type="button"
+              className="mt-5 flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+              aria-expanded={logsOpen || status?.status === "failed"}
+              onClick={() => setLogsOpen((open) => !open)}
+            >
+              <TerminalSquare className="h-3.5 w-3.5" aria-hidden />
+              {logsOpen ? "Hide logs" : "Show logs"}
+            </button>
+            {logsOpen || status?.status === "failed" ? (
+              <pre
+                data-testid="local-app-logs"
+                className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-[var(--radius-md)] bg-[color:var(--surface-inset)] p-3 font-mono text-[11px] leading-5 text-muted-foreground"
+                tabIndex={0}
+                aria-label={`${target.label} runtime logs`}
+              >
+                {logsQuery.isPending ? "Loading logs…" : logsQuery.data?.join("\n") || "No runtime logs yet."}
+              </pre>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}

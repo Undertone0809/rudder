@@ -217,6 +217,57 @@ export type DesktopBrowserResetEvent = {
   available: boolean;
 };
 
+export type DesktopLocalAppDefinitionDraft = {
+  title: string;
+  executable: string;
+  argv: string[];
+  cwd: string;
+  inheritedEnvNames: string[];
+  readiness: { path: string; timeoutMs: number };
+  openPath: string;
+};
+
+export type DesktopPreparedLocalAppDefinition = DesktopLocalAppDefinitionDraft & {
+  trustFingerprint: string;
+};
+
+export type DesktopLocalAppDefinition = DesktopPreparedLocalAppDefinition & {
+  id: string;
+  desktopInstallationId: string;
+  appPublicId: string;
+  localBindingId: string;
+  approvedFingerprint: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DesktopLocalAppDiscoveryResult =
+  | { canceled: true }
+  | { canceled: false; draft: DesktopPreparedLocalAppDefinition };
+
+export type DesktopLocalAppRuntimeStatus =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "failed"
+  | "orphaned_unverified";
+
+export type DesktopLocalAppRuntimeView = {
+  status: DesktopLocalAppRuntimeStatus;
+  generation: string | null;
+  origin?: string;
+  openPath?: string;
+  partition?: string;
+  error?: string;
+};
+
+export type DesktopLocalAppAttestedTarget = {
+  origin: string;
+  openPath: string;
+  partition: string;
+};
+
 export type DesktopWebLinkRequest = {
   url: string;
   source: "link" | "browser_popup";
@@ -270,6 +321,19 @@ export type DesktopShellApi = {
   clearBrowserData?(): Promise<void>;
   setBrowserEnabled?(enabled: boolean): Promise<void>;
   onBrowserReset?(listener: (event: DesktopBrowserResetEvent) => void): () => void;
+  localApps?: {
+    supported: boolean;
+    list(): Promise<DesktopLocalAppDefinition[]>;
+    discover(): Promise<DesktopLocalAppDiscoveryResult>;
+    create(definition: DesktopLocalAppDefinitionDraft): Promise<DesktopLocalAppDefinition>;
+    update(id: string, definition: DesktopLocalAppDefinitionDraft): Promise<DesktopLocalAppDefinition>;
+    delete(id: string): Promise<void>;
+    start(id: string): Promise<DesktopLocalAppRuntimeView>;
+    stop(id: string): Promise<DesktopLocalAppRuntimeView>;
+    status(id: string): Promise<DesktopLocalAppRuntimeView>;
+    logs(id: string): Promise<string[]>;
+    attestedTarget(id: string): Promise<DesktopLocalAppAttestedTarget | null>;
+  };
 };
 
 export function readDesktopShell(): DesktopShellApi | null {

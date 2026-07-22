@@ -116,6 +116,11 @@ export const queryKeys = {
     approvals: (orgId: string) => ["messenger", orgId, "approvals"] as const,
     system: (orgId: string, threadKind: string) => ["messenger", orgId, "system", threadKind] as const,
   },
+  localApps: {
+    definitions: ["local-apps", "definitions"] as const,
+    status: (localBindingId: string) => ["local-apps", "status", localBindingId] as const,
+    logs: (localBindingId: string) => ["local-apps", "logs", localBindingId] as const,
+  },
   automations: {
     list: (orgId: string) => ["automations", orgId] as const,
     detail: (id: string) => ["automations", "detail", id] as const,

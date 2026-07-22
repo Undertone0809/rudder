@@ -338,7 +338,7 @@ describe("KeepSidePanelViewButton mutation intents", () => {
     });
   });
 
-  it("debounces Browser recovery metadata and persists only the newest URL and title", async () => {
+  it("leaves Browser recovery metadata to the live side-panel persister", async () => {
     const savedViewId = "70000000-0000-4000-8000-000000000001";
     mockListCustomGroups.mockResolvedValue({
       groups: [{
@@ -388,47 +388,12 @@ describe("KeepSidePanelViewButton mutation intents", () => {
         kind: "browser",
         tabId: "browser-tab-1",
         viewInstanceId: "browser-tab-1",
-        url: "https://example.com/intermediate",
-        label: "Intermediate title",
-      },
-    });
-    renderButton({
-      contextKey: `chat:${chatId}`,
-      target: {
-        kind: "browser",
-        tabId: "browser-tab-1",
-        viewInstanceId: "browser-tab-1",
         url: "https://example.com/newest",
         label: "Newest title",
       },
     });
 
-    await act(async () => {
-      await vi.waitFor(() => expect(mockUpdateSavedView).toHaveBeenCalledTimes(1), { timeout: 1_500 });
-    });
-    expect(mockUpdateSavedView).toHaveBeenCalledWith(organizationId, savedViewId, {
-      target: {
-        kind: "browser",
-        tabId: "browser-tab-1",
-        viewInstanceId: "browser-tab-1",
-        url: "https://example.com/newest",
-      },
-      title: "Newest title",
-      subtitle: "https://example.com/newest",
-      favicon: null,
-    });
-
-    renderButton({
-      contextKey: `chat:${chatId}`,
-      target: {
-        kind: "browser",
-        tabId: "browser-tab-1",
-        viewInstanceId: "browser-tab-1",
-        url: "https://example.com/newest",
-        label: "Newest title",
-      },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    expect(mockUpdateSavedView).toHaveBeenCalledTimes(1);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(mockUpdateSavedView).not.toHaveBeenCalled();
   });
 });

@@ -121,8 +121,76 @@ describe("Messenger Saved View UI model", () => {
         viewInstanceId: "browser-view-1",
       },
     } as MessengerSavedView;
-    expect(sidePanelTargetFromSavedView(savedView)).toMatchObject({
+    const restored = sidePanelTargetFromSavedView(savedView);
+    expect(restored).toMatchObject({
       favicon: "https://example.com/favicon.ico",
+      savedViewRecovery: {
+        id: savedView.id,
+        persistedMetadata: {
+          title: "Dashboard",
+          subtitle: "https://example.com/dashboard",
+        },
+      },
+    });
+    const keptAgain = savedViewKeepInputFromSidePanelTarget(restored!, options);
+    expect(keptAgain?.target).toEqual({
+      kind: "browser",
+      tabId: "browser-tab-1",
+      url: "https://example.com/dashboard",
+      viewInstanceId: "browser-view-1",
+    });
+    expect(keptAgain?.target).not.toHaveProperty("savedViewRecovery");
+  });
+
+  it("keeps and restores a Local App using only opaque identity", () => {
+    const input = savedViewKeepInputFromSidePanelTarget({
+      kind: "local_app",
+      desktopInstallationId: "desktop-installation",
+      appPublicId: "public-app",
+      localBindingId: "local-binding",
+      label: "Marketing command center",
+      viewInstanceId: "local-view-1",
+    }, {
+      clientMutationId: "00000000-0000-4000-8000-000000000001",
+      placement: { kind: "group", groupId: "20000000-0000-4000-8000-000000000001" },
+    });
+
+    expect(input).toEqual({
+      target: {
+        kind: "local_app",
+        desktopInstallationId: "desktop-installation",
+        appPublicId: "public-app",
+        localBindingId: "local-binding",
+        viewInstanceId: "local-view-1",
+      },
+      title: "Marketing command center",
+      subtitle: "Local app",
+      favicon: null,
+      clientMutationId: "00000000-0000-4000-8000-000000000001",
+      placement: { kind: "group", groupId: "20000000-0000-4000-8000-000000000001" },
+    });
+    expect(Object.keys(input!.target).sort()).toEqual([
+      "appPublicId",
+      "desktopInstallationId",
+      "kind",
+      "localBindingId",
+      "viewInstanceId",
+    ]);
+
+    const savedView = {
+      id: "30000000-0000-4000-8000-000000000001",
+      title: "Marketing command center",
+      subtitle: "Local app",
+      favicon: null,
+      targetPayload: input!.target,
+    } as MessengerSavedView;
+    expect(sidePanelTargetFromSavedView(savedView)).toEqual({
+      kind: "local_app",
+      desktopInstallationId: "desktop-installation",
+      appPublicId: "public-app",
+      localBindingId: "local-binding",
+      label: "Marketing command center",
+      viewInstanceId: "local-view-1",
     });
   });
 });

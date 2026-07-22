@@ -54,6 +54,18 @@ export type SidePanelTarget =
       label: string;
     }
   | {
+      kind: "local_apps";
+      label: string;
+    }
+  | {
+      kind: "local_app";
+      desktopInstallationId: string;
+      appPublicId: string;
+      localBindingId: string;
+      label: string;
+      viewInstanceId?: string;
+    }
+  | {
       kind: "library_directory";
       directoryPath: string;
       label: string;
@@ -67,6 +79,21 @@ export type SidePanelTarget =
       favicon?: string;
       dedupeKey?: string;
       viewInstanceId?: string;
+      /** Renderer-only recovery metadata. Saved View API payloads explicitly omit this field. */
+      savedViewRecovery?: {
+        id: string;
+        persistedMetadata: {
+          target: {
+            kind: "browser";
+            tabId: string;
+            url: string;
+            viewInstanceId: string;
+          };
+          title: string;
+          subtitle: string | null;
+          favicon: string | null;
+        };
+      };
     }
   | {
       kind: "placeholder";
@@ -110,6 +137,10 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "library_entry") return `library-entry:${target.entryId}:${target.path ?? ""}`;
   if (target.kind === "library_file") return `library-file:${target.filePath}`;
   if (target.kind === "local_file") return `local-file:${target.filePath}`;
+  if (target.kind === "local_apps") return "local-apps";
+  if (target.kind === "local_app") {
+    return `local-app:${encodeURIComponent(target.desktopInstallationId)}:${encodeURIComponent(target.appPublicId)}:${encodeURIComponent(target.localBindingId)}`;
+  }
   if (target.kind === "library_directory") return `library-directory:${target.directoryPath}`;
   if (target.kind === "browser") return `browser-tab:${target.tabId}`;
   return `placeholder:${target.targetKind}`;
@@ -118,14 +149,15 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
 export function sidePanelTargetSupportsSavedView(
   target: SidePanelTarget,
 ): target is Extract<SidePanelTarget, {
-  kind: "automation" | "library_document" | "library_entry" | "library_file" | "library_directory" | "browser";
+  kind: "automation" | "library_document" | "library_entry" | "library_file" | "library_directory" | "browser" | "local_app";
 }> {
   return target.kind === "automation"
     || target.kind === "library_document"
     || target.kind === "library_entry"
     || target.kind === "library_file"
     || target.kind === "library_directory"
-    || target.kind === "browser";
+    || target.kind === "browser"
+    || target.kind === "local_app";
 }
 
 export function sidePanelTargetKey(target: SidePanelTarget) {
@@ -154,6 +186,7 @@ export function sidePanelFullPageHref(target: SidePanelTarget): string | null {
   if (target.kind === "library_document") return `/library?document=${encodeURIComponent(target.documentId)}`;
   if (target.kind === "library_file") return `/library?path=${encodeURIComponent(target.filePath)}`;
   if (target.kind === "local_file") return null;
+  if (target.kind === "local_apps" || target.kind === "local_app") return null;
   if (target.kind === "library_directory") {
     return target.directoryPath
       ? `/library?directory=${encodeURIComponent(target.directoryPath)}`

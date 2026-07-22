@@ -31,6 +31,7 @@ type ExposedDesktopShell = {
   setBrowserEnabled(enabled: boolean): Promise<void>;
   onBrowserReset(listener: (event: unknown) => void): () => void;
   localApps: {
+    supported: boolean;
     list(): Promise<unknown[]>;
     discover(): Promise<unknown>;
     create(definition: unknown): Promise<unknown>;
@@ -134,6 +135,7 @@ describe("Rudder Browser preload bridge", () => {
 
   it("exposes only narrow Local App DTO and opaque-id IPC calls", async () => {
     const localApps = desktopShell().localApps;
+    expect(localApps.supported).toBe(process.platform === "darwin");
     const definition = { title: "fixture" };
     await localApps.list();
     await localApps.discover();

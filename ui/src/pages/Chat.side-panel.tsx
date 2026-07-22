@@ -11,6 +11,8 @@ import { IssueProperties } from "@/components/IssueProperties";
 import { MarkdownEditor, type MarkdownEditorRef } from "@/components/MarkdownEditor";
 import { KeepSidePanelViewButton } from "@/components/messenger/KeepSidePanelViewButton";
 import { PriorityIcon } from "@/components/PriorityIcon";
+import { LocalAppPanelView } from "@/components/side-panel/LocalAppPanelView";
+import { LocalAppsPanel } from "@/components/side-panel/LocalAppsPanel";
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TranscriptLocalFilePreview } from "@/components/transcript/TranscriptLocalFilePreview";
@@ -34,6 +36,7 @@ import { WorkspaceLaunchTargetIcon } from "@/components/workspaces/WorkspaceLaun
 import { useOrganization } from "@/context/OrganizationContext";
 import { MAX_BROWSER_TABS_PER_CONTEXT, useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
+import { useBrowserSavedViewMetadataPersister } from "@/hooks/useBrowserSavedViewMetadataPersister";
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import {
   BROWSER_SIDE_PANEL_BLANK_URL as CHAT_SIDE_PANEL_BROWSER_BLANK_URL,
@@ -63,6 +66,7 @@ import {
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AppWindow,
   ArrowLeft,
   ArrowRight,
   Bot,
@@ -212,10 +216,12 @@ function humanizeSidePanelToken(value: string | null | undefined, fallback = "-"
 
 function SidePanelEmptyState({
   browserAvailable,
+  localAppsAvailable,
   sourceConversationId,
   onOpenTarget,
 }: {
   browserAvailable: boolean;
+  localAppsAvailable: boolean;
   sourceConversationId: string | null;
   onOpenTarget: (target: SidePanelTarget) => void;
 }) {
@@ -245,6 +251,12 @@ function SidePanelEmptyState({
       icon: Compass,
       target: createChatSidePanelBrowserTarget(),
     }] : []),
+    ...(localAppsAvailable ? [{
+      label: "Local apps",
+      description: "Run a reviewed project service beside this workspace.",
+      icon: AppWindow,
+      target: { kind: "local_apps" as const, label: "Local apps" },
+    }] : []),
     {
       label: "Library",
       description: "Browse workspace files with the Library tree.",
@@ -264,7 +276,7 @@ function SidePanelEmptyState({
           <button
             key={label}
             type="button"
-            data-testid={`chat-side-panel-empty-${label.toLowerCase()}-target`}
+            data-testid={`chat-side-panel-empty-${label.toLowerCase().replaceAll(" ", "-")}-target`}
             className="flex items-center gap-3 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3 text-left text-sm transition-colors hover:bg-[color:var(--surface-active)]"
             onClick={() => onOpenTarget(target)}
           >
@@ -1923,6 +1935,14 @@ export function ChatSidePanel({
     () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "browser" }> => candidate.kind === "browser"),
     [visibleTabs],
   );
+  const localAppTargets = useMemo(
+    () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "local_app" }> => candidate.kind === "local_app"),
+    [visibleTabs],
+  );
+  const browserSavedViewMetadata = useBrowserSavedViewMetadataPersister({
+    browserTargets,
+    organizationId: selectedOrganizationId,
+  });
   useLayoutEffect(() => {
     if (isMobile) return undefined;
     if (sidePanel.open) {
@@ -1949,10 +1969,14 @@ export function ChatSidePanel({
   }, [isMobile, sidePanel.open]);
   const desktopBrowserAvailable = Boolean(readDesktopShell()?.getBrowserPartition);
   const browserAvailable = desktopBrowserAvailable;
+  const localAppsAvailable = Boolean(readDesktopShell()?.localApps?.supported);
   useEffect(() => {
-    if (!contextReady || !target || (target.kind === "browser" && !browserAvailable)) return;
+    if (!contextReady
+      || !target
+      || (target.kind === "browser" && !browserAvailable)
+      || (target.kind === "local_apps" && !localAppsAvailable)) return;
     openTarget(target);
-  }, [browserAvailable, contextReady, openTarget, target]);
+  }, [browserAvailable, contextReady, localAppsAvailable, openTarget, target]);
 
   useEffect(() => {
     if (desktopBrowserAvailable) return;
@@ -1980,6 +2004,8 @@ export function ChatSidePanel({
   const libraryDirectoryTarget = activeTarget?.kind === "library_directory" ? activeTarget : null;
   const libraryEntryTarget = activeTarget?.kind === "library_entry" ? activeTarget : null;
   const browserTarget = activeTarget?.kind === "browser" ? activeTarget : null;
+  const localAppsTarget = activeTarget?.kind === "local_apps" ? activeTarget : null;
+  const localAppTarget = activeTarget?.kind === "local_app" ? activeTarget : null;
   const activeBrowserTargetKey = browserTarget ? sidePanelTargetKey(browserTarget) : null;
   const placeholderTarget = activeTarget?.kind === "placeholder" ? activeTarget : null;
   const targetQueriesEnabled = sidePanel.open || exiting;
@@ -2135,12 +2161,18 @@ export function ChatSidePanel({
 
   const openSidePanelTarget = (nextTarget: SidePanelTarget) => {
     if (nextTarget.kind === "browser" && !browserAvailable) return;
+    if (nextTarget.kind === "local_apps" && !localAppsAvailable) return;
     sidePanel.openTarget(nextTarget);
   };
   const replaceSidePanelTarget = (key: string, nextTarget: SidePanelTarget) => sidePanel.replaceTarget(key, nextTarget);
 
   const closeSidePanelTab = async (tab: SidePanelTarget) => {
     const tabKey = sidePanelTargetKey(tab);
+    if (tab.kind === "browser") {
+      await browserSavedViewMetadata.flushTarget(tab);
+      sidePanel.closeTarget(tabKey);
+      return;
+    }
     if (tab.kind !== "side_chat") {
       sidePanel.closeTarget(tabKey);
       return;
@@ -2429,7 +2461,7 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
-          browserTarget || issueTarget || automationTarget || libraryFilePreviewPath || localFileTarget || sideChatTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          browserTarget || localAppsTarget || localAppTarget || issueTarget || automationTarget || libraryFilePreviewPath || localFileTarget || sideChatTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {browserTargets.map((target) => {
@@ -2450,9 +2482,19 @@ export function ChatSidePanel({
               </div>
             );
           })}
-          {browserTarget ? null : !activeTarget ? (
+          {localAppTargets.map((target) => {
+            const targetKey = sidePanelTargetKey(target);
+            const active = targetKey === activeTargetKey;
+            return (
+              <div key={targetKey} className={cn("h-full min-h-0", active ? "block" : "hidden")} aria-hidden={!active}>
+                <LocalAppPanelView active={active} target={target} />
+              </div>
+            );
+          })}
+          {browserTarget || localAppTarget ? null : !activeTarget ? (
             <SidePanelEmptyState
               browserAvailable={browserAvailable}
+              localAppsAvailable={localAppsAvailable}
               sourceConversationId={sourceConversationId}
               onOpenTarget={openSidePanelTarget}
             />
@@ -2499,6 +2541,8 @@ export function ChatSidePanel({
                 onClose={() => closeSidePanelTab(automationTarget)}
               />
             </div>
+          ) : localAppsTarget ? (
+            <LocalAppsPanel onOpenTarget={openSidePanelTarget} />
           ) : placeholderTarget ? (
             <SidePanelPlaceholderView browserAvailable={browserAvailable} target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
           ) : sideChatTarget && selectedOrganizationId ? (
@@ -2571,6 +2615,6 @@ export function ChatSidePanel({
     lastOpenDesktopPanelRef.current = panel;
     return panel;
   }
-  if (!desktopExitComplete || browserTargets.length > 0) return lastOpenDesktopPanelRef.current;
+  if (!desktopExitComplete || browserTargets.length > 0 || localAppTargets.length > 0) return lastOpenDesktopPanelRef.current;
   return null;
 }

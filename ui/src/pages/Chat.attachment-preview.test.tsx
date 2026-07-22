@@ -4053,6 +4053,44 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(1);
   });
 
+  it("opens the Desktop Local Apps catalog from the Side Panel empty state", async () => {
+    const currentShell = (window as typeof window & { desktopShell?: Record<string, unknown> }).desktopShell;
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        ...currentShell,
+        localApps: {
+          supported: true,
+          list: vi.fn(async () => []),
+          discover: vi.fn(async () => ({ canceled: true })),
+        },
+      },
+    });
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "local-app-side-panel-message", body: "Open a local dashboard." })],
+    };
+    const { container } = renderChat();
+    await act(async () => { await Promise.resolve(); });
+
+    const chatSidePanelButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]');
+    await act(async () => {
+      chatSidePanelButton?.click();
+      await Promise.resolve();
+    });
+    const localAppsTarget = container.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-side-panel-empty-local-apps-target"]',
+    );
+    expect(localAppsTarget).not.toBeNull();
+    await act(async () => {
+      localAppsTarget?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="local-apps-catalog"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="local-apps-add"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid="chat-side-panel-tab"]')).toHaveLength(1);
+  });
+
   it("opens an interactive browser target from the empty Side Panel picker", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "browser-side-panel-message", body: "Open the browser panel." })],

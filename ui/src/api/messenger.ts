@@ -42,7 +42,7 @@ type SavedViewCreateInput = {
 };
 type SavedViewUpdateInput = Partial<Omit<SavedViewCreateInput, "target">> & {
   target?: MessengerSavedViewTarget;
-  hidden?: boolean;
+  hidden?: false;
 };
 type SavedViewKeepInput = SavedViewCreateInput & {
   clientMutationId: string;

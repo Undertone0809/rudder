@@ -62,6 +62,20 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
       <button type="button" onClick={() => sidePanel.openTarget(issueTarget)}>Open issue</button>
       <button type="button" onClick={() => sidePanel.openTarget({ kind: "library_file", filePath: "docs/spec.md", label: "Spec" })}>Open file</button>
       <button type="button" onClick={() => sidePanel.openTargetInNewTab({ kind: "library_file", filePath: "docs/spec.md", label: "Spec copy" })}>Open file in new tab</button>
+      <button type="button" onClick={() => sidePanel.openTarget({
+        kind: "local_app",
+        desktopInstallationId: "desktop/a",
+        appPublicId: "app:a",
+        localBindingId: "binding-a",
+        label: "Dashboard",
+      })}>Open local app</button>
+      <button type="button" onClick={() => sidePanel.openTargetInNewTab({
+        kind: "local_app",
+        desktopInstallationId: "desktop/a",
+        appPublicId: "app:a",
+        localBindingId: "binding-a",
+        label: "Dashboard copy",
+      })}>Open local app in new tab</button>
       <button type="button" onClick={() => sidePanel.openTarget({ kind: "browser", url: "https://example.com", label: "Example", tabId: "browser-1" })}>Open browser</button>
       <button type="button" onClick={() => sidePanel.reorderTarget("browser-tab:browser-1", "issue:issue-1:", "before")}>Move browser first</button>
       <button type="button" onClick={() => sidePanel.reorderTarget("browser-tab:browser-1", "issue:issue-1:", "after")}>Move browser last</button>
@@ -231,6 +245,32 @@ describe("SidePanelProvider context visibility", () => {
     const instances = text(container, "view-instance-ids").split(",");
     expect(text(container, "tab-count")).toBe("2");
     expect(new Set(instances).size).toBe(2);
+  });
+
+  it("shares one Local App identity across distinct view instances without stopping it on close", () => {
+    const stop = vi.fn(async () => undefined);
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { localApps: { supported: true, stop } },
+    });
+    ({ container, root } = renderSidePanelProvider());
+
+    click(container, "Open local app");
+    const firstInstance = text(container, "view-instance-ids");
+    expect(firstInstance).toBeTruthy();
+
+    click(container, "Open local app");
+    expect(text(container, "tab-count")).toBe("1");
+    expect(text(container, "view-instance-ids")).toBe(firstInstance);
+
+    click(container, "Open local app in new tab");
+    const instances = text(container, "view-instance-ids").split(",");
+    expect(text(container, "tab-count")).toBe("2");
+    expect(new Set(instances).size).toBe(2);
+
+    click(container, "Close active");
+    expect(text(container, "tab-count")).toBe("1");
+    expect(stop).not.toHaveBeenCalled();
   });
 
   it("preserves the destination chat closed state even when the current chat is open", () => {

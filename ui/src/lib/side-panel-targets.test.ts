@@ -12,6 +12,7 @@ import {
   sidePanelFullPageHref,
   sidePanelTargetFromHref,
   sidePanelTargetKey,
+  sidePanelTargetSupportsSavedView,
 } from "./side-panel-targets";
 
 describe("side panel targets", () => {
@@ -144,6 +145,31 @@ describe("side panel targets", () => {
 
     expect(sidePanelTargetKey(first)).toBe("library-file:docs/spec.md:view:view-first");
     expect(sidePanelTargetKey(second)).toBe("library-file:docs/spec.md:view:view-second");
+  });
+
+  it("keeps Local App catalog state separate from collision-free saved view instances", () => {
+    const catalog = { kind: "local_apps", label: "Local apps" } as const;
+    const first = {
+      kind: "local_app",
+      desktopInstallationId: "install:a",
+      appPublicId: "app%3Apublic",
+      localBindingId: "binding/one",
+      label: "Command center",
+      viewInstanceId: "view-first",
+    } as const;
+    const second = { ...first, viewInstanceId: "view-second" };
+
+    expect(sidePanelTargetKey(catalog)).toBe("local-apps");
+    expect(sidePanelTargetSupportsSavedView(catalog)).toBe(false);
+    expect(sidePanelFullPageHref(catalog)).toBeNull();
+    expect(sidePanelTargetKey(first)).toBe(
+      "local-app:install%3Aa:app%253Apublic:binding%2Fone:view:view-first",
+    );
+    expect(sidePanelTargetKey(second)).toBe(
+      "local-app:install%3Aa:app%253Apublic:binding%2Fone:view:view-second",
+    );
+    expect(sidePanelTargetSupportsSavedView(first)).toBe(true);
+    expect(sidePanelFullPageHref(first)).toBeNull();
   });
 
   it("ignores unsupported or external hrefs unless they are browser targets", () => {

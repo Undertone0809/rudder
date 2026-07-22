@@ -1,9 +1,12 @@
 import { messengerApi } from "@/api/messenger";
+import { Button } from "@/components/ui/button";
 import { useSidePanel } from "@/context/SidePanelContext";
+import { readDesktopShell } from "@/lib/desktop-shell";
+import { localAppIdentityMatches } from "@/lib/local-apps";
 import { sidePanelTargetFromSavedView } from "@/lib/messenger-saved-views";
 import { queryKeys } from "@/lib/queryKeys";
 import { useQuery } from "@tanstack/react-query";
-import { Bookmark, MonitorOff } from "lucide-react";
+import { Bookmark, MonitorOff, RotateCw } from "lucide-react";
 import { useEffect, useMemo } from "react";
 
 export function MessengerSavedViewWorkspace({
@@ -20,23 +23,64 @@ export function MessengerSavedViewWorkspace({
     enabled: Boolean(organizationId && savedViewId),
   });
   const savedView = savedViewQuery.data ?? null;
-  const target = useMemo(
+  const rawTarget = useMemo(
     () => savedView ? sidePanelTargetFromSavedView(savedView) : null,
     [savedView],
   );
+  const localTarget = rawTarget?.kind === "local_app" ? rawTarget : null;
+  const localApps = readDesktopShell()?.localApps;
+  const localAppsSupported = Boolean(localApps?.supported);
+  const definitionsQuery = useQuery({
+    queryKey: queryKeys.localApps.definitions,
+    queryFn: () => localApps!.list(),
+    enabled: Boolean(localTarget) && localAppsSupported,
+    retry: false,
+  });
+  const localDefinition = useMemo(() => (
+    localTarget
+      ? definitionsQuery.data?.find((definition) => localAppIdentityMatches(definition, localTarget)) ?? null
+      : null
+  ), [definitionsQuery.data, localTarget]);
+  const localStatusQuery = useQuery({
+    queryKey: queryKeys.localApps.status(localTarget?.localBindingId ?? "__none__"),
+    queryFn: () => localApps!.status(localDefinition!.id),
+    enabled: Boolean(localTarget && localDefinition && localAppsSupported),
+    retry: false,
+  });
+  const target = localTarget
+    ? localDefinition && localStatusQuery.isSuccess ? localTarget : null
+    : rawTarget;
 
   useEffect(() => {
     if (!target) return;
     sidePanel.openTarget(target);
   }, [sidePanel.openTarget, target]);
 
-  if (savedViewQuery.isPending) {
+  const localChecking = Boolean(localTarget && localAppsSupported && (
+    definitionsQuery.isPending || (localDefinition && localStatusQuery.isPending)
+  ));
+  if (savedViewQuery.isPending || localChecking) {
     return <div className="mx-auto max-w-3xl py-10 text-sm text-muted-foreground">Opening saved view…</div>;
   }
-  if (savedViewQuery.error) {
+  const error = savedViewQuery.error ?? definitionsQuery.error ?? localStatusQuery.error;
+  if (error) {
     return (
-      <div className="mx-auto max-w-3xl py-10 text-sm text-destructive" role="alert">
-        {savedViewQuery.error.message}
+      <div className="mx-auto flex max-w-xl flex-col items-center py-16 text-center" data-testid="messenger-saved-view-error" role="alert">
+        <h1 className="text-lg font-semibold text-foreground">Could not open saved view</h1>
+        <p className="mt-2 max-w-md text-sm leading-6 text-destructive">{error.message}</p>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-5"
+          onClick={() => {
+            if (savedViewQuery.error) void savedViewQuery.refetch();
+            if (definitionsQuery.error) void definitionsQuery.refetch();
+            if (localStatusQuery.error) void localStatusQuery.refetch();
+          }}
+        >
+          <RotateCw className="h-3.5 w-3.5" aria-hidden />
+          Retry
+        </Button>
       </div>
     );
   }

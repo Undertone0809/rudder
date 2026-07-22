@@ -13,7 +13,7 @@ import {
 } from "@/lib/side-panel-targets";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookmarkPlus, Check, Loader2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,8 +28,6 @@ function newMutationId() {
 }
 
 const MAX_RETRYABLE_KEEP_INTENTS = 32;
-const MAX_BROWSER_METADATA_FINGERPRINTS = 32;
-const BROWSER_METADATA_DEBOUNCE_MS = 350;
 const INTENT_KEY_PLACEHOLDER_MUTATION_ID = "00000000-0000-4000-8000-000000000000";
 
 function stableIntentValue(value: unknown): string {
@@ -48,16 +46,6 @@ function stableIntentValue(value: unknown): string {
 function keepIntentKey(input: MessengerSavedViewKeepInput) {
   const { clientMutationId: _clientMutationId, ...intent } = input;
   return stableIntentValue(intent);
-}
-
-function rememberBoundedFingerprint(cache: Map<string, string>, key: string, fingerprint: string) {
-  cache.delete(key);
-  cache.set(key, fingerprint);
-  while (cache.size > MAX_BROWSER_METADATA_FINGERPRINTS) {
-    const oldestKey = cache.keys().next().value;
-    if (oldestKey === undefined) break;
-    cache.delete(oldestKey);
-  }
 }
 
 function mutationIdForIntent(cache: Map<string, string>, intentKey: string) {
@@ -93,8 +81,6 @@ export function KeepSidePanelViewButton({
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const mutationIdsRef = useRef(new Map<string, string>());
-  const browserMetadataFingerprintsRef = useRef(new Map<string, string>());
-  const browserMetadataQueuesRef = useRef(new Map<string, Promise<void>>());
   const eligible = Boolean(target && sidePanelTargetSupportsSavedView(target)
     && (target.kind !== "library_entry" || target.path));
   const hostIssueRef = contextKey.startsWith("issue:")
@@ -127,67 +113,6 @@ export function KeepSidePanelViewButton({
   const existingSavedViewGroup = existingSavedViewEntry
     ? groups.find((group) => group.entries.some((entry) => entry.id === existingSavedViewEntry.id)) ?? null
     : null;
-
-  useEffect(() => {
-    if (!organizationId || target?.kind !== "browser" || existingSavedViewEntry?.item.type !== "saved_view") {
-      return undefined;
-    }
-    const savedView = existingSavedViewEntry.item.savedView;
-    if (savedView.targetPayload.kind !== "browser") return undefined;
-    const desiredTarget = {
-      kind: "browser" as const,
-      tabId: target.tabId,
-      url: target.url,
-      viewInstanceId: target.viewInstanceId ?? target.tabId,
-    };
-    const desiredFavicon = target.favicon !== undefined
-      ? target.favicon
-      : savedView.targetPayload.url === target.url
-        ? savedView.favicon
-        : null;
-    const metadata = {
-      target: desiredTarget,
-      title: target.label,
-      subtitle: target.url,
-      favicon: desiredFavicon,
-    };
-    const persistedMetadata = {
-      target: savedView.targetPayload,
-      title: savedView.title,
-      subtitle: savedView.subtitle,
-      favicon: savedView.favicon,
-    };
-    const fingerprint = stableIntentValue(metadata);
-    if (fingerprint === stableIntentValue(persistedMetadata)
-      || browserMetadataFingerprintsRef.current.get(savedView.id) === fingerprint) {
-      return undefined;
-    }
-
-    const timeout = window.setTimeout(() => {
-      rememberBoundedFingerprint(browserMetadataFingerprintsRef.current, savedView.id, fingerprint);
-      const previous = browserMetadataQueuesRef.current.get(savedView.id) ?? Promise.resolve();
-      const queued = previous
-        .catch(() => undefined)
-        .then(async () => {
-          await messengerApi.updateSavedView(organizationId, savedView.id, metadata);
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.messenger.customGroups(organizationId),
-          });
-        })
-        .catch(() => {
-          if (browserMetadataFingerprintsRef.current.get(savedView.id) === fingerprint) {
-            browserMetadataFingerprintsRef.current.delete(savedView.id);
-          }
-        });
-      browserMetadataQueuesRef.current.set(savedView.id, queued);
-      void queued.finally(() => {
-        if (browserMetadataQueuesRef.current.get(savedView.id) === queued) {
-          browserMetadataQueuesRef.current.delete(savedView.id);
-        }
-      });
-    }, BROWSER_METADATA_DEBOUNCE_MS);
-    return () => window.clearTimeout(timeout);
-  }, [existingSavedViewEntry, organizationId, queryClient, target]);
 
   const keepMutation = useMutation({
     mutationFn: async (groupId: string | null) => {

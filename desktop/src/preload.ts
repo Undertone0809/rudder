@@ -336,6 +336,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
     };
   },
   localApps: {
+    supported: process.platform === "darwin",
     list: () => ipcRenderer.invoke("desktop:local-apps:list") as Promise<LocalAppDefinition[]>,
     discover: () => ipcRenderer.invoke("desktop:local-apps:discover") as Promise<DesktopLocalAppDiscoveryResult>,
     create: (definition: DesktopLocalAppDraftInput) =>
@@ -403,6 +404,7 @@ declare global {
       setBrowserEnabled(enabled: boolean): Promise<void>;
       onBrowserReset(listener: (event: DesktopBrowserResetEvent) => void): () => void;
       localApps: {
+        supported: boolean;
         list(): Promise<LocalAppDefinition[]>;
         discover(): Promise<DesktopLocalAppDiscoveryResult>;
         create(definition: DesktopLocalAppDraftInput): Promise<LocalAppDefinition>;

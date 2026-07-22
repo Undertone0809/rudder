@@ -4,7 +4,7 @@ import type {
   MessengerCustomGroupHydratedSavedViewEntry,
   MessengerCustomGroupWithEntries,
 } from "@rudderhq/shared";
-import { FileText, FolderInput, Globe2, MoreHorizontal, Trash2, Workflow } from "lucide-react";
+import { AppWindow, FileText, FolderInput, Globe2, MoreHorizontal, Trash2, Workflow } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,6 +19,9 @@ function SavedViewIcon({ entry }: { entry: MessengerCustomGroupHydratedSavedView
   const kind = entry.item.savedView.targetPayload.kind;
   if (kind === "browser") return <Globe2 className="h-3.5 w-3.5" aria-hidden />;
   if (kind === "automation") return <Workflow className="h-3.5 w-3.5" aria-hidden />;
+  if (kind === "local_app") {
+    return <AppWindow className="h-3.5 w-3.5" data-testid="messenger-saved-view-local-app-icon" aria-hidden />;
+  }
   return <FileText className="h-3.5 w-3.5" aria-hidden />;
 }
 
