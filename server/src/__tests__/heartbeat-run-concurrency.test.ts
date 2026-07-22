@@ -1180,11 +1180,13 @@ describe("heartbeat run concurrency", () => {
 
     await waitForCondition(async () => {
       const highStatuses = await listRunStatuses(high.agentId);
+      const highCalls = mockRuntimeAdapter.calls.filter((call) => call.taskKey?.startsWith("high:"));
       return (
-        mockRuntimeAdapter.calls.length === 10
+        highCalls.length === 10
         && highStatuses.filter((run) => run.status === "running").length === 10
+        && highStatuses.filter((run) => run.status === "queued").length === 1
       );
-    });
+    }, 10_000);
 
     statuses = await listRunStatuses(high.agentId);
     expect(statuses.filter((run) => run.status === "running")).toHaveLength(10);

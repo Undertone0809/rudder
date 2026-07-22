@@ -193,6 +193,7 @@ function shouldIgnoreInstructionsEntry(entry: { name: string; isDirectory(): boo
   if (!entry.isFile()) return false;
   return (
     IGNORED_INSTRUCTIONS_FILE_NAMES.has(entry.name)
+    || entry.name.startsWith(".rudder-write-probe-")
     || entry.name.startsWith("._")
     || entry.name.endsWith(".pyc")
     || entry.name.endsWith(".pyo")
