@@ -199,6 +199,7 @@ describe("agent instructions service", () => {
     await fs.writeFile(path.join(externalRoot, "AGENTS.md"), "# External Agent\n", "utf8");
     await fs.writeFile(path.join(externalRoot, ".gitignore"), "node_modules/\n", "utf8");
     await fs.writeFile(path.join(externalRoot, ".DS_Store"), "junk", "utf8");
+    await fs.writeFile(path.join(externalRoot, ".rudder-write-probe-123-test"), "ok", "utf8");
     await fs.mkdir(path.join(externalRoot, "docs"), { recursive: true });
     await fs.writeFile(path.join(externalRoot, "docs", "TOOLS.md"), "## Tools\n", "utf8");
     await fs.writeFile(path.join(externalRoot, "docs", "module.pyc"), "compiled", "utf8");

@@ -4,7 +4,7 @@ import type { HeartbeatRun } from "@rudderhq/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RunsTab, RunConversationListItem, RunRailList, type RunRailEntry } from "./AgentDetail.runs";
+import { RunConversationListItem, RunRailList, RunsTab, type RunRailEntry } from "./AgentDetail.runs";
 
 const testState = vi.hoisted(() => ({
   navigate: vi.fn(),
