@@ -2,10 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  armAgentBrowserDownload,
-  cancelAgentBrowserDownload,
-} from "./browser-agent-downloads.js";
+import { cancelAgentBrowserDownload } from "./browser-agent-downloads.js";
 import { isAllowedBrowserNavigationUrl } from "./browser-profile.js";
 
 type DebuggerMessageListener = (
@@ -415,18 +412,6 @@ function domScript(
       if (matches.length !== 1) throw new Error("Browser locator must resolve to exactly one element; matched " + matches.length + ".");
       return matches[0];
     };
-    const nativeSetter = (element, property, value) => {
-      const view = element.ownerDocument.defaultView || window;
-      const tag = element.tagName.toLowerCase();
-      const prototype = tag === "textarea" ? view.HTMLTextAreaElement.prototype : tag === "select" ? view.HTMLSelectElement.prototype : view.HTMLInputElement.prototype;
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, property);
-      if (descriptor?.set) descriptor.set.call(element, value);
-      else element[property] = value;
-    };
-    const dispatchInput = (element) => {
-      element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-      element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-    };
     const box = (element) => {
       const rect = element.getBoundingClientRect();
       const hasFrameOffset = Number.isFinite(Number(input.args.__frameOffsetX)) && Number.isFinite(Number(input.args.__frameOffsetY));
@@ -526,9 +511,6 @@ function domScript(
       const element = strict(args.locator || {});
       if (operation === "textContent") return { value: element.textContent === null ? null : String(element.textContent).slice(0, 50000) };
       if (operation === "innerText") return { value: String(element.innerText || "").slice(0, 50000) };
-      if (operation === "value") {
-        return { value: null, redacted: true };
-      }
       if (operation === "attribute") {
         const name = String(args.name || "").toLowerCase();
         const readable = new Set(["id", "name", "type", "href", "placeholder", "data-testid", "aria-label", "aria-checked", "aria-selected", "aria-expanded"]);
@@ -540,84 +522,16 @@ function domScript(
       if (operation === "checked") return { value: Boolean(element.checked ?? element.getAttribute("aria-checked") === "true") };
       if (operation === "selected") return { value: element.tagName.toLowerCase() === "select" ? Array.from(element.selectedOptions).map((option) => option.value) : Boolean(element.selected ?? element.getAttribute("aria-selected") === "true") };
       if (operation === "box") return { value: box(element) };
-      if (operation === "focus") {
-        element.scrollIntoView?.({ block: "center", inline: "center" });
-        element.focus?.();
-        return { value: box(element) };
-      }
-      if (operation === "hover") {
-        element.scrollIntoView?.({ block: "center", inline: "center" });
-        element.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, composed: true }));
-        element.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, composed: true }));
-        element.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, composed: true }));
-        return { performed: true, box: box(element) };
-      }
-      if (operation === "fill" || operation === "type") {
-        if (!["input", "textarea"].includes(element.tagName.toLowerCase()) && !element.isContentEditable) throw new Error("Browser locator is not editable.");
-        element.focus();
-        const value = String(args.value ?? "");
-        if (element.isContentEditable) element.textContent = operation === "fill" ? value : String(element.textContent || "") + value;
-        else nativeSetter(element, "value", operation === "fill" ? value : String(element.value || "") + value);
-        dispatchInput(element);
-        return { performed: true };
-      }
-      if (operation === "press") {
-        element.focus?.();
-        const key = String(args.key || "");
-        element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, composed: true }));
-        element.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true, composed: true }));
-        return { performed: true };
-      }
-      if (["check", "uncheck", "setChecked"].includes(operation)) {
-        if (element.tagName.toLowerCase() !== "input" || !["checkbox", "radio"].includes(element.type)) throw new Error("Browser locator is not checkable.");
-        const checked = operation === "check" ? true : operation === "uncheck" ? false : Boolean(args.checked);
-        nativeSetter(element, "checked", checked);
-        dispatchInput(element);
-        return { performed: true, checked: element.checked };
-      }
-      if (operation === "select") {
-        if (element.tagName.toLowerCase() !== "select") throw new Error("Browser locator is not a select element.");
-        const desired = Array.isArray(args.values) ? args.values : [];
-        for (const option of Array.from(element.options)) {
-          option.selected = desired.some((item) => typeof item === "string" ? option.value === item || option.label === item : item && (item.value === option.value || item.label === option.label || item.index === option.index));
-        }
-        dispatchInput(element);
-        return { performed: true, values: Array.from(element.selectedOptions).map((option) => option.value) };
-      }
-      if (operation === "scroll") {
-        if (args.intoView !== false) element.scrollIntoView?.({ block: "center", inline: "center" });
-        if (Number(args.x) || Number(args.y)) element.scrollBy?.({ left: Number(args.x || 0), top: Number(args.y || 0), behavior: "instant" });
-        return { performed: true };
-      }
       if (operation === "mediaUrl") {
         const raw = element.currentSrc || element.src || element.href || element.getAttribute("src") || element.getAttribute("href");
         if (!raw) throw new Error("Browser locator has no downloadable media URL.");
         return { url: new URL(raw, location.href).href, suggestedName: element.getAttribute("download") || "" };
       }
-      if (operation === "resolveSelector" || operation === "resolveFileInputSelector") {
-        if (operation === "resolveFileInputSelector"
-          && (element.tagName.toLowerCase() !== "input" || String(element.type).toLowerCase() !== "file")) {
-          throw new Error("Browser locator is not a file input.");
-        }
-        if (element.id) return { selector: "#" + CSS.escape(element.id) };
-        const parts = [];
-        let current = element;
-        while (current && current !== document.documentElement && parts.length < 8) {
-          let part = current.tagName.toLowerCase();
-          if (current.parentElement) {
-            const siblings = Array.from(current.parentElement.children).filter((child) => child.tagName === current.tagName);
-            if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")";
-          }
-          parts.unshift(part);
-          current = current.parentElement;
-        }
-        return { selector: parts.join(" > ") };
-      }
       throw new Error("Browser locator action is unsupported.");
     };
     const domCua = async (args) => {
       if (args.action === "get") return snapshot({ boxes: true, depth: args.depth, maxNodes: args.maxNodes });
-      throw new Error("Browser DOM CUA is read-only; use a locator or explicit coordinate action to interact.");
+      throw new Error("Browser DOM CUA is read-only; use a high-level ref or explicit coordinate action to interact.");
     };
     const listAssets = () => {
       const entries = new Map();
@@ -786,14 +700,10 @@ export async function createBrowserAdvancedDriver(options: {
   const inventories = new Map<string, AssetInventory>();
   const artifactDirectories = new Set<string>();
   const activeFetches = new Set<AbortController>();
-  const activeNetworkRequests = new Set<string>();
   const dialogOpenedWaiters = new Set<() => void>();
   const dialogClosedWaiters = new Set<(params: Record<string, unknown>) => void>();
   let dialog: BrowserDialogState | null = null;
   let electronDialogCallback: ((accepted: boolean, promptText: string) => void) | null = null;
-  let armedDialogResponse: { accept: boolean; promptText: string } | null = null;
-  let armedDialogSettlement: Promise<void> | null = null;
-  let armedDialogError: Error | null = null;
   let observedMainFrameId: string | null = null;
   let navigationSequence = 0;
   let disposed = false;
@@ -817,22 +727,6 @@ export async function createBrowserAdvancedDriver(options: {
     electronDialogCallback = callback;
     for (const resolve of dialogOpenedWaiters) resolve();
     dialogOpenedWaiters.clear();
-    if (armedDialogResponse) {
-      const response = armedDialogResponse;
-      armedDialogResponse = null;
-      if (dialog.type === "prompt") {
-        callback(false, "");
-        electronDialogCallback = null;
-        dialog = null;
-        if (response.accept) armedDialogError = new Error("Browser prompt acceptance is unavailable in Electron; the prompt was dismissed safely.");
-        armedDialogSettlement = Promise.resolve();
-      } else {
-        electronDialogCallback = null;
-        dialog = null;
-        callback(response.accept, response.promptText);
-        armedDialogSettlement = Promise.resolve();
-      }
-    }
   };
   const onElectronDialogsCancelled = () => {
     electronDialogCallback = null;
@@ -859,14 +753,6 @@ export async function createBrowserAdvancedDriver(options: {
       observedMainFrameId = params.frameId;
       navigationSequence += 1;
     }
-    if (method === "Network.requestWillBeSent") {
-      const requestId = typeof params.requestId === "string" ? params.requestId : "";
-      const requestType = String(params.type || "");
-      if (requestId && requestType !== "WebSocket" && requestType !== "EventSource") activeNetworkRequests.add(requestId);
-    }
-    if (method === "Network.loadingFinished" || method === "Network.loadingFailed") {
-      if (typeof params.requestId === "string") activeNetworkRequests.delete(params.requestId);
-    }
     if (method === "Page.javascriptDialogOpening") {
       const rawType = String(params.type || "alert");
       dialog = {
@@ -877,22 +763,6 @@ export async function createBrowserAdvancedDriver(options: {
       };
       for (const resolve of dialogOpenedWaiters) resolve();
       dialogOpenedWaiters.clear();
-      if (armedDialogResponse) {
-        const response = armedDialogResponse;
-        const promptAcceptanceUnsupported = dialog.type === "prompt" && response.accept;
-        armedDialogResponse = null;
-        armedDialogSettlement = debug.sendCommand("Page.handleJavaScriptDialog", {
-          accept: dialog.type === "prompt" ? false : response.accept,
-          ...(dialog.type !== "prompt" && response.accept ? { promptText: response.promptText } : {}),
-        }).then(() => {
-          dialog = null;
-          if (promptAcceptanceUnsupported) {
-            armedDialogError = new Error("Browser prompt acceptance is unavailable in Electron; the prompt was dismissed safely.");
-          }
-        }).catch((error) => {
-          armedDialogError = error instanceof Error ? error : new Error("Browser dialog response failed.");
-        });
-      }
     }
     if (method === "Page.javascriptDialogClosed") {
       if (!electronDialogCallback) dialog = null;
@@ -1159,175 +1029,16 @@ export async function createBrowserAdvancedDriver(options: {
     return { items: structuredClone(virtualClipboardItems) };
   };
 
-  type NavigationCheckpoint = {
-    sequence: number;
-    loaderId: string | null;
-    url: string;
-  };
-
-  const captureNavigationCheckpoint = async (): Promise<NavigationCheckpoint> => {
-    const frameTree = await debug.sendCommand("Page.getFrameTree").catch(() => null);
-    const frame = frameTree?.frameTree?.frame;
-    if (typeof frame?.id === "string") observedMainFrameId = frame.id;
-    return {
-      sequence: navigationSequence,
-      loaderId: typeof frame?.loaderId === "string" ? frame.loaderId : null,
-      url: contents.getURL(),
-    };
-  };
-
-  const waitAfterLocatorAction = async (options: unknown, checkpoint: NavigationCheckpoint | null) => {
-    if (!options || typeof options !== "object" || Array.isArray(options)) return;
-    if (!checkpoint) throw new Error("Browser navigation checkpoint is unavailable.");
-    const expected = options as Record<string, unknown>;
-    const timeoutMs = Math.max(100, Math.min(Number(expected.timeoutMs || 10_000), 30_000));
-    const waitUntil = String(expected.waitUntil || "load");
-    const startedAt = Date.now();
-    let networkIdleSince: number | null = null;
-    while (Date.now() - startedAt <= timeoutMs) {
-      const currentUrl = contents.getURL();
-      const frameTree = await debug.sendCommand("Page.getFrameTree").catch(() => null);
-      const currentLoaderId = typeof frameTree?.frameTree?.frame?.loaderId === "string"
-        ? frameTree.frameTree.frame.loaderId as string
-        : null;
-      const committed = navigationSequence > checkpoint.sequence
-        || Boolean(checkpoint.loaderId && currentLoaderId && currentLoaderId !== checkpoint.loaderId)
-        || currentUrl !== checkpoint.url;
-      let urlMatches = true;
-      if (typeof expected.url === "string") {
-        if (expected.urlRegex === true) throw new Error("Browser URL regular expressions are unsupported; use a URL substring.");
-        urlMatches = currentUrl.includes(expected.url);
-      }
-      let stateMatches = waitUntil === "commit";
-      if (committed && waitUntil !== "commit") {
-        const stateResult = await debug.sendCommand("Runtime.evaluate", {
-          expression: "document.readyState",
-          returnByValue: true,
-          throwOnSideEffect: true,
-        }).catch(() => null);
-        const readyState = String(stateResult?.result?.value || "loading");
-        stateMatches = waitUntil === "domcontentloaded"
-          ? readyState === "interactive" || readyState === "complete"
-          : readyState === "complete";
-        if (waitUntil === "networkidle") {
-          if (stateMatches && activeNetworkRequests.size === 0) networkIdleSince ??= Date.now();
-          else networkIdleSince = null;
-          stateMatches = networkIdleSince !== null && Date.now() - networkIdleSince >= 500;
-        }
-      }
-      if (committed && urlMatches && stateMatches) return;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    throw new Error("Browser navigation wait timed out.");
-  };
-
   const executeLocator = async (args: Record<string, unknown>) => {
     const action = String(args.action || "count");
-    const navigationCheckpoint = args.expectNavigation
-      ? await captureNavigationCheckpoint()
-      : null;
-    const complete = async <T>(result: T): Promise<T> => {
-      await waitAfterLocatorAction(args.expectNavigation, navigationCheckpoint);
-      return result;
-    };
-    if (action === "click" || action === "dblclick") {
-      const located = await executeDom("locator", { action: "focus", locator: args.locator }) as {
-        value?: { x: number; y: number; width: number; height: number };
-      };
-      if (!located.value) throw new Error("Browser locator box is unavailable.");
-      const clickArgs = {
-        action: action === "dblclick" ? "doubleClick" : "click",
-        x: located.value.x + located.value.width / 2,
-        y: located.value.y + located.value.height / 2,
-        button: args.button,
-        keys: args.modifiers,
-      };
-      const requestedDialogResponse = args.dialogResponse && typeof args.dialogResponse === "object"
-        ? args.dialogResponse as Record<string, unknown>
-        : null;
-      if (requestedDialogResponse) {
-        armedDialogError = null;
-        armedDialogSettlement = null;
-        armedDialogResponse = {
-          accept: requestedDialogResponse.accept === true,
-          promptText: typeof requestedDialogResponse.promptText === "string" ? requestedDialogResponse.promptText.slice(0, 10_000) : "",
-        };
-        try {
-          await executeCua({ ...clickArgs, waitForRelease: true });
-          if (armedDialogSettlement) await armedDialogSettlement;
-          if (armedDialogError) throw armedDialogError;
-          return complete({ performed: true, box: located.value });
-        } finally {
-          armedDialogResponse = null;
-          armedDialogSettlement = null;
-        }
-      }
-      let resolveDialogOpened: (() => void) | null = null;
-      const dialogOpened = new Promise<"dialog">((resolve) => {
-        resolveDialogOpened = () => resolve("dialog");
-        dialogOpenedWaiters.add(resolveDialogOpened);
-      });
-      const performed = executeCua(clickArgs);
-      const outcome = await Promise.race([performed.then((result) => ({ kind: "performed" as const, result })), dialogOpened]);
-      if (resolveDialogOpened) dialogOpenedWaiters.delete(resolveDialogOpened);
-      if (outcome === "dialog") {
-        void performed.catch(() => undefined);
-        return { performed: true };
-      }
-      return complete({ performed: true, box: located.value });
+    const readOnlyActions = new Set([
+      "count", "allTextContents", "textContent", "innerText", "attribute",
+      "visible", "enabled", "checked", "selected", "wait",
+    ]);
+    if (!readOnlyActions.has(action)) {
+      throw new Error("Browser locator is read-only; use a high-level Browser click/type or explicit coordinate CUA action to interact.");
     }
-    if (action === "hover") {
-      const located = await executeDom("locator", { action: "focus", locator: args.locator }) as { value?: { x: number; y: number; width: number; height: number } };
-      if (!located.value) throw new Error("Browser locator box is unavailable.");
-      const x = located.value.x + located.value.width / 2;
-      const y = located.value.y + located.value.height / 2;
-      await executeCua({
-        action: "move",
-        x,
-        y,
-        button: args.button,
-        keys: args.modifiers,
-      });
-      return complete({ performed: true, box: located.value });
-    }
-    if (action === "type" || action === "press") {
-      await executeDom("locator", { action: "focus", locator: args.locator });
-      const result = action === "type"
-        ? await executeCua({ action: "type", text: args.value })
-        : await executeCua({
-            action: "keypress",
-            keys: [
-              ...(Array.isArray(args.modifiers) ? args.modifiers.map(String) : []),
-              ...String(args.key || "").split("+").map((key) => key.trim()).filter(Boolean),
-            ],
-          });
-      return complete(result);
-    }
-    if (["check", "uncheck", "setChecked"].includes(action)) {
-      const current = await executeDom("locator", { action: "checked", locator: args.locator }) as { value?: boolean };
-      const desired = action === "check" ? true : action === "uncheck" ? false : args.checked === true;
-      if (current.value !== desired) {
-        const located = await executeDom("locator", { action: "focus", locator: args.locator }) as { value?: { x: number; y: number; width: number; height: number } };
-        if (!located.value) throw new Error("Browser locator box is unavailable.");
-        await executeCua({ action: "click", x: located.value.x + located.value.width / 2, y: located.value.y + located.value.height / 2 });
-      }
-      const verified = await executeDom("locator", { action: "checked", locator: args.locator }) as { value?: boolean };
-      if (verified.value !== desired) throw new Error("Browser check action did not reach the requested state.");
-      return complete({ performed: true, checked: verified.value });
-    }
-    if (action === "setFiles") {
-      throw new Error("Browser file upload is disabled until a run-owned staged file handle is available.");
-    }
-    if (action === "drag") {
-      const source = await executeDom("locator", { action: "box", locator: args.locator }) as { value?: { x: number; y: number; width: number; height: number } };
-      const target = await executeDom("locator", { action: "box", locator: args.targetLocator }) as { value?: { x: number; y: number; width: number; height: number } };
-      if (!source.value || !target.value) throw new Error("Browser drag locator box is unavailable.");
-      const start = { x: source.value.x + source.value.width / 2, y: source.value.y + source.value.height / 2 };
-      const end = { x: target.value.x + target.value.width / 2, y: target.value.y + target.value.height / 2 };
-      await executeCua({ action: "drag", path: [start, { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }, end], keys: args.modifiers });
-      return complete({ performed: true, start, end });
-    }
-    return complete(await executeDom("locator", args));
+    return executeDom("locator", args);
   };
 
   const executeScreenshot = async (args: Record<string, unknown>) => {
@@ -1440,24 +1151,13 @@ export async function createBrowserAdvancedDriver(options: {
 
   const executeDownload = async (args: Record<string, unknown>) => {
     const mode = String(args.mode || "media");
+    if (mode !== "media") {
+      throw new Error("Browser locator-triggered downloads are unsupported because locator operations are read-only.");
+    }
     const directory = await newArtifactDirectory();
-    if (mode === "media") {
-      const media = await executeDom("locator", { action: "mediaUrl", locator: args.locator }) as { url: string; suggestedName?: string };
-      const file = await fetchToFile(media.url, directory, String(media.suggestedName || ""));
-      return { mode, directoryPath: directory, url: media.url, state: "completed", ...file };
-    }
-    if (mode === "trigger") {
-      const pending = armAgentBrowserDownload(contents, directory, Math.max(100, Math.min(Number(args.timeoutMs || 30_000), 30_000)));
-      try {
-        await executeLocator({ action: "click", locator: args.locator });
-        const result = await pending;
-        return { mode, directoryPath: directory, ...result };
-      } catch (error) {
-        cancelAgentBrowserDownload(contents);
-        throw error;
-      }
-    }
-    throw new Error("Browser download mode is unsupported.");
+    const media = await executeDom("locator", { action: "mediaUrl", locator: args.locator }) as { url: string; suggestedName?: string };
+    const file = await fetchToFile(media.url, directory, String(media.suggestedName || ""));
+    return { mode, directoryPath: directory, url: media.url, state: "completed", ...file };
   };
 
   const executeAssets = async (args: Record<string, unknown>) => {
@@ -1666,9 +1366,6 @@ export async function createBrowserAdvancedDriver(options: {
       cancelAgentBrowserDownload(contents);
       if (electronDialogCallback) electronDialogCallback(false, "");
       electronDialogCallback = null;
-      armedDialogResponse = null;
-      armedDialogSettlement = null;
-      armedDialogError = null;
       contents.removeListener("-run-dialog", onElectronDialog);
       contents.removeListener("-cancel-dialogs", onElectronDialogsCancelled);
       contents.removeListener("console-message", onConsoleMessage);

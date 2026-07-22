@@ -15,14 +15,14 @@
     },
     {
       "id": 2,
-      "prompt": "In the local editor fixture at http://127.0.0.1:4173/editor, select the text 'Rudder', copy it, move focus into the input inside the payment iframe, paste it, then read the Browser clipboard and report the input value. Do not inspect or modify my Mac clipboard.",
-      "expected_output": "A page-and-frame-aware virtual clipboard workflow that uses Rudder Browser state, keeps native OS clipboard isolated, and verifies the pasted value in the target frame.",
+      "prompt": "In the local editor fixture at http://127.0.0.1:4173/editor, enter 'Rudder' in the payment iframe input, activate Preview, then verify the visible preview text and report it. Do not use page JavaScript or my Mac clipboard.",
+      "expected_output": "A page-and-frame-aware workflow that keeps locators read-only, uses a fresh high-level ref or verified explicit coordinate CUA for each interaction, and verifies the visible preview with a targeted locator read.",
       "files": [],
       "assertions": [
-        "Uses a snapshot-grounded frame chain and a unique locator for the target input.",
-        "Uses the run-scoped Browser clipboard or its intercepted ControlOrMeta copy/paste path, never the OS clipboard.",
-        "Understands that the virtual clipboard remains outside page JavaScript and transfers data only through an explicit Browser action.",
-        "Reads the virtual Browser clipboard and verifies the iframe input value with a targeted locator after paste."
+        "Uses snapshot and frame evidence to identify the target input without attempting locator focus, fill, type, press, or click.",
+        "Uses rudder_browser_read plus a fresh opaque ref, or a current screenshot plus elementInfo and explicit coordinate CUA, for interaction.",
+        "Does not use arbitrary page JavaScript or the operating-system clipboard.",
+        "Uses rudder_browser_locator only for a bounded read or wait that verifies the visible preview result."
       ]
     },
     {

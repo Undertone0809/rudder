@@ -256,7 +256,7 @@ async function startBrowserSmokeFixture() {
             <input id="hidden-secret" type="hidden" value="hidden-secret-value" data-auth-token="attribute-secret-value" />
             <label for="smoke-upload">Smoke upload</label>
             <input id="smoke-upload" type="file" />
-            <label><input id="smoke-check" type="checkbox" /> Accept smoke terms</label>
+            <label><input id="smoke-check" type="checkbox" aria-label="Accept smoke terms" /> Accept smoke terms</label>
             <label for="smoke-select">Smoke color</label>
             <select id="smoke-select"><option value="red">Red</option><option value="blue">Blue</option></select>
             <div id="editable" contenteditable="true" aria-label="Smoke editor"></div>
@@ -1154,9 +1154,17 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
       for (const secret of ["password-secret-value", "hidden-secret-value", "attribute-secret-value", "server-cookie-secret", "local-storage-secret", "session-storage-secret"]) {
         assert.equal(serializedSnapshot.includes(secret), false, `Agent Browser snapshot should not expose ${secret}`);
       }
-      const cuaButton = findBrowserSnapshotNode(domSnapshot.root, (node) => node.name === "CUA action");
+      let cuaButton = findBrowserSnapshotNode(domSnapshot.root, (node) => node.name === "CUA action");
       const domButton = findBrowserSnapshotNode(domSnapshot.root, (node) => node.name === "DOM action");
+      let continueButton = findBrowserSnapshotNode(domSnapshot.root, (node) => node.name === "Continue");
+      let checkControl = findBrowserSnapshotNode(domSnapshot.root, (node) => node.name === "Accept smoke terms");
+      let selectControl = findBrowserSnapshotNode(domSnapshot.root, (node) => node.name === "Smoke color");
+      let dialogButton = findBrowserSnapshotNode(domSnapshot.root, (node) => node.name === "Open prompt");
       assert.ok(cuaButton?.box, "Agent Browser snapshot should include a CUA target box");
+      assert.ok(continueButton?.box, "Agent Browser snapshot should include a Continue target box");
+      assert.ok(checkControl?.box, "Agent Browser snapshot should include a checkbox target box");
+      assert.ok(selectControl?.box, "Agent Browser snapshot should include a select target box");
+      assert.ok(dialogButton?.box, "Agent Browser snapshot should include a dialog target box");
       assert.equal(typeof domButton?.nodeId, "string", "Agent Browser snapshot should include a DOM CUA node id");
 
       const continueCount = readSmokeMcpToolResult(await mcp.request("tools/call", {
@@ -1169,55 +1177,86 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
       }), "rudder_browser_locator");
       assert.equal(continueCount.count, 1, "semantic role locator should be unique");
 
+      const placeholder = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: {
+          tabId: opened.tabId,
+          action: "attribute",
+          locator: { strategy: "testId", value: "smoke-input" },
+          name: "placeholder",
+        },
+      }), "rudder_browser_locator attribute");
+      assert.equal(placeholder.value, "Search fixture", "locator attribute reads should remain available");
       readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_locator",
         arguments: {
           tabId: opened.tabId,
-          action: "fill",
-          locator: { strategy: "label", value: "Smoke input", exact: true },
-          value: "rudder locator",
+          action: "wait",
+          locator: { strategy: "testId", value: "continue" },
+          state: "visible",
+          timeoutMs: 5_000,
         },
-      }), "rudder_browser_locator fill");
-      readSmokeMcpToolResult(await mcp.request("tools/call", {
-        name: "rudder_browser_locator",
-        arguments: {
-          tabId: opened.tabId,
-          action: "check",
-          locator: { strategy: "css", value: "#smoke-check" },
-        },
-      }), "rudder_browser_locator check");
-      readSmokeMcpToolResult(await mcp.request("tools/call", {
-        name: "rudder_browser_locator",
-        arguments: {
-          tabId: opened.tabId,
-          action: "select",
-          locator: { strategy: "label", value: "Smoke color", exact: true },
-          values: ["blue"],
-        },
-      }), "rudder_browser_locator select");
-      readSmokeMcpToolResult(await mcp.request("tools/call", {
-        name: "rudder_browser_locator",
-        arguments: {
-          tabId: opened.tabId,
-          action: "fill",
-          locator: { strategy: "label", value: "Frame input", exact: true, frame: ["#fixture-frame"] },
-          value: "inside frame",
-        },
-      }), "rudder_browser_locator frame fill");
-      readSmokeMcpToolResult(await mcp.request("tools/call", {
+      }), "rudder_browser_locator wait");
+
+      const rejectedLocatorClick = await mcp.request("tools/call", {
         name: "rudder_browser_locator",
         arguments: {
           tabId: opened.tabId,
           action: "click",
           locator: { strategy: "testId", value: "continue" },
         },
-      }), "rudder_browser_locator click");
+      });
+      assert.equal(rejectedLocatorClick.result?.isError, true, "mutating locator actions should fail closed");
+
+      const initialRead = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_read",
+        arguments: { tabId: opened.tabId },
+      }), "rudder_browser_read before type");
+      const inputRef = initialRead.refs.find((ref) => ref.name === "Search fixture");
+      assert.equal(typeof inputRef?.ref, "string", "high-level read should return a Smoke input ref");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_type",
+        arguments: { tabId: opened.tabId, ref: inputRef.ref, text: "rudder high-level" },
+      }), "rudder_browser_type");
+
+      const checkboxRead = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_read",
+        arguments: { tabId: opened.tabId },
+      }), "rudder_browser_read before checkbox click");
+      const checkboxRef = checkboxRead.refs.find((ref) => ref.name === "Accept smoke terms");
+      assert.equal(typeof checkboxRef?.ref, "string", "high-level read should return a checkbox ref");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_click",
+        arguments: { tabId: opened.tabId, ref: checkboxRef.ref },
+      }), "rudder_browser_click checkbox");
+
+      const interactionSnapshot = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_snapshot",
+        arguments: { tabId: opened.tabId, boxes: true, depth: 20, maxNodes: 2_000 },
+      }), "rudder_browser_snapshot after type");
+      cuaButton = findBrowserSnapshotNode(interactionSnapshot.root, (node) => node.name === "CUA action");
+      continueButton = findBrowserSnapshotNode(interactionSnapshot.root, (node) => node.name === "Continue");
+      checkControl = findBrowserSnapshotNode(interactionSnapshot.root, (node) => node.name === "Accept smoke terms");
+      selectControl = findBrowserSnapshotNode(interactionSnapshot.root, (node) => node.name === "Smoke color");
+      dialogButton = findBrowserSnapshotNode(interactionSnapshot.root, (node) => node.name === "Open prompt");
+      assert.ok(cuaButton?.box && continueButton?.box && checkControl?.box && selectControl?.box && dialogButton?.box,
+        "interaction coordinates should come from a fresh post-type snapshot");
+
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_cua",
+        arguments: {
+          tabId: opened.tabId,
+          action: "click",
+          x: continueButton.box.x + continueButton.box.width / 2,
+          y: continueButton.box.y + continueButton.box.height / 2,
+        },
+      }), "rudder_browser_cua trusted click");
 
       const trusted = readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_locator",
         arguments: { tabId: opened.tabId, action: "innerText", locator: { strategy: "css", value: "#trusted-result" } },
       }), "rudder_browser_locator trusted click result");
-      assert.equal(trusted.value, "trusted", "semantic locator click should use trusted Chromium input");
+      assert.equal(trusted.value, "trusted", "explicit CUA click should use trusted Chromium input");
 
       const checkedState = readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_locator",
@@ -1228,21 +1267,23 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
         arguments: { tabId: opened.tabId, action: "selected", locator: { strategy: "css", value: "#smoke-select" } },
       }), "rudder_browser_locator selected state");
       assert.equal(checkedState.value, true, "locator checked should observe checkbox state");
-      assert.deepEqual(selectedState.value, ["blue"], "locator selected should observe select state");
+      assert.deepEqual(selectedState.value, ["red"], "locator selected should observe select state without mutating it");
 
       const rejectedDomClick = await mcp.request("tools/call", {
         name: "rudder_browser_dom_cua",
         arguments: { tabId: opened.tabId, action: "click", nodeId: domButton.nodeId },
       });
       assert.equal(rejectedDomClick.result?.isError, true, "DOM CUA node interaction should fail closed");
+      const domRead = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_read",
+        arguments: { tabId: opened.tabId },
+      }), "rudder_browser_read before click");
+      const domButtonRef = domRead.refs.find((ref) => ref.name === "DOM action");
+      assert.equal(typeof domButtonRef?.ref, "string", "high-level read should return a DOM action ref");
       readSmokeMcpToolResult(await mcp.request("tools/call", {
-        name: "rudder_browser_locator",
-        arguments: {
-          tabId: opened.tabId,
-          action: "click",
-          locator: { strategy: "css", value: "#dom-button" },
-        },
-      }), "rudder_browser_locator DOM action");
+        name: "rudder_browser_click",
+        arguments: { tabId: opened.tabId, ref: domButtonRef.ref },
+      }), "rudder_browser_click DOM action");
       readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_cua",
         arguments: {
@@ -1322,22 +1363,30 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
         arguments: { tabId: opened.tabId, mode: "media", locator: { strategy: "css", value: "img.hero" } },
       }), "rudder_browser_download media");
       assert.equal(await pathExists(mediaDownload.path), true, "media download should write a run-owned artifact");
-      const triggeredDownload = readSmokeMcpToolResult(await mcp.request("tools/call", {
+      const rejectedTriggeredDownload = await mcp.request("tools/call", {
         name: "rudder_browser_download",
         arguments: { tabId: opened.tabId, mode: "trigger", locator: { strategy: "css", value: "#download-link" }, timeoutMs: 10000 },
-      }), "rudder_browser_download trigger");
-      assert.equal(triggeredDownload.state, "completed", "one-shot browser download should complete");
-      assert.equal(await pathExists(triggeredDownload.path), true, "one-shot browser download should use its opaque artifact path");
+      });
+      assert.equal(rejectedTriggeredDownload.result?.isError, true, "locator-triggered downloads should fail closed");
 
       readSmokeMcpToolResult(await mcp.request("tools/call", {
-        name: "rudder_browser_locator",
+        name: "rudder_browser_cua",
         arguments: {
           tabId: opened.tabId,
           action: "click",
-          locator: { strategy: "css", value: "#dialog-button" },
-          dialogResponse: { accept: true },
+          x: dialogButton.box.x + dialogButton.box.width / 2,
+          y: dialogButton.box.y + dialogButton.box.height / 2,
         },
-      }), "rudder_browser_locator dialog click");
+      }), "rudder_browser_cua dialog click");
+      const openedDialog = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_dialog",
+        arguments: { tabId: opened.tabId, action: "get" },
+      }), "rudder_browser_dialog get");
+      assert.equal(openedDialog.dialog?.type, "confirm", "explicit CUA should open the confirmation dialog once");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_dialog",
+        arguments: { tabId: opened.tabId, action: "accept" },
+      }), "rudder_browser_dialog accept");
       readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_wait",
         arguments: { tabId: opened.tabId, text: "accepted", timeoutMs: 5000 },
@@ -1448,7 +1497,6 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
         assert.equal(await pathExists(bundle.directoryPath), false, "live disable should clean page-asset artifacts");
         assert.equal(await pathExists(contentExport.directoryPath), false, "live disable should clean content-export artifacts");
         assert.equal(await pathExists(mediaDownload.directoryPath), false, "live disable should clean media-download artifacts");
-        assert.equal(await pathExists(triggeredDownload.directoryPath), false, "live disable should clean triggered-download artifacts");
 
         const reenabledResponse = await fetch(`${baseUrl}/api/instance/settings/browser`, {
           method: "PATCH",

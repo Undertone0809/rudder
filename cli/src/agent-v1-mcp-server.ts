@@ -123,6 +123,7 @@ export function buildAgentV1ToolCallPlan(
   const capability = getAgentCliCapabilityById(capabilityId);
   rejectModelProvidedRuntimeIdentity(input);
   rejectUnsupportedToolArguments(toolName, input);
+  rejectUnsupportedBrowserLocatorAction(toolName, input);
   assertBrowserCapabilityEnabled(capabilityId, env);
   assertRuntimeMcpContext(capability, env);
 
@@ -1283,6 +1284,23 @@ function rejectUnsupportedToolArguments(toolName: string, input: Record<string, 
   const unsupported = Object.keys(input).filter((key) => !supported.has(key)).sort();
   if (unsupported.length === 0) return;
   const err = new Error(`Unsupported argument${unsupported.length === 1 ? "" : "s"} for ${toolName}: ${unsupported.join(", ")}`);
+  (err as Error & { code?: string }).code = "rudder_mcp_invalid_arguments";
+  throw err;
+}
+
+const READ_ONLY_BROWSER_LOCATOR_ACTIONS = new Set([
+  "count", "allTextContents", "textContent", "innerText", "attribute",
+  "visible", "enabled", "checked", "selected", "wait",
+]);
+
+function rejectUnsupportedBrowserLocatorAction(toolName: string, input: Record<string, unknown>): void {
+  const locatorActionUnsupported = toolName === "rudder_browser_locator"
+    && !READ_ONLY_BROWSER_LOCATOR_ACTIONS.has(String(input.action));
+  const downloadModeUnsupported = toolName === "rudder_browser_download" && input.mode !== "media";
+  if (!locatorActionUnsupported && !downloadModeUnsupported) return;
+  const err = new Error(locatorActionUnsupported
+    ? "rudder_browser_locator is read-only; use rudder_browser_click, rudder_browser_type, or rudder_browser_cua to interact."
+    : "rudder_browser_download supports read-only media downloads only; use an explicit interaction tool before reading download evidence.");
   (err as Error & { code?: string }).code = "rudder_mcp_invalid_arguments";
   throw err;
 }

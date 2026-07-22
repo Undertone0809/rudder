@@ -1,7 +1,7 @@
 # Browser Interaction Guide
 
-Read this reference for workflows that require more than one simple locator
-action. It is intentionally task-oriented; exact schemas and limits live in
+Read this reference for workflows that require more than one simple Browser
+operation. It is intentionally task-oriented; exact schemas and limits live in
 `tool-contract.md`.
 
 ## Snapshot Discipline
@@ -40,16 +40,17 @@ Use locator `scope` for a container, `filter.hasText` or `hasNotText` to narrow
 it, and `and` or `or` only when each side is supported by current page evidence.
 Use `frame` with outer-to-inner iframe CSS selectors for nested frames.
 
-## Forms
+## Forms And Controls
 
-- `fill` replaces text and dispatches normal input/change behavior.
-- `type` preserves existing text and sends trusted key input.
-- `press` sends one key or key chord to the resolved element.
-- `select` accepts values, labels, or indices for native select elements. Do not
-  simulate the native popup with CUA.
-- Use `check`, `uncheck`, or `setChecked` for a unique visible checkable control.
-- If a hidden checkbox does not change, locate its visible associated label or
-  enclosing control once, click it, then verify checked state.
+- Locators are read-only and may only count, read bounded text/attributes/state,
+  or wait for attached, detached, visible, or hidden state.
+- For a simple input or clickable control, call `rudder_browser_read`, select
+  the exact opaque ref, and call `rudder_browser_type` or
+  `rudder_browser_click` once. Re-read before the next interaction because refs
+  are invalidated.
+- For select controls, checkboxes not represented by a safe high-level ref,
+  keypresses, hover, scroll, or drag, verify the target with a current snapshot,
+  screenshot, and `elementInfo`, then use explicit coordinate CUA.
 - File upload is unavailable until Rudder can provide run-owned staged handles;
   do not attempt to operate a native picker or pass local paths.
 
@@ -59,13 +60,6 @@ external side effect when it sends data or creates state; confirm if the user's
 request did not already authorize that exact submission.
 
 ## Navigation And State Changes
-
-Use locator `expectNavigation` when the action should navigate. Choose:
-
-- `commit` when only navigation start matters.
-- `domcontentloaded` for document structure.
-- `load` for ordinary page completion.
-- `networkidle` only when real network quiescence is required.
 
 Menus, filters, tabs, and accordions often do not navigate. Wait for their
 specific visible or selected state instead of load state.
@@ -82,8 +76,8 @@ the main document. Re-snapshot if a frame navigates or its execution context is
 replaced.
 
 DOM-CUA is read-only. Its node ids are ephemeral snapshot evidence, not
-interaction handles. Use a locator or an explicit coordinate action to
-interact.
+interaction handles. Use a fresh high-level ref or an explicit coordinate
+action to interact.
 
 ## Visual And Coordinate Interaction
 
@@ -105,8 +99,8 @@ not a replacement for stable locators.
 
 A synchronous JavaScript dialog blocks the page action that opened it.
 
-- When a click or double-click is expected to open the dialog, pass
-  `dialogResponse: { accept, promptText? }` in that same locator action.
+- Open the dialog once through a high-level ref or verified explicit coordinate
+  action, then call `rudder_browser_dialog` to inspect and handle it.
 - JavaScript prompts can only be dismissed in the Electron runtime. An attempt
   to accept one fails closed after dismissal; prompt text is never bridged
   through page-visible state.
@@ -118,12 +112,11 @@ A synchronous JavaScript dialog blocks the page action that opened it.
 ## Downloads
 
 For explicit media or file links, use download mode `media` with a unique
-locator. For a normal browser download event:
-
-1. Use mode `trigger` with the locator and a bounded timeout.
-2. Rudder arms exactly one download before the trusted click.
-3. Wait for the returned completed artifact; do not search the user's Downloads
-   folder.
+locator. This reads the media URL and downloads it without firing page events.
+Locator-triggered download clicks are unavailable because resolving a semantic
+locator and separately dispatching input cannot be made atomic. Use an
+authorized high-level ref or verified explicit coordinate action for a normal
+page interaction, and do not search the user's Downloads folder.
 
 Paths are opaque temporary artifacts and are removed on tab/run cleanup.
 

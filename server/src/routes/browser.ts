@@ -109,46 +109,13 @@ const browserActionSchemas = {
     tabId: tabIdSchema,
     action: z.enum([
       "count", "allTextContents", "textContent", "innerText", "attribute",
-      "visible", "enabled", "checked", "selected", "click", "dblclick",
-      "fill", "type", "press", "check", "uncheck", "setChecked", "select",
-      "wait", "hover", "scroll", "drag",
+      "visible", "enabled", "checked", "selected", "wait",
     ]),
     locator: browserLocatorSchema,
-    targetLocator: browserLocatorSchema.optional(),
     name: z.string().min(1).max(200).optional(),
-    value: z.string().max(100_000).optional(),
-    key: z.string().min(1).max(100).optional(),
-    checked: z.boolean().optional(),
-    values: z.array(z.union([
-      z.string().max(2_000),
-      z.object({
-        value: z.string().max(2_000).optional(),
-        label: z.string().max(2_000).optional(),
-        index: z.number().int().min(0).max(100_000).optional(),
-      }).strict(),
-    ])).max(100).optional(),
-    button: z.enum(["left", "right", "middle"]).optional(),
-    modifiers: z.array(z.enum(["Alt", "Control", "ControlOrMeta", "Meta", "Shift"])).max(5).optional(),
     state: z.enum(["attached", "detached", "visible", "hidden"]).optional(),
     timeoutMs: z.number().int().min(0).max(30_000).optional(),
-    x: z.number().finite().min(-32_768).max(32_768).optional(),
-    y: z.number().finite().min(-32_768).max(32_768).optional(),
-    intoView: z.boolean().optional(),
-    expectNavigation: z.object({
-      url: z.string().max(8_192).optional(),
-      waitUntil: z.enum(["commit", "domcontentloaded", "load", "networkidle"]).optional(),
-      timeoutMs: z.number().int().min(100).max(30_000).optional(),
-    }).strict().optional(),
-    dialogResponse: z.object({
-      accept: z.boolean(),
-      promptText: z.string().max(10_000).optional(),
-    }).strict().optional(),
-  }).strict().superRefine((value, context) => {
-    if (value.action === "drag" && !value.targetLocator) context.addIssue({ code: "custom", message: "Locator drag requires a target locator." });
-    if (value.dialogResponse && value.action !== "click" && value.action !== "dblclick") {
-      context.addIssue({ code: "custom", message: "Locator dialogResponse requires click or dblclick." });
-    }
-  }),
+  }).strict(),
   cua: z.object({
     tabId: tabIdSchema,
     action: z.enum(["click", "doubleClick", "move", "scroll", "drag", "keypress", "type", "elementInfo"]),
@@ -196,9 +163,8 @@ const browserActionSchemas = {
   }).strict(),
   download: z.object({
     tabId: tabIdSchema,
-    mode: z.enum(["media", "trigger"]),
+    mode: z.literal("media"),
     locator: browserLocatorSchema,
-    timeoutMs: z.number().int().min(100).max(30_000).optional(),
   }).strict(),
   assets: z.object({
     tabId: tabIdSchema,

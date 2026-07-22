@@ -28,13 +28,13 @@ targets the mapped core task outcomes below.
 | `tab.back()`, `forward()`, `reload()`, `close()` | matching navigation tools and `rudder_browser_close` |
 | `tab.title()`, `tab.url()` | tab results, locator reads, and `rudder_browser_read` |
 | `tab.playwright.domSnapshot()` | `rudder_browser_snapshot` |
-| Playwright locator builders, filters, reads, and actions | `rudder_browser_locator` |
+| Playwright locator builders, filters, reads, and waits | read-only `rudder_browser_locator` |
 | `frameLocator(...)` | locator `frame` chain |
 | `playwright.evaluate(...)`, `locator.evaluate(...)` | intentionally unavailable; use bounded declarative reads |
-| `expectNavigation`, URL/load waits | locator `expectNavigation`, `rudder_browser_wait` |
+| URL/load waits | `rudder_browser_wait` |
 | `tab.cua.*` | `rudder_browser_cua` |
 | `tab.dom_cua.*` | `rudder_browser_dom_cua` |
-| `tab.getJsDialog()` and dialog methods | `rudder_browser_dialog` or atomic `dialogResponse` |
+| `tab.getJsDialog()` and dialog methods | `rudder_browser_dialog` |
 | `tab.screenshot(...)` | `rudder_browser_screenshot` |
 | `tab.clipboard.*` | `rudder_browser_clipboard` |
 | `tab.dev.logs(...)` | `rudder_browser_logs` |
@@ -55,8 +55,8 @@ Rudder also intentionally rejects arbitrary `file:` navigation; both the
 origin-only user-tab view and local-file boundary require an explicit product
 permission decision before literal parity would be safe.
 
-Rudder additionally provides one-shot download,
-text/PDF and Google Workspace export, element-at-coordinate inspection,
+Rudder additionally provides read-only explicit-media download, text/PDF and
+Google Workspace export, element-at-coordinate inspection,
 and a compact legacy ref flow.
 
 ## Tool Inventory
@@ -94,7 +94,10 @@ User-visible tabs do not consume this Agent tab quota.
   first/last position.
 - Locator read actions are `count`, `allTextContents`, `textContent`,
   `innerText`, `attribute`, `visible`, `enabled`, `checked`, and
-  `selected`.
+  `selected`, plus `wait` for attached, detached, visible, or hidden state.
+- Locator operations are read-only. Mutating or event-generating actions such
+  as click, double-click, hover, fill, type, press, check, select, scroll, drag,
+  focus, and file assignment are rejected before Desktop dispatch.
 - Arbitrary page or locator JavaScript evaluation is intentionally unavailable
   because side-effect checks do not prevent credential reads.
 - `rudder_browser_read { tabId }` returns bounded visible text and opaque refs
@@ -102,21 +105,13 @@ User-visible tabs do not consume this Agent tab quota.
 
 ### Interaction
 
-- Locator actions are `click`, `dblclick`, `fill`, `type`, `press`, `check`,
-  `uncheck`, `setChecked`, `select`, `wait`, `hover`, `scroll`, and `drag`.
-- Click options include mouse button, modifiers, optional navigation
-  expectation, and an atomic dialog response.
-- Locator navigation expectations capture the main-frame loader and event
-  sequence before the action. Success requires a new main-frame commit (or
-  same-document navigation) plus the requested load state; the old document
-  cannot satisfy the wait.
 - File upload is disabled until Rudder can bind a run-owned staged handle rather
   than trusting a model-supplied filesystem path.
 - `rudder_browser_cua` supports coordinate `click`, `doubleClick`, `move`,
   `scroll`, `drag`, `keypress`, `type`, and read-only `elementInfo`.
 - `rudder_browser_dom_cua` supports only the read-only `get` action. Node ids
-  cannot be used for click, scroll, keyboard, or text input; use a locator or
-  explicit coordinate action instead.
+  cannot be used for click, scroll, keyboard, or text input; use a high-level
+  ref or explicit coordinate action instead.
 - `rudder_browser_click` and `rudder_browser_type` operate only on refs from
   the latest `rudder_browser_read` result.
 
@@ -136,8 +131,9 @@ User-visible tabs do not consume this Agent tab quota.
   State remains in Desktop memory and is never installed on
   `navigator.clipboard`. Explicit CUA copy, cut, and paste chords transfer only
   the focused selection and never reach the native OS clipboard path.
-- `rudder_browser_download` downloads explicit locator media or arms one
-  download-trigger click. Each artifact is capped at 25 MB.
+- `rudder_browser_download` downloads explicit locator media without firing a
+  page event. Locator-triggered click downloads are rejected. Each artifact is
+  capped at 25 MB.
 - `rudder_browser_assets` first creates an inventory, then bundles an explicit
   `assetIds` or `kinds` selection. Each asset is capped at 25 MB, each bundle at
   100 MB, and each run at 250 MB. Response bodies are canceled while streaming

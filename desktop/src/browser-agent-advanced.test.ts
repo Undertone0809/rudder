@@ -161,7 +161,7 @@ describe("Browser Agent advanced driver", () => {
     });
   });
 
-  it("captures DOM state and performs semantic locator actions", async () => {
+  it("captures DOM state and performs bounded read-only locator operations", async () => {
     const harness = createHarness();
     const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
 
@@ -181,33 +181,55 @@ describe("Browser Agent advanced driver", () => {
       action: "count",
       locator: { strategy: "text", value: "Ready now", exact: true },
     })).resolves.toEqual({ count: 1 });
-    await driver.execute("locator", {
-      action: "fill",
-      locator: { strategy: "label", value: "Query", exact: true },
-      value: "rudder",
-    });
-    expect((document.querySelector("#query") as HTMLInputElement).value).toBe("rudder");
-    await driver.execute("locator", {
-      action: "setChecked",
-      locator: { strategy: "css", value: "#agree" },
-      checked: true,
-    });
-    expect((document.querySelector("#agree") as HTMLInputElement).checked).toBe(true);
-    await driver.execute("locator", {
-      action: "select",
-      locator: { strategy: "css", value: "#color" },
-      values: ["blue"],
-    });
-    expect((document.querySelector("#color") as HTMLSelectElement).value).toBe("blue");
     await expect(driver.execute("locator", {
-      action: "click",
+      action: "allTextContents",
+      locator: { strategy: "css", value: "#status-wrapper span" },
+    })).resolves.toEqual({ values: ["Ready now"] });
+    await expect(driver.execute("locator", {
+      action: "textContent",
       locator: { strategy: "css", value: "#continue" },
-    })).resolves.toMatchObject({ performed: true });
-    expect(harness.sendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.objectContaining({
-      type: "mousePressed",
-      x: 60,
-      y: 35,
-    }));
+    })).resolves.toEqual({ value: "Continue" });
+    await expect(driver.execute("locator", {
+      action: "innerText",
+      locator: { strategy: "css", value: "#continue" },
+    })).resolves.toEqual({ value: expect.any(String) });
+    await expect(driver.execute("locator", {
+      action: "attribute",
+      locator: { strategy: "css", value: "#query" },
+      name: "placeholder",
+    })).resolves.toEqual({ value: "Search" });
+    await expect(driver.execute("locator", {
+      action: "visible",
+      locator: { strategy: "css", value: "#continue" },
+    })).resolves.toEqual({ value: true });
+    await expect(driver.execute("locator", {
+      action: "enabled",
+      locator: { strategy: "css", value: "#continue" },
+    })).resolves.toEqual({ value: true });
+    await expect(driver.execute("locator", {
+      action: "checked",
+      locator: { strategy: "css", value: "#agree" },
+    })).resolves.toEqual({ value: false });
+    await expect(driver.execute("locator", {
+      action: "selected",
+      locator: { strategy: "css", value: "#color" },
+    })).resolves.toEqual({ value: ["red"] });
+    for (const [state, selector] of [
+      ["attached", "#continue"],
+      ["detached", "#missing"],
+      ["visible", "#continue"],
+      ["hidden", "#hidden-secret"],
+    ] as const) {
+      await expect(driver.execute("locator", {
+        action: "wait",
+        locator: { strategy: "css", value: selector },
+        state,
+        timeoutMs: 100,
+      })).resolves.toEqual({ state, satisfied: true });
+    }
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchKeyEvent", expect.anything());
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.insertText", expect.anything());
 
     const dom = await driver.execute("dom_cua", { action: "get", boxes: true }) as any;
     const serialized = JSON.stringify(dom.root);
@@ -216,6 +238,54 @@ describe("Browser Agent advanced driver", () => {
 
     await driver.dispose();
     expect(harness.browserDebugger.detach).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "click", "dblclick", "hover", "fill", "type", "press", "check", "uncheck",
+    "setChecked", "select", "scroll", "drag", "focus", "setFiles",
+  ])("rejects mutating locator action %s without focus, events, or trusted input", async (action) => {
+    const harness = createHarness();
+    const target = document.querySelector("#query") as HTMLInputElement;
+    const eventSpy = vi.fn();
+    for (const event of ["focus", "mousedown", "click", "mouseover", "input", "change", "keydown", "keyup"]) {
+      target.addEventListener(event, eventSpy);
+    }
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+
+    await expect(driver.execute("locator", {
+      action,
+      locator: { strategy: "css", value: "#query" },
+      targetLocator: { strategy: "css", value: "#continue" },
+      value: "blocked",
+      key: "Enter",
+      checked: true,
+      values: ["blue"],
+    })).rejects.toThrow(/read-only|unsupported/i);
+
+    expect(document.activeElement).not.toBe(target);
+    expect(eventSpy).not.toHaveBeenCalled();
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchKeyEvent", expect.anything());
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.insertText", expect.anything());
+    await driver.dispose();
+  });
+
+  it("rejects locator-triggered downloads without focus, events, or trusted input", async () => {
+    const harness = createHarness();
+    const target = document.querySelector("#continue") as HTMLButtonElement;
+    const eventSpy = vi.fn();
+    for (const event of ["focus", "mousedown", "click"]) target.addEventListener(event, eventSpy);
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+
+    await expect(driver.execute("download", {
+      mode: "trigger",
+      locator: { strategy: "css", value: "#continue" },
+    })).rejects.toThrow(/read-only|unsupported/i);
+
+    expect(document.activeElement).not.toBe(target);
+    expect(eventSpy).not.toHaveBeenCalled();
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
+    await driver.dispose();
   });
 
   it.each([
@@ -349,87 +419,6 @@ describe("Browser Agent advanced driver", () => {
     await driver.dispose();
   });
 
-  it("handles an expected locator prompt atomically", async () => {
-    const harness = createHarness();
-    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
-    const callback = vi.fn((accepted: boolean) => {
-      if (accepted) harness.debuggerHandlers.get("message")?.({}, "Page.javascriptDialogClosed", { result: true });
-    });
-    harness.sendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
-      if (method === "Input.dispatchMouseEvent" && params?.type === "mouseReleased") {
-        harness.contentHandlers.get("-run-dialog")?.({
-          dialogType: "prompt",
-          messageText: "Name?",
-          defaultPromptText: "Rudder",
-          frame: { url: "https://example.com/form" },
-        }, callback);
-      }
-      return { method, params };
-    });
-
-    await expect(driver.execute("locator", {
-      action: "click",
-      locator: { strategy: "css", value: "#continue" },
-      dialogResponse: { accept: true, promptText: "Agent" },
-    })).rejects.toThrow(/unavailable.*dismissed/i);
-    expect(callback).toHaveBeenCalledWith(false, "");
-    expect(harness.setCookie).not.toHaveBeenCalled();
-
-    await driver.dispose();
-  });
-
-  it("handles an expected locator prompt through CDP when Electron does not run its dialog callback", async () => {
-    const harness = createHarness();
-    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
-    harness.sendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
-      if (method === "Input.dispatchMouseEvent" && params?.type === "mouseReleased") {
-        harness.debuggerHandlers.get("message")?.({}, "Page.javascriptDialogOpening", {
-          type: "prompt",
-          message: "Name?",
-          defaultPrompt: "Rudder",
-        });
-      }
-      return { method, params };
-    });
-
-    await expect(driver.execute("locator", {
-      action: "click",
-      locator: { strategy: "css", value: "#continue" },
-      dialogResponse: { accept: true, promptText: "Agent" },
-    })).rejects.toThrow(/unavailable.*dismissed/i);
-    expect(harness.sendCommand).toHaveBeenCalledWith("Page.handleJavaScriptDialog", {
-      accept: false,
-    });
-
-    await driver.dispose();
-  });
-
-  it("waits for real Chromium network activity before reporting networkidle", async () => {
-    const harness = createHarness();
-    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
-    harness.debuggerHandlers.get("message")?.({}, "Network.requestWillBeSent", {
-      requestId: "request-1",
-      type: "Fetch",
-    });
-    setTimeout(() => {
-      harness.debuggerHandlers.get("message")?.({}, "Network.loadingFinished", { requestId: "request-1" });
-    }, 100);
-    document.querySelector("#continue")?.addEventListener("click", () => {
-      harness.debuggerHandlers.get("message")?.({}, "Page.frameNavigated", {
-        frame: { id: "main-frame", loaderId: "loader-2", url: "https://example.com/next" },
-      });
-    }, { once: true });
-
-    const startedAt = Date.now();
-    await driver.execute("locator", {
-      action: "click",
-      locator: { strategy: "css", value: "#continue" },
-      expectNavigation: { waitUntil: "networkidle", timeoutMs: 2_000 },
-    });
-    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(550);
-    await driver.dispose();
-  });
-
   it("fails closed for model-supplied upload paths, inspects coordinates, and exports bounded page content", async () => {
     const harness = createHarness();
     const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
@@ -441,7 +430,7 @@ describe("Browser Agent advanced driver", () => {
         action: "setFiles",
         locator: { strategy: "css", value: "#upload" },
         paths: [uploadPath],
-      })).rejects.toThrow(/disabled|unsupported/i);
+      })).rejects.toThrow(/read-only|disabled|unsupported/i);
       expect(harness.sendCommand).not.toHaveBeenCalledWith("DOM.setFileInputFiles", expect.anything());
 
       await expect(driver.execute("cua", { action: "elementInfo", x: 60, y: 35 })).resolves.toMatchObject({
@@ -479,18 +468,7 @@ describe("Browser Agent advanced driver", () => {
       if (method === "Runtime.evaluate" && params?.contextId === 22 && expression.includes("RUDDER_BROWSER_ADVANCED_DOM_V1")) {
         const encoded = /atob\("([^"]+)"\)/u.exec(expression)?.[1];
         const input = encoded ? JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) : null;
-        if (["resolveSelector", "resolveFileInputSelector"].includes(input?.args?.action)) {
-          return { result: { value: { selector: "#frame-target" } } };
-        }
         if (input?.args?.action === "count") return { result: { value: { count: 1 } } };
-        if (input?.args?.action === "focus") {
-          return { result: { value: { value: {
-            x: Number(input.args.__frameOffsetX) + 5,
-            y: Number(input.args.__frameOffsetY) + 7,
-            width: 10,
-            height: 10,
-          } } } };
-        }
       }
       if (method === "Runtime.evaluate" && params?.contextId === 22 && expression === "document.querySelector(\"#frame-target\")") {
         return { result: { objectId: "frame-file-input" } };
@@ -507,12 +485,7 @@ describe("Browser Agent advanced driver", () => {
     const locator = { strategy: "css", value: "#frame-target", frame: ["iframe#cross-origin"] };
 
     await expect(driver.execute("locator", { action: "count", locator })).resolves.toEqual({ count: 1 });
-    await expect(driver.execute("locator", { action: "click", locator })).resolves.toMatchObject({ performed: true });
-    expect(harness.sendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.objectContaining({
-      type: "mousePressed",
-      x: 28,
-      y: 41,
-    }));
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
     await driver.dispose();
   });
 
@@ -531,7 +504,7 @@ describe("Browser Agent advanced driver", () => {
     await expect(driver.execute("locator", {
       action: "value",
       locator: { strategy: "css", value: "#password-secret" },
-    })).resolves.toEqual({ value: null, redacted: true });
+    })).rejects.toThrow(/read-only/i);
     await expect(driver.execute("locator", {
       action: "attribute",
       name: "value",

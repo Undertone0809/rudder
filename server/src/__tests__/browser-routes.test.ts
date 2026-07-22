@@ -288,10 +288,10 @@ describe("Browser routes", () => {
     ["snapshot", { tabId: "tab-1", boxes: true, depth: 12 }],
     ["locator", {
       tabId: "tab-1",
-      action: "click",
+      action: "wait",
       locator: { strategy: "role", value: "button", name: "Continue", exact: true },
-      expectNavigation: { url: "/next", waitUntil: "load", timeoutMs: 10_000 },
-      dialogResponse: { accept: true, promptText: "accepted" },
+      state: "visible",
+      timeoutMs: 10_000,
     }],
     ["cua", { tabId: "tab-1", action: "click", x: 20, y: 30, keys: ["Shift"] }],
     ["dom_cua", { tabId: "tab-1", action: "get", maxNodes: 500 }],
@@ -329,6 +329,37 @@ describe("Browser routes", () => {
       .send({ tabId: "tab-1", function: "() => document.cookie" });
 
     expect(response.status).toBe(404);
+    expect(registry.forward).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "click", "dblclick", "hover", "fill", "type", "press", "check", "uncheck",
+    "setChecked", "select", "scroll", "drag", "focus", "setFiles",
+  ])("rejects mutating locator action %s before Broker dispatch", async (locatorAction) => {
+    const response = await request(createApp(runtimeActor()))
+      .post("/api/browser/locator")
+      .send({
+        tabId: "tab-1",
+        action: locatorAction,
+        locator: { strategy: "css", value: "#target" },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: "browser_invalid_argument" });
+    expect(registry.forward).not.toHaveBeenCalled();
+  });
+
+  it("rejects locator-triggered downloads before Broker dispatch", async () => {
+    const response = await request(createApp(runtimeActor()))
+      .post("/api/browser/download")
+      .send({
+        tabId: "tab-1",
+        mode: "trigger",
+        locator: { strategy: "css", value: "#download" },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: "browser_invalid_argument" });
     expect(registry.forward).not.toHaveBeenCalled();
   });
 

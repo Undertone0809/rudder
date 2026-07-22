@@ -101,30 +101,11 @@ function browserMcpInputSchema(id: string): {
     }, ["tabId"]);
     case "browser.locator": return schema({
       ...baseTab,
-      action: string("Locator read or interaction action.", { enum: ["count", "allTextContents", "textContent", "innerText", "attribute", "visible", "enabled", "checked", "selected", "click", "dblclick", "fill", "type", "press", "check", "uncheck", "setChecked", "select", "wait", "hover", "scroll", "drag"] }),
+      action: string("Read-only locator action.", { enum: ["count", "allTextContents", "textContent", "innerText", "attribute", "visible", "enabled", "checked", "selected", "wait"] }),
       locator,
-      targetLocator: locator,
       name: string("Attribute name for attribute reads.", { maxLength: 200 }),
-      value: string("Text value for fill or type.", { maxLength: 100_000 }),
-      key: string("Keyboard key for press.", { maxLength: 100 }),
-      checked: boolean("Target checked state."),
-      values: { type: "array", maxItems: 100, items: { oneOf: [string("Option value or label.", { maxLength: 2_000 }), schema({ value: string("Option value."), label: string("Option label."), index: number("Option index.") })] } },
-      button: string("Mouse button.", { enum: ["left", "right", "middle"] }),
-      modifiers: { type: "array", maxItems: 5, items: string("Keyboard modifier.", { enum: ["Alt", "Control", "ControlOrMeta", "Meta", "Shift"] }) },
       state: string("Wait state.", { enum: ["attached", "detached", "visible", "hidden"] }),
       timeoutMs: number("Wait timeout in milliseconds.", { minimum: 0, maximum: 30_000 }),
-      x: number("Horizontal scroll delta."),
-      y: number("Vertical scroll delta."),
-      intoView: boolean("Scroll the locator into the viewport."),
-      expectNavigation: schema({
-        url: string("Expected URL substring.", { maxLength: 8_192 }),
-        waitUntil: string("Requested load state.", { enum: ["commit", "domcontentloaded", "load", "networkidle"] }),
-        timeoutMs: number("Navigation timeout in milliseconds.", { minimum: 100, maximum: 30_000 }),
-      }),
-      dialogResponse: schema({
-        accept: boolean("Whether to accept the dialog opened by this action."),
-        promptText: string("Prompt response text.", { maxLength: 10_000 }),
-      }, ["accept"]),
     }, ["tabId", "action", "locator"]);
     case "browser.cua": return schema({
       ...baseTab,
@@ -178,9 +159,8 @@ function browserMcpInputSchema(id: string): {
     }, ["tabId"]);
     case "browser.download": return schema({
       ...baseTab,
-      mode: string("Download mode.", { enum: ["media", "trigger"] }),
+      mode: string("Read-only media download mode.", { enum: ["media"] }),
       locator,
-      timeoutMs: number("Download timeout in milliseconds.", { minimum: 100, maximum: 30_000 }),
     }, ["tabId", "mode", "locator"]);
     case "browser.assets": return schema({
       ...baseTab,

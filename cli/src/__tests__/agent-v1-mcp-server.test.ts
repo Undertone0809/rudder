@@ -655,6 +655,71 @@ describe("agent-v1 MCP server", () => {
     });
   });
 
+  it.each([
+    "click", "dblclick", "hover", "fill", "type", "press", "check", "uncheck",
+    "setChecked", "select", "scroll", "drag", "focus", "setFiles",
+  ])("rejects mutating locator action %s before Browser API dispatch", async (action) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 20,
+      method: "tools/call",
+      params: {
+        name: "rudder_browser_locator",
+        arguments: {
+          tabId: "tab-1",
+          action,
+          locator: { strategy: "css", value: "#target" },
+        },
+      },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_RUN_ID: "runtime-run",
+      RUDDER_BROWSER_ENABLED: "true",
+    }), "browser");
+
+    expect(response?.result).toMatchObject({
+      isError: true,
+      structuredContent: { code: "rudder_mcp_invalid_arguments" },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects locator-triggered downloads before Browser API dispatch", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 21,
+      method: "tools/call",
+      params: {
+        name: "rudder_browser_download",
+        arguments: {
+          tabId: "tab-1",
+          mode: "trigger",
+          locator: { strategy: "css", value: "#download" },
+        },
+      },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_RUN_ID: "runtime-run",
+      RUDDER_BROWSER_ENABLED: "true",
+    }), "browser");
+
+    expect(response?.result).toMatchObject({
+      isError: true,
+      structuredContent: { code: "rudder_mcp_invalid_arguments" },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("returns structuredContent for successful JSON tool output", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-success-"));
     try {

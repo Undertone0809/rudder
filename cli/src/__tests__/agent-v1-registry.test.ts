@@ -258,16 +258,25 @@ describe("agent-v1 registry", () => {
     expect(browser.serverName).toBe(RUDDER_BROWSER_MCP_SERVER_NAME);
     expect(browser.tools.map((tool) => tool.name)).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
     expect(browser.tools.every((tool) => tool.category === "browser")).toBe(true);
-    expect(browser.tools.find((tool) => tool.capabilityId === "browser.locator")?.inputSchema).toMatchObject({
-      properties: {
-        dialogResponse: {
-          required: ["accept"],
-          properties: {
-            accept: { type: "boolean" },
-            promptText: { type: "string", maxLength: 10_000 },
+    expect(browser.tools.find((tool) => tool.capabilityId === "browser.locator")).toMatchObject({
+      description: expect.stringMatching(/read-only/i),
+      mutating: false,
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          action: {
+            enum: [
+              "count", "allTextContents", "textContent", "innerText", "attribute",
+              "visible", "enabled", "checked", "selected", "wait",
+            ],
           },
         },
       },
+    });
+    expect(browser.tools.find((tool) => tool.capabilityId === "browser.locator")?.inputSchema.properties)
+      .not.toHaveProperty("dialogResponse");
+    expect(browser.tools.find((tool) => tool.capabilityId === "browser.download")?.inputSchema).toMatchObject({
+      properties: { mode: { enum: ["media"] } },
     });
     expect(browser.tools.find((tool) => tool.capabilityId === "browser.dom-cua")).toMatchObject({
       mutating: false,

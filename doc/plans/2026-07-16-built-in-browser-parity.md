@@ -87,18 +87,20 @@ must be discoverable, executable, bounded, and covered by a real Browser test.
   can expose it safely
 - locate by test id, stable attribute/CSS, href, role and accessible name,
   label, placeholder, or text
-- scope and filter locators; count before ambiguous actions
+- scope and filter locators; count before strict single-element reads
 - read text, attributes, visibility, enabled state, and checked/selected state
+- keep locators strictly read-only: they may count, read bounded state, or wait
+  for attached, detached, visible, or hidden state without focus or events
 - provide bounded read-only page and element evaluation without arbitrary page
   mutation or Node/process access
 
 ### Interaction
 
-- click with button/modifiers, double-click, move/hover, coordinate input,
-  scroll, drag, keypress, type, and fill
+- click and type through fresh bounded high-level refs; use explicit coordinate
+  CUA for double-click, move/hover, scroll, drag, keypress, selection, and other
+  visual interaction
 - inspect the bounded element stack at a screenshot coordinate
-- DOM-node click, double-click, scroll, keypress, and type
-- check, uncheck, set checked, and select one or more native options
+- bounded read-only DOM-node snapshots with ephemeral evidence ids
 - wait for attached, detached, visible, or hidden locator state
 - require a fresh snapshot after stale or ambiguous locator failures
 
@@ -108,7 +110,8 @@ must be discoverable, executable, bounded, and covered by a real Browser test.
 - capture viewport, full-page, clipped, and element screenshots
 - read bounded console logs with level, text, timestamp, and source URL filters
 - expose bounded Browser-session clipboard read/write operations
-- wait for and describe downloads, and download media from an explicit locator
+- download media from an explicit locator without firing page events;
+  locator-triggered download clicks fail closed
 - list page assets and bundle an explicit bounded selection into a temporary
   run-owned artifact
 - assign explicit bounded local files to a unique file input
@@ -171,7 +174,8 @@ local fixture application through the actual `rudder-browser` MCP transport.
 The proof must include:
 
 1. server discovery when enabled and absence when disabled;
-2. navigation, DOM/locator interaction, visual CUA interaction, and screenshot;
+2. navigation, read-only locator inspection, safe high-level ref interaction,
+   visual CUA interaction, and screenshot;
 3. back/forward/reload and responsive viewport verification;
 4. checkbox/select/form, dialog, clipboard, console, download, and page-asset
    workflows, plus file upload, coordinate inspection, and content export;

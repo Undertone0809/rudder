@@ -435,8 +435,8 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   {
     "capabilityId": "browser.locator",
     "name": "rudder_browser_locator",
-    "description": "Read or interact with a bounded Browser locator by CSS, test id, href, role, label, placeholder, or text.",
-    "mutating": true,
+    "description": "Perform read-only bounded Browser locator text, attribute, state, count, or wait operations.",
+    "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
     "attachesRunIdWhenAvailable": true
@@ -489,7 +489,7 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   {
     "capabilityId": "browser.download",
     "name": "rudder_browser_download",
-    "description": "Download explicit locator media or trigger one bounded run-owned Browser download.",
+    "description": "Download explicit locator media without dispatching page input into a bounded run-owned artifact.",
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
@@ -848,4 +848,4 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   }
 ] as const;
 export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "998b5f7a23d57634148a59a04f002b46b480570952d9f7eb4a9fa559f756cb7c";
-export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "ee82b7fc57f99054553c23e9888ca3f2009c71b09532a13b5e5743e6f5f000ec";
+export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

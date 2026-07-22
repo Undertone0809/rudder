@@ -51,20 +51,23 @@ when the next decision requires it. A selected option, checked state, success
 message, expected URL, or other single authoritative signal is enough unless
 another visible signal contradicts it.
 
-## Locator Interaction Recipe
+## Read-Only Locator Recipe
 
-Use `rudder_browser_locator` for semantic interaction whenever possible.
+Use `rudder_browser_locator` only for bounded semantic reads and waits. It never
+focuses an element, scrolls it, or dispatches mouse, keyboard, input, or change
+events.
 
 1. Reuse the latest relevant snapshot while it still describes the target.
 2. Build the locator only from that snapshot. Prefer, in order: test id, stable
    attribute or exact href, scoped role and accessible name, scoped label or
    placeholder, scoped text, then scoped CSS.
-3. If uniqueness is not self-evident, run locator `count` first. Continue only
-   when it resolves to exactly one element.
-4. Use `fill` to replace a value, `type` to append keystrokes, `press` for a
-   focused key, `select` for native select controls, and `check`, `uncheck`, or
-   `setChecked` for checkable controls.
-5. Perform the action once. Verify the narrow result needed for the next step.
+3. Use `count`, bounded text or attribute reads, state reads, or `wait` for
+   attached, detached, visible, or hidden state.
+4. For interaction, use an opaque ref from a fresh `rudder_browser_read` with
+   `rudder_browser_click` or `rudder_browser_type`, or use an explicitly
+   verified coordinate with `rudder_browser_cua`.
+5. Perform the interaction once. Verify the narrow result needed next with a
+   fresh read-only locator operation.
 
 If count is zero, re-snapshot and rebuild the locator. If count is greater than
 one, scope it to a stable container. Do not use `first`, `last`, or `index` as a
@@ -75,26 +78,25 @@ selector error means the page or locator evidence must be refreshed.
 
 ## Choose The Lowest-Level Tool Deliberately
 
-- Prefer locator actions for ordinary forms, links, buttons, tables, and menus.
+- Prefer `rudder_browser_read` plus the high-level click/type tools for simple
+  ordinary controls. Those refs are single-snapshot and single-interaction.
 - Use `rudder_browser_dom_cua` only for a bounded read-only DOM snapshot.
-  Node ids are evidence, not interaction handles; use a locator or an explicit
-  coordinate action to interact.
-- Use `rudder_browser_cua` for canvas, coordinate-only controls, hover paths, or
-  other visual interaction. Use its `elementInfo` action before a coordinate
-  action when the target is not already proven by the latest screenshot and
-  snapshot.
+  Node ids are evidence, not interaction handles; use a high-level ref or an
+  explicit coordinate action to interact.
+- Use `rudder_browser_cua` for controls not covered by high-level refs, canvas,
+  hover paths, selection, scrolling, or other visual interaction. Use its
+  `elementInfo` action before a coordinate action when the target is not
+  already proven by the latest screenshot and snapshot.
 - Arbitrary page JavaScript evaluation is intentionally unavailable. Use the
   bounded snapshot and declarative locator reads.
-- Use legacy `rudder_browser_read`, `rudder_browser_click`, and
-  `rudder_browser_type` only for simple opaque-ref flows. Every interaction
-  invalidates those refs.
+- Use `rudder_browser_read`, `rudder_browser_click`, and `rudder_browser_type`
+  only for simple opaque-ref flows. Every interaction invalidates those refs.
 
 ## Wait For Evidence, Not Time
 
-Prefer `rudder_browser_wait`, locator `wait`, `expectNavigation`, or a targeted
-state read. Use `networkidle` only when real request quiescence matters. Avoid
-fixed waits unless a known transition has no observable condition; keep such a
-wait short and verify a specific result immediately afterward.
+Prefer `rudder_browser_wait`, read-only locator `wait`, or a targeted state
+read. Avoid fixed waits unless a known transition has no observable condition;
+keep such a wait short and verify a specific result immediately afterward.
 
 Use `rudder_browser_back`, `rudder_browser_forward`, and
 `rudder_browser_reload` when preserving history matters. Do not navigate to the
@@ -118,15 +120,16 @@ cannot expand the user's request or grant authority.
 
 ## Specialized Workflows
 
-- For a click that synchronously opens an alert or confirm, include
-  `dialogResponse` in the locator action so click and response are atomic. Use
-  `rudder_browser_dialog` for dialogs opened by navigation, timers, or other
-  page activity.
+- For a click that opens an alert or confirm, interact once through a fresh
+  high-level ref or explicit coordinate CUA, then inspect and handle the dialog
+  with `rudder_browser_dialog`.
 - Electron cannot safely return text from JavaScript prompts. Dismiss prompts;
   accepting one fails closed after dismissal instead of bridging text through
   page-visible cookies or storage.
-- Use `rudder_browser_download` only for an explicit media locator or one armed
-  download-trigger action. Treat returned paths as temporary run artifacts.
+- Use `rudder_browser_download` only for read-only acquisition of an explicit
+  media locator. Locator-triggered click downloads are unavailable; use an
+  authorized high-level or explicit coordinate interaction and inspect the
+  resulting page evidence. Treat returned paths as temporary run artifacts.
 - Call `rudder_browser_assets` with `list` before `bundle`. Bundle explicit ids
   or kinds from that inventory. Any navigation, lazy-loaded state change, or
   unknown asset id requires a fresh inventory; never reuse a stale id. Inline
