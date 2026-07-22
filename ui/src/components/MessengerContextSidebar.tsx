@@ -950,7 +950,7 @@ export function MessengerContextSidebar() {
           : null,
       };
     });
-    const sections = effectiveThreadOrganizationRule === "project"
+    const baseSections = effectiveThreadOrganizationRule === "project"
       ? organizeProjectThreadDirectory(entries, groupInputs, projectsById)
       : organizeThreadEntries(
         entries,
@@ -959,6 +959,28 @@ export function MessengerContextSidebar() {
         projectsById,
         messengerThreadKindLabel,
       );
+    const savedViewGroupIds = new Set(
+      customGroups
+        .filter((group) => group.entries.some(isSavedViewCustomGroupEntry))
+        .map((group) => group.id),
+    );
+    const supplementalSavedViewSections: OrganizedThreadSection[] = groupInputs
+      .filter((group) => savedViewGroupIds.has(group.id))
+      .map((group) => ({
+        key: customGroupSectionKey(group.id),
+        label: group.name,
+        icon: group.icon,
+        isPinned: group.pinned,
+        entries: [],
+      }));
+    const sections: OrganizedThreadSection[] = effectiveThreadOrganizationRule === "agent"
+      || effectiveThreadOrganizationRule === "kind"
+      || effectiveThreadOrganizationRule === "attention"
+      ? [
+        ...baseSections,
+        ...supplementalSavedViewSections,
+      ]
+      : baseSections;
     return isManagedThreadGroupRule(effectiveThreadOrganizationRule)
       ? sortManagedThreadSections(sections, effectiveThreadOrganizationRule, projectOrderIds, threadSectionOrderIds)
       : sections;

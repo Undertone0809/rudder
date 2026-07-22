@@ -457,6 +457,26 @@ test.describe("Messenger Local Apps", () => {
     expect((await calls(page)).start).toBe(startCountBeforeRestore);
 
     await page.goto(`/${organization.issuePrefix}/messenger`);
+    for (const organizationLabel of ["Agent", "Thread type", "Needs attention"]) {
+      await page.getByTestId("messenger-thread-organization-trigger").click();
+      await page.getByRole("menuitemradio", { name: organizationLabel, exact: true }).click();
+      const organizedGroup = page.getByTestId(`messenger-thread-section-custom-group-${savedGroup!.id}`);
+      const organizedSavedRow = organizedGroup
+        .locator('[data-testid^="messenger-saved-view-"]')
+        .filter({ hasText: "MKT dashboard local" });
+      await expect(organizedGroup).toBeVisible();
+      await expect(organizedSavedRow).toHaveCount(1);
+      await expect(organizedGroup.locator('[data-testid$="-attention-count"]')).toHaveCount(0);
+
+      await page.reload();
+      const restoredGroup = page.getByTestId(`messenger-thread-section-custom-group-${savedGroup!.id}`);
+      await expect(restoredGroup).toBeVisible();
+      await expect(restoredGroup
+        .locator('[data-testid^="messenger-saved-view-"]')
+        .filter({ hasText: "MKT dashboard local" })).toHaveCount(1);
+    }
+    await page.getByTestId("messenger-thread-organization-trigger").click();
+    await page.getByRole("menuitemradio", { name: "Latest activity", exact: true }).click();
     const group = page.getByTestId(`messenger-thread-section-custom-group-${savedGroup!.id}`);
     const row = group.locator('[data-testid^="messenger-saved-view-"]').filter({ hasText: "MKT dashboard local" });
     await row.hover();

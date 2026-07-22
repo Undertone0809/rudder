@@ -810,6 +810,236 @@ describe("MessengerContextSidebar", () => {
     expect(html).not.toContain("Hide");
   });
 
+  for (const rule of ["agent", "kind", "attention"] as const) {
+    it(`keeps Saved Views in their original groups while ${rule} organizes only threads`, () => {
+      localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": rule });
+      agentList = [
+        ...agentList,
+        {
+          id: "agent-2",
+          orgId: "org-1",
+          name: "Bea",
+          urlKey: "bea",
+          role: "general",
+          title: null,
+          icon: "dicebear:notionists:bea",
+          status: "active",
+        },
+      ];
+      const groupedAlphaThread = {
+        threadKey: "chat:grouped-alpha",
+        kind: "chat" as const,
+        title: "Grouped alpha chat",
+        preview: "Alpha host context.",
+        subtitle: null,
+        href: "/messenger/chat/grouped-alpha",
+        latestActivityAt: "2026-04-11T09:30:00.000Z",
+        lastReadAt: null,
+        unreadCount: 0,
+        needsAttention: false,
+        isPinned: false,
+        metadata: { preferredAgentId: "agent-1" },
+      };
+      const groupedBetaThread = {
+        threadKey: "chat:grouped-beta",
+        kind: "chat" as const,
+        title: "Grouped beta chat",
+        preview: "Beta host context.",
+        subtitle: null,
+        href: "/messenger/chat/grouped-beta",
+        latestActivityAt: "2026-04-11T09:20:00.000Z",
+        lastReadAt: null,
+        unreadCount: 0,
+        needsAttention: false,
+        isPinned: false,
+        metadata: { preferredAgentId: "agent-2" },
+      };
+      const attentionThread = {
+        threadKey: "chat:needs-review",
+        kind: "chat" as const,
+        title: "Needs review chat",
+        preview: "A normal unread thread.",
+        subtitle: null,
+        href: "/messenger/chat/needs-review",
+        latestActivityAt: "2026-04-11T09:40:00.000Z",
+        lastReadAt: null,
+        unreadCount: 1,
+        needsAttention: true,
+        isPinned: false,
+        metadata: { preferredAgentId: "agent-1" },
+      };
+      const splitIssueThread = {
+        threadKey: "issue:loose",
+        kind: "issues" as const,
+        title: "Loose issue",
+        preview: "A normal split issue.",
+        subtitle: null,
+        href: "/messenger/issues/loose",
+        latestActivityAt: "2026-04-11T09:10:00.000Z",
+        lastReadAt: null,
+        unreadCount: 0,
+        needsAttention: false,
+        isPinned: false,
+        metadata: { splitIssue: true },
+      };
+      chatList = [
+        {
+          ...chatList[0],
+          id: "grouped-alpha",
+          title: groupedAlphaThread.title,
+          preferredAgentId: "agent-1",
+        },
+        {
+          ...chatList[0],
+          id: "grouped-beta",
+          title: groupedBetaThread.title,
+          preferredAgentId: "agent-2",
+        },
+        {
+          ...chatList[0],
+          id: "needs-review",
+          title: attentionThread.title,
+          preferredAgentId: "agent-1",
+          unreadCount: 1,
+          needsAttention: true,
+          isUnread: true,
+        },
+      ];
+      messengerModel = {
+        ...baseModel(),
+        threadSummaries: [groupedAlphaThread, groupedBetaThread, attentionThread, splitIssueThread],
+      };
+      const savedEntry = (groupId: string, suffix: string, title: string, sortOrder: number) => ({
+        id: `entry-saved-${suffix}`,
+        orgId: "org-1",
+        userId: "local-board",
+        groupId,
+        itemKey: `saved_view:30000000-0000-4000-8000-00000000000${suffix}`,
+        sortOrder,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        item: {
+          type: "saved_view" as const,
+          itemKey: `saved_view:30000000-0000-4000-8000-00000000000${suffix}`,
+          title,
+          savedView: {
+            id: `30000000-0000-4000-8000-00000000000${suffix}`,
+            title,
+            subtitle: `${suffix}.md`,
+            favicon: null,
+            targetPayload: {
+              kind: "library_file" as const,
+              filePath: `${suffix}.md`,
+              viewInstanceId: `view-${suffix}`,
+            },
+          },
+        },
+      });
+      customGroupList = [
+        {
+          id: "group-alpha",
+          orgId: "org-1",
+          userId: "local-board",
+          name: "Alpha references",
+          icon: "folder::amber",
+          pinnedAt: null,
+          sortOrder: 0,
+          collapsed: false,
+          createdAt: "2026-04-11T08:00:00.000Z",
+          updatedAt: "2026-04-11T08:00:00.000Z",
+          entries: [
+            savedEntry("group-alpha", "1", "Alpha dashboard", 0),
+            hydratedThreadEntry({
+              id: "entry-thread-alpha",
+              orgId: "org-1",
+              userId: "local-board",
+              groupId: "group-alpha",
+              threadKey: groupedAlphaThread.threadKey,
+              sortOrder: 1,
+              createdAt: "2026-04-11T08:00:00.000Z",
+              updatedAt: "2026-04-11T08:00:00.000Z",
+              thread: groupedAlphaThread,
+            }),
+          ],
+        },
+        {
+          id: "group-beta",
+          orgId: "org-1",
+          userId: "local-board",
+          name: "Beta references",
+          icon: "folder::teal",
+          pinnedAt: null,
+          sortOrder: 1,
+          collapsed: false,
+          createdAt: "2026-04-11T08:00:00.000Z",
+          updatedAt: "2026-04-11T08:00:00.000Z",
+          entries: [
+            savedEntry("group-beta", "2", "Beta dashboard", 0),
+            hydratedThreadEntry({
+              id: "entry-thread-beta",
+              orgId: "org-1",
+              userId: "local-board",
+              groupId: "group-beta",
+              threadKey: groupedBetaThread.threadKey,
+              sortOrder: 1,
+              createdAt: "2026-04-11T08:00:00.000Z",
+              updatedAt: "2026-04-11T08:00:00.000Z",
+              thread: groupedBetaThread,
+            }),
+          ],
+        },
+      ];
+
+      const html = renderToStaticMarkup(<MessengerContextSidebar />);
+      const count = (needle: string) => html.split(needle).length - 1;
+      const alphaGroupIndex = html.indexOf('data-testid="messenger-thread-section-custom-group-group-alpha"');
+      const alphaSavedIndex = html.indexOf('data-testid="messenger-saved-view-entry-saved-1"');
+      const betaGroupIndex = html.indexOf('data-testid="messenger-thread-section-custom-group-group-beta"');
+      const betaSavedIndex = html.indexOf('data-testid="messenger-saved-view-entry-saved-2"');
+
+      expect(count('data-testid="messenger-saved-view-entry-saved-1"')).toBe(1);
+      expect(count('data-testid="messenger-saved-view-entry-saved-2"')).toBe(1);
+      expect(alphaGroupIndex).toBeGreaterThanOrEqual(0);
+      expect(alphaSavedIndex).toBeGreaterThan(alphaGroupIndex);
+      expect(betaGroupIndex).toBeGreaterThan(alphaSavedIndex);
+      expect(betaSavedIndex).toBeGreaterThan(betaGroupIndex);
+      expect(html).not.toContain('data-testid="messenger-saved-views-section"');
+      expect(html).not.toContain("messenger-thread-section-custom-group-group-alpha-attention-count");
+      expect(html).not.toContain("messenger-thread-section-custom-group-group-beta-attention-count");
+      expect(count('data-testid="messenger-thread-chat-grouped-alpha"')).toBe(1);
+      expect(count('data-testid="messenger-thread-chat-grouped-beta"')).toBe(1);
+
+      const alphaThreadIndex = html.indexOf('data-testid="messenger-thread-chat-grouped-alpha"');
+      const betaThreadIndex = html.indexOf('data-testid="messenger-thread-chat-grouped-beta"');
+      const attentionThreadIndex = html.indexOf('data-testid="messenger-thread-chat-needs-review"');
+      const issueThreadIndex = html.indexOf('data-testid="messenger-thread-issue-loose"');
+      if (rule === "agent") {
+        const asherSectionIndex = html.indexOf('data-testid="messenger-thread-section-agent-agent-1"');
+        const beaSectionIndex = html.indexOf('data-testid="messenger-thread-section-agent-agent-2"');
+        expect(asherSectionIndex).toBeLessThan(alphaThreadIndex);
+        expect(alphaThreadIndex).toBeLessThan(beaSectionIndex);
+        expect(attentionThreadIndex).toBeLessThan(beaSectionIndex);
+        expect(beaSectionIndex).toBeLessThan(betaThreadIndex);
+      } else if (rule === "kind") {
+        const chatSectionIndex = html.indexOf('data-testid="messenger-thread-section-kind-chat"');
+        const issueSectionIndex = html.indexOf('data-testid="messenger-thread-section-kind-issues"');
+        expect(chatSectionIndex).toBeLessThan(alphaThreadIndex);
+        expect(chatSectionIndex).toBeLessThan(betaThreadIndex);
+        expect(chatSectionIndex).toBeLessThan(attentionThreadIndex);
+        expect(attentionThreadIndex).toBeLessThan(issueSectionIndex);
+        expect(issueSectionIndex).toBeLessThan(issueThreadIndex);
+      } else {
+        const needsSectionIndex = html.indexOf('data-testid="messenger-thread-section-attention-needs"');
+        const otherSectionIndex = html.indexOf('data-testid="messenger-thread-section-attention-other"');
+        expect(needsSectionIndex).toBeLessThan(attentionThreadIndex);
+        expect(attentionThreadIndex).toBeLessThan(otherSectionIndex);
+        expect(otherSectionIndex).toBeLessThan(alphaThreadIndex);
+        expect(otherSectionIndex).toBeLessThan(betaThreadIndex);
+        expect(otherSectionIndex).toBeLessThan(issueThreadIndex);
+      }
+    });
+  }
+
   it("renders pinned and unpinned custom groups as the same top-level group surface", () => {
     localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "custom" });
     chatList = [];
