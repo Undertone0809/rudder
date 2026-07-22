@@ -67,6 +67,7 @@ import {
   rememberChatProjectIdForAgent,
   resolveDefaultDraftChatProjectId,
   resolveDraftIssueContext,
+  resolveLatestChatAgentRunTarget,
   scrollChatMessagesToBottom,
   shouldAttachApprovalFeedbackSystemMessage,
   shouldAttachIssueCreatedSystemMessage,
@@ -249,6 +250,144 @@ function conversation(overrides: Partial<ChatConversation>): ChatConversation {
     ...overrides,
   };
 }
+
+describe("latest Chat Agent Run target", () => {
+  it("selects the newest runtime-backed assistant message by createdAt across variants", () => {
+    const target = resolveLatestChatAgentRunTarget([
+      message({
+        id: "newer-array-entry",
+        role: "assistant",
+        kind: "message",
+        runId: "run-older",
+        replyingAgentId: "agent-older",
+        chatTurnId: "turn-1",
+        turnVariant: 0,
+        createdAt: new Date("2026-05-07T12:00:00.000Z"),
+      }),
+      message({
+        id: "older-array-entry",
+        role: "assistant",
+        kind: "message",
+        runId: "run-newest",
+        replyingAgentId: "agent-newest",
+        chatTurnId: "turn-1",
+        turnVariant: 2,
+        createdAt: new Date("2026-05-07T13:00:00.000Z"),
+      }),
+    ], conversation({ preferredAgentId: "agent-preferred" }));
+
+    expect(target).toEqual({ runId: "run-newest", agentId: "agent-newest" });
+  });
+
+  it.each([
+    ["streaming", { status: "streaming" as const }],
+    ["completed", { status: "completed" as const }],
+    ["interrupted", { status: "interrupted" as const }],
+    ["failed", { status: "failed" as const }],
+    ["stopped", { status: "stopped" as const }],
+    ["superseded", { status: "completed" as const, supersededAt: new Date("2026-05-07T14:00:00.000Z") }],
+  ])("keeps %s assistant attempts eligible", (_label, attempt) => {
+    const target = resolveLatestChatAgentRunTarget([
+      message({
+        role: "assistant",
+        kind: "message",
+        runId: `run-${_label}`,
+        replyingAgentId: "agent-attempt",
+        ...attempt,
+      }),
+    ], conversation({}));
+
+    expect(target).toEqual({ runId: `run-${_label}`, agentId: "agent-attempt" });
+  });
+
+  it("ignores non-assistant messages and assistant messages without a run", () => {
+    const target = resolveLatestChatAgentRunTarget([
+      message({
+        role: "assistant",
+        kind: "message",
+        runId: "run-eligible",
+        replyingAgentId: "agent-eligible",
+        createdAt: new Date("2026-05-07T10:00:00.000Z"),
+      }),
+      message({
+        role: "user",
+        kind: "message",
+        runId: "run-user",
+        replyingAgentId: "agent-user",
+        createdAt: new Date("2026-05-07T12:00:00.000Z"),
+      }),
+      message({
+        role: "assistant",
+        kind: "message",
+        runId: null,
+        replyingAgentId: "agent-no-run",
+        createdAt: new Date("2026-05-07T13:00:00.000Z"),
+      }),
+    ], conversation({}));
+
+    expect(target).toEqual({ runId: "run-eligible", agentId: "agent-eligible" });
+  });
+
+  it("prefers the message replying agent over conversation fallbacks", () => {
+    const target = resolveLatestChatAgentRunTarget([
+      message({
+        role: "assistant",
+        kind: "message",
+        runId: "run-1",
+        replyingAgentId: "agent-replying",
+      }),
+    ], conversation({
+      preferredAgentId: "agent-preferred",
+      chatRuntime: {
+        sourceType: "agent",
+        sourceLabel: "Runtime agent",
+        runtimeAgentId: "agent-runtime",
+        agentRuntimeType: "codex",
+        model: null,
+        available: true,
+        error: null,
+      },
+    }));
+
+    expect(target).toEqual({ runId: "run-1", agentId: "agent-replying" });
+  });
+
+  it("falls back to the conversation runtime agent, then the preferred agent", () => {
+    const runMessage = message({
+      role: "assistant",
+      kind: "message",
+      runId: "run-1",
+      replyingAgentId: null,
+    });
+    const runtimeTarget = resolveLatestChatAgentRunTarget([runMessage], conversation({
+      preferredAgentId: "agent-preferred",
+      chatRuntime: {
+        sourceType: "agent",
+        sourceLabel: "Runtime agent",
+        runtimeAgentId: "agent-runtime",
+        agentRuntimeType: "codex",
+        model: null,
+        available: true,
+        error: null,
+      },
+    }));
+    const preferredTarget = resolveLatestChatAgentRunTarget([runMessage], conversation({
+      preferredAgentId: "agent-preferred",
+    }));
+
+    expect(runtimeTarget).toEqual({ runId: "run-1", agentId: "agent-runtime" });
+    expect(preferredTarget).toEqual({ runId: "run-1", agentId: "agent-preferred" });
+  });
+
+  it("returns null when no assistant run or no agent fallback is available", () => {
+    expect(resolveLatestChatAgentRunTarget([
+      message({ role: "assistant", kind: "message", runId: null }),
+    ], conversation({ preferredAgentId: "agent-preferred" }))).toBeNull();
+    expect(resolveLatestChatAgentRunTarget([
+      message({ role: "assistant", kind: "message", runId: "run-1", replyingAgentId: null }),
+    ], conversation({ preferredAgentId: null }))).toBeNull();
+  });
+});
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();
