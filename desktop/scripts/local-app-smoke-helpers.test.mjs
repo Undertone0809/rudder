@@ -5,6 +5,7 @@ import {
   assertNoLocalAppRuntimeDetails,
   assertStrictLoopbackAttestation,
   expectedLocalAppPartitionId,
+  parseLocalAppLsofListenerProcessRecords,
   proveLocalAppEmergencyOwnership,
   terminateProvenLocalAppProcessGroup,
 } from "./local-app-smoke-helpers.mjs";
@@ -30,6 +31,45 @@ const expectedTarget = {
 };
 
 describe("Local App smoke helpers", () => {
+  it("requires the smoke lsof proof to inspect every structured listener address", () => {
+    const smokeSource = readFileSync(new URL("./smoke.mjs", import.meta.url), "utf8");
+    const readerStart = smokeSource.indexOf("async function readLocalAppListeners");
+    const readerEnd = smokeSource.indexOf("\nasync function readLocalAppRuntimeDescriptor", readerStart);
+    expect(readerStart).toBeGreaterThanOrEqual(0);
+    expect(readerEnd).toBeGreaterThan(readerStart);
+    const readerSource = smokeSource.slice(readerStart, readerEnd);
+    expect(readerSource).toContain('"-Fpn"');
+    expect(readerSource).toContain("parseLocalAppLsofListenerProcessRecords");
+
+    const assertionStart = smokeSource.indexOf("async function assertLocalAppRuntimeRunning");
+    const assertionEnd = smokeSource.indexOf("\nasync function assertLocalAppRuntimeStopped", assertionStart);
+    const assertionSource = smokeSource.slice(assertionStart, assertionEnd);
+    expect(assertionSource).toContain("expectedListenerAddress");
+    expect(assertionSource).toContain("listener.addresses.every");
+  });
+
+  it("independently parses exact IPv4 loopback lsof records and rejects ambiguous process records", () => {
+    expect(parseLocalAppLsofListenerProcessRecords(
+      "p42\nf14\nn127.0.0.1:43123\np43\nf15\nn127.0.0.1:43123\n",
+      43_123,
+    )).toEqual([
+      { pid: 42, addresses: ["127.0.0.1:43123"] },
+      { pid: 43, addresses: ["127.0.0.1:43123"] },
+    ]);
+    expect(() => parseLocalAppLsofListenerProcessRecords(
+      "p42\nf14\nn127.0.0.1:43123\np42\nf15\nn127.0.0.1:43123\n",
+      43_123,
+    )).toThrow("duplicate");
+  });
+
+  it.each(["*:43123", "0.0.0.0:43123", "[::]:43123", "localhost:43123", "127.0.0.1:43124"])(
+    "independently rejects the unsafe lsof listener address %s",
+    (address) => {
+      expect(() => parseLocalAppLsofListenerProcessRecords(`p42\nf14\nn${address}\n`, 43_123))
+        .toThrow("exact IPv4 loopback");
+    },
+  );
+
   it("wires the independently derived partition into the webview probe", () => {
     const smokeSource = readFileSync(new URL("./smoke.mjs", import.meta.url), "utf8");
     const functionStart = smokeSource.indexOf("async function waitForLocalAppWebview");

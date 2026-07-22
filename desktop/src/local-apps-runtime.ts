@@ -95,6 +95,52 @@ type PersistedRuntimeLiveness = {
   listener: LivenessState;
 };
 
+export type LsofListenerProcessRecord = {
+  pid: number;
+  addresses: string[];
+};
+
+export function parseLsofListenerProcessRecords(
+  output: string,
+  port: number,
+): LsofListenerProcessRecord[] | null {
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return null;
+  const expectedAddress = `127.0.0.1:${port}`;
+  const records: LsofListenerProcessRecord[] = [];
+  const seenPids = new Set<number>();
+  let current: LsofListenerProcessRecord | null = null;
+  for (const line of output.split(/\r?\n/)) {
+    if (line.length === 0) continue;
+    if (/^p\d+$/.test(line)) {
+      if (current) {
+        if (current.addresses.length === 0) return null;
+        records.push(current);
+      }
+      const pid = Number.parseInt(line.slice(1), 10);
+      if (!isSafeLocalAppProcessId(pid) || seenPids.has(pid)) return null;
+      seenPids.add(pid);
+      current = { pid, addresses: [] };
+      continue;
+    }
+    if (/^f.+$/.test(line)) {
+      if (!current) return null;
+      continue;
+    }
+    if (line.startsWith("n")) {
+      const address = line.slice(1);
+      if (!current || address !== expectedAddress) return null;
+      current.addresses.push(address);
+      continue;
+    }
+    return null;
+  }
+  if (current) {
+    if (current.addresses.length === 0) return null;
+    records.push(current);
+  }
+  return records.length > 0 ? records : null;
+}
+
 export function localAppPartitionId(installationId: string, definitionId: string): string {
   const digest = createHash("sha256").update(`${installationId}\0${definitionId}`).digest("hex");
   return `persist:rudder-local-app-${digest.slice(0, 32)}`;
@@ -236,21 +282,19 @@ async function defaultVerifyListenerOwnership(input: { port: number; pid: number
       "-nP",
       `-iTCP:${input.port}`,
       "-sTCP:LISTEN",
-      "-Fp",
+      "-Fpn",
     ], { timeout: 2_000, maxBuffer: 64 * 1024 });
-    const listenerPids = String(stdout).split(/\r?\n/)
-      .filter((line) => /^p\d+$/.test(line))
-      .map((line) => Number.parseInt(line.slice(1), 10));
-    if (listenerPids.length === 0) return false;
-    for (const listenerPid of listenerPids) {
-      const result = await execFileAsync("/bin/ps", ["-o", "pgid=", "-p", String(listenerPid)], {
+    const listeners = parseLsofListenerProcessRecords(String(stdout), input.port);
+    if (!listeners) return false;
+    for (const listener of listeners) {
+      const result = await execFileAsync("/bin/ps", ["-o", "pgid=", "-p", String(listener.pid)], {
         timeout: 2_000,
         maxBuffer: 16 * 1024,
       });
       const listenerPgid = Number.parseInt(String(result.stdout).trim(), 10);
-      if (listenerPgid === input.pgid) return true;
+      if (listenerPgid !== input.pgid) return false;
     }
-    return false;
+    return true;
   } catch {
     return false;
   }

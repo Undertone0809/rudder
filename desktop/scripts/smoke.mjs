@@ -15,6 +15,7 @@ import {
   assertExactLocalAppSavedViewTarget,
   assertNoLocalAppRuntimeDetails,
   assertStrictLoopbackAttestation,
+  parseLocalAppLsofListenerProcessRecords,
   terminateProvenLocalAppProcessGroup,
 } from "./local-app-smoke-helpers.mjs";
 
@@ -3527,19 +3528,21 @@ async function readProcessTable() {
   });
 }
 
-async function readLocalAppListenerPids(port) {
+async function readLocalAppListeners(port) {
   const lsof = await runCapturedProcess("/usr/sbin/lsof", [
     "-nP",
     `-iTCP:${port}`,
     "-sTCP:LISTEN",
-    "-Fp",
+    "-Fpn",
   ]);
   if (lsof.code !== 0 && lsof.code !== 1) {
     throw new Error(`lsof failed while checking the Local App listener (${lsof.code})`);
   }
-  return lsof.stdout.split(/\r?\n/)
-    .filter((line) => /^p\d+$/.test(line))
-    .map((line) => Number(line.slice(1)));
+  return parseLocalAppLsofListenerProcessRecords(lsof.stdout, port);
+}
+
+async function readLocalAppListenerPids(port) {
+  return (await readLocalAppListeners(port)).map((listener) => listener.pid);
 }
 
 async function readLocalAppRuntimeDescriptor(registryPath, definitionId) {
@@ -3563,8 +3566,17 @@ async function assertLocalAppRuntimeRunning(input) {
     const healthPayload = await health.json();
     assert.equal(healthPayload.sentinelEnvAccepted, true, "generated fixture must receive its allowlisted sentinel environment value");
   }
-  const listenerPids = await readLocalAppListenerPids(descriptor.port);
-  assert.ok(listenerPids.length > 0, "lsof should report at least one Local App listener PID");
+  const listeners = await readLocalAppListeners(descriptor.port);
+  const expectedListenerAddress = `127.0.0.1:${descriptor.port}`;
+  assert.ok(listeners.length > 0, "lsof should report at least one Local App listener PID");
+  assert.ok(
+    listeners.every((listener) => (
+      listener.addresses.length > 0
+      && listener.addresses.every((address) => address === expectedListenerAddress)
+    )),
+    "every Local App listener must use the exact IPv4 loopback address",
+  );
+  const listenerPids = listeners.map((listener) => listener.pid);
   const processes = await readProcessTable();
   assert.ok(
     processes.some((processInfo) => processInfo.pid === descriptor.pid && processInfo.pgid === descriptor.pgid),

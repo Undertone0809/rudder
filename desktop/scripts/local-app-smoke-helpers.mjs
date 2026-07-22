@@ -125,6 +125,46 @@ export function isSafeLocalAppProcessId(value) {
   return Number.isSafeInteger(value) && value >= 2;
 }
 
+export function parseLocalAppLsofListenerProcessRecords(output, port) {
+  assert.ok(Number.isSafeInteger(port) && port >= 1 && port <= 65_535, "Local App lsof port must be valid");
+  const expectedAddress = `127.0.0.1:${port}`;
+  const records = [];
+  const seenPids = new Set();
+  let current = null;
+  const finishCurrent = () => {
+    if (!current) return;
+    assert.ok(current.addresses.length > 0, "each Local App lsof process must report a listener address");
+    records.push(current);
+    current = null;
+  };
+  for (const line of output.split(/\r?\n/)) {
+    if (line.length === 0) continue;
+    if (/^p\d+$/.test(line)) {
+      finishCurrent();
+      const pid = Number(line.slice(1));
+      assert.ok(isSafeLocalAppProcessId(pid), "Local App lsof must report a safe listener PID");
+      assert.equal(seenPids.has(pid), false, "Local App lsof must not contain a duplicate process record");
+      seenPids.add(pid);
+      current = { pid, addresses: [] };
+      continue;
+    }
+    if (/^f.+$/.test(line)) {
+      assert.ok(current, "Local App lsof file record must belong to a process");
+      continue;
+    }
+    if (line.startsWith("n")) {
+      assert.ok(current, "Local App lsof address must belong to a process");
+      const address = line.slice(1);
+      assert.equal(address, expectedAddress, "Local App listener must use the exact IPv4 loopback address");
+      current.addresses.push(address);
+      continue;
+    }
+    assert.fail("Local App lsof output contained an unexpected field");
+  }
+  finishCurrent();
+  return records;
+}
+
 export function proveLocalAppEmergencyOwnership({ descriptor, listenerPids, processes }) {
   if (!descriptor
     || !isSafeLocalAppProcessId(descriptor.pid)

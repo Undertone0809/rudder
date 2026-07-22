@@ -11,10 +11,12 @@ import {
   LocalAppRuntimeManager,
   installControlPipeEofCleanup,
   localAppPartitionId,
+  parseLsofListenerProcessRecords,
   terminateOwnedProcessGroup,
 } from "./local-apps-runtime.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/local-app-http-fixture.mjs", import.meta.url));
+const wildcardFixturePath = fileURLToPath(new URL("./fixtures/local-app-http-wildcard-fixture.mjs", import.meta.url));
 const watchdogPath = fileURLToPath(new URL("./local-app-watchdog-runner.mjs", import.meta.url));
 
 async function unusedLoopbackPort(): Promise<number> {
@@ -33,13 +35,14 @@ async function approvedFixture(options: {
   inheritedEnvNames?: string[];
   readinessPath?: string;
   readinessTimeoutMs?: number;
+  serverFixturePath?: string;
 } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-runtime-"));
   const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
   const prepared = await registry.prepareDefinition({
     title: "HTTP fixture",
     executable: process.execPath,
-    argv: [fixturePath],
+    argv: [options.serverFixturePath ?? fixturePath],
     cwd: root,
     inheritedEnvNames: options.inheritedEnvNames ?? [],
     readiness: { path: options.readinessPath ?? "/health", timeoutMs: options.readinessTimeoutMs ?? 4_000 },
@@ -48,6 +51,16 @@ async function approvedFixture(options: {
   const definition = await registry.createDefinition({ ...prepared, approvedFingerprint: prepared.trustFingerprint });
   await registry.approveDefinition(definition.id, prepared.trustFingerprint);
   return { root, registry, definition };
+}
+
+async function assertWildcardPortCanBeRebound(port: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(port, "0.0.0.0", () => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  });
 }
 
 function deferred<T>() {
@@ -91,6 +104,47 @@ function watchdogEmittingAfter(message: unknown, milliseconds: number) {
 }
 
 describe("Desktop Local App runtime", () => {
+  it("parses every process and listener address from structured lsof output", () => {
+    expect(parseLsofListenerProcessRecords([
+      "p42",
+      "f14",
+      "n127.0.0.1:43123",
+      "f15",
+      "n127.0.0.1:43123",
+      "p43",
+      "f16",
+      "n127.0.0.1:43123",
+      "",
+    ].join("\n"), 43_123)).toEqual([
+      { pid: 42, addresses: ["127.0.0.1:43123", "127.0.0.1:43123"] },
+      { pid: 43, addresses: ["127.0.0.1:43123"] },
+    ]);
+  });
+
+  it.each([
+    ["wildcard", "*:43123"],
+    ["IPv4 wildcard", "0.0.0.0:43123"],
+    ["IPv6 wildcard", "[::]:43123"],
+    ["unbracketed IPv6 wildcard", ":::43123"],
+    ["IPv6 loopback", "[::1]:43123"],
+    ["hostname alias", "localhost:43123"],
+    ["other interface", "192.168.1.20:43123"],
+    ["wrong port", "127.0.0.1:43124"],
+  ])("rejects a %s listener address from structured lsof output", (_label, address) => {
+    expect(parseLsofListenerProcessRecords(`p42\nf14\nn${address}\n`, 43_123)).toBeNull();
+  });
+
+  it.each([
+    ["address without a process", "n127.0.0.1:43123\n"],
+    ["process without an address", "p42\nf14\n"],
+    ["empty address", "p42\nf14\nn\n"],
+    ["unexpected field", "p42\nf14\ncnode\nn127.0.0.1:43123\n"],
+    ["duplicate process record", "p42\nf14\nn127.0.0.1:43123\np42\nf15\nn127.0.0.1:43123\n"],
+    ["mixed exact and wildcard listeners", "p42\nf14\nn127.0.0.1:43123\np43\nf15\nn*:43123\n"],
+  ])("rejects ambiguous lsof structure: %s", (_label, output) => {
+    expect(parseLsofListenerProcessRecords(output, 43_123)).toBeNull();
+  });
+
   it("derives a trusted Node bin for a realpathed npm CLI when the Desktop executable has no node", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-npm-prefix-"));
     const prefix = path.join(root, "node-prefix");
@@ -197,6 +251,26 @@ describe("Desktop Local App runtime", () => {
     expect((await manager.logs(definition.id)).join("\n").length).toBeLessThanOrEqual(256);
     await manager.stop(definition.id);
     expect((await manager.status(definition.id)).status).toBe("stopped");
+  });
+
+  it("rejects and fully cleans an approved fixture that exposes its allocated port on every interface", async () => {
+    const { root, registry, definition } = await approvedFixture({ serverFixturePath: wildcardFixturePath });
+    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+    const markerPath = path.join(root, "wildcard-listener.json");
+    try {
+      await expect(manager.start(definition.id)).rejects.toThrow("listener ownership could not be proven");
+      const marker = JSON.parse(await readFile(markerPath, "utf8")) as { pid: number; port: number };
+      await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+        status: "failed",
+        pid: null,
+        pgid: null,
+      });
+      expect((await manager.status(definition.id)).status).toBe("failed");
+      expect(() => process.kill(marker.pid, 0)).toThrow();
+      await expect(assertWildcardPortCanBeRebound(marker.port)).resolves.toBeUndefined();
+    } finally {
+      await manager.shutdown().catch(() => undefined);
+    }
   });
 
   it("serializes a real start followed immediately by stop for one binding", async () => {
