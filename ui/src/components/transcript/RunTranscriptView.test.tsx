@@ -7,6 +7,7 @@ import { ThemeProvider } from "../../context/ThemeContext";
 import { normalizeTranscript, resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget, RunTranscriptView } from "./RunTranscriptView";
 import { filterChatAssistantTranscriptEntries, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
+import { describeToolSemanticInfo } from "./RunTranscriptView.semantic";
 
 function countOccurrences(value: string, needle: string) {
   return value.split(needle).length - 1;
@@ -2525,6 +2526,83 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("high reasoning");
     expect(html).toContain("forked context");
     expect(html).not.toContain("spawn_agent");
+  });
+
+  it("renders Codex App Server collaboration spawn metadata", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-07-23T00:00:01.000Z",
+              name: "spawn_agent",
+              toolUseId: "agent-1",
+              input: {
+                message: "Inspect the transcript renderer for Codex collaboration rows.",
+                receiver_thread_ids: [],
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-07-23T00:00:02.000Z",
+              toolUseId: "agent-1",
+              content: JSON.stringify({
+                status: "completed",
+                receiver_thread_ids: ["thread-child-1"],
+                model: "gpt-5.6-sol",
+                reasoning_effort: "high",
+              }),
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Spawned agent thread-child-1: Inspect the transcript renderer for Codex collaboration rows.");
+    expect(html).toContain("gpt-5.6-sol");
+    expect(html).toContain("high reasoning");
+    expect(html).not.toContain("Collab Tool Call");
+  });
+
+  it("renders every Codex App Server collaboration action with its completed targets", () => {
+    const entries = [
+      { name: "wait_agent", id: "wait-1", input: {}, result: { status: "completed", receiver_thread_ids: ["thread-a", "thread-b"] } },
+      { name: "send_input", id: "send-1", input: { message: "Check the edge case." }, result: { status: "completed", receiver_thread_ids: ["thread-a"] } },
+      { name: "resume_agent", id: "resume-1", input: { id: "resume-call-id" }, result: { status: "completed", receiver_thread_ids: ["thread-b"] } },
+      { name: "close_agent", id: "close-1", input: {}, result: { status: "failed", receiver_thread_ids: ["thread-c"] }, isError: true },
+    ].flatMap((item, index) => ([
+      {
+        kind: "tool_call" as const,
+        ts: `2026-07-23T00:00:0${index * 2 + 1}.000Z`,
+        name: item.name,
+        toolUseId: item.id,
+        input: item.input,
+      },
+      {
+        kind: "tool_result" as const,
+        ts: `2026-07-23T00:00:0${index * 2 + 2}.000Z`,
+        toolUseId: item.id,
+        toolName: item.name,
+        content: JSON.stringify(item.result),
+        isError: item.isError ?? false,
+      },
+    ]));
+    const blocks = normalizeTranscript(entries, false);
+    const toolBlocks = blocks.filter((block) => block.type === "tool");
+    const summaries = toolBlocks.map((block) => describeToolSemanticInfo(block.name, block.input).summary);
+
+    expect(summaries).toEqual([
+      "Waited for 2 agents",
+      "Messaged agent thread-a: Check the edge case.",
+      "Resumed agent thread-b",
+      "Closed agent thread-c",
+    ]);
+    expect(summaries).not.toContain("Resumed agent resume-call-id");
+    expect(toolBlocks[3]).toMatchObject({ status: "error", isError: true });
   });
 
   it("describes provider tool call class names as operator actions", () => {

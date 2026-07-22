@@ -225,6 +225,46 @@ function networkDisconnectTextForBlock(block: TranscriptBlock): string | null {
   return null;
 }
 
+function mergeCollaborationToolResultInput(
+  block: Extract<TranscriptBlock, { type: "tool" }>,
+  result: string,
+) {
+  const toolName = block.name.trim().toLowerCase().split(".").pop()?.replace(/-/g, "_") ?? "";
+  if (!new Set(["spawn_agent", "send_input", "resume_agent", "wait_agent", "close_agent"]).has(toolName)) {
+    return;
+  }
+
+  let resultRecord: Record<string, unknown> | null = null;
+  try {
+    resultRecord = asRecord(JSON.parse(result));
+  } catch {
+    return;
+  }
+  if (!resultRecord) return;
+
+  const inputRecord = asRecord(block.input) ?? {};
+  const message = readStringField(resultRecord, ["message", "prompt"]);
+  const model = readStringField(resultRecord, ["model"]);
+  const reasoningEffort = readStringField(resultRecord, ["reasoning_effort", "reasoningEffort"]);
+  const senderThreadId = readStringField(resultRecord, ["sender_thread_id", "senderThreadId"]);
+  const receiverThreadIds = Array.isArray(resultRecord.receiver_thread_ids)
+    ? resultRecord.receiver_thread_ids.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : Array.isArray(resultRecord.receiverThreadIds)
+      ? resultRecord.receiverThreadIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : null;
+  const agentsStates = asRecord(resultRecord.agents_states) ?? asRecord(resultRecord.agentsStates);
+
+  block.input = {
+    ...inputRecord,
+    ...(message ? { message } : {}),
+    ...(model ? { model } : {}),
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+    ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
+    ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {}),
+    ...(agentsStates ? { agents_states: agentsStates } : {}),
+  };
+}
+
 function summarizeNetworkDisconnectTexts(texts: string[]): string {
   const observedRetryCount = texts.reduce<number | null>((current, text) => {
     const parsed = parseNetworkDisconnectText(text);
@@ -534,6 +574,7 @@ export function normalizeTranscript(
         ?? [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> => block.type === "tool" && block.status === "running");
 
       if (matched) {
+        mergeCollaborationToolResultInput(matched, entry.content);
         matched.result = entry.content;
         matched.isError = entry.isError;
         matched.status = entry.isError ? "error" : "completed";

@@ -293,6 +293,72 @@ function parseMcpToolCallItem(
   return [{ kind: "tool_result", ts, toolUseId: id, toolName: name, content, isError }];
 }
 
+function normalizeCollabAgentToolName(tool: string): string {
+  switch (tool) {
+    case "spawnAgent":
+      return "spawn_agent";
+    case "sendInput":
+      return "send_input";
+    case "resumeAgent":
+      return "resume_agent";
+    case "wait":
+      return "wait_agent";
+    case "closeAgent":
+      return "close_agent";
+    default:
+      return tool || "collab_agent_tool_call";
+  }
+}
+
+function parseCollabAgentToolCallItem(
+  item: Record<string, unknown>,
+  ts: string,
+  phase: "started" | "completed",
+): TranscriptEntry[] {
+  const id = asString(item.id) || "collab_agent_tool_call";
+  const name = normalizeCollabAgentToolName(asString(item.tool));
+  const receiverThreadIds = Array.isArray(item.receiverThreadIds)
+    ? item.receiverThreadIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+    : [];
+  const agentsStates = asRecord(item.agentsStates) ?? {};
+
+  if (phase === "started") {
+    return [{
+      kind: "tool_call",
+      ts,
+      name,
+      toolUseId: id,
+      input: {
+        id,
+        ...(asString(item.prompt) ? { message: asString(item.prompt) } : {}),
+        ...(asString(item.model) ? { model: asString(item.model) } : {}),
+        ...(asString(item.reasoningEffort) ? { reasoning_effort: asString(item.reasoningEffort) } : {}),
+        ...(asString(item.senderThreadId) ? { sender_thread_id: asString(item.senderThreadId) } : {}),
+        receiver_thread_ids: receiverThreadIds,
+        agents_states: agentsStates,
+      },
+    }];
+  }
+
+  const status = asString(item.status, "completed");
+  return [{
+    kind: "tool_result",
+    ts,
+    toolUseId: id,
+    toolName: name,
+    content: JSON.stringify({
+      status,
+      ...(asString(item.prompt) ? { message: asString(item.prompt) } : {}),
+      ...(asString(item.model) ? { model: asString(item.model) } : {}),
+      ...(asString(item.reasoningEffort) ? { reasoning_effort: asString(item.reasoningEffort) } : {}),
+      ...(asString(item.senderThreadId) ? { sender_thread_id: asString(item.senderThreadId) } : {}),
+      receiver_thread_ids: receiverThreadIds,
+      agents_states: agentsStates,
+    }),
+    isError: status === "failed" || isToolError(item),
+  }];
+}
+
 function parseCodexItem(
   item: Record<string, unknown>,
   ts: string,
@@ -330,6 +396,10 @@ function parseCodexItem(
 
   if (itemType === "mcp_tool_call" || itemType === "mcp_tool_call_begin" || itemType === "mcp_tool_call_end") {
     return parseMcpToolCallItem(item, ts, phase);
+  }
+
+  if (itemType === "collab_agent_tool_call" || itemType === "collabAgentToolCall") {
+    return parseCollabAgentToolCallItem(item, ts, phase);
   }
 
   if (itemType === "file_change" && phase === "completed") {

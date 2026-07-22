@@ -110,6 +110,90 @@ test("hides internal lifecycle and result protocol entries from Messenger proces
   await page.screenshot({ path: "/tmp/rudder-user-message-lifecycle-hidden.png", fullPage: true });
 });
 
+test("shows concrete Codex spawn-agent details in Messenger process activity", async ({ page }) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Chat-Transcript-Spawn-Agent-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const agent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Transcript Delegation Agent",
+    command: E2E_CODEX_STUB,
+  });
+  const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: "Inspectable spawn agent activity",
+      preferredAgentId: agent.id,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      initialMessage: { body: "Delegate an independent transcript review." },
+    },
+  });
+  expect(chatRes.ok()).toBe(true);
+  const chat = await chatRes.json() as { id: string };
+
+  await e2eDb.insert(chatMessages).values({
+    id: randomUUID(),
+    orgId: organization.id,
+    conversationId: chat.id,
+    role: "assistant",
+    kind: "message",
+    status: "completed",
+    body: "The independent review passed.",
+    structuredPayload: {
+      __chatTranscript: [
+        { kind: "system", ts: "2026-07-23T00:00:00.000Z", text: "turn started" },
+        {
+          kind: "tool_call",
+          ts: "2026-07-23T00:00:01.000Z",
+          name: "spawn_agent",
+          toolUseId: "collab-agent-1",
+          input: {
+            message: "Review the transcript renderer for collaboration events.",
+            receiver_thread_ids: [],
+          },
+        },
+        {
+          kind: "tool_result",
+          ts: "2026-07-23T00:00:02.000Z",
+          toolUseId: "collab-agent-1",
+          toolName: "spawn_agent",
+          content: JSON.stringify({
+            status: "completed",
+            receiver_thread_ids: ["thread-child-1"],
+            model: "gpt-5.6-sol",
+            reasoning_effort: "high",
+            agents_states: {
+              "thread-child-1": { status: "completed", message: "Review passed." },
+            },
+          }),
+          isError: false,
+        },
+      ],
+    },
+    replyingAgentId: agent.id,
+    chatTurnId: randomUUID(),
+    turnVariant: 0,
+  });
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+  await expect(page.getByText("The independent review passed.", { exact: true })).toBeVisible();
+  const transcript = page.getByTestId("chat-transcript-item");
+  await transcript.getByRole("button").first().click();
+  await expect(transcript).toContainText(
+    "Spawned agent thread-child-1: Review the transcript renderer for collaboration events.",
+  );
+  await expect(transcript).toContainText("gpt-5.6-sol");
+  await expect(transcript).toContainText("high reasoning");
+  await expect(transcript).not.toContainText("Collab Tool Call");
+  await page.screenshot({ path: "/tmp/rudder-spawn-agent-transcript-details.png", fullPage: true });
+});
+
 test("does not show an empty transcript block when Messenger has only internal lifecycle entries", async ({ page }) => {
   const orgRes = await page.request.post("/api/orgs", {
     data: { name: `Chat-Transcript-Empty-${Date.now()}` },

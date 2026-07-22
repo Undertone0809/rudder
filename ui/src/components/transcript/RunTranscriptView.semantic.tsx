@@ -819,23 +819,39 @@ function summarizeCodexAgentItems(input: Record<string, unknown>): string | null
   return items.length === 1 ? "1 attached item" : `${items.length} attached items`;
 }
 
+function readCodexAgentReceivers(record: Record<string, unknown>): string[] {
+  const values = Array.isArray(record.receiver_thread_ids)
+    ? record.receiver_thread_ids
+    : Array.isArray(record.receiverThreadIds)
+      ? record.receiverThreadIds
+      : [];
+  return values.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
 function describeCodexAgentToolSemanticInfo(name: string, input: unknown): TranscriptToolSemanticInfo | null {
   const toolName = normalizeCodexToolName(name);
   const record = asRecord(input);
   if (!record) return null;
 
   if (toolName === "spawn_agent") {
-    const agentType = readStringField(record, ["agent_type", "agentType", "type"]) ?? "default";
+    const agentType = readStringField(record, ["agent_type", "agentType", "type"]);
     const task =
       summarizeRecord(record, ["message", "task", "prompt", "instructions"])
       ?? summarizeCodexAgentItems(record);
+    const receiverThreadIds = readCodexAgentReceivers(record);
+    const receiver = receiverThreadIds[0];
     const model = readStringField(record, ["model"]);
     const reasoningEffort = readStringField(record, ["reasoning_effort", "reasoningEffort"]);
     const context = record.fork_context === true || record.forkContext === true ? "forked context" : null;
     const details = [model, reasoningEffort ? `${reasoningEffort} reasoning` : null, context].filter(Boolean);
+    const agentLabel = receiver
+      ? `agent ${truncate(receiver, 24)}`
+      : agentType
+        ? `${agentType} agent`
+        : "agent";
     const summary = task
-      ? `Spawned ${agentType} agent: ${task}`
-      : `Spawned ${agentType} agent`;
+      ? `Spawned ${agentLabel}: ${task}`
+      : `Spawned ${agentLabel}`;
 
     return {
       category: "tool",
@@ -850,7 +866,7 @@ function describeCodexAgentToolSemanticInfo(name: string, input: unknown): Trans
   if (toolName === "wait_agent") {
     const targets = Array.isArray(record.targets)
       ? record.targets.filter((target): target is string => typeof target === "string" && target.trim().length > 0)
-      : [];
+      : readCodexAgentReceivers(record);
     return {
       category: "tool",
       label: "Wait for agent",
@@ -864,7 +880,7 @@ function describeCodexAgentToolSemanticInfo(name: string, input: unknown): Trans
   }
 
   if (toolName === "send_input") {
-    const target = readStringField(record, ["target"]);
+    const target = readStringField(record, ["target", "agent_id", "thread_id"]) ?? readCodexAgentReceivers(record)[0];
     const message = summarizeRecord(record, ["message"]) ?? summarizeCodexAgentItems(record);
     return {
       category: "tool",
@@ -879,11 +895,23 @@ function describeCodexAgentToolSemanticInfo(name: string, input: unknown): Trans
   }
 
   if (toolName === "close_agent") {
-    const target = readStringField(record, ["target"]);
+    const target = readStringField(record, ["target", "agent_id", "thread_id"]) ?? readCodexAgentReceivers(record)[0];
     return {
       category: "tool",
       label: "Close agent",
       summary: target ? `Closed agent ${truncate(target, 16)}` : "Closed agent",
+      bucket: "tool",
+      quantity: 1,
+      noun: "tool",
+    };
+  }
+
+  if (toolName === "resume_agent") {
+    const target = readStringField(record, ["target", "agent_id", "thread_id"]) ?? readCodexAgentReceivers(record)[0];
+    return {
+      category: "tool",
+      label: "Resume agent",
+      summary: target ? `Resumed agent ${truncate(target, 24)}` : "Resumed agent",
       bucket: "tool",
       quantity: 1,
       noun: "tool",

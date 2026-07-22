@@ -92,6 +92,36 @@ rl.on("line", (line) => {
       } });
       finish("completed");
     }
+    if (process.env.RUDDER_TEST_COLLAB_AGENT_TRANSCRIPT === "1") {
+      const startedItem = {
+        type: "collabAgentToolCall",
+        id: "collab-1",
+        tool: "spawnAgent",
+        status: "inProgress",
+        senderThreadId: threadId,
+        receiverThreadIds: [],
+        prompt: "Review the transcript renderer for collaboration events.",
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {},
+      };
+      send({ method: "item/started", params: { threadId, turnId, item: startedItem } });
+      send({ method: "item/completed", params: {
+        threadId,
+        turnId,
+        item: {
+          ...startedItem,
+          status: "completed",
+          receiverThreadIds: ["thread-child-1"],
+          model: "gpt-5.6-sol",
+          reasoningEffort: "high",
+          agentsStates: {
+            "thread-child-1": { status: "completed", message: "Review passed." },
+          },
+        },
+      } });
+      finish("completed");
+    }
     if (process.env.RUDDER_TEST_DUAL_REASONING_STREAM === "1") {
       for (const delta of ["I will use ", "visualize once."]) {
         send({ method: "item/reasoning/summaryTextDelta", params: {
@@ -218,6 +248,68 @@ describe("executeCodexAppServerChat", () => {
       toolUseId: "command-1",
       input: { id: "command-1", command: "cat README.md", cwd: root },
     });
+  });
+
+  it("projects Codex collaboration agent calls as structured transcript tools", async () => {
+    const stdoutLines: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_COLLAB_AGENT_TRANSCRIPT: "1",
+      } as Record<string, string>,
+      prompt: "Delegate a transcript review",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stdout") stdoutLines.push(chunk.trim());
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const entries = stdoutLines.flatMap((line) => parseCodexStdoutLine(line, "2026-07-23T00:00:00.000Z"));
+    expect(entries).toContainEqual({
+      kind: "tool_call",
+      ts: "2026-07-23T00:00:00.000Z",
+      name: "spawn_agent",
+      toolUseId: "collab-1",
+      input: {
+        id: "collab-1",
+        message: "Review the transcript renderer for collaboration events.",
+        sender_thread_id: "thread-app-1",
+        receiver_thread_ids: [],
+        agents_states: {},
+      },
+    });
+    expect(entries).toContainEqual({
+      kind: "tool_result",
+      ts: "2026-07-23T00:00:00.000Z",
+      toolUseId: "collab-1",
+      toolName: "spawn_agent",
+      content: JSON.stringify({
+        status: "completed",
+        message: "Review the transcript renderer for collaboration events.",
+        model: "gpt-5.6-sol",
+        reasoning_effort: "high",
+        sender_thread_id: "thread-app-1",
+        receiver_thread_ids: ["thread-child-1"],
+        agents_states: {
+          "thread-child-1": { status: "completed", message: "Review passed." },
+        },
+      }),
+      isError: false,
+    });
+    expect(entries).not.toContainEqual(expect.objectContaining({
+      kind: "system",
+      text: expect.stringContaining("Collab Agent Tool Call"),
+    }));
   });
 
   it("does not leak dispose rejection when setup logging fails before awaiting the turn", async () => {

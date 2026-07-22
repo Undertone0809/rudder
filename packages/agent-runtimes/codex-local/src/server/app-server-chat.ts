@@ -113,6 +113,9 @@ function normalizeThreadItem(value: unknown): JsonRecord {
       input: item.arguments ?? {},
     };
   }
+  if (type === "collabAgentToolCall") {
+    return { ...item, type: "collab_agent_tool_call" };
+  }
   if (type === "webSearch") {
     return { ...item, type: "web_search" };
   }
