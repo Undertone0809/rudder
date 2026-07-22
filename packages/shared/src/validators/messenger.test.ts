@@ -142,8 +142,10 @@ describe("Messenger Saved View validators", () => {
     }).success).toBe(false);
   });
 
-  it("validates metadata updates, visibility, and complete reorder identities", () => {
-    expect(updateMessengerSavedViewSchema.safeParse({ title: "Renamed", hidden: true }).success).toBe(true);
+  it("validates metadata updates, legacy restoration, and complete reorder identities", () => {
+    expect(updateMessengerSavedViewSchema.safeParse({ title: "Renamed" }).success).toBe(true);
+    expect(updateMessengerSavedViewSchema.safeParse({ hidden: false }).success).toBe(true);
+    expect(updateMessengerSavedViewSchema.safeParse({ hidden: true }).success).toBe(false);
     expect(updateMessengerSavedViewSchema.safeParse({}).success).toBe(false);
     expect(listMessengerSavedViewsQuerySchema.parse({})).toEqual({ visibility: "visible", limit: 50, offset: 0 });
     expect(listMessengerSavedViewsQuerySchema.parse({ visibility: "hidden", limit: "100", offset: "50" })).toEqual({

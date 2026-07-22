@@ -78,7 +78,9 @@ export const updateMessengerSavedViewSchema = z.object({
   title: savedViewMetadataShape.title.optional(),
   subtitle: savedViewMetadataShape.subtitle,
   favicon: savedViewMetadataShape.favicon,
-  hidden: z.boolean().optional(),
+  // Compatibility-only escape hatch for legacy hidden rows. The current
+  // group-only Saved View model has no operation that creates hidden rows.
+  hidden: z.literal(false).optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required");
 
 export const reorderMessengerSavedViewsSchema = z.object({

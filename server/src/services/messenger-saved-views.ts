@@ -205,6 +205,10 @@ export function messengerSavedViewsService(db: Db) {
 
   async function update(orgId: string, userId: string, id: string, patch: UpdateMessengerSavedView) {
     const validId = assertSavedViewId(id);
+    const requestedHidden = (patch as { hidden?: unknown }).hidden;
+    if (requestedHidden !== undefined && requestedHidden !== false) {
+      throw badRequest("Messenger Saved Views cannot be hidden");
+    }
     const target = patch.target ? validatedTarget(patch.target) : undefined;
     return db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
@@ -217,11 +221,7 @@ export function messengerSavedViewsService(db: Db) {
         throw badRequest("Saved View target identity cannot be changed");
       }
       const wasHidden = Boolean(existing.hiddenAt);
-      const nextHiddenAt = patch.hidden === undefined
-        ? existing.hiddenAt
-        : patch.hidden
-          ? existing.hiddenAt ?? new Date()
-          : null;
+      const nextHiddenAt = patch.hidden === false ? null : existing.hiddenAt;
       const [updated] = await txDb
         .update(messengerSavedViews)
         .set({
@@ -236,7 +236,7 @@ export function messengerSavedViewsService(db: Db) {
         .returning();
       const isHidden = Boolean(updated.hiddenAt);
       const action = wasHidden !== isHidden
-        ? isHidden ? "messenger.saved_view_hidden" : "messenger.saved_view_restored"
+        ? "messenger.saved_view_restored"
         : "messenger.saved_view_updated";
       await logMutation(txDb, orgId, userId, action, updated);
       return updated;

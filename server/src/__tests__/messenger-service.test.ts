@@ -7204,7 +7204,14 @@ describe("messengerService and issue follows", () => {
       localBindingId: "binding-1",
       viewInstanceId: "local-app-view",
     });
-    await savedViewsSvc.update(orgId, userId, kept.savedView.id, { hidden: true });
+    const invalidVisibilityPatch = { hidden: true } as unknown as Parameters<typeof savedViewsSvc.update>[3];
+    await expect(savedViewsSvc.update(
+      orgId,
+      userId,
+      kept.savedView.id,
+      invalidVisibilityPatch,
+    )).rejects.toMatchObject({ status: 400 });
+    await expect(savedViewsSvc.get(orgId, userId, kept.savedView.id)).resolves.toMatchObject({ hiddenAt: null });
     await expect(messengerSvc.separateCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
     await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
     await expect(messengerSvc.removeThreadFromCustomGroups(
@@ -7262,11 +7269,15 @@ describe("messengerService and issue follows", () => {
     const membershipBeforeHide = await db.select().from(messengerCustomGroupEntries);
     expect(membershipBeforeHide).toHaveLength(1);
 
-    await savedViewsSvc.update(orgId, userId, automation.id, { hidden: true });
+    await db.update(messengerSavedViews)
+      .set({ hiddenAt: new Date("2026-01-01T00:00:00.000Z") })
+      .where(eq(messengerSavedViews.id, automation.id));
     expect((await savedViewsSvc.list(orgId, userId, { visibility: "hidden" })).items.map((view) => view.id)).toEqual([automation.id]);
     expect((await savedViewsSvc.list(orgId, userId, { visibility: "visible" })).items.map((view) => view.id)).not.toContain(automation.id);
     expect((await messengerSvc.listCustomGroups(orgId, userId)).groups[0]?.entries).toEqual([]);
     expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(1);
+    await expect(messengerSvc.separateCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
+    await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
 
     const restored = await savedViewsSvc.update(orgId, userId, automation.id, {
       hidden: false,
@@ -7282,6 +7293,11 @@ describe("messengerService and issue follows", () => {
     expect(restoredEntry).not.toHaveProperty("threadKey");
     expect(restoredEntry).not.toHaveProperty("thread");
 
+    const metadataUpdated = await savedViewsSvc.update(orgId, userId, automation.id, {
+      subtitle: "Metadata remains editable",
+    });
+    expect(metadataUpdated.subtitle).toBe("Metadata remains editable");
+
     await expect(savedViewsSvc.update(orgId, userId, automation.id, {
       target: { kind: "automation", automationId: randomUUID(), viewInstanceId: "different-automation-view" },
     })).rejects.toMatchObject({ status: 400 });
@@ -7296,6 +7312,9 @@ describe("messengerService and issue follows", () => {
       .where(eq(activityLog.entityType, "messenger_saved_view"));
     expect(savedViewActivity.length).toBeGreaterThanOrEqual(3);
     expect(new Set(savedViewActivity.map((event) => event.actorId))).toEqual(new Set([userId]));
+
+    await savedViewsSvc.remove(orgId, userId, automation.id);
+    await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).resolves.toMatchObject({ id: group.id });
   });
 
   it("reorders Saved Views and transactionally removes their group membership", async () => {
@@ -7384,7 +7403,9 @@ describe("messengerService and issue follows", () => {
         subtitle: "Updated metadata",
       });
 
-      await savedViewsSvc.update(orgId, userId, created.id, { hidden: true });
+      await db.update(messengerSavedViews)
+        .set({ hiddenAt: new Date("2026-01-01T00:00:00.000Z") })
+        .where(eq(messengerSavedViews.id, created.id));
       const restored = await savedViewsSvc.update(orgId, userId, created.id, {
         hidden: false,
         title: `Restored library target ${index}`,
@@ -7455,7 +7476,9 @@ describe("messengerService and issue follows", () => {
       }));
     }
     const [a, b, c, d] = orderedViews as [typeof orderedViews[number], typeof orderedViews[number], typeof orderedViews[number], typeof orderedViews[number]];
-    await savedViewsSvc.update(orgId, userId, b.id, { hidden: true });
+    await db.update(messengerSavedViews)
+      .set({ hiddenAt: new Date("2026-01-01T00:00:00.000Z") })
+      .where(eq(messengerSavedViews.id, b.id));
     await savedViewsSvc.reorder(orgId, userId, [d.id, c.id, a.id]);
     const hiddenPlacement = await db.select().from(messengerSavedViews).where(eq(messengerSavedViews.id, b.id));
     expect(hiddenPlacement[0]?.sortOrder).toBe(1);
@@ -7468,7 +7491,9 @@ describe("messengerService and issue follows", () => {
       `saved-view:${c.id}`,
     ]);
     const groupId = group.groups[0]!.id;
-    await savedViewsSvc.update(orgId, userId, b.id, { hidden: true });
+    await db.update(messengerSavedViews)
+      .set({ hiddenAt: new Date("2026-01-02T00:00:00.000Z") })
+      .where(eq(messengerSavedViews.id, b.id));
     await messengerSvc.reorderCustomGroupEntries(orgId, userId, groupId, [
       `saved-view:${c.id}`,
       `saved-view:${a.id}`,

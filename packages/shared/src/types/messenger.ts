@@ -80,6 +80,7 @@ export interface MessengerSavedView {
   subtitle: string | null;
   favicon: string | null;
   sortOrder: number;
+  /** Non-null only for legacy rows; current mutations may restore but never hide. */
   hiddenAt: Date | null;
   createdAt: Date;
   updatedAt: Date;

@@ -223,8 +223,12 @@ describe("Messenger Saved View and generic group routes", () => {
 
     expect((await request(app).get(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);
     expect(mockSavedViewsService.get).toHaveBeenCalledWith("org-1", "user-1", savedViewId);
-    expect((await request(app).patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ hidden: true })).status).toBe(200);
-    expect(mockSavedViewsService.update).toHaveBeenCalledWith("org-1", "user-1", savedViewId, { hidden: true });
+    expect((await request(app).patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ hidden: true })).status).toBe(400);
+    expect(mockSavedViewsService.update).not.toHaveBeenCalled();
+    expect((await request(app).patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ title: "Updated" })).status).toBe(200);
+    expect(mockSavedViewsService.update).toHaveBeenCalledWith("org-1", "user-1", savedViewId, { title: "Updated" });
+    expect((await request(app).patch(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`).send({ hidden: false })).status).toBe(200);
+    expect(mockSavedViewsService.update).toHaveBeenCalledWith("org-1", "user-1", savedViewId, { hidden: false });
     expect((await request(app).delete(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);
     expect(mockSavedViewsService.remove).toHaveBeenCalledWith("org-1", "user-1", savedViewId);
 
