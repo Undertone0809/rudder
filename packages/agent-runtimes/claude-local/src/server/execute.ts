@@ -48,6 +48,7 @@ import {
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -174,8 +175,14 @@ async function readJsonObject(filePath: string): Promise<Record<string, unknown>
 
 async function writePrivateJsonFile(filePath: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await fs.chmod(filePath, 0o600);
+  const tempPath = `${filePath}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await fs.rename(tempPath, filePath);
+    await fs.chmod(filePath, 0o600);
+  } finally {
+    await fs.rm(tempPath, { force: true });
+  }
 }
 
 export async function resolveRudderMcpServerConfig(
@@ -580,8 +587,8 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     runtimeEnv.RUDDER_BROWSER_ENABLED = "false";
     await (input.onLog ?? (async () => {}))("stderr", `[rudder] ${browserMcpPreflight?.diagnostic}\n`);
   }
-  await writeManagedClaudeMcpConfig(
-    managedHome,
+  const mcpConfigPath = await writeManagedClaudeMcpConfig(
+    runtimeTmpDir,
     pickRudderMcpManagedEnv(env),
     rudderMcpCommand,
     browserMcpCommand ?? undefined,
@@ -608,7 +615,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     extraArgs,
     permissionMode,
     settingsPath: managedClaudeHome.settingsPath,
-    mcpConfigPath: managedClaudeHome.mcpConfigPath,
+    mcpConfigPath,
     runtimeTmpDir,
     rudderMcpPreflight,
     browserMcpPreflight,

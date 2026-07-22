@@ -51,6 +51,7 @@ import {
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -273,19 +274,22 @@ export async function resolveRudderOpenCodeMcpConfigs(
 async function ensureManagedOpenCodeConfig(input: {
   sourceHome: string;
   targetHome: string;
+  configPath?: string;
   managedEnv?: RudderMcpManagedEnv;
   verifiedCommand?: RudderMcpCliCommand;
   verifiedBrowserCommand?: RudderMcpCliCommand;
   onLog: AgentRuntimeExecutionContext["onLog"];
 }) {
-  const configDir = path.join(input.targetHome, ".config", "opencode");
+  const configDir = input.configPath
+    ? path.dirname(input.configPath)
+    : path.join(input.targetHome, ".config", "opencode");
   const existing = await fs.lstat(configDir).catch(() => null);
   if (existing?.isSymbolicLink()) {
     await fs.unlink(configDir);
   }
 
   await fs.mkdir(configDir, { recursive: true });
-  await removeManagedOpenCodeConfigExtensions(configDir);
+  if (!input.configPath) await removeManagedOpenCodeConfigExtensions(configDir);
 
   const config = await readOpenCodeConfigFile(input.sourceHome);
   config.mcp = await resolveRudderOpenCodeMcpConfigs(
@@ -293,12 +297,15 @@ async function ensureManagedOpenCodeConfig(input: {
     input.verifiedCommand,
     input.verifiedBrowserCommand,
   );
-  await fs.writeFile(
-    path.join(configDir, MANAGED_OPENCODE_CONFIG_FILE),
-    `${JSON.stringify(config, null, 2)}\n`,
-    { encoding: "utf8", mode: 0o600 },
-  );
-  await fs.chmod(path.join(configDir, MANAGED_OPENCODE_CONFIG_FILE), 0o600);
+  const configPath = input.configPath ?? path.join(configDir, MANAGED_OPENCODE_CONFIG_FILE);
+  const tempPath = `${configPath}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tempPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await fs.rename(tempPath, configPath);
+    await fs.chmod(configPath, 0o600);
+  } finally {
+    await fs.rm(tempPath, { force: true });
+  }
   await input.onLog(
     "stdout",
     `[rudder] Wrote sanitized OpenCode config into adapter-managed runtime state ${configDir}.\n`,
@@ -521,8 +528,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     operatorHome,
     onLog,
     agent.orgId,
-    pickRudderMcpManagedEnv(env),
+    {},
   );
+  const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
+  await fs.mkdir(runtimeTmpDir, { recursive: true });
+  const runConfigPath = path.join(runtimeTmpDir, MANAGED_OPENCODE_CONFIG_FILE);
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
     home: managedHome,
@@ -531,7 +541,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
   env.HOME = operatorHome;
   env.USERPROFILE = operatorHome;
-  env.OPENCODE_CONFIG = path.join(managedHome, ".config", "opencode", MANAGED_OPENCODE_CONFIG_FILE);
+  env.OPENCODE_CONFIG = runConfigPath;
   env.OPENCODE_DISABLE_CLAUDE_CODE = "true";
   env.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT = "true";
   env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = "true";
@@ -611,6 +621,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   await ensureManagedOpenCodeConfig({
     sourceHome: operatorHome,
     targetHome: managedHome,
+    configPath: runConfigPath,
     managedEnv: pickRudderMcpManagedEnv(env),
     verifiedCommand: rudderMcpCommand,
     verifiedBrowserCommand: browserMcpCommand ?? undefined,
@@ -738,8 +749,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };
-  const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
-  await fs.mkdir(runtimeTmpDir, { recursive: true });
   const promptFilePath = path.join(runtimeTmpDir, "rudder-prompt.md");
   await fs.writeFile(promptFilePath, prompt, "utf8");
   const useStdinPrompt = context.chatMode === true;

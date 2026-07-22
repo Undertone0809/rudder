@@ -1,7 +1,6 @@
 import { execute, resetOpenCodeModelsCacheForTests } from "@rudderhq/agent-runtime-opencode-local/server";
 import { buildOpenCodeLocalConfig } from "@rudderhq/agent-runtime-opencode-local/ui";
 import {
-  RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_BROWSER_MCP_TOOL_NAMES,
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_TOOL_NAMES,
@@ -379,7 +378,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expectPreparedGitConfigCapture(capture);
       expect(capture.home).toBe(root);
       expect(capture.userProfile).toBe(root);
-      expect(capture.opencodeConfig).toBe(path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "opencode-home", ".config", "opencode", "opencode.json"));
+      expect(capture.opencodeConfig).toBe(path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "opencode-home", "runtime-tmp", "run-opencode-memory", "opencode.json"));
       expect(capture.rudderOperatorHome).toBe(root);
       expect(capture.argv).toEqual(expect.arrayContaining(["run", "--format", "json", "--dir", workspace]));
       expect(capture.argv).toContain("--pure");
@@ -1032,7 +1031,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         opencodeConfigDir: string | null;
       };
       expect(capture.home).toBe(root);
-      expect(capture.opencodeConfig).toBe(path.join(managedOpenCodeHome, ".config", "opencode", "opencode.json"));
+      expect(capture.opencodeConfig).toBe(path.join(managedOpenCodeHome, "runtime-tmp", "run-opencode-runtime-skill", "opencode.json"));
       expect(capture.rudderOperatorHome).toBe(root);
       expect(capture.xdgConfigHome).toBe(path.join(managedOpenCodeHome, ".config"));
       expect(capture.xdgDataHome).toBe(path.join(managedOpenCodeHome, ".local", "share"));
@@ -1059,11 +1058,14 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       await expect(fs.lstat(path.join(managedConfigDir, "opencode.jsonc"))).rejects.toMatchObject({
         code: "ENOENT",
       });
-      expect((await fs.stat(path.join(managedConfigDir, "opencode.json"))).mode & 0o777).toBe(0o600);
-      await expect(fs.readFile(path.join(managedConfigDir, "opencode.json"), "utf8")).resolves.not.toContain(
+      const sharedConfigPath = path.join(managedConfigDir, "opencode.json");
+      expect((await fs.stat(sharedConfigPath)).mode & 0o777).toBe(0o600);
+      await expect(fs.readFile(sharedConfigPath, "utf8")).resolves.not.toContain(
         forbiddenConfigMarker,
       );
-      const managedConfig = JSON.parse(await fs.readFile(path.join(managedConfigDir, "opencode.json"), "utf8")) as {
+      await expect(fs.readFile(sharedConfigPath, "utf8")).resolves.not.toContain("run-jwt-token");
+      expect((await fs.stat(capture.opencodeConfig!)).mode & 0o777).toBe(0o600);
+      const managedConfig = JSON.parse(await fs.readFile(capture.opencodeConfig!, "utf8")) as {
         autoupdate?: unknown;
         mcp?: Record<string, { type?: unknown; command?: unknown; environment?: Record<string, unknown>; enabled?: unknown }>;
         provider?: Record<string, unknown>;
@@ -1130,11 +1132,8 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expect(nativeDiscoverableSkills).toBeUndefined();
       expect(rudderMcp).toEqual({
         available: true,
-        browserAvailable: false,
-        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
         coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
-        diagnosticCode: null,
         provenance: "repo",
         serverName: "rudder-tools",
         toolCount: 69,
@@ -1548,6 +1547,85 @@ describe("opencode execute", { timeout: 20_000 }, () => {
   );
 
   it.skipIf(process.platform === "win32")(
+    "isolates concurrent OpenCode MCP configs by run identity and Browser eligibility",
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-concurrent-mcp-"));
+      const workspace = path.join(root, "workspace");
+      const commandPath = path.join(root, "opencode");
+      await fs.mkdir(workspace, { recursive: true });
+      await writeFakeOpenCodeCommand(commandPath);
+      const installedDesktopMcp = await installCanonicalDesktopMcp(root);
+      const previousHome = process.env.HOME;
+      const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+      const previousRudderHome = process.env.RUDDER_HOME;
+      process.env.HOME = root;
+      process.env.RUDDER_OPERATOR_HOME = root;
+      process.env.RUDDER_HOME = path.join(root, ".rudder");
+      try {
+        const invoke = async (input: {
+          agentId: string;
+          browserEnabled: boolean;
+          capturePath: string;
+          runId: string;
+          token: string;
+        }) => execute({
+          runId: input.runId,
+          agent: { id: input.agentId, orgId: "organization-1", name: input.agentId, agentRuntimeType: "opencode_local", agentRuntimeConfig: {} },
+          runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+          config: {
+            command: commandPath,
+            cwd: workspace,
+            model: "openai/gpt-4.1-mini",
+            rudderBrowserEnabled: input.browserEnabled,
+            env: { RUDDER_TEST_CAPTURE_PATH: input.capturePath },
+            promptTemplate: "Follow the heartbeat.",
+          },
+          context: {},
+          authToken: input.token,
+          onLog: async () => {},
+        });
+        const enabledCapturePath = path.join(root, "enabled.json");
+        const disabledCapturePath = path.join(root, "disabled.json");
+        const [enabledResult, disabledResult] = await Promise.all([
+          invoke({ agentId: "agent-enabled", browserEnabled: true, capturePath: enabledCapturePath, runId: "run-enabled", token: "token-enabled" }),
+          invoke({ agentId: "agent-disabled", browserEnabled: false, capturePath: disabledCapturePath, runId: "run-disabled", token: "token-disabled" }),
+        ]);
+        expect([enabledResult.exitCode, disabledResult.exitCode]).toEqual([0, 0]);
+        const captures = await Promise.all([enabledCapturePath, disabledCapturePath].map(async (filePath) =>
+          JSON.parse(await fs.readFile(filePath, "utf8")) as { opencodeConfig: string }
+        ));
+        expect(captures[0].opencodeConfig).not.toBe(captures[1].opencodeConfig);
+        const configs = await Promise.all(captures.map(async (capture) =>
+          JSON.parse(await fs.readFile(capture.opencodeConfig, "utf8")) as {
+            mcp: Record<string, { environment: Record<string, string> }>;
+          }
+        ));
+        expect(Object.keys(configs[0].mcp)).toEqual(["rudder-tools", "rudder-browser"]);
+        expect(Object.keys(configs[1].mcp)).toEqual(["rudder-tools"]);
+        for (const server of Object.values(configs[0].mcp)) {
+          expect(server.environment).toMatchObject({ RUDDER_AGENT_ID: "agent-enabled", RUDDER_API_KEY: "token-enabled", RUDDER_RUN_ID: "run-enabled" });
+          expect(JSON.stringify(server.environment)).not.toContain("token-disabled");
+        }
+        expect(configs[1].mcp["rudder-tools"].environment).toMatchObject({
+          RUDDER_AGENT_ID: "agent-disabled",
+          RUDDER_API_KEY: "token-disabled",
+          RUDDER_RUN_ID: "run-disabled",
+        });
+        expect(JSON.stringify(configs[1])).not.toContain("token-enabled");
+      } finally {
+        installedDesktopMcp.restore();
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+        if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+        else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+        if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+        else process.env.RUDDER_HOME = previousRudderHome;
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "removes Browser skill, prompt, tools, and metadata together after a bundle mismatch",
     async () => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-browser-mismatch-"));
@@ -1614,10 +1692,11 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         expect(meta.promptInjectedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          browserAvailable: false,
-          diagnosticCode: "browser_bundle_version_mismatch",
           toolCount: 69,
         });
+        expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
+        expect(meta.rudderMcp).not.toHaveProperty("contractHash");
+        expect(meta.rudderMcp).not.toHaveProperty("diagnosticCode");
         expect(meta.browserMcp).toMatchObject({
           available: false,
           diagnosticCode: "browser_bundle_version_mismatch",

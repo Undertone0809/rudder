@@ -763,17 +763,23 @@ describe("codex execute", { timeout: 20_000 }, () => {
         expect(argv).not.toContain("exec");
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          browserAvailable: false,
-          contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
           contractVersion: RUDDER_MCP_CONTRACT_VERSION,
           coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
-          diagnosticCode: "browser_bundle_version_mismatch",
           provenance: "desktop_bundle",
           serverName: "rudder-tools",
           toolCount: 69,
+          version: "0.4.6",
+        });
+        expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
+        expect(meta.rudderMcp).not.toHaveProperty("contractHash");
+        expect(meta.rudderMcp).not.toHaveProperty("diagnosticCode");
+        expect(meta.browserMcp).toMatchObject({
+          available: false,
+          diagnosticCode: "browser_bundle_version_mismatch",
+          serverName: "rudder-browser",
           version: "0.4.5",
         });
-        expect((meta.rudderMcp as { fallbackReason?: string }).fallbackReason).toContain(
+        expect((meta.browserMcp as { fallbackReason?: string }).fallbackReason).toContain(
           "bundle version mismatch",
         );
       } finally {
@@ -2113,16 +2119,16 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(runtimeMetadata.rudderMcp).toMatchObject({
         available: true,
-        browserAvailable: false,
-        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
         coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
-        diagnosticCode: null,
         provenance: "desktop_bundle",
         serverName: "rudder-tools",
         toolCount: 69,
         version: "0.4.6",
       });
+      expect(runtimeMetadata.rudderMcp).not.toHaveProperty("browserAvailable");
+      expect(runtimeMetadata.rudderMcp).not.toHaveProperty("contractHash");
+      expect(runtimeMetadata.rudderMcp).not.toHaveProperty("diagnosticCode");
       expect(runtimeMetadata.browserMcp).toMatchObject({
         available: true,
         contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
@@ -3726,10 +3732,11 @@ describe("codex execute", { timeout: 20_000 }, () => {
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          browserAvailable: false,
-          diagnosticCode: "browser_bundle_version_mismatch",
           toolCount: 69,
         });
+        expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
+        expect(meta.rudderMcp).not.toHaveProperty("contractHash");
+        expect(meta.rudderMcp).not.toHaveProperty("diagnosticCode");
         expect(meta.browserMcp).toMatchObject({
           available: false,
           diagnosticCode: "browser_bundle_version_mismatch",

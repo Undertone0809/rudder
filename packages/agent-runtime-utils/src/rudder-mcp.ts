@@ -48,6 +48,11 @@ export interface RudderMcpCliCommand {
 export type RudderMcpCliProvenance = "desktop_bundle" | "external_runtime" | "repo" | "path";
 
 export type RudderMcpPreflightDiagnosticCode =
+  | "core_bundle_handshake_failed"
+  | "core_bundle_server_mismatch"
+  | "core_bundle_version_mismatch"
+  | "core_bundle_contract_mismatch"
+  | "core_bundle_tools_mismatch"
   | "browser_bundle_handshake_failed"
   | "browser_bundle_server_mismatch"
   | "browser_bundle_version_mismatch"
@@ -56,12 +61,12 @@ export type RudderMcpPreflightDiagnosticCode =
 
 export interface RudderMcpPreflightResult {
   available: boolean;
-  browserAvailable: boolean;
+  browserAvailable?: boolean;
   provenance: RudderMcpCliProvenance;
   version: string | null;
   contractVersion: string | null;
   coreContractHash: string | null;
-  contractHash: string | null;
+  contractHash?: string | null;
   diagnosticCode: RudderMcpPreflightDiagnosticCode | null;
   diagnostic: string | null;
   tools: Array<{
@@ -79,9 +84,6 @@ export interface RudderMcpRuntimeMetadata {
   version?: string | null;
   contractVersion?: string | null;
   coreContractHash?: string | null;
-  contractHash?: string | null;
-  browserAvailable?: boolean;
-  diagnosticCode?: RudderMcpPreflightDiagnosticCode | null;
   fallbackReason?: string | null;
 }
 
@@ -100,12 +102,12 @@ export interface RudderBrowserMcpRuntimeMetadata {
 export function rudderMcpRuntimeMetadata(
   input: {
     available?: boolean;
+    /** @deprecated Ignored; Browser capability state is reported only by browserMcp. */
     browserEnabled?: boolean;
     preflight?: RudderMcpPreflightResult | null;
     fallbackReason?: string | null;
   } = {},
 ): RudderMcpRuntimeMetadata {
-  const browserAvailable = input.browserEnabled === true && input.preflight?.browserAvailable !== false;
   const metadata: RudderMcpRuntimeMetadata = {
     available: input.available ?? input.preflight?.available ?? true,
     serverName: RUDDER_MCP_SERVER_NAME,
@@ -117,9 +119,6 @@ export function rudderMcpRuntimeMetadata(
     metadata.version = input.preflight.version;
     metadata.contractVersion = input.preflight.contractVersion;
     metadata.coreContractHash = input.preflight.coreContractHash;
-    metadata.contractHash = input.preflight.contractHash;
-    metadata.browserAvailable = browserAvailable;
-    metadata.diagnosticCode = input.preflight.diagnosticCode;
   }
   return metadata;
 }

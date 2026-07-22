@@ -3,7 +3,6 @@ import {
   resetPiModelsCacheForTests,
 } from "@rudderhq/agent-runtime-pi-local/server";
 import {
-  RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_BROWSER_MCP_TOOL_NAMES,
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_TOOL_NAMES,
@@ -455,11 +454,8 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(nativeDiscoverableSkills).toBeUndefined();
       expect(rudderMcp).toEqual({
         available: false,
-        browserAvailable: false,
-        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
         coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
-        diagnosticCode: null,
         serverName: "rudder-tools",
         toolCount: 69,
         provenance: "repo",
@@ -1063,10 +1059,11 @@ describe("pi execute", { timeout: 20_000 }, () => {
         expect(meta.loadedSkills).toEqual([expect.objectContaining({ runtimeName: "keep-skill" })]);
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
-          browserAvailable: false,
-          diagnosticCode: "browser_bundle_version_mismatch",
           toolCount: 69,
         });
+        expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
+        expect(meta.rudderMcp).not.toHaveProperty("contractHash");
+        expect(meta.rudderMcp).not.toHaveProperty("diagnosticCode");
         expect(meta.rudderNativeTools).toMatchObject({ toolCount: 69 });
         expect((meta.rudderNativeTools as { toolNames: string[] }).toolNames).toEqual([
           ...RUDDER_CORE_MCP_TOOL_NAMES,

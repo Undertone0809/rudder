@@ -171,9 +171,7 @@ export interface AgentRuntimeInvocationMeta {
     provenance?: "desktop_bundle" | "external_runtime" | "repo" | "path" | null;
     version?: string | null;
     contractVersion?: string | null;
-    contractHash?: string | null;
-    browserAvailable?: boolean;
-    diagnosticCode?: string | null;
+    coreContractHash?: string | null;
     fallbackReason?: string | null;
   };
   browserMcp?: {

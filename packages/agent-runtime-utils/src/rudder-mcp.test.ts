@@ -11,7 +11,7 @@ import {
 } from "./rudder-mcp.js";
 
 describe("Rudder MCP Browser capability", () => {
-  it("adds provenance and contract diagnostics only after a real preflight", () => {
+  it("projects only core provenance and contract state into core metadata", () => {
     expect(rudderMcpRuntimeMetadata({ browserEnabled: false })).toEqual({
       available: true,
       serverName: "rudder-tools",
@@ -19,7 +19,7 @@ describe("Rudder MCP Browser capability", () => {
       fallbackReason: null,
     });
 
-    expect(rudderMcpRuntimeMetadata({
+    const metadata = rudderMcpRuntimeMetadata({
       browserEnabled: true,
       preflight: {
         available: true,
@@ -33,14 +33,16 @@ describe("Rudder MCP Browser capability", () => {
         diagnostic: null,
         tools: [],
       },
-    })).toMatchObject({
-      browserAvailable: true,
+    });
+    expect(metadata).toMatchObject({
       coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
-      contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
       provenance: "repo",
       toolCount: RUDDER_MCP_TOOL_COUNT,
       version: "0.4.6",
     });
+    expect(metadata).not.toHaveProperty("browserAvailable");
+    expect(metadata).not.toHaveProperty("contractHash");
+    expect(metadata).not.toHaveProperty("diagnosticCode");
   });
 
   it("derives the enabled capability only from the trusted boolean run config", async () => {

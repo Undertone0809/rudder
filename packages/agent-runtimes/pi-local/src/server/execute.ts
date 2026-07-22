@@ -363,7 +363,7 @@ async function ensurePiRudderToolsExtension(input: {
       });
   if (input.surface === "core") assertRudderMcpCoreAvailable(rudderMcpPreflight);
   const browserEnabled = input.surface === "browser"
-    ? input.browserEnabled && rudderMcpPreflight.browserAvailable
+    ? input.browserEnabled && rudderMcpPreflight.browserAvailable === true
     : input.browserEnabled;
   if (input.surface === "browser" && input.browserEnabled && !browserEnabled) {
     await input.onLog("stderr", `[rudder] ${rudderMcpPreflight.diagnostic}\n`);

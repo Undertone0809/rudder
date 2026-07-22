@@ -42,9 +42,7 @@ const managedClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR ?? null;
 const managedClaudeSettingsPath = process.env.RUDDER_CLAUDE_HOME
   ? path.join(process.env.RUDDER_CLAUDE_HOME, ".claude", "settings.json")
   : null;
-const managedClaudeMcpConfigPath = process.env.RUDDER_CLAUDE_HOME
-  ? path.join(process.env.RUDDER_CLAUDE_HOME, ".claude", "rudder-mcp.json")
-  : null;
+const managedClaudeMcpConfigPath = mcpConfigPath;
 const managedClaudeJsonPath = process.env.RUDDER_CLAUDE_HOME
   ? path.join(process.env.RUDDER_CLAUDE_HOME, ".claude.json")
   : null;
@@ -1253,6 +1251,81 @@ describe("claude execute", { timeout: 20_000 }, () => {
   );
 
   it.skipIf(process.platform === "win32")(
+    "isolates concurrent Claude MCP configs by run identity and Browser eligibility",
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-concurrent-mcp-"));
+      const workspace = path.join(root, "workspace");
+      const commandPath = path.join(root, "claude");
+      await fs.mkdir(workspace, { recursive: true });
+      await writeFakeClaudeCommand(commandPath);
+      const installedDesktopMcp = await installCanonicalDesktopMcp(root);
+      const previousHome = process.env.HOME;
+      const previousRudderHome = process.env.RUDDER_HOME;
+      process.env.HOME = root;
+      process.env.RUDDER_HOME = path.join(root, ".rudder");
+      try {
+        const invoke = async (input: {
+          agentId: string;
+          browserEnabled: boolean;
+          capturePath: string;
+          runId: string;
+          token: string;
+        }) => execute({
+          runId: input.runId,
+          agent: { id: input.agentId, orgId: "organization-1", name: input.agentId, agentRuntimeType: "claude_local", agentRuntimeConfig: {} },
+          runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+          config: {
+            command: commandPath,
+            cwd: workspace,
+            rudderBrowserEnabled: input.browserEnabled,
+            env: { RUDDER_TEST_CAPTURE_PATH: input.capturePath },
+            promptTemplate: "Follow the heartbeat.",
+          },
+          context: {},
+          authToken: input.token,
+          onLog: async () => {},
+        });
+        const enabledCapturePath = path.join(root, "enabled.json");
+        const disabledCapturePath = path.join(root, "disabled.json");
+        const [enabledResult, disabledResult] = await Promise.all([
+          invoke({ agentId: "agent-enabled", browserEnabled: true, capturePath: enabledCapturePath, runId: "run-enabled", token: "token-enabled" }),
+          invoke({ agentId: "agent-disabled", browserEnabled: false, capturePath: disabledCapturePath, runId: "run-disabled", token: "token-disabled" }),
+        ]);
+        expect([enabledResult.exitCode, disabledResult.exitCode]).toEqual([0, 0]);
+        const captures = await Promise.all([enabledCapturePath, disabledCapturePath].map(async (filePath) =>
+          JSON.parse(await fs.readFile(filePath, "utf8")) as {
+            managedClaudeMcpConfig: string;
+            managedClaudeMcpConfigPath: string;
+          }
+        ));
+        expect(captures[0].managedClaudeMcpConfigPath).not.toBe(captures[1].managedClaudeMcpConfigPath);
+        const [enabledConfig, disabledConfig] = captures.map((capture) => JSON.parse(capture.managedClaudeMcpConfig) as {
+          mcpServers: Record<string, { env: Record<string, string> }>;
+        });
+        expect(Object.keys(enabledConfig.mcpServers)).toEqual(["rudder-tools", "rudder-browser"]);
+        expect(Object.keys(disabledConfig.mcpServers)).toEqual(["rudder-tools"]);
+        for (const server of Object.values(enabledConfig.mcpServers)) {
+          expect(server.env).toMatchObject({ RUDDER_AGENT_ID: "agent-enabled", RUDDER_API_KEY: "token-enabled", RUDDER_RUN_ID: "run-enabled" });
+          expect(JSON.stringify(server.env)).not.toContain("token-disabled");
+        }
+        expect(disabledConfig.mcpServers["rudder-tools"].env).toMatchObject({
+          RUDDER_AGENT_ID: "agent-disabled",
+          RUDDER_API_KEY: "token-disabled",
+          RUDDER_RUN_ID: "run-disabled",
+        });
+        expect(JSON.stringify(disabledConfig)).not.toContain("token-enabled");
+      } finally {
+        installedDesktopMcp.restore();
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+        if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+        else process.env.RUDDER_HOME = previousRudderHome;
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "removes Browser skill, prompt, tools, and metadata together after a bundle mismatch",
     async () => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-browser-mismatch-"));
@@ -1318,10 +1391,11 @@ describe("claude execute", { timeout: 20_000 }, () => {
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          browserAvailable: false,
-          diagnosticCode: "browser_bundle_version_mismatch",
           toolCount: 69,
         });
+        expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
+        expect(meta.rudderMcp).not.toHaveProperty("contractHash");
+        expect(meta.rudderMcp).not.toHaveProperty("diagnosticCode");
         expect(meta.browserMcp).toMatchObject({
           available: false,
           diagnosticCode: "browser_bundle_version_mismatch",
