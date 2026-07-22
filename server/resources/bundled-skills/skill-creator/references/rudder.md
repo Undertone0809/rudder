@@ -5,6 +5,11 @@ Read this reference whenever the run exposes Rudder context such as
 `RUDDER_ORG_SKILLS_DIR`. Rudder decides which skills are enabled for a run, so
 filesystem discovery by Codex, Claude, or another provider is not sufficient.
 
+Inside Rudder, this is the default compatibility guide. Do not also load a
+guide from `references/compatibility/` unless the user explicitly requests
+provider-native compatibility, packaging, evaluation, or a cross-host
+comparison.
+
 ## Choose Ownership Before Writing
 
 Use the narrowest durable owner that matches the user's intent:

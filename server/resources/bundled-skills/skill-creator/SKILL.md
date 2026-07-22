@@ -7,11 +7,15 @@ description: Create new skills, modify and improve existing skills, and measure 
 
 A skill for creating new skills and iteratively improving them.
 
-Before host-sensitive work, read exactly one compatibility guide from `references/compatibility/`: `claudecode.md`, `codex.md`, or `other.md`. Read more than one only when packaging or evaluating the same skill across multiple hosts.
+When running inside Rudder, read `references/rudder.md` as the default
+compatibility guide. Do not read a host-specific guide unless the user
+explicitly asks for provider-native compatibility, packaging, or evaluation,
+or asks to compare the same skill across hosts.
 
-When running inside Rudder, also read `references/rudder.md`. Rudder owns skill
-installation and runtime enablement, while the host-specific guide still owns
-evaluation and packaging mechanics for the underlying agent runtime.
+Outside Rudder, before host-sensitive work, read exactly one guide from
+`references/compatibility/`: `claudecode.md`, `codex.md`, or `other.md`. Read
+more than one only when packaging or evaluating the same skill across multiple
+hosts.
 
 At a high level, the process of creating a skill goes like this:
 

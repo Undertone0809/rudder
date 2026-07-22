@@ -235,6 +235,17 @@ describe("organization skill references", () => {
       { path: "references/rudder.md", kind: "reference" },
       { path: "scripts/package_skill.py", kind: "script" },
     ]));
+    const skillCreatorInstructions = await skillSvc.readFile(
+      orgId,
+      skillCreator!.id,
+      "SKILL.md",
+    );
+    expect(skillCreatorInstructions?.content).toContain(
+      "read `references/rudder.md` as the default",
+    );
+    expect(skillCreatorInstructions?.content).toContain(
+      "Do not read a host-specific guide unless the user",
+    );
     const rudderReference = await skillSvc.readFile(
       orgId,
       skillCreator!.id,
@@ -248,6 +259,9 @@ describe("organization skill references", () => {
     });
     expect(rudderReference?.content).toContain("# Rudder Compatibility");
     expect(rudderReference?.content).toContain("$AGENT_HOME/skills/<slug>");
+    expect(rudderReference?.content).toContain(
+      "this is the default compatibility guide",
+    );
     expect(skills.find((skill) => skill.slug === "visualize")).toMatchObject({
       key: "rudder/visualize",
       sourceBadge: "rudder",

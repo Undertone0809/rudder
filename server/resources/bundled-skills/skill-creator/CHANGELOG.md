@@ -2,6 +2,11 @@
 
 Notable changes to the `skill-creator` skill.
 
+## 2026-07-23
+
+- Made Rudder compatibility the default inside Rudder and limited host-specific
+  guides to explicitly requested provider-native or cross-host work.
+
 ## 2026-07-22
 
 - Restored the complete self-contained skill creator package in Rudder.
