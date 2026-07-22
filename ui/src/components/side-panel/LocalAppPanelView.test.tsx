@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
 import type { DesktopLocalAppDefinition, DesktopLocalAppRuntimeView } from "@/lib/desktop-shell";
+import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalAppPanelView } from "./LocalAppPanelView";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -47,6 +48,14 @@ const start = vi.fn();
 const stop = vi.fn();
 const logs = vi.fn();
 const attestedTarget = vi.fn();
+
+beforeAll(() => {
+  notifyManager.setNotifyFunction((callback) => act(callback));
+});
+
+afterAll(() => {
+  notifyManager.setNotifyFunction((callback) => callback());
+});
 
 function installShell() {
   Object.defineProperty(window, "desktopShell", {
@@ -112,6 +121,7 @@ afterEach(() => {
   queryClient = null;
   host?.remove();
   host = null;
+  vi.useRealTimers();
   Reflect.deleteProperty(window, "desktopShell");
 });
 
@@ -159,6 +169,34 @@ describe("LocalAppPanelView", () => {
     expect(start).toHaveBeenCalledTimes(1);
     expect(new Set(Array.from(host!.querySelectorAll('[data-testid="local-app-webview"]'))
       .map((node) => node.getAttribute("data-view-instance-id")))).toEqual(new Set(["view-0", "view-1"]));
+  });
+
+  it("detects an unexpected process exit while running and discards the attested guest", async () => {
+    vi.useFakeTimers();
+    let runtime: DesktopLocalAppRuntimeView = { status: "running", generation: "generation-a" };
+    status.mockImplementation(async () => runtime);
+    renderView();
+    await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-webview"]')).not.toBeNull());
+    expect(status).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000);
+    });
+    expect(status).toHaveBeenCalledTimes(4);
+    expect(host?.querySelector('[data-testid="local-app-webview"]')).not.toBeNull();
+
+    runtime = { status: "failed", generation: null, error: "Process exited unexpectedly" };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(status).toHaveBeenCalledTimes(5);
+    expect(host?.textContent).toContain("Failed");
+    expect(host?.textContent).toContain("Process exited unexpectedly");
+    expect(host?.querySelector('[data-testid="local-app-start"]')?.textContent).toContain("Retry & open");
+    expect(host?.querySelector('[data-testid="local-app-webview"]')).toBeNull();
+    expect(queryClient?.getQueriesData({
+      queryKey: [...queryKeys.localApps.status(target.localBindingId), "attested"],
+    }).some(([, data]) => Boolean(data))).toBe(false);
   });
 
   it("requires all three opaque identity fields and never probes a mismatched local binding", async () => {

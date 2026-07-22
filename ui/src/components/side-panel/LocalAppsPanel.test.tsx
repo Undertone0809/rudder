@@ -7,10 +7,10 @@ import type {
 } from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalAppsPanel } from "./LocalAppsPanel";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -50,6 +50,14 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let queryClient: QueryClient | null = null;
 let opened: SidePanelTarget[] = [];
+
+beforeAll(() => {
+  notifyManager.setNotifyFunction((callback) => act(callback));
+});
+
+afterAll(() => {
+  notifyManager.setNotifyFunction((callback) => callback());
+});
 
 function renderPanel(seedStatus?: DesktopLocalAppRuntimeView) {
   Object.defineProperty(window, "desktopShell", {
@@ -107,6 +115,7 @@ afterEach(() => {
   host?.remove();
   host = null;
   document.body.replaceChildren();
+  vi.useRealTimers();
   Reflect.deleteProperty(window, "desktopShell");
 });
 
@@ -186,6 +195,30 @@ describe("LocalAppsPanel", () => {
       buttonByText("Stop")?.click();
       await vi.waitFor(() => expect(stop).toHaveBeenCalledWith("definition-a"));
     });
+  });
+
+  it("keeps checking a running definition and unlocks its controls after an external failure", async () => {
+    vi.useFakeTimers();
+    let runtime: DesktopLocalAppRuntimeView = { status: "running", generation: "generation-a" };
+    status.mockImplementation(async () => runtime);
+    renderPanel();
+    const card = await vi.waitFor(() => {
+      const candidate = document.querySelector<HTMLElement>('[data-testid="local-apps-app-binding-a"]');
+      expect(candidate?.textContent).toContain("running");
+      return candidate!;
+    });
+    expect(status).toHaveBeenCalledTimes(1);
+
+    runtime = { status: "failed", generation: null, error: "Process exited unexpectedly" };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+
+    expect(status).toHaveBeenCalledTimes(2);
+    expect(card.textContent).toContain("failed");
+    expect(Array.from(card.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Stop")).toBeUndefined();
+    expect(Array.from(card.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Edit")?.disabled).toBe(false);
+    expect(Array.from(card.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Delete")?.disabled).toBe(false);
   });
 
   it("offers Retry for a catalog load failure", async () => {

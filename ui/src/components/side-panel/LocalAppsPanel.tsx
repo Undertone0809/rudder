@@ -19,6 +19,7 @@ import {
 import {
   localAppDefinitionFromForm,
   localAppDefinitionToForm,
+  localAppStatusRefetchInterval,
   type LocalAppDefinitionForm,
 } from "@/lib/local-apps";
 import { queryKeys } from "@/lib/queryKeys";
@@ -173,10 +174,7 @@ function LocalAppCatalogRow({
     queryKey: queryKeys.localApps.status(definition.localBindingId),
     queryFn: () => localApps.status(definition.id),
     retry: false,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === "starting" || status === "stopping" ? 400 : false;
-    },
+    refetchInterval: (query) => localAppStatusRefetchInterval(query.state.data?.status),
   });
   const status = statusQuery.data?.status ?? null;
   const active = status !== null && ["starting", "running", "stopping", "orphaned_unverified"].includes(status);

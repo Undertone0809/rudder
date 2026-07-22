@@ -1,12 +1,16 @@
 import { Button } from "@/components/ui/button";
 import { readDesktopShell, type DesktopLocalAppRuntimeView } from "@/lib/desktop-shell";
-import { localAppIdentityMatches, resolveLocalAppAttestedWebview } from "@/lib/local-apps";
+import {
+  localAppIdentityMatches,
+  localAppStatusRefetchInterval,
+  resolveLocalAppAttestedWebview,
+} from "@/lib/local-apps";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppWindow, CircleAlert, Loader2, Play, RotateCw, Square, TerminalSquare } from "lucide-react";
-import { createElement, useState } from "react";
+import { createElement, useEffect, useState } from "react";
 
 type LocalAppTarget = Extract<SidePanelTarget, { kind: "local_app" }>;
 
@@ -41,10 +45,7 @@ export function LocalAppPanelView({
     queryKey: queryKeys.localApps.status(target.localBindingId),
     queryFn: () => localApps!.status(definition!.id),
     enabled: supported && Boolean(definition),
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === "starting" || status === "stopping" ? 400 : false;
-    },
+    refetchInterval: (query) => localAppStatusRefetchInterval(query.state.data?.status),
   });
   const status = statusQuery.data ?? null;
   const attestedQuery = useQuery({
@@ -57,6 +58,13 @@ export function LocalAppPanelView({
     enabled: supported && Boolean(definition) && status?.status === "running",
     retry: false,
   });
+  useEffect(() => {
+    if (status?.status === "running") return;
+    queryClient.removeQueries({
+      queryKey: [...queryKeys.localApps.status(target.localBindingId), "attested"],
+      type: "inactive",
+    });
+  }, [queryClient, status?.status, target.localBindingId]);
   const startMutation = useMutation({
     mutationFn: () => localApps!.start(definition!.id),
     onSuccess: (nextStatus) => {

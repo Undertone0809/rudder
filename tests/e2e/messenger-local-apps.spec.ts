@@ -365,6 +365,24 @@ test.describe("Messenger Local Apps", () => {
     await expect(guest).toHaveAttribute("data-local-binding-id", "binding-a");
     await expect(guest).toHaveAttribute("data-active", "true");
     await expect(guest).not.toHaveAttribute("allowpopups", /.+/);
+
+    const attestedCallsBeforeExternalExit = (await calls(page)).attestedTarget;
+    await setLocalFlag(page, "e2e.localApps.status", {
+      status: "failed",
+      generation: null,
+      error: "Process exited unexpectedly",
+    });
+    await expect(localView).toContainText("Failed", { timeout: 5_000 });
+    await expect(localView).toContainText("Process exited unexpectedly");
+    await expect(localView.getByTestId("local-app-webview")).toHaveCount(0);
+    await expect(localView.getByTestId("local-app-start")).toContainText("Retry & open");
+
+    await localView.getByTestId("local-app-start").click();
+    await expect(localView.getByTestId("local-app-webview"))
+      .toHaveAttribute("src", "http://127.0.0.1:43123/outreach");
+    await expect.poll(async () => (await calls(page)).attestedTarget)
+      .toBe(attestedCallsBeforeExternalExit + 1);
+    const startCallsAfterExternalRecovery = (await calls(page)).start;
     await page.screenshot({ path: "/tmp/rudder-local-app-running.png", fullPage: true });
 
     await page.getByTestId("chat-side-panel-keep-in-messenger").click();
@@ -400,7 +418,7 @@ test.describe("Messenger Local Apps", () => {
     await page.getByRole("menuitem", { name: "Open in new tab" }).click();
     await expect(page.getByTestId("local-app-view")).toHaveCount(2);
     await expect(page.getByTestId("local-app-webview")).toHaveCount(2);
-    expect((await calls(page)).start).toBe(2);
+    expect((await calls(page)).start).toBe(startCallsAfterExternalRecovery);
 
     await page.getByTestId("chat-side-panel-tab").filter({ hasText: "MKT dashboard local" }).last().click({ button: "right" });
     await page.getByRole("menuitem", { name: "Close", exact: true }).click();

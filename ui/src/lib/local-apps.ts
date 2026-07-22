@@ -2,7 +2,19 @@ import type {
   DesktopLocalAppAttestedTarget,
   DesktopLocalAppDefinition,
   DesktopLocalAppDefinitionDraft,
+  DesktopLocalAppRuntimeStatus,
 } from "./desktop-shell";
+
+export const LOCAL_APP_TRANSITION_REFETCH_MS = 400;
+export const LOCAL_APP_RUNNING_REFETCH_MS = 2_000;
+
+export function localAppStatusRefetchInterval(
+  status: DesktopLocalAppRuntimeStatus | undefined,
+): number | false {
+  if (status === "starting" || status === "stopping") return LOCAL_APP_TRANSITION_REFETCH_MS;
+  if (status === "running") return LOCAL_APP_RUNNING_REFETCH_MS;
+  return false;
+}
 
 export type LocalAppOpaqueIdentity = Pick<
   DesktopLocalAppDefinition,
