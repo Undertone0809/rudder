@@ -1,0 +1,72 @@
+{
+  "expectations": [
+    {
+      "text": "Places the durable package under $RUDDER_ORG_SKILLS_DIR/customer-summary",
+      "passed": true,
+      "evidence": "response.md opens with the exact durable tree rooted at `$RUDDER_ORG_SKILLS_DIR/customer-summary/`, then copies the complete source directory into `TARGET_DIR=\"$RUDDER_ORG_SKILLS_DIR/$SKILL_SLUG\"`."
+    },
+    {
+      "text": "Registers the complete package with rudder skill import and uses the returned selection reference",
+      "passed": true,
+      "evidence": "Step 6 imports `--source \"$TARGET_DIR\"` (explicitly 'not merely SKILL.md'), states that this registers SKILL.md, references/style-guide.md, and scripts/check_output.py, and Step 8 passes `<returned-selection-ref>` to `rudder agent skills enable`."
+    },
+    {
+      "text": "Uses rudder agent skills enable additively and warns against replacing selections with skills sync",
+      "passed": true,
+      "evidence": "Step 8 runs `rudder agent skills enable` and explicitly says: '`enable` preserves the agent's existing optional skills, while `sync` replaces the full optional-skill set.'"
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "tool_calls": {
+      "Bash": 7
+    },
+    "total_tool_calls": 7,
+    "total_steps": 8,
+    "errors_encountered": 1,
+    "output_chars": 3172,
+    "transcript_chars": 71875
+  },
+  "timing": {
+    "executor_duration_seconds": 79,
+    "total_duration_seconds": 79
+  },
+  "claims": [
+    {
+      "claim": "Importing the target directory registers the complete three-file inventory.",
+      "type": "factual",
+      "verified": true,
+      "evidence": "The response imports `$TARGET_DIR`, after testing for all three required files. The transcript's Rudder compatibility reference says organization import registers the full file inventory from `$RUDDER_ORG_SKILLS_DIR/<slug>`."
+    },
+    {
+      "claim": "rudder agent skills enable is additive, while skills sync replaces the optional enabled-skill set.",
+      "type": "factual",
+      "verified": true,
+      "evidence": "The transcript corroborates this against references/rudder.md and doc/engineering/CLI.md; response.md uses enable and warns against sync for this task."
+    },
+    {
+      "claim": "Enablement affects future runs rather than the already loaded active run.",
+      "type": "factual",
+      "verified": true,
+      "evidence": "The transcript's references/rudder.md states that enablement affects future runs rather than rewriting the current run's loaded context, matching the final response."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "reason": "The prompt requires a board-authorized organizational mutation, but no assertion checks that the workflow verifies organization Skill management permission or stops before an unauthorized import. Add a permission-boundary assertion if governance behavior is part of the intended contract."
+      }
+    ],
+    "overall": "The three assertions are objective and all pass. The retained old-skill baseline was rerun in an isolated workspace after grading, so the final comparison excludes the discarded transcript-leakage run."
+  }
+}

@@ -1,0 +1,281 @@
+{
+  "metadata": {
+    "skill_name": "skill-creator",
+    "skill_path": "server/resources/bundled-skills/skill-creator",
+    "executor_model": "gpt-5.6-codex",
+    "analyzer_model": "gpt-5.6-codex",
+    "timestamp": "2026-07-22T13:47:19Z",
+    "evals_run": [
+      1,
+      2,
+      3
+    ],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "configuration": "old_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.3333333333,
+        "passed": 1,
+        "failed": 2,
+        "total": 3,
+        "time_seconds": 225,
+        "tokens": 61915,
+        "tool_calls": 2,
+        "errors": 1
+      },
+      "expectations": [
+        {
+          "text": "Installs the complete multi-file package under $AGENT_HOME/skills/incident-handoff",
+          "passed": true,
+          "evidence": "The response defines TARGET as ${AGENT_HOME%/}/skills/incident-handoff, installs SKILL.md, references/checklist.md, and scripts/validate_handoff.py beneath it, and verifies all three files plus diff -qr between staging and the target."
+        },
+        {
+          "text": "Enables the private skill additively with agent:incident-handoff rather than using a global or provider-native path",
+          "passed": false,
+          "evidence": "The response never uses the required agent:incident-handoff selection reference or an additive Rudder enable operation. Its Enablement section instead says that installation under $AGENT_HOME is itself the justified enablement mechanism and relies on agent-scoped discovery."
+        },
+        {
+          "text": "Separates installed, validated, enabled, and future-run-loaded states",
+          "passed": false,
+          "evidence": "Validation and installation are separate sections, and a fresh session is mentioned, but enabled is explicitly conflated with filesystem installation/discovery. There is no distinct enable transition or verification of an enabled selection before the future-run visibility check."
+        }
+      ],
+      "notes": [
+        "Runtime values for the four Rudder environment variables were unavailable, so commands intentionally defer their resolution.",
+        "The response substitutes filesystem discovery and a fresh session for explicit Rudder enablement."
+      ]
+    },
+    {
+      "eval_id": 2,
+      "configuration": "old_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0,
+        "passed": 0,
+        "failed": 3,
+        "total": 3,
+        "time_seconds": 64,
+        "tokens": 54542,
+        "tool_calls": 2,
+        "errors": 1
+      },
+      "expectations": [
+        {
+          "text": "Places the durable package under $RUDDER_ORG_SKILLS_DIR/customer-summary",
+          "passed": false,
+          "evidence": "The response deliberately leaves the durable location generic as the organization's 'documented durable skill-package location'. It never names or uses `$RUDDER_ORG_SKILLS_DIR/customer-summary`, so the required Rudder ownership path is not provided."
+        },
+        {
+          "text": "Registers the complete package with rudder skill import and uses the returned selection reference",
+          "passed": false,
+          "evidence": "The response conceptually says to register all three files, but explicitly declines to provide CLI syntax. It never invokes `rudder skill import` and never captures or uses the returned selection reference."
+        },
+        {
+          "text": "Uses rudder agent skills enable additively and warns against replacing selections with skills sync",
+          "passed": false,
+          "evidence": "The response correctly recommends an additive/merge operation and warns against a replacement containing only the new skill, but it never uses the required `rudder agent skills enable` command and never identifies `skills sync` as the replacement-oriented operation. The assertion requires both exact Rudder semantics."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "old_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.25,
+        "passed": 1,
+        "failed": 3,
+        "total": 4,
+        "time_seconds": 76,
+        "tokens": 36804,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Uses $RUDDER_PROJECT_LIBRARY_ROOT/skill-evals for the durable evaluation workspace",
+          "passed": false,
+          "evidence": "The response instead places project-context results at `<project-root>/.codex/evals/<skill-name>/<evaluation-id>/`; `$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals` is never used."
+        },
+        {
+          "text": "Defines paired with_skill and old_skill runs with metadata, assertions, timing, and grading",
+          "passed": true,
+          "evidence": "The response defines an exact two-prompt, four-cell `old_skill`/`with_skill` matrix; `manifest.json` metadata; deterministic assertions; per-run timing/resource capture; and an identical blind-grading rubric for all cells."
+        },
+        {
+          "text": "Aggregates benchmark artifacts, performs an analyst pass, and generates a static review with generate_review.py",
+          "passed": false,
+          "evidence": "The response does define benchmark aggregation and an analyst review, but its viewer section prescribes creating a custom self-contained `viewer/index.html` and never invokes `eval-viewer/generate_review.py`, which is an explicit part of the assertion."
+        },
+        {
+          "text": "Rejects the bundled package and provider-managed runtime mount as evaluation output locations",
+          "passed": false,
+          "evidence": "The exclusions mention temporary directories, global installed-skill directories, live source directories, candidate snapshots, shared mutable workspaces, and unrelated repositories, but do not reject Rudder's bundled package or a provider-managed runtime mount."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 88,
+        "tokens": 71802,
+        "tool_calls": 3,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Installs the complete multi-file package under $AGENT_HOME/skills/incident-handoff",
+          "passed": true,
+          "evidence": "The response identifies `$AGENT_HOME/skills/incident-handoff/` as the final installation path and shows the complete tree containing `SKILL.md`, `references/checklist.md`, and `scripts/validate_handoff.py`. It then provides substantive contents for all three files, installs directly into that directory, validates the exact inventory, and rechecks every installed file. Because the prompt forbade mutations, these are correctly presented as planned commands rather than falsely claimed completed changes."
+        },
+        {
+          "text": "Enables the private skill additively with agent:incident-handoff rather than using a global or provider-native path",
+          "passed": true,
+          "evidence": "The enablement command is exactly `rudder agent skills enable \"$RUDDER_AGENT_ID\" \"agent:incident-handoff\" --json`. The response explicitly says not to use `$RUDDER_ORG_SKILLS_DIR`, `rudder skill import`, or `skills sync`, explaining that `enable` is additive and `sync` could replace existing optional selections. No global or provider-native installation path is proposed."
+        },
+        {
+          "text": "Separates installed, validated, enabled, and future-run-loaded states",
+          "passed": true,
+          "evidence": "The response separates the workflow into author/install, validate, enable, and verify sections. It states, `At this point the package is installed on disk, but it is not yet enabled in Rudder`, treats the successful enable JSON as separate proof of selection, and says enablement applies to future runs and cannot retroactively modify the current run. It finally requires a new-run smoke test to prove loading and execution."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 79,
+        "tokens": 182806,
+        "tool_calls": 7,
+        "errors": 1
+      },
+      "expectations": [
+        {
+          "text": "Places the durable package under $RUDDER_ORG_SKILLS_DIR/customer-summary",
+          "passed": true,
+          "evidence": "response.md opens with the exact durable tree rooted at `$RUDDER_ORG_SKILLS_DIR/customer-summary/`, then copies the complete source directory into `TARGET_DIR=\"$RUDDER_ORG_SKILLS_DIR/$SKILL_SLUG\"`."
+        },
+        {
+          "text": "Registers the complete package with rudder skill import and uses the returned selection reference",
+          "passed": true,
+          "evidence": "Step 6 imports `--source \"$TARGET_DIR\"` (explicitly 'not merely SKILL.md'), states that this registers SKILL.md, references/style-guide.md, and scripts/check_output.py, and Step 8 passes `<returned-selection-ref>` to `rudder agent skills enable`."
+        },
+        {
+          "text": "Uses rudder agent skills enable additively and warns against replacing selections with skills sync",
+          "passed": true,
+          "evidence": "Step 8 runs `rudder agent skills enable` and explicitly says: '`enable` preserves the agent's existing optional skills, while `sync` replaces the full optional-skill set.'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 105,
+        "tokens": 134814,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Uses $RUDDER_PROJECT_LIBRARY_ROOT/skill-evals for the durable evaluation workspace",
+          "passed": true,
+          "evidence": "The response's workspace section explicitly sets the project-context location to `$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals/<slug>-workspace/` and later sets `WORKSPACE=$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals/<slug>-workspace`."
+        },
+        {
+          "text": "Defines paired with_skill and old_skill runs with metadata, assertions, timing, and grading",
+          "passed": true,
+          "evidence": "Sections 3-7 define exactly two prompts, an `eval_metadata.json` with assertions for each, paired `with_skill/` and `old_skill/` output directories, all four executor runs launched together, per-run `timing.json`, and schema-compliant per-run `grading.json`."
+        },
+        {
+          "text": "Aggregates benchmark artifacts, performs an analyst pass, and generates a static review with generate_review.py",
+          "passed": true,
+          "evidence": "Sections 8-10 prescribe `python -m scripts.aggregate_benchmark` to create `benchmark.json` and `benchmark.md`, a grounded analyst review of grades/timings/metrics, and `eval-viewer/generate_review.py ... --static .../review.html`; the response also says not to write custom review HTML."
+        },
+        {
+          "text": "Rejects the bundled package and provider-managed runtime mount as evaluation output locations",
+          "passed": true,
+          "evidence": "The response's first section explicitly lists both `Rudder's read-only bundled-skill directory` and `A provider-managed runtime mount` under `Do not place the workspace or results in`, and explains that these locations are read-only, ephemeral, or not Rudder's source of truth."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "old_skill": {
+      "pass_rate": {
+        "mean": 0.1944,
+        "stddev": 0.1735,
+        "min": 0,
+        "max": 0.3333
+      },
+      "time_seconds": {
+        "mean": 121.6667,
+        "stddev": 89.6902,
+        "min": 64,
+        "max": 225
+      },
+      "tokens": {
+        "mean": 51087,
+        "stddev": 12907.1046,
+        "min": 36804,
+        "max": 61915
+      }
+    },
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1,
+        "stddev": 0,
+        "min": 1,
+        "max": 1
+      },
+      "time_seconds": {
+        "mean": 90.6667,
+        "stddev": 13.2035,
+        "min": 79,
+        "max": 105
+      },
+      "tokens": {
+        "mean": 129807.3333,
+        "stddev": 55671.1059,
+        "min": 71802,
+        "max": 182806
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.81",
+      "time_seconds": "-31.0",
+      "tokens": "+78720"
+    }
+  },
+  "notes": [
+    "The restored skill passed all 10 assertions; the clean isolated nine-line baseline passed 2 of 10.",
+    "Both contaminated baseline attempts were discarded and rerun in isolated workdirs containing only the nine-line SKILL.md.",
+    "The restored package uniquely supplied additive private enablement, organization import ownership, durable Rudder eval workspaces, and the bundled static review workflow.",
+    "Each configuration has one run per scenario, so the comparison is directional rather than a variance estimate."
+  ]
+}

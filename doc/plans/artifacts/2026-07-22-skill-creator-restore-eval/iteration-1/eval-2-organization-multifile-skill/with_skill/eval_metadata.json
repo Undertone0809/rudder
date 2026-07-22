@@ -1,0 +1,10 @@
+{
+  "eval_id": 2,
+  "eval_name": "organization-multifile-skill",
+  "prompt": "A board-authorized Rudder agent must create a customer-summary skill shared across the organization. The package has SKILL.md, references/style-guide.md, and scripts/check_output.py. Explain where the durable package belongs, how to register its complete inventory in the organization Skill Library, and how to enable it for one agent without removing that agent's existing optional skills. Do not execute; provide the exact ordered workflow and commands.",
+  "assertions": [
+    "Places the durable package under $RUDDER_ORG_SKILLS_DIR/customer-summary",
+    "Registers the complete package with rudder skill import and uses the returned selection reference",
+    "Uses rudder agent skills enable additively and warns against replacing selections with skills sync"
+  ]
+}

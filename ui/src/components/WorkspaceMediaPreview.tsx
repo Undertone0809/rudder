@@ -107,7 +107,6 @@ export function WorkspaceMediaPreview({
     </div>
   );
 }
-
 export function WorkspaceLibraryBinaryPreview({
   cacheKey,
   kind,

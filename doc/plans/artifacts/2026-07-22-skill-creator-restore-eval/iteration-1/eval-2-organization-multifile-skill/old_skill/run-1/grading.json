@@ -1,0 +1,72 @@
+{
+  "expectations": [
+    {
+      "text": "Places the durable package under $RUDDER_ORG_SKILLS_DIR/customer-summary",
+      "passed": false,
+      "evidence": "The response deliberately leaves the durable location generic as the organization's 'documented durable skill-package location'. It never names or uses `$RUDDER_ORG_SKILLS_DIR/customer-summary`, so the required Rudder ownership path is not provided."
+    },
+    {
+      "text": "Registers the complete package with rudder skill import and uses the returned selection reference",
+      "passed": false,
+      "evidence": "The response conceptually says to register all three files, but explicitly declines to provide CLI syntax. It never invokes `rudder skill import` and never captures or uses the returned selection reference."
+    },
+    {
+      "text": "Uses rudder agent skills enable additively and warns against replacing selections with skills sync",
+      "passed": false,
+      "evidence": "The response correctly recommends an additive/merge operation and warns against a replacement containing only the new skill, but it never uses the required `rudder agent skills enable` command and never identifies `skills sync` as the replacement-oriented operation. The assertion requires both exact Rudder semantics."
+    }
+  ],
+  "summary": {
+    "passed": 0,
+    "failed": 3,
+    "total": 3,
+    "pass_rate": 0.0
+  },
+  "execution_metrics": {
+    "tool_calls": {
+      "Bash": 2
+    },
+    "total_tool_calls": 2,
+    "total_steps": 2,
+    "errors_encountered": 1,
+    "output_chars": 1818,
+    "transcript_chars": 5063
+  },
+  "timing": {
+    "executor_duration_seconds": 64,
+    "total_duration_seconds": 64
+  },
+  "claims": [
+    {
+      "claim": "The complete three-file package should be registered rather than only SKILL.md.",
+      "type": "quality",
+      "verified": true,
+      "evidence": "The proposed tree contains `SKILL.md`, `references/style-guide.md`, and `scripts/check_output.py`, and the response explicitly requires all three relative paths in the Skill Library inventory."
+    },
+    {
+      "claim": "Exact Rudder commands cannot be derived from the placeholder skill alone.",
+      "type": "factual",
+      "verified": true,
+      "evidence": "The transcript reads the isolated nine-line `old_skill/SKILL.md`; it contains no Rudder path, import, selection-reference, enable, or sync guidance."
+    },
+    {
+      "claim": "An additive update should preserve the agent's existing optional skills.",
+      "type": "process",
+      "verified": true,
+      "evidence": "The response instructs reading the existing list, adding `customer-summary`, submitting the merged list, and verifying that pre-existing skills remain enabled. This is conceptually sound but does not satisfy the command-specific assertion."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "reason": "The prompt states that the agent is board-authorized, but no assertion checks the permission boundary or confirms that organization import must stop without Skill-management authority. Add that assertion if governance behavior is part of the intended contract."
+      }
+    ],
+    "overall": "The three assertions are concrete and discriminating for the restored Rudder-specific guidance. This clean baseline fails all three while still demonstrating generic multi-file and additive-update reasoning."
+  }
+}

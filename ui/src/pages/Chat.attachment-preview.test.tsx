@@ -2544,9 +2544,16 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel.textContent.indexOf("Properties")).toBeLessThan(sidePanel.textContent.indexOf("Activity"));
     expect(sidePanel.textContent).not.toContain("CreatedUpdated");
 
+    const layout = sidePanel.querySelector<HTMLElement>("[data-testid='issue-detail-layout']");
+    const rail = sidePanel.querySelector<HTMLElement>("[data-testid='issue-detail-sidebar']");
+    const primaryContent = sidePanel.querySelector<HTMLElement>("[data-testid='issue-detail-primary-content']");
     const propertiesRegion = sidePanel.querySelector<HTMLElement>("[aria-label='Issue properties']");
+    const activityRegion = sidePanel.querySelector<HTMLElement>("[aria-label='Activity']");
     expect(sidePanel.querySelector("[data-testid='chat-side-panel-issue-view']")).toBeNull();
+    expect(layout?.classList.contains("issue-detail-layout")).toBe(true);
     expect(propertiesRegion).not.toBeNull();
+    expect(rail?.contains(propertiesRegion)).toBe(true);
+    expect(primaryContent?.contains(activityRegion)).toBe(true);
   });
 
   it("lets the operator directly edit issue title and description from the Side Panel", async () => {

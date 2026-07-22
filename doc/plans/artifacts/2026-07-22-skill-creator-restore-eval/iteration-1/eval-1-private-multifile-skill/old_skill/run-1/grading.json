@@ -1,0 +1,78 @@
+{
+  "expectations": [
+    {
+      "text": "Installs the complete multi-file package under $AGENT_HOME/skills/incident-handoff",
+      "passed": true,
+      "evidence": "The response defines TARGET as ${AGENT_HOME%/}/skills/incident-handoff, installs SKILL.md, references/checklist.md, and scripts/validate_handoff.py beneath it, and verifies all three files plus diff -qr between staging and the target."
+    },
+    {
+      "text": "Enables the private skill additively with agent:incident-handoff rather than using a global or provider-native path",
+      "passed": false,
+      "evidence": "The response never uses the required agent:incident-handoff selection reference or an additive Rudder enable operation. Its Enablement section instead says that installation under $AGENT_HOME is itself the justified enablement mechanism and relies on agent-scoped discovery."
+    },
+    {
+      "text": "Separates installed, validated, enabled, and future-run-loaded states",
+      "passed": false,
+      "evidence": "Validation and installation are separate sections, and a fresh session is mentioned, but enabled is explicitly conflated with filesystem installation/discovery. There is no distinct enable transition or verification of an enabled selection before the future-run visibility check."
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 2,
+    "total": 3,
+    "pass_rate": 0.3333333333
+  },
+  "execution_metrics": {
+    "tool_calls": {
+      "Bash": 2
+    },
+    "total_tool_calls": 2,
+    "total_steps": 6,
+    "errors_encountered": 1,
+    "output_chars": 13960,
+    "transcript_chars": 18159
+  },
+  "timing": {
+    "executor_duration_seconds": 225,
+    "total_duration_seconds": 225,
+    "timing_source": "transcript file birth-to-modification wall clock"
+  },
+  "claims": [
+    {
+      "claim": "No mutations were executed",
+      "type": "process",
+      "verified": true,
+      "evidence": "The transcript contains only two read-only shell commands: one reads old_skill/SKILL.md, environment variables, and the old_skill file list; the other lists/searches the isolated workspace."
+    },
+    {
+      "claim": "The four Rudder variables were not visible in the read-only shell",
+      "type": "factual",
+      "verified": true,
+      "evidence": "The transcript's env filter produced no RUDDER_AGENT_ID, RUDDER_ORG_ID, AGENT_HOME, or RUDDER_ORG_SKILLS_DIR lines."
+    },
+    {
+      "claim": "Installing at $AGENT_HOME/skills/incident-handoff is sufficient enablement",
+      "type": "quality",
+      "verified": false,
+      "evidence": "The eval explicitly requires additive enablement through agent:incident-handoff; the response provides no such operation and treats discovery from disk as enablement."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [
+      "Runtime values for the four Rudder environment variables were unavailable, so commands intentionally defer their resolution."
+    ],
+    "needs_review": [],
+    "workarounds": [
+      "The response substitutes filesystem discovery and a fresh session for explicit Rudder enablement."
+    ]
+  },
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "assertion": "Separates installed, validated, enabled, and future-run-loaded states",
+        "reason": "This is discriminating here, but future graders would be more consistent if it explicitly required four named transitions and evidence that enablement uses the returned or canonical selection ref before a fresh run."
+      }
+    ],
+    "overall": "The eval catches the central old-skill failure: a strong generic answer can author and install the package, but without Rudder-specific guidance it conflates installation with additive enablement."
+  }
+}
