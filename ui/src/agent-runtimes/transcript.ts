@@ -7,10 +7,14 @@ export type TranscriptLogBuildState = { stdoutBuffer: string; lastStdoutTs: stri
 
 export function appendTranscriptEntry(entries: TranscriptEntry[], entry: TranscriptEntry) {
   if ((entry.kind === "thinking" || entry.kind === "assistant") && entry.delta) {
-    const last = entries[entries.length - 1];
+    const lastIndex = entries.length - 1;
+    const last = entries[lastIndex];
     if (last && last.kind === entry.kind && last.delta) {
-      last.text += entry.text;
-      last.ts = entry.ts;
+      entries[lastIndex] = {
+        ...last,
+        text: last.text + entry.text,
+        ts: entry.ts,
+      };
       return;
     }
   }

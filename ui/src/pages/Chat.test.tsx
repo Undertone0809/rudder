@@ -123,6 +123,33 @@ describe("chat stream stop cutoff", () => {
     })).toBe(replacement);
   });
 
+  it("does not mutate the current transcript while coalescing streamed entries", () => {
+    const current = draft({
+      transcript: [{
+        kind: "assistant",
+        ts: "2026-07-16T09:00:02.000Z",
+        text: "我",
+        delta: true,
+      }],
+    });
+    const event = {
+      type: "transcript_entry" as const,
+      entry: {
+        kind: "assistant" as const,
+        ts: "2026-07-16T09:00:03.000Z",
+        text: "会",
+        delta: true as const,
+      },
+    };
+
+    const first = applyChatStreamProgressEvent(current, "stream-1", event);
+    const replay = applyChatStreamProgressEvent(current, "stream-1", event);
+
+    expect(current.transcript).toEqual([expect.objectContaining({ text: "我" })]);
+    expect(first?.transcript).toEqual([expect.objectContaining({ text: "我会" })]);
+    expect(replay?.transcript).toEqual([expect.objectContaining({ text: "我会" })]);
+  });
+
   it("keeps body, state, and transcript immutable after Stop freezes the generation", () => {
     const frozen = draft({
       state: "stopping",

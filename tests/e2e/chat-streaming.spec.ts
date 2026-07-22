@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
@@ -94,6 +95,42 @@ process.stdin.on("end", () => {
     result: "Plain-text reply without the Rudder sentinel.",
     usage: { input_tokens: 3, cached_input_tokens: 0, output_tokens: 5 },
   }) + "\\n");
+});
+`, "utf8");
+  await fs.chmod(stubPath, 0o755);
+  return stubPath;
+}
+
+async function createTranscriptDeltaCodexStub() {
+  const stubDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-transcript-delta-"));
+  const stubPath = path.join(stubDir, "codex");
+  await fs.writeFile(stubPath, `#!/usr/bin/env node
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+});
+process.stdin.on("end", async () => {
+  const sentinel = input.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+  const send = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
+  send({ type: "thread.started", thread_id: "transcript-delta-e2e", model: "gpt-5.4" });
+  send({ type: "item.completed", item: { id: "progress-1", type: "agent_message", text: "我", delta: true } });
+  send({ type: "item.completed", item: { id: "progress-1", type: "agent_message", text: "会", delta: true } });
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  const finalText = "我会\\n" + sentinel + JSON.stringify({
+    kind: "message",
+    body: "最终答复",
+    structuredPayload: null,
+  });
+  send({
+    type: "item.completed",
+    item: { id: "progress-1", type: "agent_message", text: finalText },
+  });
+  send({
+    type: "turn.completed",
+    result: finalText,
+    usage: { input_tokens: 2, cached_input_tokens: 0, output_tokens: 2 },
+  });
 });
 `, "utf8");
   await fs.chmod(stubPath, 0o755);
@@ -334,6 +371,38 @@ test.describe("Chat streaming", () => {
     await expect(transcriptItem.locator('button[aria-label="Expand command details"]').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/__RUDDER_RESULT_/)).toHaveCount(0);
     await expect(page.getByText(/"kind":"message"/)).toHaveCount(0);
+  });
+
+  test("renders each live Work Transcript delta once", async ({ page }) => {
+    const stubPath = await createTranscriptDeltaCodexStub();
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Transcript-Delta-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Transcript Delta Agent",
+      command: stubPath,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/chat?agentId=${chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill("Show two streamed progress tokens");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const transcriptItem = page.getByTestId("chat-transcript-item").last();
+    await expect(transcriptItem).toContainText("我会", { timeout: 15_000 });
+    await expect(transcriptItem).not.toContainText("我会会");
+    await transcriptItem.screenshot({ path: "/tmp/rudder-live-transcript-no-duplicates.png" });
+    await expect(page.getByTestId("chat-assistant-message").last()).toContainText("最终答复", {
+      timeout: 15_000,
+    });
   });
 
   test("internally repairs a successful chat reply when the runtime omits the Rudder sentinel", async ({ page }) => {
