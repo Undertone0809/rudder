@@ -125,7 +125,7 @@ test.describe("Global search results", () => {
       data: {
         title: "Description-only global search target",
         description: "Only this description contains rare-issue-description-token.",
-        status: "todo",
+        status: "in_review",
         priority: "medium",
       },
     });
@@ -138,13 +138,15 @@ test.describe("Global search results", () => {
     }, organization.id);
     await page.goto(`/${organization.issuePrefix}/messenger`);
 
-    await page.getByRole("button", { name: "Search" }).click();
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Search" }).click();
     const searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, skills, library...");
     await expect(searchInput).toBeVisible();
     await searchInput.fill("rare-issue-description-token");
 
     const issueResult = page.getByRole("option", { name: /Description-only global search target/i });
     await expect(issueResult).toBeVisible({ timeout: 15_000 });
+    await expect(issueResult.locator('[data-slot="issue-status-icon"][data-status="in_review"]')).toBeVisible();
+    await expect(issueResult.locator(".lucide-circle-dot")).toHaveCount(0);
     await issueResult.click();
 
     await expect(page).toHaveURL(new RegExp(`/issues/${issue.identifier ?? issue.id}$`));

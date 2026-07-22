@@ -399,6 +399,7 @@ describe("CommandPalette", () => {
     expect(container.textContent).toContain("Issues");
     expect(container.textContent).toContain("RUD-498");
     expect(container.textContent).toContain("Global search regression");
+    expect(container.querySelector('[data-slot="issue-status-icon"][data-status="todo"]')).not.toBeNull();
   });
 
   it("shows a loading state while global search results are pending", () => {

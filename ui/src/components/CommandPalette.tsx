@@ -50,6 +50,7 @@ import { buildLibrarySkillHref, SKILLS_LIBRARY_DIRECTORY_HREF } from "../lib/ski
 import { agentUrl, projectUrl, relativeTime } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
 import { ProjectIcon } from "./ProjectIdentity";
+import { StatusIcon } from "./StatusIcon";
 
 const GLOBAL_ISSUE_SEARCH_FIELDS: IssueSearchField[] = ["title", "description", "comment"];
 const GLOBAL_REMOTE_SEARCH_MIN_LENGTH = 2;
@@ -460,7 +461,7 @@ export function CommandPalette() {
                   }
                   onSelect={() => go(`/issues/${issue.identifier ?? issue.id}`)}
                 >
-                  <CircleDot className="mr-2 h-4 w-4" />
+                  <StatusIcon status={issue.status} className="mr-2" />
                   <span className="text-muted-foreground mr-2 font-mono text-xs">
                     {issue.identifier ?? issue.id.slice(0, 8)}
                   </span>
