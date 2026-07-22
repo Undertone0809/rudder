@@ -545,6 +545,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
   await fs.rm(runtimeTmpDir, { recursive: true, force: true });
   await fs.mkdir(runtimeTmpDir, { recursive: true });
+  try {
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
     home: managedHome,
@@ -620,6 +621,10 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     rudderMcpPreflight,
     browserMcpPreflight,
   };
+  } catch (error) {
+    await fs.rm(runtimeTmpDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export async function runClaudeLogin(input: {
@@ -640,24 +645,28 @@ export async function runClaudeLogin(input: {
     onLog,
   });
 
-  const proc = await runChildProcess(input.runId, runtime.command, ["auth", "login"], {
-    cwd: runtime.cwd,
-    env: runtime.env,
-    timeoutSec: runtime.timeoutSec,
-    graceSec: runtime.graceSec,
-    onLog,
-  });
+  try {
+    const proc = await runChildProcess(input.runId, runtime.command, ["auth", "login"], {
+      cwd: runtime.cwd,
+      env: runtime.env,
+      timeoutSec: runtime.timeoutSec,
+      graceSec: runtime.graceSec,
+      onLog,
+    });
 
-  const loginMeta = detectClaudeLoginRequired({
-    parsed: null,
-    stdout: proc.stdout,
-    stderr: proc.stderr,
-  });
+    const loginMeta = detectClaudeLoginRequired({
+      parsed: null,
+      stdout: proc.stdout,
+      stderr: proc.stderr,
+    });
 
-  return buildLoginResult({
-    proc,
-    loginUrl: loginMeta.loginUrl,
-  });
+    return buildLoginResult({
+      proc,
+      loginUrl: loginMeta.loginUrl,
+    });
+  } finally {
+    await fs.rm(runtime.runtimeTmpDir, { recursive: true, force: true });
+  }
 }
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
@@ -698,6 +707,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     rudderMcpPreflight,
     browserMcpPreflight,
   } = runtimeConfig;
+  try {
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -1048,6 +1058,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
     return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
   } finally {
-    fs.rm(skillsDir, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(skillsDir, { recursive: true, force: true });
+  }
+  } finally {
+    await fs.rm(runtimeTmpDir, { recursive: true, force: true });
   }
 }

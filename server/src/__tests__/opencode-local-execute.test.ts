@@ -41,6 +41,10 @@ const payload = {
   home: process.env.HOME || null,
   userProfile: process.env.USERPROFILE || null,
   opencodeConfig: process.env.OPENCODE_CONFIG || null,
+  opencodeConfigContents:
+    process.env.OPENCODE_CONFIG && fs.existsSync(process.env.OPENCODE_CONFIG)
+      ? fs.readFileSync(process.env.OPENCODE_CONFIG, "utf8")
+      : null,
   opencodeConfigContent: process.env.OPENCODE_CONFIG_CONTENT || null,
   opencodeConfigDir: process.env.OPENCODE_CONFIG_DIR || null,
   rudderOperatorHome: process.env.RUDDER_OPERATOR_HOME || null,
@@ -57,6 +61,10 @@ const payload = {
 };
 if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
+}
+if (process.env.RUDDER_TEST_PROVIDER_FAILURE === "1") {
+  console.error("forced OpenCode provider failure");
+  process.exit(7);
 }
 if (process.env.RUDDER_TEST_OPENCODE_STARTUP_IDLE === "1") {
   setInterval(() => {}, 1000);
@@ -758,6 +766,17 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         summaryStatus: "tool_loop_idle",
         stoppedAfterToolLoopIdle: true,
       });
+      await expect(fs.stat(path.join(
+        root,
+        ".rudder",
+        "instances",
+        "default",
+        "organizations",
+        "organization-1",
+        "opencode-home",
+        "runtime-tmp",
+        "run-opencode-tool-idle",
+      ))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -821,6 +840,17 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         summaryStatus: "startup_idle",
         stoppedAfterStartupIdle: true,
       });
+      await expect(fs.stat(path.join(
+        root,
+        ".rudder",
+        "instances",
+        "default",
+        "organizations",
+        "organization-1",
+        "opencode-home",
+        "runtime-tmp",
+        "run-opencode-startup-idle",
+      ))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -1029,6 +1059,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         prompt: string;
         opencodeConfigContent: string | null;
         opencodeConfigDir: string | null;
+        opencodeConfigContents: string;
       };
       expect(capture.home).toBe(root);
       expect(capture.opencodeConfig).toBe(path.join(managedOpenCodeHome, "runtime-tmp", "run-opencode-runtime-skill", "opencode.json"));
@@ -1064,8 +1095,8 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         forbiddenConfigMarker,
       );
       await expect(fs.readFile(sharedConfigPath, "utf8")).resolves.not.toContain("run-jwt-token");
-      expect((await fs.stat(capture.opencodeConfig!)).mode & 0o777).toBe(0o600);
-      const managedConfig = JSON.parse(await fs.readFile(capture.opencodeConfig!, "utf8")) as {
+      await expect(fs.stat(capture.opencodeConfig!)).rejects.toMatchObject({ code: "ENOENT" });
+      const managedConfig = JSON.parse(capture.opencodeConfigContents) as {
         autoupdate?: unknown;
         mcp?: Record<string, { type?: unknown; command?: unknown; environment?: Record<string, unknown>; enabled?: unknown }>;
         provider?: Record<string, unknown>;
@@ -1520,8 +1551,11 @@ describe("opencode execute", { timeout: 20_000 }, () => {
           onMeta: async (value) => { meta = value as Record<string, unknown>; },
         });
         expect(result.exitCode).toBe(0);
-        const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { opencodeConfig: string };
-        const managedConfig = JSON.parse(await fs.readFile(capture.opencodeConfig, "utf8")) as {
+        const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+          opencodeConfig: string;
+          opencodeConfigContents: string;
+        };
+        const managedConfig = JSON.parse(capture.opencodeConfigContents) as {
           mcp: Record<string, { command: string[]; environment?: Record<string, string> }>;
         };
         expect(Object.keys(managedConfig.mcp)).toEqual(["rudder-tools", "rudder-browser"]);
@@ -1531,6 +1565,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         expect(await readMcpToolNames({ command: browser.command[0], args: browser.command.slice(1), env: browser.environment })).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
         expect(meta.rudderMcp).toMatchObject({ available: true, serverName: "rudder-tools", toolCount: 69 });
         expect(meta.browserMcp).toMatchObject({ available: true, serverName: "rudder-browser", toolCount: 8 });
+        await expect(fs.stat(path.dirname(capture.opencodeConfig))).rejects.toMatchObject({ code: "ENOENT" });
       } finally {
         installedDesktopMcp.restore();
         if (previousHome === undefined) delete process.env.HOME;
@@ -1592,14 +1627,17 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         ]);
         expect([enabledResult.exitCode, disabledResult.exitCode]).toEqual([0, 0]);
         const captures = await Promise.all([enabledCapturePath, disabledCapturePath].map(async (filePath) =>
-          JSON.parse(await fs.readFile(filePath, "utf8")) as { opencodeConfig: string }
-        ));
-        expect(captures[0].opencodeConfig).not.toBe(captures[1].opencodeConfig);
-        const configs = await Promise.all(captures.map(async (capture) =>
-          JSON.parse(await fs.readFile(capture.opencodeConfig, "utf8")) as {
-            mcp: Record<string, { environment: Record<string, string> }>;
+          JSON.parse(await fs.readFile(filePath, "utf8")) as {
+            opencodeConfig: string;
+            opencodeConfigContents: string;
           }
         ));
+        expect(captures[0].opencodeConfig).not.toBe(captures[1].opencodeConfig);
+        const configs = captures.map((capture) =>
+          JSON.parse(capture.opencodeConfigContents) as {
+            mcp: Record<string, { environment: Record<string, string> }>;
+          }
+        );
         expect(Object.keys(configs[0].mcp)).toEqual(["rudder-tools", "rudder-browser"]);
         expect(Object.keys(configs[1].mcp)).toEqual(["rudder-tools"]);
         for (const server of Object.values(configs[0].mcp)) {
@@ -1612,6 +1650,61 @@ describe("opencode execute", { timeout: 20_000 }, () => {
           RUDDER_RUN_ID: "run-disabled",
         });
         expect(JSON.stringify(configs[1])).not.toContain("token-enabled");
+        await Promise.all(captures.map(async (capture) => {
+          await expect(fs.stat(path.dirname(capture.opencodeConfig))).rejects.toMatchObject({ code: "ENOENT" });
+        }));
+      } finally {
+        installedDesktopMcp.restore();
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+        if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+        else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+        if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+        else process.env.RUDDER_HOME = previousRudderHome;
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "removes the OpenCode run credential config after provider failure",
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-failed-config-"));
+      const workspace = path.join(root, "workspace");
+      const commandPath = path.join(root, "opencode");
+      const capturePath = path.join(root, "capture.json");
+      await fs.mkdir(workspace, { recursive: true });
+      await writeFakeOpenCodeCommand(commandPath);
+      const installedDesktopMcp = await installCanonicalDesktopMcp(root);
+      const previousHome = process.env.HOME;
+      const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+      const previousRudderHome = process.env.RUDDER_HOME;
+      process.env.HOME = root;
+      process.env.RUDDER_OPERATOR_HOME = root;
+      process.env.RUDDER_HOME = path.join(root, ".rudder");
+      try {
+        const result = await execute({
+          runId: "run-failed",
+          agent: { id: "agent-failed", orgId: "organization-1", name: "Failed Agent", agentRuntimeType: "opencode_local", agentRuntimeConfig: {} },
+          runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+          config: {
+            command: commandPath,
+            cwd: workspace,
+            model: "openai/gpt-4.1-mini",
+            env: { RUDDER_TEST_CAPTURE_PATH: capturePath, RUDDER_TEST_PROVIDER_FAILURE: "1" },
+            promptTemplate: "Follow the heartbeat.",
+          },
+          context: {},
+          authToken: "token-failed",
+          onLog: async () => {},
+        });
+        expect(result.exitCode).toBe(7);
+        const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+          opencodeConfig: string;
+          opencodeConfigContents: string;
+        };
+        expect(capture.opencodeConfigContents).toContain("token-failed");
+        await expect(fs.stat(path.dirname(capture.opencodeConfig))).rejects.toMatchObject({ code: "ENOENT" });
       } finally {
         installedDesktopMcp.restore();
         if (previousHome === undefined) delete process.env.HOME;
@@ -1682,6 +1775,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
           prompt: string;
           opencodeConfig: string;
+          opencodeConfigContents: string;
           rudderBrowserEnabled: string | null;
         };
         expect(capture.rudderBrowserEnabled).toBe("false");
@@ -1714,7 +1808,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
           "skills",
         );
         expect(await fs.readdir(managedSkills)).toEqual(["keep-skill"]);
-        const managedConfig = JSON.parse(await fs.readFile(capture.opencodeConfig, "utf8")) as {
+        const managedConfig = JSON.parse(capture.opencodeConfigContents) as {
           mcp?: Record<string, {
             command?: string[];
             environment?: Record<string, string>;

@@ -532,6 +532,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   );
   const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
   await fs.mkdir(runtimeTmpDir, { recursive: true });
+  try {
   const runConfigPath = path.join(runtimeTmpDir, MANAGED_OPENCODE_CONFIG_FILE);
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
@@ -1021,4 +1022,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
 
   return toResult(initial);
+  } finally {
+    await fs.rm(runtimeTmpDir, { recursive: true, force: true });
+  }
 }

@@ -97,6 +97,10 @@ const payload = {
 if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
 }
+if (process.env.RUDDER_TEST_PROVIDER_FAILURE === "1") {
+  console.error("forced Claude provider failure");
+  process.exit(7);
+}
 console.log(JSON.stringify({
   type: "system",
   subtype: "init",
@@ -217,6 +221,17 @@ describe("claude execute", { timeout: 20_000 }, () => {
         argv: string[];
       };
       expect(capture.argv).toEqual(["auth", "login"]);
+      await expect(fs.stat(path.join(
+        root,
+        ".rudder",
+        "instances",
+        "default",
+        "organizations",
+        "organization-1",
+        "claude-home",
+        "runtime-tmp",
+        "claude-login-test",
+      ))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });
@@ -727,9 +742,9 @@ describe("claude execute", { timeout: 20_000 }, () => {
       const settingsStat = await fs.lstat(capture.managedClaudeSettingsPath!);
       expect(settingsStat.isSymbolicLink()).toBe(false);
       expect(settingsStat.mode & 0o777).toBe(0o600);
-      const mcpConfigStat = await fs.lstat(capture.managedClaudeMcpConfigPath!);
-      expect(mcpConfigStat.isSymbolicLink()).toBe(false);
-      expect(mcpConfigStat.mode & 0o777).toBe(0o600);
+      await expect(fs.lstat(capture.managedClaudeMcpConfigPath!)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
       const managedSettings = JSON.parse(capture.managedClaudeSettings ?? "{}") as {
         env?: Record<string, string>;
         enabledPlugins?: unknown;
@@ -1226,6 +1241,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
         expect(result.exitCode).toBe(0);
         const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
           managedClaudeMcpConfig: string;
+          managedClaudeMcpConfigPath: string;
         };
         const managedConfig = JSON.parse(capture.managedClaudeMcpConfig) as {
           mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
@@ -1237,6 +1253,8 @@ describe("claude execute", { timeout: 20_000 }, () => {
         expect(await readMcpToolNames(browser)).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
         expect(meta.rudderMcp).toMatchObject({ available: true, serverName: "rudder-tools", toolCount: 69 });
         expect(meta.browserMcp).toMatchObject({ available: true, serverName: "rudder-browser", toolCount: 8 });
+        await expect(fs.stat(path.dirname(path.dirname(capture.managedClaudeMcpConfigPath))))
+          .rejects.toMatchObject({ code: "ENOENT" });
       } finally {
         installedDesktopMcp.restore();
         if (previousHome === undefined) delete process.env.HOME;
@@ -1314,6 +1332,58 @@ describe("claude execute", { timeout: 20_000 }, () => {
           RUDDER_RUN_ID: "run-disabled",
         });
         expect(JSON.stringify(disabledConfig)).not.toContain("token-enabled");
+        await Promise.all(captures.map(async (capture) => {
+          await expect(fs.stat(path.dirname(path.dirname(capture.managedClaudeMcpConfigPath))))
+            .rejects.toMatchObject({ code: "ENOENT" });
+        }));
+      } finally {
+        installedDesktopMcp.restore();
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+        if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+        else process.env.RUDDER_HOME = previousRudderHome;
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "removes the Claude run credential config after provider failure",
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-failed-config-"));
+      const workspace = path.join(root, "workspace");
+      const commandPath = path.join(root, "claude");
+      const capturePath = path.join(root, "capture.json");
+      await fs.mkdir(workspace, { recursive: true });
+      await writeFakeClaudeCommand(commandPath);
+      const installedDesktopMcp = await installCanonicalDesktopMcp(root);
+      const previousHome = process.env.HOME;
+      const previousRudderHome = process.env.RUDDER_HOME;
+      process.env.HOME = root;
+      process.env.RUDDER_HOME = path.join(root, ".rudder");
+      try {
+        const result = await execute({
+          runId: "run-failed",
+          agent: { id: "agent-failed", orgId: "organization-1", name: "Failed Agent", agentRuntimeType: "claude_local", agentRuntimeConfig: {} },
+          runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+          config: {
+            command: commandPath,
+            cwd: workspace,
+            env: { RUDDER_TEST_CAPTURE_PATH: capturePath, RUDDER_TEST_PROVIDER_FAILURE: "1" },
+            promptTemplate: "Follow the heartbeat.",
+          },
+          context: {},
+          authToken: "token-failed",
+          onLog: async () => {},
+        });
+        expect(result.exitCode).toBe(7);
+        const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+          managedClaudeMcpConfig: string;
+          managedClaudeMcpConfigPath: string;
+        };
+        expect(capture.managedClaudeMcpConfig).toContain("token-failed");
+        await expect(fs.stat(path.dirname(path.dirname(capture.managedClaudeMcpConfigPath))))
+          .rejects.toMatchObject({ code: "ENOENT" });
       } finally {
         installedDesktopMcp.restore();
         if (previousHome === undefined) delete process.env.HOME;
