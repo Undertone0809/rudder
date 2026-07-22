@@ -95,6 +95,7 @@ const mockState = vi.hoisted(() => ({
     available: true,
     error: null,
   } as ChatRuntimeDescriptor,
+  draftPreflightPending: false,
   preflightDraft: vi.fn(),
   sendFirstMessageStream: vi.fn(),
   sendMessageStream: vi.fn(),
@@ -191,9 +192,9 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (queryKey[0] === "chats" && queryKey[2] === "draft-preflight") {
       return {
-        data: mockState.draftPreflight,
-        isPending: false,
-        isLoading: false,
+        data: mockState.draftPreflightPending ? undefined : mockState.draftPreflight,
+        isPending: mockState.draftPreflightPending,
+        isLoading: mockState.draftPreflightPending,
         error: null,
       };
     }
@@ -1461,6 +1462,7 @@ beforeEach(() => {
     available: true,
     error: null,
   };
+  mockState.draftPreflightPending = false;
   mockState.preflightDraft.mockReset();
   mockState.preflightDraft.mockResolvedValue(mockState.draftPreflight);
   mockState.sendFirstMessageStream.mockReset();
@@ -7081,6 +7083,19 @@ describe("Chat ask_user panel", () => {
 });
 
 describe("Atomic new-chat drafts", () => {
+  it("keeps draft preflight loading silent on initial entry", () => {
+    mockState.conversationId = null;
+    mockState.conversations = [];
+    mockState.messagesByChatId = {};
+    mockState.draftPreflightPending = true;
+
+    const { container } = renderChat();
+
+    expect(container.textContent).not.toContain("Checking the selected chat configuration.");
+    expect(container.querySelector(".chat-warning")).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Send"]')?.disabled).toBe(true);
+  });
+
   it("keeps an unavailable draft unpersisted and links to agent settings", async () => {
     mockState.conversationId = null;
     mockState.conversations = [];

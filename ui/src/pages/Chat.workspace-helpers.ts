@@ -31,6 +31,8 @@ export const RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT = 10;
 export const CHAT_LIST_PREVIEW_LIMIT = 40;
 export const CHAT_ISSUE_MENTION_LIMIT = 50;
 export const CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD = 5;
+export const CHAT_DRAFT_PREFLIGHT_STALE_TIME_MS = 5 * 60_000;
+export const CHAT_DRAFT_PREFLIGHT_GC_TIME_MS = 30 * 60_000;
 
 const ACTIVE_CHAT_GENERATION_STATUSES = new Set<ChatGenerationStatus>([
   "starting",
@@ -170,6 +172,10 @@ export function useChatDraftQueries(input: {
     }),
     enabled: !input.selectedConversation && Boolean(input.selectedOrganizationId) && Boolean(input.activeAgentId),
     retry: false,
+    staleTime: (query) => query.state.data?.available
+      ? CHAT_DRAFT_PREFLIGHT_STALE_TIME_MS
+      : 0,
+    gcTime: CHAT_DRAFT_PREFLIGHT_GC_TIME_MS,
   });
   return { draftPreflightQuery, projectConversationsQuery };
 }
