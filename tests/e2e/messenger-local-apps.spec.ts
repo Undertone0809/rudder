@@ -376,6 +376,20 @@ test.describe("Messenger Local Apps", () => {
     await browserSavedRow.getByRole("button", { name: `Saved View actions for ${browserSavedEntry.title}` }).click();
     const removeBrowserSavedView = page.getByRole("menuitem", { name: "Remove from Messenger" });
     await expect(removeBrowserSavedView).toBeVisible();
+    let releaseGroupsRefetch!: () => void;
+    let markGroupsRefetchStarted!: () => void;
+    const groupsRefetchRelease = new Promise<void>((resolve) => { releaseGroupsRefetch = resolve; });
+    const groupsRefetchStarted = new Promise<void>((resolve) => { markGroupsRefetchStarted = resolve; });
+    let holdGroupsRefetch = true;
+    await page.route(`**/api/orgs/${organization.id}/messenger/groups`, async (route) => {
+      if (route.request().method() !== "GET" || !holdGroupsRefetch) {
+        await route.continue();
+        return;
+      }
+      markGroupsRefetchStarted();
+      await groupsRefetchRelease;
+      await route.continue();
+    });
     const browserQueuedUrl = "https://example.com/deleted-before-metadata-sync";
     const updatesBeforeBrowserDelete = browserMetadataUpdateCount;
     await browserView.locator('input[aria-label="Browser URL"]').evaluate((element, nextUrl) => {
@@ -393,8 +407,14 @@ test.describe("Messenger Local Apps", () => {
       );
     }).toBe(false);
     await expect(browserView.getByTestId("chat-side-panel-browser-webview")).toHaveAttribute("src", browserQueuedUrl);
+    await groupsRefetchStarted;
+    await page.waitForTimeout(1_200);
+    expect(browserMetadataUpdateCount).toBe(updatesBeforeBrowserDelete);
+    holdGroupsRefetch = false;
+    releaseGroupsRefetch();
     await page.waitForTimeout(800);
     expect(browserMetadataUpdateCount).toBe(updatesBeforeBrowserDelete);
+    await page.unroute(`**/api/orgs/${organization.id}/messenger/groups`);
 
     const startCountBeforeRestore = (await calls(page)).start;
     await page.goto(`/${organization.issuePrefix}/messenger/saved/${savedEntry.savedView.id}`);

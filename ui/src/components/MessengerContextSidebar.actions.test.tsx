@@ -3417,6 +3417,82 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "approvals");
   });
 
+  it("evicts a successfully deleted Saved View from the exact organization groups cache before refetch", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    customGroupList = [{
+      id: "group-saved",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Launch research",
+      icon: "folder::amber",
+      sortOrder: 0,
+      collapsed: false,
+      pinnedAt: null,
+      createdAt: "2026-04-11T08:00:00.000Z",
+      updatedAt: "2026-04-11T08:00:00.000Z",
+      entries: [{
+        id: "entry-saved",
+        orgId: "org-1",
+        userId: "local-board",
+        groupId: "group-saved",
+        itemKey: "saved-view:saved-a",
+        sortOrder: 0,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        item: {
+          type: "saved_view",
+          itemKey: "saved-view:saved-a",
+          title: "Market dashboard",
+          savedView: {
+            id: "saved-a",
+            title: "Market dashboard",
+            subtitle: "https://example.com/market",
+            favicon: null,
+            targetPayload: {
+              kind: "browser",
+              tabId: "tab-a",
+              url: "https://example.com/market",
+              viewInstanceId: "view-a",
+            },
+          },
+        },
+      }],
+    }];
+    renderSidebar();
+
+    const removeButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Remove from Messenger")) as HTMLButtonElement | undefined;
+    expect(removeButton).toBeTruthy();
+    setQueryData.mockClear();
+    invalidateQueries.mockClear();
+    await act(async () => {
+      removeButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockDeleteSavedView).toHaveBeenCalledWith("org-1", "saved-a");
+    const cacheCall = setQueryData.mock.calls.find(([queryKey]) => (
+      Array.isArray(queryKey)
+      && queryKey[0] === "messenger"
+      && queryKey[1] === "org-1"
+      && queryKey[2] === "groups"
+    ));
+    expect(cacheCall).toBeTruthy();
+    const updateCache = cacheCall?.[1] as ((current: unknown) => unknown) | undefined;
+    const responseCache = { groups: hydrateCustomGroupFixtures(customGroupList) };
+    expect(updateCache?.(responseCache)).toMatchObject({
+      groups: [{ id: "group-saved", entries: [] }],
+    });
+    const legacyArrayCache = hydrateCustomGroupFixtures(customGroupList);
+    expect(updateCache?.(legacyArrayCache)).toBe(legacyArrayCache);
+    expect(mockDeleteSavedView.mock.invocationCallOrder[0]).toBeLessThan(setQueryData.mock.invocationCallOrder[0]);
+    expect(setQueryData.mock.invocationCallOrder[0]).toBeLessThan(invalidateQueries.mock.invocationCallOrder[0]);
+  });
+
   it("surfaces Saved View move and remove failures", async () => {
     installLocalStorage({
       "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
@@ -3497,6 +3573,7 @@ describe("MessengerContextSidebar chat actions", () => {
     const removeButton = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Remove from Messenger")) as HTMLButtonElement | undefined;
     expect(removeButton).toBeTruthy();
+    setQueryData.mockClear();
     await act(async () => {
       removeButton?.click();
       await Promise.resolve();
@@ -3506,6 +3583,12 @@ describe("MessengerContextSidebar chat actions", () => {
       body: "Remove denied",
       tone: "error",
     });
+    expect(setQueryData.mock.calls.some(([queryKey]) => (
+      Array.isArray(queryKey)
+      && queryKey[0] === "messenger"
+      && queryKey[1] === "org-1"
+      && queryKey[2] === "groups"
+    ))).toBe(false);
 
     const separateButtons = Array.from(document.querySelectorAll("button"))
       .filter((button) => button.textContent?.includes("Separate items")) as HTMLButtonElement[];

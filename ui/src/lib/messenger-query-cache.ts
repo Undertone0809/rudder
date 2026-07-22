@@ -1,5 +1,5 @@
 import { queryKeys } from "@/lib/queryKeys";
-import type { ChatConversation, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupsResponse, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
+import type { ChatConversation, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupsResponse, MessengerCustomGroupWithEntries, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
 import type { QueryClient } from "@tanstack/react-query";
 
 interface MessengerThreadPageData {
@@ -289,6 +289,31 @@ export function cancelMessengerChatRenameQueries(queryClient: QueryClient, orgId
     queryClient.cancelQueries({ queryKey: ["chats", orgId] }),
     queryClient.cancelQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
   ]);
+}
+
+export function removeMessengerSavedViewFromCustomGroupsCache(
+  queryClient: QueryClient,
+  orgId: string,
+  savedViewId: string,
+) {
+  queryClient.setQueryData<MessengerCustomGroupsResponse | MessengerCustomGroupWithEntries[]>(
+    queryKeys.messenger.customGroups(orgId),
+    (current) => {
+      if (!current || Array.isArray(current)) return current;
+
+      let changed = false;
+      const groups = current.groups.map((group) => {
+        const entries = group.entries.filter((entry) => (
+          entry.item.type !== "saved_view" || entry.item.savedView.id !== savedViewId
+        ));
+        if (entries.length === group.entries.length) return group;
+        changed = true;
+        return { ...group, entries };
+      });
+
+      return changed ? { ...current, groups } : current;
+    },
+  );
 }
 
 export function markMessengerThreadPinnedInCache(

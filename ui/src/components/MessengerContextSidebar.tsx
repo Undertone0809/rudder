@@ -85,6 +85,7 @@ import {
   markMessengerChatPinnedInCache,
   markMessengerThreadPinnedInCache,
   markMessengerThreadReadInCache,
+  removeMessengerSavedViewFromCustomGroupsCache,
   renameMessengerChatInCache,
 } from "@/lib/messenger-query-cache";
 import { messengerThreadKindLabel } from "@/lib/messenger-thread-labels";
@@ -1303,11 +1304,16 @@ export function MessengerContextSidebar() {
   });
 
   const removeSavedViewMutation = useMutation({
-    mutationFn: (savedViewId: string) => {
-      if (!model.selectedOrganizationId) throw new Error("Organization is required to remove a Saved View");
-      return messengerApi.deleteSavedView(model.selectedOrganizationId, savedViewId);
+    mutationFn: async (savedViewId: string) => {
+      const organizationId = model.selectedOrganizationId;
+      if (!organizationId) throw new Error("Organization is required to remove a Saved View");
+      await messengerApi.deleteSavedView(organizationId, savedViewId);
+      return { organizationId, savedViewId };
     },
-    onSuccess: refreshCustomGroups,
+    onSuccess: async ({ organizationId, savedViewId }) => {
+      removeMessengerSavedViewFromCustomGroupsCache(queryClient, organizationId, savedViewId);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.customGroups(organizationId) });
+    },
     onError: (error) => {
       pushToast({
         title: "Could not remove Saved View",
