@@ -11,6 +11,12 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  assertExactLocalAppSavedViewTarget,
+  assertNoLocalAppRuntimeDetails,
+  assertStrictLoopbackAttestation,
+  terminateProvenLocalAppProcessGroup,
+} from "./local-app-smoke-helpers.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
@@ -42,6 +48,7 @@ const browserImportSmokeCookieUrl = "http://127.0.0.1/";
 const browserSmokeScreenshotPath = process.env.RUDDER_DESKTOP_SMOKE_SCREENSHOT?.trim() || null;
 const localAppSmokeRootOverride = process.env.RUDDER_DESKTOP_LOCAL_APP_SMOKE_ROOT?.trim() || null;
 const localAppSmokeEnvNames = process.env.RUDDER_DESKTOP_LOCAL_APP_SMOKE_ENV_NAMES?.trim() || "";
+const localAppSmokeExpectedBody = process.env.RUDDER_DESKTOP_LOCAL_APP_SMOKE_EXPECTED_BODY?.trim() || null;
 const localAppSmokeScreenshotOverride = process.env.RUDDER_DESKTOP_LOCAL_APP_SMOKE_SCREENSHOT?.trim() || null;
 const localAppSmokeScreenshotPath = localAppSmokeScreenshotOverride
   ? path.resolve(localAppSmokeScreenshotOverride)
@@ -147,6 +154,9 @@ async function createGeneratedLocalAppSmokeProject(scenarioRoot) {
   const projectRoot = path.join(scenarioRoot, "local-app-project");
   const markerPath = path.join(projectRoot, "start-marker.json");
   const serverPath = path.join(projectRoot, "server.mjs");
+  const sentinelEnvName = "RUDDER_DESKTOP_LOCAL_APP_SMOKE_SENTINEL";
+  const sentinelEnvValue = `local-app-smoke-${randomBytes(32).toString("hex")}`;
+  const sentinelDigest = createHash("sha256").update(sentinelEnvValue).digest("hex");
   await mkdir(projectRoot, { recursive: true });
   await writeFile(path.join(projectRoot, "package.json"), `${JSON.stringify({
     name: "rudder-local-app-smoke-fixture",
@@ -158,16 +168,20 @@ async function createGeneratedLocalAppSmokeProject(scenarioRoot) {
       openPath: "/app",
     },
   }, null, 2)}\n`, "utf8");
-  await writeFile(serverPath, `import { writeFileSync } from "node:fs";
+  await writeFile(serverPath, `import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import http from "node:http";
 
 const host = process.env.HOST === "127.0.0.1" ? process.env.HOST : "127.0.0.1";
 const port = Number.parseInt(process.env.PORT ?? "0", 10);
 const markerPath = ${JSON.stringify(markerPath)};
+const sentinelEnvAccepted = createHash("sha256")
+  .update(process.env[${JSON.stringify(sentinelEnvName)}] ?? "")
+  .digest("hex") === ${JSON.stringify(sentinelDigest)};
 const server = http.createServer((request, response) => {
   if (request.url === "/health") {
     response.writeHead(200, { "cache-control": "no-store", "content-type": "application/json" });
-    response.end(JSON.stringify({ ok: true, pid: process.pid, port }));
+    response.end(JSON.stringify({ ok: true, pid: process.pid, port, sentinelEnvAccepted }));
     return;
   }
   if (request.url === "/app" || request.url === "/") {
@@ -179,7 +193,7 @@ const server = http.createServer((request, response) => {
   response.end("not found");
 });
 server.listen(port, host, () => {
-  const marker = { pid: process.pid, ppid: process.ppid, port, startedAt: new Date().toISOString() };
+  const marker = { pid: process.pid, ppid: process.ppid, port, sentinelEnvAccepted, startedAt: new Date().toISOString() };
   writeFileSync(markerPath, JSON.stringify(marker) + "\\n", { mode: 0o600 });
   process.stdout.write('Rudder Local Apps smoke fixture listening on ' + host + ':' + port + '\\n');
 });
@@ -189,9 +203,11 @@ process.on("SIGINT", stop);
 `, "utf8");
   return {
     external: false,
+    expectedBodyText: "Rudder Local Apps smoke fixture",
+    launchEnv: { [sentinelEnvName]: sentinelEnvValue },
     markerPath,
     projectRoot,
-    expectedBodyText: "Rudder Local Apps smoke fixture",
+    requiredEnvNames: [sentinelEnvName],
   };
 }
 
@@ -201,9 +217,11 @@ async function resolveLocalAppSmokeProject(scenarioRoot) {
   assert.equal((await stat(projectRoot)).isDirectory(), true, "Local App smoke root must be a directory");
   return {
     external: true,
+    expectedBodyText: localAppSmokeExpectedBody,
+    launchEnv: {},
     markerPath: null,
     projectRoot,
-    expectedBodyText: null,
+    requiredEnvNames: [],
   };
 }
 
@@ -225,13 +243,21 @@ async function seedApprovedLocalAppDefinition(scenarioRoot, project) {
     import(pathToFileURL(discoveryModulePath).href),
   ]);
   const registryPath = path.join(resolveInstancePaths(scenarioRoot).electronUserDataDir, "local-apps", "registry.json");
-  const registry = new LocalAppRegistry({ registryPath, installationId: "default" });
+  const installationId = "default";
+  const registry = new LocalAppRegistry({ registryPath, installationId });
   const discovered = await discoverLocalAppDefinition(project.projectRoot);
-  const inheritedEnvNames = parseLocalAppSmokeEnvNames();
+  const inheritedEnvNames = [...new Set([
+    ...project.requiredEnvNames,
+    ...parseLocalAppSmokeEnvNames(),
+  ])];
   const created = await registry.createDefinition({ ...discovered, inheritedEnvNames });
   const definition = await registry.approveDefinition(created.id, created.trustFingerprint);
   assert.equal(definition.approvedFingerprint, definition.trustFingerprint, "smoke definition should be approved in its isolated registry");
-  return { definition, registryPath };
+  const inheritedEnvValues = inheritedEnvNames.flatMap((name) => {
+    const value = project.launchEnv[name] ?? process.env[name];
+    return typeof value === "string" ? [value] : [];
+  });
+  return { definition, inheritedEnvNames, inheritedEnvValues, installationId, registry, registryPath };
 }
 
 async function readLocalAppSmokeRegistry(registryPath) {
@@ -3475,7 +3501,7 @@ async function waitForLocalAppSavedView(baseUrl, companyId, localBindingId) {
         const savedView = entry.item?.type === "saved_view" ? entry.item.savedView : null;
         if (savedView?.targetPayload?.kind === "local_app"
           && savedView.targetPayload.localBindingId === localBindingId) {
-          return { entry, group, savedView };
+          return { directory: payload, entry, group, savedView };
         }
       }
     }
@@ -3501,10 +3527,28 @@ async function readProcessTable() {
   });
 }
 
+async function readLocalAppListenerPids(port) {
+  const lsof = await runCapturedProcess("/usr/sbin/lsof", [
+    "-nP",
+    `-iTCP:${port}`,
+    "-sTCP:LISTEN",
+    "-Fp",
+  ]);
+  if (lsof.code !== 0 && lsof.code !== 1) {
+    throw new Error(`lsof failed while checking the Local App listener (${lsof.code})`);
+  }
+  return lsof.stdout.split(/\r?\n/)
+    .filter((line) => /^p\d+$/.test(line))
+    .map((line) => Number(line.slice(1)));
+}
+
+async function readLocalAppRuntimeDescriptor(registryPath, definitionId) {
+  return (await readLocalAppSmokeRegistry(registryPath)).runtimeDescriptors?.[definitionId] ?? null;
+}
+
 async function assertLocalAppRuntimeRunning(input) {
   const { attested, definition, markerPath, registryPath } = input;
-  const registry = await readLocalAppSmokeRegistry(registryPath);
-  const descriptor = registry.runtimeDescriptors?.[definition.id];
+  const descriptor = await readLocalAppRuntimeDescriptor(registryPath, definition.id);
   assert.equal(descriptor?.status, "running", "registry should persist a running Local App descriptor");
   assert.equal(Number.isInteger(descriptor?.pid), true, "running Local App descriptor should include a PID");
   assert.equal(Number.isInteger(descriptor?.pgid), true, "running Local App descriptor should include a process group");
@@ -3515,16 +3559,11 @@ async function assertLocalAppRuntimeRunning(input) {
     signal: AbortSignal.timeout(2_000),
   });
   assert.equal(health.ok, true, "attested Local App readiness endpoint should remain reachable");
-  const lsof = await runCapturedProcess("/usr/sbin/lsof", [
-    "-nP",
-    `-iTCP:${descriptor.port}`,
-    "-sTCP:LISTEN",
-    "-Fp",
-  ]);
-  assert.equal(lsof.code, 0, `lsof should find the Local App listener: ${lsof.stderr}`);
-  const listenerPids = lsof.stdout.split(/\r?\n/)
-    .filter((line) => /^p\d+$/.test(line))
-    .map((line) => Number(line.slice(1)));
+  if (markerPath) {
+    const healthPayload = await health.json();
+    assert.equal(healthPayload.sentinelEnvAccepted, true, "generated fixture must receive its allowlisted sentinel environment value");
+  }
+  const listenerPids = await readLocalAppListenerPids(descriptor.port);
   assert.ok(listenerPids.length > 0, "lsof should report at least one Local App listener PID");
   const processes = await readProcessTable();
   assert.ok(
@@ -3539,6 +3578,7 @@ async function assertLocalAppRuntimeRunning(input) {
   );
   if (markerPath) {
     const marker = JSON.parse(await readFile(markerPath, "utf8"));
+    assert.equal(marker.sentinelEnvAccepted, true, "start marker must prove receipt of the allowlisted sentinel environment value");
     assert.ok(listenerPids.includes(marker.pid), "fixture start marker should identify an attested listener process");
     assert.ok(
       processes.some((processInfo) => processInfo.pid === marker.pid && processInfo.pgid === descriptor.pgid),
@@ -3554,13 +3594,7 @@ async function assertLocalAppRuntimeStopped(input) {
   await waitForSmokeCondition("the Local App listener and process group to exit", async () => {
     const registry = await readLocalAppSmokeRegistry(registryPath);
     if (registry.runtimeDescriptors?.[definition.id]) return false;
-    const lsof = await runCapturedProcess("/usr/sbin/lsof", [
-      "-nP",
-      `-iTCP:${descriptor.port}`,
-      "-sTCP:LISTEN",
-      "-Fp",
-    ]);
-    if (lsof.code === 0 && lsof.stdout.trim()) return false;
+    if ((await readLocalAppListenerPids(descriptor.port)).length > 0) return false;
     const processes = await readProcessTable();
     return !processes.some((processInfo) => (
       processInfo.pid === descriptor.pid || processInfo.pgid === descriptor.pgid
@@ -3571,8 +3605,118 @@ async function assertLocalAppRuntimeStopped(input) {
   }
 }
 
-async function waitForLocalAppWebview(page, definition, attested, expectedBodyText) {
-  const expectedUrl = new URL(attested.openPath, attested.origin).href;
+function sanitizeLocalAppSmokeError(error, sensitiveValues) {
+  const redact = (value) => sensitiveValues.reduce((result, sensitive) => (
+    typeof sensitive === "string" && sensitive.length > 0
+      ? result.split(sensitive).join("[redacted]")
+      : result
+  ), value);
+  if (!(error instanceof Error)) return new Error(redact(String(error)));
+  const sanitized = new Error(redact(error.message));
+  sanitized.name = error.name;
+  if (error.stack) sanitized.stack = redact(error.stack);
+  return sanitized;
+}
+
+async function clearEmergencyLocalAppDescriptor(registry, definition, descriptor) {
+  const current = await registry.getRuntimeDescriptor(definition.id);
+  if (!current) return;
+  assert.equal(
+    current.generation,
+    descriptor.generation,
+    "emergency cleanup must not clear a newer Local App runtime generation",
+  );
+  const cleared = await registry.recordRuntimeDescriptorIfMatch(
+    definition.id,
+    { generation: descriptor.generation },
+    null,
+  );
+  assert.equal(cleared, true, "emergency cleanup should clear only its verified isolated runtime descriptor");
+}
+
+async function hasLocalAppOsResidue(descriptor) {
+  const [listenerPids, processes] = await Promise.all([
+    readLocalAppListenerPids(descriptor.port),
+    readProcessTable(),
+  ]);
+  return listenerPids.length > 0 || processes.some((processInfo) => (
+    processInfo.pid === descriptor.pid || processInfo.pgid === descriptor.pgid
+  ));
+}
+
+async function cleanupLocalAppScenario(input) {
+  const {
+    definition,
+    lastKnownDescriptor,
+    markerPath,
+    registry,
+    registryPath,
+    run,
+    sensitiveValues,
+  } = input;
+  const cleanupErrors = [];
+  let descriptor = lastKnownDescriptor;
+  try {
+    descriptor = await readLocalAppRuntimeDescriptor(registryPath, definition.id) ?? descriptor;
+  } catch (error) {
+    cleanupErrors.push(sanitizeLocalAppSmokeError(error, sensitiveValues));
+  }
+
+  try {
+    if (run.page.isClosed()) throw new Error("Local App renderer closed before the cleanup IPC stop");
+    await run.page.evaluate((definitionId) => window.desktopShell.localApps.stop(definitionId), definition.id);
+    if (descriptor) {
+      await assertLocalAppRuntimeStopped({ definition, descriptor, markerPath, registryPath });
+    }
+  } catch (error) {
+    cleanupErrors.push(sanitizeLocalAppSmokeError(error, sensitiveValues));
+  }
+
+  try {
+    await closeDesktop(run.electronApp);
+  } catch (error) {
+    cleanupErrors.push(sanitizeLocalAppSmokeError(error, sensitiveValues));
+  }
+
+  try {
+    descriptor = await readLocalAppRuntimeDescriptor(registryPath, definition.id) ?? descriptor;
+  } catch (error) {
+    cleanupErrors.push(sanitizeLocalAppSmokeError(error, sensitiveValues));
+  }
+  if (descriptor) {
+    try {
+      await assertLocalAppRuntimeStopped({ definition, descriptor, markerPath, registryPath });
+    } catch (watchdogError) {
+      cleanupErrors.push(sanitizeLocalAppSmokeError(watchdogError, sensitiveValues));
+      try {
+        if (await hasLocalAppOsResidue(descriptor)) {
+          await terminateProvenLocalAppProcessGroup({
+            descriptor,
+            readListenerPids: readLocalAppListenerPids,
+            readProcesses: readProcessTable,
+            signalGroup: async (pgid, signal) => {
+              try {
+                process.kill(-pgid, signal);
+              } catch (error) {
+                if (error?.code !== "ESRCH") throw error;
+              }
+            },
+          });
+        }
+        await clearEmergencyLocalAppDescriptor(registry, definition, descriptor);
+        await assertLocalAppRuntimeStopped({ definition, descriptor, markerPath, registryPath });
+      } catch (emergencyError) {
+        cleanupErrors.push(sanitizeLocalAppSmokeError(emergencyError, sensitiveValues));
+      }
+    }
+  }
+  return cleanupErrors.length > 0
+    ? new AggregateError(cleanupErrors, "Local App smoke cleanup encountered one or more failures")
+    : null;
+}
+
+async function waitForLocalAppWebview(page, definition, expectedAttestation, expectedBodyText) {
+  const { expectedPartition, expectedUrl } = expectedAttestation;
   await page.waitForFunction(async ({ bindingId, expectedBodyText: bodyText, expectedPartition, expectedUrl: url }) => {
     const webview = Array.from(document.querySelectorAll("[data-testid='local-app-webview']"))
       .find((candidate) => candidate.getAttribute("data-local-binding-id") === bindingId
@@ -3583,12 +3727,22 @@ async function waitForLocalAppWebview(page, definition, attested, expectedBodyTe
       || typeof webview.executeJavaScript !== "function"
       || webview.getURL() !== url) return false;
     try {
-      const evidence = await webview.executeJavaScript(`({
-        bodyText: document.body?.innerText?.trim() ?? "",
-        pathname: window.location.pathname,
-        title: document.title,
-      })`);
+      const evidence = await webview.executeJavaScript(`(async () => {
+        const response = await fetch(window.location.href, { cache: "no-store", credentials: "same-origin" });
+        return {
+          bodyText: document.body?.innerText?.trim() ?? "",
+          fetchOk: response.ok,
+          fetchStatus: response.status,
+          fetchUrl: response.url,
+          pathname: window.location.pathname,
+          title: document.title,
+        };
+      })()`);
       return evidence.pathname === new URL(url).pathname
+        && evidence.fetchOk === true
+        && evidence.fetchStatus >= 200
+        && evidence.fetchStatus < 300
+        && evidence.fetchUrl === url
         && evidence.bodyText.length > 0
         && (!bodyText || evidence.bodyText.includes(bodyText));
     } catch {
@@ -3610,11 +3764,17 @@ async function waitForLocalAppWebview(page, definition, attested, expectedBodyTe
     return {
       partition: webview.getAttribute("partition"),
       url: typeof webview.getURL === "function" ? webview.getURL() : null,
-      ...(await webview.executeJavaScript(`({
-        bodyText: document.body?.innerText?.trim() ?? "",
-        pathname: window.location.pathname,
-        title: document.title,
-      })`)),
+      ...(await webview.executeJavaScript(`(async () => {
+        const response = await fetch(window.location.href, { cache: "no-store", credentials: "same-origin" });
+        return {
+          bodyText: document.body?.innerText?.trim() ?? "",
+          fetchOk: response.ok,
+          fetchStatus: response.status,
+          fetchUrl: response.url,
+          pathname: window.location.pathname,
+          title: document.title,
+        };
+      })()`)),
       expectedUrl: url,
     };
   }, { bindingId: definition.localBindingId, expectedUrl });
@@ -3628,19 +3788,25 @@ async function runLocalAppsScenario(mode) {
 
   const scenarioRoot = path.join(tmpRoot, "local-apps");
   const project = await resolveLocalAppSmokeProject(scenarioRoot);
-  const { definition, registryPath } = await seedApprovedLocalAppDefinition(scenarioRoot, project);
+  const {
+    definition,
+    inheritedEnvNames,
+    inheritedEnvValues,
+    installationId,
+    registry,
+    registryPath,
+  } = await seedApprovedLocalAppDefinition(scenarioRoot, project);
   console.log("[desktop-smoke] Local App definition", JSON.stringify({
-    argv: definition.argv,
-    cwd: definition.cwd,
-    executable: definition.executable,
-    inheritedEnvNames: definition.inheritedEnvNames,
-    openPath: definition.openPath,
-    readiness: definition.readiness,
+    appPublicId: definition.appPublicId,
+    desktopInstallationId: definition.desktopInstallationId,
+    localBindingId: definition.localBindingId,
     title: definition.title,
   }));
   const ports = await allocateSmokePorts();
-  const run = await launchDesktop(scenarioRoot, mode, ports);
+  const run = await launchDesktop(scenarioRoot, mode, ports, project.launchEnv);
   let runningDescriptor = null;
+  let scenarioError = null;
+  let cleanupError = null;
   try {
     const company = await createCompany(run.baseUrl, "LAP");
     const companyRouteKey = company.urlKey ?? company.issuePrefix;
@@ -3678,17 +3844,41 @@ async function runLocalAppsScenario(mode) {
     await openSmokeSidePanel(run.page);
     await initial.view.waitFor({ state: "visible", timeout: 10_000 });
 
+    const activeLocalAppTab = initial.sidePanel
+      .locator('[data-testid="chat-side-panel-tab"][aria-selected="true"]')
+      .filter({ hasText: definition.title });
+    await activeLocalAppTab.waitFor({ state: "visible", timeout: 15_000 });
+    const openedViewInstanceId = await activeLocalAppTab.getAttribute("data-view-instance-id");
+    assert.ok(openedViewInstanceId, "opened Local App tab must expose its view instance identity");
+    const expectedSavedViewTarget = {
+      kind: "local_app",
+      desktopInstallationId: definition.desktopInstallationId,
+      appPublicId: definition.appPublicId,
+      localBindingId: definition.localBindingId,
+      viewInstanceId: openedViewInstanceId,
+    };
+    const privacyOptions = (label) => ({
+      definition,
+      envNames: inheritedEnvNames,
+      envValues: inheritedEnvValues,
+      label,
+    });
     const keepButton = initial.sidePanel.getByTestId("chat-side-panel-keep-in-messenger");
     await keepButton.waitFor({ state: "visible", timeout: 15_000 });
     assert.equal(await keepButton.isEnabled(), true, "Local App Keep in Messenger should be enabled");
+    const keepRequestPromise = run.page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return request.method() === "POST"
+        && url.pathname === `/api/orgs/${company.id}/messenger/saved-views/keep`;
+    }, { timeout: 15_000 });
     const keepResponsePromise = run.page.waitForResponse((response) => {
       const url = new URL(response.url());
       return response.request().method() === "POST"
         && url.pathname === `/api/orgs/${company.id}/messenger/saved-views/keep`;
     }, { timeout: 15_000 });
     await keepButton.click();
-    const keepResponse = await Promise.race([
-      keepResponsePromise,
+    const keepExchange = await Promise.race([
+      Promise.all([keepRequestPromise, keepResponsePromise]),
       run.page.getByText("Could not keep this view", { exact: true })
         .waitFor({ state: "visible", timeout: 15_000 })
         .then(async () => {
@@ -3697,14 +3887,35 @@ async function runLocalAppsScenario(mode) {
           throw new Error(`Keep Local App Saved View did not issue a request: ${await errorToast.innerText()}`);
         }),
     ]);
+    const [keepRequest, keepResponse] = keepExchange;
+    const keepRequestBody = keepRequest.postDataJSON();
+    assertExactLocalAppSavedViewTarget(
+      keepRequestBody?.target,
+      expectedSavedViewTarget,
+      "Keep request",
+    );
+    assertNoLocalAppRuntimeDetails(keepRequestBody, privacyOptions("Keep request"));
     const keepResponseBody = await keepResponse.text();
     assert.equal(
       keepResponse.status(),
       201,
-      `Keep Local App Saved View failed (${keepResponse.status()}): ${keepResponseBody}`,
+      "Keep Local App Saved View returned an unexpected status",
     );
+    const keepResult = JSON.parse(keepResponseBody);
+    assertExactLocalAppSavedViewTarget(
+      keepResult?.savedView?.targetPayload,
+      expectedSavedViewTarget,
+      "Keep response",
+    );
+    assertNoLocalAppRuntimeDetails(keepResult, privacyOptions("Keep response"));
     await run.page.getByText("Kept in Messenger", { exact: true }).waitFor({ state: "visible", timeout: 15_000 });
     const saved = await waitForLocalAppSavedView(run.baseUrl, company.id, definition.localBindingId);
+    assertExactLocalAppSavedViewTarget(
+      saved.savedView.targetPayload,
+      expectedSavedViewTarget,
+      "Messenger group response",
+    );
+    assertNoLocalAppRuntimeDetails(saved.directory, privacyOptions("Messenger group response"));
     assert.ok(
       saved.group.entries.some((entry) => entry.item?.type === "thread" && entry.itemKey === `chat:${chat.id}`),
       "keeping from an ungrouped Chat should atomically group the Chat and Local App Saved View",
@@ -3753,9 +3964,22 @@ async function runLocalAppsScenario(mode) {
     const attested = await waitForSmokeCondition("the attested Local App target", () => (
       readDesktopLocalAppAttestedTarget(run.page, definition.id)
     ));
-    assert.equal(runningStatus.partition, attested.partition);
-    assert.equal(runningStatus.origin, attested.origin);
-    runningDescriptor = await assertLocalAppRuntimeRunning({
+    const expectedAttestation = assertStrictLoopbackAttestation(attested, definition, installationId);
+    assert.equal(
+      runningStatus.partition,
+      expectedAttestation.expectedPartition,
+      "runtime status must use the independently derived Local App partition",
+    );
+    assert.equal(
+      runningStatus.origin,
+      new URL(expectedAttestation.expectedUrl).origin,
+      "runtime status must expose the exact attested loopback origin",
+    );
+    runningDescriptor = await waitForSmokeCondition("the running descriptor to reach the isolated registry", async () => {
+      const descriptor = await readLocalAppRuntimeDescriptor(registryPath, definition.id);
+      return descriptor?.status === "running" ? descriptor : null;
+    });
+    await assertLocalAppRuntimeRunning({
       attested,
       definition,
       markerPath: project.markerPath,
@@ -3764,12 +3988,19 @@ async function runLocalAppsScenario(mode) {
     const webviewEvidence = await waitForLocalAppWebview(
       run.page,
       definition,
-      attested,
+      expectedAttestation,
       project.expectedBodyText,
     );
-    assert.equal(webviewEvidence.partition, attested.partition);
-    assert.equal(webviewEvidence.url, new URL(attested.openPath, attested.origin).href);
+    assert.equal(webviewEvidence.partition, expectedAttestation.expectedPartition);
+    assert.equal(webviewEvidence.url, expectedAttestation.expectedUrl);
+    assert.equal(webviewEvidence.fetchOk, true, "Local App guest same-origin fetch must succeed");
+    assert.ok(
+      webviewEvidence.fetchStatus >= 200 && webviewEvidence.fetchStatus < 300,
+      "Local App guest same-origin fetch must return a 2xx status",
+    );
+    assert.equal(webviewEvidence.fetchUrl, expectedAttestation.expectedUrl);
     console.log("[desktop-smoke] Local App webview evidence", JSON.stringify({
+      fetchStatus: webviewEvidence.fetchStatus,
       partition: webviewEvidence.partition,
       pathname: webviewEvidence.pathname,
       title: webviewEvidence.title,
@@ -3845,22 +4076,31 @@ async function runLocalAppsScenario(mode) {
 
     console.log("[desktop-smoke] Local Apps stayed inert on open/restore, loaded an attested isolated webview, reused one runtime, and stopped without residue");
   } catch (error) {
-    console.error("[desktop-smoke] Local Apps scenario failed", error);
-    throw error;
+    scenarioError = sanitizeLocalAppSmokeError(error, inheritedEnvValues);
+    console.error(`[desktop-smoke] Local Apps scenario failed: ${scenarioError.message}`);
   } finally {
-    await closeDesktop(run.electronApp).catch(() => {});
-    if (runningDescriptor) {
-      await assertLocalAppRuntimeStopped({
+    try {
+      cleanupError = await cleanupLocalAppScenario({
         definition,
-        descriptor: runningDescriptor,
+        lastKnownDescriptor: runningDescriptor,
         markerPath: project.markerPath,
+        registry,
         registryPath,
-      }).catch((error) => {
-        console.error("[desktop-smoke] Local App cleanup verification failed", error);
-        throw error;
+        run,
+        sensitiveValues: inheritedEnvValues,
       });
+    } catch (error) {
+      cleanupError = sanitizeLocalAppSmokeError(error, inheritedEnvValues);
+    }
+    if (cleanupError) {
+      const cleanupMessages = cleanupError instanceof AggregateError
+        ? cleanupError.errors.map((error) => error.message)
+        : [cleanupError.message];
+      console.error("[desktop-smoke] Local App cleanup verification failed", cleanupMessages);
     }
   }
+  if (scenarioError) throw scenarioError;
+  if (cleanupError) throw cleanupError;
 }
 
 async function runAgentBrowserScenario(mode) {
