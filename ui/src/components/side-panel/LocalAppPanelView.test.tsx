@@ -202,4 +202,25 @@ describe("LocalAppPanelView", () => {
     await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-webview"]')).not.toBeNull());
     expect(start).toHaveBeenCalledTimes(2);
   });
+
+  it("announces a logs failure and retries without claiming there are no logs", async () => {
+    logs.mockRejectedValueOnce(new Error("Logs bridge unavailable"))
+      .mockResolvedValueOnce(["recovered view log"]);
+    renderView();
+    await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-start"]')).not.toBeNull());
+    await act(async () => {
+      Array.from(host!.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Show logs")?.click();
+      await vi.waitFor(() => expect(host?.querySelector('[role="alert"]')?.textContent ?? "").toContain("Logs bridge unavailable"));
+    });
+
+    expect(host?.textContent).not.toContain("No runtime logs yet.");
+    const retryLogs = Array.from(host!.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Retry logs");
+    expect(retryLogs).toBeDefined();
+    await act(async () => {
+      retryLogs?.click();
+      await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-logs"]')?.textContent).toContain("recovered view log"));
+    });
+    expect(logs).toHaveBeenCalledTimes(2);
+  });
 });

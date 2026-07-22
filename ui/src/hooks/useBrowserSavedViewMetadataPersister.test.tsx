@@ -29,7 +29,7 @@ const groups = {
     name: "Group A",
     entries: [{
       id: "entry-a",
-      itemKey: "saved_view:saved-a",
+      itemKey: "saved-view:saved-a",
       item: {
         type: "saved_view",
         savedView: {
@@ -50,13 +50,14 @@ const groups = {
 };
 
 function Harness({ targets }: { targets: BrowserTarget[] }) {
-  useBrowserSavedViewMetadataPersister({ browserTargets: targets, organizationId: "org-a" });
+  controls = useBrowserSavedViewMetadataPersister({ browserTargets: targets, organizationId: "org-a" });
   return null;
 }
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let client: QueryClient | null = null;
+let controls: ReturnType<typeof useBrowserSavedViewMetadataPersister> | null = null;
 
 function render(targets: BrowserTarget[], seedGroups = true) {
   if (!root) {
@@ -85,6 +86,7 @@ afterEach(() => {
   client?.clear();
   root = null;
   client = null;
+  controls = null;
   host?.remove();
   host = null;
 });
@@ -183,5 +185,30 @@ describe("useBrowserSavedViewMetadataPersister", () => {
     await new Promise((resolve) => setTimeout(resolve, 450));
 
     expect(updateSavedView).not.toHaveBeenCalled();
+  });
+
+  it("cancels queued navigation when custom groups confirm deletion before debounce", async () => {
+    vi.useFakeTimers();
+    try {
+      render([initialTarget]);
+      await act(async () => { await Promise.resolve(); });
+      render([{ ...initialTarget, url: "https://deleted.example/newest", label: "Deleted newest" }]);
+      act(() => {
+        client!.setQueryData(queryKeys.messenger.customGroups("org-a"), { groups: [] });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+        await Promise.resolve();
+      });
+
+      await act(async () => { await controls!.flushAll(); });
+      act(() => root?.unmount());
+      root = null;
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(updateSavedView).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

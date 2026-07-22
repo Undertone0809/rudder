@@ -128,6 +128,10 @@ async function installLocalAppsStub(page: Page) {
       },
       stop: async () => {
         record("stop");
+        if (window.localStorage.getItem("e2e.localApps.stopFailureOnce") === "true") {
+          window.localStorage.setItem("e2e.localApps.stopFailureOnce", "false");
+          throw new Error("Stop bridge unavailable");
+        }
         const next = runtime("stopped");
         window.localStorage.setItem(statusKey, JSON.stringify(next));
         return next;
@@ -142,6 +146,10 @@ async function installLocalAppsStub(page: Page) {
       },
       logs: async () => {
         record("logs");
+        if (window.localStorage.getItem("e2e.localApps.logsFailureOnce") === "true") {
+          window.localStorage.setItem("e2e.localApps.logsFailureOnce", "false");
+          throw new Error("Logs bridge unavailable");
+        }
         return ["MKT dashboard fixture log", "listener restricted to 127.0.0.1"];
       },
       attestedTarget: async () => {
@@ -156,7 +164,10 @@ async function installLocalAppsStub(page: Page) {
     };
     Object.defineProperty(window, "desktopShell", {
       configurable: true,
-      value: { localApps },
+      value: {
+        getBrowserPartition: async () => "persist:rudder-browser-v1-local-apps-e2e",
+        localApps,
+      },
     });
   });
 }
@@ -179,6 +190,7 @@ async function groups(page: Page, orgId: string) {
   return response.json() as Promise<{ groups: Array<{
     id: string;
     entries: Array<{
+      itemKey: string;
       item: { type: "thread" } | {
         type: "saved_view";
         savedView: {
@@ -221,10 +233,25 @@ test.describe("Messenger Local Apps", () => {
     await expect(review.getByLabel("Working directory")).toHaveValue("/Users/zeeland/projects/uranus/rudder/mkt/dashboard");
     await expect(review).toContainText("can modify local files and data");
     await review.getByLabel("Name", { exact: true }).fill("MKT dashboard local");
+    await setLocalFlag(page, "e2e.localApps.statusFailureOnce", "true");
     await review.getByRole("button", { name: "Review & add" }).click();
 
     const card = page.getByTestId("local-apps-app-binding-a");
     await expect(card).toContainText("MKT dashboard local");
+    await expect(card.getByRole("alert")).toContainText("Desktop bridge unavailable");
+    await expect(card.getByRole("button", { name: "Edit" })).toBeDisabled();
+    await expect(card.getByRole("button", { name: "Delete" })).toBeDisabled();
+    await card.getByRole("button", { name: "Retry status" }).click();
+    await expect(card).toContainText("stopped");
+    await expect(card.getByRole("button", { name: "Edit" })).toBeEnabled();
+    await expect(card.getByRole("button", { name: "Delete" })).toBeEnabled();
+
+    await setLocalFlag(page, "e2e.localApps.logsFailureOnce", "true");
+    await card.getByRole("button", { name: "Logs" }).click();
+    await expect(card.getByRole("alert")).toContainText("Logs bridge unavailable");
+    await expect(card).not.toContainText("No runtime logs yet.");
+    await card.getByRole("button", { name: "Retry logs" }).click();
+    await expect(card.getByTestId("local-app-logs")).toContainText("listener restricted to 127.0.0.1");
     await page.screenshot({ path: "/tmp/rudder-local-apps-catalog.png", fullPage: true });
     expect((await calls(page)).create).toBe(1);
 
@@ -255,6 +282,16 @@ test.describe("Messenger Local Apps", () => {
       .find((entry) => entry.item.type === "saved_view")?.item;
     expect(savedEntry?.type).toBe("saved_view");
     if (!savedEntry || savedEntry.type !== "saved_view") throw new Error("Expected kept Local App");
+    const savedGroup = directory.groups.find((candidate) => candidate.entries.some(
+      (entry) => entry.item.type === "saved_view" && entry.item.savedView.id === savedEntry.savedView.id,
+    ));
+    expect(savedGroup).toBeTruthy();
+    expect(savedGroup!.entries.some((entry) => entry.itemKey === `chat:${chat.id}`)).toBe(true);
+    expect(savedGroup!.entries.some((entry) => (
+      entry.itemKey === `saved-view:${savedEntry.savedView.id}`
+      && entry.item.type === "saved_view"
+      && entry.item.savedView.id === savedEntry.savedView.id
+    ))).toBe(true);
     expect(savedEntry.savedView.targetPayload).toEqual({
       kind: "local_app",
       desktopInstallationId: "installation-a",
@@ -284,9 +321,12 @@ test.describe("Messenger Local Apps", () => {
     await expect(activeCard).toContainText("Stop this Local App before editing or deleting it.");
     await expect(activeCard.getByRole("button", { name: "Edit" })).toBeDisabled();
     await expect(activeCard.getByRole("button", { name: "Delete" })).toBeDisabled();
+    await setLocalFlag(page, "e2e.localApps.stopFailureOnce", "true");
     await activeCard.getByRole("button", { name: "Stop" }).click();
+    await expect(activeCard.getByRole("alert")).toContainText("Stop bridge unavailable");
+    await activeCard.getByRole("button", { name: "Retry stop" }).click();
     await expect(activeCard).toContainText("stopped");
-    expect((await calls(page)).stop).toBe(1);
+    expect((await calls(page)).stop).toBe(2);
 
     await activeCard.getByRole("button", { name: "Edit" }).click();
     const editReview = page.getByTestId("local-app-definition-review");
@@ -294,6 +334,67 @@ test.describe("Messenger Local Apps", () => {
     await editReview.getByRole("button", { name: "Review & save" }).click();
     await expect(activeCard).toContainText("MKT dashboard reviewed");
     expect((await calls(page)).update).toBe(1);
+
+    await page.getByTestId("chat-side-panel-add-tab").click();
+    await page.getByTestId("chat-side-panel-empty-browser-target").click();
+    const browserView = page.getByTestId("chat-side-panel-browser-view");
+    const browserAddress = browserView.getByRole("textbox", { name: "Browser URL" });
+    const browserInitialUrl = "https://example.com/messenger-local-app";
+    await browserAddress.fill(browserInitialUrl);
+    await browserAddress.press("Enter");
+    await expect(browserView.getByTestId("chat-side-panel-browser-webview")).toHaveAttribute("src", browserInitialUrl);
+    await page.getByTestId("chat-side-panel-keep-in-messenger").click();
+    await expect(page.getByText("Kept in Messenger")).toBeVisible();
+    await expect.poll(async () => {
+      const next = await groups(page, organization.id);
+      return next.groups.flatMap((candidate) => candidate.entries).some((candidate) => (
+        candidate.item.type === "saved_view"
+        && candidate.item.savedView.targetPayload.kind === "browser"
+      ));
+    }).toBe(true);
+    const browserDirectory = await groups(page, organization.id);
+    const browserSavedItem = browserDirectory.groups.flatMap((candidate) => candidate.entries).find((candidate) => (
+      candidate.item.type === "saved_view"
+      && candidate.item.savedView.targetPayload.kind === "browser"
+    ))?.item;
+    if (!browserSavedItem || browserSavedItem.type !== "saved_view") throw new Error("Expected kept Browser view");
+    const browserSavedEntry = browserSavedItem.savedView;
+    let browserMetadataUpdateCount = 0;
+    page.on("request", (request) => {
+      if (
+        request.method() === "PATCH"
+        && new URL(request.url()).pathname === `/api/orgs/${organization.id}/messenger/saved-views/${browserSavedEntry.id}`
+      ) browserMetadataUpdateCount += 1;
+    });
+    const browserSavedGroup = (await groups(page, organization.id)).groups.find((candidate) => candidate.entries.some(
+      (entry) => entry.item.type === "saved_view" && entry.item.savedView.id === browserSavedEntry.id,
+    ));
+    expect(browserSavedGroup).toBeTruthy();
+    const browserGroupSection = page.getByTestId(`messenger-thread-section-custom-group-${browserSavedGroup!.id}`);
+    const browserSavedRow = browserGroupSection.locator(`a[href$="/messenger/saved/${browserSavedEntry.id}"]`).locator("..");
+    await browserSavedRow.hover();
+    await browserSavedRow.getByRole("button", { name: `Saved View actions for ${browserSavedEntry.title}` }).click();
+    const removeBrowserSavedView = page.getByRole("menuitem", { name: "Remove from Messenger" });
+    await expect(removeBrowserSavedView).toBeVisible();
+    const browserQueuedUrl = "https://example.com/deleted-before-metadata-sync";
+    const updatesBeforeBrowserDelete = browserMetadataUpdateCount;
+    await browserView.locator('input[aria-label="Browser URL"]').evaluate((element, nextUrl) => {
+      const input = element as HTMLInputElement;
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(input, nextUrl);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.form?.requestSubmit();
+    }, browserQueuedUrl);
+    await removeBrowserSavedView.click();
+    await expect.poll(async () => {
+      const next = await groups(page, organization.id);
+      return next.groups.flatMap((candidate) => candidate.entries).some(
+        (entry) => entry.item.type === "saved_view" && entry.item.savedView.id === browserSavedEntry.id,
+      );
+    }).toBe(false);
+    await expect(browserView.getByTestId("chat-side-panel-browser-webview")).toHaveAttribute("src", browserQueuedUrl);
+    await page.waitForTimeout(800);
+    expect(browserMetadataUpdateCount).toBe(updatesBeforeBrowserDelete);
 
     const startCountBeforeRestore = (await calls(page)).start;
     await page.goto(`/${organization.issuePrefix}/messenger/saved/${savedEntry.savedView.id}`);
@@ -325,17 +426,42 @@ test.describe("Messenger Local Apps", () => {
     expect((await calls(page)).start).toBe(startCountBeforeRestore);
 
     await setLocalFlag(page, "e2e.localApps.definitions", JSON.parse(currentDefinitions ?? "[]"));
+    await setLocalFlag(page, "e2e.localApps.status", { status: "orphaned_unverified", generation: "generation-a" });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.getByTestId("chat-side-panel-trigger").click();
+    await page.getByTestId("chat-side-panel-empty-local-apps-target").click();
+    const orphanedCard = page.getByTestId("local-apps-app-binding-a");
+    await expect(orphanedCard).toContainText("Ownership is unverified");
+    await expect(orphanedCard.getByRole("button", { name: "Edit" })).toBeDisabled();
+    await expect(orphanedCard.getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect((await calls(page)).start).toBe(startCountBeforeRestore);
+
     await page.goto(`/${organization.issuePrefix}/messenger`);
-    const group = page.getByTestId(`messenger-thread-section-custom-group-${directory.groups[0]!.id}`);
+    const group = page.getByTestId(`messenger-thread-section-custom-group-${savedGroup!.id}`);
     const row = group.locator('[data-testid^="messenger-saved-view-"]').filter({ hasText: "MKT dashboard local" });
     await row.hover();
     await row.getByRole("button", { name: "Saved View actions for MKT dashboard local" }).click();
+    const stopCountBeforeSavedRemove = (await calls(page)).stop;
     await page.getByRole("menuitem", { name: "Remove from Messenger" }).click();
     await expect.poll(async () => {
       const next = await groups(page, organization.id);
       return next.groups.flatMap((candidate) => candidate.entries)
         .some((entry) => entry.item.type === "saved_view" && entry.item.savedView.id === savedEntry.savedView.id);
     }).toBe(false);
-    expect((await calls(page)).stop).toBe(1);
+    expect((await calls(page)).stop).toBe(stopCountBeforeSavedRemove);
+
+    await setLocalFlag(page, "e2e.localApps.status", { status: "stopped", generation: null });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.getByTestId("chat-side-panel-trigger").click();
+    await page.getByTestId("chat-side-panel-empty-local-apps-target").click();
+    const deletableCard = page.getByTestId("local-apps-app-binding-a");
+    await expect(deletableCard).toContainText("stopped");
+    await deletableCard.getByRole("button", { name: "Delete" }).click();
+    const deleteDialog = page.getByRole("dialog", { name: "Delete Local App?" });
+    await deleteDialog.getByRole("button", { name: "Delete" }).click();
+    await expect(page.getByTestId("local-apps-app-binding-a")).toHaveCount(0);
+    expect((await calls(page)).delete).toBe(1);
+    expect((await calls(page)).stop).toBe(stopCountBeforeSavedRemove);
+    expect((await calls(page)).start).toBe(startCountBeforeRestore);
   });
 });

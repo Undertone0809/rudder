@@ -35,6 +35,7 @@ export type BrowserSavedViewMetadataPersister = {
     metadata: BrowserSavedViewMetadata;
     persistedMetadata: BrowserSavedViewMetadata;
   }): void;
+  cancelSavedView(savedViewId: string): void;
   flushSavedView(savedViewId: string): Promise<void>;
   flushAll(): Promise<void>;
 };
@@ -58,6 +59,7 @@ export function createBrowserSavedViewMetadataPersister(
   const maxRememberedSuccesses = Math.max(1, options.maxRememberedSuccesses ?? 32);
   const queues = new Map<string, QueueState>();
   const successfulFingerprints = new Map<string, string>();
+  const canceledSavedViewIds = new Set<string>();
 
   const rememberSuccess = (savedViewId: string, fingerprint: string) => {
     successfulFingerprints.delete(savedViewId);
@@ -84,6 +86,7 @@ export function createBrowserSavedViewMetadataPersister(
   const drain = (savedViewId: string): Promise<void> => {
     const state = queues.get(savedViewId);
     if (!state) return Promise.resolve();
+    if (canceledSavedViewIds.has(savedViewId)) return state.running ?? Promise.resolve();
     if (state.timer) {
       clearTimeout(state.timer);
       state.timer = null;
@@ -96,11 +99,12 @@ export function createBrowserSavedViewMetadataPersister(
     if (!state.pending) return Promise.resolve();
 
     const running = (async () => {
-      while (state.pending) {
+      while (state.pending && !canceledSavedViewIds.has(savedViewId)) {
         let desired = state.pending;
         state.pending = null;
         let completed = false;
         for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+          if (canceledSavedViewIds.has(savedViewId)) break;
           if (state.pending) {
             desired = state.pending;
             state.pending = null;
@@ -108,11 +112,13 @@ export function createBrowserSavedViewMetadataPersister(
           }
           try {
             await options.update(desired.organizationId, desired.savedViewId, desired.metadata);
+            if (canceledSavedViewIds.has(savedViewId)) break;
             rememberSuccess(savedViewId, desired.fingerprint);
             state.failed = null;
             completed = true;
             break;
           } catch {
+            if (canceledSavedViewIds.has(savedViewId)) break;
             if (attempt >= retryDelaysMs.length) {
               state.failed = state.pending ?? desired;
               state.pending = null;
@@ -121,17 +127,24 @@ export function createBrowserSavedViewMetadataPersister(
             await delay(retryDelaysMs[attempt] ?? 0);
           }
         }
+        if (canceledSavedViewIds.has(savedViewId)) {
+          state.pending = null;
+          state.failed = null;
+          break;
+        }
         if (!completed && !state.pending) break;
       }
     })();
     state.running = running;
     void running.finally(() => {
       if (state.running === running) state.running = null;
+      if (canceledSavedViewIds.has(savedViewId)) queues.delete(savedViewId);
     });
     return running;
   };
 
   const schedule: BrowserSavedViewMetadataPersister["schedule"] = (input) => {
+    if (canceledSavedViewIds.has(input.savedViewId)) return;
     const fingerprint = stableValue(input.metadata);
     const successfulFingerprint = successfulFingerprints.get(input.savedViewId);
     const existingState = queues.get(input.savedViewId);
@@ -154,6 +167,18 @@ export function createBrowserSavedViewMetadataPersister(
     }, debounceMs);
   };
 
+  const cancelSavedView = (savedViewId: string) => {
+    canceledSavedViewIds.add(savedViewId);
+    successfulFingerprints.delete(savedViewId);
+    const state = queues.get(savedViewId);
+    if (!state) return;
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = null;
+    state.pending = null;
+    state.failed = null;
+    if (!state.running) queues.delete(savedViewId);
+  };
+
   const flushSavedView = async (savedViewId: string) => {
     const state = queues.get(savedViewId);
     if (!state) return;
@@ -168,5 +193,5 @@ export function createBrowserSavedViewMetadataPersister(
     await Promise.all([...queues.keys()].map(flushSavedView));
   };
 
-  return { schedule, flushSavedView, flushAll };
+  return { schedule, cancelSavedView, flushSavedView, flushAll };
 }

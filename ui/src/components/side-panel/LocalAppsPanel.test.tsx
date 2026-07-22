@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 
-import type { DesktopLocalAppDefinition, DesktopPreparedLocalAppDefinition } from "@/lib/desktop-shell";
+import type {
+  DesktopLocalAppDefinition,
+  DesktopLocalAppRuntimeView,
+  DesktopPreparedLocalAppDefinition,
+} from "@/lib/desktop-shell";
+import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
@@ -46,7 +51,7 @@ let host: HTMLDivElement | null = null;
 let queryClient: QueryClient | null = null;
 let opened: SidePanelTarget[] = [];
 
-function renderPanel() {
+function renderPanel(seedStatus?: DesktopLocalAppRuntimeView) {
   Object.defineProperty(window, "desktopShell", {
     configurable: true,
     value: {
@@ -67,6 +72,7 @@ function renderPanel() {
   document.body.appendChild(host);
   root = createRoot(host);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  if (seedStatus) queryClient.setQueryData(queryKeys.localApps.status(definition.localBindingId), seedStatus);
   act(() => {
     root!.render(
       <QueryClientProvider client={queryClient!}>
@@ -214,5 +220,78 @@ describe("LocalAppsPanel", () => {
     });
     act(() => buttonByText("Cancel")?.click());
     expect(document.querySelector('[data-testid="local-app-error"]')).toBeNull();
+  });
+
+  it("locks edit and delete while status is unavailable and retries status explicitly", async () => {
+    status.mockRejectedValueOnce(new Error("Status bridge unavailable"))
+      .mockResolvedValueOnce({ status: "stopped", generation: null });
+    renderPanel({ status: "stopped", generation: null });
+    const card = await vi.waitFor(() => {
+      const candidate = document.querySelector<HTMLElement>('[data-testid="local-apps-app-binding-a"]');
+      expect(candidate?.querySelector('[role="alert"]')?.textContent ?? "").toContain("Status bridge unavailable");
+      return candidate!;
+    });
+
+    expect(Array.from(card.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Edit")?.disabled).toBe(true);
+    expect(Array.from(card.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Delete")?.disabled).toBe(true);
+    const retryStatus = Array.from(card.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Retry status");
+    expect(retryStatus).toBeDefined();
+    await act(async () => {
+      retryStatus?.click();
+      await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+    });
+    await vi.waitFor(() => expect(
+      Array.from(card.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Edit")?.disabled,
+    ).toBe(false));
+  });
+
+  it("announces a stop failure and provides an explicit stop retry", async () => {
+    status.mockResolvedValue({ status: "running", generation: "generation-a" });
+    stop.mockRejectedValueOnce(new Error("Stop bridge unavailable"))
+      .mockResolvedValueOnce({ status: "stopped", generation: null });
+    renderPanel();
+    const card = await vi.waitFor(() => {
+      const candidate = document.querySelector<HTMLElement>('[data-testid="local-apps-app-binding-a"]');
+      expect(candidate).not.toBeNull();
+      return candidate!;
+    });
+    await act(async () => {
+      Array.from(card.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Stop")?.click();
+      await vi.waitFor(() => expect(card.querySelector('[role="alert"]')?.textContent ?? "").toContain("Stop bridge unavailable"));
+    });
+
+    const retryStop = Array.from(card.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Retry stop");
+    expect(retryStop).toBeDefined();
+    await act(async () => {
+      retryStop?.click();
+      await vi.waitFor(() => expect(stop).toHaveBeenCalledTimes(2));
+    });
+  });
+
+  it("announces a logs failure and retries without claiming there are no logs", async () => {
+    logs.mockRejectedValueOnce(new Error("Logs bridge unavailable"))
+      .mockResolvedValueOnce(["recovered log"]);
+    renderPanel();
+    const card = await vi.waitFor(() => {
+      const candidate = document.querySelector<HTMLElement>('[data-testid="local-apps-app-binding-a"]');
+      expect(candidate).not.toBeNull();
+      return candidate!;
+    });
+    await act(async () => {
+      Array.from(card.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Logs")?.click();
+      await vi.waitFor(() => expect(card.querySelector('[role="alert"]')?.textContent ?? "").toContain("Logs bridge unavailable"));
+    });
+
+    expect(card.textContent).not.toContain("No runtime logs yet.");
+    const retryLogs = Array.from(card.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Retry logs");
+    expect(retryLogs).toBeDefined();
+    await act(async () => {
+      retryLogs?.click();
+      await vi.waitFor(() => expect(card.querySelector('[data-testid="local-app-logs"]')?.textContent).toContain("recovered log"));
+    });
+    expect(logs).toHaveBeenCalledTimes(2);
   });
 });

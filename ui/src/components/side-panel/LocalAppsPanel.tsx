@@ -30,6 +30,7 @@ import {
   FolderSearch,
   Loader2,
   Pencil,
+  RotateCw,
   ShieldAlert,
   Square,
   TerminalSquare,
@@ -171,13 +172,15 @@ function LocalAppCatalogRow({
   const statusQuery = useQuery({
     queryKey: queryKeys.localApps.status(definition.localBindingId),
     queryFn: () => localApps.status(definition.id),
+    retry: false,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       return status === "starting" || status === "stopping" ? 400 : false;
     },
   });
-  const status = statusQuery.data?.status ?? "stopped";
-  const active = ["starting", "running", "stopping", "orphaned_unverified"].includes(status);
+  const status = statusQuery.data?.status ?? null;
+  const active = status !== null && ["starting", "running", "stopping", "orphaned_unverified"].includes(status);
+  const canChangeDefinition = !statusQuery.isError && (status === "stopped" || status === "failed");
   const stopMutation = useMutation({
     mutationFn: () => localApps.stop(definition.id),
     onSuccess: (nextStatus) => {
@@ -191,7 +194,9 @@ function LocalAppCatalogRow({
     retry: false,
   });
   const bindingTestId = safeTestId(definition.localBindingId);
-  const statusLabel = status === "orphaned_unverified" ? "Needs attention" : status.replaceAll("_", " ");
+  const statusLabel = status === "orphaned_unverified"
+    ? "Needs attention"
+    : status?.replaceAll("_", " ") ?? "Status unavailable";
 
   return (
     <article
@@ -205,17 +210,28 @@ function LocalAppCatalogRow({
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold text-foreground">{definition.title}</h3>
           <p className="mt-1 truncate text-xs text-muted-foreground">{definition.cwd}</p>
-          <p className="mt-1 text-xs capitalize text-muted-foreground">{statusQuery.isPending ? "checking…" : statusLabel}</p>
+          <p className="mt-1 text-xs capitalize text-muted-foreground">
+            {statusQuery.isPending ? "checking…" : statusQuery.isError ? "status unavailable" : statusLabel}
+          </p>
         </div>
       </div>
       {statusQuery.error ? (
-        <p className="mt-3 text-xs text-destructive" role="alert">{message(statusQuery.error, "Could not read runtime status.")}</p>
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-destructive/25 bg-destructive/5 p-3" role="alert">
+          <p className="min-w-0 text-xs text-destructive">{message(statusQuery.error, "Could not read runtime status.")}</p>
+          <Button type="button" size="sm" variant="outline" onClick={() => void statusQuery.refetch()}>
+            <RotateCw className="h-3.5 w-3.5" aria-hidden />
+            Retry status
+          </Button>
+        </div>
       ) : null}
       {status === "orphaned_unverified" ? (
         <p className="mt-3 text-xs leading-5 text-amber-700 dark:text-amber-300">Ownership is unverified. Restart Rudder Desktop before changing this definition.</p>
       ) : null}
       {active && status !== "orphaned_unverified" ? (
         <p className="mt-3 text-xs leading-5 text-muted-foreground">Stop this Local App before editing or deleting it.</p>
+      ) : null}
+      {!statusQuery.isPending && statusQuery.isError ? (
+        <p className="mt-3 text-xs leading-5 text-muted-foreground">Confirm runtime status before editing or deleting this definition.</p>
       ) : null}
       <div className="mt-4 flex flex-wrap gap-2">
         <Button
@@ -241,11 +257,25 @@ function LocalAppCatalogRow({
             Stop
           </Button>
         ) : null}
-        <Button type="button" size="sm" variant="outline" disabled={active} title={active ? "Stop this Local App before editing it." : undefined} onClick={() => onEdit(definition)}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={!canChangeDefinition}
+          title={!canChangeDefinition ? "Confirm this Local App is stopped before editing it." : undefined}
+          onClick={() => onEdit(definition)}
+        >
           <Pencil className="h-3.5 w-3.5" aria-hidden />
           Edit
         </Button>
-        <Button type="button" size="sm" variant="outline" disabled={active} title={active ? "Stop this Local App before deleting it." : undefined} onClick={() => onDelete(definition)}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={!canChangeDefinition}
+          title={!canChangeDefinition ? "Confirm this Local App is stopped before deleting it." : undefined}
+          onClick={() => onDelete(definition)}
+        >
           <Trash2 className="h-3.5 w-3.5" aria-hidden />
           Delete
         </Button>
@@ -254,15 +284,34 @@ function LocalAppCatalogRow({
           Logs
         </Button>
       </div>
+      {stopMutation.error ? (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-destructive/25 bg-destructive/5 p-3" role="alert">
+          <p className="min-w-0 text-xs text-destructive">{message(stopMutation.error, "Could not stop this Local App.")}</p>
+          <Button type="button" size="sm" variant="outline" disabled={stopMutation.isPending} onClick={() => stopMutation.mutate()}>
+            <RotateCw className="h-3.5 w-3.5" aria-hidden />
+            Retry stop
+          </Button>
+        </div>
+      ) : null}
       {logsOpen ? (
-        <pre
-          className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-[var(--radius-md)] bg-[color:var(--surface-inset)] p-3 font-mono text-[11px] leading-5 text-muted-foreground"
-          data-testid="local-app-logs"
-          tabIndex={0}
-          aria-label={`${definition.title} runtime logs`}
-        >
-          {logsQuery.isPending ? "Loading logs…" : logsQuery.data?.join("\n") || "No runtime logs yet."}
-        </pre>
+        logsQuery.error ? (
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-destructive/25 bg-destructive/5 p-3" role="alert">
+            <p className="min-w-0 text-xs text-destructive">{message(logsQuery.error, "Could not load runtime logs.")}</p>
+            <Button type="button" size="sm" variant="outline" onClick={() => void logsQuery.refetch()}>
+              <RotateCw className="h-3.5 w-3.5" aria-hidden />
+              Retry logs
+            </Button>
+          </div>
+        ) : (
+          <pre
+            className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-[var(--radius-md)] bg-[color:var(--surface-inset)] p-3 font-mono text-[11px] leading-5 text-muted-foreground"
+            data-testid="local-app-logs"
+            tabIndex={0}
+            aria-label={`${definition.title} runtime logs`}
+          >
+            {logsQuery.isPending ? "Loading logs…" : logsQuery.data?.join("\n") || "No runtime logs yet."}
+          </pre>
+        )
       ) : null}
     </article>
   );

@@ -62,6 +62,10 @@ export function useBrowserSavedViewMetadataPersister({
     () => groups.flatMap((group) => group.entries).filter((entry) => entry.item.type === "saved_view"),
     [groups],
   );
+  const savedViewIds = useMemo(
+    () => new Set(savedEntries.map((entry) => entry.item.type === "saved_view" ? entry.item.savedView.id : "")),
+    [savedEntries],
+  );
   const instanceToSavedViewRef = useRef(new Map<string, {
     savedViewId: string;
     persistedMetadata: BrowserSavedViewMetadata;
@@ -97,6 +101,9 @@ export function useBrowserSavedViewMetadataPersister({
       const persistedMetadata = entryMetadata ?? (!groupsQuery.isSuccess
         ? target.savedViewRecovery?.persistedMetadata ?? null
         : null);
+      if (groupsQuery.isSuccess && target.savedViewRecovery && !savedViewIds.has(target.savedViewRecovery.id)) {
+        persister.cancelSavedView(target.savedViewRecovery.id);
+      }
       if (!savedViewId || !persistedMetadata) continue;
       nextMapping.set(targetInstanceId, { savedViewId, persistedMetadata });
       persister.schedule({
@@ -108,10 +115,15 @@ export function useBrowserSavedViewMetadataPersister({
     }
 
     for (const [previousInstanceId, previous] of instanceToSavedViewRef.current) {
-      if (!nextMapping.has(previousInstanceId)) void persister.flushSavedView(previous.savedViewId);
+      if (nextMapping.has(previousInstanceId)) continue;
+      if (groupsQuery.isSuccess && !savedViewIds.has(previous.savedViewId)) {
+        persister.cancelSavedView(previous.savedViewId);
+      } else {
+        void persister.flushSavedView(previous.savedViewId);
+      }
     }
     instanceToSavedViewRef.current = nextMapping;
-  }, [browserTargets, groupsQuery.isSuccess, organizationId, persister, savedEntries]);
+  }, [browserTargets, groupsQuery.isSuccess, organizationId, persister, savedEntries, savedViewIds]);
 
   useEffect(() => () => {
     void persister.flushAll();
@@ -119,6 +131,10 @@ export function useBrowserSavedViewMetadataPersister({
 
   const flushTarget = useCallback((target: BrowserTarget) => {
     const directRecovery = target.savedViewRecovery;
+    if (groupsQuery.isSuccess && directRecovery && !savedViewIds.has(directRecovery.id)) {
+      persister.cancelSavedView(directRecovery.id);
+      return Promise.resolve();
+    }
     const mapped = instanceToSavedViewRef.current.get(instanceId(target));
     const recovered = mapped && (!groupsQuery.isSuccess || savedEntries.some((entry) => (
       entry.item.type === "saved_view" && entry.item.savedView.id === mapped.savedViewId
@@ -136,7 +152,7 @@ export function useBrowserSavedViewMetadataPersister({
       persistedMetadata: recovered.persistedMetadata,
     });
     return persister.flushSavedView(recovered.savedViewId);
-  }, [groupsQuery.isSuccess, organizationId, persister, savedEntries]);
+  }, [groupsQuery.isSuccess, organizationId, persister, savedEntries, savedViewIds]);
   const flushAll = useCallback(() => persister.flushAll(), [persister]);
 
   return { flushAll, flushTarget };

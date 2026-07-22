@@ -107,4 +107,51 @@ describe("browser saved-view metadata persister", () => {
     expect(update).toHaveBeenCalledTimes(2);
     expect(update.mock.calls.at(-1)).toEqual(["org", "saved-a", initial]);
   });
+
+  it("cancels queued metadata without allowing timers or flushes to update a deleted saved view", async () => {
+    vi.useFakeTimers();
+    try {
+      const update = vi.fn(async () => undefined);
+      const persister = createBrowserSavedViewMetadataPersister({ update, debounceMs: 350 });
+      persister.schedule({ organizationId: "org", savedViewId: "saved-a", metadata: next("https://deleted.example/newest"), persistedMetadata: initial });
+
+      persister.cancelSavedView("saved-a");
+      await vi.advanceTimersByTimeAsync(1_000);
+      await persister.flushSavedView("saved-a");
+      await persister.flushAll();
+
+      expect(update).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry a failed update after its saved view is canceled during backoff", async () => {
+    vi.useFakeTimers();
+    try {
+      let firstAttemptStarted!: () => void;
+      const firstAttempt = new Promise<void>((resolve) => { firstAttemptStarted = resolve; });
+      const update = vi.fn(async () => {
+        firstAttemptStarted();
+        throw new Error("Saved View was deleted");
+      });
+      const persister = createBrowserSavedViewMetadataPersister({
+        update,
+        debounceMs: 0,
+        retryDelaysMs: [500, 1_000],
+      });
+      persister.schedule({ organizationId: "org", savedViewId: "saved-a", metadata: next("https://deleted.example/retry"), persistedMetadata: initial });
+      const flush = persister.flushSavedView("saved-a");
+      await firstAttempt;
+
+      persister.cancelSavedView("saved-a");
+      await vi.runAllTimersAsync();
+      await flush;
+      await persister.flushAll();
+
+      expect(update).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

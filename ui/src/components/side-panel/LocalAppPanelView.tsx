@@ -91,6 +91,30 @@ export function LocalAppPanelView({
   const orphaned = status?.status === "orphaned_unverified";
   const canStart = status?.status === "stopped" || status?.status === "failed";
   const canStop = status?.status === "running" || status?.status === "starting" || status?.status === "stopping";
+  const logsRegion = logsQuery.error ? (
+    <div
+      className="mt-3 rounded-[var(--radius-md)] border border-destructive/25 bg-destructive/5 p-3 text-left"
+      data-testid="local-app-logs-error"
+      role="alert"
+    >
+      <p className="break-words text-xs leading-5 text-destructive">
+        {errorMessage(logsQuery.error, "Could not load runtime logs.")}
+      </p>
+      <Button type="button" className="mt-3" size="sm" variant="outline" onClick={() => void logsQuery.refetch()}>
+        <RotateCw className="h-3.5 w-3.5" aria-hidden />
+        Retry logs
+      </Button>
+    </div>
+  ) : (
+    <pre
+      data-testid="local-app-logs"
+      className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-[var(--radius-md)] bg-[color:var(--surface-inset)] p-3 text-left font-mono text-[11px] leading-5 text-muted-foreground"
+      tabIndex={0}
+      aria-label={`${target.label} runtime logs`}
+    >
+      {logsQuery.isPending ? "Loading logs…" : logsQuery.data?.join("\n") || "No runtime logs yet."}
+    </pre>
+  );
 
   return (
     <section
@@ -154,16 +178,7 @@ export function LocalAppPanelView({
           <p className="mt-2 break-words text-sm leading-6 text-muted-foreground">
             {errorMessage(queryError, "The local runtime did not respond.")}
           </p>
-          {startMutation.error ? (
-            <pre
-              data-testid="local-app-logs"
-              className="mt-4 max-h-40 overflow-auto whitespace-pre-wrap rounded-[var(--radius-md)] bg-[color:var(--surface-inset)] p-3 text-left font-mono text-[11px] leading-5 text-muted-foreground"
-              tabIndex={0}
-              aria-label={`${target.label} runtime logs`}
-            >
-              {logsQuery.isPending ? "Loading logs…" : logsQuery.data?.join("\n") || "No runtime logs yet."}
-            </pre>
-          ) : null}
+          {startMutation.error ? logsRegion : null}
           <Button
             type="button"
             className="mt-5"
@@ -246,16 +261,7 @@ export function LocalAppPanelView({
               <TerminalSquare className="h-3.5 w-3.5" aria-hidden />
               {logsOpen ? "Hide logs" : "Show logs"}
             </button>
-            {logsOpen || status?.status === "failed" ? (
-              <pre
-                data-testid="local-app-logs"
-                className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-[var(--radius-md)] bg-[color:var(--surface-inset)] p-3 font-mono text-[11px] leading-5 text-muted-foreground"
-                tabIndex={0}
-                aria-label={`${target.label} runtime logs`}
-              >
-                {logsQuery.isPending ? "Loading logs…" : logsQuery.data?.join("\n") || "No runtime logs yet."}
-              </pre>
-            ) : null}
+            {logsOpen || status?.status === "failed" ? logsRegion : null}
           </div>
         </div>
       )}
