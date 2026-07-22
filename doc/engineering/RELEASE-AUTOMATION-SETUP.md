@@ -13,16 +13,27 @@ Repo-side files that depend on this setup:
 - `.github/workflows/desktop-release.yml`
 - `.github/CODEOWNERS`
 
-The `Release` workflow needs `actions: write` because it dispatches
-`desktop-release.yml` after publishing npm and pushing the release tag. A tag
-push performed with `GITHUB_TOKEN` will not, by itself, trigger a second
-workflow run.
+The `Release` workflow needs `actions: write` because it inspects exact-source
+CI runs and dispatches `desktop-release.yml` after publishing npm and pushing
+the release tag. It needs `pull-requests: write` to propose the next patch base
+after stable. A tag push performed with `GITHUB_TOKEN` will not, by itself,
+trigger a second workflow run.
+
+In repository `Settings` -> `Actions` -> `General` -> `Workflow permissions`,
+enable **Allow GitHub Actions to create and approve pull requests**. The release
+preflight requires an operator attestation that this and the other safeguards
+below are configured; the workflow does not silently skip the next-version
+handoff.
 
 Note:
 
-- the release workflows intentionally use `pnpm install --no-frozen-lockfile`
-- this matches the repo's current policy where `pnpm-lock.yaml` is refreshed by GitHub automation after manifest changes land on `main`
-- the publish jobs then restore `pnpm-lock.yaml` before running `scripts/release.sh`, so the release script still sees a clean worktree
+- release and Desktop jobs use `pnpm install --frozen-lockfile` because the
+  exact source commit must already have passed CI dependency resolution
+- canary publishing begins from the successful `CI` workflow-run SHA; manual
+  stable dispatches query CI for the exact immutable source before installing
+  dependencies
+- release-specific preflight rejects stale versions and missing notes before
+  package installation or build work
 
 ## 1. Merge the Repo Changes First
 
@@ -153,12 +164,12 @@ Reasoning:
 
 ## 6. Configure `npm-stable`
 
-Recommended settings for `npm-stable`:
+Required settings for `npm-stable`:
 
 - environment name: `npm-stable`
-- required reviewers: at least one maintainer other than the person triggering the workflow when possible
+- required reviewers: at least one maintainer other than the person triggering the workflow
 - prevent self-review: enabled
-- admin bypass: disabled if your team can tolerate it
+- admin bypass: disabled
 - wait timer: optional
 - deployment branches and tags:
   - selected branches only
@@ -168,12 +179,14 @@ Reasoning:
 
 - stable publishes should require an explicit human approval gate
 - the workflow is manual, but the environment should still be the real control point
+- the safeguards attestation must not be set while the environment has no
+  required-reviewer protection rule
 
 ## 7. Protect `main`
 
 Open the branch protection settings for `main`.
 
-Recommended rules:
+Required rules for release automation:
 
 1. require pull requests before merging
 2. require status checks to pass before merging
@@ -181,7 +194,17 @@ Recommended rules:
 4. dismiss stale approvals when new commits are pushed
 5. restrict who can push directly to `main`
 
-At minimum, make sure workflow and release script changes cannot land without review.
+At minimum, make sure workflow and release script changes cannot land without
+review. The stable preflight stops before executing source-ref release code
+unless all safeguards have been attested.
+
+After required reviewers, `main` protection, and Actions pull-request creation
+are all configured and manually verified, create the repository Actions
+variable `RELEASE_SAFEGUARDS_CONFIGURED` with value `true`. Manual stable
+preflight fails closed while this variable is missing. The variable is an
+operator attestation because the workflow's scoped `GITHUB_TOKEN` cannot read
+repository-administration settings; do not set it before checking all three
+controls.
 
 ## 8. Enforce CODEOWNERS Review
 
@@ -236,8 +259,9 @@ This keeps LLM spending intentional and avoids a high-value token sitting in Act
 After setup:
 
 1. merge a harmless commit to `main`
-2. open the `Release` workflow run triggered by that push
-3. confirm it passes verification
+2. confirm the exact push passes the `CI` workflow
+3. open the `Release` workflow run triggered by that successful CI run and
+   confirm its preflight reports the same source SHA
 4. confirm publish succeeds under the `npm-canary` environment
 5. confirm npm now shows a new `canary` release
 6. confirm a git tag named `canary/v0.1.0-canary.N` was pushed
@@ -269,6 +293,8 @@ After at least one good canary exists:
 10. confirm the GitHub Release was created
 11. confirm `.github/workflows/desktop-release.yml` runs for `v0.1.0`
 12. confirm the GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets
+13. confirm the workflow opens the next-patch version pull request and
+    dispatches its CI, or reports that `main` already advanced
 
 Start-path check:
 

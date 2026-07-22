@@ -63,7 +63,7 @@
     {"reminder":"gdpval-harness: reviewer should compare English and Chinese counterparts","fingerprint":"776fc041708cf5a61dcde022c6511ab7a8a23146f5b601fef1e9f767c92fd312","classification":"fixed","reviewed_revision":"93df830ef-working-tree-review-2026-07-21"},
     {"reminder":"about: reviewer should compare English and Chinese counterparts","fingerprint":"f9e86f129053ae312a0cd33658537b048bd5863349983b317b6905cea12e131c","classification":"false-positive","reviewed_revision":"c5236c074-working-tree-review-2026-07-21"},
     {"reminder":"contact: reviewer should compare English and Chinese counterparts","fingerprint":"68ea9f0d1530b21e9b29492f43f4452022443cc389552454f5c52d895b0d733c","classification":"false-positive","reviewed_revision":"ae3284612-discord-icon-review-2026-07-22"},
-    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"de0a3752201a55145e8e5b03735b7cf80aa51545a033a142bdaf2bcc31354f43","classification":"false-positive","reviewed_revision":"v0.5.1-release-review-2026-07-22"}
+    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"6bc7c9c5dab8a4d7212fe60c11567debadffa6a285aeddefa802c4f38665499c","classification":"false-positive","reviewed_revision":"release-pipeline-review-2026-07-22"}
   ],
   "allowed_classifications": ["fixed", "intentional", "false-positive"]
 }

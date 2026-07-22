@@ -4,7 +4,7 @@ Maintainer runbook for shipping Rudder across npm, GitHub, and the website-facin
 
 The release model is now commit-driven:
 
-1. Every push to `main` publishes a canary automatically, except explicit release-infra maintenance commits marked `[skip release]`.
+1. Every successful `CI` run for a `main` push publishes a canary automatically, except explicit release-infra maintenance commits marked `[skip release]`.
 2. Stable releases are manually promoted from a chosen tested commit or canary tag.
 3. Stable release notes live in `releases/vX.Y.Z.md`.
 4. Stable releases get user-facing GitHub Releases; canaries may get prerelease GitHub Releases for Desktop portable assets.
@@ -27,9 +27,9 @@ Important constraints:
 - stable source commits must have one committed public package version
 - all public packages must share that same stable semver before release
 - canary publishes derive the next prerelease from the committed stable version
-- after publishing stable `X.Y.Z`, the next canary requires an explicit commit
-  that bumps the public package version to the next stable base, for example
-  `X.Y.Z -> X.Y.(Z+1)`
+- after publishing stable `X.Y.Z`, the workflow opens a pull request that bumps
+  the public package version to the next stable base, for example
+  `X.Y.Z -> X.Y.(Z+1)`; a maintainer still reviews and merges that commit
 - `./scripts/release.sh canary --print-version` fails if the committed canary
   base already exists as stable npm package `X.Y.Z` or remote git tag `vX.Y.Z`
 
@@ -75,6 +75,11 @@ approval. Agents and automation must not set `dry_run: false`, enter workflow
 confirmation strings, or synthesize a release tag as evidence of approval. The
 operator's explicit authorization must exist before those values are supplied.
 
+The workflow also fails closed unless `npm-stable` has required reviewers,
+`main` is protected, and GitHub Actions is allowed to create the post-stable
+version pull request. These repository settings are part of the release gate,
+not optional documentation.
+
 Even when an initial request or plan includes production deployment, always
 pause at the production gate after presenting the reviewed source, target,
 checks, known failures, and rollback point. Only the operator's latest explicit
@@ -113,11 +118,12 @@ Canaries cover verification, npm, a traceability tag, and Desktop portable asset
 
 ### Canary
 
-Every push to `main` runs the canary path inside [`.github/workflows/release.yml`](../.github/workflows/release.yml), unless the head commit message contains `[skip release]`.
+Every successful `CI` workflow for a `main` push starts the canary path inside [`.github/workflows/release.yml`](../.github/workflows/release.yml), unless the head commit message contains `[skip release]`.
 
 It:
 
-- verifies the pushed commit
+- reuses the successful CI result for the exact pushed commit
+- runs a fast version/tag/npm preflight before installing dependencies
 - derives the next canary prerelease from the committed semver
 - publishes under npm dist-tag `canary`
 - while no stable npm version exists yet, also points npm dist-tag `latest` at
@@ -129,6 +135,12 @@ It:
 The release workflow dispatches the Desktop workflow explicitly after pushing the
 canary tag. Do not rely on a tag push made by `GITHUB_TOKEN` to trigger another
 workflow.
+
+Canary and stable publication use the same non-cancelling concurrency group, so
+their npm/Desktop orchestration cannot run at the same time. GitHub retains at
+most one pending job per group rather than a FIFO queue. If a pending manual
+stable is superseded by a newer pending run, rerun the same locked stable SHA
+after the active publication finishes; do not silently retarget it.
 
 Users install canaries with:
 
@@ -160,12 +172,13 @@ Before running stable:
 1. pick the canary commit or tag you trust
 2. confirm the committed public package version is the stable version you want to ship
 3. create or update `releases/vX.Y.Z.md` on that source ref
-4. run the workflow with `dry_run: true`
-5. present the exact source ref, version, checks, targets, and rollback point;
+4. confirm that exact source commit has a successful `CI` run
+5. run the workflow with `dry_run: true`
+6. present the exact source ref, version, checks, targets, and rollback point;
    obtain explicit production approval
-6. run the workflow with `dry_run: false` and `confirm_stable: PUBLISH STABLE`
-7. after stable is published, merge a separate version-bump commit before
-   expecting later canaries to be detectable as updates for stable users
+7. run the workflow with `dry_run: false` and `confirm_stable: PUBLISH STABLE`
+8. after stable is published, review and merge the automatically opened
+   next-patch version pull request before expecting later canaries
 
 Example:
 
@@ -175,7 +188,9 @@ Example:
 
 The workflow:
 
-- re-verifies the exact source ref
+- resolves the source ref to an immutable SHA and requires successful CI for
+  that exact commit
+- runs release-specific version/tag/npm preflight before dependency install
 - publishes the committed `X.Y.Z` under npm dist-tag `latest`
 - creates git tag `vX.Y.Z`
 - creates or updates the GitHub Release from `releases/vX.Y.Z.md`
@@ -184,6 +199,9 @@ The workflow:
   the released stable version or older, while preserving the current npm
   `@rudderhq/cli@canary` target if the next-base canary has not been published
   yet
+- opens an idempotent `automation/release-vX.Y.(Z+1)` pull request for the next
+  canary/stable base and dispatches the trusted `main`-branch CI workflow with
+  its immutable head SHA, unless `main` already advanced
 - records the announcement channel, and publishes docs production when website
   content is part of the release scope
 
