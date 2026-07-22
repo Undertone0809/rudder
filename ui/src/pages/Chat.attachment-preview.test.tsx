@@ -5703,6 +5703,113 @@ describe("Chat streaming controls", () => {
     expect(queueItem?.textContent).not.toContain("Steer");
   });
 
+  it("hides a server-claimed Queue message once its user message is delivered", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-message-1", body: "Please draft a plan." }),
+        message({ id: "user-message-2", body: "Continue with the next step." }),
+      ],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-2",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
+      items: [
+        queuedMessage({
+          status: "dequeue_claimed",
+          sourceMessageId: "user-message-2",
+          deliveredMessageId: "user-message-2",
+          payload: {
+            body: "Continue with the next step.",
+            attachmentIds: [],
+            projectId: null,
+            skillRefs: [],
+            accessMode: null,
+            model: null,
+            effort: null,
+            metadata: null,
+          },
+        }),
+      ],
+    });
+
+    const { container } = renderChat();
+
+    expect(container.querySelector("[data-testid='chat-running-queue']")).toBeNull();
+    expect(container.textContent).toContain("Continue with the next step.");
+  });
+
+  it.each([
+    ["queued", "Still queued"],
+    ["failed_actionable", "Needs attention"],
+  ] as const)("keeps a linked Queue message visible when delivery returns to %s", (status, label) => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-2", body: "Delivery needs operator attention." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: null,
+      items: [
+        queuedMessage({
+          status,
+          sourceMessageId: "user-message-2",
+          deliveredMessageId: "user-message-2",
+          lastDeliveryReason: "queued_continuation_failed",
+          payload: {
+            body: "Delivery needs operator attention.",
+            attachmentIds: [],
+            projectId: null,
+            skillRefs: [],
+            accessMode: null,
+            model: null,
+            effort: null,
+            metadata: null,
+          },
+        }),
+      ],
+    });
+
+    const { container } = renderChat();
+    const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
+
+    expect(queueItem?.textContent).toContain("Delivery needs operator attention.");
+    expect(queueItem?.textContent).toContain(label);
+  });
+
+  it("hides linked fallback Steer feedback while its continuation is running", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-2", body: "Use the fallback direction." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "generation-2",
+      activeGenerationStatus: "running",
+      items: [
+        queuedMessage({
+          status: "running_next",
+          deliveryIntent: "steer",
+          deliveryDisposition: "running_next",
+          sourceMessageId: "user-message-2",
+          deliveredMessageId: "user-message-2",
+          payload: {
+            body: "Use the fallback direction.",
+            attachmentIds: [],
+            projectId: null,
+            skillRefs: [],
+            accessMode: null,
+            model: null,
+            effort: null,
+            metadata: null,
+          },
+        }),
+      ],
+    });
+
+    const { container } = renderChat();
+
+    expect(container.querySelector("[data-testid='chat-running-queue']")).toBeNull();
+    expect(container.textContent).toContain("Use the fallback direction.");
+  });
+
   it("lets retained feedback be steered into a continuation after Stop", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],

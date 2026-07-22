@@ -12,8 +12,10 @@ import { InlineEditor } from "./InlineEditor";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const markdownEditorHarness = vi.hoisted(() => ({
+  currentMarkdown: null as null | string,
   onChange: null as null | ((value: string) => void),
   onSubmit: null as null | (() => void),
+  submitShortcut: null as null | string,
 }));
 
 vi.mock("./MarkdownBody", () => ({
@@ -22,25 +24,38 @@ vi.mock("./MarkdownBody", () => ({
   ),
 }));
 
-vi.mock("./MarkdownEditor", () => ({
-  MarkdownEditor: ({ value, onChange, onSubmit, contentClassName }: {
-    value: string;
-    onChange: (value: string) => void;
-    onSubmit: () => void;
-    contentClassName?: string;
-  }) => {
-    markdownEditorHarness.onChange = onChange;
-    markdownEditorHarness.onSubmit = onSubmit;
-    return (
-      <textarea
-        data-testid="markdown-editor"
-        data-content-class-name={contentClassName}
-        value={value}
-        readOnly
-      />
-    );
-  },
-}));
+vi.mock("./MarkdownEditor", async () => {
+  const { forwardRef, useImperativeHandle } = await import("react");
+  return {
+    MarkdownEditor: forwardRef(function MarkdownEditorMock({ value, onChange, onSubmit, contentClassName, submitShortcut }: {
+      value: string;
+      onChange: (value: string) => void;
+      onSubmit: () => void;
+      contentClassName?: string;
+      submitShortcut?: string;
+    }, ref) {
+      markdownEditorHarness.currentMarkdown = value;
+      markdownEditorHarness.onChange = (nextValue) => {
+        markdownEditorHarness.currentMarkdown = nextValue;
+        onChange(nextValue);
+      };
+      markdownEditorHarness.onSubmit = onSubmit;
+      markdownEditorHarness.submitShortcut = submitShortcut ?? null;
+      useImperativeHandle(ref, () => ({
+        focus: () => undefined,
+        getMarkdown: () => markdownEditorHarness.currentMarkdown ?? value,
+      }));
+      return (
+        <textarea
+          data-testid="markdown-editor"
+          data-content-class-name={contentClassName}
+          value={value}
+          readOnly
+        />
+      );
+    }),
+  };
+});
 
 describe("InlineEditor", () => {
   it("renders multiline markdown as a direct editable surface without hover highlight", () => {
@@ -90,7 +105,8 @@ describe("InlineEditor", () => {
     expect(html).not.toContain("hover:bg-accent/50");
   });
 
-  it("keeps always-edit multiline markdown in edit mode after blur", async () => {
+  it("flushes changed always-edit Markdown on blur without leaving edit mode", async () => {
+    const onSave = vi.fn();
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -98,7 +114,7 @@ describe("InlineEditor", () => {
       root.render(
         <InlineEditor
           value="Issue context"
-          onSave={() => undefined}
+          onSave={onSave}
           multiline
           alwaysEdit
         />,
@@ -107,16 +123,258 @@ describe("InlineEditor", () => {
 
     expect(host.querySelector("[data-testid='markdown-body']")).toBeNull();
     expect(host.querySelector("[data-testid='markdown-editor']")).toBeTruthy();
-    const surface = host.querySelector(".rudder-inline-markdown-surface");
     await act(async () => {
-      surface!.dispatchEvent(new FocusEvent("blur", { bubbles: true, relatedTarget: null }));
+      markdownEditorHarness.onChange?.("Issue context\n\nFollow-up detail");
+      host.querySelector("[data-testid='markdown-editor']")!.dispatchEvent(
+        new FocusEvent("focusout", { bubbles: true, relatedTarget: null }),
+      );
     });
 
+    expect(onSave).toHaveBeenCalledWith("Issue context\n\nFollow-up detail");
     expect(host.querySelector("[data-testid='markdown-editor']")).toBeTruthy();
     await act(async () => {
       root.unmount();
     });
     host.remove();
+  });
+
+  it("serializes an in-flight autosave before the latest explicit save", async () => {
+    vi.useFakeTimers();
+    let resolveFirstSave: (() => void) | undefined;
+    let resolveSecondSave: (() => void) | undefined;
+    const onSave = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveFirstSave = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveSecondSave = resolve;
+      }));
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    try {
+      await act(async () => {
+        root.render(
+          <InlineEditor
+            value="Issue context"
+            onSave={onSave}
+            multiline
+            alwaysEdit
+          />,
+        );
+      });
+
+      await act(async () => {
+        host.querySelector("[data-testid='markdown-editor']")!.dispatchEvent(
+          new FocusEvent("focusin", { bubbles: true }),
+        );
+        markdownEditorHarness.onChange?.("Issue context\n\nAutosave draft");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(900);
+      });
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(onSave).toHaveBeenNthCalledWith(1, "Issue context\n\nAutosave draft");
+
+      await act(async () => {
+        markdownEditorHarness.onChange?.("Issue context\n\nNewest draft");
+        markdownEditorHarness.onSubmit?.();
+      });
+      expect(onSave).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        resolveFirstSave?.();
+        await Promise.resolve();
+      });
+      expect(onSave).toHaveBeenCalledTimes(2);
+      expect(onSave).toHaveBeenNthCalledWith(2, "Issue context\n\nNewest draft");
+
+      await act(async () => {
+        resolveSecondSave?.();
+        await vi.advanceTimersByTimeAsync(1_800);
+      });
+      expect(onSave).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      host.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it("queues a return to the persisted value behind an in-flight autosave", async () => {
+    vi.useFakeTimers();
+    let resolveAutosave: (() => void) | undefined;
+    let resolveRevert: (() => void) | undefined;
+    const onSave = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveAutosave = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveRevert = resolve;
+      }));
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    try {
+      await act(async () => {
+        root.render(
+          <InlineEditor
+            value="Persisted value"
+            onSave={onSave}
+            multiline
+            alwaysEdit
+          />,
+        );
+      });
+      await act(async () => {
+        host.querySelector("[data-testid='markdown-editor']")!.dispatchEvent(
+          new FocusEvent("focusin", { bubbles: true }),
+        );
+        markdownEditorHarness.onChange?.("Pending autosave");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(900);
+      });
+      expect(onSave).toHaveBeenNthCalledWith(1, "Pending autosave");
+
+      await act(async () => {
+        markdownEditorHarness.onChange?.("Persisted value");
+        markdownEditorHarness.onSubmit?.();
+      });
+      expect(onSave).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        resolveAutosave?.();
+        await Promise.resolve();
+      });
+      expect(onSave).toHaveBeenCalledTimes(2);
+      expect(onSave).toHaveBeenNthCalledWith(2, "Persisted value");
+
+      await act(async () => {
+        resolveRevert?.();
+        await vi.advanceTimersByTimeAsync(1_800);
+      });
+      expect(onSave).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      host.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not suppress a new edit that matches an earlier explicit save", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    try {
+      await act(async () => {
+        root.render(
+          <InlineEditor
+            value="Initial value"
+            onSave={onSave}
+            multiline
+            alwaysEdit
+          />,
+        );
+      });
+      await act(async () => {
+        host.querySelector("[data-testid='markdown-editor']")!.dispatchEvent(
+          new FocusEvent("focusin", { bubbles: true }),
+        );
+        markdownEditorHarness.onChange?.("Earlier explicit value");
+        host.querySelector("[data-testid='markdown-editor']")!.dispatchEvent(
+          new FocusEvent("focusout", { bubbles: true, relatedTarget: null }),
+        );
+      });
+      expect(onSave).toHaveBeenNthCalledWith(1, "Earlier explicit value");
+
+      await act(async () => {
+        root.render(
+          <InlineEditor
+            value="External update"
+            onSave={onSave}
+            multiline
+            alwaysEdit
+          />,
+        );
+      });
+      await act(async () => {
+        host.querySelector("[data-testid='markdown-editor']")!.dispatchEvent(
+          new FocusEvent("focusin", { bubbles: true }),
+        );
+        markdownEditorHarness.onChange?.("Earlier explicit value");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(900);
+      });
+
+      expect(onSave).toHaveBeenCalledTimes(2);
+      expect(onSave).toHaveBeenNthCalledWith(2, "Earlier explicit value");
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      host.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a failed explicit-save draft available for retry", async () => {
+    const onSave = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Save failed"))
+      .mockResolvedValueOnce(undefined);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    try {
+      await act(async () => {
+        root.render(
+          <InlineEditor
+            value="Persisted value"
+            onSave={onSave}
+            multiline
+            alwaysEdit
+          />,
+        );
+      });
+      await act(async () => {
+        markdownEditorHarness.onChange?.("Unsaved draft");
+        host.querySelector("[data-testid='markdown-editor']")!.dispatchEvent(
+          new FocusEvent("focusout", { bubbles: true, relatedTarget: null }),
+        );
+        await Promise.resolve();
+      });
+
+      expect(onSave).toHaveBeenNthCalledWith(1, "Unsaved draft");
+      expect(host.querySelector<HTMLTextAreaElement>("[data-testid='markdown-editor']")?.value)
+        .toBe("Unsaved draft");
+
+      await act(async () => {
+        markdownEditorHarness.onChange?.("Unsaved draft");
+        markdownEditorHarness.onSubmit?.();
+        await Promise.resolve();
+      });
+      expect(onSave).toHaveBeenCalledTimes(2);
+      expect(onSave).toHaveBeenNthCalledWith(2, "Unsaved draft");
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      host.remove();
+    }
   });
 
   it("uses the same issue-description markdown rhythm in read and edit modes", async () => {
@@ -148,6 +406,7 @@ describe("InlineEditor", () => {
     expect(editor?.dataset.contentClassName).toContain("rudder-edit-in-place-content");
     expect(editor?.dataset.contentClassName).toContain("rudder-issue-description-markdown");
     expect(editor?.dataset.contentClassName).toContain("rudder-issue-description-markdown-edit");
+    expect(markdownEditorHarness.submitShortcut).toBe("mod-enter");
 
     await act(async () => {
       root.unmount();

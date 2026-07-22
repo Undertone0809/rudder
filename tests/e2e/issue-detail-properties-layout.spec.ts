@@ -226,6 +226,8 @@ test.describe("Issue detail properties layout", () => {
     expect(wide).not.toBeNull();
     expect(wide!.gridTemplateColumns).toContain("280px");
     expect(wide!.propertiesLeft).toBeGreaterThan(wide!.bodyRight);
+    expect(wide!.bodyTop - wide!.headingBottom).toBeGreaterThanOrEqual(16);
+    expect(wide!.bodyTop - wide!.headingBottom).toBeLessThanOrEqual(32);
     await page.screenshot({
       path: testInfo.outputPath("issue-detail-responsive-wide-light.png"),
       fullPage: false,

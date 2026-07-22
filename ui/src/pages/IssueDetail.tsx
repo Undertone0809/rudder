@@ -2188,6 +2188,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           placeholder="Add a description..."
           multiline
           editorEngine="milkdown"
+          alwaysEdit
           variant="issue-description"
           mentions={mentionOptions}
           onMentionQueryChange={setLibraryFileMentionQuery}

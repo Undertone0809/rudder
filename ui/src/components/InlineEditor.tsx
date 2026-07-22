@@ -30,6 +30,10 @@ function eventTargetElement(target: EventTarget | null): HTMLElement | null {
   return null;
 }
 
+function settleSave(promise: Promise<void>) {
+  void promise.catch(() => undefined);
+}
+
 export function InlineEditor({
   value,
   onSave,
@@ -50,6 +54,11 @@ export function InlineEditor({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const markdownRef = useRef<MarkdownEditorRef>(null);
   const autosaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const latestQueuedValueRef = useRef<string | null>(null);
+  const pendingSaveCountRef = useRef(0);
+  const explicitSaveValueRef = useRef<string | null>(null);
+  const previousValueRef = useRef(value);
   const {
     state: autosaveState,
     markDirty,
@@ -58,17 +67,20 @@ export function InlineEditor({
   } = useAutosaveIndicator();
 
   useEffect(() => {
+    const valueChanged = previousValueRef.current !== value;
+    previousValueRef.current = value;
+    if (!valueChanged) return;
     if (multiline && multilineFocused) return;
     setDraft(value);
   }, [value, multiline, multilineFocused]);
 
-  useEffect(() => {
-    return () => {
-      if (autosaveDebounceRef.current) {
-        clearTimeout(autosaveDebounceRef.current);
-      }
-    };
+  const clearAutosaveDebounce = useCallback(() => {
+    if (!autosaveDebounceRef.current) return;
+    clearTimeout(autosaveDebounceRef.current);
+    autosaveDebounceRef.current = null;
   }, []);
+
+  useEffect(() => clearAutosaveDebounce, [clearAutosaveDebounce]);
 
   const autoSize = useCallback((el: HTMLTextAreaElement | null) => {
     if (!el) return;
@@ -109,8 +121,28 @@ export function InlineEditor({
 
   const commit = useCallback(async (nextValue = draft) => {
     const trimmed = nextValue.trim();
-    if (trimmed !== value) {
-      await Promise.resolve(onSave(trimmed));
+    const hasPendingSave = pendingSaveCountRef.current > 0;
+    if (trimmed !== value || hasPendingSave) {
+      if (hasPendingSave && latestQueuedValueRef.current === trimmed) {
+        await saveQueueRef.current;
+      } else {
+        latestQueuedValueRef.current = trimmed;
+        pendingSaveCountRef.current += 1;
+        const queuedSave = saveQueueRef.current
+          .catch(() => undefined)
+          .then(async () => {
+            await Promise.resolve(onSave(trimmed));
+          });
+        saveQueueRef.current = queuedSave;
+        try {
+          await queuedSave;
+        } finally {
+          pendingSaveCountRef.current -= 1;
+          if (pendingSaveCountRef.current === 0 && latestQueuedValueRef.current === trimmed) {
+            latestQueuedValueRef.current = null;
+          }
+        }
+      }
     } else {
       setDraft(value);
     }
@@ -122,12 +154,10 @@ export function InlineEditor({
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !multiline) {
       e.preventDefault();
-      void commit();
+      settleSave(commit());
     }
     if (e.key === "Escape") {
-      if (autosaveDebounceRef.current) {
-        clearTimeout(autosaveDebounceRef.current);
-      }
+      clearAutosaveDebounce();
       reset();
       setDraft(value);
       if (multiline) {
@@ -148,6 +178,10 @@ export function InlineEditor({
     if (!multiline) return;
     if (!multilineFocused) return;
     const trimmed = draft.trim();
+    if (explicitSaveValueRef.current === trimmed) {
+      explicitSaveValueRef.current = null;
+      return;
+    }
     if (trimmed === value) {
       if (autosaveState !== "saved") {
         reset();
@@ -155,19 +189,14 @@ export function InlineEditor({
       return;
     }
     markDirty();
-    if (autosaveDebounceRef.current) {
-      clearTimeout(autosaveDebounceRef.current);
-    }
+    clearAutosaveDebounce();
     autosaveDebounceRef.current = setTimeout(() => {
-      void runSave(() => commit(trimmed));
+      autosaveDebounceRef.current = null;
+      settleSave(runSave(() => commit(trimmed)));
     }, AUTOSAVE_DEBOUNCE_MS);
 
-    return () => {
-      if (autosaveDebounceRef.current) {
-        clearTimeout(autosaveDebounceRef.current);
-      }
-    };
-  }, [autosaveState, commit, draft, markDirty, multiline, multilineFocused, reset, runSave, value]);
+    return clearAutosaveDebounce;
+  }, [autosaveState, clearAutosaveDebounce, commit, draft, markDirty, multiline, multilineFocused, reset, runSave, value]);
 
   if (multiline && editing) {
     return (
@@ -179,20 +208,20 @@ export function InlineEditor({
         onFocusCapture={() => setMultilineFocused(true)}
         onBlurCapture={(event) => {
           if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-          if (autosaveDebounceRef.current) {
-            clearTimeout(autosaveDebounceRef.current);
-          }
+          clearAutosaveDebounce();
           setMultilineFocused(false);
           if (!alwaysEdit) {
             setEditing(false);
           }
-          const trimmed = draft.trim();
+          const currentDraft = markdownRef.current?.getMarkdown?.() ?? draft;
+          const trimmed = currentDraft.trim();
+          explicitSaveValueRef.current = trimmed;
           if (trimmed === value) {
             reset();
-            void commit();
+            settleSave(commit(currentDraft));
             return;
           }
-          void runSave(() => commit());
+          settleSave(runSave(() => commit(currentDraft)));
         }}
         onKeyDown={handleKeyDown}
       >
@@ -200,7 +229,10 @@ export function InlineEditor({
           ref={markdownRef}
           engine={editorEngine}
           value={draft}
-          onChange={setDraft}
+          onChange={(nextDraft) => {
+            explicitSaveValueRef.current = null;
+            setDraft(nextDraft);
+          }}
           placeholder={placeholder}
           bordered={false}
           className="bg-transparent"
@@ -208,14 +240,18 @@ export function InlineEditor({
           imageUploadHandler={imageUploadHandler}
           mentions={mentions}
           onMentionQueryChange={onMentionQueryChange}
+          submitShortcut="mod-enter"
           onSubmit={() => {
-            const trimmed = draft.trim();
+            clearAutosaveDebounce();
+            const currentDraft = markdownRef.current?.getMarkdown?.() ?? draft;
+            const trimmed = currentDraft.trim();
+            explicitSaveValueRef.current = trimmed;
             if (trimmed === value) {
               reset();
-              void commit();
+              settleSave(commit(currentDraft));
               return;
             }
-            void runSave(() => commit());
+            settleSave(runSave(() => commit(currentDraft)));
           }}
         />
         <div className="flex min-h-4 items-center justify-end pr-1">
@@ -251,7 +287,7 @@ export function InlineEditor({
           autoSize(e.target);
         }}
         onBlur={() => {
-          void commit();
+          settleSave(commit());
         }}
         onKeyDown={handleKeyDown}
         className={cn(

@@ -512,6 +512,7 @@ describe("index.css motion rules", () => {
     expect(issueContainer).toContain("container-type: inline-size");
     expect(compactLayout).toContain('"heading"');
     expect(compactLayout).toContain("width: calc(100% - 0.5rem)");
+    expect(compactLayout).toContain("align-content: start");
     expect(compactLayout).toContain('"rail"');
     expect(compactLayout).toContain('"body"');
     expect(compactProperties).toContain("border-left-width: 0");
@@ -519,6 +520,7 @@ describe("index.css motion rules", () => {
     expect(issueComposer).toContain("margin-right: 0");
     expect(issueComposer).toContain("margin-left: 0");
     expect(wideContainer).toContain("grid-template-columns: minmax(0, 1fr) 280px");
+    expect(wideContainer).toContain("grid-template-rows: max-content minmax(0, 1fr)");
     expect(wideContainer).toContain('"heading rail"');
     expect(wideContainer).toContain('"body rail"');
     expect(wideContainer).toContain("position: sticky");
@@ -595,17 +597,13 @@ describe("index.css motion rules", () => {
     expect(indexCss).not.toContain(".rudder-markdown a.rudder-website-link:hover {");
   });
 
-  it("hides issue description editor filler paragraphs that read-mode markdown ignores", () => {
-    const emptyBreakParagraph = cssBlock(".rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> br.ProseMirror-trailingBreak:only-child)");
+  it("keeps intentional blank issue-description paragraphs editable", () => {
     const htmlCommentParagraph = cssBlock('.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> span[data-type="html"][data-value^="<!--"][data-value$="-->"]:first-child):has(> br.ProseMirror-trailingBreak:last-child)');
-    const nextAfterEmptyBreakParagraph = cssBlock(".rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> br.ProseMirror-trailingBreak:only-child) + p,");
     const nextAfterHtmlCommentParagraph = cssBlock('.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > p:has(> span[data-type="html"][data-value^="<!--"][data-value$="-->"]:first-child):has(> br.ProseMirror-trailingBreak:last-child) + p');
 
-    expect(emptyBreakParagraph).toContain("display: none");
-    expect(emptyBreakParagraph).toContain("margin: 0");
+    expect(indexCss).not.toContain("p:has(> br.ProseMirror-trailingBreak:only-child)");
     expect(htmlCommentParagraph).toContain("height: 1lh");
     expect(htmlCommentParagraph).toContain("overflow: hidden");
-    expect(nextAfterEmptyBreakParagraph).toContain("margin-top: 0");
     expect(nextAfterHtmlCommentParagraph).toContain("margin-top: 0");
   });
 
