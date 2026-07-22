@@ -149,7 +149,7 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await expect(composer).toHaveAttribute("aria-expanded", "false");
 
   await resetComposer(composer);
-  await composer.fill("briefing");
+  await composer.fill("bRiEf Me On");
   await expect(suggestions.getByRole("option", { name: "Brief me on a project" })).toBeVisible();
   await composer.press("Tab");
   await expect(composer).toHaveText("Brief me on a project. Start by asking me which project to cover.");
@@ -181,10 +181,30 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await expect(suggestions.getByRole("option", { name: "Automate my morning prep" })).toBeVisible();
 
   await resetComposer(composer);
-  await composer.fill("Write a haiku about release notes");
+  await composer.fill("Create a");
+  const staleDocumentSuggestion = suggestions.getByRole("option", { name: "Create a new document" });
+  await expect(suggestions.getByRole("option")).toHaveCount(4);
+  await expect(staleDocumentSuggestion).toBeVisible();
+  await composer.fill("Create a new d");
+  await expect(suggestions.getByRole("option")).toHaveCount(1);
+  await expect(staleDocumentSuggestion).toBeVisible();
+  await composer.fill("what");
+  await expect(promptFlow).toHaveAttribute("data-state", "hidden");
   await expect(suggestions).toHaveAttribute("aria-hidden", "true");
+  await expect(suggestions).toHaveAttribute("data-interactive", "false");
+  await expect(suggestions.locator("[role='option']")).toHaveCount(0);
+  await expect(staleDocumentSuggestion).toHaveCount(0);
+  await expect(composer).toHaveAttribute("aria-expanded", "false");
+  await composer.press("Tab");
+  await expect(composer).toHaveText("what");
+  await expect(page.getByTestId("chat-project-selector")).toContainText(project.name);
+  await expect(page.getByTestId("chat-agent-selector")).toContainText(agent.name);
 
   await resetComposer(composer);
+  await expect(promptFlow).toHaveAttribute("data-state", "starters");
+  await expect(starters).toBeVisible();
+  await expect(starters.getByRole("button")).toHaveCount(4);
+
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(starters).toBeVisible();
   await expect(page.getByRole("button", { name: "Automate routine and recurring work" })).toBeVisible();
@@ -200,6 +220,16 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   expect(new Set(mobileMetrics.starterHeights).size).toBe(1);
   expect(mobileMetrics.starterHeights.every((height) => height <= 48)).toBe(true);
   expect(mobileMetrics.starterOverflows).toEqual([false, false, false, false]);
+
+  await composer.fill("Create a");
+  await expect(suggestions.getByRole("option")).toHaveCount(4);
+  await composer.fill("what");
+  await expect(promptFlow).toHaveAttribute("data-state", "hidden");
+  await expect(suggestions.locator("[role='option']")).toHaveCount(0);
+  await expect(composer).toHaveAttribute("aria-expanded", "false");
+  await resetComposer(composer);
+  await expect(promptFlow).toHaveAttribute("data-state", "starters");
+  await expect(starters.getByRole("button")).toHaveCount(4);
 
   const existingChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
     data: { title: "Existing prompt starter boundary", preferredAgentId: agent.id },
