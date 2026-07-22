@@ -180,6 +180,37 @@ test("adds a composer message to Queue while the current chat is streaming", asy
   expect(finalQueue.items).toHaveLength(0);
 });
 
+test("removes a queued message from the composer as soon as its user message is delivered", async ({ page }) => {
+  const organization = await createStreamingOrg(page, `Queue-Delivery-${Date.now()}`);
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${organization.chatAgent.id}`);
+
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.fill("Start the first reply");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page).toHaveURL(/\/messenger\/chat\/[^/]+$/i, { timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
+
+  await composer.fill("Run this immediately after the first reply");
+  await composer.press("Enter");
+  await expect(page.getByTestId("chat-running-queue-item")).toContainText(
+    "Run this immediately after the first reply",
+    { timeout: 15_000 },
+  );
+
+  const deliveredBubble = page.getByTestId("chat-user-message-bubble").filter({
+    hasText: "Run this immediately after the first reply",
+  });
+  await expect(deliveredBubble).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible();
+  await expect(page.getByTestId("chat-running-queue")).toHaveCount(0);
+});
+
 test("delivers native Codex Steer into the active App Server turn", async ({ page }) => {
   const orgRes = await page.request.post("/api/orgs", {
     data: { name: `Native-Steer-${Date.now()}` },
