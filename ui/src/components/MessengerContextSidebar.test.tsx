@@ -61,6 +61,10 @@ vi.mock("@/context/OrganizationContext", () => ({
   useOrganization: () => ({ selectedOrganizationId: "org-1" }),
 }));
 
+vi.mock("@/context/ToastContext", () => ({
+  useToast: () => ({ pushToast: vi.fn() }),
+}));
+
 vi.mock("@/hooks/useMessenger", () => ({
   useMessengerModel: (options?: unknown) => {
     messengerModelOptions.push(options);
@@ -709,6 +713,59 @@ describe("MessengerContextSidebar", () => {
       queryKey: ["messenger", "org-1", "groups"],
       enabled: true,
     }));
+  });
+
+  it("renders Saved Views only inside their custom group without unread or a fixed Saved section", () => {
+    localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "custom" });
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    customGroupList = [{
+      id: "group-saved",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Launch research",
+      icon: "folder::amber",
+      pinnedAt: null,
+      sortOrder: 0,
+      collapsed: false,
+      createdAt: "2026-04-11T08:00:00.000Z",
+      updatedAt: "2026-04-11T08:00:00.000Z",
+      entries: [{
+        id: "entry-saved",
+        orgId: "org-1",
+        userId: "local-board",
+        groupId: "group-saved",
+        itemKey: "saved_view:30000000-0000-4000-8000-000000000001",
+        sortOrder: 0,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        item: {
+          type: "saved_view",
+          itemKey: "saved_view:30000000-0000-4000-8000-000000000001",
+          title: "Market dashboard",
+          savedView: {
+            id: "30000000-0000-4000-8000-000000000001",
+            title: "Market dashboard",
+            subtitle: "dashboard/README.md",
+            favicon: null,
+            targetPayload: {
+              kind: "library_file",
+              filePath: "dashboard/README.md",
+              viewInstanceId: "view-dashboard",
+            },
+          },
+        },
+      }],
+    }];
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain("Launch research");
+    expect(html).toContain("Market dashboard");
+    expect(html).toContain('data-testid="messenger-saved-view-entry-saved"');
+    expect(html).not.toContain('data-testid="messenger-saved-views-section"');
+    expect(html).not.toContain("unread-badge");
+    expect(html).not.toContain("Hide");
   });
 
   it("renders pinned and unpinned custom groups as the same top-level group surface", () => {

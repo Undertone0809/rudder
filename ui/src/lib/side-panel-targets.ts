@@ -12,6 +12,7 @@ export type SidePanelTarget =
       kind: "automation";
       automationId: string;
       label: string;
+      viewInstanceId?: string;
     }
   | {
       kind: "chat";
@@ -32,17 +33,20 @@ export type SidePanelTarget =
       kind: "library_document";
       documentId: string;
       label: string;
+      viewInstanceId?: string;
     }
   | {
       kind: "library_entry";
       entryId: string;
       path: string | null;
       label: string;
+      viewInstanceId?: string;
     }
   | {
       kind: "library_file";
       filePath: string;
       label: string;
+      viewInstanceId?: string;
     }
   | {
       kind: "local_file";
@@ -53,6 +57,7 @@ export type SidePanelTarget =
       kind: "library_directory";
       directoryPath: string;
       label: string;
+      viewInstanceId?: string;
     }
   | {
       kind: "browser";
@@ -60,6 +65,7 @@ export type SidePanelTarget =
       label: string;
       tabId: string;
       dedupeKey?: string;
+      viewInstanceId?: string;
     }
   | {
       kind: "placeholder";
@@ -92,7 +98,7 @@ function commentIdFromHash(url: URL) {
   return hash.startsWith("comment-") ? hash.slice("comment-".length).trim() || null : null;
 }
 
-export function sidePanelTargetKey(target: SidePanelTarget) {
+export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "issue") return `issue:${target.issueId}:${target.commentId ?? ""}`;
   if (target.kind === "automation") return `automation:${target.automationId}`;
   if (target.kind === "chat") return `chat:${target.conversationId}:${target.messageId ?? ""}`;
@@ -106,6 +112,27 @@ export function sidePanelTargetKey(target: SidePanelTarget) {
   if (target.kind === "library_directory") return `library-directory:${target.directoryPath}`;
   if (target.kind === "browser") return `browser-tab:${target.tabId}`;
   return `placeholder:${target.targetKind}`;
+}
+
+export function sidePanelTargetSupportsSavedView(
+  target: SidePanelTarget,
+): target is Extract<SidePanelTarget, {
+  kind: "automation" | "library_document" | "library_entry" | "library_file" | "library_directory" | "browser";
+}> {
+  return target.kind === "automation"
+    || target.kind === "library_document"
+    || target.kind === "library_entry"
+    || target.kind === "library_file"
+    || target.kind === "library_directory"
+    || target.kind === "browser";
+}
+
+export function sidePanelTargetKey(target: SidePanelTarget) {
+  const canonicalKey = sidePanelCanonicalTargetKey(target);
+  if (target.kind === "browser" || !sidePanelTargetSupportsSavedView(target) || !target.viewInstanceId) {
+    return canonicalKey;
+  }
+  return `${canonicalKey}:view:${target.viewInstanceId}`;
 }
 
 export function sidePanelFullPageHref(target: SidePanelTarget): string | null {

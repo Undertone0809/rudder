@@ -99,6 +99,10 @@ vi.mock("@/context/OrganizationContext", () => ({
   useOrganization: () => ({ selectedOrganizationId: "org-1" }),
 }));
 
+vi.mock("@/context/ToastContext", () => ({
+  useToast: () => ({ pushToast: vi.fn() }),
+}));
+
 vi.mock("@/hooks/useMessenger", () => ({
   useMessengerModel: () => messengerModel,
   messengerThreadKindLabel: (kind: string) => kind,

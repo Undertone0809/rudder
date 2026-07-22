@@ -9,6 +9,7 @@ import { CommentThread } from "@/components/CommentThread";
 import { InlineEditor } from "@/components/InlineEditor";
 import { IssueProperties } from "@/components/IssueProperties";
 import { MarkdownEditor, type MarkdownEditorRef } from "@/components/MarkdownEditor";
+import { KeepSidePanelViewButton } from "@/components/messenger/KeepSidePanelViewButton";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -2264,6 +2265,11 @@ export function ChatSidePanel({
                   organizationId={selectedOrganizationId}
                   tab={tab}
                   onClose={(target) => void closeSidePanelTab(target)}
+                  onOpenInNewTab={(target) => {
+                    sidePanel.openTargetInNewTab(target.kind === "browser"
+                      ? createChatSidePanelBrowserTarget(target.url)
+                      : target);
+                  }}
                   onMoveSideChat={moveSideChatToMessenger}
                 >
                   <div
@@ -2352,6 +2358,11 @@ export function ChatSidePanel({
             </button>
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-1">
+            <KeepSidePanelViewButton
+              contextKey={sidePanel.contextKey}
+              organizationId={selectedOrganizationId}
+              target={activeTarget}
+            />
             {onToggleExpanded ? (
               <button
                 type="button"

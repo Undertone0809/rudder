@@ -5,7 +5,9 @@ import type {
   MessengerCustomGroupsResponse,
   MessengerIssueThreadItem,
   MessengerSavedView,
+  MessengerSavedViewKeepResult,
   MessengerSavedViewPage,
+  MessengerSavedViewPlacement,
   MessengerSavedViewTarget,
   MessengerSystemThreadItem,
   MessengerSystemThreadKind,
@@ -42,6 +44,10 @@ type SavedViewUpdateInput = Partial<Omit<SavedViewCreateInput, "target">> & {
   target?: MessengerSavedViewTarget;
   hidden?: boolean;
 };
+type SavedViewKeepInput = SavedViewCreateInput & {
+  clientMutationId: string;
+  placement: MessengerSavedViewPlacement;
+};
 
 export const messengerApi = {
   listSavedViews: (
@@ -55,6 +61,8 @@ export const messengerApi = {
   },
   getSavedView: (orgId: string, savedViewId: string) =>
     api.get<MessengerSavedView>(`/orgs/${orgId}/messenger/saved-views/${savedViewId}`),
+  keepSavedView: (orgId: string, data: SavedViewKeepInput) =>
+    api.post<MessengerSavedViewKeepResult>(`/orgs/${orgId}/messenger/saved-views/keep`, data),
   createSavedView: (orgId: string, data: SavedViewCreateInput) =>
     api.post<MessengerSavedView>(`/orgs/${orgId}/messenger/saved-views`, data),
   updateSavedView: (orgId: string, savedViewId: string, data: SavedViewUpdateInput) =>

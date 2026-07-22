@@ -9,9 +9,9 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { queryKeys } from "@/lib/queryKeys";
 import { sideChatIsReadOnly } from "@/lib/side-chat";
-import type { SidePanelTarget } from "@/lib/side-panel-targets";
+import { sidePanelTargetSupportsSavedView, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { useQuery } from "@tanstack/react-query";
-import { MessageSquare, X } from "lucide-react";
+import { CopyPlus, MessageSquare, X } from "lucide-react";
 import { useState, type ReactElement } from "react";
 
 export type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
@@ -24,6 +24,7 @@ export function ChatSidePanelTabContextMenu({
   organizationId,
   tab,
   onClose,
+  onOpenInNewTab,
   onMoveSideChat,
 }: {
   children: ReactElement;
@@ -33,6 +34,7 @@ export function ChatSidePanelTabContextMenu({
   organizationId: string | null | undefined;
   tab: SidePanelTarget;
   onClose: (tab: SidePanelTarget) => void;
+  onOpenInNewTab: (tab: SidePanelTarget) => void;
   onMoveSideChat: (tab: SideChatTarget) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -105,6 +107,15 @@ export function ChatSidePanelTabContextMenu({
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
+            <ContextMenuSeparator />
+          </>
+        ) : null}
+        {sidePanelTargetSupportsSavedView(tab) ? (
+          <>
+            <ContextMenuItem onSelect={() => onOpenInNewTab(tab)}>
+              <CopyPlus />
+              Open in new tab
+            </ContextMenuItem>
             <ContextMenuSeparator />
           </>
         ) : null}

@@ -1,6 +1,11 @@
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { getKeyboardShortcutPlatform } from "@/lib/keyboard-shortcuts";
-import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
+import {
+  sidePanelCanonicalTargetKey,
+  sidePanelTargetKey,
+  sidePanelTargetSupportsSavedView,
+  type SidePanelTarget,
+} from "@/lib/side-panel-targets";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 type SidePanelContextState = {
@@ -18,6 +23,7 @@ type SidePanelContextValue = {
   clearCurrentContext: () => void;
   hidePanel: () => void;
   openTarget: (target: SidePanelTarget) => void;
+  openTargetInNewTab: (target: SidePanelTarget) => void;
   openTargetForContext: (contextKey: string | null, target: SidePanelTarget) => void;
   showPanel: () => void;
   showPanelForContext: (contextKey: string | null) => void;
@@ -45,6 +51,34 @@ function emptyContextState(): SidePanelContextState {
 
 function contextHasPanelState(state: SidePanelContextState | undefined) {
   return Boolean(state && (state.hasPanelState || state.tabs.length > 0 || state.activeKey !== null));
+}
+
+function newViewInstanceId() {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `view-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function targetWithViewInstance(
+  tabs: SidePanelTarget[],
+  target: SidePanelTarget,
+  forceNew: boolean,
+): SidePanelTarget {
+  if (!sidePanelTargetSupportsSavedView(target)) return target;
+  if (target.kind === "browser") {
+    return { ...target, viewInstanceId: target.viewInstanceId ?? target.tabId };
+  }
+  if (!forceNew && target.viewInstanceId) return target;
+  if (!forceNew) {
+    const canonicalKey = sidePanelCanonicalTargetKey(target);
+    const existing = tabs.find((candidate) => (
+      sidePanelTargetSupportsSavedView(candidate)
+      && sidePanelCanonicalTargetKey(candidate) === canonicalKey
+    ));
+    if (existing && existing.kind !== "browser" && "viewInstanceId" in existing && existing.viewInstanceId) {
+      return { ...target, viewInstanceId: existing.viewInstanceId } as SidePanelTarget;
+    }
+  }
+  return { ...target, viewInstanceId: newViewInstanceId() } as SidePanelTarget;
 }
 
 function upsertSidePanelTarget(
@@ -149,7 +183,23 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
 
   const openTarget = useCallback((target: SidePanelTarget) => {
     writeContextState(contextKey, (current) => {
-      const result = upsertSidePanelTarget(current.tabs, current.activeKey, target);
+      const result = upsertSidePanelTarget(
+        current.tabs,
+        current.activeKey,
+        targetWithViewInstance(current.tabs, target, false),
+      );
+      return { ...result, hasPanelState: true, open: true };
+    });
+    setOpen(true);
+  }, [contextKey, writeContextState]);
+
+  const openTargetInNewTab = useCallback((target: SidePanelTarget) => {
+    writeContextState(contextKey, (current) => {
+      const result = upsertSidePanelTarget(
+        current.tabs,
+        current.activeKey,
+        targetWithViewInstance(current.tabs, target, true),
+      );
       return { ...result, hasPanelState: true, open: true };
     });
     setOpen(true);
@@ -158,7 +208,11 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   const openTargetForContext = useCallback((nextContextKey: string | null, target: SidePanelTarget) => {
     const normalizedKey = normalizeContextKey(nextContextKey);
     const nextState = writeContextState(normalizedKey, (current) => {
-      const result = upsertSidePanelTarget(current.tabs, current.activeKey, target);
+      const result = upsertSidePanelTarget(
+        current.tabs,
+        current.activeKey,
+        targetWithViewInstance(current.tabs, target, false),
+      );
       return { ...result, hasPanelState: true, open: true };
     });
     if (normalizedKey === currentContextKeyRef.current) {
@@ -336,6 +390,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     open,
     openEmpty,
     openTarget,
+    openTargetInNewTab,
     openTargetForContext,
     registerCloseRequestHandler,
     replaceTarget,
@@ -345,7 +400,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     showPanel,
     showPanelForContext,
     tabs: currentContextState.tabs,
-  }), [clearCurrentContext, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, hidePanel, open, openEmpty, openTarget, openTargetForContext, registerCloseRequestHandler, reorderTarget, replaceTarget, setActiveKey, setContextKey, showPanel, showPanelForContext]);
+  }), [clearCurrentContext, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, hidePanel, open, openEmpty, openTarget, openTargetForContext, openTargetInNewTab, registerCloseRequestHandler, reorderTarget, replaceTarget, setActiveKey, setContextKey, showPanel, showPanelForContext]);
 
   return <SidePanelContext.Provider value={value}>{children}</SidePanelContext.Provider>;
 }

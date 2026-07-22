@@ -133,6 +133,19 @@ describe("side panel targets", () => {
     expect(sidePanelFullPageHref(persistedSideChat)).toBe("/messenger/chat/side-chat-1");
   });
 
+  it("keeps explicit Saved View instances distinct from the canonical resource", () => {
+    const first = {
+      kind: "library_file",
+      filePath: "docs/spec.md",
+      label: "spec.md",
+      viewInstanceId: "view-first",
+    } as const;
+    const second = { ...first, viewInstanceId: "view-second" };
+
+    expect(sidePanelTargetKey(first)).toBe("library-file:docs/spec.md:view:view-first");
+    expect(sidePanelTargetKey(second)).toBe("library-file:docs/spec.md:view:view-second");
+  });
+
   it("ignores unsupported or external hrefs unless they are browser targets", () => {
     expect(sidePanelTargetFromHref("https://example.com")).toBeNull();
     expect(sidePanelTargetFromHref("mailto:hello@example.com")).toBeNull();

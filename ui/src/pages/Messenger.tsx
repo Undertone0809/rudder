@@ -62,6 +62,7 @@ import {
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Chat } from "./Chat";
 import { IssueDetail } from "./IssueDetail";
+import { MessengerSavedViewWorkspace } from "./MessengerSavedViewWorkspace";
 
 const ISSUE_COMMENT_PREVIEW_LINES = 10;
 const ISSUE_COMMENT_PREVIEW_LINE_HEIGHT = 20;
@@ -1121,6 +1122,10 @@ export function Messenger() {
       setBreadcrumbs([{ label: messengerThreadKindLabel(route.threadKind) }]);
       return;
     }
+    if (route.kind === "saved_view") {
+      setBreadcrumbs([{ label: "Saved view" }]);
+      return;
+    }
     setBreadcrumbs([{ label: "Messenger" }]);
   }, [route.kind, route.kind === "system" ? route.threadKind : null, setBreadcrumbs]);
 
@@ -1137,5 +1142,8 @@ export function Messenger() {
   if (route.kind === "issues") return <MessengerIssuesView />;
   if (route.kind === "approvals") return <MessengerApprovalsView />;
   if (route.kind === "system") return <MessengerSystemView threadKind={route.threadKind} />;
+  if (route.kind === "saved_view" && selectedOrganizationId) {
+    return <MessengerSavedViewWorkspace organizationId={selectedOrganizationId} savedViewId={route.savedViewId} />;
+  }
   return <div className="mx-auto max-w-3xl py-10 text-sm text-muted-foreground">Opening Messenger…</div>;
 }

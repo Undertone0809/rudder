@@ -60,6 +60,8 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
       <button type="button" onClick={() => sidePanel.setContextKey("chat:a")}>Chat A</button>
       <button type="button" onClick={() => sidePanel.setContextKey("chat:b")}>Chat B</button>
       <button type="button" onClick={() => sidePanel.openTarget(issueTarget)}>Open issue</button>
+      <button type="button" onClick={() => sidePanel.openTarget({ kind: "library_file", filePath: "docs/spec.md", label: "Spec" })}>Open file</button>
+      <button type="button" onClick={() => sidePanel.openTargetInNewTab({ kind: "library_file", filePath: "docs/spec.md", label: "Spec copy" })}>Open file in new tab</button>
       <button type="button" onClick={() => sidePanel.openTarget({ kind: "browser", url: "https://example.com", label: "Example", tabId: "browser-1" })}>Open browser</button>
       <button type="button" onClick={() => sidePanel.reorderTarget("browser-tab:browser-1", "issue:issue-1:", "before")}>Move browser first</button>
       <button type="button" onClick={() => sidePanel.reorderTarget("browser-tab:browser-1", "issue:issue-1:", "after")}>Move browser last</button>
@@ -90,6 +92,7 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
       <span data-testid="tab-count">{String(sidePanel.tabs.length)}</span>
       <span data-testid="tab-keys">{sidePanel.tabs.map(sidePanelTargetKey).join(",")}</span>
       <span data-testid="tab-urls">{sidePanel.tabs.map((target) => target.kind === "browser" ? target.url : "").join(",")}</span>
+      <span data-testid="view-instance-ids">{sidePanel.tabs.map((target) => "viewInstanceId" in target ? target.viewInstanceId ?? "" : "").join(",")}</span>
     </div>
   );
 }
@@ -211,6 +214,23 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "open")).toBe("false");
     expect(text(container, "active-key")).toBe("");
     expect(text(container, "tab-count")).toBe("0");
+  });
+
+  it("focuses a canonical file normally but creates a distinct explicit instance", () => {
+    ({ container, root } = renderSidePanelProvider());
+
+    click(container, "Open file");
+    const firstInstance = text(container, "view-instance-ids");
+    expect(firstInstance).toBeTruthy();
+
+    click(container, "Open file");
+    expect(text(container, "tab-count")).toBe("1");
+    expect(text(container, "view-instance-ids")).toBe(firstInstance);
+
+    click(container, "Open file in new tab");
+    const instances = text(container, "view-instance-ids").split(",");
+    expect(text(container, "tab-count")).toBe("2");
+    expect(new Set(instances).size).toBe(2);
   });
 
   it("preserves the destination chat closed state even when the current chat is open", () => {

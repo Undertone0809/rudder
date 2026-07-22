@@ -21,6 +21,7 @@ const mockSeparateCustomGroup = vi.hoisted(() => vi.fn());
 const mockReorderCustomGroups = vi.hoisted(() => vi.fn());
 const mockReorderCustomGroupEntries = vi.hoisted(() => vi.fn());
 const mockRemoveCustomGroupEntry = vi.hoisted(() => vi.fn());
+const mockDeleteSavedView = vi.hoisted(() => vi.fn());
 const mockUpdateConversation = vi.hoisted(() => vi.fn());
 const mockForkConversation = vi.hoisted(() => vi.fn());
 const mockRegenerateTitle = vi.hoisted(() => vi.fn());
@@ -31,6 +32,7 @@ const mockSetChatSendInFlight = vi.hoisted(() => vi.fn());
 const mockSetStreamDraftForChat = vi.hoisted(() => vi.fn());
 const mockConfirm = vi.hoisted(() => vi.fn(async () => true));
 const mockMarkThreadRead = vi.hoisted(() => vi.fn());
+const mockPushToast = vi.hoisted(() => vi.fn());
 const invalidateQueries = vi.fn();
 const cancelQueries = vi.fn(() => Promise.resolve());
 const getQueryData = vi.fn();
@@ -176,6 +178,7 @@ vi.mock("@/api/messenger", () => ({
     assignCustomGroupEntry: mockAssignCustomGroupEntry,
     removeCustomGroupEntry: mockRemoveCustomGroupEntry,
     reorderCustomGroupEntries: mockReorderCustomGroupEntries,
+    deleteSavedView: mockDeleteSavedView,
   },
 }));
 
@@ -306,6 +309,10 @@ vi.mock("@/context/DialogContext", () => ({
 
 vi.mock("@/context/OrganizationContext", () => ({
   useOrganization: () => ({ selectedOrganizationId: "org-1" }),
+}));
+
+vi.mock("@/context/ToastContext", () => ({
+  useToast: () => ({ pushToast: mockPushToast }),
 }));
 
 vi.mock("@/hooks/useMessenger", () => ({
@@ -530,6 +537,8 @@ describe("MessengerContextSidebar chat actions", () => {
       updatedAt: "2026-04-11T09:40:00.000Z",
     });
     mockRemoveCustomGroupEntry.mockResolvedValue({ ok: true });
+    mockDeleteSavedView.mockResolvedValue({ ok: true });
+    mockPushToast.mockReset();
     mockListCustomGroups.mockResolvedValue({ groups: [] });
     mockConfirm.mockResolvedValue(true);
     Object.defineProperty(window, "localStorage", {
@@ -3406,6 +3415,96 @@ describe("MessengerContextSidebar chat actions", () => {
     });
 
     expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "approvals");
+  });
+
+  it("surfaces Saved View move and remove failures", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    customGroupList = [
+      {
+        id: "group-saved",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Launch research",
+        icon: "folder::amber",
+        sortOrder: 0,
+        collapsed: false,
+        pinnedAt: null,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        entries: [{
+          id: "entry-saved",
+          orgId: "org-1",
+          userId: "local-board",
+          groupId: "group-saved",
+          itemKey: "saved_view:30000000-0000-4000-8000-000000000001",
+          sortOrder: 0,
+          createdAt: "2026-04-11T08:00:00.000Z",
+          updatedAt: "2026-04-11T08:00:00.000Z",
+          item: {
+            type: "saved_view",
+            itemKey: "saved_view:30000000-0000-4000-8000-000000000001",
+            title: "Market dashboard",
+            savedView: {
+              id: "30000000-0000-4000-8000-000000000001",
+              title: "Market dashboard",
+              subtitle: "dashboard/README.md",
+              favicon: null,
+              targetPayload: {
+                kind: "library_file",
+                filePath: "dashboard/README.md",
+                viewInstanceId: "view-dashboard",
+              },
+            },
+          },
+        }],
+      },
+      {
+        id: "group-review",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Review later",
+        icon: "folder::slate",
+        sortOrder: 1,
+        collapsed: false,
+        pinnedAt: null,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        entries: [],
+      },
+    ];
+    mockAssignCustomGroupEntry.mockRejectedValueOnce(new Error("Move denied"));
+    mockDeleteSavedView.mockRejectedValueOnce(new Error("Remove denied"));
+    renderSidebar();
+
+    const moveDestination = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Review later") as HTMLButtonElement | undefined;
+    expect(moveDestination).toBeTruthy();
+    await act(async () => {
+      moveDestination?.click();
+      await Promise.resolve();
+    });
+    expect(mockPushToast).toHaveBeenCalledWith({
+      title: "Could not move Saved View",
+      body: "Move denied",
+      tone: "error",
+    });
+
+    const removeButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Remove from Messenger")) as HTMLButtonElement | undefined;
+    expect(removeButton).toBeTruthy();
+    await act(async () => {
+      removeButton?.click();
+      await Promise.resolve();
+    });
+    expect(mockPushToast).toHaveBeenCalledWith({
+      title: "Could not remove Saved View",
+      body: "Remove denied",
+      tone: "error",
+    });
   });
 
   it("groups split issue rows by project beside project chats", () => {

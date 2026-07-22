@@ -20,6 +20,7 @@ import {
   splitCustomGroupIconValue,
   type CustomGroupColor,
 } from "@/components/messenger/MessengerCustomGroupVisuals";
+import { MessengerSavedViewRow } from "@/components/messenger/MessengerSavedViewRow";
 import {
   ChatThreadRow,
   conversationDisplayTitle,
@@ -48,6 +49,7 @@ import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
+import { useToast } from "@/context/ToastContext";
 import { resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { isFeishuBackedConversation } from "@/lib/chat-source";
@@ -142,7 +144,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { buildChatMentionHref, type Agent, type ChatConversation, type MessengerCustomGroupHydratedEntry, type MessengerCustomGroupHydratedThreadEntry, type MessengerCustomGroupWithEntries, type MessengerThreadSummary, type Project } from "@rudderhq/shared";
+import { buildChatMentionHref, type Agent, type ChatConversation, type MessengerCustomGroupHydratedEntry, type MessengerCustomGroupHydratedSavedViewEntry, type MessengerCustomGroupHydratedThreadEntry, type MessengerCustomGroupWithEntries, type MessengerThreadSummary, type Project } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
@@ -168,6 +170,12 @@ function isThreadCustomGroupEntry(
   entry: MessengerCustomGroupHydratedEntry,
 ): entry is MessengerCustomGroupHydratedThreadEntry {
   return entry.item.type === "thread";
+}
+
+function isSavedViewCustomGroupEntry(
+  entry: MessengerCustomGroupHydratedEntry,
+): entry is MessengerCustomGroupHydratedSavedViewEntry {
+  return entry.item.type === "saved_view";
 }
 
 type CustomGroupEditorState = { mode: "create"; threadKey?: string };
@@ -516,6 +524,7 @@ function useMeasuredSortableNode(setNodeRef: ReturnType<typeof useSortable>["set
 }
 
 export function MessengerContextSidebar() {
+  const { pushToast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
   const relativePath = toOrganizationRelativePath(location.pathname);
@@ -1271,6 +1280,36 @@ export function MessengerContextSidebar() {
     onSuccess: refreshCustomGroups,
   });
 
+  const moveSavedViewMutation = useMutation({
+    mutationFn: ({ groupId, itemKey }: { groupId: string; itemKey: string }) => {
+      if (!model.selectedOrganizationId) throw new Error("Organization is required to move a Saved View");
+      return messengerApi.assignCustomGroupEntry(model.selectedOrganizationId, groupId, itemKey);
+    },
+    onSuccess: refreshCustomGroups,
+    onError: (error) => {
+      pushToast({
+        title: "Could not move Saved View",
+        body: error instanceof Error ? error.message : "Try again.",
+        tone: "error",
+      });
+    },
+  });
+
+  const removeSavedViewMutation = useMutation({
+    mutationFn: (savedViewId: string) => {
+      if (!model.selectedOrganizationId) throw new Error("Organization is required to remove a Saved View");
+      return messengerApi.deleteSavedView(model.selectedOrganizationId, savedViewId);
+    },
+    onSuccess: refreshCustomGroups,
+    onError: (error) => {
+      pushToast({
+        title: "Could not remove Saved View",
+        body: error instanceof Error ? error.message : "Try again.",
+        tone: "error",
+      });
+    },
+  });
+
   const handleThreadSectionDragOver = useCallback((event: DragOverEvent) => {
     const overId = event.over ? String(event.over.id) : null;
     updateDragOverId(overId);
@@ -1816,6 +1855,7 @@ export function MessengerContextSidebar() {
       : null;
     const sectionAgent = sectionAgentId ? agentsById.get(sectionAgentId) ?? null : null;
     const customGroup = customGroupBySectionKey.get(section.key) ?? null;
+    const savedViewEntries = customGroup?.entries.filter(isSavedViewCustomGroupEntry) ?? [];
     const customGroupTitleGenerating = Boolean(customGroup && generatingGroupTitleIds.has(customGroup.id));
     const displayedCustomGroup = customGroup;
     const collapsed = customGroup ? customGroup.collapsed : isManagedSection && collapsedThreadGroupKeys.has(section.key);
@@ -1943,6 +1983,16 @@ export function MessengerContextSidebar() {
         {renderedChildSections}
         <div className="flex flex-col gap-1">
           {renderedEntries}
+          {customGroup ? savedViewEntries.map((entry) => (
+            <MessengerSavedViewRow
+              key={entry.itemKey}
+              currentGroupId={customGroup.id}
+              entry={entry}
+              groups={customGroups}
+              onMove={(groupId, itemKey) => moveSavedViewMutation.mutate({ groupId, itemKey })}
+              onRemove={(savedViewId) => removeSavedViewMutation.mutate(savedViewId)}
+            />
+          )) : null}
         </div>
         {showMoreControl || showCollapseControl ? (
           <div className="mx-1.5 flex items-center gap-1.5 px-2 py-1">
@@ -2126,7 +2176,11 @@ export function MessengerContextSidebar() {
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => void handleSeparateCustomGroup(customGroup)}>
+                <DropdownMenuItem
+                  disabled={savedViewEntries.length > 0}
+                  title={savedViewEntries.length > 0 ? "Remove or move Saved Views before separating this group." : undefined}
+                  onClick={() => void handleSeparateCustomGroup(customGroup)}
+                >
                   <FolderInput className="h-4 w-4" />
                   Separate items
                 </DropdownMenuItem>
