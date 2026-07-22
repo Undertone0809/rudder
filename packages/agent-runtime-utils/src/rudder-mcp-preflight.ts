@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { fingerprintRudderMcpToolManifest } from "./rudder-mcp-fingerprint.js";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_BROWSER_MCP_SERVER_NAME,
   RUDDER_BROWSER_MCP_TOOL_NAMES,
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_TOOL_NAMES,
@@ -21,6 +22,14 @@ const RUDDER_SCHEMA_KEYS = new Set([
   "items",
   "additionalProperties",
   "required",
+  "enum",
+  "minimum",
+  "maximum",
+  "minLength",
+  "maxLength",
+  "minItems",
+  "maxItems",
+  "oneOf",
 ]);
 const JSON_SCHEMA_TYPES = new Set([
   "array",
@@ -75,9 +84,29 @@ function isValidRudderSchemaNode(value: unknown): value is Record<string, unknow
   const schema = value as Record<string, unknown>;
   if (Object.keys(schema).some((key) => !RUDDER_SCHEMA_KEYS.has(key))) return false;
 
-  const types = schemaTypes(schema.type);
-  if (!types) return false;
+  const types = schema.type === undefined ? [] : schemaTypes(schema.type);
+  if (types === null) return false;
   if (schema.description !== undefined && typeof schema.description !== "string") return false;
+
+  if (schema.enum !== undefined && (!Array.isArray(schema.enum) || schema.enum.length === 0)) return false;
+  for (const key of ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]) {
+    if (
+      schema[key] !== undefined
+      && (typeof schema[key] !== "number" || !Number.isFinite(schema[key]) || Number(schema[key]) < 0)
+    ) {
+      return false;
+    }
+  }
+  if (
+    schema.oneOf !== undefined
+    && (
+      !Array.isArray(schema.oneOf)
+      || schema.oneOf.length === 0
+      || !schema.oneOf.every(isValidRudderSchemaNode)
+    )
+  ) {
+    return false;
+  }
 
   const supportsObject = types.includes("object");
   const supportsArray = types.includes("array");
@@ -168,6 +197,24 @@ function failed(
   };
 }
 
+function failedCore(
+  command: RudderMcpCliCommand,
+  code: RudderMcpPreflightDiagnosticCode,
+  message: string,
+  partial: Partial<RudderMcpPreflightResult> = {},
+): RudderMcpPreflightResult {
+  return {
+    available: false,
+    provenance: command.provenance,
+    version: partial.version ?? null,
+    contractVersion: partial.contractVersion ?? null,
+    coreContractHash: partial.coreContractHash ?? null,
+    diagnosticCode: code,
+    diagnostic: message,
+    tools: partial.tools ?? [],
+  };
+}
+
 export function assertRudderMcpCoreAvailable(result: RudderMcpPreflightResult): void {
   if (result.available) return;
   throw new Error(result.diagnostic ?? "Rudder MCP initialize/tools-list handshake failed.");
@@ -250,17 +297,10 @@ type RudderMcpPreflightInput = {
   command: RudderMcpCliCommand;
   runtimeEnv: NodeJS.ProcessEnv | Record<string, string | undefined>;
   managedEnv?: Record<string, string>;
-  browserEnabled: boolean;
+  /** @deprecated The isolated core server always ignores Browser capability state. */
+  browserEnabled?: boolean;
   timeoutMs?: number;
 };
-
-function hasExactProviderSurface(result: RudderMcpPreflightResult, browserEnabled: boolean): boolean {
-  const expectedNames = [
-    ...RUDDER_CORE_MCP_TOOL_NAMES,
-    ...(browserEnabled ? RUDDER_BROWSER_MCP_TOOL_NAMES : []),
-  ];
-  return result.available && hasExactNames(result.tools.map((tool) => tool.name), expectedNames);
-}
 
 async function preflightRudderMcpServerOnce(
   input: RudderMcpPreflightInput,
@@ -270,16 +310,16 @@ async function preflightRudderMcpServerOnce(
       .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
   delete env.RUDDER_DESKTOP_CLI_ENTRY;
-  env.RUDDER_BROWSER_ENABLED = input.browserEnabled ? "true" : "false";
+  env.RUDDER_BROWSER_ENABLED = "false";
 
   let responses: Map<string | number, JsonRpcResponse>;
   try {
     responses = await exchange(input.command, env, input.timeoutMs ?? PREFLIGHT_TIMEOUT_MS);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return failed(
+    return failedCore(
       input.command,
-      "browser_bundle_handshake_failed",
+      "core_bundle_handshake_failed",
       `Rudder MCP initialize/tools-list handshake failed: ${detail}; core Rudder tools are unavailable.`,
     );
   }
@@ -287,9 +327,9 @@ async function preflightRudderMcpServerOnce(
   const initialize = responses.get("initialize");
   const toolsList = responses.get("tools-list");
   if (initialize?.error || toolsList?.error) {
-    return failed(
+    return failedCore(
       input.command,
-      "browser_bundle_handshake_failed",
+      "core_bundle_handshake_failed",
       "Rudder MCP initialize/tools-list returned a protocol error; core Rudder tools are unavailable.",
     );
   }
@@ -301,14 +341,13 @@ async function preflightRudderMcpServerOnce(
   const version = asExactString(serverInfo.version);
   const contractVersion = asExactString(rudder.contractVersion);
   const coreContractHash = asExactString(rudder.coreContractHash);
-  const contractHash = asExactString(rudder.browserContractHash);
   const listed = asRecord(toolsList?.result).tools;
   if (!Array.isArray(listed)) {
-    return failed(
+    return failedCore(
       input.command,
-      "browser_bundle_handshake_failed",
+      "core_bundle_tools_mismatch",
       "Rudder MCP tools/list returned an invalid manifest; core Rudder tools are unavailable.",
-      { version, contractVersion, coreContractHash, contractHash },
+      { version, contractVersion, coreContractHash },
     );
   }
   const parsedTools = listed.map((entry) => {
@@ -327,12 +366,12 @@ async function preflightRudderMcpServerOnce(
   const tools = parsedTools
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     .map(({ hasCanonicalInputSchema: _hasCanonicalInputSchema, ...tool }) => tool);
-  const partial = { version, contractVersion, coreContractHash, contractHash, tools };
+  const partial = { version, contractVersion, coreContractHash, tools };
 
   if (asExactString(serverInfo.name) !== RUDDER_MCP_SERVER_NAME) {
-    return failed(
+    return failedCore(
       input.command,
-      "browser_bundle_server_mismatch",
+      "core_bundle_server_mismatch",
       "Rudder MCP server identity did not match the managed bundle; core Rudder tools are unavailable.",
       partial,
     );
@@ -341,61 +380,45 @@ async function preflightRudderMcpServerOnce(
   const coreToolNames = coreTools.map((tool) => tool!.name);
   const observedCoreContractHash = semanticManifestHash(coreTools.filter((tool) => tool !== null));
   if (
+    contractVersion !== RUDDER_MCP_CONTRACT_VERSION
+    || coreContractHash !== RUDDER_CORE_MCP_CONTRACT_HASH
+  ) {
+    return failedCore(
+      input.command,
+      "core_bundle_contract_mismatch",
+      "Rudder MCP core contract hash did not match the runtime bundle; core MCP is unavailable.",
+      partial,
+    );
+  }
+  if (
     parsedTools.some((tool) => tool === null)
+    || parsedTools.length !== coreTools.length
     || !hasExactNames(coreToolNames, RUDDER_CORE_MCP_TOOL_NAMES)
     || coreTools.some((tool) => !tool!.hasCanonicalInputSchema)
-    || coreContractHash !== RUDDER_CORE_MCP_CONTRACT_HASH
     || observedCoreContractHash !== RUDDER_CORE_MCP_CONTRACT_HASH
   ) {
-    return failed(
+    return failedCore(
       input.command,
-      "browser_bundle_handshake_failed",
+      "core_bundle_tools_mismatch",
       "Rudder MCP tools/list did not match the canonical core Rudder manifest; core MCP is unavailable.",
       partial,
     );
   }
   if (input.command.expectedVersion && version !== input.command.expectedVersion) {
-    return failed(
+    return failedCore(
       input.command,
-      "browser_bundle_version_mismatch",
-      `Rudder MCP bundle version mismatch (expected ${input.command.expectedVersion}, received ${version ?? "unknown"}); optional Browser capability was disabled.`,
-      partial,
-    );
-  }
-  if (contractVersion !== RUDDER_MCP_CONTRACT_VERSION || contractHash !== RUDDER_BROWSER_MCP_CONTRACT_HASH) {
-    return failed(
-      input.command,
-      "browser_bundle_contract_mismatch",
-      "Rudder MCP Browser contract hash did not match the runtime bundle; optional Browser capability was disabled.",
-      partial,
-    );
-  }
-
-  const browserTools = parsedTools.filter((tool) => tool && isRudderBrowserMcpToolCandidate(tool.name));
-  const browserToolNames = browserTools.map((tool) => tool!.name);
-  const expectedBrowserTools = input.browserEnabled ? [...RUDDER_BROWSER_MCP_TOOL_NAMES] : [];
-  const observedBrowserContractHash = semanticManifestHash(browserTools.filter((tool) => tool !== null));
-  if (
-    !hasExactNames(browserToolNames, expectedBrowserTools)
-    || browserTools.some((tool) => !tool!.hasCanonicalInputSchema)
-    || (input.browserEnabled && observedBrowserContractHash !== RUDDER_BROWSER_MCP_CONTRACT_HASH)
-  ) {
-    return failed(
-      input.command,
-      "browser_bundle_tools_mismatch",
-      "Rudder MCP Browser tool manifest did not expose the exact managed tool set; optional Browser capability was disabled.",
+      "core_bundle_version_mismatch",
+      `Rudder MCP bundle version mismatch (expected ${input.command.expectedVersion}, received ${version ?? "unknown"}); core Rudder tools are unavailable.`,
       partial,
     );
   }
 
   return {
     available: true,
-    browserAvailable: input.browserEnabled,
     provenance: input.command.provenance,
     version,
     contractVersion,
     coreContractHash,
-    contractHash,
     diagnosticCode: null,
     diagnostic: null,
     tools,
@@ -405,31 +428,131 @@ async function preflightRudderMcpServerOnce(
 export async function preflightRudderMcpServer(
   input: RudderMcpPreflightInput,
 ): Promise<RudderMcpPreflightResult> {
-  const requested = await preflightRudderMcpServerOnce(input);
-  if (!requested.available || (input.browserEnabled && requested.browserAvailable)) return requested;
+  return preflightRudderMcpServerOnce(input);
+}
 
-  if (!input.browserEnabled) {
-    if (hasExactProviderSurface(requested, false)) return requested;
+type RudderBrowserMcpPreflightInput = Omit<RudderMcpPreflightInput, "browserEnabled">;
+
+export async function preflightRudderBrowserMcpServer(
+  input: RudderBrowserMcpPreflightInput,
+): Promise<RudderMcpPreflightResult> {
+  const env = Object.fromEntries(
+    Object.entries({ ...input.runtimeEnv, ...(input.command.env ?? {}), ...(input.managedEnv ?? {}) })
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  delete env.RUDDER_DESKTOP_CLI_ENTRY;
+  env.RUDDER_BROWSER_ENABLED = "true";
+
+  let responses: Map<string | number, JsonRpcResponse>;
+  try {
+    responses = await exchange(input.command, env, input.timeoutMs ?? PREFLIGHT_TIMEOUT_MS);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
     return failed(
       input.command,
       "browser_bundle_handshake_failed",
-      "Rudder MCP core-only tools/list did not expose the exact canonical core manifest; core MCP is unavailable.",
-      { ...requested, available: false },
+      `Rudder Browser MCP initialize/tools-list handshake failed: ${detail}; optional Browser capability was disabled.`,
+      { available: true },
     );
   }
 
-  const coreOnly = await preflightRudderMcpServerOnce({ ...input, browserEnabled: false });
-  if (!hasExactProviderSurface(coreOnly, false)) {
+  const initialize = responses.get("initialize");
+  const toolsList = responses.get("tools-list");
+  if (initialize?.error || toolsList?.error) {
     return failed(
       input.command,
       "browser_bundle_handshake_failed",
-      "Rudder MCP Browser downgrade did not produce an exact core-only provider surface; core MCP is unavailable.",
-      { ...coreOnly, available: false },
+      "Rudder Browser MCP initialize/tools-list returned a protocol error; optional Browser capability was disabled.",
+      { available: true },
+    );
+  }
+
+  const initializeResult = asRecord(initialize?.result);
+  const serverInfo = asRecord(initializeResult.serverInfo);
+  const rudder = asRecord(asRecord(asRecord(initializeResult.capabilities).experimental).rudder);
+  const version = asExactString(serverInfo.version);
+  const contractVersion = asExactString(rudder.contractVersion);
+  const coreContractHash = asExactString(rudder.coreContractHash);
+  const contractHash = asExactString(rudder.browserContractHash);
+  const listed = asRecord(toolsList?.result).tools;
+  const partialBase = { available: true, version, contractVersion, coreContractHash, contractHash };
+  if (!Array.isArray(listed)) {
+    return failed(
+      input.command,
+      "browser_bundle_handshake_failed",
+      "Rudder Browser MCP tools/list returned an invalid manifest; optional Browser capability was disabled.",
+      partialBase,
+    );
+  }
+
+  const parsedTools = listed.map((entry) => {
+    const tool = asRecord(entry);
+    const name = asExactString(tool.name);
+    if (!name) return null;
+    const description = asExactString(tool.description);
+    const inputSchema = asRecord(tool.inputSchema);
+    return {
+      name,
+      hasCanonicalInputSchema: hasCanonicalInputSchema(tool.inputSchema),
+      ...(description ? { description } : {}),
+      ...(Object.keys(inputSchema).length > 0 ? { inputSchema } : {}),
+    };
+  });
+  const tools = parsedTools
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .map(({ hasCanonicalInputSchema: _hasCanonicalInputSchema, ...tool }) => tool);
+  const partial = { ...partialBase, tools };
+
+  if (asExactString(serverInfo.name) !== RUDDER_BROWSER_MCP_SERVER_NAME) {
+    return failed(
+      input.command,
+      "browser_bundle_server_mismatch",
+      "Rudder Browser MCP server identity did not match the managed bundle; optional Browser capability was disabled.",
+      partial,
+    );
+  }
+  if (input.command.expectedVersion && version !== input.command.expectedVersion) {
+    return failed(
+      input.command,
+      "browser_bundle_version_mismatch",
+      `Rudder Browser MCP bundle version mismatch (expected ${input.command.expectedVersion}, received ${version ?? "unknown"}); optional Browser capability was disabled.`,
+      partial,
+    );
+  }
+  if (contractVersion !== RUDDER_MCP_CONTRACT_VERSION || contractHash !== RUDDER_BROWSER_MCP_CONTRACT_HASH) {
+    return failed(
+      input.command,
+      "browser_bundle_contract_mismatch",
+      "Rudder Browser MCP contract hash did not match the runtime bundle; optional Browser capability was disabled.",
+      partial,
+    );
+  }
+
+  const observedContractHash = semanticManifestHash(parsedTools.filter((tool) => tool !== null));
+  if (
+    parsedTools.some((tool) => tool === null)
+    || !hasExactNames(tools.map((tool) => tool.name), RUDDER_BROWSER_MCP_TOOL_NAMES)
+    || parsedTools.some((tool) => tool !== null && !tool.hasCanonicalInputSchema)
+    || observedContractHash !== RUDDER_BROWSER_MCP_CONTRACT_HASH
+  ) {
+    return failed(
+      input.command,
+      "browser_bundle_tools_mismatch",
+      "Rudder Browser MCP tools/list did not expose the exact canonical Browser manifest; optional Browser capability was disabled.",
+      partial,
     );
   }
 
   return {
-    ...requested,
-    tools: coreOnly.tools,
+    available: true,
+    browserAvailable: true,
+    provenance: input.command.provenance,
+    version,
+    contractVersion,
+    coreContractHash,
+    contractHash,
+    diagnosticCode: null,
+    diagnostic: null,
+    tools,
   };
 }

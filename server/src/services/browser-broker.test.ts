@@ -170,4 +170,29 @@ describe("Browser Broker registry", () => {
     expect(registry.unregister(replacement)).toBe(true);
     expect(registry.isAvailable()).toBe(false);
   });
+
+  it("aborts admitted Broker requests immediately when Browser is revoked", async () => {
+    let admittedSignal: AbortSignal | undefined;
+    const registry = createBrowserBrokerRegistry({
+      fetchImpl: vi.fn(async (_url, init) => {
+        admittedSignal = init?.signal ?? undefined;
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      }),
+    });
+    registry.register({ endpoint: "http://127.0.0.1:4141/browser", token: "r".repeat(48) });
+    const pending = registry.forward({
+      identity: { orgId: "org-1", agentId: "agent-1", runId: "run-1" },
+      action: "wait",
+      args: { tabId: "tab-1", timeMs: 30_000 },
+    });
+    await vi.waitFor(() => expect(admittedSignal).toBeDefined());
+
+    registry.revoke();
+
+    expect(admittedSignal?.aborted).toBe(true);
+    await expect(pending).rejects.toMatchObject({ code: "browser_unavailable" });
+    expect(registry.isAvailable()).toBe(false);
+  });
 });

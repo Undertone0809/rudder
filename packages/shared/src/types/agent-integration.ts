@@ -57,6 +57,20 @@ export interface AgentRudderToolSummary {
   cliFallbackAvailable: boolean;
 }
 
+export interface AgentBrowserToolSummary {
+  id: "rudder-browser";
+  displayName: "Rudder Browser";
+  kind: "rudder_browser_mcp";
+  status: "available" | "disabled";
+  scope: "runtime";
+  serverName: "rudder-browser";
+  contract: "browser-v1";
+  toolCount: number;
+  tools: string[];
+  authMode: "runtime_managed";
+  cliFallbackAvailable: boolean;
+}
+
 export interface AgentIntegrationSetupUrl {
   provider: AgentIntegrationProvider;
   providerRegion: AgentIntegrationProviderRegion;

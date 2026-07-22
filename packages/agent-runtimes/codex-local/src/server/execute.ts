@@ -3,6 +3,7 @@ import {
   applyRudderBrowserCapabilityEnv,
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
+  rudderBrowserMcpRuntimeMetadata,
   rudderMcpRuntimeMetadata,
   type AgentRuntimeControlHandleLease,
   type AgentRuntimeExecutionContext,
@@ -11,9 +12,13 @@ import {
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   assertRudderMcpCoreAvailable,
+  preflightRudderBrowserMcpServer,
   preflightRudderMcpServer,
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
-import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
+import {
+  resolveRudderBrowserMcpCliCommand,
+  resolveRudderMcpCliCommand,
+} from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import {
   asBoolean,
   asNumber,
@@ -60,7 +65,7 @@ const CODEX_BENIGN_STDERR_RES = [
   /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_core::shell_snapshot:\s+Failed to delete shell snapshot at\s+".+?\.tmp-\d+":\s+Os\s+\{\s+code:\s*2,\s+kind:\s*NotFound,\s+message:\s*"No such file or directory"\s+\}$/i,
   /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_protocol::openai_models:\s+Model personality requested but model_messages is missing, falling back to base instructions\.\s+model=\S+\s+personality=\S+$/i,
   /^\d{4}-\d{2}-\d{2}T[^\s]+\s+ERROR\s+codex_core::models_manager::manager:\s+failed to refresh available models:\s+timeout waiting for child process to exit$/i,
-  /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_rmcp_client::stdio_server_launcher:\s+Failed to kill MCP process group for server rudder-tools:\s+No such process\s+\(os error 3\)$/i,
+  /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_rmcp_client::stdio_server_launcher:\s+Failed to kill MCP process group for server (?:rudder-tools|rudder-browser):\s+No such process\s+\(os error 3\)$/i,
   /^\d{4}-\d{2}-\d{2}T[^\s]+\s+ERROR\s+codex_memories_write::phase2:\s+Phase 2 no changes$/i,
 ] as const;
 const CODEX_ANALYTICS_FORBIDDEN_HTML_START_RE =
@@ -492,14 +497,22 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     command: rudderMcpCommand,
     runtimeEnv,
     managedEnv: pickRudderMcpManagedEnv(env),
-    browserEnabled,
+    browserEnabled: false,
   });
   assertRudderMcpCoreAvailable(rudderMcpPreflight);
-  if (browserEnabled && !rudderMcpPreflight?.browserAvailable) {
+  const browserMcpCommand = browserEnabled ? await resolveRudderBrowserMcpCliCommand(__moduleDir) : null;
+  const browserMcpPreflight = browserMcpCommand
+    ? await preflightRudderBrowserMcpServer({
+        command: browserMcpCommand,
+        runtimeEnv,
+        managedEnv: pickRudderMcpManagedEnv(env),
+      })
+    : null;
+  if (browserEnabled && !browserMcpPreflight?.browserAvailable) {
     browserEnabled = false;
     env.RUDDER_BROWSER_ENABLED = "false";
     runtimeEnv.RUDDER_BROWSER_ENABLED = "false";
-    await onLog("stderr", `[rudder] ${rudderMcpPreflight?.diagnostic}\n`);
+    await onLog("stderr", `[rudder] ${browserMcpPreflight?.diagnostic}\n`);
   }
   const effectiveDesiredCodexSkillNames = filterRudderDesiredSkillsForBrowserCapability(
     codexSkillEntries,
@@ -527,6 +540,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     __moduleDir,
     pickRudderMcpManagedEnv(env),
     rudderMcpCommand,
+    browserMcpCommand ?? undefined,
   );
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
@@ -692,6 +706,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         loadedSkills,
         realizedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
+        browserMcp: rudderBrowserMcpRuntimeMetadata({
+          available: browserEnabled,
+          preflight: browserMcpPreflight,
+        }),
         context,
       });
     }
@@ -819,6 +837,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         loadedSkills,
         realizedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
+        browserMcp: rudderBrowserMcpRuntimeMetadata({
+          available: browserEnabled,
+          preflight: browserMcpPreflight,
+        }),
         context,
       });
     }

@@ -1,0 +1,41 @@
+{
+  "skill_name": "browser",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I already have the account recovery page open in Rudder's built-in Browser. Continue there, verify the heading, and take a screenshot. The URL contains a private reset token, but I have not pasted the URL into this task.",
+      "expected_output": "A privacy-preserving workflow that uses user-tab discovery only as origin-level context, never claims or exposes the user tab, and asks for the exact URL because the origin is insufficient to locate a tokenized page.",
+      "files": [],
+      "assertions": [
+        "Uses the separate rudder-browser surface and calls user-tab discovery only because the task refers to an already-open page.",
+        "Treats user-tab ids as read-only and does not attempt to claim, select, close, or interact with them.",
+        "Does not expose or infer the private title, path, query, fragment, credentials, or reset token from user-tab discovery.",
+        "Recognizes that an origin-only summary is insufficient and asks the user for the exact URL instead of guessing a path."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "In the local editor fixture at http://127.0.0.1:4173/editor, enter 'Rudder' in the payment iframe input, activate Preview, then verify the visible preview text and report it. Do not use page JavaScript or my Mac clipboard.",
+      "expected_output": "A page-and-frame-aware workflow that keeps locators read-only, uses a fresh high-level ref or verified explicit coordinate CUA for each interaction, and verifies the visible preview with a targeted locator read.",
+      "files": [],
+      "assertions": [
+        "Uses snapshot and frame evidence to identify the target input without attempting locator focus, fill, type, press, or click.",
+        "Uses rudder_browser_read plus a fresh opaque ref, or a current screenshot plus elementInfo and explicit coordinate CUA, for interaction.",
+        "Does not use arbitrary page JavaScript or the operating-system clipboard.",
+        "Uses rudder_browser_locator only for a bounded read or wait that verifies the visible preview result."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Open http://localhost:4173/asset-lab, inventory and bundle the image assets, navigate to the next fixture page, and bundle one of the old asset ids again. Then capture a full-page screenshot; the new page is 20000 pixels tall. Report what succeeded and what must be retried.",
+      "expected_output": "A bounded workflow that refuses stale asset ids after navigation, relists the new page before any new bundle, and reports the explicit Chromium full-page dimension failure without labeling a truncated image as complete evidence.",
+      "files": [],
+      "assertions": [
+        "Calls asset list before the first bundle and selects image assets explicitly.",
+        "Does not reuse an inventory or asset id after navigation and relists the current page before bundling again.",
+        "Reports unknown or stale asset ids as a fresh-inventory requirement instead of blind retrying the old request.",
+        "Reports the 16384-pixel full-page dimension limit and uses bounded clips or sectional evidence rather than accepting a truncated fullPage result."
+      ]
+    }
+  ]
+}

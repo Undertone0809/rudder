@@ -11,7 +11,7 @@ import {
 } from "./rudder-mcp.js";
 
 describe("Rudder MCP Browser capability", () => {
-  it("adds provenance and contract diagnostics only after a real preflight", () => {
+  it("projects only core provenance and contract state into core metadata", () => {
     expect(rudderMcpRuntimeMetadata({ browserEnabled: false })).toEqual({
       available: true,
       serverName: "rudder-tools",
@@ -19,7 +19,7 @@ describe("Rudder MCP Browser capability", () => {
       fallbackReason: null,
     });
 
-    expect(rudderMcpRuntimeMetadata({
+    const metadata = rudderMcpRuntimeMetadata({
       browserEnabled: true,
       preflight: {
         available: true,
@@ -33,17 +33,19 @@ describe("Rudder MCP Browser capability", () => {
         diagnostic: null,
         tools: [],
       },
-    })).toMatchObject({
-      browserAvailable: true,
+    });
+    expect(metadata).toMatchObject({
       coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
-      contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
       provenance: "repo",
-      toolCount: RUDDER_MCP_TOOL_COUNT + 8,
+      toolCount: RUDDER_MCP_TOOL_COUNT,
       version: "0.4.6",
     });
+    expect(metadata).not.toHaveProperty("browserAvailable");
+    expect(metadata).not.toHaveProperty("contractHash");
+    expect(metadata).not.toHaveProperty("diagnosticCode");
   });
 
-  it("derives the enabled capability only from the trusted boolean run config", () => {
+  it("derives the enabled capability only from the trusted boolean run config", async () => {
     const env = { RUDDER_BROWSER_ENABLED: "false" };
 
     const enabled = applyRudderBrowserCapabilityEnv(env, {
@@ -53,9 +55,14 @@ describe("Rudder MCP Browser capability", () => {
     expect(enabled).toBe(true);
     expect(env.RUDDER_BROWSER_ENABLED).toBe("true");
     expect(RUDDER_MCP_MANAGED_ENV_KEYS).toContain("RUDDER_BROWSER_ENABLED");
-    expect(rudderMcpRuntimeMetadata({ browserEnabled: enabled }).toolCount).toBe(
-      RUDDER_MCP_TOOL_COUNT + 8,
-    );
+    expect(rudderMcpRuntimeMetadata({ browserEnabled: enabled }).toolCount).toBe(RUDDER_MCP_TOOL_COUNT);
+    const module = await import("./rudder-mcp.js") as typeof import("./rudder-mcp.js") & {
+      rudderBrowserMcpRuntimeMetadata?: () => { toolCount: number; serverName: string };
+    };
+    expect(module.rudderBrowserMcpRuntimeMetadata).toBeTypeOf("function");
+    if (!module.rudderBrowserMcpRuntimeMetadata) return;
+    expect(module.rudderBrowserMcpRuntimeMetadata().toolCount).toBe(25);
+    expect(module.rudderBrowserMcpRuntimeMetadata().serverName).toBe("rudder-browser");
   });
 
   it.each([

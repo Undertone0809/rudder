@@ -4,12 +4,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertRudderMcpCoreAvailable,
+  preflightRudderBrowserMcpServer,
   preflightRudderMcpServer,
 } from "./rudder-mcp-preflight.js";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_BROWSER_MCP_TOOL_NAMES,
   RUDDER_CORE_MCP_CONTRACT_HASH,
+  RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CANONICAL_TOOL_CONTRACTS,
   RUDDER_MCP_CONTRACT_VERSION,
 } from "./rudder-mcp.js";
@@ -19,13 +21,14 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
-async function fixtureCommand(mode: string, expectedVersion = "0.4.6") {
+async function fixtureCommand(mode: string, expectedVersion = "0.4.6", surface: "control-plane" | "browser" = "control-plane") {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-preflight-"));
   roots.push(root);
   const script = path.join(root, "server.mjs");
   await fs.writeFile(script, `
 import readline from "node:readline";
 const mode = process.env.RUDDER_PREFLIGHT_FIXTURE_MODE;
+const surface = process.env.RUDDER_PREFLIGHT_FIXTURE_SURFACE;
 const canonicalTools = ${JSON.stringify(RUDDER_MCP_CANONICAL_TOOL_CONTRACTS)};
 const canonicalByName = new Map(canonicalTools.map((tool) => [tool.name, tool]));
 const browserTools = canonicalTools.filter((tool) => tool.name.startsWith("rudder_browser_")).map((tool) => tool.name);
@@ -37,6 +40,7 @@ function advertisedName(name) {
   if (mode === "whitespace-browser-name" && name === browserTools[0]) return " " + name + " ";
   return name;
 }
+
 function advertisedDescription(name) {
   const description = canonicalByName.get(name)?.description ?? "Forged Rudder MCP tool.";
   if (mode === "semantic-core-description" && name === coreTools[0]) return description + " changed";
@@ -95,7 +99,8 @@ for await (const line of lines) {
         coreContractHash: ${JSON.stringify(RUDDER_CORE_MCP_CONTRACT_HASH)},
         browserContractHash: hash,
       } } },
-      serverInfo: { name: mode === "server" || desktopCliEntryLeaked ? "not-rudder" : "rudder-tools", version },
+      serverInfo: { name: mode === "server" || desktopCliEntryLeaked ? "not-rudder" : surface === "browser" ? "rudder-browser" : "rudder-tools", version },
+
     } }));
   }
   if (request.method === "tools/list") {
@@ -119,7 +124,7 @@ for await (const line of lines) {
     const selectedBrowserTools = process.env.RUDDER_BROWSER_ENABLED === "true" || mode === "version-ignore-browser-env"
       ? (mode === "tools" ? browserTools.slice(0, -1) : browserTools)
       : [];
-    const tools = [...selectedCoreTools, ...selectedBrowserTools];
+    const tools = surface === "browser" ? selectedBrowserTools : [...selectedCoreTools, ...selectedBrowserTools];
     console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
       tools: tools.map((name) => ({
         name: advertisedName(name),
@@ -133,14 +138,85 @@ for await (const line of lines) {
   return {
     command: process.execPath,
     args: [script],
-    env: { RUDDER_PREFLIGHT_FIXTURE_MODE: mode },
+    env: { RUDDER_PREFLIGHT_FIXTURE_MODE: mode, RUDDER_PREFLIGHT_FIXTURE_SURFACE: surface },
+    provenance: "repo" as const,
+    expectedVersion,
+  };
+}
+
+async function browserFixtureCommand(expectedVersion = "0.4.6") {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-browser-mcp-preflight-"));
+  roots.push(root);
+  const script = path.join(root, "server.mjs");
+  const browserContracts = RUDDER_MCP_CANONICAL_TOOL_CONTRACTS
+    .filter((tool) => tool.name.startsWith("rudder_browser_"));
+  await fs.writeFile(script, `
+import readline from "node:readline";
+const tools = ${JSON.stringify(browserContracts)};
+const lines = readline.createInterface({ input: process.stdin });
+for await (const line of lines) {
+  const request = JSON.parse(line);
+  if (request.id == null) continue;
+  if (request.method === "initialize") {
+    console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
+      protocolVersion: "2024-11-05",
+      capabilities: { tools: {}, experimental: { rudder: {
+        contractVersion: ${JSON.stringify(RUDDER_MCP_CONTRACT_VERSION)},
+        coreContractHash: ${JSON.stringify(RUDDER_CORE_MCP_CONTRACT_HASH)},
+        browserContractHash: ${JSON.stringify(RUDDER_BROWSER_MCP_CONTRACT_HASH)},
+      } } },
+      serverInfo: { name: "rudder-browser", version: "0.4.6" },
+    } }));
+  }
+  if (request.method === "tools/list") {
+    console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { tools } }));
+  }
+}
+`, "utf8");
+  return {
+    command: process.execPath,
+    args: [script],
     provenance: "repo" as const,
     expectedVersion,
   };
 }
 
 describe("preflightRudderMcpServer", () => {
-  it("accepts the exact version, contract hash, and eight Browser tools", async () => {
+  it("does not validate or retain Browser contract state for the core server", async () => {
+
+    const result = await preflightRudderMcpServer({
+      command: await fixtureCommand("contract"),
+      runtimeEnv: {},
+      browserEnabled: true,
+    });
+
+    expect(result).toMatchObject({
+      available: true,
+      coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
+      diagnosticCode: null,
+    });
+    expect(result.tools.map((tool) => tool.name)).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
+    expect(result).not.toHaveProperty("browserAvailable");
+    expect(result).not.toHaveProperty("contractHash");
+  });
+
+  it("verifies the isolated Browser server identity and exact semantic manifest", async () => {
+    const result = await preflightRudderBrowserMcpServer({
+      command: await browserFixtureCommand(),
+      runtimeEnv: {},
+    });
+
+    expect(result).toMatchObject({
+      available: true,
+      browserAvailable: true,
+      contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+      contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+      diagnosticCode: null,
+    });
+    expect(result.tools.map((tool) => tool.name)).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
+  });
+
+  it("accepts the exact isolated core manifest and ignores the deprecated Browser flag", async () => {
     const result = await preflightRudderMcpServer({
       command: await fixtureCommand("ok"),
       runtimeEnv: {},
@@ -149,16 +225,15 @@ describe("preflightRudderMcpServer", () => {
 
     expect(result).toMatchObject({
       available: true,
-      browserAvailable: true,
       provenance: "repo",
       version: "0.4.6",
       contractVersion: RUDDER_MCP_CONTRACT_VERSION,
       coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
-      contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
       diagnosticCode: null,
     });
-    expect(result.tools.map((tool) => tool.name).filter((name) => name.startsWith("rudder_browser_")))
-      .toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
+    expect(result.tools.map((tool) => tool.name)).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
+    expect(result).not.toHaveProperty("browserAvailable");
+    expect(result).not.toHaveProperty("contractHash");
   });
 
   it("accepts the recursive schema dialect emitted by the canonical registry", async () => {
@@ -168,39 +243,37 @@ describe("preflightRudderMcpServer", () => {
       browserEnabled: true,
     });
 
-    expect(result).toMatchObject({ available: true, browserAvailable: true, diagnosticCode: null });
+    expect(result).toMatchObject({ available: true, diagnosticCode: null });
   });
 
   it.each([
-    ["server", "browser_bundle_server_mismatch"],
-    ["version", "browser_bundle_version_mismatch"],
-    ["contract", "browser_bundle_contract_mismatch"],
-    ["tools", "browser_bundle_tools_mismatch"],
-    ["exit", "browser_bundle_handshake_failed"],
-  ])("degrades Browser with a stable diagnostic for %s mismatch", async (mode, diagnosticCode) => {
+    ["server", "core_bundle_server_mismatch"],
+    ["version", "core_bundle_version_mismatch"],
+    ["exit", "core_bundle_handshake_failed"],
+  ])("fails isolated core preflight with a stable diagnostic for %s", async (mode, diagnosticCode) => {
     const result = await preflightRudderMcpServer({
       command: await fixtureCommand(mode),
       runtimeEnv: {},
       browserEnabled: true,
     });
 
-    expect(result.browserAvailable).toBe(false);
+    expect(result.available).toBe(false);
     expect(result.diagnosticCode).toBe(diagnosticCode);
+    expect(result).not.toHaveProperty("browserAvailable");
+    expect(result).not.toHaveProperty("contractHash");
   });
 
-  it("fails closed when Browser downgrade cannot establish an exact core-only provider surface", async () => {
+  it("rejects Browser tools leaked onto the isolated core server", async () => {
     const result = await preflightRudderMcpServer({
-      command: await fixtureCommand("version-ignore-browser-env"),
+      command: await fixtureCommand("version-ignore-browser-env", "0.4.5"),
       runtimeEnv: {},
       browserEnabled: true,
     });
 
     expect(result).toMatchObject({
       available: false,
-      browserAvailable: false,
-      diagnosticCode: "browser_bundle_handshake_failed",
+      diagnosticCode: "core_bundle_tools_mismatch",
     });
-    expect(result.diagnostic).toContain("exact core-only provider surface");
     expect(() => assertRudderMcpCoreAvailable(result)).toThrow(/Rudder MCP/u);
   });
 
@@ -211,18 +284,7 @@ describe("preflightRudderMcpServer", () => {
       browserEnabled: true,
     });
 
-    expect(result).toMatchObject({ available: true, browserAvailable: true, diagnosticCode: null });
-  });
-
-  it.each(["server", "exit"])("fails core MCP fast for %s failure", async (mode) => {
-    const result = await preflightRudderMcpServer({
-      command: await fixtureCommand(mode),
-      runtimeEnv: {},
-      browserEnabled: true,
-    });
-
-    expect(result.available).toBe(false);
-    expect(() => assertRudderMcpCoreAvailable(result)).toThrow(/Rudder MCP/u);
+    expect(result).toMatchObject({ available: true, diagnosticCode: null });
   });
 
   it("reports the exit context and trailing stderr detail", async () => {
@@ -258,8 +320,7 @@ describe("preflightRudderMcpServer", () => {
 
     expect(result).toMatchObject({
       available: false,
-      browserAvailable: false,
-      diagnosticCode: "browser_bundle_handshake_failed",
+      diagnosticCode: "core_bundle_tools_mismatch",
     });
     expect(() => assertRudderMcpCoreAvailable(result)).toThrow(/Rudder MCP/u);
   });
@@ -276,34 +337,23 @@ describe("preflightRudderMcpServer", () => {
       expect(result).toMatchObject({
         available: false,
         coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
-        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
-        diagnosticCode: "browser_bundle_handshake_failed",
+        diagnosticCode: "core_bundle_tools_mismatch",
       });
       expect(() => assertRudderMcpCoreAvailable(result)).toThrow(/Rudder MCP/u);
     },
   );
 
-  it("keeps canonical core MCP while degrading Browser for a malformed Browser schema", async () => {
-    const result = await preflightRudderMcpServer({
-      command: await fixtureCommand("malformed-browser-schema"),
-      runtimeEnv: {},
-      browserEnabled: true,
-    });
-
-    expect(result).toMatchObject({
-      available: true,
-      browserAvailable: false,
-      diagnosticCode: "browser_bundle_tools_mismatch",
-    });
-    expect(() => assertRudderMcpCoreAvailable(result)).not.toThrow();
-  });
-
   it.each([
+    "contract",
+    "tools",
+    "malformed-browser-schema",
     "whitespace-browser-name",
     "malformed-browser-keyword",
     "unsupported-browser-schema-draft",
+    "semantic-browser-required",
+    "semantic-browser-description",
   ])(
-    "keeps canonical core MCP while degrading Browser for %s",
+    "ignores Browser-only failure mode %s during isolated core preflight",
     async (mode) => {
       const result = await preflightRudderMcpServer({
         command: await fixtureCommand(mode),
@@ -313,34 +363,15 @@ describe("preflightRudderMcpServer", () => {
 
       expect(result).toMatchObject({
         available: true,
-        browserAvailable: false,
-        diagnosticCode: "browser_bundle_tools_mismatch",
+        diagnosticCode: null,
       });
+      expect(result).not.toHaveProperty("browserAvailable");
+      expect(result).not.toHaveProperty("contractHash");
       expect(() => assertRudderMcpCoreAvailable(result)).not.toThrow();
     },
   );
 
-  it.each(["semantic-browser-required", "semantic-browser-description"])(
-    "degrades Browser for legal semantic forgery %s despite matching advertised hashes",
-    async (mode) => {
-      const result = await preflightRudderMcpServer({
-        command: await fixtureCommand(mode),
-        runtimeEnv: {},
-        browserEnabled: true,
-      });
-
-      expect(result).toMatchObject({
-        available: true,
-        browserAvailable: false,
-        coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
-        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
-        diagnosticCode: "browser_bundle_tools_mismatch",
-      });
-      expect(() => assertRudderMcpCoreAvailable(result)).not.toThrow();
-    },
-  );
-
-  it("rejects a forged core name even alongside all eight Browser names and malformed schemas", async () => {
+  it("rejects a forged core name even alongside all Browser names and malformed schemas", async () => {
     const result = await preflightRudderMcpServer({
       command: await fixtureCommand("forged-core-malformed-schema"),
       runtimeEnv: {},
@@ -349,12 +380,48 @@ describe("preflightRudderMcpServer", () => {
 
     expect(result).toMatchObject({
       available: false,
-      browserAvailable: false,
-      diagnosticCode: "browser_bundle_handshake_failed",
+      diagnosticCode: "core_bundle_tools_mismatch",
     });
-    expect(result.tools.map((tool) => tool.name)).toEqual([
-      "rudder_forged_core",
-      ...RUDDER_BROWSER_MCP_TOOL_NAMES,
-    ]);
+    expect(result.tools.map((tool) => tool.name)).toEqual(["rudder_forged_core"]);
+  });
+});
+
+describe("preflightRudderBrowserMcpServer", () => {
+  it("accepts the exact separate Browser server identity and semantic manifest", async () => {
+    const result = await preflightRudderBrowserMcpServer({
+      command: await fixtureCommand("ok", "0.4.6", "browser"),
+      runtimeEnv: {},
+    });
+
+    expect(result).toMatchObject({
+      available: true,
+      browserAvailable: true,
+      provenance: "repo",
+      version: "0.4.6",
+      contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+      contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+      diagnosticCode: null,
+    });
+    expect(result.tools.map((tool) => tool.name)).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
+  });
+
+  it.each([
+    ["server", "browser_bundle_server_mismatch"],
+    ["version", "browser_bundle_version_mismatch"],
+    ["contract", "browser_bundle_contract_mismatch"],
+    ["tools", "browser_bundle_tools_mismatch"],
+    ["exit", "browser_bundle_handshake_failed"],
+  ])("disables only the separate Browser surface for %s mismatch", async (mode, diagnosticCode) => {
+    const result = await preflightRudderBrowserMcpServer({
+      command: await fixtureCommand(mode, "0.4.6", "browser"),
+      runtimeEnv: {},
+    });
+
+    expect(result).toMatchObject({
+      available: true,
+      browserAvailable: false,
+      diagnosticCode,
+    });
+    expect(() => assertRudderMcpCoreAvailable(result)).not.toThrow();
   });
 });

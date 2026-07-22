@@ -1,11 +1,15 @@
 import {
+  RUDDER_BROWSER_MCP_SERVER_NAME,
   RUDDER_MCP_SERVER_NAME,
   resolveOrganizationStorageKey,
   type AgentRuntimeExecutionContext,
   type RudderMcpCliCommand,
   type RudderMcpManagedEnv,
 } from "@rudderhq/agent-runtime-utils";
-import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
+import {
+  resolveRudderBrowserMcpCliCommand,
+  resolveRudderMcpCliCommand,
+} from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import { resolveLocalOperatorHome } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -233,24 +237,40 @@ async function renderRudderMcpCodexConfig(
   moduleDir: string,
   managedEnv: RudderMcpManagedEnv = {},
   verifiedCommand?: RudderMcpCliCommand,
+  verifiedBrowserCommand?: RudderMcpCliCommand,
 ): Promise<string> {
-  const server = verifiedCommand ?? await resolveRudderMcpCliCommand(moduleDir);
-  const serverEnv = {
-    ...(server.env ?? {}),
+  const coreServer = verifiedCommand ?? await resolveRudderMcpCliCommand(moduleDir);
+  const coreEnv = {
+    ...(coreServer.env ?? {}),
     ...managedEnv,
   };
-  return [
-    `[mcp_servers.${RUDDER_MCP_SERVER_NAME}]`,
+  delete coreEnv.RUDDER_BROWSER_ENABLED;
+  const renderServer = (
+    serverName: string,
+    server: RudderMcpCliCommand,
+    env: Record<string, string>,
+  ) => [
+    `[mcp_servers.${serverName}]`,
     `command = ${JSON.stringify(server.command)}`,
     `args = ${JSON.stringify(server.args)}`,
-    ...(Object.keys(serverEnv).length > 0
+    ...(Object.keys(env).length > 0
       ? [
           "",
-          `[mcp_servers.${RUDDER_MCP_SERVER_NAME}.env]`,
-          ...Object.entries(serverEnv).map(([key, value]) => `${key} = ${JSON.stringify(value)}`),
+          `[mcp_servers.${serverName}.env]`,
+          ...Object.entries(env).map(([key, value]) => `${key} = ${JSON.stringify(value)}`),
         ]
       : []),
   ].join("\n");
+
+  const servers = [renderServer(RUDDER_MCP_SERVER_NAME, coreServer, coreEnv)];
+  if (managedEnv.RUDDER_BROWSER_ENABLED === "true") {
+    const browserServer = verifiedBrowserCommand ?? await resolveRudderBrowserMcpCliCommand(moduleDir);
+    servers.push(renderServer(RUDDER_BROWSER_MCP_SERVER_NAME, browserServer, {
+      ...(browserServer.env ?? {}),
+      ...managedEnv,
+    }));
+  }
+  return servers.join("\n\n");
 }
 
 function sanitizeCodexConfigToml(content: string): {
@@ -537,6 +557,7 @@ async function syncManagedCodexConfigToml(
   moduleDir: string = path.dirname(fileURLToPath(import.meta.url)),
   mcpEnv: RudderMcpManagedEnv = {},
   verifiedMcpCommand?: RudderMcpCliCommand,
+  verifiedBrowserMcpCommand?: RudderMcpCliCommand,
 ): Promise<void> {
   const existingTarget = await fs.lstat(target).catch(() => null);
   const existingTargetContent = existingTarget ? await fs.readFile(target, "utf8") : null;
@@ -558,7 +579,12 @@ async function syncManagedCodexConfigToml(
   const disabledSkillConfigEntries = renderDisabledCodexSkillConfigEntries(isolationSurface.disabledSkillPaths);
   const mergedContent = [
     baseContent,
-    await renderRudderMcpCodexConfig(moduleDir, mcpEnv, verifiedMcpCommand),
+    await renderRudderMcpCodexConfig(
+      moduleDir,
+      mcpEnv,
+      verifiedMcpCommand,
+      verifiedBrowserMcpCommand,
+    ),
     disabledSkillConfigEntries,
   ].filter((part) => part.length > 0).join("\n\n");
   const nextContent = mergedContent.length > 0 ? `${mergedContent}\n` : "";
@@ -761,6 +787,7 @@ export async function realizeManagedCodexSkillEntries(
   moduleDir: string = path.dirname(fileURLToPath(import.meta.url)),
   mcpEnv: RudderMcpManagedEnv = {},
   verifiedMcpCommand?: RudderMcpCliCommand,
+  verifiedBrowserMcpCommand?: RudderMcpCliCommand,
 ): Promise<void> {
   await withCodexHomeMutationLock(codexHome, async () => {
     const sourceHome = resolveSharedCodexHomeDir(env);
@@ -774,6 +801,7 @@ export async function realizeManagedCodexSkillEntries(
       moduleDir,
       mcpEnv,
       verifiedMcpCommand,
+      verifiedBrowserMcpCommand,
     );
     await syncManagedCodexSkillsHome(codexHome, skillSources, onLog);
   });

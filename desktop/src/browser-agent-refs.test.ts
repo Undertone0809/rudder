@@ -15,6 +15,15 @@ class DomTab implements BrowserAgentTab {
   private readonly listeners: Array<() => void> = [];
 
   async loadURL(url: string) { this.url = url; }
+  async goBack() {}
+  async goForward() {}
+  async reload() {}
+  getViewport() { return { width: 1280, height: 720 }; }
+  setViewport() {}
+  resetViewport() {}
+  isVisible() { return false; }
+  setVisible() {}
+  async advanced() { return {}; }
   getURL() { return this.url; }
   getTitle() { return document.title; }
   isDestroyed() { return this.destroyed; }

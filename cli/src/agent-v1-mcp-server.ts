@@ -1,4 +1,5 @@
 import {
+  RUDDER_BROWSER_MCP_SERVER_NAME,
   RUDDER_MCP_CONTRACT_VERSION,
   RUDDER_MCP_SERVER_NAME,
   rudderMcpSemanticToolContract,
@@ -16,12 +17,14 @@ import {
   getAgentCliCapabilityById,
   type AgentV1McpToolManifestEntry
 } from "./agent-v1-registry.js";
-import { RudderApiClient } from "./client/http.js";
+import { ApiRequestError, RudderApiClient } from "./client/http.js";
 import { resolveCliVersion } from "./version.js";
 
-export { RUDDER_MCP_SERVER_NAME };
+export { RUDDER_BROWSER_MCP_SERVER_NAME, RUDDER_MCP_SERVER_NAME };
 const RUDDER_MCP_MAX_TOOL_RESULT_BYTES = 1_000_000;
+const RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES = 16_000_000;
 const RUDDER_MCP_MAX_INLINE_TEXT_BYTES = 32_000;
+const RUDDER_BROWSER_LIVENESS_INTERVAL_MS = 1_000;
 
 type JsonRpcId = string | number | null;
 
@@ -45,6 +48,17 @@ interface McpServerEnv {
 }
 
 type McpStdioMode = "framed" | "newline";
+export type RudderMcpServerSurface = "core" | "browser";
+type McpStdioInput = NodeJS.ReadableStream
+  & AsyncIterable<string | Buffer>
+  & { destroy(error?: Error): void };
+type McpStdioOutput = { write(chunk: string): unknown };
+type McpStdioServerOptions = {
+  input?: McpStdioInput;
+  output?: McpStdioOutput;
+  startLivenessMonitor?: typeof startBrowserMcpLivenessMonitor;
+};
+
 const RESERVED_MODEL_ARGUMENTS = new Set([
   "orgId",
   "org_id",
@@ -109,6 +123,7 @@ export function buildAgentV1ToolCallPlan(
   const capability = getAgentCliCapabilityById(capabilityId);
   rejectModelProvidedRuntimeIdentity(input);
   rejectUnsupportedToolArguments(toolName, input);
+  rejectUnsupportedBrowserLocatorAction(toolName, input);
   assertBrowserCapabilityEnabled(capabilityId, env);
   assertRuntimeMcpContext(capability, env);
 
@@ -136,6 +151,9 @@ export function buildAgentV1ToolCallPlan(
 export async function runAgentV1McpJsonRpcMessage(
   message: JsonRpcRequest,
   env: McpServerEnv = buildMcpServerEnv(),
+  surface: RudderMcpServerSurface = "core",
+  options: { signal?: AbortSignal } = {},
+
 ): Promise<Record<string, unknown> | null> {
   const isNotification = message.id === undefined;
   const id = message.id ?? null;
@@ -144,14 +162,13 @@ export async function runAgentV1McpJsonRpcMessage(
       case "notifications/initialized":
         return isNotification ? null : rpcResult(id, {});
       case "initialize":
-        const contractManifest = buildAgentV1McpToolsManifest("agent-v1").tools
+        const coreContractManifest = buildAgentV1McpToolsManifest("agent-v1").tools
+
           .map(rudderMcpSemanticToolContract);
-        const coreContractHash = fingerprintRudderMcpToolManifest(
-          contractManifest.filter((tool) => !tool.name.startsWith("rudder_browser_")),
-        );
-        const browserContractHash = fingerprintRudderMcpToolManifest(
-          contractManifest.filter((tool) => tool.name.startsWith("rudder_browser_")),
-        );
+        const browserContractManifest = buildAgentV1McpToolsManifest("agent-v1", { surface: "browser" }).tools
+          .map(rudderMcpSemanticToolContract);
+        const coreContractHash = fingerprintRudderMcpToolManifest(coreContractManifest);
+        const browserContractHash = fingerprintRudderMcpToolManifest(browserContractManifest);
         return rpcResult(id, {
           protocolVersion: requestedProtocolVersion(message.params) ?? "2024-11-05",
           capabilities: {
@@ -164,16 +181,24 @@ export async function runAgentV1McpJsonRpcMessage(
               },
             },
           },
-          serverInfo: { name: RUDDER_MCP_SERVER_NAME, version: resolveCliVersion() },
+          serverInfo: {
+            name: surface === "browser" ? RUDDER_BROWSER_MCP_SERVER_NAME : RUDDER_MCP_SERVER_NAME,
+            version: resolveCliVersion(),
+          },
         });
       case "tools/list":
         return rpcResult(id, {
-          tools: buildAgentV1McpToolsManifest("agent-v1", {
-            browserEnabled: browserCapabilityEnabled(env),
-          }).tools.map(toMcpToolListEntry),
+          tools: surface === "browser" && !browserCapabilityEnabled(env)
+            ? []
+            : buildAgentV1McpToolsManifest("agent-v1", { surface }).tools.map(toMcpToolListEntry),
         });
       case "tools/call":
-        return boundedToolCallRpcResponse(id, await callToolSafely(message.params, env));
+        return boundedToolCallRpcResponse(
+          id,
+          await callToolSafely(message.params, env, surface, options.signal),
+          surface,
+        );
+
       default:
         if (isNotification) return null;
         return rpcError(id, -32601, `Unsupported JSON-RPC method: ${String(message.method ?? "")}`);
@@ -184,24 +209,95 @@ export async function runAgentV1McpJsonRpcMessage(
   }
 }
 
-export async function runMcpStdioServer(env: McpServerEnv = buildMcpServerEnv()): Promise<void> {
+export async function runMcpStdioServer(
+  env: McpServerEnv = buildMcpServerEnv(),
+  surface: RudderMcpServerSurface = "core",
+  options: McpStdioServerOptions = {},
+): Promise<void> {
+  const stdin = options.input ?? process.stdin;
+  const output = options.output ?? process.stdout;
+  let revoked = false;
+  let activeRequest: AbortController | null = null;
+  const revoke = () => {
+    revoked = true;
+    activeRequest?.abort();
+    stdin.destroy();
+  };
+  const stopLivenessMonitor = surface === "browser"
+    ? (options.startLivenessMonitor ?? startBrowserMcpLivenessMonitor)(env, revoke)
+    : () => undefined;
   let buffer = "";
   let mode: McpStdioMode | null = null;
-  process.stdin.setEncoding("utf8");
-  for await (const chunk of process.stdin) {
-    buffer += chunk;
-    const parsed = parseMcpStdioMessages(buffer, mode);
-    mode = parsed.mode ?? mode;
-    buffer = parsed.remainder;
-    for (const message of parsed.messages) {
-      const response = await runAgentV1McpJsonRpcMessage(message, env);
-      if (!response) continue;
-      const payload = JSON.stringify(response);
-      process.stdout.write(parsed.mode === "framed"
-        ? `Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`
-        : `${payload}\n`);
+  stdin.setEncoding("utf8");
+  try {
+    for await (const chunk of stdin) {
+      if (revoked) break;
+      buffer += chunk;
+      const parsed = parseMcpStdioMessages(buffer, mode);
+      mode = parsed.mode ?? mode;
+      buffer = parsed.remainder;
+      for (const message of parsed.messages) {
+        if (revoked) break;
+        activeRequest = new AbortController();
+        const response = await runAgentV1McpJsonRpcMessage(
+          message,
+          env,
+          surface,
+          { signal: activeRequest.signal },
+        );
+        activeRequest = null;
+        if (revoked) break;
+        if (!response) continue;
+        const payload = JSON.stringify(response);
+        output.write(parsed.mode === "framed"
+          ? `Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`
+          : `${payload}\n`);
+      }
+
     }
+  } catch (error) {
+    if (!revoked) throw error;
+  } finally {
+    activeRequest?.abort();
+    stopLivenessMonitor();
   }
+}
+
+export function startBrowserMcpLivenessMonitor(
+  env: McpServerEnv,
+  onRevoked: (code: string) => void,
+  options: { intervalMs?: number; probe?: () => Promise<void> } = {},
+): () => void {
+  const intervalMs = Math.max(100, options.intervalMs ?? RUDDER_BROWSER_LIVENESS_INTERVAL_MS);
+  const probe = options.probe ?? (async () => {
+    await mcpApiClient(env).post("/api/browser/liveness", {});
+  });
+  let stopped = false;
+  let timer: NodeJS.Timeout | null = null;
+  const schedule = () => {
+    if (stopped) return;
+    timer = setTimeout(() => void tick(), intervalMs);
+    timer.unref?.();
+  };
+  const tick = async () => {
+    try {
+      await probe();
+    } catch (error) {
+      if (error instanceof ApiRequestError
+        && ["browser_disabled", "browser_runtime_unsupported", "browser_run_inactive", "browser_run_forbidden"].includes(error.code ?? "")) {
+        stopped = true;
+        onRevoked(error.code ?? "browser_disabled");
+        return;
+      }
+    }
+    schedule();
+  };
+  schedule();
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
 }
 
 export function parseMcpStdioMessages(buffer: string, mode: McpStdioMode | null = null): {
@@ -252,9 +348,15 @@ function detectMcpStdioMode(buffer: string): McpStdioMode | null {
   return "newline";
 }
 
-async function callToolSafely(params: unknown, env: McpServerEnv): Promise<Record<string, unknown>> {
+async function callToolSafely(
+  params: unknown,
+  env: McpServerEnv,
+  surface: RudderMcpServerSurface,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
   try {
-    return await callTool(params, env);
+    return await callTool(params, env, surface, signal);
+
   } catch (err) {
     const details = errorDetails(err);
     const payload = {
@@ -274,12 +376,25 @@ async function callToolSafely(params: unknown, env: McpServerEnv): Promise<Recor
   }
 }
 
-async function callTool(params: unknown, env: McpServerEnv): Promise<Record<string, unknown>> {
+async function callTool(
+  params: unknown,
+  env: McpServerEnv,
+  surface: RudderMcpServerSurface,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+
   const record = isRecord(params) ? params : {};
   const toolName = typeof record.name === "string" ? record.name : "";
+  const exposed = buildAgentV1McpToolsManifest("agent-v1", { surface }).tools
+    .some((tool) => tool.name === toolName);
+  if (!exposed) {
+    const err = new Error(`Rudder MCP tool is not exposed by the ${surface} server: ${toolName || "(missing)"}`);
+    (err as Error & { code?: string }).code = "rudder_mcp_tool_not_available";
+    throw err;
+  }
   const args = record.arguments;
   const plan = buildAgentV1ToolCallPlan(toolName, args, env);
-  const directResult = await callToolDirectlyIfSupported(toolName, args, env);
+  const directResult = await callToolDirectlyIfSupported(toolName, args, env, signal);
   if (directResult) return directResult;
   const tempDir = plan.tempFiles.length > 0 ? await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-")) : null;
   const materializedArgs = [...plan.args];
@@ -296,7 +411,10 @@ async function callTool(params: unknown, env: McpServerEnv): Promise<Record<stri
     const result = await runRudderCli(materializedArgs, plan.env);
     if (result.exitCode === 0) {
       const text = result.stdout.trim() || "{}";
-      return mcpSuccessFromJsonText(text);
+      return mcpSuccessFromJsonText(
+        text,
+        surface === "browser" ? RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES : RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
+      );
     }
     const payload = {
       status: "error",
@@ -321,25 +439,32 @@ async function callToolDirectlyIfSupported(
   toolName: string,
   rawArgs: unknown,
   env: McpServerEnv,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown> | null> {
   const capabilityId = toolNameToCapabilityId(toolName);
   if (!capabilityId) return null;
   const input = isRecord(rawArgs) ? rawArgs : {};
-  const api = mcpApiClient(env);
+  const api = mcpApiClient(env, signal);
+  const success = (data: unknown) => mcpSuccess(
+    data,
+    capabilityId.startsWith("browser.")
+      ? RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES
+      : RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
+  );
 
   switch (capabilityId) {
     case "agent.me":
-      return mcpSuccess(await api.get("/api/agents/me"));
+      return success(await api.get("/api/agents/me"));
     case "agent.inbox":
-      return mcpSuccess(await api.get("/api/agents/me/inbox-lite"));
+      return success(await api.get("/api/agents/me/inbox-lite"));
     case "issue.get":
-      return mcpSuccess(await api.get(`/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}`));
+      return success(await api.get(`/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}`));
     case "issue.context": {
       const params = new URLSearchParams();
       const wakeCommentId = optionalString(input.wakeCommentId);
       if (wakeCommentId) params.set("wakeCommentId", wakeCommentId);
       const query = params.toString();
-      return mcpSuccess(await api.get(
+      return success(await api.get(
         `/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}/heartbeat-context${query ? `?${query}` : ""}`,
       ));
     }
@@ -349,7 +474,7 @@ async function callToolDirectlyIfSupported(
         agentId: optionalString(env.RUDDER_AGENT_ID),
         expectedStatuses,
       });
-      return mcpSuccess(await api.post(
+      return success(await api.post(
         `/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}/checkout`,
         payload,
       ));
@@ -359,51 +484,80 @@ async function callToolDirectlyIfSupported(
         body: requiredAnyString(input, ["body", "comment"]),
         reopen: input.reopen === true ? true : undefined,
       });
-      return mcpSuccess(await api.post(
+      return success(await api.post(
         `/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}/comments`,
         payload,
       ));
     }
     case "issue.done": {
       const comment = requiredAnyString(input, ["comment", "body"]);
-      return mcpSuccess(await api.patch(
+      return success(await api.patch(
         `/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}`,
         { status: "done", comment },
       ));
     }
     case "browser.tabs":
-      return mcpSuccess(await api.post("/api/browser/tabs", {}));
+      return success(await api.post("/api/browser/tabs", {}));
+    case "browser.user-tabs":
+      return success(await api.post("/api/browser/user_tabs", {}));
     case "browser.open":
-      return mcpSuccess(await api.post("/api/browser/open", {
+      return success(await api.post("/api/browser/open", {
         url: requiredString(input, "url"),
       }));
     case "browser.navigate":
-      return mcpSuccess(await api.post("/api/browser/navigate", {
+      return success(await api.post("/api/browser/navigate", {
         tabId: requiredString(input, "tabId"),
         url: requiredString(input, "url"),
       }));
+    case "browser.back":
+    case "browser.forward":
+    case "browser.reload":
+      return success(await api.post(`/api/browser/${capabilityId.slice("browser.".length)}`, {
+        tabId: requiredString(input, "tabId"),
+      }));
+    case "browser.viewport":
+      return success(await api.post("/api/browser/viewport", {
+        action: requiredString(input, "action"),
+        ...(input.width !== undefined ? { width: input.width } : {}),
+        ...(input.height !== undefined ? { height: input.height } : {}),
+      }));
+    case "browser.visibility":
+      return success(await api.post("/api/browser/visibility", {
+        ...(typeof input.visible === "boolean" ? { visible: input.visible } : {}),
+      }));
+    case "browser.snapshot":
+    case "browser.locator":
+    case "browser.cua":
+    case "browser.dialog":
+    case "browser.clipboard":
+    case "browser.logs":
+    case "browser.download":
+    case "browser.assets":
+    case "browser.content":
+    case "browser.wait":
+      return success(await api.post(`/api/browser/${capabilityId.slice("browser.".length)}`, input));
+    case "browser.dom-cua":
+      return success(await api.post("/api/browser/dom_cua", input));
     case "browser.read":
-      return mcpSuccess(await api.post("/api/browser/read", {
+      return success(await api.post("/api/browser/read", {
         tabId: requiredString(input, "tabId"),
       }));
     case "browser.click":
-      return mcpSuccess(await api.post("/api/browser/click", {
+      return success(await api.post("/api/browser/click", {
         tabId: requiredString(input, "tabId"),
         ref: requiredString(input, "ref"),
       }));
     case "browser.type":
-      return mcpSuccess(await api.post("/api/browser/type", {
+      return success(await api.post("/api/browser/type", {
         tabId: requiredString(input, "tabId"),
         ref: requiredString(input, "ref"),
         text: requiredString(input, "text"),
         ...(input.submit === true ? { submit: true } : {}),
       }));
     case "browser.screenshot":
-      return mcpSuccess(await api.post("/api/browser/screenshot", {
-        tabId: requiredString(input, "tabId"),
-      }));
+      return success(await api.post("/api/browser/screenshot", input));
     case "browser.close":
-      return mcpSuccess(await api.post("/api/browser/close", {
+      return success(await api.post("/api/browser/close", {
         tabId: requiredString(input, "tabId"),
       }));
     default:
@@ -411,7 +565,7 @@ async function callToolDirectlyIfSupported(
   }
 }
 
-function mcpApiClient(env: McpServerEnv): RudderApiClient {
+function mcpApiClient(env: McpServerEnv, signal?: AbortSignal): RudderApiClient {
   const apiBase = optionalString(env.RUDDER_API_URL);
   if (!apiBase) {
     const err = new Error("Rudder MCP runtime context is incomplete. Missing RUDDER_API_URL.");
@@ -423,14 +577,32 @@ function mcpApiClient(env: McpServerEnv): RudderApiClient {
     apiKey: optionalString(env.RUDDER_API_KEY) ?? undefined,
     agentId: optionalString(env.RUDDER_AGENT_ID) ?? undefined,
     runId: optionalString(env.RUDDER_RUN_ID) ?? undefined,
+    signal,
   });
 }
 
-function mcpSuccess(data: unknown): Record<string, unknown> {
-  return mcpSuccessFromJsonText(JSON.stringify(data ?? {}));
+function mcpSuccess(
+  data: unknown,
+  maxResultBytes = RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
+): Record<string, unknown> {
+  if (isRecord(data)
+    && (data.mimeType === "image/png" || data.mimeType === "image/jpeg")
+    && typeof data.base64 === "string"
+    && data.base64.length > 0) {
+    const { base64, ...metadata } = data;
+    return {
+      content: [{ type: "image", data: base64, mimeType: data.mimeType }],
+      structuredContent: metadata,
+      isError: false,
+    };
+  }
+  return mcpSuccessFromJsonText(JSON.stringify(data ?? {}), maxResultBytes);
 }
 
-function mcpSuccessFromJsonText(text: string): Record<string, unknown> {
+function mcpSuccessFromJsonText(
+  text: string,
+  maxResultBytes = RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
+): Record<string, unknown> {
   const structured = structuredContentFromJsonText(text);
   const textBytes = Buffer.byteLength(text, "utf8");
   const inlineText = textBytes <= RUDDER_MCP_MAX_INLINE_TEXT_BYTES
@@ -447,24 +619,31 @@ function mcpSuccessFromJsonText(text: string): Record<string, unknown> {
     isError: false,
   };
   const resultBytes = Buffer.byteLength(JSON.stringify(result), "utf8");
-  if (resultBytes <= RUDDER_MCP_MAX_TOOL_RESULT_BYTES) return result;
-  return mcpResponseTooLarge(resultBytes);
+  if (resultBytes <= maxResultBytes) return result;
+  return mcpResponseTooLarge(resultBytes, maxResultBytes);
 }
 
-function boundedToolCallRpcResponse(id: JsonRpcId, result: Record<string, unknown>): Record<string, unknown> {
+function boundedToolCallRpcResponse(
+  id: JsonRpcId,
+  result: Record<string, unknown>,
+  surface: RudderMcpServerSurface,
+): Record<string, unknown> {
   const response = rpcResult(id, result);
   const responseBytes = Buffer.byteLength(JSON.stringify(response), "utf8");
-  if (responseBytes <= RUDDER_MCP_MAX_TOOL_RESULT_BYTES) return response;
-  return rpcResult(id, mcpResponseTooLarge(responseBytes));
+  const maxBytes = surface === "browser"
+    ? RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES
+    : RUDDER_MCP_MAX_TOOL_RESULT_BYTES;
+  if (responseBytes <= maxBytes) return response;
+  return rpcResult(id, mcpResponseTooLarge(responseBytes, maxBytes));
 }
 
-function mcpResponseTooLarge(responseBytes: number): Record<string, unknown> {
+function mcpResponseTooLarge(responseBytes: number, maxBytes = RUDDER_MCP_MAX_TOOL_RESULT_BYTES): Record<string, unknown> {
   const payload = {
     status: "error",
     code: "rudder_mcp_response_too_large",
     message: "Rudder MCP response exceeded the bounded tool-result budget. Use pagination or a ranged log read.",
     details: {
-      maxBytes: RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
+      maxBytes,
       responseBytes,
     },
   };
@@ -702,10 +881,46 @@ function cliArgsForCapability(
     }
     case "browser.tabs":
       return ["browser", "tabs"];
+    case "browser.user-tabs":
+      return ["browser", "user-tabs"];
     case "browser.open":
       return ["browser", "open", requiredString(input, "url")];
     case "browser.navigate":
       return ["browser", "navigate", requiredString(input, "tabId"), requiredString(input, "url")];
+    case "browser.back":
+      return ["browser", "back", requiredString(input, "tabId")];
+    case "browser.forward":
+      return ["browser", "forward", requiredString(input, "tabId")];
+    case "browser.reload":
+      return ["browser", "reload", requiredString(input, "tabId")];
+    case "browser.viewport": {
+      const args = ["browser", "viewport", "--action", requiredString(input, "action")];
+      pushOptional(args, "--width", input.width);
+      pushOptional(args, "--height", input.height);
+      return args;
+    }
+    case "browser.visibility": {
+      const args = ["browser", "visibility"];
+      if (typeof input.visible === "boolean") args.push("--visible", String(input.visible));
+      return args;
+    }
+    case "browser.snapshot":
+    case "browser.locator":
+    case "browser.cua":
+    case "browser.dom-cua":
+    case "browser.dialog":
+    case "browser.logs":
+    case "browser.download":
+    case "browser.assets":
+    case "browser.content":
+    case "browser.wait": {
+      const tabId = requiredString(input, "tabId");
+      const payload = { ...input };
+      delete payload.tabId;
+      return ["browser", capabilityId.slice("browser.".length), tabId, "--input", JSON.stringify(payload)];
+    }
+    case "browser.clipboard":
+      return ["browser", "clipboard", "--input", JSON.stringify(input)];
     case "browser.read":
       return ["browser", "read", requiredString(input, "tabId")];
     case "browser.click":
@@ -715,8 +930,14 @@ function cliArgsForCapability(
       pushBoolean(args, "--submit", input.submit);
       return args;
     }
-    case "browser.screenshot":
-      return ["browser", "screenshot", requiredString(input, "tabId")];
+    case "browser.screenshot": {
+      const tabId = requiredString(input, "tabId");
+      const payload = { ...input };
+      delete payload.tabId;
+      return Object.keys(payload).length > 0
+        ? ["browser", "screenshot", tabId, "--input", JSON.stringify(payload)]
+        : ["browser", "screenshot", tabId];
+    }
     case "browser.close":
       return ["browser", "close", requiredString(input, "tabId")];
     case "automation.list": {
@@ -955,7 +1176,7 @@ function requestedProtocolVersion(params: unknown): string | null {
 }
 
 function toolNameToCapabilityId(toolName: string): string | null {
-  const manifest = buildAgentV1McpToolsManifest("agent-v1");
+  const manifest = buildAgentV1McpToolsManifest("agent-v1", { surface: "all" });
   return manifest.tools.find((tool) => tool.name === toolName)?.id ?? null;
 }
 
@@ -1055,12 +1276,31 @@ function rejectModelProvidedRuntimeIdentity(input: Record<string, unknown>): voi
 }
 
 function rejectUnsupportedToolArguments(toolName: string, input: Record<string, unknown>): void {
-  const tool = buildAgentV1McpToolsManifest("agent-v1").tools.find((entry) => entry.name === toolName);
+  const tool = buildAgentV1McpToolsManifest("agent-v1", { surface: "all" }).tools
+    .find((entry) => entry.name === toolName);
+
   if (!tool) return;
   const supported = new Set(Object.keys(tool.inputSchema.properties));
   const unsupported = Object.keys(input).filter((key) => !supported.has(key)).sort();
   if (unsupported.length === 0) return;
   const err = new Error(`Unsupported argument${unsupported.length === 1 ? "" : "s"} for ${toolName}: ${unsupported.join(", ")}`);
+  (err as Error & { code?: string }).code = "rudder_mcp_invalid_arguments";
+  throw err;
+}
+
+const READ_ONLY_BROWSER_LOCATOR_ACTIONS = new Set([
+  "count", "allTextContents", "textContent", "innerText", "attribute",
+  "visible", "enabled", "checked", "selected", "wait",
+]);
+
+function rejectUnsupportedBrowserLocatorAction(toolName: string, input: Record<string, unknown>): void {
+  const locatorActionUnsupported = toolName === "rudder_browser_locator"
+    && !READ_ONLY_BROWSER_LOCATOR_ACTIONS.has(String(input.action));
+  const downloadModeUnsupported = toolName === "rudder_browser_download" && input.mode !== "media";
+  if (!locatorActionUnsupported && !downloadModeUnsupported) return;
+  const err = new Error(locatorActionUnsupported
+    ? "rudder_browser_locator is read-only; use rudder_browser_click, rudder_browser_type, or rudder_browser_cua to interact."
+    : "rudder_browser_download supports read-only media downloads only; use an explicit interaction tool before reading download evidence.");
   (err as Error & { code?: string }).code = "rudder_mcp_invalid_arguments";
   throw err;
 }

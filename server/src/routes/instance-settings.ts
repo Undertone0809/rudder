@@ -11,6 +11,7 @@ import {
 import { Router, type Request } from "express";
 import { forbidden, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
+import { browserBrokerRegistry } from "../services/browser-broker.js";
 import {
   boardAuthService,
   instanceSettingsService,
@@ -69,6 +70,7 @@ export function instanceSettingsRoutes(
       assertCanManageInstanceSettings(req);
       assertLocalBrowserSettings(opts.deploymentMode);
       const updated = await svc.updateBrowser(req.body);
+      if (!updated.browser.enabled) browserBrokerRegistry.revoke();
       const actor = getActorInfo(req);
       const orgIds = await svc.listCompanyIds();
       await Promise.all(

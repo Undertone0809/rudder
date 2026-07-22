@@ -58,9 +58,11 @@ export interface AgentV1McpToolManifestEntry extends AgentCliCapabilitiesManifes
 export interface AgentV1McpToolsManifest {
   schema: "rudder.agent-mcp-tools/v1";
   contract: AgentCliCapabilityContract | "all";
-  serverName: "rudder-tools";
+  serverName: "rudder-tools" | "rudder-browser";
   tools: AgentV1McpToolManifestEntry[];
 }
+
+export type AgentV1McpSurface = "core" | "browser" | "all";
 
 const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   {
@@ -678,6 +680,18 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     attachesRunIdWhenAvailable: false,
   },
   {
+    id: "browser.user-tabs",
+    command: "rudder browser user-tabs",
+    category: "browser",
+    description: "List user-visible tabs currently open in Rudder's built-in Browser without taking control of them.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: false,
+  },
+  {
     id: "browser.open",
     command: "rudder browser open <url>",
     category: "browser",
@@ -695,6 +709,198 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     category: "browser",
     description: "Navigate a run-owned Rudder Browser tab.",
     mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.back",
+    command: "rudder browser back <tab-id>",
+    category: "browser",
+    description: "Navigate a run-owned Rudder Browser tab back in history.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.forward",
+    command: "rudder browser forward <tab-id>",
+    category: "browser",
+    description: "Navigate a run-owned Rudder Browser tab forward in history.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.reload",
+    command: "rudder browser reload <tab-id>",
+    category: "browser",
+    description: "Reload a run-owned Rudder Browser tab.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.viewport",
+    command: "rudder browser viewport --action <get|set|reset> [--width <px> --height <px>]",
+    category: "browser",
+    description: "Inspect, set, or reset the responsive viewport for the current Rudder Browser run.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.visibility",
+    command: "rudder browser visibility [--visible <true|false>]",
+    category: "browser",
+    description: "Inspect or change whether the current run's selected Rudder Browser tab is visible.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.snapshot",
+    command: "rudder browser snapshot <tab-id> [--input <json>]",
+    category: "browser",
+    description: "Capture a bounded DOM and accessibility-oriented snapshot, including frame structure and ephemeral node ids.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.locator",
+    command: "rudder browser locator <tab-id> --input <json>",
+    category: "browser",
+    description: "Perform read-only bounded Browser locator text, attribute, state, count, or wait operations.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.cua",
+    command: "rudder browser cua <tab-id> --input <json>",
+    category: "browser",
+    description: "Perform trusted coordinate mouse, scroll, drag, keyboard, and text input in a run-owned Browser tab.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.dom-cua",
+    command: "rudder browser dom-cua <tab-id> --input <json>",
+    category: "browser",
+    description: "Inspect a bounded read-only DOM snapshot with ephemeral node ids.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.dialog",
+    command: "rudder browser dialog <tab-id> --input <json>",
+    category: "browser",
+    description: "Inspect, accept, or dismiss the active JavaScript dialog in a run-owned Browser tab.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.clipboard",
+    command: "rudder browser clipboard --input <json>",
+    category: "browser",
+    description: "Read or write the isolated virtual clipboard for the current Browser run without touching the OS clipboard.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.logs",
+    command: "rudder browser logs <tab-id> [--input <json>]",
+    category: "browser",
+    description: "Read bounded console and runtime logs captured for a run-owned Browser tab.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.download",
+    command: "rudder browser download <tab-id> --input <json>",
+    category: "browser",
+    description: "Download explicit locator media without dispatching page input into a bounded run-owned artifact.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.assets",
+    command: "rudder browser assets <tab-id> --input <json>",
+    category: "browser",
+    description: "List page assets or bundle an explicit bounded selection into a run-owned temporary artifact.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.content",
+    command: "rudder browser content <tab-id> --input <json>",
+    category: "browser",
+    description: "Export current page content or an eligible Google Workspace document into a bounded run-owned artifact.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "browser.wait",
+    command: "rudder browser wait <tab-id> --input <json>",
+    category: "browser",
+    description: "Wait for bounded URL, text, disappearance, or time conditions in a run-owned Browser tab.",
+    mutating: false,
     contract: "agent-v1",
     requiresOrgId: true,
     requiresAgentId: true,
@@ -739,7 +945,7 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "browser.screenshot",
-    command: "rudder browser screenshot <tab-id>",
+    command: "rudder browser screenshot <tab-id> [--input <json>]",
     category: "browser",
     description: "Capture a screenshot of a run-owned Rudder Browser tab.",
     mutating: false,
@@ -1190,10 +1396,15 @@ export function agentCliCapabilityIdToMcpToolName(id: string): string {
 
 export function buildAgentV1McpToolsManifest(
   contract: AgentCliCapabilityContract | "all" = "agent-v1",
-  options: { browserEnabled?: boolean } = {},
+  options: { browserEnabled?: boolean; surface?: AgentV1McpSurface } = {},
 ): AgentV1McpToolsManifest {
+  const surface = options.surface ?? "core";
   const capabilities = buildAgentCliCapabilitiesManifest(contract).capabilities
-    .filter((entry) => options.browserEnabled !== false || entry.category !== "browser");
+    .filter((entry) => {
+      if (surface === "all") return true;
+      if (surface === "browser") return entry.category === "browser";
+      return entry.category !== "browser";
+    });
 
   const semanticContractByCapability = new Map<string, (typeof RUDDER_MCP_CANONICAL_TOOL_DEFINITIONS)[number]>(
     RUDDER_MCP_CANONICAL_TOOL_DEFINITIONS.map((tool) => [tool.capabilityId, tool]),
@@ -1202,7 +1413,7 @@ export function buildAgentV1McpToolsManifest(
   return {
     schema: "rudder.agent-mcp-tools/v1",
     contract,
-    serverName: "rudder-tools",
+    serverName: surface === "browser" ? "rudder-browser" : "rudder-tools",
     tools: capabilities.map((entry) => {
       const semanticContract = semanticContractByCapability.get(entry.id);
       if (!semanticContract) {
@@ -1222,7 +1433,7 @@ export function buildAgentV1McpToolsManifest(
 
 export function renderAgentCliReferenceMarkdown(): string {
   const manifest = buildAgentCliCapabilitiesManifest("agent-v1");
-  const mcpManifest = buildAgentV1McpToolsManifest("agent-v1");
+  const mcpManifest = buildAgentV1McpToolsManifest("agent-v1", { surface: "all" });
   const mcpByCapability = new Map(mcpManifest.tools.map((tool) => [tool.capabilityId, tool]));
   const lines: string[] = [
     "# Rudder Agent CLI Reference",

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { BrowserAdvancedAction } from "./browser-agent-advanced.js";
 import {
   BrowserAgentError,
   createBrowserAgentTabController,
@@ -17,14 +18,73 @@ class FakeTab implements BrowserAgentTab {
   url = "about:blank";
   title = "";
   readonly scripts: string[] = [];
+  readonly advancedCalls: Array<{ action: BrowserAdvancedAction; args: Record<string, unknown> }> = [];
+  clipboardItems: Array<{ entries: Array<{ mimeType: string; text?: string }> }> = [];
   stopCalls = 0;
   executionGate: Promise<void> | null = null;
+  closeGate: Promise<void> | null = null;
+  assetBundleGate: Promise<void> | null = null;
   png = Buffer.from("png-data");
+  advancedError: Error | null = null;
+  viewport = { width: 1280, height: 720 };
+  visible = false;
   private readonly destroyedListeners = new Set<() => void>();
 
   async loadURL(url: string) {
     this.url = url;
     this.title = new URL(url).hostname;
+  }
+
+  async goBack() {
+    this.url = "https://example.com/back";
+    this.title = "Back";
+  }
+
+  async goForward() {
+    this.url = "https://example.com/forward";
+    this.title = "Forward";
+  }
+
+  async reload() {
+    this.title = "Reloaded";
+  }
+
+  getViewport() {
+    return { ...this.viewport };
+  }
+
+  setViewport(width: number, height: number) {
+    this.viewport = { width, height };
+  }
+
+  resetViewport() {
+    this.viewport = { width: 1280, height: 720 };
+  }
+
+  isVisible() {
+    return this.visible;
+  }
+
+  setVisible(visible: boolean) {
+    this.visible = visible;
+  }
+
+  async advanced(action: BrowserAdvancedAction, args: Record<string, unknown>) {
+    this.advancedCalls.push({ action, args });
+    if (this.advancedError) throw this.advancedError;
+    if (action === "clipboard") {
+      if (args.action === "write") this.clipboardItems = structuredClone(args.items as typeof this.clipboardItems);
+      return { items: structuredClone(this.clipboardItems) };
+    }
+    if (action === "screenshot") {
+      return { mimeType: "image/png", base64: this.png.toString("base64") };
+    }
+    if (action === "assets" && args.action === "bundle") {
+      await this.assetBundleGate;
+      const totalBytes = Math.min(60, Number(args.maxTotalBytes || 0));
+      return { action, performed: true, summary: { totalBytes } };
+    }
+    return { action, performed: true };
   }
 
   getURL() {
@@ -43,7 +103,8 @@ class FakeTab implements BrowserAgentTab {
     this.stopCalls += 1;
   }
 
-  close() {
+  async close() {
+    await this.closeGate;
     if (this.destroyed) return;
     this.destroyed = true;
     for (const listener of this.destroyedListeners) listener();
@@ -79,9 +140,11 @@ function createHarness(options: {
   maxTabsTotal?: number;
   commandTimeoutMs?: number;
   maxScreenshotBytes?: number;
+  maxAssetBundleBytesPerRun?: number;
   maxRunStatusFailures?: number;
   createTabGate?: Promise<void>;
   clock?: () => number;
+  listUserTabs?: () => Array<{ id: string; title?: string; url?: string }>;
 } = {}) {
   const tabs: FakeTab[] = [];
   let nextId = 1;
@@ -101,6 +164,21 @@ function createHarness(options: {
 }
 
 describe("Browser Agent tab controller", () => {
+  it("lists user-visible built-in Browser tabs without mixing in run-owned Agent tabs", async () => {
+    const { controller } = createHarness({
+      listUserTabs: () => [{
+        id: "opaque-user-tab",
+        title: "Private reset document",
+        url: "https://user:password@example.com/reset?token=secret#private",
+      }],
+    });
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://agent.example.com" } });
+
+    await expect(controller.execute({ identity: owner, action: "user_tabs", args: {} })).resolves.toEqual({
+      tabs: [{ id: "opaque-user-tab", title: "example.com", url: "https://example.com/" }],
+    });
+  });
+
   it("opens and lists only tabs owned by the exact organization, agent, and run", async () => {
     const { controller } = createHarness();
 
@@ -118,7 +196,261 @@ describe("Browser Agent tab controller", () => {
 
     await expect(controller.execute({ identity: owner, action: "tabs", args: {} })).resolves.toEqual({
       tabs: [expect.objectContaining({ tabId: "tab-1", url: "https://example.com/path?secret=hidden" })],
+      selectedTabId: "tab-1",
     });
+  });
+
+  it("navigates back, forward, and reloads through the owned tab history", async () => {
+    const { controller } = createHarness();
+    const opened = await controller.execute({
+      identity: owner,
+      action: "open",
+      args: { url: "https://example.com/start" },
+    }) as { tabId: string };
+
+    await expect(controller.execute({ identity: owner, action: "back", args: { tabId: opened.tabId } }))
+      .resolves.toMatchObject({ url: "https://example.com/back", title: "Back" });
+    await expect(controller.execute({ identity: owner, action: "forward", args: { tabId: opened.tabId } }))
+      .resolves.toMatchObject({ url: "https://example.com/forward", title: "Forward" });
+    await expect(controller.execute({ identity: owner, action: "reload", args: { tabId: opened.tabId } }))
+      .resolves.toMatchObject({ title: "Reloaded" });
+  });
+
+  it("persists viewport and visibility before opening a tab and isolates them by run", async () => {
+    const { controller, tabs } = createHarness();
+
+    await expect(controller.execute({
+      identity: owner,
+      action: "viewport",
+      args: { action: "set", width: 390, height: 844 },
+    })).resolves.toEqual({ viewport: { width: 390, height: 844 }, overridden: true });
+    await expect(controller.execute({
+      identity: owner,
+      action: "visibility",
+      args: { visible: true },
+    })).resolves.toEqual({ visible: true, selectedTabId: null });
+
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+    await controller.execute({
+      identity: { ...owner, runId: "run-2" },
+      action: "open",
+      args: { url: "https://example.org" },
+    });
+
+    expect(tabs[0]?.viewport).toEqual({ width: 390, height: 844 });
+    expect(tabs[0]?.visible).toBe(true);
+    expect(tabs[1]?.viewport).toEqual({ width: 1280, height: 720 });
+    expect(tabs[1]?.visible).toBe(false);
+  });
+
+  it("applies viewport reset and shows only the selected tab", async () => {
+    const { controller, tabs } = createHarness();
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.org" } });
+    await controller.execute({ identity: owner, action: "visibility", args: { visible: true } });
+
+    expect(tabs[0]?.visible).toBe(false);
+    expect(tabs[1]?.visible).toBe(true);
+    await controller.execute({ identity: owner, action: "read", args: { tabId: "tab-1" } });
+    expect(tabs[0]?.visible).toBe(true);
+    expect(tabs[1]?.visible).toBe(false);
+
+    await controller.execute({
+      identity: owner,
+      action: "viewport",
+      args: { action: "set", width: 412, height: 915 },
+    });
+    expect(tabs.map((tab) => tab.viewport)).toEqual([
+      { width: 412, height: 915 },
+      { width: 412, height: 915 },
+    ]);
+    await expect(controller.execute({
+      identity: owner,
+      action: "viewport",
+      args: { action: "reset" },
+    })).resolves.toEqual({ viewport: { width: 1280, height: 720 }, overridden: false });
+    expect(tabs.map((tab) => tab.viewport)).toEqual([
+      { width: 1280, height: 720 },
+      { width: 1280, height: 720 },
+    ]);
+  });
+
+  it("reaps run state that exists without an open tab", async () => {
+    const { controller } = createHarness();
+    await controller.execute({ identity: owner, action: "visibility", args: { visible: true } });
+
+    const checked: BrowserRuntimeIdentity[] = [];
+    await controller.reapInactiveRuns(async (identity) => {
+      checked.push(identity);
+      return false;
+    });
+
+    expect(checked).toEqual([owner]);
+    await expect(controller.execute({ identity: owner, action: "tabs", args: {} })).resolves.toEqual({
+      tabs: [],
+      selectedTabId: null,
+    });
+  });
+
+  it("isolates the virtual clipboard by run and clears it with run state", async () => {
+    const { controller } = createHarness();
+    const otherRun = { ...owner, runId: "run-2" };
+    await controller.execute({
+      identity: owner,
+      action: "clipboard",
+      args: { action: "writeText", text: "run-one" },
+    });
+
+    await expect(controller.execute({
+      identity: owner,
+      action: "clipboard",
+      args: { action: "readText" },
+    })).resolves.toEqual({ text: "run-one" });
+    await expect(controller.execute({
+      identity: otherRun,
+      action: "clipboard",
+      args: { action: "readText" },
+    })).resolves.toEqual({ text: "" });
+
+    await controller.closeRun(owner);
+    await expect(controller.execute({
+      identity: owner,
+      action: "clipboard",
+      args: { action: "read" },
+    })).resolves.toEqual({ items: [] });
+  });
+
+  it("synchronizes the run clipboard with the selected page and virtual CUA shortcuts", async () => {
+    const { controller, tabs } = createHarness();
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+    await controller.execute({
+      identity: owner,
+      action: "clipboard",
+      args: { action: "writeText", text: "from-run" },
+    });
+    expect(tabs[0]?.clipboardItems).toEqual([{ entries: [{ mimeType: "text/plain", text: "from-run" }] }]);
+
+    tabs[0]!.clipboardItems = [{ entries: [{ mimeType: "text/plain", text: "from-page" }] }];
+    await expect(controller.execute({
+      identity: owner,
+      action: "clipboard",
+      args: { action: "readText" },
+    })).resolves.toEqual({ text: "from-page" });
+
+    await controller.execute({
+      identity: owner,
+      action: "cua",
+      args: { tabId: "tab-1", action: "keypress", keys: ["ControlOrMeta", "v"] },
+    });
+    expect(tabs[0]?.advancedCalls.slice(-3).map((call) => [call.action, call.args.action])).toEqual([
+      ["clipboard", "write"],
+      ["cua", "keypress"],
+      ["clipboard", "read"],
+    ]);
+  });
+
+  it("keeps serialized clipboard commands below the one MiB Broker limit", async () => {
+    const { controller } = createHarness();
+    await expect(controller.execute({
+      identity: owner,
+      action: "clipboard",
+      args: {
+        action: "write",
+        items: [{ entries: [{ mimeType: "application/octet-stream", base64: "a".repeat(650_001) }] }],
+      },
+    })).rejects.toMatchObject({ code: "browser_invalid_argument" });
+  });
+
+  it("cancels an admitted operation immediately when its transport disconnects", async () => {
+    const { controller, tabs } = createHarness();
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+    tabs[0]!.assetBundleGate = new Promise<void>(() => undefined);
+    const abort = new AbortController();
+    const operation = controller.execute({
+      identity: owner,
+      action: "assets",
+      args: {
+        tabId: "tab-1",
+        action: "bundle",
+        inventoryId: "inventory-1",
+        assetIds: ["asset-1"],
+      },
+      signal: abort.signal,
+    });
+    await vi.waitFor(() => expect(tabs[0]?.advancedCalls).toHaveLength(1));
+
+    abort.abort();
+
+    await expect(operation).rejects.toMatchObject({ code: "browser_unavailable" });
+    await vi.waitFor(() => expect(tabs[0]?.destroyed).toBe(true));
+  });
+
+  it("routes advanced Browser actions only through an owned tab", async () => {
+    const { controller } = createHarness();
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+
+    await expect(controller.execute({
+      identity: owner,
+      action: "snapshot",
+      args: { tabId: "tab-1", boxes: true },
+    })).resolves.toMatchObject({ tabId: "tab-1", action: "snapshot", performed: true });
+    await expect(controller.execute({
+      identity: { ...owner, runId: "run-2" },
+      action: "snapshot",
+      args: { tabId: "tab-1" },
+    })).rejects.toMatchObject({ code: "browser_tab_forbidden" });
+  });
+
+  it("enforces the asset quota across every tab owned by a run", async () => {
+    const { controller, tabs } = createHarness({ maxAssetBundleBytesPerRun: 100 });
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.org" } });
+
+    await controller.execute({
+      identity: owner,
+      action: "assets",
+      args: { tabId: "tab-1", action: "bundle", inventoryId: "inventory-1", assetIds: ["asset-1"] },
+    });
+    await controller.execute({
+      identity: owner,
+      action: "assets",
+      args: { tabId: "tab-2", action: "bundle", inventoryId: "inventory-2", assetIds: ["asset-2"] },
+    });
+
+    expect(tabs[0]?.advancedCalls.at(-1)?.args.maxTotalBytes).toBe(100);
+    expect(tabs[1]?.advancedCalls.at(-1)?.args.maxTotalBytes).toBe(40);
+    await expect(controller.execute({
+      identity: owner,
+      action: "assets",
+      args: { tabId: "tab-1", action: "bundle", inventoryId: "inventory-1", assetIds: ["asset-3"] },
+    })).rejects.toMatchObject({ code: "browser_result_too_large" });
+  });
+
+  it("serializes concurrent asset bundles across tabs before admitting run quota", async () => {
+    const { controller, tabs } = createHarness({ maxAssetBundleBytesPerRun: 100 });
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.org" } });
+    let releaseFirstBundle!: () => void;
+    tabs[0]!.assetBundleGate = new Promise<void>((resolve) => { releaseFirstBundle = resolve; });
+
+    const first = controller.execute({
+      identity: owner,
+      action: "assets",
+      args: { tabId: "tab-1", action: "bundle", inventoryId: "inventory-1", assetIds: ["asset-1"] },
+    });
+    await vi.waitFor(() => expect(tabs[0]?.advancedCalls).toHaveLength(1));
+    const second = controller.execute({
+      identity: owner,
+      action: "assets",
+      args: { tabId: "tab-2", action: "bundle", inventoryId: "inventory-2", assetIds: ["asset-2"] },
+    });
+    await Promise.resolve();
+    expect(tabs[1]?.advancedCalls).toHaveLength(0);
+
+    releaseFirstBundle();
+    await Promise.all([first, second]);
+    expect(tabs[0]?.advancedCalls[0]?.args.maxTotalBytes).toBe(100);
+    expect(tabs[1]?.advancedCalls[0]?.args.maxTotalBytes).toBe(40);
   });
 
   it("rejects cross-run tab control without exposing page content", async () => {
@@ -207,6 +539,22 @@ describe("Browser Agent tab controller", () => {
     expect(tabs[1]?.destroyed).toBe(true);
   });
 
+  it("waits for native tab cleanup before run cleanup completes", async () => {
+    const { controller, tabs } = createHarness();
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+    let releaseClose!: () => void;
+    tabs[0]!.closeGate = new Promise<void>((resolve) => { releaseClose = resolve; });
+
+    let cleanupFinished = false;
+    const cleanup = controller.closeRun(owner).then(() => { cleanupFinished = true; });
+    await Promise.resolve();
+    expect(cleanupFinished).toBe(false);
+
+    releaseClose();
+    await cleanup;
+    expect(tabs[0]?.destroyed).toBe(true);
+  });
+
   it("reaps tabs after their run becomes inactive", async () => {
     const { controller, tabs } = createHarness();
     await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
@@ -260,12 +608,18 @@ describe("Browser Agent tab controller", () => {
     await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
     vi.useFakeTimers();
     tabs[0]!.executionGate = new Promise<void>(() => undefined);
+    let releaseClose!: () => void;
+    tabs[0]!.closeGate = new Promise<void>((resolve) => { releaseClose = resolve; });
     const read = controller.execute({ identity: owner, action: "read", args: { tabId: "tab-1" } });
-    const rejection = expect(read).rejects.toMatchObject({ code: "browser_timeout" });
+    let rejected = false;
+    void read.catch(() => { rejected = true; });
     await vi.advanceTimersByTimeAsync(25);
 
-    await rejection;
     expect(tabs[0]?.stopCalls).toBe(1);
+    expect(rejected).toBe(true);
+    await expect(read).rejects.toMatchObject({ code: "browser_timeout" });
+    releaseClose();
+    await vi.runAllTimersAsync();
     expect(tabs[0]?.destroyed).toBe(true);
     vi.useRealTimers();
   });
@@ -309,6 +663,21 @@ describe("Browser Agent tab controller", () => {
       action: "screenshot",
       args: { tabId: "tab-1" },
     })).rejects.toMatchObject({ code: "browser_result_too_large" });
+  });
+
+  it("maps Chromium full-page dimension failures to the stable result-too-large error", async () => {
+    const { controller, tabs } = createHarness();
+    await controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+    tabs[0]!.advancedError = new Error("Browser full-page screenshot exceeds Chromium's 16384-pixel dimension limit.");
+
+    await expect(controller.execute({
+      identity: owner,
+      action: "screenshot",
+      args: { tabId: "tab-1", fullPage: true },
+    })).rejects.toMatchObject({
+      code: "browser_result_too_large",
+      message: expect.stringMatching(/16384-pixel dimension limit/i),
+    });
   });
 
   it("does not execute a command whose Broker deadline expired in the tab queue", async () => {

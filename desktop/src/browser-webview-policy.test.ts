@@ -361,4 +361,32 @@ describe("Rudder Browser guest policy", () => {
     expect(activeGuest.close).toHaveBeenCalledWith({ waitForBeforeUnload: false });
     expect(destroyedGuest.close).not.toHaveBeenCalled();
   });
+
+  it("lists only live user Browser tabs with opaque ids", () => {
+    const registry = createBrowserGuestRegistry();
+    const userGuest = {
+      isDestroyed: () => false,
+      close: vi.fn(),
+      getTitle: () => "Private document title",
+      getURL: () => "https://user:password@example.com/path?token=secret#private",
+      on: vi.fn(),
+    };
+    const agentGuest = {
+      isDestroyed: () => false,
+      close: vi.fn(),
+      getTitle: () => "Agent tab",
+      getURL: () => "https://agent.example.com",
+      on: vi.fn(),
+    };
+    registry.register(userGuest, "user");
+    registry.register(agentGuest, "agent");
+
+    expect(registry.listUserTabs()).toEqual([
+      expect.objectContaining({ title: "example.com", url: "https://example.com/" }),
+    ]);
+    expect(registry.listUserTabs()[0]?.id).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(JSON.stringify(registry.listUserTabs())).not.toContain("Agent tab");
+    expect(JSON.stringify(registry.listUserTabs())).not.toContain("secret");
+    expect(JSON.stringify(registry.listUserTabs())).not.toContain("Private document title");
+  });
 });

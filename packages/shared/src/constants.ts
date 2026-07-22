@@ -257,6 +257,7 @@ export const AGENT_INTEGRATION_OUTBOUND_STATUSES = ["pending", "streaming", "fin
 export type AgentIntegrationOutboundStatus = (typeof AGENT_INTEGRATION_OUTBOUND_STATUSES)[number];
 
 export const RUDDER_AGENT_V1_MCP_SERVER_NAME = "rudder-tools" as const;
+export const RUDDER_BROWSER_MCP_SERVER_NAME = "rudder-browser" as const;
 export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_agent_me",
   "rudder_agent_inbox",
@@ -297,8 +298,25 @@ export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_skill_scan_local",
   "rudder_skill_scan_projects",
   "rudder_browser_tabs",
+  "rudder_browser_user_tabs",
   "rudder_browser_open",
   "rudder_browser_navigate",
+  "rudder_browser_back",
+  "rudder_browser_forward",
+  "rudder_browser_reload",
+  "rudder_browser_viewport",
+  "rudder_browser_visibility",
+  "rudder_browser_snapshot",
+  "rudder_browser_locator",
+  "rudder_browser_cua",
+  "rudder_browser_dom_cua",
+  "rudder_browser_dialog",
+  "rudder_browser_clipboard",
+  "rudder_browser_logs",
+  "rudder_browser_download",
+  "rudder_browser_assets",
+  "rudder_browser_content",
+  "rudder_browser_wait",
   "rudder_browser_read",
   "rudder_browser_click",
   "rudder_browser_type",
@@ -337,6 +355,12 @@ export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_runs_retry",
 ] as const;
 export type RudderAgentV1McpToolName = (typeof RUDDER_AGENT_V1_MCP_TOOL_NAMES)[number];
+export const RUDDER_BROWSER_MCP_TOOL_NAMES = RUDDER_AGENT_V1_MCP_TOOL_NAMES
+  .filter((name) => name.startsWith("rudder_browser_"));
+export const RUDDER_CORE_MCP_TOOL_NAMES = RUDDER_AGENT_V1_MCP_TOOL_NAMES
+  .filter((name) => !name.startsWith("rudder_browser_"));
+export type RudderBrowserMcpToolName = (typeof RUDDER_BROWSER_MCP_TOOL_NAMES)[number];
+export type RudderCoreMcpToolName = (typeof RUDDER_CORE_MCP_TOOL_NAMES)[number];
 
 export const CUSTOM_INTEGRATION_KINDS = ["custom_api", "mcp_server"] as const;
 export type CustomIntegrationKind = (typeof CUSTOM_INTEGRATION_KINDS)[number];

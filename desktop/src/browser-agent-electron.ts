@@ -1,3 +1,4 @@
+import { createBrowserAdvancedDriver } from "./browser-agent-advanced.js";
 import type { BrowserAgentTabFactory } from "./browser-agent-tabs.js";
 import { isAllowedBrowserNavigationUrl } from "./browser-profile.js";
 
@@ -11,19 +12,52 @@ type BrowserAgentNativeImage = {
 };
 
 type BrowserAgentWebContents = {
+  debugger: {
+    isAttached(): boolean;
+    attach(protocolVersion?: string): void;
+    detach(): void;
+    sendCommand(method: string, commandParams?: Record<string, unknown>): Promise<any>;
+    on(event: "message", listener: (...args: any[]) => void): unknown;
+    removeListener(event: "message", listener: (...args: any[]) => void): unknown;
+  };
+  session: {
+    fetch(input: string, init?: { method?: string; redirect?: "follow" }): Promise<Response>;
+    cookies: {
+      set(details: {
+        url: string;
+        name: string;
+        value: string;
+        path?: string;
+        secure?: boolean;
+        sameSite?: "lax";
+        expirationDate?: number;
+      }): Promise<void>;
+    };
+  };
   getURL(): string;
   getTitle(): string;
   isDestroyed(): boolean;
   stop(): void;
   close(options?: { waitForBeforeUnload?: boolean }): void;
   on(event: string, listener: (...args: any[]) => void): unknown;
+  once(event: string, listener: (...args: any[]) => void): unknown;
+  removeListener(event: string, listener: (...args: any[]) => void): unknown;
+  removeAllListeners(event: string): unknown;
   setWindowOpenHandler(handler: (details: { url: string }) => { action: "deny" }): void;
+  executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
   executeJavaScriptInIsolatedWorld(
     worldId: number,
     scripts: Array<{ code: string; url?: string }>,
     userGesture?: boolean,
   ): Promise<unknown>;
   capturePage(): Promise<BrowserAgentNativeImage>;
+  navigationHistory: {
+    canGoBack(): boolean;
+    canGoForward(): boolean;
+    goBack(): void;
+    goForward(): void;
+  };
+  reload(): void;
 };
 
 const RUDDER_BROWSER_AGENT_WORLD_ID = 10_001;
@@ -32,6 +66,12 @@ type BrowserAgentWindow = {
   webContents: BrowserAgentWebContents;
   loadURL(url: string): Promise<void>;
   isDestroyed(): boolean;
+  getContentSize(): number[];
+  setContentSize(width: number, height: number): void;
+  isVisible(): boolean;
+  showInactive(): void;
+  hide(): void;
+  capturePage(rect?: { x: number; y: number; width: number; height: number }): Promise<BrowserAgentNativeImage>;
   destroy(): void;
 };
 
@@ -45,8 +85,6 @@ type BrowserAgentWindowOptions = {
     nodeIntegrationInSubFrames: false;
     webSecurity: true;
     allowRunningInsecureContent: false;
-    safeDialogs: true;
-    disableDialogs: true;
     devTools: false;
     backgroundThrottling: false;
   };
@@ -69,14 +107,25 @@ export function createElectronBrowserAgentTabFactory(options: {
         nodeIntegrationInSubFrames: false,
         webSecurity: true,
         allowRunningInsecureContent: false,
-        safeDialogs: true,
-        disableDialogs: true,
         devTools: false,
         backgroundThrottling: false,
       },
     });
     const contents = browserWindow.webContents;
+    const initialContentSize = browserWindow.getContentSize();
     options.registerGuest(contents);
+    let advancedDriverPromise: ReturnType<typeof createBrowserAdvancedDriver> | null = null;
+    let closePromise: Promise<void> | null = null;
+    const getAdvancedDriver = () => {
+      advancedDriverPromise ??= createBrowserAdvancedDriver({
+        window: browserWindow,
+        getRudderAppOrigins: options.getRudderAppOrigins,
+      });
+      return advancedDriverPromise;
+    };
+    const disposeAdvancedDriver = async () => {
+      if (advancedDriverPromise) await advancedDriverPromise.then((driver) => driver.dispose());
+    };
 
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
 
@@ -93,22 +142,91 @@ export function createElectronBrowserAgentTabFactory(options: {
     });
     contents.on("will-frame-navigate", (
       event: PreventableEvent,
-      legacyDetails?: { url?: string },
+      legacyDetails?: { url?: string } | string,
     ) => {
-      preventUnsafeNavigation(event, legacyDetails?.url ?? event.url);
+      const targetUrl = typeof legacyDetails === "string"
+        ? legacyDetails
+        : legacyDetails?.url ?? event.url;
+      preventUnsafeNavigation(event, targetUrl);
     });
+
+    const waitForHistoryNavigation = (canNavigate: () => boolean, navigate: () => void): Promise<void> => {
+      if (!canNavigate()) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          contents.removeListener("did-finish-load", handleFinish);
+          contents.removeListener("did-navigate-in-page", handleInPageNavigation);
+          contents.removeListener("did-fail-load", handleFailure);
+        };
+        const handleFinish = () => {
+          cleanup();
+          resolve();
+        };
+        const handleInPageNavigation = (_event: unknown, _url: string, isMainFrame: boolean) => {
+          if (!isMainFrame) return;
+          cleanup();
+          resolve();
+        };
+        const handleFailure = (
+          _event: unknown,
+          _errorCode?: number,
+          _errorDescription?: string,
+          _validatedURL?: string,
+          isMainFrame = true,
+        ) => {
+          if (!isMainFrame) return;
+          cleanup();
+          reject(new Error("Browser navigation failed."));
+        };
+        contents.once("did-finish-load", handleFinish);
+        contents.on("did-navigate-in-page", handleInPageNavigation);
+        contents.on("did-fail-load", handleFailure);
+        navigate();
+      });
+    };
 
     return {
       loadURL: (url) => browserWindow.loadURL(url),
+      goBack: () => waitForHistoryNavigation(
+        () => contents.navigationHistory.canGoBack(),
+        () => contents.navigationHistory.goBack(),
+      ),
+      goForward: () => waitForHistoryNavigation(
+        () => contents.navigationHistory.canGoForward(),
+        () => contents.navigationHistory.goForward(),
+      ),
+      reload: () => waitForHistoryNavigation(() => true, () => contents.reload()),
+      getViewport: () => {
+        const [width, height] = browserWindow.getContentSize();
+        return { width, height };
+      },
+      setViewport: (width, height) => browserWindow.setContentSize(width, height),
+      resetViewport: () => browserWindow.setContentSize(initialContentSize[0] ?? 1280, initialContentSize[1] ?? 720),
+      isVisible: () => browserWindow.isVisible(),
+      setVisible: (visible) => {
+        if (visible) browserWindow.showInactive();
+        else browserWindow.hide();
+      },
+      advanced: async (action, args) => (await getAdvancedDriver()).execute(action, args),
       getURL: () => contents.getURL(),
       getTitle: () => contents.getTitle(),
       isDestroyed: () => browserWindow.isDestroyed() || contents.isDestroyed(),
       stop: () => contents.stop(),
       close: () => {
-        if (!browserWindow.isDestroyed()) browserWindow.destroy();
+        closePromise ??= (async () => {
+          try {
+            await disposeAdvancedDriver();
+          } finally {
+            if (!browserWindow.isDestroyed()) browserWindow.destroy();
+          }
+        })();
+        return closePromise;
       },
       onDestroyed: (listener) => {
-        contents.on("destroyed", listener);
+        contents.on("destroyed", () => {
+          void disposeAdvancedDriver().catch(() => undefined);
+          listener();
+        });
       },
       executeIsolatedJavaScript: (script) => contents.executeJavaScriptInIsolatedWorld(
         RUDDER_BROWSER_AGENT_WORLD_ID,

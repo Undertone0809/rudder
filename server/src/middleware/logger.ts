@@ -7,6 +7,43 @@ import pretty from "pino-pretty";
 import { readConfigFile } from "../config-file.js";
 import { resolveDefaultLogsDir, resolveHomeAwarePath } from "../home-paths.js";
 
+const REDACTED_REQUEST_BODY = "[REDACTED]";
+
+function isBrowserRequest(req: object): boolean {
+  const request = req as { originalUrl?: unknown; url?: unknown };
+  const rawUrl = typeof request.originalUrl === "string"
+    ? request.originalUrl
+    : typeof request.url === "string"
+      ? request.url
+      : "";
+  const pathname = (rawUrl.split("?", 1)[0] ?? "")
+    .toLowerCase()
+    .replace(/\/+$/u, "");
+  return pathname === "/api/browser"
+    || pathname.startsWith("/api/browser/")
+    || pathname === "/api/instance/browser/broker";
+}
+
+export function markHttpRequestBodySensitive(req: object): void {
+  (req as { __rudderSensitiveRequestBody?: boolean }).__rudderSensitiveRequestBody = true;
+}
+
+export function markBrowserHttpRequestBodySensitive(
+  req: object,
+  _res: object,
+  next: () => void,
+): void {
+  if (isBrowserRequest(req)) markHttpRequestBodySensitive(req);
+  next();
+}
+
+export function requestBodyForLogs(req: object, body: unknown): unknown {
+  return (req as { __rudderSensitiveRequestBody?: boolean }).__rudderSensitiveRequestBody === true
+    || isBrowserRequest(req)
+    ? REDACTED_REQUEST_BODY
+    : body;
+}
+
 function resolveServerLogDir(): string {
   const envOverride = process.env.RUDDER_LOG_DIR?.trim();
   if (envOverride) return resolveHomeAwarePath(envOverride);
@@ -118,7 +155,7 @@ export const httpLogger = pinoHttp({
       if (ctx) {
         return {
           errorContext: ctx.error,
-          reqBody: ctx.reqBody,
+          reqBody: requestBodyForLogs(req, ctx.reqBody),
           reqParams: ctx.reqParams,
           reqQuery: ctx.reqQuery,
         };
@@ -126,7 +163,7 @@ export const httpLogger = pinoHttp({
       const props: Record<string, unknown> = {};
       const { body, params, query } = req as any;
       if (body && typeof body === "object" && Object.keys(body).length > 0) {
-        props.reqBody = body;
+        props.reqBody = requestBodyForLogs(req, body);
       }
       if (params && typeof params === "object" && Object.keys(params).length > 0) {
         props.reqParams = params;

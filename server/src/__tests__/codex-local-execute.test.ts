@@ -1,6 +1,7 @@
 import { execute } from "@rudderhq/agent-runtime-codex-local/server";
 import {
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
+  RUDDER_BROWSER_MCP_TOOL_NAMES,
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_TOOL_NAMES,
   RUDDER_MCP_CONTRACT_VERSION,
@@ -14,13 +15,14 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   createRuntimeSkillFixture,
+  installCanonicalDesktopMcp,
   installVersionMismatchedDesktopMcp,
   readMcpToolNames,
 } from "./local-runtime-browser-mismatch-helpers";
 
 const execFileAsync = promisify(execFile);
 
-function parseCodexRudderMcpConfig(content: string): {
+function parseCodexRudderMcpConfig(content: string, serverName = "rudder-tools"): {
   command: string;
   args: string[];
   env: Record<string, string>;
@@ -40,14 +42,14 @@ function parseCodexRudderMcpConfig(content: string): {
     if (separator < 0) continue;
     const key = line.slice(0, separator).trim();
     const value = JSON.parse(line.slice(separator + 1).trim()) as unknown;
-    if (section === "[mcp_servers.rudder-tools]") {
+    if (section === `[mcp_servers.${serverName}]`) {
       if (key === "command" && typeof value === "string") command = value;
       if (key === "args" && Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
         args = value as string[];
       }
     }
     if (
-      section === "[mcp_servers.rudder-tools.env]"
+      section === `[mcp_servers.${serverName}.env]`
       && typeof value === "string"
     ) {
       env[key] = value;
@@ -289,7 +291,10 @@ async function writeMcpProcessCleanupNoiseCodexCommand(commandPath: string): Pro
   const script = `#!/usr/bin/env node
 process.stdin.resume();
 process.stdin.on("end", () => {
-  process.stderr.write("2026-07-01T06:12:02.158754Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server rudder-tools: No such process (os error 3)\\n");
+  process.stderr.write([
+    "2026-07-01T06:12:02.158754Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server rudder-tools: No such process (os error 3)",
+    "2026-07-01T06:12:02.158755Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server rudder-browser: No such process (os error 3)",
+  ].join("\\n") + "\\n");
   console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
   console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
   console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
@@ -761,17 +766,23 @@ describe("codex execute", { timeout: 20_000 }, () => {
         expect(argv).not.toContain("exec");
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          browserAvailable: false,
-          contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
           contractVersion: RUDDER_MCP_CONTRACT_VERSION,
           coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
-          diagnosticCode: "browser_bundle_version_mismatch",
           provenance: "desktop_bundle",
           serverName: "rudder-tools",
           toolCount: 69,
+          version: "0.4.6",
+        });
+        expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
+        expect(meta.rudderMcp).not.toHaveProperty("contractHash");
+        expect(meta.rudderMcp).not.toHaveProperty("diagnosticCode");
+        expect(meta.browserMcp).toMatchObject({
+          available: false,
+          diagnosticCode: "browser_bundle_version_mismatch",
+          serverName: "rudder-browser",
           version: "0.4.5",
         });
-        expect((meta.rudderMcp as { fallbackReason?: string }).fallbackReason).toContain(
+        expect((meta.browserMcp as { fallbackReason?: string }).fallbackReason).toContain(
           "bundle version mismatch",
         );
       } finally {
@@ -2015,7 +2026,8 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(managedConfigContents).toContain('RUDDER_ORG_ID = "organization-1"');
       expect(managedConfigContents).toContain('RUDDER_AGENT_ID = "agent-1"');
       expect(managedConfigContents).toContain('RUDDER_RUN_ID = "run-strip-managed"');
-      expect(managedConfigContents).toContain('RUDDER_BROWSER_ENABLED = "false"');
+      expect(managedConfigContents).not.toContain("RUDDER_BROWSER_ENABLED");
+      expect(managedConfigContents).not.toContain("[mcp_servers.rudder-browser]");
       expect(managedConfigContents).not.toContain("stale.example.invalid");
       expect(managedConfigContents).not.toContain("stale-organization");
       expect(managedConfigContents).not.toContain('RUDDER_AGENT_ID = "stale-agent"');
@@ -2066,6 +2078,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
     await fs.writeFile(path.join(sharedCodexHome, "config.toml"), 'model = "codex-mini-latest"\n', "utf8");
     await writeFakeCodexCommand(commandPath);
+    const installedDesktopMcp = await installCanonicalDesktopMcp(root);
 
     const previousHome = process.env.HOME;
     const previousPaperclipHome = process.env.RUDDER_HOME;
@@ -2075,7 +2088,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     process.env.CODEX_HOME = sharedCodexHome;
 
     try {
-      let mcpMetadata: unknown;
+      let runtimeMetadata: Record<string, unknown> = {};
       const result = await execute({
         runId: "run-mcp-meta",
         agent: {
@@ -2103,25 +2116,46 @@ describe("codex execute", { timeout: 20_000 }, () => {
         context: {},
         authToken: "run-jwt-token",
         onLog: async () => {},
-        onMeta: async (meta) => {
-          mcpMetadata = meta.rudderMcp;
-        },
+        onMeta: async (meta) => { runtimeMetadata = meta as Record<string, unknown>; },
       });
 
       expect(result.exitCode).toBe(0);
-      expect(mcpMetadata).toMatchObject({
+      expect(runtimeMetadata.rudderMcp).toMatchObject({
         available: true,
-        browserAvailable: true,
-        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
         coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
-        diagnosticCode: null,
-        provenance: "repo",
+        provenance: "desktop_bundle",
         serverName: "rudder-tools",
-        toolCount: 77,
-        version: "0.5.1",
+        toolCount: 69,
+        version: "0.4.6",
       });
+      expect(runtimeMetadata.rudderMcp).not.toHaveProperty("browserAvailable");
+      expect(runtimeMetadata.rudderMcp).not.toHaveProperty("contractHash");
+      expect(runtimeMetadata.rudderMcp).not.toHaveProperty("diagnosticCode");
+      expect(runtimeMetadata.browserMcp).toMatchObject({
+        available: true,
+        contractHash: RUDDER_BROWSER_MCP_CONTRACT_HASH,
+        contractVersion: RUDDER_MCP_CONTRACT_VERSION,
+        diagnosticCode: null,
+        provenance: "desktop_bundle",
+        serverName: "rudder-browser",
+        toolCount: RUDDER_BROWSER_MCP_TOOL_NAMES.length,
+        version: "0.4.6",
+      });
+      const managedConfig = await fs.readFile(
+        path.join(managedCodexHomePath({ rudderHome: paperclipHome }), "config.toml"),
+        "utf8",
+      );
+      expect(managedConfig.match(/^\[mcp_servers\.(rudder-tools|rudder-browser)\]$/gmu)).toEqual([
+        "[mcp_servers.rudder-tools]",
+        "[mcp_servers.rudder-browser]",
+      ]);
+      const coreConfig = parseCodexRudderMcpConfig(managedConfig);
+      const browserConfig = parseCodexRudderMcpConfig(managedConfig, "rudder-browser");
+      expect(await readMcpToolNames(coreConfig)).toEqual([...RUDDER_CORE_MCP_TOOL_NAMES]);
+      expect(await readMcpToolNames(browserConfig)).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
     } finally {
+      installedDesktopMcp.restore();
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
       if (previousPaperclipHome === undefined) delete process.env.RUDDER_HOME;
@@ -3701,15 +3735,23 @@ describe("codex execute", { timeout: 20_000 }, () => {
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          browserAvailable: false,
-          diagnosticCode: "browser_bundle_version_mismatch",
           toolCount: 69,
+        });
+        expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
+        expect(meta.rudderMcp).not.toHaveProperty("contractHash");
+        expect(meta.rudderMcp).not.toHaveProperty("diagnosticCode");
+        expect(meta.browserMcp).toMatchObject({
+          available: false,
+          diagnosticCode: "browser_bundle_version_mismatch",
+          serverName: "rudder-browser",
+          toolCount: RUDDER_BROWSER_MCP_TOOL_NAMES.length,
         });
         const managedConfig = await fs.readFile(
           path.join(managedCodexHomePath({ rudderHome }), "config.toml"),
           "utf8",
         );
-        expect(managedConfig).toContain('RUDDER_BROWSER_ENABLED = "false"');
+        expect(managedConfig).not.toContain('RUDDER_BROWSER_ENABLED = "false"');
+        expect(managedConfig).not.toContain("[mcp_servers.rudder-browser]");
         const generatedMcpConfig = parseCodexRudderMcpConfig(managedConfig);
         expect(generatedMcpConfig.command).toBe(installedDesktopMcp.command);
         expect(generatedMcpConfig.args).toEqual(installedDesktopMcp.args);

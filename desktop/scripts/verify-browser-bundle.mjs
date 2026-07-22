@@ -95,12 +95,17 @@ export async function verifyBrowserBundle(options) {
       const preflightModule = await import(pathToFileURL(path.join(runtimeUtilsDir, "dist", "rudder-mcp-preflight.js")).href);
       const contractModule = await import(pathToFileURL(path.join(runtimeUtilsDir, "dist", "rudder-mcp-contract.js")).href);
       const command = await resolver.resolveRudderMcpCliCommand(runtimeModuleDir);
-      assertEqual(command.provenance, "desktop_bundle", "resolver provenance");
-      assertEqual(command.expectedVersion, expectedVersion, "resolver expected version");
+      const browserCommand = await resolver.resolveRudderBrowserMcpCliCommand(runtimeModuleDir);
+      assertEqual(command.provenance, "desktop_bundle", "core resolver provenance");
+      assertEqual(browserCommand.provenance, "desktop_bundle", "Browser resolver provenance");
+      assertEqual(command.expectedVersion, expectedVersion, "core resolver expected version");
+      assertEqual(browserCommand.expectedVersion, expectedVersion, "Browser resolver expected version");
       const expectedArgs = process.platform === "win32"
         ? [path.join(path.dirname(cliEntry), "desktop-cli-runner.js"), "mcp-server"]
         : ["--desktop-cli", "mcp-server"];
-      assertEqual(JSON.stringify(command.args), JSON.stringify(expectedArgs), "resolver arguments");
+      const expectedBrowserArgs = [...expectedArgs, "--server", "browser"];
+      assertEqual(JSON.stringify(command.args), JSON.stringify(expectedArgs), "core resolver arguments");
+      assertEqual(JSON.stringify(browserCommand.args), JSON.stringify(expectedBrowserArgs), "Browser resolver arguments");
       if (process.platform === "win32") {
         assertEqual(command.env?.ELECTRON_RUN_AS_NODE, "1", "resolver Electron Node mode");
       }
@@ -115,7 +120,12 @@ export async function verifyBrowserBundle(options) {
         command: packagedExecutable,
         args: process.platform === "linux" ? ["--no-sandbox", ...command.args] : command.args,
       };
-      const result = await preflightModule.preflightRudderMcpServer({
+      const packagedBrowserCommand = {
+        ...browserCommand,
+        command: packagedExecutable,
+        args: process.platform === "linux" ? ["--no-sandbox", ...browserCommand.args] : browserCommand.args,
+      };
+      const coreResult = await preflightModule.preflightRudderMcpServer({
         command: packagedCommand,
         runtimeEnv: {
           ...process.env,
@@ -124,10 +134,26 @@ export async function verifyBrowserBundle(options) {
           RUDDER_BROWSER_ENABLED: "true",
           RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
         },
-        browserEnabled: true,
+        browserEnabled: false,
         timeoutMs: 15_000,
       });
-      if (!result.available || !result.browserAvailable) {
+      if (!coreResult.available) {
+        throw new Error(
+          `packaged core MCP preflight failed: ${coreResult.diagnosticCode ?? "unknown"}: ${coreResult.diagnostic ?? "no diagnostic"}`,
+        );
+      }
+      const result = await preflightModule.preflightRudderBrowserMcpServer({
+        command: packagedBrowserCommand,
+        runtimeEnv: {
+          ...process.env,
+          HOME: tempRoot,
+          PATH: [staleBinDir, process.env.PATH].filter(Boolean).join(path.delimiter),
+          RUDDER_BROWSER_ENABLED: "true",
+          RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
+        },
+        timeoutMs: 15_000,
+      });
+      if (!result.browserAvailable) {
         throw new Error(
           `packaged Browser MCP preflight failed: ${result.diagnosticCode ?? "unknown"}: ${result.diagnostic ?? "no diagnostic"}`,
         );

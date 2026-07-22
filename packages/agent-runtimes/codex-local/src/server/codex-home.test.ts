@@ -51,14 +51,21 @@ describe("managed Codex home config sync", () => {
   it.each([
     { enabled: true, expected: "true", untrusted: "false" },
     { enabled: false, expected: "false", untrusted: "true" },
-  ])("renders the trusted Browser capability into managed MCP TOML ($expected)", async ({ enabled, expected, untrusted }) => {
+  ])("injects a separate Browser MCP server only for trusted enabled runs ($expected)", async ({ enabled, expected, untrusted }) => {
     const mcpEnv = { RUDDER_BROWSER_ENABLED: untrusted };
     applyRudderBrowserCapabilityEnv(mcpEnv, { rudderBrowserEnabled: enabled });
 
     const { config } = await prepareWithSharedConfig('model = "gpt-5.5"\n', mcpEnv);
 
-    expect(config).toContain(`[mcp_servers.rudder-tools.env]`);
-    expect(config).toContain(`RUDDER_BROWSER_ENABLED = "${expected}"`);
+    expect(config).toContain(`[mcp_servers.rudder-tools]`);
+    expect(config).not.toContain(`[mcp_servers.rudder-tools.env]\nRUDDER_BROWSER_ENABLED`);
+    if (expected === "true") {
+      expect(config).toContain(`[mcp_servers.rudder-browser]`);
+      expect(config).toContain(`[mcp_servers.rudder-browser.env]`);
+      expect(config).toContain(`RUDDER_BROWSER_ENABLED = "true"`);
+    } else {
+      expect(config).not.toContain(`[mcp_servers.rudder-browser]`);
+    }
   });
 
   it("strips inherited Codex service_tier default values unsupported by current Codex", async () => {

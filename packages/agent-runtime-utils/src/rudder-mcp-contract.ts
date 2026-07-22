@@ -35,12 +35,178 @@ function mcpStringArray(description: string): Record<string, unknown> {
   return { type: "array", items: { type: "string" }, description };
 }
 
+function browserMcpInputSchema(id: string): {
+  type: "object";
+  additionalProperties: false;
+  properties: Record<string, unknown>;
+  required?: string[];
+} {
+  const string = (description: string, extra: Record<string, unknown> = {}) => ({ type: "string", description, ...extra });
+  const number = (description: string, extra: Record<string, unknown> = {}) => ({ type: "number", description, ...extra });
+  const boolean = (description: string) => ({ type: "boolean", description });
+  const schema = (properties: Record<string, unknown>, required: string[] = []) => ({
+    type: "object" as const,
+    additionalProperties: false as const,
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+  });
+  const locatorAtom = schema({
+    strategy: string("Locator strategy.", { enum: ["css", "testId", "href", "role", "label", "placeholder", "text"] }),
+    value: string("Selector, role, label, placeholder, href, test id, or text value.", { minLength: 1, maxLength: 2_000 }),
+    name: string("Accessible name used with the role strategy.", { maxLength: 2_000 }),
+    exact: boolean("Require an exact text or attribute match."),
+  }, ["strategy", "value"]);
+  const simpleLocator = schema({
+    ...locatorAtom.properties,
+    filter: schema({
+      hasText: string("Required descendant text.", { maxLength: 2_000 }),
+      hasNotText: string("Excluded descendant text.", { maxLength: 2_000 }),
+      visible: boolean("Filter by current visibility."),
+      has: locatorAtom,
+      hasNot: locatorAtom,
+    }),
+    and: locatorAtom,
+    or: locatorAtom,
+    index: number("Zero-based locator match index.", { minimum: 0, maximum: 499 }),
+    position: string("Locator endpoint after an explicit count.", { enum: ["first", "last"] }),
+  }, ["strategy", "value"]);
+  const locator = schema({
+    ...simpleLocator.properties,
+    frame: { type: "array", maxItems: 8, items: string("CSS iframe selector.", { minLength: 1, maxLength: 1_000 }) },
+    scope: simpleLocator,
+  }, ["strategy", "value"]);
+  const baseTab = { tabId: string("Run-owned Rudder Browser tab id.", { minLength: 1, maxLength: 160 }) };
+
+  switch (id) {
+    case "browser.tabs":
+    case "browser.user-tabs": return schema({});
+    case "browser.open": return schema({ url: string("HTTP or HTTPS URL.", { minLength: 1, maxLength: 8_192 }) }, ["url"]);
+    case "browser.navigate": return schema({ ...baseTab, url: string("HTTP or HTTPS URL.", { minLength: 1, maxLength: 8_192 }) }, ["tabId", "url"]);
+    case "browser.back":
+    case "browser.forward":
+    case "browser.reload":
+    case "browser.read":
+    case "browser.close": return schema(baseTab, ["tabId"]);
+    case "browser.viewport": return schema({
+      action: string("Viewport action.", { enum: ["get", "set", "reset"] }),
+      width: number("Viewport width in CSS pixels.", { minimum: 320, maximum: 3_840 }),
+      height: number("Viewport height in CSS pixels.", { minimum: 240, maximum: 2_160 }),
+    }, ["action"]);
+    case "browser.visibility": return schema({ visible: boolean("Whether the selected Agent Browser tab is visible.") });
+    case "browser.snapshot": return schema({
+      ...baseTab,
+      boxes: boolean("Include viewport-relative element boxes."),
+      depth: number("Maximum snapshot tree depth.", { minimum: 1, maximum: 30 }),
+      maxNodes: number("Maximum snapshot nodes.", { minimum: 1, maximum: 3_000 }),
+    }, ["tabId"]);
+    case "browser.locator": return schema({
+      ...baseTab,
+      action: string("Read-only locator action.", { enum: ["count", "allTextContents", "textContent", "innerText", "attribute", "visible", "enabled", "checked", "selected", "wait"] }),
+      locator,
+      name: string("Attribute name for attribute reads.", { maxLength: 200 }),
+      state: string("Wait state.", { enum: ["attached", "detached", "visible", "hidden"] }),
+      timeoutMs: number("Wait timeout in milliseconds.", { minimum: 0, maximum: 30_000 }),
+    }, ["tabId", "action", "locator"]);
+    case "browser.cua": return schema({
+      ...baseTab,
+      action: string("Coordinate input or inspection action.", { enum: ["click", "doubleClick", "move", "scroll", "drag", "keypress", "type", "elementInfo"] }),
+      x: number("Viewport X coordinate."),
+      y: number("Viewport Y coordinate."),
+      scrollX: number("Horizontal scroll delta."),
+      scrollY: number("Vertical scroll delta."),
+      button: { oneOf: [number("Mouse button number.", { minimum: 1, maximum: 5 }), string("Mouse button.", { enum: ["left", "middle", "right"] })] },
+      keys: { type: "array", maxItems: 10, items: string("Keyboard key or modifier.", { minLength: 1, maxLength: 100 }) },
+      text: string("Text to type.", { maxLength: 100_000 }),
+      path: { type: "array", minItems: 2, maxItems: 200, items: schema({ x: number("Path X coordinate."), y: number("Path Y coordinate.") }, ["x", "y"]) },
+    }, ["tabId", "action"]);
+    case "browser.dom-cua": return schema({
+      ...baseTab,
+      action: string("Read-only DOM snapshot action.", { enum: ["get"] }),
+      depth: number("Maximum DOM depth.", { minimum: 1, maximum: 30 }),
+      maxNodes: number("Maximum DOM nodes.", { minimum: 1, maximum: 3_000 }),
+    }, ["tabId", "action"]);
+    case "browser.dialog": return schema({
+      ...baseTab,
+      action: string("Dialog action.", { enum: ["get", "accept", "dismiss"] }),
+      promptText: string("Prompt response text.", { maxLength: 10_000 }),
+    }, ["tabId", "action"]);
+    case "browser.clipboard": return schema({
+      action: string("Virtual clipboard action.", { enum: ["read", "readText", "write", "writeText", "clear"] }),
+      text: string("Plain clipboard text.", { maxLength: 500_000 }),
+      items: {
+        type: "array",
+        maxItems: 20,
+        items: schema({
+          presentationStyle: string("Clipboard presentation style.", { enum: ["unspecified", "inline", "attachment"] }),
+          entries: {
+            type: "array",
+            maxItems: 20,
+            items: schema({
+              mimeType: string("Clipboard MIME type.", { minLength: 1, maxLength: 200 }),
+              text: string("Text clipboard payload.", { maxLength: 500_000 }),
+              base64: string("Base64 clipboard payload.", { maxLength: 650_000 }),
+            }, ["mimeType"]),
+          },
+        }, ["entries"]),
+      },
+    }, ["action"]);
+    case "browser.logs": return schema({
+      ...baseTab,
+      levels: { type: "array", maxItems: 5, items: string("Log level.", { enum: ["debug", "info", "log", "warn", "error"] }) },
+      filter: string("Case-insensitive log substring filter.", { maxLength: 2_000 }),
+      limit: number("Maximum log entries.", { minimum: 1, maximum: 500 }),
+      clear: boolean("Clear the tab log buffer after reading."),
+    }, ["tabId"]);
+    case "browser.download": return schema({
+      ...baseTab,
+      mode: string("Read-only media download mode.", { enum: ["media"] }),
+      locator,
+    }, ["tabId", "mode", "locator"]);
+    case "browser.assets": return schema({
+      ...baseTab,
+      action: string("Asset action.", { enum: ["list", "bundle"] }),
+      inventoryId: string("Prior asset inventory id.", { maxLength: 160 }),
+      assetIds: { type: "array", minItems: 1, maxItems: 100, items: string("Asset id.", { maxLength: 160 }) },
+      kinds: { type: "array", minItems: 1, maxItems: 4, items: string("Asset kind.", { enum: ["font", "image", "stylesheet", "video"] }) },
+    }, ["tabId", "action"]);
+    case "browser.content": return schema({
+      ...baseTab,
+      format: string("Content export format.", { enum: ["text", "pdf", "md", "docx", "xlsx", "csv", "pptx"] }),
+    }, ["tabId", "format"]);
+    case "browser.wait": return schema({
+      ...baseTab,
+      url: string("URL substring.", { maxLength: 8_192 }),
+      text: string("Text that must appear.", { maxLength: 10_000 }),
+      textGone: string("Text that must disappear.", { maxLength: 10_000 }),
+      timeMs: number("Fixed bounded delay in milliseconds.", { minimum: 0, maximum: 30_000 }),
+      timeoutMs: number("Wait timeout in milliseconds.", { minimum: 0, maximum: 30_000 }),
+    }, ["tabId"]);
+    case "browser.click": return schema({ ...baseTab, ref: string("Element reference returned by rudder_browser_read.", { maxLength: 160 }) }, ["tabId", "ref"]);
+    case "browser.type": return schema({
+      ...baseTab,
+      ref: string("Element reference returned by rudder_browser_read.", { maxLength: 160 }),
+      text: string("Text to enter.", { maxLength: 100_000 }),
+      submit: boolean("Submit the owning form after typing."),
+    }, ["tabId", "ref", "text"]);
+    case "browser.screenshot": return schema({
+      ...baseTab,
+      fullPage: boolean("Capture the full scrollable page."),
+      format: string("Image format.", { enum: ["png", "jpeg"] }),
+      quality: number("JPEG quality.", { minimum: 1, maximum: 100 }),
+      clip: schema({ x: number("Clip X coordinate."), y: number("Clip Y coordinate."), width: number("Clip width.", { minimum: 1 }), height: number("Clip height.", { minimum: 1 }) }, ["x", "y", "width", "height"]),
+      locator,
+    }, ["tabId"]);
+    default: return schema({});
+  }
+}
+
 export function rudderMcpInputSchemaForCapability(id: string): {
   type: "object";
   additionalProperties: false;
   properties: Record<string, unknown>;
   required?: string[];
 } {
+  if (id.startsWith("browser.")) return browserMcpInputSchema(id);
   const properties: Record<string, unknown> = {};
   const add = (key: string, value: Record<string, unknown>) => {
     properties[key] = value;

@@ -4,7 +4,7 @@ import type { BrowserAgentCommand } from "./browser-agent-tabs.js";
 import { BrowserAgentError } from "./browser-agent-tabs.js";
 
 const MAX_BROWSER_COMMAND_BYTES = 1_048_576;
-const BROWSER_COMMAND_DEADLINE_MS = 10_000;
+const BROWSER_COMMAND_DEADLINE_MS = 35_000;
 
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
@@ -84,10 +84,18 @@ export async function startBrowserBrokerServer(options: {
       sendJson(response, 401, { ok: false, error: { code: "browser_broker_unauthorized", message: "Unauthorized." } });
       return;
     }
+    const operationAbort = new AbortController();
+    const abortOperation = () => operationAbort.abort();
+    const abortOnEarlyClose = () => {
+      if (!response.writableEnded) operationAbort.abort();
+    };
+    request.once("aborted", abortOperation);
+    response.once("close", abortOnEarlyClose);
     try {
       const command = {
         ...await readJsonBody(request) as BrowserAgentCommand,
         deadlineAt: Date.now() + BROWSER_COMMAND_DEADLINE_MS,
+        signal: operationAbort.signal,
       };
       const result = await options.execute(command);
       sendJson(response, 200, { ok: true, result });
@@ -97,6 +105,9 @@ export async function startBrowserBrokerServer(options: {
         ok: false,
         error: { code: safeError.code, message: safeError.message },
       });
+    } finally {
+      request.off("aborted", abortOperation);
+      response.off("close", abortOnEarlyClose);
     }
   });
 

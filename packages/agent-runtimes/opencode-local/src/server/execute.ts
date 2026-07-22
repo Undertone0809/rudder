@@ -1,9 +1,11 @@
 import {
+  RUDDER_BROWSER_MCP_SERVER_NAME,
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
   applyRudderBrowserCapabilityEnv,
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
+  rudderBrowserMcpRuntimeMetadata,
   rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
@@ -13,9 +15,13 @@ import {
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   assertRudderMcpCoreAvailable,
+  preflightRudderBrowserMcpServer,
   preflightRudderMcpServer,
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
-import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
+import {
+  resolveRudderBrowserMcpCliCommand,
+  resolveRudderMcpCliCommand,
+} from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import {
   asBoolean,
   asNumber,
@@ -45,6 +51,7 @@ import {
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -234,6 +241,7 @@ export async function resolveRudderOpenCodeMcpConfig(
     ...(rudderMcp.env ?? {}),
     ...managedEnv,
   };
+  delete env.RUDDER_BROWSER_ENABLED;
   return {
     type: "local",
     command: [rudderMcp.command, ...rudderMcp.args],
@@ -242,35 +250,62 @@ export async function resolveRudderOpenCodeMcpConfig(
   };
 }
 
+export async function resolveRudderOpenCodeMcpConfigs(
+  managedEnv: RudderMcpManagedEnv = {},
+  verifiedCommand?: RudderMcpCliCommand,
+  verifiedBrowserCommand?: RudderMcpCliCommand,
+): Promise<Record<string, Record<string, unknown>>> {
+  const configs: Record<string, Record<string, unknown>> = {
+    [RUDDER_MCP_SERVER_NAME]: await resolveRudderOpenCodeMcpConfig(managedEnv, verifiedCommand),
+  };
+  if (managedEnv.RUDDER_BROWSER_ENABLED === "true") {
+    const browserMcp = verifiedBrowserCommand ?? await resolveRudderBrowserMcpCliCommand(__moduleDir);
+    const env = { ...(browserMcp.env ?? {}), ...managedEnv };
+    configs[RUDDER_BROWSER_MCP_SERVER_NAME] = {
+      type: "local",
+      command: [browserMcp.command, ...browserMcp.args],
+      enabled: true,
+      ...(Object.keys(env).length > 0 ? { environment: env } : {}),
+    };
+  }
+  return configs;
+}
+
 async function ensureManagedOpenCodeConfig(input: {
   sourceHome: string;
   targetHome: string;
+  configPath?: string;
   managedEnv?: RudderMcpManagedEnv;
   verifiedCommand?: RudderMcpCliCommand;
+  verifiedBrowserCommand?: RudderMcpCliCommand;
   onLog: AgentRuntimeExecutionContext["onLog"];
 }) {
-  const configDir = path.join(input.targetHome, ".config", "opencode");
+  const configDir = input.configPath
+    ? path.dirname(input.configPath)
+    : path.join(input.targetHome, ".config", "opencode");
   const existing = await fs.lstat(configDir).catch(() => null);
   if (existing?.isSymbolicLink()) {
     await fs.unlink(configDir);
   }
 
   await fs.mkdir(configDir, { recursive: true });
-  await removeManagedOpenCodeConfigExtensions(configDir);
+  if (!input.configPath) await removeManagedOpenCodeConfigExtensions(configDir);
 
   const config = await readOpenCodeConfigFile(input.sourceHome);
-  config.mcp = {
-    [RUDDER_MCP_SERVER_NAME]: await resolveRudderOpenCodeMcpConfig(
-      input.managedEnv ?? {},
-      input.verifiedCommand,
-    ),
-  };
-  await fs.writeFile(
-    path.join(configDir, MANAGED_OPENCODE_CONFIG_FILE),
-    `${JSON.stringify(config, null, 2)}\n`,
-    { encoding: "utf8", mode: 0o600 },
+  config.mcp = await resolveRudderOpenCodeMcpConfigs(
+    input.managedEnv ?? {},
+    input.verifiedCommand,
+    input.verifiedBrowserCommand,
   );
-  await fs.chmod(path.join(configDir, MANAGED_OPENCODE_CONFIG_FILE), 0o600);
+  const configPath = input.configPath ?? path.join(configDir, MANAGED_OPENCODE_CONFIG_FILE);
+  const tempPath = `${configPath}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tempPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await fs.rename(tempPath, configPath);
+    await fs.chmod(configPath, 0o600);
+  } finally {
+    await fs.rm(tempPath, { force: true });
+  }
   await input.onLog(
     "stdout",
     `[rudder] Wrote sanitized OpenCode config into adapter-managed runtime state ${configDir}.\n`,
@@ -493,8 +528,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     operatorHome,
     onLog,
     agent.orgId,
-    pickRudderMcpManagedEnv(env),
+    {},
   );
+  const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
+  await fs.mkdir(runtimeTmpDir, { recursive: true });
+  try {
+  const runConfigPath = path.join(runtimeTmpDir, MANAGED_OPENCODE_CONFIG_FILE);
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
     home: managedHome,
@@ -503,7 +542,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
   env.HOME = operatorHome;
   env.USERPROFILE = operatorHome;
-  env.OPENCODE_CONFIG = path.join(managedHome, ".config", "opencode", MANAGED_OPENCODE_CONFIG_FILE);
+  env.OPENCODE_CONFIG = runConfigPath;
   env.OPENCODE_DISABLE_CLAUDE_CODE = "true";
   env.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT = "true";
   env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = "true";
@@ -534,16 +573,24 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     command: rudderMcpCommand,
     runtimeEnv,
     managedEnv: pickRudderMcpManagedEnv(env),
-    browserEnabled,
+    browserEnabled: false,
   });
   assertRudderMcpCoreAvailable(rudderMcpPreflight);
   delete runtimeEnv.RUDDER_DESKTOP_CLI_ENTRY;
   delete runtimeEnv.RUDDER_MCP_RUDDER_BIN;
-  if (browserEnabled && !rudderMcpPreflight?.browserAvailable) {
+  const browserMcpCommand = browserEnabled ? await resolveRudderBrowserMcpCliCommand(__moduleDir) : null;
+  const browserMcpPreflight = browserMcpCommand
+    ? await preflightRudderBrowserMcpServer({
+        command: browserMcpCommand,
+        runtimeEnv,
+        managedEnv: pickRudderMcpManagedEnv(env),
+      })
+    : null;
+  if (browserEnabled && !browserMcpPreflight?.browserAvailable) {
     browserEnabled = false;
     env.RUDDER_BROWSER_ENABLED = "false";
     runtimeEnv.RUDDER_BROWSER_ENABLED = "false";
-    await onLog("stderr", `[rudder] ${rudderMcpPreflight?.diagnostic}\n`);
+    await onLog("stderr", `[rudder] ${browserMcpPreflight?.diagnostic}\n`);
   }
   const effectiveDesiredOpenCodeSkillNames = filterRudderDesiredSkillsForBrowserCapability(
     openCodeSkillEntries,
@@ -575,8 +622,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   await ensureManagedOpenCodeConfig({
     sourceHome: operatorHome,
     targetHome: managedHome,
+    configPath: runConfigPath,
     managedEnv: pickRudderMcpManagedEnv(env),
     verifiedCommand: rudderMcpCommand,
+    verifiedBrowserCommand: browserMcpCommand ?? undefined,
     onLog,
   });
   await ensureCommandResolvable(command, cwd, runtimeEnv);
@@ -701,8 +750,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };
-  const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
-  await fs.mkdir(runtimeTmpDir, { recursive: true });
   const promptFilePath = path.join(runtimeTmpDir, "rudder-prompt.md");
   await fs.writeFile(promptFilePath, prompt, "utf8");
   const useStdinPrompt = context.chatMode === true;
@@ -756,6 +803,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         realizedSkills: loadedSkills,
         promptInjectedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
+        browserMcp: rudderBrowserMcpRuntimeMetadata({
+          available: browserEnabled,
+          preflight: browserMcpPreflight,
+        }),
         context,
       });
     }
@@ -971,4 +1022,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
 
   return toResult(initial);
+  } finally {
+    await fs.rm(runtimeTmpDir, { recursive: true, force: true });
+  }
 }

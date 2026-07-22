@@ -1,9 +1,11 @@
 import {
+  RUDDER_BROWSER_MCP_SERVER_NAME,
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
   applyRudderBrowserCapabilityEnv,
   pickRudderMcpManagedEnv,
   resolveOrganizationStorageKey,
+  rudderBrowserMcpRuntimeMetadata,
   rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
@@ -14,9 +16,13 @@ import {
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   assertRudderMcpCoreAvailable,
+  preflightRudderBrowserMcpServer,
   preflightRudderMcpServer,
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
-import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
+import {
+  resolveRudderBrowserMcpCliCommand,
+  resolveRudderMcpCliCommand,
+} from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import type { RunProcessResult } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   asBoolean,
@@ -42,6 +48,7 @@ import {
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -168,8 +175,14 @@ async function readJsonObject(filePath: string): Promise<Record<string, unknown>
 
 async function writePrivateJsonFile(filePath: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await fs.chmod(filePath, 0o600);
+  const tempPath = `${filePath}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await fs.rename(tempPath, filePath);
+    await fs.chmod(filePath, 0o600);
+  } finally {
+    await fs.rm(tempPath, { force: true });
+  }
 }
 
 export async function resolveRudderMcpServerConfig(
@@ -181,12 +194,34 @@ export async function resolveRudderMcpServerConfig(
     ...(rudderMcp.env ?? {}),
     ...managedEnv,
   };
+  delete env.RUDDER_BROWSER_ENABLED;
   return {
     type: "stdio",
     command: rudderMcp.command,
     args: rudderMcp.args,
     ...(Object.keys(env).length > 0 ? { env } : {}),
   };
+}
+
+export async function resolveRudderMcpServerConfigs(
+  managedEnv: RudderMcpManagedEnv = {},
+  verifiedCommand?: RudderMcpCliCommand,
+  verifiedBrowserCommand?: RudderMcpCliCommand,
+): Promise<Record<string, Record<string, unknown>>> {
+  const configs: Record<string, Record<string, unknown>> = {
+    [RUDDER_MCP_SERVER_NAME]: await resolveRudderMcpServerConfig(managedEnv, verifiedCommand),
+  };
+  if (managedEnv.RUDDER_BROWSER_ENABLED === "true") {
+    const browserMcp = verifiedBrowserCommand ?? await resolveRudderBrowserMcpCliCommand(__moduleDir);
+    const env = { ...(browserMcp.env ?? {}), ...managedEnv };
+    configs[RUDDER_BROWSER_MCP_SERVER_NAME] = {
+      type: "stdio",
+      command: browserMcp.command,
+      args: browserMcp.args,
+      ...(Object.keys(env).length > 0 ? { env } : {}),
+    };
+  }
+  return configs;
 }
 
 async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: string): Promise<string> {
@@ -200,12 +235,9 @@ async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: stri
     if (typeof value === "string" && value.trim().length > 0) authEnv[key] = value;
   }
 
-  const rudderMcp = await resolveRudderMcpServerConfig();
   const sanitized = {
     ...(Object.keys(authEnv).length > 0 ? { env: authEnv } : {}),
-    mcpServers: {
-      [RUDDER_MCP_SERVER_NAME]: rudderMcp,
-    },
+    mcpServers: await resolveRudderMcpServerConfigs(),
   };
   await writePrivateJsonFile(targetSettingsPath, sanitized);
   return targetSettingsPath;
@@ -215,13 +247,15 @@ async function writeManagedClaudeMcpConfig(
   targetHome: string,
   managedEnv: RudderMcpManagedEnv = {},
   verifiedCommand?: RudderMcpCliCommand,
+  verifiedBrowserCommand?: RudderMcpCliCommand,
 ): Promise<string> {
   const configPath = path.join(targetHome, ".claude", "rudder-mcp.json");
-  const rudderMcp = await resolveRudderMcpServerConfig(managedEnv, verifiedCommand);
   await writePrivateJsonFile(configPath, {
-    mcpServers: {
-      [RUDDER_MCP_SERVER_NAME]: rudderMcp,
-    },
+    mcpServers: await resolveRudderMcpServerConfigs(
+      managedEnv,
+      verifiedCommand,
+      verifiedBrowserCommand,
+    ),
   });
   return configPath;
 }
@@ -315,6 +349,7 @@ interface ClaudeRuntimeConfig {
   mcpConfigPath: string;
   runtimeTmpDir: string;
   rudderMcpPreflight: RudderMcpPreflightResult | null;
+  browserMcpPreflight: RudderMcpPreflightResult | null;
 }
 
 function buildLoginResult(input: {
@@ -510,6 +545,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
   await fs.rm(runtimeTmpDir, { recursive: true, force: true });
   await fs.mkdir(runtimeTmpDir, { recursive: true });
+  try {
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
     home: managedHome,
@@ -535,19 +571,28 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     command: rudderMcpCommand,
     runtimeEnv,
     managedEnv: pickRudderMcpManagedEnv(env),
-    browserEnabled,
+    browserEnabled: false,
   });
   assertRudderMcpCoreAvailable(rudderMcpPreflight);
-  if (browserEnabled && !rudderMcpPreflight?.browserAvailable) {
+  const browserMcpCommand = browserEnabled ? await resolveRudderBrowserMcpCliCommand(__moduleDir) : null;
+  const browserMcpPreflight = browserMcpCommand
+    ? await preflightRudderBrowserMcpServer({
+        command: browserMcpCommand,
+        runtimeEnv,
+        managedEnv: pickRudderMcpManagedEnv(env),
+      })
+    : null;
+  if (browserEnabled && !browserMcpPreflight?.browserAvailable) {
     browserEnabled = false;
     env.RUDDER_BROWSER_ENABLED = "false";
     runtimeEnv.RUDDER_BROWSER_ENABLED = "false";
-    await (input.onLog ?? (async () => {}))("stderr", `[rudder] ${rudderMcpPreflight?.diagnostic}\n`);
+    await (input.onLog ?? (async () => {}))("stderr", `[rudder] ${browserMcpPreflight?.diagnostic}\n`);
   }
-  await writeManagedClaudeMcpConfig(
-    managedHome,
+  const mcpConfigPath = await writeManagedClaudeMcpConfig(
+    runtimeTmpDir,
     pickRudderMcpManagedEnv(env),
     rudderMcpCommand,
+    browserMcpCommand ?? undefined,
   );
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
@@ -571,10 +616,15 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     extraArgs,
     permissionMode,
     settingsPath: managedClaudeHome.settingsPath,
-    mcpConfigPath: managedClaudeHome.mcpConfigPath,
+    mcpConfigPath,
     runtimeTmpDir,
     rudderMcpPreflight,
+    browserMcpPreflight,
   };
+  } catch (error) {
+    await fs.rm(runtimeTmpDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export async function runClaudeLogin(input: {
@@ -595,24 +645,28 @@ export async function runClaudeLogin(input: {
     onLog,
   });
 
-  const proc = await runChildProcess(input.runId, runtime.command, ["auth", "login"], {
-    cwd: runtime.cwd,
-    env: runtime.env,
-    timeoutSec: runtime.timeoutSec,
-    graceSec: runtime.graceSec,
-    onLog,
-  });
+  try {
+    const proc = await runChildProcess(input.runId, runtime.command, ["auth", "login"], {
+      cwd: runtime.cwd,
+      env: runtime.env,
+      timeoutSec: runtime.timeoutSec,
+      graceSec: runtime.graceSec,
+      onLog,
+    });
 
-  const loginMeta = detectClaudeLoginRequired({
-    parsed: null,
-    stdout: proc.stdout,
-    stderr: proc.stderr,
-  });
+    const loginMeta = detectClaudeLoginRequired({
+      parsed: null,
+      stdout: proc.stdout,
+      stderr: proc.stderr,
+    });
 
-  return buildLoginResult({
-    proc,
-    loginUrl: loginMeta.loginUrl,
-  });
+    return buildLoginResult({
+      proc,
+      loginUrl: loginMeta.loginUrl,
+    });
+  } finally {
+    await fs.rm(runtime.runtimeTmpDir, { recursive: true, force: true });
+  }
 }
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
@@ -651,7 +705,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     mcpConfigPath,
     runtimeTmpDir,
     rudderMcpPreflight,
+    browserMcpPreflight,
   } = runtimeConfig;
+  try {
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -858,6 +914,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         loadedSkills,
         realizedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
+        browserMcp: rudderBrowserMcpRuntimeMetadata({
+          available: browserEnabled,
+          preflight: browserMcpPreflight,
+        }),
         context,
       });
     }
@@ -998,6 +1058,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
     return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
   } finally {
-    fs.rm(skillsDir, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(skillsDir, { recursive: true, force: true });
+  }
+  } finally {
+    await fs.rm(runtimeTmpDir, { recursive: true, force: true });
   }
 }

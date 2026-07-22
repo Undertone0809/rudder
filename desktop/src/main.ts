@@ -886,10 +886,12 @@ function initializeBrowserProfile(instanceRoot: string): void {
     createTab: createElectronBrowserAgentTabFactory({
       partition,
       createWindow: (windowOptions) => new BrowserWindow(windowOptions),
-      registerGuest: browserGuestRegistry.register,
+      registerGuest: (guest) => browserGuestRegistry.register(guest, "agent"),
       getRudderAppOrigins: collectRudderAppOrigins,
     }),
     getRudderAppOrigins: collectRudderAppOrigins,
+    listUserTabs: browserGuestRegistry.listUserTabs,
+
   });
   browserAgentTabController = agentTabs;
   browserRuntimeLifecycle = createDesktopBrowserRuntimeLifecycle({
@@ -1860,9 +1862,17 @@ async function openDesktopBugReport(): Promise<void> {
 }
 
 function registerIpc(): void {
+  const profileController = requireBrowserProfileController();
   registerBrowserIpcHandlers(ipcMain, {
     getMainRenderer: getCurrentMainRenderer,
-    controller: requireBrowserProfileController(),
+    controller: {
+      getPartition: () => profileController.getPartition(),
+      clearBrowserData: () => profileController.clearBrowserData(),
+      setEnabled: async (enabled) => {
+        await profileController.setEnabled(enabled);
+        if (serverHandle) await requireBrowserRuntimeLifecycle().connect(serverHandle.apiUrl);
+      },
+    },
     importer: requireBrowserCookieImporter(),
   });
   registerLocalAppsIpcHandlers(ipcMain, {

@@ -4,7 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { actorMiddleware } from "../middleware/auth.js";
-import { errorHandler, httpLogger } from "../middleware/index.js";
+import {
+  errorHandler,
+  httpLogger,
+  markBrowserHttpRequestBodySensitive,
+} from "../middleware/index.js";
 import { logger } from "../middleware/logger.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "../middleware/private-hostname-guard.js";
 import { createChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
@@ -92,6 +96,7 @@ export async function createHttpApp(
       (req as unknown as { rawBody: Buffer }).rawBody = buf;
     },
   }));
+  app.use(markBrowserHttpRequestBodySensitive);
   app.use(httpLogger);
   app.use(
     privateHostnameGuard({

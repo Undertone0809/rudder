@@ -28,10 +28,13 @@ import {
   organizationSkillCreateSchema,
   resetAgentSessionSchema,
   RUDDER_AGENT_V1_MCP_SERVER_NAME,
-  RUDDER_AGENT_V1_MCP_TOOL_NAMES,
+  RUDDER_BROWSER_MCP_SERVER_NAME,
+  RUDDER_BROWSER_MCP_TOOL_NAMES,
+  RUDDER_CORE_MCP_TOOL_NAMES,
   testAgentRuntimeEnvironmentSchema,
   updateAgentIntegrationSettingsSchema,
   updateCustomIntegrationBindingSchema,
+  type AgentBrowserToolSummary,
   type AgentIntegrationProviderRegion,
   type AgentIntegrationSetupSession,
   type AgentRudderToolSummary,
@@ -54,6 +57,10 @@ import { validate } from "../middleware/validate.js";
 import { redactEventPayload } from "../redaction.js";
 import { listAgentRuntimeAvailability } from "../services/agent-runtime-availability.js";
 import { assetService } from "../services/assets.js";
+import {
+  resolveBrowserCapability,
+  resolveBrowserCapabilityDeployment,
+} from "../services/browser-capability.js";
 import {
   loadDefaultAgentInstructionsBundle,
   resolveDefaultAgentInstructionsBundleRole,
@@ -161,7 +168,7 @@ function normalizeFeishuProviderRegion(value: unknown): AgentIntegrationProvider
   return value === "lark_global" ? "lark_global" : "feishu_cn";
 }
 
-function buildAgentRudderTools(): AgentRudderToolSummary[] {
+function buildAgentRudderTools(browserAvailable: boolean): Array<AgentRudderToolSummary | AgentBrowserToolSummary> {
   return [
     {
       id: RUDDER_AGENT_V1_MCP_SERVER_NAME,
@@ -171,10 +178,23 @@ function buildAgentRudderTools(): AgentRudderToolSummary[] {
       scope: "runtime",
       serverName: RUDDER_AGENT_V1_MCP_SERVER_NAME,
       contract: "agent-v1",
-      toolCount: RUDDER_AGENT_V1_MCP_TOOL_NAMES.length,
-      tools: [...RUDDER_AGENT_V1_MCP_TOOL_NAMES],
+      toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+      tools: [...RUDDER_CORE_MCP_TOOL_NAMES],
       authMode: "runtime_managed",
       cliFallbackAvailable: true,
+    },
+    {
+      id: RUDDER_BROWSER_MCP_SERVER_NAME,
+      displayName: "Rudder Browser",
+      kind: "rudder_browser_mcp",
+      status: browserAvailable ? "available" : "disabled",
+      scope: "runtime",
+      serverName: RUDDER_BROWSER_MCP_SERVER_NAME,
+      contract: "browser-v1",
+      toolCount: browserAvailable ? RUDDER_BROWSER_MCP_TOOL_NAMES.length : 0,
+      tools: browserAvailable ? [...RUDDER_BROWSER_MCP_TOOL_NAMES] : [],
+      authMode: "runtime_managed",
+      cliFallbackAvailable: false,
     },
   ];
 }
@@ -548,10 +568,11 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>,
     options?: { restricted?: boolean },
   ) {
-    const [chainOfCommand, accessState, integrations] = await Promise.all([
+    const [chainOfCommand, accessState, integrations, browserSettings] = await Promise.all([
       svc.getChainOfCommand(agent.id),
       buildAgentAccessState(agent),
       options?.restricted ? Promise.resolve([]) : integrationsSvc.listForAgent(agent.orgId, agent.id),
+      options?.restricted ? Promise.resolve(null) : instanceSettings.getBrowser(),
     ]);
     const internalAgent = options?.restricted || typeof svc.getInternalById !== "function"
       ? null
@@ -565,6 +586,13 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     const instructionsLibraryPath = instructionsBundle?.mode === "managed"
       ? `agents/${resolveStoredOrDerivedAgentWorkspaceKey(internalAgent ?? agent)}/instructions`
       : null;
+    const browserAvailable = browserSettings
+      ? resolveBrowserCapability({
+          deploymentMode: resolveBrowserCapabilityDeployment(db),
+          browserEnabled: browserSettings.enabled,
+          agentRuntimeType: agent.agentRuntimeType,
+        }).runEligible
+      : false;
 
     return {
       ...(options?.restricted ? redactForRestrictedAgentView(agent) : publicAgent),
@@ -572,7 +600,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       access: accessState,
       instructionsLibraryPath,
       ...(options?.restricted ? {} : {
-        rudderTools: buildAgentRudderTools(),
+        rudderTools: buildAgentRudderTools(browserAvailable),
         integrations,
       }),
     };

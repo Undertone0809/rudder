@@ -2,7 +2,10 @@
 
 import {
   RUDDER_AGENT_V1_MCP_SERVER_NAME,
-  RUDDER_AGENT_V1_MCP_TOOL_NAMES,
+  RUDDER_BROWSER_MCP_SERVER_NAME,
+  RUDDER_BROWSER_MCP_TOOL_NAMES,
+  RUDDER_CORE_MCP_TOOL_NAMES,
+  type AgentBrowserToolSummary,
   type AgentDetail,
   type AgentIntegrationSummary,
   type AgentRudderToolSummary,
@@ -163,7 +166,7 @@ function agent(overrides: Partial<AgentDetail> = {}): AgentDetail {
     chainOfCommand: [],
     access: { membership: null, grants: [], canAssignTasks: false, taskAssignSource: "none" },
     instructionsLibraryPath: null,
-    rudderTools: [rudderToolSummary()],
+    rudderTools: [rudderToolSummary(), browserToolSummary()],
     integrations: [],
     ...overrides,
   };
@@ -178,10 +181,27 @@ function rudderToolSummary(overrides: Partial<AgentRudderToolSummary> = {}): Age
     scope: "runtime",
     serverName: RUDDER_AGENT_V1_MCP_SERVER_NAME,
     contract: "agent-v1",
-    toolCount: RUDDER_AGENT_V1_MCP_TOOL_NAMES.length,
-    tools: [...RUDDER_AGENT_V1_MCP_TOOL_NAMES],
+    toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+    tools: [...RUDDER_CORE_MCP_TOOL_NAMES],
     authMode: "runtime_managed",
     cliFallbackAvailable: true,
+    ...overrides,
+  };
+}
+
+function browserToolSummary(overrides: Partial<AgentBrowserToolSummary> = {}): AgentBrowserToolSummary {
+  return {
+    id: RUDDER_BROWSER_MCP_SERVER_NAME,
+    displayName: "Rudder Browser",
+    kind: "rudder_browser_mcp",
+    status: "available",
+    scope: "runtime",
+    serverName: RUDDER_BROWSER_MCP_SERVER_NAME,
+    contract: "browser-v1",
+    toolCount: RUDDER_BROWSER_MCP_TOOL_NAMES.length,
+    tools: [...RUDDER_BROWSER_MCP_TOOL_NAMES],
+    authMode: "runtime_managed",
+    cliFallbackAvailable: false,
     ...overrides,
   };
 }
@@ -284,7 +304,7 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).not.toContain("Create a Feishu bot named Wesley - Rudder");
   });
 
-  it("renders built-in Rudder MCP tools in manage view without custom integration actions", () => {
+  it("renders distinct core and Browser built-ins in manage view without mixing their tools", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
     const manageButton = [...container.querySelectorAll("button")]
       .find((button) => button.textContent === "Manage");
@@ -294,8 +314,13 @@ describe("AgentIntegrationsTab", () => {
     });
 
     expect(container.textContent).toContain("Rudder MCP tools");
+    expect(container.textContent).toContain("Rudder Browser");
     expect(container.textContent).toContain("rudder-tools");
-    expect(container.textContent).toContain(`${RUDDER_AGENT_V1_MCP_TOOL_NAMES.length} exposed`);
+    expect(container.textContent).toContain("rudder-browser");
+    expect(container.textContent).toContain(`${RUDDER_CORE_MCP_TOOL_NAMES.length} exposed`);
+    expect(container.textContent).toContain(`${RUDDER_BROWSER_MCP_TOOL_NAMES.length} exposed`);
+    expect(container.textContent).toContain("agent-v1");
+    expect(container.textContent).toContain("browser-v1");
     expect(container.textContent).toContain("Runtime managed");
     expect(container.textContent).toContain("No user credential");
     expect(container.textContent).toContain("rudder_agent_me");
@@ -303,6 +328,39 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).not.toContain("No connected integrations");
     expect(container.textContent).not.toContain("Credential stored");
     expect(container.querySelector('img[src="/rudder-logo.png"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="Rudder MCP tools list"]')?.textContent)
+      .not.toContain("rudder_browser_tabs");
+    expect(container.querySelector('[aria-label="Rudder Browser tools list"]')?.textContent)
+      .toContain("rudder_browser_tabs");
+    expect(container.querySelector('[aria-label="Rudder Browser integration"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="Rudder MCP tools integration"]')).toBeTruthy();
+    expect(container.textContent).toContain("Built-in2");
+  });
+
+  it("shows a disabled Browser built-in with zero exposed tools while core stays available", () => {
+    const container = render(<AgentIntegrationsTab
+      agent={agent({
+        rudderTools: [
+          rudderToolSummary(),
+          browserToolSummary({ status: "disabled", toolCount: 0, tools: [] }),
+        ],
+      })}
+      orgId="org-1"
+    />);
+    const manageButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Manage");
+
+    act(() => {
+      manageButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const coreRow = container.querySelector('[aria-label="Rudder MCP tools integration"]');
+    const browserRow = container.querySelector('[aria-label="Rudder Browser integration"]');
+    expect(coreRow?.textContent).toContain("Available");
+    expect(coreRow?.textContent).toContain(`${RUDDER_CORE_MCP_TOOL_NAMES.length} exposed`);
+    expect(browserRow?.textContent).toContain("Disabled");
+    expect(browserRow?.textContent).toContain("0 exposed");
+    expect(browserRow?.textContent).not.toContain("rudder_browser_tabs");
   });
 
   it("uses the larger integration action radius on catalog buttons", () => {

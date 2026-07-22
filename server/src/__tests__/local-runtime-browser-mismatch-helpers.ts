@@ -32,8 +32,9 @@ export type InstalledVersionMismatchedDesktopMcp = {
   restore: () => void;
 };
 
-export async function installVersionMismatchedDesktopMcp(
+async function installDesktopMcpFixture(
   root: string,
+  responseVersion: string,
 ): Promise<InstalledVersionMismatchedDesktopMcp> {
   const fixtureDir = path.join(FIXTURE_ROOT, path.basename(root));
   const cliDir = path.join(fixtureDir, "Contents", "Resources", "app");
@@ -54,6 +55,8 @@ export async function installVersionMismatchedDesktopMcp(
 const readline = require("node:readline");
 const tools = ${JSON.stringify(RUDDER_MCP_CANONICAL_TOOL_CONTRACTS)};
 const coreTools = tools.filter((tool) => !tool.name.startsWith("rudder_browser_"));
+const browserTools = tools.filter((tool) => tool.name.startsWith("rudder_browser_"));
+const browserMode = process.argv.includes("browser");
 const lines = readline.createInterface({ input: process.stdin });
 (async () => {
   for await (const line of lines) {
@@ -67,12 +70,12 @@ const lines = readline.createInterface({ input: process.stdin });
           coreContractHash: ${JSON.stringify(RUDDER_CORE_MCP_CONTRACT_HASH)},
           browserContractHash: ${JSON.stringify(RUDDER_BROWSER_MCP_CONTRACT_HASH)},
         } } },
-        serverInfo: { name: "rudder-tools", version: "0.4.5" },
+        serverInfo: { name: browserMode ? "rudder-browser" : "rudder-tools", version: browserMode ? ${JSON.stringify(responseVersion)} : "0.4.6" },
       } }));
     }
     if (request.method === "tools/list") {
       console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {
-        tools: process.env.RUDDER_BROWSER_ENABLED === "false" ? coreTools : tools,
+        tools: browserMode ? browserTools : coreTools,
       } }));
     }
   }
@@ -94,6 +97,18 @@ const lines = readline.createInterface({ input: process.stdin });
       else delete process.env.RUDDER_DESKTOP_CLI_ENTRY;
     },
   };
+}
+
+export async function installCanonicalDesktopMcp(
+  root: string,
+): Promise<InstalledVersionMismatchedDesktopMcp> {
+  return installDesktopMcpFixture(root, "0.4.6");
+}
+
+export async function installVersionMismatchedDesktopMcp(
+  root: string,
+): Promise<InstalledVersionMismatchedDesktopMcp> {
+  return installDesktopMcpFixture(root, "0.4.5");
 }
 
 export async function readMcpToolNames(input: {

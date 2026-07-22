@@ -84,12 +84,29 @@ operating-practices guide for operating behavior:
 | `rudder_skill_scan_local` | `rudder skill scan-local --org-id <id> [--roots <csv>]` | Scan local roots for skill packages and import new ones. | yes | required | no | attached when available |
 | `rudder_skill_scan_projects` | `rudder skill scan-projects --org-id <id> [--project-ids <csv>] [--workspace-ids <csv>]` | Scan the org workspace and any legacy project workspace records for skill packages and import new ones. | yes | required | no | attached when available |
 | `rudder_browser_tabs` | `rudder browser tabs` | List Browser tabs owned by the current Rudder agent run. | no | required | required | required |
+| `rudder_browser_user_tabs` | `rudder browser user-tabs` | List user-visible tabs currently open in Rudder's built-in Browser without taking control of them. | no | required | required | required |
 | `rudder_browser_open` | `rudder browser open <url>` | Open a run-owned tab in the Rudder Browser. | yes | required | required | required |
 | `rudder_browser_navigate` | `rudder browser navigate <tab-id> <url>` | Navigate a run-owned Rudder Browser tab. | yes | required | required | required |
+| `rudder_browser_back` | `rudder browser back <tab-id>` | Navigate a run-owned Rudder Browser tab back in history. | yes | required | required | required |
+| `rudder_browser_forward` | `rudder browser forward <tab-id>` | Navigate a run-owned Rudder Browser tab forward in history. | yes | required | required | required |
+| `rudder_browser_reload` | `rudder browser reload <tab-id>` | Reload a run-owned Rudder Browser tab. | yes | required | required | required |
+| `rudder_browser_viewport` | `rudder browser viewport --action <get|set|reset> [--width <px> --height <px>]` | Inspect, set, or reset the responsive viewport for the current Rudder Browser run. | yes | required | required | required |
+| `rudder_browser_visibility` | `rudder browser visibility [--visible <true|false>]` | Inspect or change whether the current run's selected Rudder Browser tab is visible. | yes | required | required | required |
+| `rudder_browser_snapshot` | `rudder browser snapshot <tab-id> [--input <json>]` | Capture a bounded DOM and accessibility-oriented snapshot, including frame structure and ephemeral node ids. | no | required | required | required |
+| `rudder_browser_locator` | `rudder browser locator <tab-id> --input <json>` | Perform read-only bounded Browser locator text, attribute, state, count, or wait operations. | no | required | required | required |
+| `rudder_browser_cua` | `rudder browser cua <tab-id> --input <json>` | Perform trusted coordinate mouse, scroll, drag, keyboard, and text input in a run-owned Browser tab. | yes | required | required | required |
+| `rudder_browser_dom_cua` | `rudder browser dom-cua <tab-id> --input <json>` | Inspect a bounded read-only DOM snapshot with ephemeral node ids. | no | required | required | required |
+| `rudder_browser_dialog` | `rudder browser dialog <tab-id> --input <json>` | Inspect, accept, or dismiss the active JavaScript dialog in a run-owned Browser tab. | yes | required | required | required |
+| `rudder_browser_clipboard` | `rudder browser clipboard --input <json>` | Read or write the isolated virtual clipboard for the current Browser run without touching the OS clipboard. | yes | required | required | required |
+| `rudder_browser_logs` | `rudder browser logs <tab-id> [--input <json>]` | Read bounded console and runtime logs captured for a run-owned Browser tab. | yes | required | required | required |
+| `rudder_browser_download` | `rudder browser download <tab-id> --input <json>` | Download explicit locator media without dispatching page input into a bounded run-owned artifact. | yes | required | required | required |
+| `rudder_browser_assets` | `rudder browser assets <tab-id> --input <json>` | List page assets or bundle an explicit bounded selection into a run-owned temporary artifact. | yes | required | required | required |
+| `rudder_browser_content` | `rudder browser content <tab-id> --input <json>` | Export current page content or an eligible Google Workspace document into a bounded run-owned artifact. | yes | required | required | required |
+| `rudder_browser_wait` | `rudder browser wait <tab-id> --input <json>` | Wait for bounded URL, text, disappearance, or time conditions in a run-owned Browser tab. | no | required | required | required |
 | `rudder_browser_read` | `rudder browser read <tab-id>` | Read a structured snapshot from a run-owned Rudder Browser tab. | no | required | required | required |
 | `rudder_browser_click` | `rudder browser click <tab-id> <ref>` | Click an element reference returned by Rudder Browser read. | yes | required | required | required |
 | `rudder_browser_type` | `rudder browser type <tab-id> <ref> --text <text>` | Type into an element reference in a run-owned Rudder Browser tab. | yes | required | required | required |
-| `rudder_browser_screenshot` | `rudder browser screenshot <tab-id>` | Capture a screenshot of a run-owned Rudder Browser tab. | no | required | required | required |
+| `rudder_browser_screenshot` | `rudder browser screenshot <tab-id> [--input <json>]` | Capture a screenshot of a run-owned Rudder Browser tab. | no | required | required | required |
 | `rudder_browser_close` | `rudder browser close <tab-id>` | Close a run-owned Rudder Browser tab. | yes | required | required | required |
 | `rudder_automation_list` | `rudder automation list --org-id <id>` | List automations for an organization with compact local filters. | no | required | no | no |
 | `rudder_automation_get` | `rudder automation get <automation-id>` | Read one automation detail including triggers and recent runs. | no | no | no | no |

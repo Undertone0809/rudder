@@ -352,6 +352,15 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": false
   },
   {
+    "capabilityId": "browser.user-tabs",
+    "name": "rudder_browser_user_tabs",
+    "description": "List user-visible tabs currently open in Rudder's built-in Browser without taking control of them.",
+    "mutating": false,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": false
+  },
+  {
     "capabilityId": "browser.open",
     "name": "rudder_browser_open",
     "description": "Open a run-owned tab in the Rudder Browser.",
@@ -365,6 +374,150 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "name": "rudder_browser_navigate",
     "description": "Navigate a run-owned Rudder Browser tab.",
     "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.back",
+    "name": "rudder_browser_back",
+    "description": "Navigate a run-owned Rudder Browser tab back in history.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.forward",
+    "name": "rudder_browser_forward",
+    "description": "Navigate a run-owned Rudder Browser tab forward in history.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.reload",
+    "name": "rudder_browser_reload",
+    "description": "Reload a run-owned Rudder Browser tab.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.viewport",
+    "name": "rudder_browser_viewport",
+    "description": "Inspect, set, or reset the responsive viewport for the current Rudder Browser run.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.visibility",
+    "name": "rudder_browser_visibility",
+    "description": "Inspect or change whether the current run's selected Rudder Browser tab is visible.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.snapshot",
+    "name": "rudder_browser_snapshot",
+    "description": "Capture a bounded DOM and accessibility-oriented snapshot, including frame structure and ephemeral node ids.",
+    "mutating": false,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.locator",
+    "name": "rudder_browser_locator",
+    "description": "Perform read-only bounded Browser locator text, attribute, state, count, or wait operations.",
+    "mutating": false,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.cua",
+    "name": "rudder_browser_cua",
+    "description": "Perform trusted coordinate mouse, scroll, drag, keyboard, and text input in a run-owned Browser tab.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.dom-cua",
+    "name": "rudder_browser_dom_cua",
+    "description": "Inspect a bounded read-only DOM snapshot with ephemeral node ids.",
+    "mutating": false,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.dialog",
+    "name": "rudder_browser_dialog",
+    "description": "Inspect, accept, or dismiss the active JavaScript dialog in a run-owned Browser tab.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.clipboard",
+    "name": "rudder_browser_clipboard",
+    "description": "Read or write the isolated virtual clipboard for the current Browser run without touching the OS clipboard.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.logs",
+    "name": "rudder_browser_logs",
+    "description": "Read bounded console and runtime logs captured for a run-owned Browser tab.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.download",
+    "name": "rudder_browser_download",
+    "description": "Download explicit locator media without dispatching page input into a bounded run-owned artifact.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.assets",
+    "name": "rudder_browser_assets",
+    "description": "List page assets or bundle an explicit bounded selection into a run-owned temporary artifact.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.content",
+    "name": "rudder_browser_content",
+    "description": "Export current page content or an eligible Google Workspace document into a bounded run-owned artifact.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "browser.wait",
+    "name": "rudder_browser_wait",
+    "description": "Wait for bounded URL, text, disappearance, or time conditions in a run-owned Browser tab.",
+    "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
     "attachesRunIdWhenAvailable": true
@@ -695,4 +848,4 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   }
 ] as const;
 export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "998b5f7a23d57634148a59a04f002b46b480570952d9f7eb4a9fa559f756cb7c";
-export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "c4d41b5aaa22d76e528877c17cee84e0fb363b38ebe9d2ff4e1c36a46edecfbe";
+export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";
