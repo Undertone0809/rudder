@@ -8,7 +8,11 @@ import type {
   OrganizationMembership,
   PrincipalPermissionGrant,
 } from "./access.js";
-import type { AgentIntegrationSummary, AgentRudderToolSummary } from "./agent-integration.js";
+import type {
+  AgentBrowserToolSummary,
+  AgentIntegrationSummary,
+  AgentRudderToolSummary,
+} from "./agent-integration.js";
 
 export interface AgentPermissions {
   canCreateAgents: boolean;
@@ -91,7 +95,7 @@ export interface AgentDetail extends Agent {
   chainOfCommand: AgentChainOfCommandEntry[];
   access: AgentAccessState;
   instructionsLibraryPath: string | null;
-  rudderTools?: AgentRudderToolSummary[];
+  rudderTools?: Array<AgentRudderToolSummary | AgentBrowserToolSummary>;
   integrations?: AgentIntegrationSummary[];
 }
 

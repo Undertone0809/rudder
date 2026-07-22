@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type {
+  AgentBrowserToolSummary,
   AgentDetail,
   AgentIntegrationProviderRegion,
   AgentIntegrationSetupSession,
@@ -56,6 +57,7 @@ type UpcomingIntegrationId =
 
 type IntegrationCategory = "message" | "productivity" | "developer";
 type IntegrationsView = "discover" | "manage";
+type RudderRuntimeIntegrationSummary = AgentRudderToolSummary | AgentBrowserToolSummary;
 
 interface UpcomingIntegrationDefinition {
   id: UpcomingIntegrationId;
@@ -248,7 +250,6 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const integrations = integrationsQuery.data ?? [];
   const customIntegrations = customIntegrationsQuery.data ?? [];
   const rudderTools = agent.rudderTools ?? [];
-  const rudderMcpIntegration = rudderTools.find((integration) => integration.kind === "rudder_mcp") ?? null;
   const feishuIntegration = integrations.find((integration) => integration.provider === "feishu") ?? null;
   const state = getFeishuIntegrationState(feishuIntegration);
   const isActive = state === "active";
@@ -425,7 +426,7 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const managedCustomIntegrations = customIntegrations.filter((integration) => (
     integration.status === "active" && integration.binding?.status === "active"
   ));
-  const hasManagedIntegrations = Boolean(rudderMcpIntegration) || Boolean(managedFeishuIntegration) || managedCustomIntegrations.length > 0;
+  const hasManagedIntegrations = rudderTools.length > 0 || Boolean(managedFeishuIntegration) || managedCustomIntegrations.length > 0;
 
   return (
     <div className="max-w-5xl space-y-5">
@@ -503,12 +504,14 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
               <IntegrationRowSkeleton />
             ) : hasManagedIntegrations ? (
               <div className="space-y-5">
-                {rudderMcpIntegration ? (
+                {rudderTools.length > 0 ? (
                   <IntegrationManageGroup
                     title="Built-in"
-                    count={1}
+                    count={rudderTools.length}
                   >
-                    <RudderMcpManageRow integration={rudderMcpIntegration} />
+                    {rudderTools.map((integration) => (
+                      <RudderRuntimeManageRow key={integration.id} integration={integration} />
+                    ))}
                   </IntegrationManageGroup>
                 ) : null}
                 {managedFeishuIntegration ? (
@@ -782,9 +785,16 @@ function UpcomingIntegrationCard({ integration }: UpcomingIntegrationCardProps) 
   );
 }
 
-function RudderMcpManageRow({ integration }: { integration: AgentRudderToolSummary }) {
+function RudderRuntimeManageRow({ integration }: { integration: RudderRuntimeIntegrationSummary }) {
+  const available = integration.status === "available";
+  const toolListLabel = integration.kind === "rudder_mcp"
+    ? "Rudder MCP tools list"
+    : "Rudder Browser tools list";
   return (
-    <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+    <div
+      className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+      aria-label={`${integration.displayName} integration`}
+    >
       <div className="flex min-w-0 items-start gap-3">
         <IntegrationBrandIcon src="/rudder-logo.png" name="Rudder" />
         <div className="min-w-0 space-y-2">
@@ -796,8 +806,13 @@ function RudderMcpManageRow({ integration }: { integration: AgentRudderToolSumma
             <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
               Built-in
             </span>
-            <span className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-xs text-emerald-700 dark:text-emerald-300">
-              Available
+            <span className={cn(
+              "rounded-md border px-1.5 py-0.5 text-xs",
+              available
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                : "border-border bg-muted text-muted-foreground",
+            )}>
+              {available ? "Available" : "Disabled"}
             </span>
           </div>
           <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
@@ -810,7 +825,7 @@ function RudderMcpManageRow({ integration }: { integration: AgentRudderToolSumma
           </dl>
           <div
             className="flex max-h-32 max-w-3xl flex-wrap gap-1 overflow-y-auto pr-1"
-            aria-label="Rudder MCP tools list"
+            aria-label={toolListLabel}
           >
             {integration.tools.map((tool) => (
               <span

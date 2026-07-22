@@ -18,7 +18,7 @@ export type {
   AgentSkillTelemetryEvidenceCounts
 } from "./adapter-skills.js";
 export type {
-  AgentIntegration,
+  AgentBrowserToolSummary, AgentIntegration,
   AgentIntegrationBindingToken,
   AgentIntegrationChatBinding,
   AgentIntegrationInboundAudit,
@@ -27,8 +27,7 @@ export type {
   AgentIntegrationSetupSession,
   AgentIntegrationSetupSessionStatus,
   AgentIntegrationSetupUrl,
-  AgentIntegrationSummary,
-  AgentIntegrationUserBinding, AgentRudderToolSummary, FeishuIntegrationSettings
+  AgentIntegrationSummary, AgentIntegrationUserBinding, AgentRudderToolSummary, FeishuIntegrationSettings
 } from "./agent-integration.js";
 export type {
   Agent,

@@ -1,8 +1,13 @@
+import {
+  RUDDER_BROWSER_MCP_TOOL_NAMES,
+  RUDDER_CORE_MCP_TOOL_NAMES,
+} from "@rudderhq/shared";
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { agentRoutes } from "../routes/agents.js";
+import { configureBrowserCapabilityDeployment } from "../services/browser-capability.js";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -110,6 +115,9 @@ const mockCompanySkillService = vi.hoisted(() => ({
 }));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
+const mockInstanceSettingsService = vi.hoisted(() => ({
+  getBrowser: vi.fn(),
+}));
 
 vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
@@ -143,6 +151,10 @@ vi.mock("../services/integrations/custom-integrations.js", () => ({
   customIntegrationService: () => mockCustomIntegrationService,
 }));
 
+vi.mock("../services/instance-settings.js", () => ({
+  instanceSettingsService: () => mockInstanceSettingsService,
+}));
+
 function createDbStub(options?: {
   schedulerRows?: Array<Record<string, unknown>>;
 }) {
@@ -172,12 +184,14 @@ function createApp(
   },
 ) {
   const app = express();
+  const db = createDbStub(options) as any;
+  configureBrowserCapabilityDeployment(db, "local_trusted");
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", agentRoutes(createDbStub(options) as any));
+  app.use("/api", agentRoutes(db));
   app.use(errorHandler);
   return app;
 }
@@ -229,6 +243,10 @@ describe("agent permission routes", () => {
     );
     mockAgentInstructionsService.getBundle.mockResolvedValue({ mode: "managed" });
     mockAgentIntegrationService.listForAgent.mockResolvedValue([]);
+    mockInstanceSettingsService.getBrowser.mockResolvedValue({
+      enabled: true,
+      openLinksIn: "built_in",
+    });
     mockCustomIntegrationService.listForAgent.mockResolvedValue([]);
     mockCustomIntegrationService.createForAgent.mockResolvedValue({ id: customIntegrationId });
     mockCustomIntegrationService.updateBindingForAgent.mockResolvedValue({ id: customIntegrationId });
@@ -409,6 +427,129 @@ describe("agent permission routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.access.canAssignTasks).toBe(true);
     expect(res.body.access.taskAssignSource).toBe("explicit_grant");
+  });
+
+  it("exposes separate core and Browser runtime integrations for a supported agent", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      agentRuntimeType: "codex_local",
+    });
+
+    const app = createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      orgIds: [orgId],
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.rudderTools).toEqual([
+      expect.objectContaining({
+        id: "rudder-tools",
+        kind: "rudder_mcp",
+        status: "available",
+        serverName: "rudder-tools",
+        contract: "agent-v1",
+        toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+        tools: [...RUDDER_CORE_MCP_TOOL_NAMES],
+        authMode: "runtime_managed",
+      }),
+      expect.objectContaining({
+        id: "rudder-browser",
+        kind: "rudder_browser_mcp",
+        status: "available",
+        serverName: "rudder-browser",
+        contract: "browser-v1",
+        toolCount: RUDDER_BROWSER_MCP_TOOL_NAMES.length,
+        tools: [...RUDDER_BROWSER_MCP_TOOL_NAMES],
+        authMode: "runtime_managed",
+      }),
+    ]);
+  });
+
+  it("reports Browser as disabled with no exposed tools when the instance setting is off", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      agentRuntimeType: "codex_local",
+    });
+    mockInstanceSettingsService.getBrowser.mockResolvedValue({
+      enabled: false,
+      openLinksIn: "built_in",
+    });
+
+    const app = createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      orgIds: [orgId],
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.rudderTools[0]).toMatchObject({
+      id: "rudder-tools",
+      status: "available",
+      toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+    });
+    expect(res.body.rudderTools[1]).toMatchObject({
+      id: "rudder-browser",
+      status: "disabled",
+      toolCount: 0,
+      tools: [],
+    });
+  });
+
+  it("reports Browser as disabled for an unsupported runtime while core tools remain available", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      agentRuntimeType: "process",
+    });
+
+    const app = createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      orgIds: [orgId],
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.rudderTools).toEqual([
+      expect.objectContaining({
+        id: "rudder-tools",
+        status: "available",
+        toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
+      }),
+      expect.objectContaining({
+        id: "rudder-browser",
+        status: "disabled",
+        toolCount: 0,
+        tools: [],
+      }),
+    ]);
+  });
+
+  it("does not leak runtime integration or Browser setting metadata in a restricted agent detail", async () => {
+    const app = createApp({
+      type: "agent",
+      agentId: peerAgentId,
+      orgId,
+      runId: "run-1",
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.rudderTools).toBeUndefined();
+    expect(res.body.integrations).toBeUndefined();
+    expect(mockInstanceSettingsService.getBrowser).not.toHaveBeenCalled();
   });
 
   it("exposes the instructions Library path for managed instruction bundles", async () => {

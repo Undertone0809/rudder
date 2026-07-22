@@ -1,4 +1,8 @@
 import { expect, test } from "@playwright/test";
+import {
+  RUDDER_BROWSER_MCP_TOOL_NAMES,
+  RUDDER_CORE_MCP_TOOL_NAMES,
+} from "../../packages/shared/src/index";
 import { E2E_BASE_URL } from "./support/e2e-env";
 
 test.describe("Agent detail integrations tab", () => {
@@ -15,6 +19,8 @@ test.describe("Agent detail integrations tab", () => {
       data: {
         name: "Integration Scout",
         role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
       },
     });
     expect(agentRes.ok()).toBe(true);
@@ -40,6 +46,7 @@ test.describe("Agent detail integrations tab", () => {
     await expect(page.getByRole("heading", { name: "Productivity" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Developer" })).toBeVisible();
     await expect(page.getByText("Rudder MCP tools", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Rudder Browser", { exact: true })).toHaveCount(0);
     await expect(page.getByText("rudder-tools · 77 tools · runtime-managed auth")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Rudder MCP tools are built in" })).toHaveCount(0);
     await expect(page.getByText("Custom API", { exact: true })).toBeVisible();
@@ -81,15 +88,55 @@ test.describe("Agent detail integrations tab", () => {
     await page.getByRole("button", { name: "Manage" }).click();
     await expect(page.getByText("No connected integrations")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Built-in" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Built-in" }).locator("..")).toContainText("2");
     await expect(page.getByText("Rudder MCP tools", { exact: true })).toBeVisible();
-    await expect(page.locator('img[src="/rudder-logo.png"]')).toBeVisible();
-    await expect(page.getByText("77 exposed")).toBeVisible();
-    await expect(page.getByText("Runtime managed")).toBeVisible();
-    await expect(page.getByText("No user credential")).toBeVisible();
+    await expect(page.getByText("Rudder Browser", { exact: true })).toBeVisible();
+    await expect(page.locator('img[src="/rudder-logo.png"]')).toHaveCount(2);
+    const coreRow = page.getByLabel("Rudder MCP tools integration");
+    const browserRow = page.getByLabel("Rudder Browser integration");
+    await expect(coreRow).toContainText("Available");
+    await expect(coreRow).toContainText("rudder-tools");
+    await expect(coreRow).toContainText("agent-v1");
+    await expect(coreRow).toContainText(`${RUDDER_CORE_MCP_TOOL_NAMES.length} exposed`);
+    await expect(browserRow).toContainText("Available");
+    await expect(browserRow).toContainText("rudder-browser");
+    await expect(browserRow).toContainText("browser-v1");
+    await expect(browserRow).toContainText(`${RUDDER_BROWSER_MCP_TOOL_NAMES.length} exposed`);
+    await expect(page.getByText("Runtime managed")).toHaveCount(2);
+    await expect(page.getByText("No user credential")).toHaveCount(2);
     await expect(page.getByText("rudder_agent_me", { exact: true })).toBeVisible();
     await expect(page.getByText("rudder_issue_checkout", { exact: true })).toBeVisible();
     await expect(page.getByText("rudder_library_file_list", { exact: true })).toBeVisible();
     await expect(page.getByText("rudder_runs_errors", { exact: true })).toBeVisible();
+
+    const coreTools = coreRow.getByLabel("Rudder MCP tools list").locator("span");
+    const browserTools = browserRow.getByLabel("Rudder Browser tools list").locator("span");
+    await expect(coreTools).toHaveText([...RUDDER_CORE_MCP_TOOL_NAMES]);
+    await expect(browserTools).toHaveText([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
+    await expect(coreRow.getByText("rudder_browser_tabs", { exact: true })).toHaveCount(0);
+
+    const unsupportedAgentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Unsupported Browser Runtime",
+        role: "engineer",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {},
+      },
+    });
+    expect(unsupportedAgentRes.ok()).toBe(true);
+    const unsupportedAgent = await unsupportedAgentRes.json() as { id: string };
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${unsupportedAgent.id}/integrations`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("button", { name: "Manage" }).click();
+    const unsupportedCoreRow = page.getByLabel("Rudder MCP tools integration");
+    const unsupportedBrowserRow = page.getByLabel("Rudder Browser integration");
+    await expect(unsupportedCoreRow).toContainText("Available");
+    await expect(unsupportedCoreRow).toContainText(`${RUDDER_CORE_MCP_TOOL_NAMES.length} exposed`);
+    await expect(unsupportedBrowserRow).toContainText("Disabled");
+    await expect(unsupportedBrowserRow).toContainText("0 exposed");
+    await expect(unsupportedBrowserRow.getByLabel("Rudder Browser tools list").locator("span")).toHaveCount(0);
   });
 
   test("creates custom integrations with agent and organization scope boundaries", async ({ page }) => {
