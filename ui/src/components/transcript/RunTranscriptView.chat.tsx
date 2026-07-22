@@ -547,7 +547,7 @@ export function TranscriptChatActionGroup({
       </button>
 
       {detailsOpen ? (
-        <div className="motion-disclosure-enter mt-2 divide-y divide-border/30 border-l border-border/35 pl-3">
+        <div className="motion-disclosure-enter mt-2 pl-3">
           {actions.map((action) => (
             <TranscriptChatActionRow
               key={action.key}

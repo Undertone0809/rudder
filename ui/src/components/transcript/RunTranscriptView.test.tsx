@@ -2041,6 +2041,8 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("hover:bg-red-500/[0.05]");
     expect(html).toContain("bg-red-500/[0.08]");
     expect(html).toContain("-mx-2 rounded-lg bg-red-500/[0.04] px-2");
+    expect(html).not.toContain("divide-y divide-border/30");
+    expect(html).not.toContain("border-l border-border/35");
     expect(html).toContain("Expand command details");
     expect(html).not.toContain("data-testid=\"command-terminal-detail\"");
     expect(html).not.toContain("First command failed");
