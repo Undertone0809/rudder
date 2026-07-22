@@ -2,11 +2,12 @@
 
 import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import type { DesktopLocalAppDefinition } from "@/lib/desktop-shell";
+import { sidePanelTargetKey } from "@/lib/side-panel-targets";
 import type { MessengerSavedView } from "@rudderhq/shared";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MessengerSavedViewWorkspace } from "./MessengerSavedViewWorkspace";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -57,19 +58,55 @@ const savedView: MessengerSavedView = {
   updatedAt: new Date("2026-07-23T00:00:00.000Z"),
 };
 
+const savedBrowserView: MessengerSavedView = {
+  ...savedView,
+  id: "saved-browser-a",
+  targetKind: "browser",
+  targetPayload: {
+    kind: "browser",
+    tabId: "saved-browser-tab",
+    url: "https://example.com/saved",
+    viewInstanceId: "saved-browser-instance",
+  },
+  resourceKey: "browser-tab:saved-browser-tab",
+  instanceId: "saved-browser-instance",
+  canonicalResourceKey: "browser-tab:saved-browser-tab",
+  title: "Saved browser",
+  subtitle: "https://example.com/saved",
+};
+
 const list = vi.fn();
 const status = vi.fn();
 const start = vi.fn();
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let client: QueryClient | null = null;
+let sidePanelControls: ReturnType<typeof useSidePanel> | null = null;
+
+beforeAll(() => {
+  notifyManager.setNotifyFunction((callback) => act(callback));
+});
+
+afterAll(() => {
+  notifyManager.setNotifyFunction((callback) => callback());
+});
 
 function Probe() {
   const sidePanel = useSidePanel();
+  sidePanelControls = sidePanel;
   return <output data-testid="target">{JSON.stringify(sidePanel.tabs[0] ?? null)}</output>;
 }
 
-function renderWorkspace() {
+async function waitForAct(assertion: () => void) {
+  await vi.waitFor(async () => {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assertion();
+  });
+}
+
+async function renderWorkspace() {
   Object.defineProperty(window, "desktopShell", {
     configurable: true,
     value: { localApps: { supported: true, list, status, start } },
@@ -78,7 +115,7 @@ function renderWorkspace() {
   document.body.appendChild(host);
   root = createRoot(host);
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  act(() => {
+  await act(async () => {
     root!.render(
       <QueryClientProvider client={client!}>
         <SidePanelProvider>
@@ -87,6 +124,7 @@ function renderWorkspace() {
         </SidePanelProvider>
       </QueryClientProvider>,
     );
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
 
@@ -102,6 +140,7 @@ afterEach(() => {
   client?.clear();
   root = null;
   client = null;
+  sidePanelControls = null;
   host?.remove();
   host = null;
   Reflect.deleteProperty(window, "desktopShell");
@@ -109,8 +148,8 @@ afterEach(() => {
 
 describe("MessengerSavedViewWorkspace Local Apps", () => {
   it("matches all opaque fields and checks status without auto-starting before opening", async () => {
-    renderWorkspace();
-    await vi.waitFor(() => expect(host?.querySelector('[data-testid="target"]')?.textContent).toContain('"kind":"local_app"'));
+    await renderWorkspace();
+    await waitForAct(() => expect(host?.querySelector('[data-testid="target"]')?.textContent).toContain('"kind":"local_app"'));
 
     expect(list).toHaveBeenCalledTimes(1);
     expect(status).toHaveBeenCalledWith("definition-a");
@@ -123,8 +162,8 @@ describe("MessengerSavedViewWorkspace Local Apps", () => {
       ...savedView,
       targetPayload: { ...savedView.targetPayload, desktopInstallationId: "installation-other" },
     });
-    renderWorkspace();
-    await vi.waitFor(() => expect(host?.querySelector('[data-testid="messenger-saved-view-unavailable"]')).not.toBeNull());
+    await renderWorkspace();
+    await waitForAct(() => expect(host?.querySelector('[data-testid="messenger-saved-view-unavailable"]')).not.toBeNull());
 
     expect(status).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
@@ -134,16 +173,62 @@ describe("MessengerSavedViewWorkspace Local Apps", () => {
   it("shows a retryable local status failure and opens after retry succeeds", async () => {
     status.mockRejectedValueOnce(new Error("Desktop bridge unavailable"))
       .mockResolvedValueOnce({ status: "stopped", generation: null });
-    renderWorkspace();
-    await vi.waitFor(() => expect(host?.querySelector('[data-testid="messenger-saved-view-error"]')?.textContent).toContain("Desktop bridge unavailable"));
+    await renderWorkspace();
+    await waitForAct(() => expect(host?.querySelector('[data-testid="messenger-saved-view-error"]')?.textContent).toContain("Desktop bridge unavailable"));
     expect(start).not.toHaveBeenCalled();
 
     await act(async () => {
       Array.from(host!.querySelectorAll("button")).find((button) => button.textContent?.includes("Retry"))?.click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    await vi.waitFor(() => expect(host?.querySelector('[data-testid="target"]')?.textContent).toContain('"kind":"local_app"'));
+    await waitForAct(() => expect(host?.querySelector('[data-testid="target"]')?.textContent).toContain('"kind":"local_app"'));
     expect(status).toHaveBeenCalledTimes(2);
     expect(start).not.toHaveBeenCalled();
+  });
+
+  it("explains Browser capacity and restores the Saved View after a tab closes", async () => {
+    let resolveSavedView!: (value: MessengerSavedView) => void;
+    getSavedView.mockReturnValue(new Promise<MessengerSavedView>((resolve) => {
+      resolveSavedView = resolve;
+    }));
+    await renderWorkspace();
+
+    act(() => {
+      for (let index = 0; index < 8; index += 1) {
+        sidePanelControls!.openTarget({
+          kind: "browser",
+          tabId: `physical-${index}`,
+          url: `https://example.com/physical-${index}`,
+          label: `Physical ${index}`,
+        });
+      }
+    });
+    await act(async () => {
+      resolveSavedView(savedBrowserView);
+    });
+    await waitForAct(() => expect(host?.querySelector('[data-testid="messenger-saved-view-capacity-error"]')).not.toBeNull());
+
+    expect(sidePanelControls!.tabs).toHaveLength(8);
+    expect(sidePanelControls!.tabs).not.toContainEqual(expect.objectContaining({
+      viewInstanceId: "saved-browser-instance",
+    }));
+
+    act(() => {
+      sidePanelControls!.closeTarget(sidePanelTargetKey(sidePanelControls!.tabs[7]!));
+    });
+    await act(async () => {
+      Array.from(host!.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Retry opening"))
+        ?.click();
+    });
+    await waitForAct(() => expect(host?.querySelector('[data-testid="messenger-saved-view-workspace"]')).not.toBeNull());
+
+    expect(sidePanelControls!.tabs).toHaveLength(8);
+    expect(sidePanelControls!.tabs).toContainEqual(expect.objectContaining({
+      kind: "browser",
+      tabId: "saved-browser-tab",
+      viewInstanceId: "saved-browser-instance",
+      savedViewRecovery: expect.objectContaining({ id: "saved-browser-a" }),
+    }));
   });
 });

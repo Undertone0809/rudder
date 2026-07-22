@@ -204,6 +204,98 @@ async function groups(page: Page, orgId: string) {
 }
 
 test.describe("Messenger Local Apps", () => {
+  test("reports Browser capacity and restores with canonical identity after retry", async ({ page }) => {
+    const organization = await createOrganization(page.request);
+    const groupName = "Browser capacity recovery";
+    const groupResponse = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: groupName, icon: "folder::slate" },
+    });
+    expect(groupResponse.ok(), await groupResponse.text()).toBe(true);
+    await selectOrganization(page, organization.id);
+    await installLocalAppsStub(page);
+    await page.setViewportSize({ width: 1500, height: 920 });
+    await page.goto(`/${organization.issuePrefix}/messenger`);
+
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await page.getByTestId("global-side-panel-trigger").click({ force: true });
+    await page.getByTestId("chat-side-panel-empty-browser-target").click();
+    const savedUrl = "https://example.com/saved-at-capacity";
+    const address = page.getByRole("textbox", { name: "Browser URL" });
+    await address.fill(savedUrl);
+    await address.press("Enter");
+    await page.getByTestId("chat-side-panel-keep-in-messenger").click();
+    await page.getByRole("menuitem", { name: groupName, exact: true }).click();
+    await expect(page.getByText("Kept in Messenger")).toBeVisible();
+
+    const directory = await groups(page, organization.id);
+    const savedItem = directory.groups.flatMap((candidate) => candidate.entries).find((entry) => (
+      entry.item.type === "saved_view" && entry.item.savedView.targetPayload.kind === "browser"
+    ))?.item;
+    if (!savedItem || savedItem.type !== "saved_view") throw new Error("Expected kept Browser view");
+    const savedView = savedItem.savedView;
+    const savedInstanceId = String(savedView.targetPayload.viewInstanceId);
+    const savedCanonicalTabId = String(savedView.targetPayload.tabId);
+
+    for (let index = 0; index < 7; index += 1) {
+      await page.getByTestId("chat-side-panel-add-tab").click();
+      await page.getByTestId("chat-side-panel-empty-browser-target").click();
+    }
+    await expect(page.getByTestId("chat-side-panel-tab")).toHaveCount(8);
+    const originalSavedTab = page.locator(
+      `[data-testid="chat-side-panel-tab"][data-view-instance-id="${savedInstanceId}"]`,
+    );
+    await originalSavedTab.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+    await expect(page.getByTestId("chat-side-panel-tab")).toHaveCount(7);
+    await page.getByTestId("chat-side-panel-add-tab").click();
+    await page.getByTestId("chat-side-panel-empty-browser-target").click();
+    await expect(page.getByTestId("chat-side-panel-tab")).toHaveCount(8);
+    await expect(page.locator(
+      `[data-testid="chat-side-panel-tab"][data-view-instance-id="${savedInstanceId}"]`,
+    )).toHaveCount(0);
+
+    await page.locator(`a[href$="/messenger/saved/${savedView.id}"]`).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/saved/${savedView.id}$`));
+    const capacityError = page.getByTestId("messenger-saved-view-capacity-error");
+    await expect(capacityError).toContainText("Close a Browser tab");
+    await expect(page.getByTestId("messenger-saved-view-workspace")).toHaveCount(0);
+    await expect(page.getByTestId("chat-side-panel-tab")).toHaveCount(8);
+    await expect(page.locator(
+      `[data-testid="chat-side-panel-tab"][data-view-instance-id="${savedInstanceId}"]`,
+    )).toHaveCount(0);
+
+    const selectedTab = page.locator('[data-testid="chat-side-panel-tab"][aria-selected="true"]');
+    await selectedTab.locator("..").getByTestId("chat-side-panel-tab-close").click({ force: true });
+    await expect(page.getByTestId("chat-side-panel-tab")).toHaveCount(7);
+    await capacityError.getByRole("button", { name: "Retry opening" }).click();
+    await expect(page.getByTestId("messenger-saved-view-workspace")).toBeVisible();
+    await expect(page.getByTestId("chat-side-panel-tab")).toHaveCount(8);
+    await expect(page.locator(
+      `[data-testid="chat-side-panel-tab"][data-view-instance-id="${savedInstanceId}"][aria-selected="true"]`,
+    )).toBeVisible();
+    await expect(page.locator('[data-testid="chat-side-panel-browser-webview"][data-active="true"]'))
+      .toHaveAttribute("src", savedUrl);
+
+    const navigatedUrl = "https://example.com/saved-at-capacity-navigated";
+    const restoredBrowser = page.getByTestId("chat-side-panel-browser-view");
+    await restoredBrowser.getByRole("textbox", { name: "Browser URL" }).fill(navigatedUrl);
+    await restoredBrowser.getByRole("textbox", { name: "Browser URL" }).press("Enter");
+    await expect(restoredBrowser.getByTestId("chat-side-panel-browser-webview"))
+      .toHaveAttribute("src", navigatedUrl);
+    await expect.poll(async () => {
+      const refreshed = await groups(page, organization.id);
+      const refreshedSaved = refreshed.groups.flatMap((candidate) => candidate.entries).find((entry) => (
+        entry.item.type === "saved_view" && entry.item.savedView.id === savedView.id
+      ))?.item;
+      return refreshedSaved?.type === "saved_view"
+        ? {
+          tabId: refreshedSaved.savedView.targetPayload.tabId,
+          url: refreshedSaved.savedView.targetPayload.url,
+        }
+        : null;
+    }).toEqual({ tabId: savedCanonicalTabId, url: navigatedUrl });
+  });
+
   test("discovers, reviews, runs, keeps, restores, and safely controls a local dashboard", async ({ page }) => {
     const organization = await createOrganization(page.request);
     const chat = await createChat(page, organization.id);

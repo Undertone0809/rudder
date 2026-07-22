@@ -15,6 +15,10 @@ type SidePanelContextState = {
   tabs: SidePanelTarget[];
 };
 
+export type SidePanelOpenResult =
+  | { admitted: true }
+  | { admitted: false; reason: "browser_capacity" };
+
 type SidePanelContextValue = {
   activeKey: string | null;
   open: boolean;
@@ -22,9 +26,9 @@ type SidePanelContextValue = {
   contextKey: string;
   clearCurrentContext: () => void;
   hidePanel: () => void;
-  openTarget: (target: SidePanelTarget) => void;
-  openTargetInNewTab: (target: SidePanelTarget) => void;
-  openTargetForContext: (contextKey: string | null, target: SidePanelTarget) => void;
+  openTarget: (target: SidePanelTarget) => SidePanelOpenResult;
+  openTargetInNewTab: (target: SidePanelTarget) => SidePanelOpenResult;
+  openTargetForContext: (contextKey: string | null, target: SidePanelTarget) => SidePanelOpenResult;
   showPanel: () => void;
   showPanelForContext: (contextKey: string | null) => void;
   openEmpty: () => void;
@@ -81,51 +85,85 @@ function targetWithViewInstance(
   return { ...target, viewInstanceId: newViewInstanceId() } as SidePanelTarget;
 }
 
+function browserTargetForPhysicalReuse(
+  target: Extract<SidePanelTarget, { kind: "browser" }>,
+  physicalTab: Extract<SidePanelTarget, { kind: "browser" }>,
+) {
+  return {
+    ...target,
+    tabId: physicalTab.tabId,
+    viewInstanceId: physicalTab.viewInstanceId ?? physicalTab.tabId,
+    savedViewRecovery: physicalTab.savedViewRecovery ?? target.savedViewRecovery,
+  } satisfies Extract<SidePanelTarget, { kind: "browser" }>;
+}
+
+type SidePanelTargetUpsertResult = {
+  activeKey: string | null;
+  tabs: SidePanelTarget[];
+  openResult: SidePanelOpenResult;
+};
+
 function upsertSidePanelTarget(
   tabs: SidePanelTarget[],
   activeKey: string | null,
   target: SidePanelTarget,
-): { activeKey: string | null; tabs: SidePanelTarget[] } {
+): SidePanelTargetUpsertResult {
   const nextKey = sidePanelTargetKey(target);
   const matchingBrowser = target.kind === "browser" && target.dedupeKey
     ? tabs.find((candidate) => candidate.kind === "browser" && candidate.dedupeKey === target.dedupeKey)
     : undefined;
-  if (matchingBrowser?.kind === "browser") {
+  if (target.kind === "browser" && matchingBrowser?.kind === "browser") {
     const matchingKey = sidePanelTargetKey(matchingBrowser);
-    const replacement = { ...target, tabId: matchingBrowser.tabId };
+    const replacement = browserTargetForPhysicalReuse(target, matchingBrowser);
     return {
       activeKey: matchingKey,
       tabs: tabs.map((candidate) => (sidePanelTargetKey(candidate) === matchingKey ? replacement : candidate)),
+      openResult: { admitted: true },
     };
   }
-  if (tabs.some((candidate) => sidePanelTargetKey(candidate) === nextKey)) {
+  const matchingTarget = tabs.find((candidate) => sidePanelTargetKey(candidate) === nextKey);
+  if (matchingTarget) {
+    const replacement = target.kind === "browser" && matchingTarget.kind === "browser"
+      ? browserTargetForPhysicalReuse(target, matchingTarget)
+      : target;
     return {
       activeKey: nextKey,
-      tabs: tabs.map((candidate) => (sidePanelTargetKey(candidate) === nextKey ? target : candidate)),
+      tabs: tabs.map((candidate) => (sidePanelTargetKey(candidate) === nextKey ? replacement : candidate)),
+      openResult: { admitted: true },
     };
   }
   const nextTabs = [...tabs, target];
-  if (target.kind !== "browser") return { activeKey: nextKey, tabs: nextTabs };
+  if (target.kind !== "browser") {
+    return { activeKey: nextKey, tabs: nextTabs, openResult: { admitted: true } };
+  }
   const browserTabCount = tabs.filter((candidate) => candidate.kind === "browser").length;
-  if (browserTabCount < MAX_BROWSER_TABS_PER_CONTEXT) return { activeKey: nextKey, tabs: nextTabs };
+  if (browserTabCount < MAX_BROWSER_TABS_PER_CONTEXT) {
+    return { activeKey: nextKey, tabs: nextTabs, openResult: { admitted: true } };
+  }
+
+  const activeBrowser = tabs.find((candidate) => (
+    candidate.kind === "browser" && sidePanelTargetKey(candidate) === activeKey
+  ));
+  const reusableBrowser = activeBrowser ?? tabs.find((candidate) => candidate.kind === "browser");
 
   // Ordinary Rudder links carry a URL dedupe key. At capacity, navigate an
   // existing Browser tab so the click still has a visible result.
   if (target.dedupeKey) {
-    const activeBrowser = tabs.find((candidate) => (
-      candidate.kind === "browser" && sidePanelTargetKey(candidate) === activeKey
-    ));
-    const reusable = activeBrowser ?? tabs.find((candidate) => candidate.kind === "browser");
-    if (reusable?.kind === "browser") {
-      const replacement = { ...target, tabId: reusable.tabId };
-      const reusableKey = sidePanelTargetKey(reusable);
+    if (reusableBrowser?.kind === "browser") {
+      const replacement = browserTargetForPhysicalReuse(target, reusableBrowser);
+      const reusableKey = sidePanelTargetKey(reusableBrowser);
       return {
         activeKey: reusableKey,
         tabs: tabs.map((candidate) => (sidePanelTargetKey(candidate) === reusableKey ? replacement : candidate)),
+        openResult: { admitted: true },
       };
     }
   }
-  return { activeKey, tabs };
+  return {
+    activeKey,
+    tabs,
+    openResult: { admitted: false, reason: "browser_capacity" },
+  };
 }
 
 function withoutBrowserTargets(state: SidePanelContextState): SidePanelContextState {
@@ -181,44 +219,68 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     setCurrentContextKey((previousKey) => (previousKey === normalizedKey ? previousKey : normalizedKey));
   }, []);
 
-  const openTarget = useCallback((target: SidePanelTarget) => {
+  const openTarget = useCallback((target: SidePanelTarget): SidePanelOpenResult => {
+    let openResult: SidePanelOpenResult = { admitted: true };
     writeContextState(contextKey, (current) => {
       const result = upsertSidePanelTarget(
         current.tabs,
         current.activeKey,
         targetWithViewInstance(current.tabs, target, false),
       );
-      return { ...result, hasPanelState: true, open: true };
+      openResult = result.openResult;
+      return {
+        activeKey: result.activeKey,
+        hasPanelState: true,
+        open: true,
+        tabs: result.tabs,
+      };
     });
     setOpen(true);
+    return openResult;
   }, [contextKey, writeContextState]);
 
-  const openTargetInNewTab = useCallback((target: SidePanelTarget) => {
+  const openTargetInNewTab = useCallback((target: SidePanelTarget): SidePanelOpenResult => {
+    let openResult: SidePanelOpenResult = { admitted: true };
     writeContextState(contextKey, (current) => {
       const result = upsertSidePanelTarget(
         current.tabs,
         current.activeKey,
         targetWithViewInstance(current.tabs, target, true),
       );
-      return { ...result, hasPanelState: true, open: true };
+      openResult = result.openResult;
+      return {
+        activeKey: result.activeKey,
+        hasPanelState: true,
+        open: true,
+        tabs: result.tabs,
+      };
     });
     setOpen(true);
+    return openResult;
   }, [contextKey, writeContextState]);
 
-  const openTargetForContext = useCallback((nextContextKey: string | null, target: SidePanelTarget) => {
+  const openTargetForContext = useCallback((nextContextKey: string | null, target: SidePanelTarget): SidePanelOpenResult => {
     const normalizedKey = normalizeContextKey(nextContextKey);
+    let openResult: SidePanelOpenResult = { admitted: true };
     const nextState = writeContextState(normalizedKey, (current) => {
       const result = upsertSidePanelTarget(
         current.tabs,
         current.activeKey,
         targetWithViewInstance(current.tabs, target, false),
       );
-      return { ...result, hasPanelState: true, open: true };
+      openResult = result.openResult;
+      return {
+        activeKey: result.activeKey,
+        hasPanelState: true,
+        open: true,
+        tabs: result.tabs,
+      };
     });
     if (normalizedKey === currentContextKeyRef.current) {
       setCurrentContextState(nextState);
       setOpen(true);
     }
+    return openResult;
   }, [writeContextState]);
 
   const showPanel = useCallback(() => {
