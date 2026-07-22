@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const GETTING_STARTED_TITLES = [
+  "👋 Welcome to Rudder — quick reference",
+  "1. Run one real task",
+  "2. Review the result and close the loop",
+];
+
+const LEGACY_GETTING_STARTED_TITLES = [
   "👋 Welcome to Rudder — work with agents like a team",
   "1. Understand how Rudder work happens",
   "2. Ask your agent one quick question",
@@ -120,6 +126,9 @@ test.describe("Onboarding wizard", () => {
 
     await expectOnboardingStep(page, "Name your organization");
     await expect(page.getByRole("checkbox", { name: /new to Rudder/i })).toBeChecked();
+    await expect(page.getByText(
+      "Create two guided actions for your first real work loop. Turn this off to seed only the Welcome reference.",
+    )).toBeVisible();
     await expectEvenOnboardingStepTabs(page);
 
     await expect(page.getByRole("button", { name: "Task", exact: true })).toHaveCount(0);
@@ -225,6 +234,9 @@ test.describe("Onboarding wizard", () => {
     );
     expect(gettingStartedProjects).toHaveLength(1);
     const gettingStartedProject = gettingStartedProjects[0];
+    expect(gettingStartedProject.description).toBe(
+      "Complete one real work loop: start a small task in Chat or an Issue, inspect the result, and decide what happens next.",
+    );
 
     const issuesRes = await page.request.get(
       `${baseUrl}/api/orgs/${organization.id}/issues?projectId=${gettingStartedProject.id}`
@@ -246,38 +258,54 @@ test.describe("Onboarding wizard", () => {
     );
     const issueByTitle = new Map(issues.map((issue) => [issue.title, issue]));
     expect(issueByTitle.get(GETTING_STARTED_TITLES[0]!)?.status).toBe("done");
-    for (const title of GETTING_STARTED_TITLES.slice(1, 6)) {
+    expect(issueByTitle.get(GETTING_STARTED_TITLES[0]!)?.priority).toBe("low");
+    for (const title of GETTING_STARTED_TITLES.slice(1)) {
       expect(issueByTitle.get(title)?.status).toBe("todo");
       expect(issueByTitle.get(title)?.priority).toBe("high");
     }
-    for (const title of GETTING_STARTED_TITLES.slice(6)) {
-      expect(issueByTitle.get(title)?.status).toBe("backlog");
-    }
-    const nextIssueSource = issueByTitle.get("1. Understand how Rudder work happens");
-    const nextIssueTarget = issueByTitle.get("2. Ask your agent one quick question");
+    const welcomeIssue = issueByTitle.get("👋 Welcome to Rudder — quick reference");
+    const nextIssueSource = issueByTitle.get("1. Run one real task");
+    const nextIssueTarget = issueByTitle.get("2. Review the result and close the loop");
+    expect(welcomeIssue).toBeTruthy();
     expect(nextIssueSource).toBeTruthy();
     expect(nextIssueTarget).toBeTruthy();
-    expect(nextIssueSource?.description).toContain(
-      "Chat and issues can both move tasks forward",
+    expect(welcomeIssue?.description).toContain(
+      "Rudder moves real work through agent execution and human review",
+    );
+    expect(welcomeIssue?.description).toContain(
+      "Chat is conversation-driven; Issues add structured ownership, status, and review",
+    );
+    const welcomeNextHref = extractMarkdownHref(
+      welcomeIssue?.description ?? "",
+      "1. Run one real task",
+    );
+    expect(new URL(welcomeNextHref, baseUrl).pathname).toBe(
+      `/${organization.urlKey}/issues/${encodeURIComponent(nextIssueSource!.identifier ?? nextIssueSource!.id)}`,
     );
     expect(nextIssueSource?.description).toContain(
-      "Creating an issue adds coordination structure",
+      "Choose a small, useful, low-risk task you can review today",
     );
-    expect(issueByTitle.get("8. Link this work to a goal")?.description).toContain(
-      "a real Chat or issue is connected to a goal",
+    expect(nextIssueSource?.description).toContain(
+      "Done when the agent leaves a result or clear progress update you can inspect",
+    );
+    expect(nextIssueTarget?.description).toContain(
+      "Accept it, request a specific revision, or create a clear follow-up",
+    );
+    expect(nextIssueTarget?.description).toContain(
+      "Done when both the result and your decision are recorded on the real work item",
     );
     const nextIssueHref = extractMarkdownHref(
       nextIssueSource?.description ?? "",
-      "2. Ask your agent one quick question",
+      "Review the result",
     );
     const nextIssueUrl = new URL(nextIssueHref, baseUrl);
     expect(nextIssueUrl.pathname).toBe(
       `/${organization.urlKey}/issues/${encodeURIComponent(nextIssueTarget!.identifier ?? nextIssueTarget!.id)}`,
     );
-    const chatIssue = issueByTitle.get("2. Ask your agent one quick question");
+    const chatIssue = nextIssueSource;
     expect(chatIssue).toBeTruthy();
     const chatIssueDescription = chatIssue?.description ?? "";
-    const chatCtaHref = extractMarkdownHref(chatIssueDescription, "Start from this prompt");
+    const chatCtaHref = extractMarkdownHref(chatIssueDescription, "Start in Chat");
     const chatCtaUrl = new URL(chatCtaHref, baseUrl);
     expect(chatCtaUrl.pathname).toBe(`/${organization.urlKey}/messenger/chat`);
     expect(chatIssueDescription).toContain(`projectId=${gettingStartedProject.id}`);
@@ -286,6 +314,17 @@ test.describe("Onboarding wizard", () => {
     expect(chatCtaUrl.searchParams.get("agentId")).toBe(rootAgent.id);
     const expectedPrefill = chatCtaUrl.searchParams.get("prefill");
     expect(expectedPrefill).toBeTruthy();
+    const issuesCtaHref = extractMarkdownHref(chatIssueDescription, "Open Issues");
+    const issuesCtaUrl = new URL(issuesCtaHref, baseUrl);
+    expect(issuesCtaUrl.pathname).toBe(`/${organization.urlKey}/issues`);
+    expect(issuesCtaUrl.searchParams.get("projectId")).toBe(gettingStartedProject.id);
+    const messengerCtaHref = extractMarkdownHref(
+      nextIssueTarget?.description ?? "",
+      "Open Messenger",
+    );
+    expect(new URL(messengerCtaHref, baseUrl).pathname).toBe(
+      `/${organization.urlKey}/messenger`,
+    );
     for (const issue of issues) {
       expect(issue.projectId).toBe(gettingStartedProject.id);
       expect(issue.assigneeAgentId).toBeNull();
@@ -312,8 +351,8 @@ test.describe("Onboarding wizard", () => {
     };
     const gettingStartedGroup = messengerGroups.groups.find((group) => group.name === "Getting Started");
     expect(gettingStartedGroup).toBeTruthy();
-    expect(new Set(gettingStartedGroup!.entries.map((entry) => entry.threadKey))).toEqual(
-      new Set(issues.map((issue) => `issue:${issue.id}`)),
+    expect(gettingStartedGroup!.entries.map((entry) => entry.threadKey)).toEqual(
+      GETTING_STARTED_TITLES.map((title) => `issue:${issueByTitle.get(title)!.id}`),
     );
     expect(gettingStartedGroup!.entries.every((entry) => entry.thread.unreadCount === 0)).toBe(true);
     expect(gettingStartedGroup!.entries.every((entry) => entry.thread.needsAttention === false)).toBe(true);
@@ -348,9 +387,9 @@ test.describe("Onboarding wizard", () => {
     await page.goto(`/${organization.urlKey}/issues?projectId=${gettingStartedProject.id}`);
     await expect(page.getByRole("heading", { name: "Issue Tracker" })).toBeVisible({ timeout: 15_000 });
     await page.getByRole("button", { name: "List view" }).click();
-    await expect(page.getByText(/choose Chat or issue structure/i)).toBeVisible();
+    await expect(page.getByText(/run one real task, inspect its result, and record your decision/i)).toBeVisible();
     await expect(page.getByRole("link", { name: /Welcome to Rudder/ }).first()).toBeVisible();
-    await expect(page.getByRole("link", { name: /Ask your agent one quick question/ }).first()).toBeVisible();
+    await expect(page.getByRole("link", { name: /Run one real task/ }).first()).toBeVisible();
 
     await page.goto(
       `/${organization.urlKey}/issues/${encodeURIComponent(nextIssueSource!.identifier ?? nextIssueSource!.id)}`,
@@ -363,7 +402,7 @@ test.describe("Onboarding wizard", () => {
     await expect(page.getByRole("heading", { name: nextIssueSource!.title })).toBeVisible({
       timeout: 15_000,
     });
-    const nextIssueLink = page.getByRole("link", { name: "2. Ask your agent one quick question" });
+    const nextIssueLink = page.getByRole("link", { name: "Review the result" });
     await expect(nextIssueLink).toHaveAttribute("href", nextIssueHref);
     await nextIssueLink.click();
     await expect(page).toHaveURL(
@@ -378,7 +417,7 @@ test.describe("Onboarding wizard", () => {
 
     await page.goto(`/${organization.urlKey}/issues/${encodeURIComponent(chatIssue!.identifier ?? chatIssue!.id)}`);
     await expect(page.getByRole("heading", { name: chatIssue!.title })).toBeVisible({ timeout: 15_000 });
-    const chatCta = page.getByRole("link", { name: "Start from this prompt" });
+    const chatCta = page.getByRole("link", { name: "Start in Chat" });
     await expect(chatCta).toHaveAttribute("href", chatCtaHref);
     await chatCta.click();
     await expect(page).toHaveURL(
@@ -390,6 +429,32 @@ test.describe("Onboarding wizard", () => {
     await expect(page.getByTestId("chat-project-selector")).toContainText("Getting Started", { timeout: 15_000 });
     await expect(page.locator(".chat-composer [contenteditable='true']").first()).toContainText(expectedPrefill!, { timeout: 15_000 });
     await expect(page.locator(".chat-warning")).toHaveCount(0);
+
+    await page.goto(`/${organization.urlKey}/issues/${encodeURIComponent(chatIssue!.identifier ?? chatIssue!.id)}`);
+    const openIssuesCta = page.getByRole("link", { name: "Open Issues" });
+    await expect(openIssuesCta).toHaveAttribute("href", issuesCtaHref);
+    await openIssuesCta.click();
+    await expect(page).toHaveURL(
+      new RegExp(`/${escapeRegExp(organization.urlKey)}/issues\\?projectId=${gettingStartedProject.id}$`),
+      { timeout: 15_000 },
+    );
+    await page.getByTestId("workspace-main-header").getByRole("button", { name: "Create Issue" }).click();
+    const newIssueDialog = page.locator('[data-slot="dialog-content"]')
+      .filter({ has: page.getByText("New issue") })
+      .first();
+    await expect(newIssueDialog.getByRole("button", { name: "Getting Started" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(newIssueDialog).toHaveCount(0);
+
+    for (const guideIssue of [nextIssueSource!, nextIssueTarget!]) {
+      await page.goto(
+        `/${organization.urlKey}/issues/${encodeURIComponent(guideIssue.identifier ?? guideIssue.id)}`,
+      );
+      await page.getByRole("button", { name: "Todo", exact: true }).click();
+      await page.getByRole("menuitemradio", { name: "Done", exact: true }).click();
+      await page.reload({ waitUntil: "networkidle" });
+      await expect(page.getByRole("button", { name: "Done", exact: true })).toBeVisible();
+    }
   });
 
   test("getting started seed can create only the welcome issue for experienced users", async ({
@@ -412,7 +477,7 @@ test.describe("Onboarding wizard", () => {
     const seed = await seedRes.json();
     expect(seed.includeTutorial).toBe(false);
     expect(seed.issues.map((issue: { title: string }) => issue.title)).toEqual([
-      "👋 Welcome to Rudder — work with agents like a team",
+      "👋 Welcome to Rudder — quick reference",
     ]);
 
     const projectsRes = await page.request.get(
@@ -432,7 +497,7 @@ test.describe("Onboarding wizard", () => {
     expect(issuesRes.ok()).toBe(true);
     const issues = await issuesRes.json();
     expect(issues.map((issue: { title: string }) => issue.title)).toEqual([
-      "👋 Welcome to Rudder — work with agents like a team",
+      "👋 Welcome to Rudder — quick reference",
     ]);
 
     const messengerGroupsRes = await page.request.get(
@@ -447,6 +512,294 @@ test.describe("Onboarding wizard", () => {
     expect(gettingStartedGroup?.entries[0]?.thread.unreadCount).toBe(0);
   });
 
+  test("v2 seed is idempotent and welcome-only can expand without deleting guides", async ({
+    page,
+  }) => {
+    const createRes = await page.request.post("/api/orgs", {
+      data: { name: `E2E-V2-Idempotent-${Date.now()}` },
+    });
+    expect(createRes.ok()).toBe(true);
+    const organization = await createRes.json() as { id: string };
+    const seedUrl = `/api/orgs/${organization.id}/onboarding/getting-started`;
+
+    const welcomeOnlyRes = await page.request.post(seedUrl, {
+      data: { includeTutorial: false },
+    });
+    expect(welcomeOnlyRes.status()).toBe(201);
+    const welcomeOnly = await welcomeOnlyRes.json() as {
+      project: { id: string };
+      issues: Array<{ id: string; title: string }>;
+    };
+    expect(welcomeOnly.issues).toHaveLength(1);
+
+    const repeatedWelcomeRes = await page.request.post(seedUrl, {
+      data: { includeTutorial: false },
+    });
+    expect(repeatedWelcomeRes.status()).toBe(200);
+    const repeatedWelcome = await repeatedWelcomeRes.json() as typeof welcomeOnly;
+    expect(repeatedWelcome.project.id).toBe(welcomeOnly.project.id);
+    expect(repeatedWelcome.issues.map((issue) => issue.id)).toEqual(
+      welcomeOnly.issues.map((issue) => issue.id),
+    );
+
+    const fullSeedRes = await page.request.post(seedUrl, {
+      data: { includeTutorial: true },
+    });
+    expect(fullSeedRes.status()).toBe(201);
+    const fullSeed = await fullSeedRes.json() as typeof welcomeOnly;
+    expect(fullSeed.issues.map((issue) => issue.title)).toEqual(GETTING_STARTED_TITLES);
+    expect(fullSeed.issues[0]?.id).toBe(welcomeOnly.issues[0]?.id);
+
+    const repeatedFullRes = await page.request.post(seedUrl, {
+      data: { includeTutorial: true },
+    });
+    expect(repeatedFullRes.status()).toBe(200);
+    const repeatedFull = await repeatedFullRes.json() as typeof welcomeOnly;
+    expect(repeatedFull.issues.map((issue) => issue.id)).toEqual(
+      fullSeed.issues.map((issue) => issue.id),
+    );
+
+    const welcomeAgainRes = await page.request.post(seedUrl, {
+      data: { includeTutorial: false },
+    });
+    expect(welcomeAgainRes.status()).toBe(200);
+    const allIssuesRes = await page.request.get(
+      `/api/orgs/${organization.id}/issues?projectId=${welcomeOnly.project.id}`,
+    );
+    expect(allIssuesRes.ok()).toBe(true);
+    const allIssues = await allIssuesRes.json() as Array<{ id: string; title: string }>;
+    expect(allIssues.map((issue) => issue.title).sort()).toEqual(
+      [...GETTING_STARTED_TITLES].sort(),
+    );
+    expect(new Set(allIssues.map((issue) => issue.id))).toEqual(
+      new Set(fullSeed.issues.map((issue) => issue.id)),
+    );
+
+    const emptyProjectOrgRes = await page.request.post("/api/orgs", {
+      data: { name: `E2E-V2-Empty-Project-${Date.now()}` },
+    });
+    expect(emptyProjectOrgRes.ok()).toBe(true);
+    const emptyProjectOrg = await emptyProjectOrgRes.json() as { id: string };
+    const emptyProjectRes = await page.request.post(
+      `/api/orgs/${emptyProjectOrg.id}/projects`,
+      {
+        data: {
+          name: "Getting Started",
+          description: "Replace this description when v2 seeds",
+          status: "planned",
+        },
+      },
+    );
+    expect(emptyProjectRes.ok()).toBe(true);
+    const emptyProject = await emptyProjectRes.json() as { id: string };
+    const emptyProjectSeedRes = await page.request.post(
+      `/api/orgs/${emptyProjectOrg.id}/onboarding/getting-started`,
+      { data: { includeTutorial: true } },
+    );
+    expect(emptyProjectSeedRes.status()).toBe(201);
+    await expect(emptyProjectSeedRes.json()).resolves.toMatchObject({
+      project: {
+        id: emptyProject.id,
+        description: "Complete one real work loop: start a small task in Chat or an Issue, inspect the result, and decide what happens next.",
+      },
+      issues: GETTING_STARTED_TITLES.map((title) => ({ title })),
+      createdProject: false,
+      createdIssueCount: 3,
+    });
+  });
+
+  test("legacy and unrelated Getting Started projects remain byte-for-byte unchanged", async ({
+    page,
+  }) => {
+    for (const [index, title] of [
+      LEGACY_GETTING_STARTED_TITLES[0]!,
+      "Operator-authored first task",
+    ].entries()) {
+      const createRes = await page.request.post("/api/orgs", {
+        data: { name: `E2E-Frozen-Getting-Started-${index}-${Date.now()}` },
+      });
+      expect(createRes.ok()).toBe(true);
+      const organization = await createRes.json() as { id: string };
+      const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+        data: {
+          name: "Getting Started",
+          description: `Keep this description unchanged ${index}`,
+          status: "in_progress",
+        },
+      });
+      expect(projectRes.ok()).toBe(true);
+      const project = await projectRes.json() as { id: string };
+      const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+        data: {
+          projectId: project.id,
+          title,
+          description: `Keep this issue unchanged ${index}`,
+          status: "blocked",
+          priority: "high",
+          boardOrder: 7300,
+        },
+      });
+      expect(issueRes.ok()).toBe(true);
+
+      const beforeProjectsRes = await page.request.get(`/api/orgs/${organization.id}/projects`);
+      const beforeIssuesRes = await page.request.get(
+        `/api/orgs/${organization.id}/issues?projectId=${project.id}`,
+      );
+      const beforeGroupsRes = await page.request.get(
+        `/api/orgs/${organization.id}/messenger/groups`,
+      );
+      const beforeProjects = await beforeProjectsRes.json();
+      const beforeIssues = await beforeIssuesRes.json();
+      const beforeGroups = await beforeGroupsRes.json();
+
+      const seedRes = await page.request.post(
+        `/api/orgs/${organization.id}/onboarding/getting-started`,
+        { data: { includeTutorial: true } },
+      );
+      expect(seedRes.status()).toBe(200);
+      await expect(seedRes.json()).resolves.toMatchObject({
+        project: { id: project.id },
+        issues: [{ title }],
+        createdProject: false,
+        createdIssueCount: 0,
+      });
+
+      const afterProjectsRes = await page.request.get(`/api/orgs/${organization.id}/projects`);
+      const afterIssuesRes = await page.request.get(
+        `/api/orgs/${organization.id}/issues?projectId=${project.id}`,
+      );
+      const afterGroupsRes = await page.request.get(
+        `/api/orgs/${organization.id}/messenger/groups`,
+      );
+      expect(await afterProjectsRes.json()).toEqual(beforeProjects);
+      expect(await afterIssuesRes.json()).toEqual(beforeIssues);
+      expect(await afterGroupsRes.json()).toEqual(beforeGroups);
+    }
+  });
+
+  test("a Getting Started project with only a hidden issue remains frozen", async ({ page }) => {
+    const createRes = await page.request.post("/api/orgs", {
+      data: { name: `E2E-Frozen-Hidden-Getting-Started-${Date.now()}` },
+    });
+    expect(createRes.ok()).toBe(true);
+    const organization = await createRes.json() as { id: string };
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Getting Started",
+        description: "Hidden operator work must keep this description",
+        status: "in_progress",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string };
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        projectId: project.id,
+        title: "Hidden operator-authored first task",
+        description: "Do not reveal or mutate this issue during reseed",
+        status: "blocked",
+        priority: "high",
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json() as { id: string };
+    const hideRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: { hiddenAt: new Date().toISOString() },
+    });
+    expect(hideRes.ok()).toBe(true);
+
+    const beforeProjects = await page.request.get(`/api/orgs/${organization.id}/projects`)
+      .then((response) => response.json());
+    const beforeIssue = await page.request.get(`/api/issues/${issue.id}`)
+      .then((response) => response.json());
+    const beforeGroups = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`)
+      .then((response) => response.json());
+
+    const seedRes = await page.request.post(
+      `/api/orgs/${organization.id}/onboarding/getting-started`,
+      { data: { includeTutorial: true } },
+    );
+    expect(seedRes.status()).toBe(200);
+    await expect(seedRes.json()).resolves.toMatchObject({
+      project: { id: project.id },
+      issues: [],
+      createdProject: false,
+      createdIssueCount: 0,
+    });
+
+    const afterProjects = await page.request.get(`/api/orgs/${organization.id}/projects`)
+      .then((response) => response.json());
+    const afterIssue = await page.request.get(`/api/issues/${issue.id}`)
+      .then((response) => response.json());
+    const afterGroups = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`)
+      .then((response) => response.json());
+    expect(afterProjects).toEqual(beforeProjects);
+    expect(afterIssue).toEqual(beforeIssue);
+    expect(afterGroups).toEqual(beforeGroups);
+  });
+
+  test("a hidden v2 guide is frozen and never duplicated by reseed", async ({ page }) => {
+    const createRes = await page.request.post("/api/orgs", {
+      data: { name: `E2E-Frozen-Hidden-V2-${Date.now()}` },
+    });
+    expect(createRes.ok()).toBe(true);
+    const organization = await createRes.json() as { id: string };
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Getting Started",
+        description: "Hidden v2 content remains operator-owned",
+        status: "in_progress",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string };
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        projectId: project.id,
+        title: GETTING_STARTED_TITLES[0],
+        description: "Keep this hidden v2 guide unchanged",
+        status: "blocked",
+        priority: "high",
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json() as { id: string };
+    const hiddenAt = new Date().toISOString();
+    const hideRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: { hiddenAt },
+    });
+    expect(hideRes.ok()).toBe(true);
+    const beforeIssue = await page.request.get(`/api/issues/${issue.id}`)
+      .then((response) => response.json());
+
+    const seedRes = await page.request.post(
+      `/api/orgs/${organization.id}/onboarding/getting-started`,
+      { data: { includeTutorial: true } },
+    );
+    expect(seedRes.status()).toBe(200);
+    await expect(seedRes.json()).resolves.toMatchObject({
+      project: { id: project.id, description: "Hidden v2 content remains operator-owned" },
+      issues: [],
+      createdProject: false,
+      createdIssueCount: 0,
+    });
+    const afterIssue = await page.request.get(`/api/issues/${issue.id}`)
+      .then((response) => response.json());
+    expect(afterIssue).toEqual(beforeIssue);
+
+    const unhideRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: { hiddenAt: null },
+    });
+    expect(unhideRes.ok()).toBe(true);
+    const visibleIssuesRes = await page.request.get(
+      `/api/orgs/${organization.id}/issues?projectId=${project.id}`,
+    );
+    expect(visibleIssuesRes.ok()).toBe(true);
+    const visibleIssues = await visibleIssuesRes.json() as Array<{ id: string; title: string }>;
+    expect(visibleIssues).toHaveLength(1);
+    expect(visibleIssues[0]).toMatchObject({ id: issue.id, title: GETTING_STARTED_TITLES[0] });
+  });
+
   test("existing organization onboarding starts at agent and runtime test stays valid", async ({
     page,
   }) => {
@@ -456,6 +809,38 @@ test.describe("Onboarding wizard", () => {
     });
     expect(createRes.ok()).toBe(true);
     const organization = await createRes.json();
+
+    const existingProjectRes = await page.request.post(
+      `/api/orgs/${organization.id}/projects`,
+      {
+        data: {
+          name: "Getting Started",
+          description: "Existing operator-owned onboarding project",
+          status: "in_progress",
+        },
+      },
+    );
+    expect(existingProjectRes.ok()).toBe(true);
+    const existingProject = await existingProjectRes.json() as { id: string };
+    const existingIssueRes = await page.request.post(
+      `/api/orgs/${organization.id}/issues`,
+      {
+        data: {
+          projectId: existingProject.id,
+          title: "Existing operator-owned guide",
+          description: "Do not mutate during agent onboarding",
+          status: "blocked",
+          priority: "high",
+        },
+      },
+    );
+    expect(existingIssueRes.ok()).toBe(true);
+    const beforeProject = await existingProjectRes.json();
+    const beforeIssuesRes = await page.request.get(
+      `/api/orgs/${organization.id}/issues?projectId=${existingProject.id}`,
+    );
+    expect(beforeIssuesRes.ok()).toBe(true);
+    const beforeIssues = await beforeIssuesRes.json();
 
     await page.goto(`/${organization.urlKey}/onboarding`);
 
@@ -497,6 +882,13 @@ test.describe("Onboarding wizard", () => {
     );
     expect(rootAgent).toBeTruthy();
 
+    const afterProjectsRes = await page.request.get(`/api/orgs/${organization.id}/projects`);
+    const afterProjects = await afterProjectsRes.json() as Array<{ id: string }>;
+    expect(afterProjects.find((project) => project.id === existingProject.id)).toEqual(beforeProject);
+    const afterIssuesRes = await page.request.get(
+      `/api/orgs/${organization.id}/issues?projectId=${existingProject.id}`,
+    );
+    expect(await afterIssuesRes.json()).toEqual(beforeIssues);
   });
 
   test("new organization drafts are rolled back when onboarding closes before completion", async ({
