@@ -88,7 +88,7 @@ export function savedViewKeepInputFromSidePanelTarget(
     target: targetPayload,
     title: target.label,
     subtitle: savedViewSubtitle(target),
-    favicon: null,
+    favicon: target.kind === "browser" ? target.favicon ?? null : null,
     clientMutationId: options.clientMutationId,
     placement: options.placement,
   };
@@ -101,7 +101,15 @@ export function messengerSavedViewRoute(savedViewId: string) {
 export function sidePanelTargetFromSavedView(savedView: MessengerSavedView): SidePanelTarget | null {
   const target = savedView.targetPayload;
   const common = { label: savedView.title, viewInstanceId: target.viewInstanceId };
-  if (target.kind === "browser") return { ...common, kind: "browser", tabId: target.tabId, url: target.url };
+  if (target.kind === "browser") {
+    return {
+      ...common,
+      kind: "browser",
+      tabId: target.tabId,
+      url: target.url,
+      favicon: savedView.favicon ?? undefined,
+    };
+  }
   if (target.kind === "automation") return { ...common, kind: "automation", automationId: target.automationId };
   if (target.kind === "library_document") return { ...common, kind: "library_document", documentId: target.documentId };
   if (target.kind === "library_entry") return { ...common, kind: "library_entry", entryId: target.entryId, path: target.path };

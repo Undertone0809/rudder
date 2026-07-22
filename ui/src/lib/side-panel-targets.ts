@@ -64,6 +64,7 @@ export type SidePanelTarget =
       url: string;
       label: string;
       tabId: string;
+      favicon?: string;
       dedupeKey?: string;
       viewInstanceId?: string;
     }

@@ -92,4 +92,37 @@ describe("Messenger Saved View UI model", () => {
       viewInstanceId: "view-exact",
     });
   });
+
+  it("round-trips Browser favicon recovery metadata", () => {
+    const options = {
+      clientMutationId: "00000000-0000-4000-8000-000000000001",
+      placement: { kind: "group" as const, groupId: "20000000-0000-4000-8000-000000000001" },
+    };
+    expect(savedViewKeepInputFromSidePanelTarget({
+      kind: "browser",
+      tabId: "browser-tab-1",
+      url: "https://example.com/dashboard",
+      label: "Dashboard",
+      favicon: "https://example.com/favicon.ico",
+      viewInstanceId: "browser-view-1",
+    }, options)).toMatchObject({
+      favicon: "https://example.com/favicon.ico",
+    });
+
+    const savedView = {
+      id: "30000000-0000-4000-8000-000000000001",
+      title: "Dashboard",
+      subtitle: "https://example.com/dashboard",
+      favicon: "https://example.com/favicon.ico",
+      targetPayload: {
+        kind: "browser",
+        tabId: "browser-tab-1",
+        url: "https://example.com/dashboard",
+        viewInstanceId: "browser-view-1",
+      },
+    } as MessengerSavedView;
+    expect(sidePanelTargetFromSavedView(savedView)).toMatchObject({
+      favicon: "https://example.com/favicon.ico",
+    });
+  });
 });

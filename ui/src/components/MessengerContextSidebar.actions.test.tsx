@@ -3478,6 +3478,7 @@ describe("MessengerContextSidebar chat actions", () => {
     ];
     mockAssignCustomGroupEntry.mockRejectedValueOnce(new Error("Move denied"));
     mockDeleteSavedView.mockRejectedValueOnce(new Error("Remove denied"));
+    mockSeparateCustomGroup.mockRejectedValueOnce(new Error("Saved View membership changed"));
     renderSidebar();
 
     const moveDestination = Array.from(document.querySelectorAll("button"))
@@ -3503,6 +3504,27 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockPushToast).toHaveBeenCalledWith({
       title: "Could not remove Saved View",
       body: "Remove denied",
+      tone: "error",
+    });
+
+    const separateButtons = Array.from(document.querySelectorAll("button"))
+      .filter((button) => button.textContent?.includes("Separate items")) as HTMLButtonElement[];
+    const blockedSeparate = separateButtons.find((button) => button.disabled);
+    const blockedReasonId = blockedSeparate?.getAttribute("aria-describedby");
+    expect(blockedReasonId).toBeTruthy();
+    expect(document.getElementById(blockedReasonId!)?.textContent).toContain(
+      "Move or remove Saved Views before separating this group.",
+    );
+
+    const availableSeparate = separateButtons.find((button) => !button.disabled);
+    expect(availableSeparate).toBeTruthy();
+    await act(async () => {
+      availableSeparate?.click();
+      await Promise.resolve();
+    });
+    expect(mockPushToast).toHaveBeenCalledWith({
+      title: "Could not separate Messenger group",
+      body: "Saved View membership changed",
       tone: "error",
     });
   });

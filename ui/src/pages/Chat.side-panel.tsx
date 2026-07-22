@@ -45,7 +45,11 @@ import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspace
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
-import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
+import {
+  sidePanelTargetKey,
+  sidePanelTargetSupportsSavedView,
+  type SidePanelTarget,
+} from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
 import {
@@ -176,6 +180,19 @@ type BrowserWebviewElement = HTMLElement & {
   reloadIgnoringCache?: () => void;
   setZoomFactor?: (factor: number) => void;
 };
+
+function acceptedBrowserFavicon(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 8_192) return null;
+  if (trimmed.startsWith("data:image/")) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:" ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
 
 function LoadingPanelBody() {
   return (
@@ -1506,10 +1523,12 @@ function ChatSidePanelBrowserView({
   }, [executeBrowserShortcut, onRegisterShortcutController, targetKey]);
 
   const replaceBrowserTarget = useCallback((nextUrl: string, nextTitle = chatSidePanelBrowserLabel(nextUrl)) => {
+    const urlChanged = targetRef.current.url !== nextUrl;
     const nextTarget: Extract<SidePanelTarget, { kind: "browser" }> = {
       ...targetRef.current,
       url: nextUrl,
       label: nextTitle,
+      favicon: urlChanged ? undefined : targetRef.current.favicon,
     };
     currentUrlRef.current = nextUrl;
     targetRef.current = nextTarget;
@@ -1578,6 +1597,14 @@ function ChatSidePanelBrowserView({
       targetRef.current = nextTarget;
       onReplaceTargetRef.current(targetKey, nextTarget);
     };
+    const handleFavicon = (event: Event) => {
+      const favicons = "favicons" in event && Array.isArray(event.favicons) ? event.favicons : [];
+      const favicon = favicons.map(acceptedBrowserFavicon).find((value): value is string => Boolean(value));
+      if (!favicon || favicon === targetRef.current.favicon) return;
+      const nextTarget = { ...targetRef.current, favicon };
+      targetRef.current = nextTarget;
+      onReplaceTargetRef.current(targetKey, nextTarget);
+    };
     const handleFail = (event: Event) => {
       const errorDescription = "errorDescription" in event && typeof event.errorDescription === "string"
         ? event.errorDescription
@@ -1624,6 +1651,7 @@ function ChatSidePanelBrowserView({
     webview.addEventListener("did-navigate", handleNavigate);
     webview.addEventListener("did-navigate-in-page", handleNavigate);
     webview.addEventListener("page-title-updated", handleTitle);
+    webview.addEventListener("page-favicon-updated", handleFavicon);
     webview.addEventListener("did-fail-load", handleFail);
     updateNavigationState();
 
@@ -1636,6 +1664,7 @@ function ChatSidePanelBrowserView({
       webview.removeEventListener("did-navigate", handleNavigate);
       webview.removeEventListener("did-navigate-in-page", handleNavigate);
       webview.removeEventListener("page-title-updated", handleTitle);
+      webview.removeEventListener("page-favicon-updated", handleFavicon);
       webview.removeEventListener("did-fail-load", handleFail);
     };
   }, [replaceBrowserTarget, safeCurrentWebviewUrl, safeWebviewCall, targetKey, updateNavigationState, webviewNode]);
@@ -2323,6 +2352,12 @@ export function ChatSidePanel({
                       draggable={!isMobile && visibleTabs.length > 1}
                       aria-selected={selected}
                       data-testid="chat-side-panel-tab"
+                      data-view-instance-id={sidePanelTargetSupportsSavedView(tab)
+                        ? tab.kind === "browser"
+                          ? tab.viewInstanceId ?? tab.tabId
+                          : tab.viewInstanceId
+                        : undefined}
+                      data-browser-favicon={tab.kind === "browser" ? tab.favicon : undefined}
                       className="min-w-0 flex-1 cursor-grab truncate rounded-l-full px-2.5 py-1 text-left text-xs active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                       onClick={() => sidePanel.setActiveKey(tabKey)}
                     >

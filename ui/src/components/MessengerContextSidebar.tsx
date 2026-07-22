@@ -1243,6 +1243,13 @@ export function MessengerContextSidebar() {
       return messengerApi.separateCustomGroup(model.selectedOrganizationId, groupId);
     },
     onSuccess: refreshCustomGroups,
+    onError: (error) => {
+      pushToast({
+        title: "Could not separate Messenger group",
+        body: error instanceof Error ? error.message : "Try again.",
+        tone: "error",
+      });
+    },
   });
 
   const reorderCustomGroupsMutation = useMutation({
@@ -1254,9 +1261,9 @@ export function MessengerContextSidebar() {
   });
 
   const reorderCustomGroupEntriesMutation = useMutation({
-    mutationFn: ({ groupId, threadKeys }: { groupId: string; threadKeys: string[] }) => {
+    mutationFn: ({ groupId, itemKeys }: { groupId: string; itemKeys: string[] }) => {
       if (!model.selectedOrganizationId) throw new Error("Organization is required to reorder Messenger group entries");
-      return messengerApi.reorderCustomGroupEntries(model.selectedOrganizationId, groupId, threadKeys);
+      return messengerApi.reorderCustomGroupEntries(model.selectedOrganizationId, groupId, itemKeys);
     },
     onSuccess: refreshCustomGroups,
   });
@@ -1489,15 +1496,17 @@ export function MessengerContextSidebar() {
         }
       }
       if (activeGroupId && overEntryGroupId && activeGroupId === overEntryGroupId) {
-        const groupSectionKey = customGroupSectionKey(activeGroupId);
-        const section = organizedThreadSections.find((candidate) => candidate.key === groupSectionKey);
-        const sectionKeys = section?.entries.map((entry) => entry.thread.threadKey) ?? [];
-        const oldIndex = sectionKeys.indexOf(activeThreadKey);
-        const newIndex = sectionKeys.indexOf(overThreadKey);
+        const group = customGroups.find((candidate) => candidate.id === activeGroupId);
+        const itemKeys = group?.entries
+          .slice()
+          .sort((left, right) => left.sortOrder - right.sortOrder)
+          .map((entry) => entry.itemKey) ?? [];
+        const oldIndex = itemKeys.indexOf(activeThreadKey);
+        const newIndex = itemKeys.indexOf(overThreadKey);
         if (oldIndex !== -1 && newIndex !== -1) {
           reorderCustomGroupEntriesMutation.mutate({
             groupId: activeGroupId,
-            threadKeys: arrayMove(sectionKeys, oldIndex, newIndex),
+            itemKeys: arrayMove(itemKeys, oldIndex, newIndex),
           });
         }
         return;
@@ -1955,35 +1964,30 @@ export function MessengerContextSidebar() {
         </div>
       </SortableContext>
     ) : null;
-    const renderedEntries = canSortCustomEntries ? (
-      <SortableContext
-        items={visibleEntries.map((entry) => entry.thread.threadKey)}
-        strategy={verticalListSortingStrategy}
-      >
-        {visibleEntries.map((entry) => (
-          <SortableCustomThreadEntry
-            key={entry.thread.threadKey}
-            id={entry.thread.threadKey}
-            insertionPlacement={resolveEntryInsertionPlacement(entry.thread.threadKey)}
-          >
-            {(dragHandlePropsForEntry, dragging) => renderThreadEntry(entry, dragHandlePropsForEntry, dragging)}
-          </SortableCustomThreadEntry>
-        ))}
-      </SortableContext>
-    ) : (
-      visibleEntries.map((entry) => (
-        <div key={entry.thread.threadKey} className="relative">
-          <MessengerInsertionLine placement={resolveEntryInsertionPlacement(entry.thread.threadKey)} />
-          {renderThreadEntry(entry, canDragStandaloneCustomEntry ? dragHandleProps : undefined)}
-        </div>
-      ))
+    const visibleEntryByThreadKey = new Map(
+      visibleEntries.map((entry) => [entry.thread.threadKey, entry]),
     );
-    const sectionBody = (
-      <>
-        {renderedChildSections}
-        <div className="flex flex-col gap-1">
-          {renderedEntries}
-          {customGroup ? savedViewEntries.map((entry) => (
+    const renderVisibleThreadEntry = (entry: OrganizedThreadEntry) => canSortCustomEntries ? (
+      <SortableCustomThreadEntry
+        key={entry.thread.threadKey}
+        id={entry.thread.threadKey}
+        insertionPlacement={resolveEntryInsertionPlacement(entry.thread.threadKey)}
+      >
+        {(dragHandlePropsForEntry, dragging) => renderThreadEntry(entry, dragHandlePropsForEntry, dragging)}
+      </SortableCustomThreadEntry>
+    ) : (
+      <div key={entry.thread.threadKey} className="relative">
+        <MessengerInsertionLine placement={resolveEntryInsertionPlacement(entry.thread.threadKey)} />
+        {renderThreadEntry(entry, canDragStandaloneCustomEntry ? dragHandleProps : undefined)}
+      </div>
+    );
+    const orderedCustomEntries = customGroup?.entries
+      .slice()
+      .sort((left, right) => left.sortOrder - right.sortOrder) ?? [];
+    const renderedEntryNodes = customGroup
+      ? orderedCustomEntries.map((entry) => {
+        if (isSavedViewCustomGroupEntry(entry)) {
+          return (
             <MessengerSavedViewRow
               key={entry.itemKey}
               currentGroupId={customGroup.id}
@@ -1992,7 +1996,25 @@ export function MessengerContextSidebar() {
               onMove={(groupId, itemKey) => moveSavedViewMutation.mutate({ groupId, itemKey })}
               onRemove={(savedViewId) => removeSavedViewMutation.mutate(savedViewId)}
             />
-          )) : null}
+          );
+        }
+        const visibleEntry = visibleEntryByThreadKey.get(entry.threadKey);
+        return visibleEntry ? renderVisibleThreadEntry(visibleEntry) : null;
+      })
+      : visibleEntries.map(renderVisibleThreadEntry);
+    const renderedEntries = canSortCustomEntries ? (
+      <SortableContext
+        items={visibleEntries.map((entry) => entry.thread.threadKey)}
+        strategy={verticalListSortingStrategy}
+      >
+        {renderedEntryNodes}
+      </SortableContext>
+    ) : renderedEntryNodes;
+    const sectionBody = (
+      <>
+        {renderedChildSections}
+        <div className="flex flex-col gap-1">
+          {renderedEntries}
         </div>
         {showMoreControl || showCollapseControl ? (
           <div className="mx-1.5 flex items-center gap-1.5 px-2 py-1">
@@ -2178,12 +2200,20 @@ export function MessengerContextSidebar() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   disabled={savedViewEntries.length > 0}
-                  title={savedViewEntries.length > 0 ? "Remove or move Saved Views before separating this group." : undefined}
+                  aria-describedby={savedViewEntries.length > 0 ? `messenger-separate-blocked-${customGroup.id}` : undefined}
                   onClick={() => void handleSeparateCustomGroup(customGroup)}
                 >
                   <FolderInput className="h-4 w-4" />
                   Separate items
                 </DropdownMenuItem>
+                {savedViewEntries.length > 0 ? (
+                  <p
+                    id={`messenger-separate-blocked-${customGroup.id}`}
+                    className="px-2 py-1 text-[11px] leading-4 text-muted-foreground"
+                  >
+                    Move or remove Saved Views before separating this group.
+                  </p>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
             ) : null}

@@ -4,16 +4,16 @@ import { useToast } from "@/context/ToastContext";
 import {
   savedViewKeepInputFromSidePanelTarget,
   savedViewPlacementForSidePanelContext,
+  type MessengerSavedViewKeepInput,
 } from "@/lib/messenger-saved-views";
 import { queryKeys } from "@/lib/queryKeys";
 import {
-  sidePanelTargetKey,
   sidePanelTargetSupportsSavedView,
   type SidePanelTarget,
 } from "@/lib/side-panel-targets";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookmarkPlus, Check, Loader2 } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,6 +25,60 @@ import {
 function newMutationId() {
   return globalThis.crypto?.randomUUID?.()
     ?? `00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padEnd(12, "0")}`;
+}
+
+const MAX_RETRYABLE_KEEP_INTENTS = 32;
+const MAX_BROWSER_METADATA_FINGERPRINTS = 32;
+const BROWSER_METADATA_DEBOUNCE_MS = 350;
+const INTENT_KEY_PLACEHOLDER_MUTATION_ID = "00000000-0000-4000-8000-000000000000";
+
+function stableIntentValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableIntentValue).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, entryValue]) => (
+      `${JSON.stringify(key)}:${stableIntentValue(entryValue)}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function keepIntentKey(input: MessengerSavedViewKeepInput) {
+  const { clientMutationId: _clientMutationId, ...intent } = input;
+  return stableIntentValue(intent);
+}
+
+function rememberBoundedFingerprint(cache: Map<string, string>, key: string, fingerprint: string) {
+  cache.delete(key);
+  cache.set(key, fingerprint);
+  while (cache.size > MAX_BROWSER_METADATA_FINGERPRINTS) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+}
+
+function mutationIdForIntent(cache: Map<string, string>, intentKey: string) {
+  const existing = cache.get(intentKey);
+  if (existing) {
+    cache.delete(intentKey);
+    cache.set(intentKey, existing);
+    return existing;
+  }
+  const mutationId = newMutationId();
+  cache.set(intentKey, mutationId);
+  while (cache.size > MAX_RETRYABLE_KEEP_INTENTS) {
+    const oldestIntentKey = cache.keys().next().value;
+    if (oldestIntentKey === undefined) break;
+    cache.delete(oldestIntentKey);
+  }
+  return mutationId;
+}
+
+function retireCompletedIntent(cache: Map<string, string>, intentKey: string, mutationId: string) {
+  if (cache.get(intentKey) === mutationId) cache.delete(intentKey);
 }
 
 export function KeepSidePanelViewButton({
@@ -39,6 +93,8 @@ export function KeepSidePanelViewButton({
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const mutationIdsRef = useRef(new Map<string, string>());
+  const browserMetadataFingerprintsRef = useRef(new Map<string, string>());
+  const browserMetadataQueuesRef = useRef(new Map<string, Promise<void>>());
   const eligible = Boolean(target && sidePanelTargetSupportsSavedView(target)
     && (target.kind !== "library_entry" || target.path));
   const hostIssueRef = contextKey.startsWith("issue:")
@@ -53,7 +109,7 @@ export function KeepSidePanelViewButton({
   const groupsQuery = useQuery({
     queryKey: queryKeys.messenger.customGroups(organizationId ?? "__none__"),
     queryFn: () => messengerApi.listCustomGroups(organizationId!),
-    enabled: eligible && Boolean(organizationId) && !anchorPlacement,
+    enabled: eligible && Boolean(organizationId) && (!anchorPlacement || target?.kind === "browser"),
   });
   const groups = groupsQuery.data?.groups ?? [];
   const targetInstanceId = target && sidePanelTargetSupportsSavedView(target)
@@ -61,12 +117,77 @@ export function KeepSidePanelViewButton({
       ? target.viewInstanceId ?? target.tabId
       : target.viewInstanceId ?? null
     : null;
-  const existingSavedViewGroup = targetInstanceId
-    ? groups.find((group) => group.entries.some((entry) => (
+  const existingSavedViewEntry = targetInstanceId && target && sidePanelTargetSupportsSavedView(target)
+    ? groups.flatMap((group) => group.entries).find((entry) => (
       entry.item.type === "saved_view"
+      && entry.item.savedView.targetPayload.kind === target.kind
       && entry.item.savedView.targetPayload.viewInstanceId === targetInstanceId
-    ))) ?? null
+    )) ?? null
     : null;
+  const existingSavedViewGroup = existingSavedViewEntry
+    ? groups.find((group) => group.entries.some((entry) => entry.id === existingSavedViewEntry.id)) ?? null
+    : null;
+
+  useEffect(() => {
+    if (!organizationId || target?.kind !== "browser" || existingSavedViewEntry?.item.type !== "saved_view") {
+      return undefined;
+    }
+    const savedView = existingSavedViewEntry.item.savedView;
+    if (savedView.targetPayload.kind !== "browser") return undefined;
+    const desiredTarget = {
+      kind: "browser" as const,
+      tabId: target.tabId,
+      url: target.url,
+      viewInstanceId: target.viewInstanceId ?? target.tabId,
+    };
+    const desiredFavicon = target.favicon !== undefined
+      ? target.favicon
+      : savedView.targetPayload.url === target.url
+        ? savedView.favicon
+        : null;
+    const metadata = {
+      target: desiredTarget,
+      title: target.label,
+      subtitle: target.url,
+      favicon: desiredFavicon,
+    };
+    const persistedMetadata = {
+      target: savedView.targetPayload,
+      title: savedView.title,
+      subtitle: savedView.subtitle,
+      favicon: savedView.favicon,
+    };
+    const fingerprint = stableIntentValue(metadata);
+    if (fingerprint === stableIntentValue(persistedMetadata)
+      || browserMetadataFingerprintsRef.current.get(savedView.id) === fingerprint) {
+      return undefined;
+    }
+
+    const timeout = window.setTimeout(() => {
+      rememberBoundedFingerprint(browserMetadataFingerprintsRef.current, savedView.id, fingerprint);
+      const previous = browserMetadataQueuesRef.current.get(savedView.id) ?? Promise.resolve();
+      const queued = previous
+        .catch(() => undefined)
+        .then(async () => {
+          await messengerApi.updateSavedView(organizationId, savedView.id, metadata);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.messenger.customGroups(organizationId),
+          });
+        })
+        .catch(() => {
+          if (browserMetadataFingerprintsRef.current.get(savedView.id) === fingerprint) {
+            browserMetadataFingerprintsRef.current.delete(savedView.id);
+          }
+        });
+      browserMetadataQueuesRef.current.set(savedView.id, queued);
+      void queued.finally(() => {
+        if (browserMetadataQueuesRef.current.get(savedView.id) === queued) {
+          browserMetadataQueuesRef.current.delete(savedView.id);
+        }
+      });
+    }, BROWSER_METADATA_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [existingSavedViewEntry, organizationId, queryClient, target]);
 
   const keepMutation = useMutation({
     mutationFn: async (groupId: string | null) => {
@@ -81,17 +202,18 @@ export function KeepSidePanelViewButton({
           ? "Wait for the Issue to finish loading, then try again."
           : "Choose a Messenger group first.");
       }
-      const targetKey = sidePanelTargetKey(target);
-      let clientMutationId = mutationIdsRef.current.get(targetKey);
-      if (!clientMutationId) {
-        clientMutationId = newMutationId();
-        mutationIdsRef.current.set(targetKey, clientMutationId);
-      }
-      const input = savedViewKeepInputFromSidePanelTarget(target, { clientMutationId, placement });
-      if (!input) throw new Error("This Side Panel view cannot be kept in Messenger.");
-      return messengerApi.keepSavedView(organizationId, input);
+      const intent = savedViewKeepInputFromSidePanelTarget(target, {
+        clientMutationId: INTENT_KEY_PLACEHOLDER_MUTATION_ID,
+        placement,
+      });
+      if (!intent) throw new Error("This Side Panel view cannot be kept in Messenger.");
+      const intentKey = keepIntentKey(intent);
+      const clientMutationId = mutationIdForIntent(mutationIdsRef.current, intentKey);
+      const result = await messengerApi.keepSavedView(organizationId, { ...intent, clientMutationId });
+      return { clientMutationId, intentKey, result };
     },
-    onSuccess: async (result) => {
+    onSuccess: async ({ clientMutationId, intentKey, result }) => {
+      retireCompletedIntent(mutationIdsRef.current, intentKey, clientMutationId);
       await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.customGroups(organizationId ?? "__none__") });
       pushToast({
         title: "Kept in Messenger",
@@ -118,6 +240,20 @@ export function KeepSidePanelViewButton({
       : <BookmarkPlus className="h-3.5 w-3.5" aria-hidden />;
 
   if (anchorPlacement) {
+    if (hostIssueRef && hostIssueQuery.isError) {
+      return (
+        <div className="flex items-center gap-1 text-[11px]" role="alert">
+          <span className="text-destructive">Could not load this Issue.</span>
+          <button
+            type="button"
+            className={buttonClass}
+            onClick={() => void hostIssueQuery.refetch()}
+          >
+            Retry Issue lookup
+          </button>
+        </div>
+      );
+    }
     return (
       <button
         type="button"
@@ -153,7 +289,16 @@ export function KeepSidePanelViewButton({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="surface-overlay w-64 text-foreground">
         <DropdownMenuLabel>Keep in Messenger group</DropdownMenuLabel>
-        {existingSavedViewGroup ? (
+        {groupsQuery.isError ? (
+          <>
+            <DropdownMenuItem disabled className="whitespace-normal text-xs leading-5">
+              Could not load Messenger groups.
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void groupsQuery.refetch()}>
+              Retry groups
+            </DropdownMenuItem>
+          </>
+        ) : existingSavedViewGroup ? (
           <DropdownMenuItem disabled className="whitespace-normal text-xs leading-5">
             Already kept in {existingSavedViewGroup.name}. Use the Saved View row menu to move or remove it.
           </DropdownMenuItem>

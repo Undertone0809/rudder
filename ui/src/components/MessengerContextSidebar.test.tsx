@@ -717,8 +717,36 @@ describe("MessengerContextSidebar", () => {
 
   it("renders Saved Views only inside their custom group without unread or a fixed Saved section", () => {
     localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "custom" });
-    chatList = [];
-    messengerModel = { ...baseModel(), threadSummaries: [] };
+    const laterThread = {
+      threadKey: "chat:chat-later",
+      kind: "chat" as const,
+      title: "Later grouped chat",
+      preview: "Continue after the saved reference.",
+      subtitle: null,
+      href: "/messenger/chat/chat-later",
+      latestActivityAt: "2026-04-11T08:00:00.000Z",
+      lastReadAt: null,
+      unreadCount: 0,
+      needsAttention: false,
+      isPinned: false,
+    };
+    chatList = [{
+      id: "chat-later",
+      title: "Later grouped chat",
+      summary: "Continue after the saved reference.",
+      latestReplyPreview: "Continue after the saved reference.",
+      latestUserMessagePreview: null,
+      userMessageCount: 0,
+      updatedAt: "2026-04-11T08:00:00.000Z",
+      lastMessageAt: "2026-04-11T08:00:00.000Z",
+      unreadCount: 0,
+      needsAttention: false,
+      isUnread: false,
+      isPinned: false,
+      primaryIssue: null,
+      contextLinks: [],
+    }];
+    messengerModel = { ...baseModel(), threadSummaries: [laterThread] };
     customGroupList = [{
       id: "group-saved",
       orgId: "org-1",
@@ -730,38 +758,52 @@ describe("MessengerContextSidebar", () => {
       collapsed: false,
       createdAt: "2026-04-11T08:00:00.000Z",
       updatedAt: "2026-04-11T08:00:00.000Z",
-      entries: [{
-        id: "entry-saved",
-        orgId: "org-1",
-        userId: "local-board",
-        groupId: "group-saved",
-        itemKey: "saved_view:30000000-0000-4000-8000-000000000001",
-        sortOrder: 0,
-        createdAt: "2026-04-11T08:00:00.000Z",
-        updatedAt: "2026-04-11T08:00:00.000Z",
-        item: {
-          type: "saved_view",
+      entries: [
+        {
+          id: "entry-saved",
+          orgId: "org-1",
+          userId: "local-board",
+          groupId: "group-saved",
           itemKey: "saved_view:30000000-0000-4000-8000-000000000001",
-          title: "Market dashboard",
-          savedView: {
-            id: "30000000-0000-4000-8000-000000000001",
+          sortOrder: 0,
+          createdAt: "2026-04-11T08:00:00.000Z",
+          updatedAt: "2026-04-11T08:00:00.000Z",
+          item: {
+            type: "saved_view",
+            itemKey: "saved_view:30000000-0000-4000-8000-000000000001",
             title: "Market dashboard",
-            subtitle: "dashboard/README.md",
-            favicon: null,
-            targetPayload: {
-              kind: "library_file",
-              filePath: "dashboard/README.md",
-              viewInstanceId: "view-dashboard",
+            savedView: {
+              id: "30000000-0000-4000-8000-000000000001",
+              title: "Market dashboard",
+              subtitle: "dashboard/README.md",
+              favicon: null,
+              targetPayload: {
+                kind: "library_file",
+                filePath: "dashboard/README.md",
+                viewInstanceId: "view-dashboard",
+              },
             },
           },
         },
-      }],
+        hydratedThreadEntry({
+          id: "entry-later-thread",
+          orgId: "org-1",
+          userId: "local-board",
+          groupId: "group-saved",
+          threadKey: laterThread.threadKey,
+          sortOrder: 1,
+          createdAt: "2026-04-11T08:00:00.000Z",
+          updatedAt: "2026-04-11T08:00:00.000Z",
+          thread: laterThread,
+        }),
+      ],
     }];
 
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
     expect(html).toContain("Launch research");
     expect(html).toContain("Market dashboard");
+    expect(html.indexOf("Market dashboard")).toBeLessThan(html.indexOf("Later grouped chat"));
     expect(html).toContain('data-testid="messenger-saved-view-entry-saved"');
     expect(html).not.toContain('data-testid="messenger-saved-views-section"');
     expect(html).not.toContain("unread-badge");

@@ -152,10 +152,19 @@ test.describe("Messenger Saved Views", () => {
     await page.goto(`/${organization.issuePrefix}/messenger/saved/${firstSavedView!.id}`);
     await expect(page.getByTestId("messenger-saved-view-workspace")).toContainText(fileName);
     await expect(page.getByTestId("chat-side-panel-library-file-view")).toBeVisible();
+    const exactViewInstanceId = firstSavedView!.targetPayload.viewInstanceId;
+    const exactActiveTab = () => page.locator(
+      `[data-testid="chat-side-panel-tab"][data-view-instance-id="${exactViewInstanceId}"][aria-selected="true"]`,
+    );
+    await expect(exactActiveTab()).toContainText(fileName);
     await page.screenshot({
       path: testInfo.outputPath("messenger-saved-view-restored.png"),
       fullPage: true,
     });
+    await page.reload();
+    await expect(page.getByTestId("messenger-saved-view-workspace")).toContainText(fileName);
+    await expect(page.getByTestId("chat-side-panel-library-file-view")).toBeVisible();
+    await expect(exactActiveTab()).toContainText(fileName);
 
     await page.getByTestId("chat-side-panel-keep-in-messenger").click();
     await expect(page.getByText(
@@ -322,6 +331,35 @@ test.describe("Messenger Saved Views", () => {
           : null,
       };
     }).toEqual({ groupCount: 1, savedCount: 1, filePath });
+
+    const beforeDelete = await listGroups(page, organization.id);
+    const removedSavedView = beforeDelete.groups[0]?.entries.find(
+      (entry) => entry.item.type === "saved_view",
+    )?.item;
+    expect(removedSavedView?.type).toBe("saved_view");
+    if (!removedSavedView || removedSavedView.type !== "saved_view") {
+      throw new Error("Expected a Saved View before exercising remove and re-Keep");
+    }
+    const removedInstanceId = removedSavedView.savedView.targetPayload.viewInstanceId;
+    const deleteResponse = await page.request.delete(
+      `/api/orgs/${organization.id}/messenger/saved-views/${removedSavedView.savedView.id}`,
+    );
+    expect(deleteResponse.ok(), await deleteResponse.text()).toBe(true);
+
+    await keepButton.click();
+    await page.getByRole("menuitem", { name: "Global research" }).click();
+    await expect.poll(async () => {
+      const directory = await listGroups(page, organization.id);
+      const replacement = directory.groups[0]?.entries.find(
+        (entry) => entry.item.type === "saved_view",
+      )?.item;
+      return replacement?.type === "saved_view"
+        ? {
+          idChanged: replacement.savedView.id !== removedSavedView.savedView.id,
+          instanceId: replacement.savedView.targetPayload.viewInstanceId,
+        }
+        : null;
+    }).toEqual({ idChanged: true, instanceId: removedInstanceId });
 
     await page.goto(`/${organization.issuePrefix}/messenger`);
     const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);

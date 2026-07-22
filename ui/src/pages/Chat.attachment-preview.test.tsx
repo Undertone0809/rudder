@@ -4234,6 +4234,16 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelector("[data-testid='chat-side-panel-tab']")?.textContent).toContain("example.org");
     expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(webview);
     expect(container.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+
+    const faviconEvent = Object.assign(new Event("page-favicon-updated"), {
+      favicons: ["https://example.org/favicon.ico"],
+    });
+    await act(async () => {
+      webview!.dispatchEvent(faviconEvent);
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-tab']")?.getAttribute("data-browser-favicon"))
+      .toBe("https://example.org/favicon.ico");
   });
 
   it("renders a full Browser connection error state and reloads the current webview", async () => {
