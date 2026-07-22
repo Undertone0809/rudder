@@ -45,6 +45,8 @@ describe("WorkspaceMediaPreview", () => {
     expect(video?.autoplay).toBe(false);
     expect(video?.getAttribute("src")).toBe(props.src);
     expect(video?.getAttribute("aria-label")).toBe("media/demo.mp4 video preview");
+    expect(video?.classList.contains("w-full")).toBe(true);
+    expect(video?.classList.contains("max-w-5xl")).toBe(true);
     expect(container.querySelector("[data-workspace-media-preview='video']")).not.toBeNull();
     expect(container.querySelector<HTMLAnchorElement>("a[download]")?.getAttribute("href")).toBe(props.src);
     expect(container.textContent).toContain("Open");

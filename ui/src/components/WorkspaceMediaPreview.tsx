@@ -73,7 +73,7 @@ export function WorkspaceMediaPreview({
           <video
             key={identity}
             aria-label={label}
-            className="max-h-full max-w-full rounded-md bg-black shadow-sm"
+            className="h-auto w-full max-h-full max-w-5xl rounded-md bg-black shadow-sm"
             controls
             playsInline
             preload="metadata"
