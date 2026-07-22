@@ -1,16 +1,12 @@
 import { expect, test } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { E2E_CODEX_STUB, E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
+import { E2E_CODEX_STUB } from "./support/e2e-env";
+import { resolveE2EOrganizationWorkspaceRoot } from "./support/organization-storage";
 
 async function resolveSingleAgentWorkspaceRoot(orgId: string) {
   const agentsRoot = path.join(
-    E2E_HOME,
-    "instances",
-    E2E_INSTANCE_ID,
-    "organizations",
-    orgId,
-    "workspaces",
+    resolveE2EOrganizationWorkspaceRoot(orgId),
     "agents",
   );
   await expect.poll(async () => {

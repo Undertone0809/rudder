@@ -1,0 +1,68 @@
+{
+  "expectations": [
+    {
+      "text": "Installs the complete multi-file package under $AGENT_HOME/skills/incident-handoff",
+      "passed": true,
+      "evidence": "The response identifies `$AGENT_HOME/skills/incident-handoff/` as the final installation path and shows the complete tree containing `SKILL.md`, `references/checklist.md`, and `scripts/validate_handoff.py`. It then provides substantive contents for all three files, installs directly into that directory, validates the exact inventory, and rechecks every installed file. Because the prompt forbade mutations, these are correctly presented as planned commands rather than falsely claimed completed changes."
+    },
+    {
+      "text": "Enables the private skill additively with agent:incident-handoff rather than using a global or provider-native path",
+      "passed": true,
+      "evidence": "The enablement command is exactly `rudder agent skills enable \"$RUDDER_AGENT_ID\" \"agent:incident-handoff\" --json`. The response explicitly says not to use `$RUDDER_ORG_SKILLS_DIR`, `rudder skill import`, or `skills sync`, explaining that `enable` is additive and `sync` could replace existing optional selections. No global or provider-native installation path is proposed."
+    },
+    {
+      "text": "Separates installed, validated, enabled, and future-run-loaded states",
+      "passed": true,
+      "evidence": "The response separates the workflow into author/install, validate, enable, and verify sections. It states, `At this point the package is installed on disk, but it is not yet enabled in Rudder`, treats the successful enable JSON as separate proof of selection, and says enablement applies to future runs and cannot retroactively modify the current run. It finally requires a new-run smoke test to prove loading and execution."
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "tool_calls": {
+      "Bash": 3
+    },
+    "total_tool_calls": 3,
+    "total_steps": 3,
+    "errors_encountered": 0,
+    "output_chars": 13056,
+    "transcript_chars": 60637
+  },
+  "timing": {
+    "executor_duration_seconds": 88,
+    "total_duration_seconds": 88
+  },
+  "claims": [
+    {
+      "claim": "The proposed package is agent-private and contains all three required files.",
+      "type": "quality",
+      "verified": true,
+      "evidence": "The response uses only `$AGENT_HOME/skills/incident-handoff` as the installed source of truth and supplies nontrivial contents plus validation checks for `SKILL.md`, `references/checklist.md`, and `scripts/validate_handoff.py`."
+    },
+    {
+      "claim": "The proposed Rudder enablement is additive.",
+      "type": "process",
+      "verified": true,
+      "evidence": "The response uses `rudder agent skills enable` with `agent:incident-handoff` and explicitly rejects `skills sync` because it can replace existing selections."
+    },
+    {
+      "claim": "A newly enabled skill is loaded only by a future run, not the current run.",
+      "type": "process",
+      "verified": true,
+      "evidence": "The response explicitly requires starting a new Rudder agent run for the smoke test and states that enablement cannot retroactively add the skill to the current run's loaded context."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "The assertions are objective and discriminating for the requested Rudder ownership, additive enablement, and lifecycle-state boundaries."
+  }
+}

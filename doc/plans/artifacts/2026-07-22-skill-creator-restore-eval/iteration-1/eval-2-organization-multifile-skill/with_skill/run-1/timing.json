@@ -1,0 +1,10 @@
+{
+  "total_tokens": 182806,
+  "input_tokens": 180986,
+  "cached_input_tokens": 155904,
+  "output_tokens": 1820,
+  "reasoning_output_tokens": 450,
+  "duration_ms": 79000,
+  "total_duration_seconds": 79,
+  "timing_source": "transcript file birth-to-modification wall clock"
+}

@@ -1,0 +1,63 @@
+{
+  "expectations": [
+    {
+      "text": "Uses $RUDDER_PROJECT_LIBRARY_ROOT/skill-evals for the durable evaluation workspace",
+      "passed": false,
+      "evidence": "The response instead places project-context results at `<project-root>/.codex/evals/<skill-name>/<evaluation-id>/`; `$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals` is never used."
+    },
+    {
+      "text": "Defines paired with_skill and old_skill runs with metadata, assertions, timing, and grading",
+      "passed": true,
+      "evidence": "The response defines an exact two-prompt, four-cell `old_skill`/`with_skill` matrix; `manifest.json` metadata; deterministic assertions; per-run timing/resource capture; and an identical blind-grading rubric for all cells."
+    },
+    {
+      "text": "Aggregates benchmark artifacts, performs an analyst pass, and generates a static review with generate_review.py",
+      "passed": false,
+      "evidence": "The response does define benchmark aggregation and an analyst review, but its viewer section prescribes creating a custom self-contained `viewer/index.html` and never invokes `eval-viewer/generate_review.py`, which is an explicit part of the assertion."
+    },
+    {
+      "text": "Rejects the bundled package and provider-managed runtime mount as evaluation output locations",
+      "passed": false,
+      "evidence": "The exclusions mention temporary directories, global installed-skill directories, live source directories, candidate snapshots, shared mutable workspaces, and unrelated repositories, but do not reject Rudder's bundled package or a provider-managed runtime mount."
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 3,
+    "total": 4,
+    "pass_rate": 0.25
+  },
+  "timing": {
+    "executor_duration_seconds": 76,
+    "total_duration_seconds": 76
+  },
+  "claims": [
+    {
+      "claim": "The project-context evaluation workspace belongs at `<project-root>/.codex/evals/<skill-name>/<evaluation-id>/`.",
+      "type": "factual",
+      "verified": false,
+      "evidence": "That is the response's prescribed path, but it conflicts with this eval's required Rudder durable workspace under `$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals`."
+    },
+    {
+      "claim": "The procedure compares exactly two prompts across immutable `old_skill` and `with_skill` snapshots.",
+      "type": "process",
+      "verified": true,
+      "evidence": "The response defines two prompts, a four-cell run matrix, complete immutable snapshots, and controls holding all non-skill variables constant."
+    },
+    {
+      "claim": "The review viewer is static and requires no backend or network.",
+      "type": "quality",
+      "verified": true,
+      "evidence": "The viewer specification requires a self-contained file that opens via `file://`, embeds escaped data, and performs no CDN or network request, although it omits the required `generate_review.py` implementation path."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "The assertions are objective and discriminating: the baseline demonstrates that a generally rigorous evaluation procedure can still fail Rudder-specific workspace and viewer requirements."
+  }
+}
