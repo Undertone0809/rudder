@@ -875,7 +875,7 @@ export function createBrowserAgentTabController(options: {
           if (action === "assets" && args.action === "bundle" && Number(advancedArgs.maxTotalBytes) <= 0) {
             throw new BrowserAgentError("browser_result_too_large", "Browser asset run quota is exhausted.");
           }
-          const shortcutKeys = (action === "cua" || action === "dom_cua") && args.action === "keypress" && Array.isArray(args.keys)
+          const shortcutKeys = action === "cua" && args.action === "keypress" && Array.isArray(args.keys)
             ? args.keys.map(String)
             : [];
           const primary = shortcutKeys.findLast((key) => !["Alt", "Control", "Meta", "ControlOrMeta", "Shift"].includes(key));

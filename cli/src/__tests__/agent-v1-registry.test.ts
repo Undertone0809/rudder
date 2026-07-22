@@ -269,6 +269,15 @@ describe("agent-v1 registry", () => {
         },
       },
     });
+    expect(browser.tools.find((tool) => tool.capabilityId === "browser.dom-cua")).toMatchObject({
+      mutating: false,
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          action: { enum: ["get"] },
+        },
+      },
+    });
     expect(core.tools).toHaveLength(cliManifest.capabilities.length - browser.tools.length);
 
   });

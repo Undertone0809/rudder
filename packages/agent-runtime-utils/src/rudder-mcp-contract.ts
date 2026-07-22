@@ -140,12 +140,7 @@ function browserMcpInputSchema(id: string): {
     }, ["tabId", "action"]);
     case "browser.dom-cua": return schema({
       ...baseTab,
-      action: string("DOM input action.", { enum: ["get", "click", "doubleClick", "scroll", "keypress", "type"] }),
-      nodeId: string("Node id from the latest DOM CUA snapshot.", { maxLength: 160 }),
-      x: number("Horizontal scroll delta."),
-      y: number("Vertical scroll delta."),
-      keys: { type: "array", maxItems: 10, items: string("Keyboard key or modifier.", { minLength: 1, maxLength: 100 }) },
-      text: string("Text to type.", { maxLength: 100_000 }),
+      action: string("Read-only DOM snapshot action.", { enum: ["get"] }),
       depth: number("Maximum DOM depth.", { minimum: 1, maximum: 30 }),
       maxNodes: number("Maximum DOM nodes.", { minimum: 1, maximum: 3_000 }),
     }, ["tabId", "action"]);

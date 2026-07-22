@@ -337,7 +337,7 @@ describe("Browser routes", () => {
     ["locator", { tabId: "tab-1", action: "count", locator: { strategy: "role", value: "button" }, dialogResponse: { accept: true } }],
     ["locator", { tabId: "tab-1", action: "setFiles", locator: { strategy: "css", value: "input[type=file]" }, paths: ["/etc/hosts"] }],
     ["cua", { tabId: "tab-1", action: "click", x: 20 }],
-    ["dom_cua", { tabId: "tab-1", action: "click" }],
+    ["dom_cua", { tabId: "tab-1", action: "click", nodeId: "snapshot-1-node-9" }],
     ["clipboard", { action: "write", items: [{ entries: [{ mimeType: "text/plain", text: "a", base64: "YQ==" }] }] }],
     ["download", { tabId: "tab-1", mode: "trigger", locator: { strategy: "css", value: "a" }, timeoutMs: 30_001 }],
     ["assets", { tabId: "tab-1", action: "bundle" }],

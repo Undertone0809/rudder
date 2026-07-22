@@ -426,7 +426,7 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   {
     "capabilityId": "browser.snapshot",
     "name": "rudder_browser_snapshot",
-    "description": "Capture a bounded DOM and accessibility-oriented snapshot, including frame structure and stable node ids.",
+    "description": "Capture a bounded DOM and accessibility-oriented snapshot, including frame structure and ephemeral node ids.",
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
@@ -453,8 +453,8 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   {
     "capabilityId": "browser.dom-cua",
     "name": "rudder_browser_dom_cua",
-    "description": "Inspect visible DOM node ids and perform node-based click, scroll, keyboard, or text input.",
-    "mutating": true,
+    "description": "Inspect a bounded read-only DOM snapshot with ephemeral node ids.",
+    "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
     "attachesRunIdWhenAvailable": true
@@ -848,4 +848,4 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   }
 ] as const;
 export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "998b5f7a23d57634148a59a04f002b46b480570952d9f7eb4a9fa559f756cb7c";
-export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "c2a9ba7231640c07ddee498e8f9baee8b5ed4404110eee62f91542db7e83c955";
+export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "ee82b7fc57f99054553c23e9888ca3f2009c71b09532a13b5e5743e6f5f000ec";

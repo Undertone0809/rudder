@@ -86,7 +86,7 @@ User-visible tabs do not consume this Agent tab quota.
 
 - `rudder_browser_snapshot { tabId, boxes?, depth?, maxNodes? }` returns a
   bounded accessibility-oriented DOM tree, same-origin frame boundaries,
-  optional boxes, and stable DOM-CUA node ids. Depth is at most 30 and node
+  optional boxes, and ephemeral DOM-CUA node ids. Depth is at most 30 and node
   count at most 3000; Chromium full-tree capture is never materialized.
 - `rudder_browser_locator` accepts a locator strategy of `css`, `testId`,
   `href`, `role`, `label`, `placeholder`, or `text`. Locators may use a frame
@@ -114,8 +114,9 @@ User-visible tabs do not consume this Agent tab quota.
   than trusting a model-supplied filesystem path.
 - `rudder_browser_cua` supports coordinate `click`, `doubleClick`, `move`,
   `scroll`, `drag`, `keypress`, `type`, and read-only `elementInfo`.
-- `rudder_browser_dom_cua` supports `get`, node `click`, `doubleClick`,
-  `scroll`, `keypress`, and `type`.
+- `rudder_browser_dom_cua` supports only the read-only `get` action. Node ids
+  cannot be used for click, scroll, keyboard, or text input; use a locator or
+  explicit coordinate action instead.
 - `rudder_browser_click` and `rudder_browser_type` operate only on refs from
   the latest `rudder_browser_read` result.
 

@@ -1230,10 +1230,19 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
       assert.equal(checkedState.value, true, "locator checked should observe checkbox state");
       assert.deepEqual(selectedState.value, ["blue"], "locator selected should observe select state");
 
-      readSmokeMcpToolResult(await mcp.request("tools/call", {
+      const rejectedDomClick = await mcp.request("tools/call", {
         name: "rudder_browser_dom_cua",
         arguments: { tabId: opened.tabId, action: "click", nodeId: domButton.nodeId },
-      }), "rudder_browser_dom_cua");
+      });
+      assert.equal(rejectedDomClick.result?.isError, true, "DOM CUA node interaction should fail closed");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: {
+          tabId: opened.tabId,
+          action: "click",
+          locator: { strategy: "css", value: "#dom-button" },
+        },
+      }), "rudder_browser_locator DOM action");
       readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_cua",
         arguments: {

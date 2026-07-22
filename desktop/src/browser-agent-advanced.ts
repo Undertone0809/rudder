@@ -443,48 +443,11 @@ function domScript(
       }
       return { x, y, width: rect.width, height: rect.height };
     };
-    const owningForm = (element) => element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLButtonElement
-      ? element.form
-      : element.closest("form");
-    const interactionFingerprint = (element) => {
-      const form = owningForm(element);
-      return JSON.stringify({
-        tag: element.tagName.toLowerCase(),
-        type: element instanceof HTMLInputElement || element instanceof HTMLButtonElement ? element.type : "",
-        role: implicitRole(element),
-        name: accessibleName(element),
-        controlName: element.getAttribute("name") || "",
-        formAssociation: element.getAttribute("form") || "",
-        href: element instanceof HTMLAnchorElement ? String(element.href || "").slice(0, 8192) : "",
-        formId: form?.id || "",
-        formAction: String((element instanceof HTMLInputElement || element instanceof HTMLButtonElement ? element.getAttribute("formaction") : "") || form?.action || "").slice(0, 8192),
-        formMethod: String((element instanceof HTMLInputElement || element instanceof HTMLButtonElement ? element.getAttribute("formmethod") : "") || form?.method || "").toLowerCase().slice(0, 20),
-        formTarget: String((element instanceof HTMLInputElement || element instanceof HTMLButtonElement ? element.getAttribute("formtarget") : "") || form?.target || "").slice(0, 500),
-        formEnctype: String((element instanceof HTMLInputElement || element instanceof HTMLButtonElement ? element.getAttribute("formenctype") : "") || form?.enctype || "").toLowerCase().slice(0, 100),
-        readOnly: "readOnly" in element && Boolean(element.readOnly),
-        editable: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable,
-      });
-    };
-    const interactable = (element) => {
-      if (!visible(element) || element.closest("fieldset[disabled]")) return false;
-      let current = element;
-      while (current) {
-        if (getComputedStyle(current).pointerEvents === "none") return false;
-        current = current.parentElement;
-      }
-      if (("disabled" in element && Boolean(element.disabled)) || element.getAttribute("aria-disabled") === "true") return false;
-      const rect = element.getBoundingClientRect();
-      const view = element.ownerDocument.defaultView || window;
-      if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= view.innerHeight || rect.left >= view.innerWidth) return false;
-      const x = Math.min(Math.max(rect.left + rect.width / 2, 0), Math.max(view.innerWidth - 1, 0));
-      const y = Math.min(Math.max(rect.top + rect.height / 2, 0), Math.max(view.innerHeight - 1, 0));
-      const topmost = element.ownerDocument.elementFromPoint(x, y);
-      return Boolean(topmost && (topmost === element || element.contains(topmost)));
-    };
-    const nodeStore = globalThis.__RUDDER_BROWSER_ADVANCED_NODES_V1__ instanceof Map ? globalThis.__RUDDER_BROWSER_ADVANCED_NODES_V1__ : new Map();
-    globalThis.__RUDDER_BROWSER_ADVANCED_NODES_V1__ = nodeStore;
+    const interactionNode = (element) => implicitRole(element) !== "generic"
+      || element.matches("input,textarea,select,button,a[href],[contenteditable=true],[tabindex]");
     const snapshot = (options = {}) => {
-      nodeStore.clear();
+      const snapshotGeneration = Number(globalThis.__RUDDER_BROWSER_ADVANCED_SNAPSHOT_GENERATION_V1__ || 0) + 1;
+      globalThis.__RUDDER_BROWSER_ADVANCED_SNAPSHOT_GENERATION_V1__ = snapshotGeneration;
       const maxDepth = Math.max(1, Math.min(Number(options.depth || 12), 30));
       const maxNodes = Math.max(1, Math.min(Number(options.maxNodes || 1500), 3000));
       let count = 0;
@@ -493,9 +456,8 @@ function domScript(
         if (!(element instanceof Element) || count >= maxNodes) { truncated = true; return null; }
         count += 1;
         const role = implicitRole(element);
-        const interactive = role !== "generic" || element.matches("input,textarea,select,button,a[href],[contenteditable=true],[tabindex]");
-        const nodeId = interactive ? "node-" + count : undefined;
-        if (nodeId) nodeStore.set(nodeId, { element, fingerprint: interactionFingerprint(element) });
+        const interactive = interactionNode(element);
+        const nodeId = interactive ? "snapshot-" + snapshotGeneration + "-node-" + count : undefined;
         const attributes = {};
         for (const name of ["id", "name", "type", "href", "placeholder", "data-testid", "aria-label", "aria-checked", "aria-selected", "aria-expanded"]) {
           const value = element.getAttribute(name);
@@ -655,40 +617,7 @@ function domScript(
     };
     const domCua = async (args) => {
       if (args.action === "get") return snapshot({ boxes: true, depth: args.depth, maxNodes: args.maxNodes });
-      const entry = args.nodeId ? nodeStore.get(String(args.nodeId)) : null;
-      const element = entry?.element;
-      if (args.action === "keypress" || args.action === "type") return { focused: document.activeElement !== null };
-      const stale = (message) => {
-        nodeStore.clear();
-        throw new Error(message);
-      };
-      const revalidate = () => {
-        if (!(element instanceof Element) || !element.isConnected || element.ownerDocument !== document) stale("Browser DOM node is missing or stale; capture a fresh snapshot.");
-        if (entry.fingerprint !== interactionFingerprint(element)) stale("Browser DOM node is stale; capture a fresh snapshot.");
-        if (!interactable(element)) stale("Browser DOM node is not interactable or is covered; capture a fresh snapshot.");
-        return box(element);
-      };
-      if (!(element instanceof Element) || !element.isConnected || element.ownerDocument !== document) stale("Browser DOM node is missing or stale; capture a fresh snapshot.");
-      if (entry.fingerprint !== interactionFingerprint(element)) stale("Browser DOM node is stale; capture a fresh snapshot.");
-      if (args.action === "click" || args.action === "doubleClick") {
-        element.scrollIntoView?.({ block: "center", inline: "center" });
-        element.focus?.();
-        return { performed: true, box: revalidate() };
-      }
-      if (args.action === "validate") {
-        const currentBox = revalidate();
-        nodeStore.delete(String(args.nodeId));
-        return { performed: true, box: currentBox };
-      }
-      if (args.action === "scroll") {
-        revalidate();
-        if (typeof element.scrollBy === "function") element.scrollBy({ left: Number(args.x || 0), top: Number(args.y || 0), behavior: "instant" });
-        else window.scrollBy(Number(args.x || 0), Number(args.y || 0));
-        revalidate();
-        nodeStore.delete(String(args.nodeId));
-        return { performed: true };
-      }
-      throw new Error("Browser DOM CUA action is unsupported.");
+      throw new Error("Browser DOM CUA is read-only; use a locator or explicit coordinate action to interact.");
     };
     const listAssets = () => {
       const entries = new Map();
@@ -1663,20 +1592,7 @@ export async function createBrowserAdvancedDriver(options: {
       if (action === "locator") return executeLocator(args);
       if (action === "cua") return executeCua(args);
       if (action === "dom_cua") {
-        const result = await executeDom("dom_cua", args);
-        if ((args.action === "click" || args.action === "doubleClick") && typeof result === "object" && result !== null) {
-          const validated = await executeDom("dom_cua", { action: "validate", nodeId: args.nodeId });
-          const box = (validated as { box?: { x: number; y: number; width: number; height: number } }).box;
-          if (!box) throw new Error("Browser DOM node box is unavailable.");
-          await executeCua({
-            action: args.action === "doubleClick" ? "doubleClick" : "click",
-            x: box.x + box.width / 2,
-            y: box.y + box.height / 2,
-          });
-        }
-        if (args.action === "keypress") return executeCua({ action: "keypress", keys: args.keys });
-        if (args.action === "type") return executeCua({ action: "type", text: args.text });
-        return result;
+        return executeDom("dom_cua", args);
       }
       if (action === "clipboard") return executeClipboard(args);
       if (action === "dialog") {

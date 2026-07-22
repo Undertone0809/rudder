@@ -92,10 +92,10 @@ operating-practices guide for operating behavior:
 | `rudder_browser_reload` | `rudder browser reload <tab-id>` | Reload a run-owned Rudder Browser tab. | yes | required | required | required |
 | `rudder_browser_viewport` | `rudder browser viewport --action <get|set|reset> [--width <px> --height <px>]` | Inspect, set, or reset the responsive viewport for the current Rudder Browser run. | yes | required | required | required |
 | `rudder_browser_visibility` | `rudder browser visibility [--visible <true|false>]` | Inspect or change whether the current run's selected Rudder Browser tab is visible. | yes | required | required | required |
-| `rudder_browser_snapshot` | `rudder browser snapshot <tab-id> [--input <json>]` | Capture a bounded DOM and accessibility-oriented snapshot, including frame structure and stable node ids. | no | required | required | required |
+| `rudder_browser_snapshot` | `rudder browser snapshot <tab-id> [--input <json>]` | Capture a bounded DOM and accessibility-oriented snapshot, including frame structure and ephemeral node ids. | no | required | required | required |
 | `rudder_browser_locator` | `rudder browser locator <tab-id> --input <json>` | Read or interact with a bounded Browser locator by CSS, test id, href, role, label, placeholder, or text. | yes | required | required | required |
 | `rudder_browser_cua` | `rudder browser cua <tab-id> --input <json>` | Perform trusted coordinate mouse, scroll, drag, keyboard, and text input in a run-owned Browser tab. | yes | required | required | required |
-| `rudder_browser_dom_cua` | `rudder browser dom-cua <tab-id> --input <json>` | Inspect visible DOM node ids and perform node-based click, scroll, keyboard, or text input. | yes | required | required | required |
+| `rudder_browser_dom_cua` | `rudder browser dom-cua <tab-id> --input <json>` | Inspect a bounded read-only DOM snapshot with ephemeral node ids. | no | required | required | required |
 | `rudder_browser_dialog` | `rudder browser dialog <tab-id> --input <json>` | Inspect, accept, or dismiss the active JavaScript dialog in a run-owned Browser tab. | yes | required | required | required |
 | `rudder_browser_clipboard` | `rudder browser clipboard --input <json>` | Read or write the isolated virtual clipboard for the current Browser run without touching the OS clipboard. | yes | required | required | required |
 | `rudder_browser_logs` | `rudder browser logs <tab-id> [--input <json>]` | Read bounded console and runtime logs captured for a run-owned Browser tab. | yes | required | required | required |

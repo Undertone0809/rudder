@@ -76,8 +76,9 @@ selector error means the page or locator evidence must be refreshed.
 ## Choose The Lowest-Level Tool Deliberately
 
 - Prefer locator actions for ordinary forms, links, buttons, tables, and menus.
-- Use `rudder_browser_dom_cua` when the snapshot exposes a stable DOM node id
-  but a semantic locator is unreliable.
+- Use `rudder_browser_dom_cua` only for a bounded read-only DOM snapshot.
+  Node ids are evidence, not interaction handles; use a locator or an explicit
+  coordinate action to interact.
 - Use `rudder_browser_cua` for canvas, coordinate-only controls, hover paths, or
   other visual interaction. Use its `elementInfo` action before a coordinate
   action when the target is not already proven by the latest screenshot and

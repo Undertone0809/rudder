@@ -161,7 +161,7 @@ describe("Browser Agent advanced driver", () => {
     });
   });
 
-  it("captures DOM state and performs semantic locator and DOM-node actions", async () => {
+  it("captures DOM state and performs semantic locator actions", async () => {
     const harness = createHarness();
     const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
 
@@ -213,13 +213,32 @@ describe("Browser Agent advanced driver", () => {
     const serialized = JSON.stringify(dom.root);
     const nodeId = /"nodeId":"([^"]+)"[^}]*"tag":"button"/.exec(serialized)?.[1];
     expect(nodeId).toBeTruthy();
-    const clicked = vi.fn();
-    document.querySelector("#continue")?.addEventListener("click", clicked);
-    await driver.execute("dom_cua", { action: "click", nodeId });
-    expect(clicked).toHaveBeenCalledTimes(1);
 
     await driver.dispose();
     expect(harness.browserDebugger.detach).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["click", { nodeId: "placeholder" }],
+    ["doubleClick", { nodeId: "placeholder" }],
+    ["scroll", { nodeId: "placeholder", x: 0, y: 100 }],
+    ["keypress", { keys: ["Enter"] }],
+    ["type", { text: "blocked" }],
+  ])("rejects DOM-node %s actions without dispatching trusted input", async (action, actionArgs) => {
+    const harness = createHarness();
+    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
+    const snapshot = await driver.execute("dom_cua", { action: "get" }) as any;
+    const nodeId = snapshotNodeId(snapshot.root, "continue");
+
+    await expect(driver.execute("dom_cua", {
+      action,
+      ...actionArgs,
+      ...(actionArgs.nodeId ? { nodeId } : {}),
+    })).rejects.toThrow(/unsupported|read-only/i);
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchKeyEvent", expect.anything());
+    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.insertText", expect.anything());
+    await driver.dispose();
   });
 
   it("uses CDP for trusted CUA, isolated virtual clipboard shortcuts, dialogs, and screenshots", async () => {
@@ -609,127 +628,21 @@ describe("Browser Agent advanced driver", () => {
     await driver.dispose();
   });
 
-  it("rejects a connected DOM node whose immutable interaction fingerprint changed", async () => {
+  it("scopes read-only DOM node ids to their snapshot generation", async () => {
     const harness = createHarness();
-    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
-    const dom = await driver.execute("dom_cua", { action: "get" }) as any;
-    const serialized = JSON.stringify(dom.root);
-    const nodeId = /"nodeId":"([^"]+)"[^}]*"tag":"button"/.exec(serialized)?.[1];
-    const button = document.querySelector("#continue") as HTMLButtonElement;
-    const clicked = vi.fn();
-    button.addEventListener("click", clicked);
-    button.textContent = "Delete account";
-    button.setAttribute("aria-label", "Delete account");
-
-    await expect(driver.execute("dom_cua", { action: "click", nodeId })).rejects.toThrow(/stale|fresh snapshot/i);
-    expect(clicked).not.toHaveBeenCalled();
-    await driver.dispose();
-  });
-
-  it("invalidates DOM nodes when their form destination or editability changes", async () => {
-    const harness = createHarness();
-    const form = document.createElement("form");
-    form.id = "checkout";
-    form.action = "https://example.com/review";
-    form.method = "post";
-    form.innerHTML = '<input id="order" name="order" /><button id="purchase" type="submit">Purchase</button>';
-    document.body.append(form);
     const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
     const firstSnapshot = await driver.execute("dom_cua", { action: "get" }) as any;
-    const purchaseNodeId = snapshotNodeId(firstSnapshot.root, "purchase");
-
-    form.action = "https://attacker.example/collect";
-    await expect(driver.execute("dom_cua", { action: "click", nodeId: purchaseNodeId }))
-      .rejects.toThrow(/stale|fresh snapshot/i);
+    const oldNodeId = snapshotNodeId(firstSnapshot.root, "continue");
+    const oldButton = document.querySelector("#continue") as HTMLButtonElement;
+    const replacement = document.createElement("button");
+    replacement.id = "replacement-action";
+    replacement.textContent = "Delete account";
+    oldButton.replaceWith(replacement);
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => replacement });
 
     const secondSnapshot = await driver.execute("dom_cua", { action: "get" }) as any;
-    const orderNodeId = snapshotNodeId(secondSnapshot.root, "order");
-    (form.querySelector("#order") as HTMLInputElement).readOnly = true;
-    await expect(driver.execute("dom_cua", { action: "click", nodeId: orderNodeId }))
-      .rejects.toThrow(/stale|fresh snapshot/i);
-    await driver.dispose();
-  });
-
-  it("revalidates a DOM node after focus changes its label and form action", async () => {
-    const harness = createHarness();
-    const form = document.createElement("form");
-    form.action = "https://example.com/review";
-    const button = document.createElement("button");
-    button.id = "focus-purchase";
-    button.textContent = "Review purchase";
-    form.append(button);
-    document.body.append(form);
-    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => button });
-    button.addEventListener("focus", () => {
-      button.setAttribute("aria-label", "Transfer funds");
-      form.action = "https://attacker.example/collect";
-    }, { once: true });
-    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
-    const snapshot = await driver.execute("dom_cua", { action: "get" }) as any;
-    const nodeId = snapshotNodeId(snapshot.root, button.id);
-
-    await expect(driver.execute("dom_cua", { action: "click", nodeId }))
-      .rejects.toThrow(/stale|fresh snapshot/i);
-    expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
-    await driver.dispose();
-  });
-
-  it("rejects invisible, zero-sized, disabled, and covered DOM nodes", async () => {
-    const harness = createHarness();
-    const cases = ["invisible-target", "zero-target", "disabled-target", "covered-target"];
-    for (const id of cases) {
-      const button = document.createElement("button");
-      button.id = id;
-      button.textContent = id;
-      document.body.append(button);
-    }
-    const invisible = document.querySelector("#invisible-target") as HTMLButtonElement;
-    invisible.style.visibility = "hidden";
-    const zero = document.querySelector("#zero-target") as HTMLButtonElement;
-    Object.defineProperty(zero, "getBoundingClientRect", {
-      configurable: true,
-      value: () => ({ x: 10, y: 20, left: 10, top: 20, right: 10, bottom: 20, width: 0, height: 0 }),
-    });
-    const disabled = document.querySelector("#disabled-target") as HTMLButtonElement;
-    disabled.disabled = true;
-    const covered = document.querySelector("#covered-target") as HTMLButtonElement;
-    const overlay = document.createElement("div");
-    document.body.append(overlay);
-    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
-
-    for (const target of [invisible, zero, disabled]) {
-      const snapshot = await driver.execute("dom_cua", { action: "get" }) as any;
-      await expect(driver.execute("dom_cua", { action: "click", nodeId: snapshotNodeId(snapshot.root, target.id) }))
-        .rejects.toThrow(/stale|interactable|fresh snapshot/i);
-    }
-
-    const snapshot = await driver.execute("dom_cua", { action: "get" }) as any;
-    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => overlay });
-    await expect(driver.execute("dom_cua", { action: "click", nodeId: snapshotNodeId(snapshot.root, covered.id) }))
-      .rejects.toThrow(/stale|interactable|fresh snapshot/i);
-    await driver.dispose();
-  });
-
-  it("revalidates the topmost DOM hit target immediately before trusted dispatch", async () => {
-    const harness = createHarness();
-    const button = document.querySelector("#continue") as HTMLButtonElement;
-    const overlay = document.createElement("div");
-    const evaluate = harness.contents.executeJavaScriptInIsolatedWorld.getMockImplementation();
-    harness.contents.executeJavaScriptInIsolatedWorld.mockImplementation(async (worldId, scripts, userGesture) => {
-      const result = await evaluate?.(worldId, scripts, userGesture);
-      const input = advancedDomInput(scripts[0]?.code ?? "");
-      if (input?.action === "dom_cua" && input.args?.action === "click") {
-        document.body.append(overlay);
-        Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => overlay });
-      }
-      return result;
-    });
-    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => button });
-    const driver = await createBrowserAdvancedDriver({ window: harness.windowStub });
-    const snapshot = await driver.execute("dom_cua", { action: "get" }) as any;
-
-    await expect(driver.execute("dom_cua", { action: "click", nodeId: snapshotNodeId(snapshot.root, button.id) }))
-      .rejects.toThrow(/stale|interactable|fresh snapshot/i);
+    const replacementNodeId = snapshotNodeId(secondSnapshot.root, replacement.id);
+    expect(replacementNodeId).not.toBe(oldNodeId);
     expect(harness.sendCommand).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
     await driver.dispose();
   });

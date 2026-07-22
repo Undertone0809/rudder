@@ -170,21 +170,10 @@ const browserActionSchemas = {
   }),
   dom_cua: z.object({
     tabId: tabIdSchema,
-    action: z.enum(["get", "click", "doubleClick", "scroll", "keypress", "type"]),
-    nodeId: z.string().min(1).max(160).optional(),
-    x: z.number().finite().min(-100_000).max(100_000).optional(),
-    y: z.number().finite().min(-100_000).max(100_000).optional(),
-    keys: z.array(z.string().min(1).max(100)).max(10).optional(),
-    text: z.string().max(100_000).optional(),
+    action: z.literal("get"),
     depth: z.number().int().min(1).max(30).optional(),
     maxNodes: z.number().int().min(1).max(3_000).optional(),
-  }).strict().superRefine((value, context) => {
-    if (["click", "doubleClick", "scroll"].includes(value.action) && !value.nodeId) {
-      context.addIssue({ code: "custom", message: "DOM action requires a node id." });
-    }
-    if (value.action === "keypress" && !value.keys?.length) context.addIssue({ code: "custom", message: "Keypress requires keys." });
-    if (value.action === "type" && value.text === undefined) context.addIssue({ code: "custom", message: "Type requires text." });
-  }),
+  }).strict(),
   dialog: z.object({
     tabId: tabIdSchema,
     action: z.enum(["get", "accept", "dismiss"]),

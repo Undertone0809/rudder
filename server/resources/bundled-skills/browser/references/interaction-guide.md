@@ -81,8 +81,9 @@ chain from outer frame to target frame, then use the same locator strategies as
 the main document. Re-snapshot if a frame navigates or its execution context is
 replaced.
 
-Use DOM-CUA only when the snapshot provides the target node id. Node ids are
-snapshot state, not durable identifiers.
+DOM-CUA is read-only. Its node ids are ephemeral snapshot evidence, not
+interaction handles. Use a locator or an explicit coordinate action to
+interact.
 
 ## Visual And Coordinate Interaction
 
@@ -166,7 +167,8 @@ describe it as the system clipboard.
 
 - On locator ambiguity or staleness, refresh the snapshot and rebuild once.
 - After two failures against the same target, switch to a stable copied
-  attribute or DOM-CUA. Do not keep increasing timeout or selector complexity.
+  attribute or an explicitly verified coordinate action. Do not keep
+  increasing timeout or selector complexity.
 - On a Browser timeout, call `rudder_browser_tabs` before retrying. The active
   tab may have been closed and the website action may already have occurred.
 - On navigation failure, inspect the tab URL/title before deciding to retry.
