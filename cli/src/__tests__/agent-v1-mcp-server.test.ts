@@ -455,7 +455,7 @@ describe("agent-v1 MCP server", () => {
             },
           },
         },
-        serverInfo: { name: "rudder-tools", version: "0.5.0" },
+        serverInfo: { name: "rudder-tools", version: "0.5.1" },
       },
     });
   });

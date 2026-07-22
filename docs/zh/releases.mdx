@@ -24,6 +24,34 @@ npx @rudderhq/cli@latest start
 操作指南和参考页面为准。今后的发布记录应使用当前导航名称；术语可能有歧义时，
 应链接到对应的权威页面。
 
+## v0.5.1
+
+发布时间：2026-07-22
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.5.1)
+
+### New Features
+
+- 增加 Chat 首轮原子创建：新 conversation 在首条消息被接受前保留为本地 draft，并让 UI、API 和 agent tools 使用一致语义。
+- 增加 Messenger saved views、project-aware custom groups、promoted Side Chat grouping，以及用于组织当前工作的 Side Panel tab context menus。
+- 增加 runtime-neutral inline visual artifacts，以及从 Markdown 和结构化 transcript activity 打开的本地文件 Side Panel 预览。
+- 增加 failed-run origin cards 和 Oreo agent avatar style，使 agent identity 与恢复上下文更容易识别。
+- 增加系统应用打开入口，用于 Rudder 无法直接预览的 Library 文件。
+
+### Improvements
+
+- 改善 transcript activity，增加语义摘要、稳定的 native Steer 顺序、streaming delta 合并和有界的 chat title context。
+- 改善 Side Panel issue scrolling、Chat load error containment、local-file safety boundaries，以及生产数据规模下的 project-group paging。
+- 围绕具体 Rudder workflow 重构公开文档，并澄清 GDPval benchmark 的 sampling、execution 和 deployment guidance。
+- 将 agent、plugin 与 skill 创建指南合并到 `rudder-docs`；旧的 bundled `rudder-create-agent`、`rudder-create-plugin` 和 `skill-optimizer` skills 不再随版本提供。
+
+### Bug Fixes
+
+- 修复重复 Chat stop、edit、follow-up 和 Side Chat lifecycle 的竞态，使 terminal state 保持持久且一致。
+- 修复内部 provider 与 execution events 泄漏到用户可见 transcript，包括空 process placeholder 和 release events。
+- 修复 Automation chat cron validation 和 transaction integrity、unread group retry loops、saved-view persistence，以及重复 Messenger group keys。
+- 修复 Library 目录不可用时的本地开发启动，并恢复 Chat Side Panel 中 expanded issue detail 的滚动行为。
+
 ## v0.5.0
 
 发布时间：2026-07-19
