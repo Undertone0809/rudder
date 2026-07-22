@@ -547,6 +547,7 @@ export function getTranscriptActionIconTreatment(category: TranscriptActionIconC
 export function getTranscriptActionIconTone(status: TranscriptActionIconStatus, category: TranscriptActionIconCategory): string {
   if (status === "error") return "text-red-600 dark:text-red-300";
   if (status === "running") return "text-cyan-600 dark:text-cyan-300";
+  if (status === "neutral") return "text-muted-foreground";
   if (category === "skill") return "text-[#2f80ed]";
   return "text-muted-foreground";
 }
