@@ -355,11 +355,14 @@ contracts:
       - server/src/__tests__/heartbeat-workspace-preflight.test.ts
       - ui/src/pages/AgentDetail.run-filters.test.ts
       - ui/src/pages/AgentDetail.runs.test.ts
+      - ui/src/pages/AgentDetail.run-rail.test.tsx
       - tests/e2e/agent-runs-filter-menu.spec.ts
+      - tests/e2e/agent-run-conversation-grouping.spec.ts
       - tests/e2e/messenger-contract.spec.ts
     related_plans:
       - doc/plans/2026-06-20-agent-run-unification-completion.md
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
+      - doc/plans/2026-07-21-chat-agent-run-conversation-grouping.md
   RUN.CHAT.AGENT.001:
     owner: product
     domain: execution
@@ -377,6 +380,7 @@ contracts:
       - ui/src/pages/AgentDetail.chat-context.tsx
       - ui/src/pages/Chat.parts.tsx
       - ui/src/pages/Chat.messages.tsx
+      - ui/src/pages/Chat.tsx
     related_tests:
       - server/src/__tests__/chat-agent-runs.test.ts
       - server/src/__tests__/chat-assistant.test.ts
@@ -388,9 +392,12 @@ contracts:
       - tests/e2e/chat-runtime-boot-failure.spec.ts
       - tests/e2e/chat-streaming.spec.ts
       - tests/e2e/chat-concurrent-streaming.spec.ts
+      - tests/e2e/chat-options-menu.spec.ts
+      - tests/e2e/agent-run-conversation-grouping.spec.ts
     related_plans:
       - doc/plans/2026-06-20-agent-run-unification-completion.md
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
+      - doc/plans/2026-07-21-chat-agent-run-conversation-grouping.md
   AGENT.IDENTITY.CONFIG.001:
     owner: product
     domain: agents
@@ -1051,11 +1058,13 @@ contracts:
       - tests/e2e/chat-runtime-boot-failure.spec.ts
       - tests/e2e/chat-streaming.spec.ts
       - tests/e2e/chat-transcript-internal-events.spec.ts
+      - tests/e2e/agent-run-conversation-grouping.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
       - doc/plans/2026-07-17-safe-change-throughput-architecture-optimization.md
       - doc/plans/2026-07-20-atomic-chat-first-turn.md
+      - doc/plans/2026-07-21-chat-agent-run-conversation-grouping.md
   CHAT.INLINE.VISUAL.001:
     owner: product
     domain: collaboration
@@ -1070,6 +1079,8 @@ contracts:
       - server/resources/bundled-skills/visualize/references/runtime-contract.md
       - server/src/services/chat-assistant.ts
       - server/src/services/chat-assistant.helpers.ts
+      - server/src/services/chat-assistant.inline-visuals.ts
+      - server/src/services/chats.inline-visual-persistence.ts
       - server/src/services/chats.ts
       - server/src/services/chat-work-manifest.ts
       - server/src/routes/chats.ts
@@ -1082,6 +1093,7 @@ contracts:
       - server/src/__tests__/bundled-visualize-skill.test.ts
       - server/src/__tests__/chat-routes.test.ts
       - server/src/__tests__/chat-work-manifest.test.ts
+      - server/src/__tests__/generic-chat-runtime-adapters.test.ts
       - ui/src/pages/ChatInlineVisual.test.tsx
       - ui/src/pages/Chat.messages.test.tsx
       - tests/e2e/chat-inline-visual.spec.ts
@@ -1112,6 +1124,7 @@ contracts:
       - tests/e2e/chat-fork.spec.ts
       - tests/e2e/messenger-chat-title-regenerate.spec.ts
     related_plans:
+      - doc/plans/2026-07-21-chat-title-generation-token-budget.md
       - doc/plans/2026-06-18-chat-title-defaults.md
       - doc/plans/2026-05-22-organization-intelligence-profiles.md
   CHAT.FORK.001:
@@ -1510,8 +1523,16 @@ contracts:
       - doc/product/domains/governance-and-visibility/approvals-budgets-activity.md
     related_code:
       - server/src/services/activity.ts
+      - server/src/services/operator-event-visibility.ts
+      - server/src/services/run-intelligence.ts
+      - server/src/services/runtime-kernel/heartbeat.ts
+      - server/src/services/runtime-kernel/heartbeat.release.ts
+      - ui/src/lib/run-detail-events.ts
     related_tests:
       - server/src/__tests__/activity-service.test.ts
+      - server/src/__tests__/heartbeat-process-recovery.test.ts
+      - tests/e2e/issue-activity-chat-links.spec.ts
+      - ui/src/lib/run-detail-events.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   RUN.INTELLIGENCE.001:
@@ -1747,6 +1768,7 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-12-built-in-browser.md
+      - doc/plans/2026-07-22-default-rudder-appearance.md
   ORG.IDENTITY.001:
     owner: product
     domain: organizations-and-goals

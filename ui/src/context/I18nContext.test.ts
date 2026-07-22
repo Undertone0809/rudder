@@ -69,6 +69,9 @@ describe("translateMessage", () => {
     expect(translateLegacyString("zh-CN", "0 api · 33 subscription")).toBe("0 API · 33 订阅");
     expect(translateLegacyString("zh-CN", "Threads sorted by latest activity")).toBe("话题按最近活动排序");
     expect(translateLegacyString("zh-CN", "Create new chat")).toBe("创建新聊天");
+    expect(translateLegacyString("zh-CN", "View agent runs")).toBe("查看智能体运行记录");
+    expect(translateLegacyString("zh-CN", "Loading agent runs...")).toBe("正在加载智能体运行记录...");
+    expect(translateLegacyString("zh-CN", "No agent runs yet")).toBe("暂无智能体运行记录");
     expect(translateLegacyString("zh-CN", "Issue update")).toBe("任务更新");
     expect(translateLegacyString("zh-CN", "in review")).toBe("评审中");
     expect(translateLegacyString("zh-CN", "Open issue")).toBe("打开任务");

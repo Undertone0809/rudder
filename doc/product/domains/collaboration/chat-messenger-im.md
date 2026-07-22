@@ -195,6 +195,10 @@ Product model:
   evidence under `CHAT.THREAD.MANIFEST.001`.
 - Chat-native assistant turns that invoke runtimes are Agent Runs under
   `RUN.CHAT.AGENT.001`.
+- The conversation menu exposes its newest linked Agent Run. Agent Runs
+  navigation collapses matching runs with the same normalized conversation
+  identity into one entry, while individual attempts remain available through
+  the run detail's `Chat Replies` evidence.
 - Chat and issues are parallel ways to move tasks forward. Chat organizes work
   through an ongoing conversation; issues add explicit status, ownership,
   priority, dependencies, and review structure.
@@ -309,26 +313,29 @@ Flow:
    the accepted user message and durable, visible failure evidence.
 7. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
    streams/persists assistant messages.
-8. Chat can continue executing the task conversationally or create/link an
+8. The operator can open the conversation menu to inspect its newest linked
+   Agent Run, then use `Chat Replies` to move between distinct attempts without
+   expanding duplicate conversation entries in the Agent Runs navigation.
+9. Chat can continue executing the task conversationally or create/link an
    issue, automation, or approval when the operator asks for that additional
    structure. The assistant must not emit an issue proposal merely because the
    work is large, durable, assignable, or issue-shaped.
-9. When the operator refreshes a completed assistant answer, Rudder reuses the
+10. When the operator refreshes a completed assistant answer, Rudder reuses the
    original turn context, creates a new turn variant, and surfaces branch
    controls for moving between variants.
-10. While the refreshed or edited variant is still streaming, the operator may
+11. While the refreshed or edited variant is still streaming, the operator may
    switch the visible turn branch back to an earlier variant to inspect prior
    user and assistant content. The current stream continues in the background,
    generation controls remain available, and returning to the active/latest
    variant shows the live stream draft again.
-11. If the operator sends another local follow-up while the selected chat has an
+12. If the operator sends another local follow-up while the selected chat has an
    active generation, Rudder creates a queued follow-up with the current draft,
    attachments, selected project, skills, model/effort, access mode, and
    expected active generation id.
-12. The queue renders beside the composer with stable ordering. The first queued
+13. The queue renders beside the composer with stable ordering. The first queued
    item is marked as next, later items show their queue position, and editable
    queued items expose edit/delete controls.
-13. When the operator chooses Steer, Rudder atomically persists the durable
+14. When the operator chooses Steer, Rudder atomically persists the durable
    control action, one normal user message, their queue linkage, and message
    activity evidence before attempting provider delivery. The message records
    its target generation and exact Work Transcript boundary. It stays in the
@@ -336,11 +343,11 @@ Flow:
    failure; delivery status remains separate evidence. Pending, provider-
    acceptance-unknown, and accepted native delivery use that one anchored
    interjection. Continuation delivery keeps the message outside the old run.
-14. When the current reply completes, a server-owned worker claims the next
+15. When the current reply completes, a server-owned worker claims the next
    eligible queued follow-up, sends it as the next chat turn, and hides the
    queued row after it is linked to the delivered user message. Delivery does
    not depend on the originating page remaining open.
-15. If the current reply is stopped, fails, or is otherwise not completed,
+16. If the current reply is stopped, fails, or is otherwise not completed,
    ordinary queued follow-ups stay parked and are not silently flushed. The
    operator may explicitly Steer retained feedback; Rudder then persists a
    continuation, waits for the prior owner to terminate, and starts that
@@ -446,6 +453,9 @@ Invariants:
   queued follow-up mutations through the same fork-to-continue boundary as
   normal local chat mutation APIs.
 - Agent attribution is visible enough to navigate from message to run/agent.
+- Conversation-to-run navigation chooses the newest linked assistant attempt;
+  per-conversation grouping in the run rail must not collapse the underlying
+  run records or their evidence.
 - When Chat merges organization-wide mention candidates with the selected
   agent's enabled skill candidates, one canonical skill target appears only
   once. The selected-agent candidate wins so the composer preserves the
@@ -473,6 +483,9 @@ Evidence:
   deletion, bound-row recovery, Messenger hiding, and IM binding invalidation.
 - Chat E2E covers rich references, skill picker, duplicate-free agent-enabled
   skill mentions, attachments, draft persistence, and attribution navigation.
+- Chat menu and Agent Runs E2E cover opening the newest conversation run,
+  rendering one conversation navigation entry, and switching to an older run
+  through `Chat Replies` without reintroducing duplicates.
 - Chat scroll-map focused tests cover the visible-message filter, the 64-marker
   production-sized ceiling, Markdown-safe bounded previews, assistant context,
   and jump delegation.
@@ -673,6 +686,8 @@ Related code:
 - `server/resources/bundled-skills/visualize/SKILL.md`
 - `server/src/services/chat-assistant.ts`
 - `server/src/services/chat-assistant.helpers.ts`
+- `server/src/services/chat-assistant.inline-visuals.ts`
+- `server/src/services/chats.inline-visual-persistence.ts`
 - `server/src/services/chats.ts`
 - `server/src/services/chat-work-manifest.ts`
 - `server/src/routes/chats.ts`
@@ -684,6 +699,7 @@ Related tests:
 - `server/src/services/chat-assistant.inline-visuals.test.ts`
 - `server/src/__tests__/chat-routes.test.ts`
 - `server/src/__tests__/chat-work-manifest.test.ts`
+- `server/src/__tests__/generic-chat-runtime-adapters.test.ts`
 - `ui/src/pages/ChatInlineVisual.test.tsx`
 - `tests/e2e/chat-inline-visual.spec.ts`
 

@@ -104,6 +104,11 @@ export const en = {
   "chat.composer.placeholder": "Ask anything",
   "chat.composer.issuePlaceholder": "Ask about {{issue}}",
   "chat.composer.planModePlaceholder": "Ask for follow-up changes",
+  "agentRuns.conversation": "Conversation",
+  "agentRuns.runCount.one": "{{count}} run",
+  "agentRuns.runCount.many": "{{count}} runs",
+  "agentRuns.openAgentRunForConversation.one": "Open agent run for conversation {{shortId}}, {{count}} run",
+  "agentRuns.openAgentRunForConversation.many": "Open agent run for conversation {{shortId}}, {{count}} runs",
   "organizations.description": "Manage organizations for this Rudder instance.",
   "organizationSkills.createSkillChatPrompt":
     "Help me design a new Agent skill for this Rudder organization.\n\nUse [$office-hours]({{officeHoursPath}}) as the bar for structure and rigor.\n\nPlease:\n1. Ask the minimum questions needed to clarify the skill's responsibility.\n2. Propose the skill name, trigger description, and workflow.\n3. Draft the full `SKILL.md`; the final `SKILL.md` should be written in English.",

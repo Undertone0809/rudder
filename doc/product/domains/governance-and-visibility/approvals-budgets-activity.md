@@ -102,16 +102,33 @@ Flow:
    summary fields.
 3. Activity service can aggregate related chat, issue, run, and approval
    context for timelines and Messenger.
+4. Internal execution-coordination audits may remain durable for backend
+   diagnostics while operator-facing Activity, Messenger, Agent Run events,
+   and Run Intelligence omit them when they do not describe a material product
+   change. `issue.execution_released` is this kind of internal audit: it proves
+   terminal cleanup and idempotency, but it does not itself change the issue's
+   operator-visible status, ownership, review state, or result.
 
 Invariants:
 
 - Activity should describe material product changes, not every internal update.
 - Mutating product actions must not be invisible when later agents need to
   reconstruct why state changed.
+- Agents reconstruct issue state from material issue activity, the issue's
+  current status and routing fields, and the run's visible terminal lifecycle
+  evidence. They must not depend on the internal `issue.execution_released`
+  audit, which remains queryable only through backend storage and diagnostics.
+- Filtering an internal event must happen before pagination is exposed so a
+  hidden row cannot consume a public page slot, create a false `hasMore`, or
+  make visible lifecycle evidence disappear.
 
 Evidence:
 
 - `server/src/__tests__/activity-service.test.ts` covers activity aggregation
-  and reference behavior.
+  and reference behavior, including the persisted-but-operator-hidden execution
+  release audit boundary.
 - Issue, automation, approval, and Messenger tests verify domain-specific
   activity consumers where those flows are visible.
+- `tests/e2e/issue-activity-chat-links.spec.ts` covers the same hidden-event
+  boundary across public Agent Run events, Run Intelligence, Messenger issue
+  activity, and Agent Run detail while keeping visible terminal evidence.
