@@ -1537,9 +1537,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     ? "Create or activate an agent before sending messages."
     : selectedConversation
       ? selectedConversation.chatRuntime.error ?? "Selected chat agent is unavailable."
+      : draftPreflightQuery.isPending
+        ? null
       : draftPreflightError
         ?? draftPreflightQuery.data?.error
-        ?? "Checking the selected chat configuration."; const hasPendingLightweightProposal = rawMessages.some(
+        ?? "Selected chat configuration is unavailable."; const hasPendingLightweightProposal = rawMessages.some(
     (message) => !message.supersededAt && message.kind === "operation_proposal" && !message.approval && operationProposalStatusFromMessage(message) === "pending", ); const hasActionableApprovals = rawMessages .filter((m) => !m.supersededAt) .some((message) => approvalNeedsAction(message.approval));
   const agentPillLabel =
     activeAgentId === NO_CHAT_AGENT_ID ? (agents ? NO_CHAT_AGENT_LABEL : "Loading agents") : (() => { const activeAgent = (agents ?? []).find((agent) => agent.id === activeAgentId); return activeAgent ? formatChatAgentLabel(activeAgent) : "Unknown agent"; })(); const activeProjectContextLink = selectedConversation?.contextLinks.find((link) => link.entityType === "project") ?? null; const activeProject = activeProjectId === NO_PROJECT_ID ? null : visibleProjects.find((project) => project.id === activeProjectId) ?? null; const hasSelectedProject = activeProjectId !== NO_PROJECT_ID; const projectPillLabel = activeProject ? projectDisplayName(activeProject) : activeProjectId === NO_PROJECT_ID ? "No project" : activeProjectContextLink?.entity?.label ?? "Unknown project"; const showProjectSelector = !selectedConversation || activeProjectId !== NO_PROJECT_ID || !projectSelectionLocked; const allRecentProjectConversations = useMemo(() => {
@@ -2414,7 +2416,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               void sendMessage(); }
           }} /> </div>
       {renderSideChatSlashCommandMenu()}
-      {composerUnavailable ? (
+      {composerUnavailable && composerUnavailableMessage ? (
         <div className="chat-warning mt-2.5 rounded-[var(--radius-md)] px-3 py-2.5 text-sm">
           {composerUnavailableMessage}{" "}
           <Link to="/agents" className="underline underline-offset-4 hover:text-foreground">

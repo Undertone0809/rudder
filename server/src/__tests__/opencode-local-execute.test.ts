@@ -1136,7 +1136,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         provenance: "repo",
         serverName: "rudder-tools",
         toolCount: 69,
-        version: "0.5.0",
+        version: "0.5.1",
         fallbackReason: null,
       });
     } finally {

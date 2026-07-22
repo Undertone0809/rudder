@@ -364,7 +364,7 @@ describe("heartbeat managed workspace preflight", () => {
     expect(run?.id).toBeTruthy();
     await waitForCondition(async () => {
       const failedRun = await getRun(run!.id);
-      if (failedRun?.status !== "failed") return false;
+      if (failedRun?.status !== "failed" || failedRun.terminalEffectsPending) return false;
       const events = await getRunEvents(run!.id);
       return events.some((event) => event.eventType === "runtime.workspace_preflight_failed");
     });
@@ -786,7 +786,7 @@ describe("heartbeat managed workspace preflight", () => {
     expect(run?.id).toBeTruthy();
     await waitForCondition(async () => {
       const latestRun = await getRun(run!.id);
-      if (latestRun?.status !== "failed") return false;
+      if (latestRun?.status !== "failed" || latestRun.terminalEffectsPending) return false;
       const events = await getRunEvents(run!.id);
       return events.some((event) => event.eventType === "adapter.forbidden_marker");
     });
@@ -871,7 +871,7 @@ describe("heartbeat managed workspace preflight", () => {
     expect(run?.id).toBeTruthy();
     await waitForCondition(async () => {
       const latestRun = await getRun(run!.id);
-      if (latestRun?.status !== "failed") return false;
+      if (latestRun?.status !== "failed" || latestRun.terminalEffectsPending) return false;
       const events = await getRunEvents(run!.id);
       return events.some((event) => event.eventType === "adapter.forbidden_marker");
     });
@@ -924,7 +924,7 @@ describe("heartbeat managed workspace preflight", () => {
     expect(run?.id).toBeTruthy();
     await waitForCondition(async () => {
       const latestRun = await getRun(run!.id);
-      if (latestRun?.status !== "timed_out") return false;
+      if (latestRun?.status !== "timed_out" || latestRun.terminalEffectsPending) return false;
       const events = await getRunEvents(run!.id);
       return events.some((event) => event.eventType === "adapter.forbidden_marker");
     });
@@ -1072,7 +1072,7 @@ describe("heartbeat managed workspace preflight", () => {
     expect(run?.id).toBeTruthy();
     await waitForCondition(async () => {
       const latestRun = await getRun(run!.id);
-      if (latestRun?.status !== "failed") return false;
+      if (latestRun?.status !== "failed" || latestRun.terminalEffectsPending) return false;
       const events = await getRunEvents(run!.id);
       return events.some((event) => event.eventType === "adapter.forbidden_marker");
     });
@@ -1121,7 +1121,7 @@ describe("heartbeat managed workspace preflight", () => {
     expect(run?.id).toBeTruthy();
     await waitForCondition(async () => {
       const latestRun = await getRun(run!.id);
-      if (latestRun?.status !== "failed") return false;
+      if (latestRun?.status !== "failed" || latestRun.terminalEffectsPending) return false;
       const events = await getRunEvents(run!.id);
       return events.some((event) => event.eventType === "adapter.forbidden_marker");
     });
@@ -1189,7 +1189,7 @@ describe("heartbeat managed workspace preflight", () => {
     expect(run?.id).toBeTruthy();
     await waitForCondition(async () => {
       const latestRun = await getRun(run!.id);
-      if (latestRun?.status !== "failed") return false;
+      if (latestRun?.status !== "failed" || latestRun.terminalEffectsPending) return false;
       const events = await getRunEvents(run!.id);
       return (
         models.length === 2 &&
