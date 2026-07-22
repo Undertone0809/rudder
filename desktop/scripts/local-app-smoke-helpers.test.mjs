@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   assertExactLocalAppSavedViewTarget,
@@ -29,6 +30,17 @@ const expectedTarget = {
 };
 
 describe("Local App smoke helpers", () => {
+  it("wires the independently derived partition into the webview probe", () => {
+    const smokeSource = readFileSync(new URL("./smoke.mjs", import.meta.url), "utf8");
+    const functionStart = smokeSource.indexOf("async function waitForLocalAppWebview");
+    const functionEnd = smokeSource.indexOf("\nasync function runLocalAppsScenario", functionStart);
+    expect(functionStart).toBeGreaterThanOrEqual(0);
+    expect(functionEnd).toBeGreaterThan(functionStart);
+    const probeSource = smokeSource.slice(functionStart, functionEnd);
+    expect(probeSource).toContain("expectedPartition,\n    expectedUrl,");
+    expect(probeSource).not.toContain("attested.partition");
+  });
+
   it("derives and independently enforces the exact loopback origin and partition", () => {
     expect(expectedLocalAppPartitionId("install-a", "definition-a"))
       .toBe("persist:rudder-local-app-26e2460901408e58ba3ac4e61b708e02");

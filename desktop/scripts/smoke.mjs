@@ -3751,7 +3751,7 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
   }, {
     bindingId: definition.localBindingId,
     expectedBodyText,
-    expectedPartition: attested.partition,
+    expectedPartition,
     expectedUrl,
   }, { timeout: 45_000 });
   return page.evaluate(async ({ bindingId, expectedUrl: url }) => {
