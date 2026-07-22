@@ -220,12 +220,34 @@ describe("organization skill references", () => {
       editable: false,
     });
 
-    expect(skills.find((skill) => skill.slug === "skill-creator")).toMatchObject({
+    const skillCreator = skills.find((skill) => skill.slug === "skill-creator");
+    expect(skillCreator).toMatchObject({
       key: "rudder/skill-creator",
       sourceBadge: "rudder",
       sourceLabel: "Bundled by Rudder",
       editable: false,
+      trustLevel: "scripts_executables",
     });
+    expect(skillCreator?.fileInventory).toEqual(expect.arrayContaining([
+      { path: "SKILL.md", kind: "skill" },
+      { path: "agents/grader.md", kind: "markdown" },
+      { path: "eval-viewer/generate_review.py", kind: "script" },
+      { path: "references/rudder.md", kind: "reference" },
+      { path: "scripts/package_skill.py", kind: "script" },
+    ]));
+    const rudderReference = await skillSvc.readFile(
+      orgId,
+      skillCreator!.id,
+      "references/rudder.md",
+    );
+    expect(rudderReference).toMatchObject({
+      path: "references/rudder.md",
+      kind: "reference",
+      markdown: true,
+      editable: false,
+    });
+    expect(rudderReference?.content).toContain("# Rudder Compatibility");
+    expect(rudderReference?.content).toContain("$AGENT_HOME/skills/<slug>");
     expect(skills.find((skill) => skill.slug === "visualize")).toMatchObject({
       key: "rudder/visualize",
       sourceBadge: "rudder",

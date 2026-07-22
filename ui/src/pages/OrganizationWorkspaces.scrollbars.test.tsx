@@ -274,6 +274,23 @@ vi.mock("@tanstack/react-query", () => ({
           error: null,
         };
       }
+      if (String(filePath).endsWith(".mp4") || String(filePath).endsWith(".mp3")) {
+        const video = String(filePath).endsWith(".mp4");
+        return {
+          data: {
+            filePath,
+            rootExists: mockState.workspaceFileRootExists,
+            content: null,
+            contentPath: `/api/orgs/org-1/workspace/file/content?path=${encodeURIComponent(String(filePath))}`,
+            contentType: video ? "video/mp4" : "audio/mpeg",
+            previewKind: video ? "video" : "audio",
+            message: null,
+            truncated: false,
+          },
+          isLoading: false,
+          error: null,
+        };
+      }
       if (String(filePath).endsWith(".bin") || String(filePath).endsWith(".opaque")) {
         return {
           data: {
@@ -795,6 +812,24 @@ describe("OrganizationWorkspaces scroll regions", () => {
 
     expect(document.body.textContent).not.toContain("This file can’t be previewed or edited in Rudder.");
     expect(document.querySelector("[data-testid='org-workspaces-unsupported-file-launcher']")).toBeNull();
+  });
+
+  it.each([
+    ["artifacts/chat-ui-review/demo.mp4", "video", "VIDEO"],
+    ["artifacts/chat-ui-review/demo.mp3", "audio", "AUDIO"],
+  ] as const)("uses the shared %s Library media renderer", async (filePath, previewKind, tagName) => {
+    mockState.searchParams = `path=${encodeURIComponent(filePath)}`;
+
+    renderWorkspacesPage();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const preview = document.querySelector<HTMLElement>(`[data-testid='org-workspaces-${previewKind}-preview']`);
+    expect(preview?.tagName).toBe(tagName);
+    expect(document.querySelector(`[data-workspace-media-preview='${previewKind}']`)).not.toBeNull();
+    expect(document.querySelector("a[download]")?.textContent).toContain("Download");
+    expect(document.body.textContent).not.toContain("This file can’t be previewed or edited in Rudder.");
   });
 
   it("keeps bounded truncated text in the read-only presentation before the unsupported fallback", () => {

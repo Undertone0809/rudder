@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your agent session and say you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "skill-creator", "runs": [{"id": "eval-1-private-multifile-skill-old_skill-run-1", "prompt": "You are running as a Rudder agent with RUDDER_AGENT_ID, RUDDER_ORG_ID, AGENT_HOME, and RUDDER_ORG_SKILLS_DIR available. The user wants a reusable incident-handoff skill only for this current agent. It must contain SKILL.md, references/checklist.md, and scripts/validate_handoff.py. Explain the exact authoring, validation, installation, enablement, and verification workflow. Do not execute mutations; return the implementation plan and exact paths/commands.", "eval_id": 1, "outputs": [{"name": "response.md", "type": "text", "content": "I inspected only `/tmp/rudder-skill-creator-old-private.tBz0nO/old_skill/SKILL.md`. It contains no additional scaffolding, installation, or enablement conventions. No mutations were executed.\n\nThe Rudder variables were not visible in the read-only shell, so paths below intentionally resolve from the supplied environment at execution time.\n\n## Paths\n\n- Authoring/staging:\n  `/tmp/rudder-skill-creator-old-private.tBz0nO/incident-handoff`\n- Current-agent installation:\n  `$AGENT_HOME/skills/incident-handoff`\n- Shared organization directory, deliberately unused:\n  `$RUDDER_ORG_SKILLS_DIR`\n\nFinal layout:\n\n```text\n$AGENT_HOME/skills/incident-handoff/\n\u251c\u2500\u2500 SKILL.md\n\u251c\u2500\u2500 references/\n\u2502   \u2514\u2500\u2500 checklist.md\n\u2514\u2500\u2500 scripts/\n    \u2514\u2500\u2500 validate_handoff.py\n```\n\n## 1. Preflight\n\nRun before authoring:\n\n```zsh\nset -euo pipefail\n\n: \"${RUDDER_AGENT_ID:?RUDDER_AGENT_ID is required}\"\n: \"${RUDDER_ORG_ID:?RUDDER_ORG_ID is required}\"\n: \"${AGENT_HOME:?AGENT_HOME is required}\"\n: \"${RUDDER_ORG_SKILLS_DIR:?RUDDER_ORG_SKILLS_DIR is required}\"\n\nSTAGE=\"/tmp/rudder-skill-creator-old-private.tBz0nO/incident-handoff\"\nTARGET=\"${AGENT_HOME%/}/skills/incident-handoff\"\n\nprintf 'Agent:  %s\\nOrg:    %s\\nStage:  %s\\nTarget: %s\\n' \\\n  \"$RUDDER_AGENT_ID\" \"$RUDDER_ORG_ID\" \"$STAGE\" \"$TARGET\"\n\ntest ! -e \"$STAGE\" || {\n  print -u2 \"Refusing to overwrite staging path: $STAGE\"\n  exit 1\n}\n\ntest ! -e \"$TARGET\" || {\n  print -u2 \"Refusing to overwrite installed skill: $TARGET\"\n  exit 1\n}\n```\n\n## 2. Author the three files\n\nCreate private staging directories:\n\n```zsh\numask 077\ninstall -d -m 700 \"$STAGE/references\" \"$STAGE/scripts\"\n```\n\n### `SKILL.md`\n\nWrite this to `$STAGE/SKILL.md`:\n\n```markdown\n---\nname: incident-handoff\ndescription: Create, review, or validate a structured operational incident handoff when incident ownership changes, including shift changes, escalation, or transfer to another responder.\n---\n\n# Incident Handoff\n\nCreate a concise, factual handoff that lets the receiving responder continue incident work without reconstructing context.\n\n## Workflow\n\n1. Gather confirmed facts, current ownership, timestamps, evidence, decisions, and open work.\n2. Do not invent missing information. State unknowns explicitly.\n3. Do not include passwords, tokens, credentials, or other secret values.\n4. Use the required structure below.\n5. Review `references/checklist.md`.\n6. Validate the finished Markdown file:\n\n   `python3 \"$AGENT_HOME/skills/incident-handoff/scripts/validate_handoff.py\" HANDOFF.md`\n\n7. Resolve every validation error before declaring the handoff ready.\n\n## Required structure\n\n# Incident Handoff\n\n## Incident Identity\n\n- Incident ID: value\n- Severity: value\n- Status: value\n- Started: ISO-8601 timestamp\n- Handoff time: ISO-8601 timestamp\n- Outgoing owner: value\n- Incoming owner: value\n\n## Executive Summary\n\nState what happened, the present condition, and why ownership is changing.\n\n## Customer Impact\n\nDescribe affected customers, functions, regions, duration, and magnitude. Write `None confirmed` when appropriate.\n\n## Current State\n\nDescribe system health, active mitigations, and whether impact is improving, stable, or worsening.\n\n## Timeline\n\nList material events chronologically with timezone-qualified timestamps.\n\n## Actions Taken\n\nRecord completed or attempted actions and their observed results.\n\n## Evidence and Links\n\nProvide relevant dashboards, logs, traces, tickets, runbooks, and communication links. Do not copy secret values.\n\n## Risks and Unknowns\n\nList unresolved questions, assumptions, hazards, and conditions that could worsen the incident. Write `None known` when appropriate.\n\n## Next Actions\n\nList ordered actions with an owner, due time, and status.\n\n## Ownership and Escalation\n\nIdentify the current decision-maker, escalation contacts, and the conditions that require escalation.\n\n## Communications\n\nRecord the latest stakeholder update, its timestamp, audience, and the next planned update.\n\n## Acknowledgement\n\nRecord whether the incoming owner accepted the handoff and at what time.\n```\n\n### `references/checklist.md`\n\nWrite this to `$STAGE/references/checklist.md`:\n\n```markdown\n# Incident handoff checklist\n\n## Accuracy\n\n- Separate confirmed facts from hypotheses.\n- Use absolute, timezone-qualified ISO-8601 timestamps.\n- State unknown information explicitly.\n- Record the result of each attempted action.\n- Confirm links point to the intended incident resources.\n- Exclude passwords, tokens, credentials, and secret values.\n\n## Operational continuity\n\n- Identify outgoing and incoming owners.\n- Explain the current customer impact and system state.\n- Record active mitigations and rollback considerations.\n- List next actions in priority order.\n- Give every next action an owner, due time, and status.\n- State escalation contacts and escalation conditions.\n- Record the next communication deadline.\n\n## Transfer\n\n- The incoming owner has reviewed the handoff.\n- The incoming owner can access the linked evidence and tools.\n- Any access gaps are documented and assigned.\n- The acknowledgement includes a timestamp.\n- The outgoing owner remains available until acceptance or an explicit fallback is documented.\n```\n\n### `scripts/validate_handoff.py`\n\nWrite this to `$STAGE/scripts/validate_handoff.py`:\n\n```python\n#!/usr/bin/env python3\n\"\"\"Validate a Markdown incident handoff without external dependencies.\"\"\"\n\nfrom __future__ import annotations\n\nimport argparse\nimport re\nimport sys\nfrom datetime import datetime\nfrom pathlib import Path\n\nREQUIRED_SECTIONS = (\n    \"Incident Identity\",\n    \"Executive Summary\",\n    \"Customer Impact\",\n    \"Current State\",\n    \"Timeline\",\n    \"Actions Taken\",\n    \"Evidence and Links\",\n    \"Risks and Unknowns\",\n    \"Next Actions\",\n    \"Ownership and Escalation\",\n    \"Communications\",\n    \"Acknowledgement\",\n)\n\nREQUIRED_FIELDS = (\n    \"Incident ID\",\n    \"Severity\",\n    \"Status\",\n    \"Started\",\n    \"Handoff time\",\n    \"Outgoing owner\",\n    \"Incoming owner\",\n)\n\nPLACEHOLDER_RE = re.compile(\n    r\"<[^>\\n]+>|\\b(?:TBD|TODO|FIXME|REPLACE_ME)\\b\",\n    re.IGNORECASE,\n)\n\n\ndef parse_sections(text: str) -> tuple[list[str], dict[str, str]]:\n    matches = list(re.finditer(r\"(?m)^##\\s+(.+?)\\s*$\", text))\n    names = [match.group(1).strip() for match in matches]\n    bodies: dict[str, str] = {}\n\n    for index, match in enumerate(matches):\n        start = match.end()\n        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)\n        bodies[match.group(1).strip()] = text[start:end].strip()\n\n    return names, bodies\n\n\ndef field_value(body: str, field: str) -> str | None:\n    match = re.search(\n        rf\"(?mi)^-\\s*{re.escape(field)}:\\s*(.*?)\\s*$\",\n        body,\n    )\n    return match.group(1).strip() if match else None\n\n\ndef valid_timestamp(value: str) -> bool:\n    try:\n        parsed = datetime.fromisoformat(value.replace(\"Z\", \"+00:00\"))\n    except ValueError:\n        return False\n    return parsed.tzinfo is not None\n\n\ndef validate(text: str) -> list[str]:\n    errors: list[str] = []\n\n    if not re.search(r\"(?m)^# Incident Handoff\\s*$\", text):\n        errors.append(\"missing exact top-level heading: # Incident Handoff\")\n\n    names, sections = parse_sections(text)\n\n    for section in REQUIRED_SECTIONS:\n        count = names.count(section)\n        if count == 0:\n            errors.append(f\"missing section: ## {section}\")\n        elif count > 1:\n            errors.append(f\"duplicate section: ## {section}\")\n        elif not sections.get(section, \"\").strip():\n            errors.append(f\"empty section: ## {section}\")\n\n    present_required = [name for name in names if name in REQUIRED_SECTIONS]\n    if present_required != list(REQUIRED_SECTIONS):\n        errors.append(\"required sections are not in the prescribed order\")\n\n    identity = sections.get(\"Incident Identity\", \"\")\n    values: dict[str, str] = {}\n\n    for field in REQUIRED_FIELDS:\n        value = field_value(identity, field)\n        if not value:\n            errors.append(f\"missing or empty identity field: {field}\")\n        else:\n            values[field] = value\n\n    for field in (\"Started\", \"Handoff time\"):\n        value = values.get(field)\n        if value and not valid_timestamp(value):\n            errors.append(\n                f\"{field} must be an ISO-8601 timestamp with timezone: {value!r}\"\n            )\n\n    placeholders = sorted(set(match.group(0) for match in PLACEHOLDER_RE.finditer(text)))\n    if placeholders:\n        errors.append(\"unresolved placeholders: \" + \", \".join(placeholders))\n\n    return errors\n\n\ndef main() -> int:\n    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument(\"handoff\", type=Path, help=\"Markdown handoff to validate\")\n    args = parser.parse_args()\n\n    try:\n        text = args.handoff.read_text(encoding=\"utf-8\")\n    except (OSError, UnicodeError) as exc:\n        print(f\"ERROR: cannot read {args.handoff}: {exc}\", file=sys.stderr)\n        return 2\n\n    errors = validate(text)\n    if errors:\n        for error in errors:\n            print(f\"ERROR: {error}\", file=sys.stderr)\n        return 1\n\n    print(f\"VALID: {args.handoff}\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n```\n\nSet permissions:\n\n```zsh\nchmod 600 \"$STAGE/SKILL.md\" \"$STAGE/references/checklist.md\"\nchmod 700 \"$STAGE/scripts/validate_handoff.py\"\n```\n\n## 3. Validate before installation\n\nConfirm the package contains exactly the requested files:\n\n```zsh\nACTUAL=\"$(\n  cd \"$STAGE\"\n  find . -type f -print | LC_ALL=C sort\n)\"\nEXPECTED=$'./SKILL.md\\n./references/checklist.md\\n./scripts/validate_handoff.py'\n\ntest \"$ACTUAL\" = \"$EXPECTED\" || {\n  print -u2 \"Unexpected package contents:\"\n  print -u2 -- \"$ACTUAL\"\n  exit 1\n}\n```\n\nPerform non-writing Python syntax validation:\n\n```zsh\npython3 -c '\nimport ast\nimport pathlib\nimport sys\nast.parse(pathlib.Path(sys.argv[1]).read_text(encoding=\"utf-8\"))\n' \"$STAGE/scripts/validate_handoff.py\"\n```\n\nThen test both validator outcomes using a temporary directory:\n\n```zsh\nTEST_DIR=\"$(mktemp -d)\"\ntrap 'rm -rf -- \"$TEST_DIR\"' EXIT\n\ncat > \"$TEST_DIR/good.md\" <<'EOF'\n# Incident Handoff\n\n## Incident Identity\n- Incident ID: INC-123\n- Severity: SEV-2\n- Status: Mitigated\n- Started: 2026-07-22T09:00:00+08:00\n- Handoff time: 2026-07-22T10:00:00+08:00\n- Outgoing owner: Alice\n- Incoming owner: Bob\n\n## Executive Summary\nAPI errors are mitigated; monitoring continues during ownership transfer.\n\n## Customer Impact\nElevated API error rates affected some customers.\n\n## Current State\nError rates have returned to baseline.\n\n## Timeline\n- 2026-07-22T09:00:00+08:00 \u2014 Alert fired.\n\n## Actions Taken\n- Rolled back the latest deployment; error rates decreased.\n\n## Evidence and Links\n- Incident dashboard: https://example.invalid/dashboard\n\n## Risks and Unknowns\nNone known.\n\n## Next Actions\n- Monitor error rate | Owner: Bob | Due: 2026-07-22T10:30:00+08:00 | Status: Open\n\n## Ownership and Escalation\nBob owns the incident; escalate if errors exceed the alert threshold.\n\n## Communications\nLast update sent at 2026-07-22T09:50:00+08:00; next update due at 10:30.\n\n## Acknowledgement\nBob accepted the handoff at 2026-07-22T10:00:00+08:00.\nEOF\n\n\"$STAGE/scripts/validate_handoff.py\" \"$TEST_DIR/good.md\"\n\nprintf '# Incident Handoff\\n' > \"$TEST_DIR/bad.md\"\nif \"$STAGE/scripts/validate_handoff.py\" \"$TEST_DIR/bad.md\"; then\n  print -u2 \"Validator incorrectly accepted an invalid handoff\"\n  exit 1\nfi\n```\n\n## 4. Install for only the current agent\n\nResolve and guard the target before copying:\n\n```zsh\nAGENT_ROOT=\"$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' \"$AGENT_HOME\")\"\nORG_ROOT=\"$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' \"$RUDDER_ORG_SKILLS_DIR\")\"\nSKILLS_ROOT=\"$AGENT_ROOT/skills\"\nTARGET=\"$SKILLS_ROOT/incident-handoff\"\nINSTALL_TMP=\"$SKILLS_ROOT/.incident-handoff.install.$$\"\n\ncase \"$TARGET/\" in\n  \"$AGENT_ROOT/\"*) ;;\n  *)\n    print -u2 \"Target escapes AGENT_HOME: $TARGET\"\n    exit 1\n    ;;\nesac\n\ncase \"$TARGET/\" in\n  \"$ORG_ROOT/\"*)\n    print -u2 \"Refusing organization-scoped installation: $TARGET\"\n    exit 1\n    ;;\nesac\n\ntest ! -e \"$TARGET\"\ntest ! -e \"$INSTALL_TMP\"\n\ninstall -d -m 700 \"$SKILLS_ROOT\"\ninstall -d -m 700 \"$INSTALL_TMP/references\" \"$INSTALL_TMP/scripts\"\ninstall -m 600 \"$STAGE/SKILL.md\" \"$INSTALL_TMP/SKILL.md\"\ninstall -m 600 \"$STAGE/references/checklist.md\" \\\n  \"$INSTALL_TMP/references/checklist.md\"\ninstall -m 700 \"$STAGE/scripts/validate_handoff.py\" \\\n  \"$INSTALL_TMP/scripts/validate_handoff.py\"\n\nmv \"$INSTALL_TMP\" \"$TARGET\"\n```\n\nNothing should be copied, linked, or registered under `$RUDDER_ORG_SKILLS_DIR`.\n\n## 5. Enablement\n\nThe supplied skill-creator definition specifies no Rudder enablement CLI. Therefore, the justified enablement mechanism is agent-scoped discovery by installing at:\n\n```text\n$AGENT_HOME/skills/incident-handoff/SKILL.md\n```\n\nAfter installation, begin a fresh Rudder turn/session for the same `$RUDDER_AGENT_ID` so any startup-time skill index is refreshed. Do not add an organization registration step.\n\n## 6. Verify installation and behavior\n\nVerify disk contents and equality:\n\n```zsh\ntest -f \"$TARGET/SKILL.md\"\ntest -f \"$TARGET/references/checklist.md\"\ntest -x \"$TARGET/scripts/validate_handoff.py\"\n\ndiff -qr \"$STAGE\" \"$TARGET\"\n\nfind \"$TARGET\" -type f -print | LC_ALL=C sort\n\"$TARGET/scripts/validate_handoff.py\" \"$TEST_DIR/good.md\"\n```\n\nIn a fresh session for the same agent, use this behavioral prompt:\n\n```text\nCreate an incident handoff for a SEV-2 API incident whose ownership is\nmoving from Alice to Bob. Use the incident-handoff skill, state unknowns\nexplicitly, and validate the final Markdown with its bundled validator.\nReport the validator exit status.\n```\n\nSuccessful verification requires:\n\n- The current agent discovers and follows `incident-handoff`.\n- The output uses all required sections.\n- The bundled validator exits `0`.\n- Another agent cannot discover it through `$RUDDER_ORG_SKILLS_DIR`.\n- No files were installed outside `$AGENT_HOME/skills/incident-handoff`."}], "grading": {"expectations": [{"text": "Installs the complete multi-file package under $AGENT_HOME/skills/incident-handoff", "passed": true, "evidence": "The response defines TARGET as ${AGENT_HOME%/}/skills/incident-handoff, installs SKILL.md, references/checklist.md, and scripts/validate_handoff.py beneath it, and verifies all three files plus diff -qr between staging and the target."}, {"text": "Enables the private skill additively with agent:incident-handoff rather than using a global or provider-native path", "passed": false, "evidence": "The response never uses the required agent:incident-handoff selection reference or an additive Rudder enable operation. Its Enablement section instead says that installation under $AGENT_HOME is itself the justified enablement mechanism and relies on agent-scoped discovery."}, {"text": "Separates installed, validated, enabled, and future-run-loaded states", "passed": false, "evidence": "Validation and installation are separate sections, and a fresh session is mentioned, but enabled is explicitly conflated with filesystem installation/discovery. There is no distinct enable transition or verification of an enabled selection before the future-run visibility check."}], "summary": {"passed": 1, "failed": 2, "total": 3, "pass_rate": 0.3333333333}, "execution_metrics": {"tool_calls": {"Bash": 2}, "total_tool_calls": 2, "total_steps": 6, "errors_encountered": 1, "output_chars": 13960, "transcript_chars": 18159}, "timing": {"executor_duration_seconds": 225, "total_duration_seconds": 225, "timing_source": "transcript file birth-to-modification wall clock"}, "claims": [{"claim": "No mutations were executed", "type": "process", "verified": true, "evidence": "The transcript contains only two read-only shell commands: one reads old_skill/SKILL.md, environment variables, and the old_skill file list; the other lists/searches the isolated workspace."}, {"claim": "The four Rudder variables were not visible in the read-only shell", "type": "factual", "verified": true, "evidence": "The transcript's env filter produced no RUDDER_AGENT_ID, RUDDER_ORG_ID, AGENT_HOME, or RUDDER_ORG_SKILLS_DIR lines."}, {"claim": "Installing at $AGENT_HOME/skills/incident-handoff is sufficient enablement", "type": "quality", "verified": false, "evidence": "The eval explicitly requires additive enablement through agent:incident-handoff; the response provides no such operation and treats discovery from disk as enablement."}], "user_notes_summary": {"uncertainties": ["Runtime values for the four Rudder environment variables were unavailable, so commands intentionally defer their resolution."], "needs_review": [], "workarounds": ["The response substitutes filesystem discovery and a fresh session for explicit Rudder enablement."]}, "eval_feedback": {"suggestions": [{"assertion": "Separates installed, validated, enabled, and future-run-loaded states", "reason": "This is discriminating here, but future graders would be more consistent if it explicitly required four named transitions and evidence that enablement uses the returned or canonical selection ref before a fresh run."}], "overall": "The eval catches the central old-skill failure: a strong generic answer can author and install the package, but without Rudder-specific guidance it conflates installation with additive enablement."}}}, {"id": "eval-1-private-multifile-skill-with_skill-run-1", "prompt": "You are running as a Rudder agent with RUDDER_AGENT_ID, RUDDER_ORG_ID, AGENT_HOME, and RUDDER_ORG_SKILLS_DIR available. The user wants a reusable incident-handoff skill only for this current agent. It must contain SKILL.md, references/checklist.md, and scripts/validate_handoff.py. Explain the exact authoring, validation, installation, enablement, and verification workflow. Do not execute mutations; return the implementation plan and exact paths/commands.", "eval_id": 1, "outputs": [{"name": "response.md", "type": "text", "content": "Use an agent-private package named `incident-handoff`. Its final installation path is:\n\n```text\n$AGENT_HOME/skills/incident-handoff/\n\u251c\u2500\u2500 SKILL.md\n\u251c\u2500\u2500 references/\n\u2502   \u2514\u2500\u2500 checklist.md\n\u2514\u2500\u2500 scripts/\n    \u2514\u2500\u2500 validate_handoff.py\n```\n\nDo not use `$RUDDER_ORG_SKILLS_DIR`: that would make it organization-owned rather than private to the current agent.\n\n## 1. Author and install the package\n\nAuthor directly into the agent-private source-of-truth directory:\n\n```bash\nSKILL_SLUG=\"incident-handoff\"\nSKILL_DIR=\"$AGENT_HOME/skills/$SKILL_SLUG\"\n\ntest -n \"$RUDDER_AGENT_ID\"\ntest -n \"$AGENT_HOME\"\ntest \"$SKILL_DIR\" != \"/\"\ntest \"$SKILL_DIR\" != \"$AGENT_HOME\"\n\ninstall -d \"$SKILL_DIR/references\" \"$SKILL_DIR/scripts\"\n```\n\nCreate `$AGENT_HOME/skills/incident-handoff/SKILL.md` with:\n\n```markdown\n---\nname: incident-handoff\ndescription: Create, review, or validate operational incident handoffs during shift changes, responder changes, escalation, or transfer to another team. Use when a user asks for an incident handoff, status transfer, responder briefing, escalation packet, or continuity check. Produce a concise, actionable handoff that separates confirmed facts from hypotheses and makes ownership, risk, evidence, and next actions explicit.\ncompatibility: Requires Python 3 to run the bundled handoff validator.\n---\n\n# Incident Handoff\n\nCreate incident handoffs that let a new responder assume control without reconstructing the incident from chat history.\n\n## Workflow\n\n1. Read `references/checklist.md` before drafting or reviewing a handoff.\n2. Gather the incident identifier, severity, current state, impact, timeline, evidence, actions taken, unresolved questions, owners, and next update time.\n3. Distinguish confirmed facts from hypotheses. Do not invent missing details; mark them as `Unknown` and identify who should resolve them.\n4. Identify the active incident commander or owner and the person or team receiving the handoff.\n5. Record risky, irreversible, or customer-visible actions separately from routine next steps.\n6. Produce the handoff using the format below.\n7. Save the Markdown document when a path is available.\n8. Run `python3 scripts/validate_handoff.py <handoff.md>` from this skill directory, or use the absolute script path.\n9. Correct validation failures before calling the handoff ready. Report warnings that cannot be resolved from available evidence.\n\n## Handoff format\n\n# Incident Handoff: [incident ID or short title]\n\n## Control\n\n- Severity:\n- Status:\n- Incident commander:\n- Handing off from:\n- Handing off to:\n- Handoff time:\n- Next update due:\n\n## Executive summary\n\n[Current situation in two to five sentences.]\n\n## Customer and business impact\n\n- Affected users or systems:\n- Scope:\n- Start time:\n- Current impact:\n- Business risk:\n\n## Confirmed facts\n\n- [Fact with evidence or source.]\n\n## Working hypotheses\n\n- [Hypothesis, confidence, and evidence needed to confirm or reject it.]\n\n## Timeline\n\n- [Timestamp] \u2014 [Event, observation, or action.]\n\n## Actions completed\n\n- [Action] \u2014 [Result] \u2014 [Owner]\n\n## Current system state\n\n- Healthy:\n- Degraded:\n- Unknown:\n\n## Evidence and links\n\n- [Dashboard, log query, ticket, runbook, deployment, or communication link.]\n\n## Risks and constraints\n\n- [Risk, safety constraint, rollback concern, or prohibited action.]\n\n## Next actions\n\n- [ ] [Action] \u2014 Owner: [name/team] \u2014 Due: [time] \u2014 Success signal: [signal]\n\n## Decisions required\n\n- [Decision, deadline, and decision owner.]\n\n## Communications\n\n- Last internal update:\n- Last external update:\n- Next audience and message:\n\n## Open questions\n\n- [Question] \u2014 Owner: [name/team]\n\n## Acknowledgement\n\n- Receiving owner:\n- Acknowledged at:\n- First action accepted:\n```\n\nCreate `$AGENT_HOME/skills/incident-handoff/references/checklist.md` with:\n\n```markdown\n# Incident handoff checklist\n\nUse this checklist before declaring a handoff ready.\n\n## Control and ownership\n\n- The incident ID or title is unambiguous.\n- Severity and current status are stated.\n- The active incident commander or owner is named.\n- The sender and receiving owner are named.\n- Handoff time and next update deadline include a timezone.\n- The receiving owner has an explicit acknowledgement field.\n\n## Situation and impact\n\n- The executive summary describes the current situation, not the full history.\n- Customer, system, and business impact are quantified where evidence permits.\n- Incident start time and current scope are recorded.\n- Unknown impact is labeled `Unknown`, not guessed.\n\n## Evidence and reasoning\n\n- Confirmed facts are separated from hypotheses.\n- Important claims identify their evidence or source.\n- Hypotheses include confidence or a method for testing them.\n- Relevant dashboards, logs, tickets, changes, and runbooks are linked.\n- Timestamps use one consistent timezone.\n\n## Actions and safety\n\n- Completed actions include their results and owners.\n- Next actions have an owner, due time, and success signal.\n- Risky or irreversible actions are clearly identified.\n- Rollback constraints and prohibited actions are recorded.\n- Decisions requiring authorization identify the decision owner and deadline.\n\n## Continuity\n\n- The current state of affected components is summarized.\n- Open questions have owners.\n- Internal and external communication status is recorded.\n- The first action expected from the receiving owner is explicit.\n- The handoff is understandable without relying on unstated chat context.\n```\n\nCreate `$AGENT_HOME/skills/incident-handoff/scripts/validate_handoff.py` with:\n\n```python\n#!/usr/bin/env python3\n\"\"\"Validate the structure and actionable content of an incident handoff.\"\"\"\n\nfrom __future__ import annotations\n\nimport argparse\nimport re\nimport sys\nfrom pathlib import Path\n\nREQUIRED_SECTIONS = [\n    \"Control\",\n    \"Executive summary\",\n    \"Customer and business impact\",\n    \"Confirmed facts\",\n    \"Working hypotheses\",\n    \"Timeline\",\n    \"Actions completed\",\n    \"Current system state\",\n    \"Evidence and links\",\n    \"Risks and constraints\",\n    \"Next actions\",\n    \"Decisions required\",\n    \"Communications\",\n    \"Open questions\",\n    \"Acknowledgement\",\n]\n\nREQUIRED_FIELDS = [\n    \"Severity:\",\n    \"Status:\",\n    \"Incident commander:\",\n    \"Handing off from:\",\n    \"Handing off to:\",\n    \"Handoff time:\",\n    \"Next update due:\",\n    \"Receiving owner:\",\n    \"Acknowledged at:\",\n    \"First action accepted:\",\n]\n\nUNRESOLVED_MARKERS = (\n    \"[incident ID or short title]\",\n    \"[Current situation in two to five sentences.]\",\n    \"[name/team]\",\n    \"[time]\",\n    \"[signal]\",\n)\n\n\ndef section_body(text: str, heading: str) -> str:\n    pattern = re.compile(\n        rf\"(?ms)^##\\s+{re.escape(heading)}\\s*$\\n(.*?)(?=^##\\s+|\\Z)\"\n    )\n    match = pattern.search(text)\n    return match.group(1).strip() if match else \"\"\n\n\ndef main() -> int:\n    parser = argparse.ArgumentParser(\n        description=\"Validate an incident-handoff Markdown document.\"\n    )\n    parser.add_argument(\"handoff\", type=Path, help=\"Path to the Markdown handoff\")\n    args = parser.parse_args()\n\n    if not args.handoff.is_file():\n        print(f\"ERROR: file not found: {args.handoff}\", file=sys.stderr)\n        return 2\n\n    text = args.handoff.read_text(encoding=\"utf-8\")\n    errors: list[str] = []\n    warnings: list[str] = []\n\n    if not re.search(r\"(?m)^# Incident Handoff:\\s+\\S+\", text):\n        errors.append(\"Missing a populated '# Incident Handoff:' title.\")\n\n    for heading in REQUIRED_SECTIONS:\n        body = section_body(text, heading)\n        if not body:\n            errors.append(f\"Missing or empty section: {heading}\")\n\n    for field in REQUIRED_FIELDS:\n        match = re.search(rf\"(?m)^-\\s+{re.escape(field)}\\s*(.*)$\", text)\n        if not match or not match.group(1).strip():\n            errors.append(f\"Missing or empty required field: {field}\")\n\n    next_actions = section_body(text, \"Next actions\")\n    if next_actions:\n        if not re.search(r\"(?m)^-\\s+\\[[ xX]\\]\\s+\", next_actions):\n            errors.append(\"Next actions must contain at least one task checkbox.\")\n        for term in (\"Owner:\", \"Due:\", \"Success signal:\"):\n            if term not in next_actions:\n                errors.append(f\"Next actions do not include '{term}'.\")\n\n    for marker in UNRESOLVED_MARKERS:\n        if marker in text:\n            errors.append(f\"Unresolved template marker: {marker}\")\n\n    if not re.search(\n        r\"\\b(?:UTC|GMT|Z|[A-Z]{2,5}|[+-]\\d{2}:\\d{2})\\b\", text\n    ):\n        warnings.append(\"No explicit timezone was detected.\")\n\n    if \"Unknown\" not in text:\n        warnings.append(\n            \"No values are marked Unknown; confirm that missing information was not guessed.\"\n        )\n\n    for warning in warnings:\n        print(f\"WARNING: {warning}\")\n\n    for error in errors:\n        print(f\"ERROR: {error}\", file=sys.stderr)\n\n    if errors:\n        print(\n            f\"FAIL: {len(errors)} error(s), {len(warnings)} warning(s).\",\n            file=sys.stderr,\n        )\n        return 1\n\n    print(f\"PASS: handoff is structurally valid; {len(warnings)} warning(s).\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n```\n\nMake only the validator executable:\n\n```bash\nchmod 0755 \"$SKILL_DIR/scripts/validate_handoff.py\"\nchmod 0644 \"$SKILL_DIR/SKILL.md\" \"$SKILL_DIR/references/checklist.md\"\n```\n\nAt this point the package is installed on disk, but it is not yet enabled in Rudder.\n\n## 2. Validate the package\n\nFirst inspect the complete inventory and reject unexpected files:\n\n```bash\nfind \"$SKILL_DIR\" -type f -print | LC_ALL=C sort\n```\n\nExpected output:\n\n```text\n$AGENT_HOME/skills/incident-handoff/SKILL.md\n$AGENT_HOME/skills/incident-handoff/references/checklist.md\n$AGENT_HOME/skills/incident-handoff/scripts/validate_handoff.py\n```\n\nCompile-check the bundled script without creating `__pycache__`:\n\n```bash\nPYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \\\n  \"$SKILL_DIR/scripts/validate_handoff.py\"\n```\n\nRun the skill-creator structural validator:\n\n```bash\npython3 \\\n  /Users/zeeland/projects/rudder-oss/server/resources/bundled-skills/skill-creator/scripts/quick_validate.py \\\n  \"$SKILL_DIR\"\n```\n\nConfirm the required files are present and nonempty:\n\n```bash\ntest -s \"$SKILL_DIR/SKILL.md\"\ntest -s \"$SKILL_DIR/references/checklist.md\"\ntest -s \"$SKILL_DIR/scripts/validate_handoff.py\"\n```\n\nThen exercise `validate_handoff.py` against two fixtures stored outside the skill package:\n\n```bash\nVALID_FIXTURE=\"$(mktemp /tmp/incident-handoff-valid.XXXXXX.md)\"\nINVALID_FIXTURE=\"$(mktemp /tmp/incident-handoff-invalid.XXXXXX.md)\"\n```\n\nPopulate the valid fixture with every required section and field, ensuring the next action contains `Owner:`, `Due:`, and `Success signal:` and all times specify a timezone. Populate the invalid fixture with only a title.\n\nExpected checks:\n\n```bash\npython3 \"$SKILL_DIR/scripts/validate_handoff.py\" \"$VALID_FIXTURE\"\ntest \"$?\" -eq 0\n\npython3 \"$SKILL_DIR/scripts/validate_handoff.py\" \"$INVALID_FIXTURE\"\ntest \"$?\" -eq 1\n```\n\nRemove the temporary fixtures after validation:\n\n```bash\nrm \"$VALID_FIXTURE\" \"$INVALID_FIXTURE\"\n```\n\n## 3. Enable it for this agent\n\nBecause this is a full package containing references and a script, do not use the `rudder agent skills create --markdown-file` shortcut. Enable the installed package additively:\n\n```bash\nrudder agent skills enable \\\n  \"$RUDDER_AGENT_ID\" \\\n  \"agent:incident-handoff\" \\\n  --json\n```\n\nCapture the JSON response as the enablement record. Do not use `rudder skill import`, which is for organization skills, and do not use `skills sync`, which could replace the agent\u2019s existing optional skill selections.\n\nEnablement applies to future runs; it cannot retroactively add the skill to the current run\u2019s already-loaded context.\n\n## 4. Verify installation and runtime behavior\n\nVerify the installed source files again:\n\n```bash\ntest -f \"$AGENT_HOME/skills/incident-handoff/SKILL.md\"\ntest -f \"$AGENT_HOME/skills/incident-handoff/references/checklist.md\"\ntest -x \"$AGENT_HOME/skills/incident-handoff/scripts/validate_handoff.py\"\n\npython3 \\\n  /Users/zeeland/projects/rudder-oss/server/resources/bundled-skills/skill-creator/scripts/quick_validate.py \\\n  \"$AGENT_HOME/skills/incident-handoff\"\n```\n\nTreat the successful `skills enable --json` response as proof of Rudder selection, separately from filesystem installation.\n\nFinally, start a new Rudder agent run and issue an explicit smoke-test prompt:\n\n```text\nUse $incident-handoff to create a handoff for incident INC-1042. Severity is SEV-2, API writes are failing for about 18% of customers, Alice is handing command to Bob at 2026-07-22 18:30 CST, and the next update is due at 19:00 CST. Mark everything else Unknown, assign owners to open questions, and validate the resulting Markdown.\n```\n\nThe verification passes only if the new run:\n\n- Loads `incident-handoff`.\n- Reads `references/checklist.md`.\n- Produces all required handoff sections.\n- Preserves unknown information as `Unknown`.\n- Runs the installed `validate_handoff.py`.\n- Reports a zero exit status or fixes validation errors before presenting the handoff."}], "grading": {"expectations": [{"text": "Installs the complete multi-file package under $AGENT_HOME/skills/incident-handoff", "passed": true, "evidence": "The response identifies `$AGENT_HOME/skills/incident-handoff/` as the final installation path and shows the complete tree containing `SKILL.md`, `references/checklist.md`, and `scripts/validate_handoff.py`. It then provides substantive contents for all three files, installs directly into that directory, validates the exact inventory, and rechecks every installed file. Because the prompt forbade mutations, these are correctly presented as planned commands rather than falsely claimed completed changes."}, {"text": "Enables the private skill additively with agent:incident-handoff rather than using a global or provider-native path", "passed": true, "evidence": "The enablement command is exactly `rudder agent skills enable \"$RUDDER_AGENT_ID\" \"agent:incident-handoff\" --json`. The response explicitly says not to use `$RUDDER_ORG_SKILLS_DIR`, `rudder skill import`, or `skills sync`, explaining that `enable` is additive and `sync` could replace existing optional selections. No global or provider-native installation path is proposed."}, {"text": "Separates installed, validated, enabled, and future-run-loaded states", "passed": true, "evidence": "The response separates the workflow into author/install, validate, enable, and verify sections. It states, `At this point the package is installed on disk, but it is not yet enabled in Rudder`, treats the successful enable JSON as separate proof of selection, and says enablement applies to future runs and cannot retroactively modify the current run. It finally requires a new-run smoke test to prove loading and execution."}], "summary": {"passed": 3, "failed": 0, "total": 3, "pass_rate": 1.0}, "execution_metrics": {"tool_calls": {"Bash": 3}, "total_tool_calls": 3, "total_steps": 3, "errors_encountered": 0, "output_chars": 13056, "transcript_chars": 60637}, "timing": {"executor_duration_seconds": 88, "total_duration_seconds": 88}, "claims": [{"claim": "The proposed package is agent-private and contains all three required files.", "type": "quality", "verified": true, "evidence": "The response uses only `$AGENT_HOME/skills/incident-handoff` as the installed source of truth and supplies nontrivial contents plus validation checks for `SKILL.md`, `references/checklist.md`, and `scripts/validate_handoff.py`."}, {"claim": "The proposed Rudder enablement is additive.", "type": "process", "verified": true, "evidence": "The response uses `rudder agent skills enable` with `agent:incident-handoff` and explicitly rejects `skills sync` because it can replace existing selections."}, {"claim": "A newly enabled skill is loaded only by a future run, not the current run.", "type": "process", "verified": true, "evidence": "The response explicitly requires starting a new Rudder agent run for the smoke test and states that enablement cannot retroactively add the skill to the current run's loaded context."}], "user_notes_summary": {"uncertainties": [], "needs_review": [], "workarounds": []}, "eval_feedback": {"suggestions": [], "overall": "The assertions are objective and discriminating for the requested Rudder ownership, additive enablement, and lifecycle-state boundaries."}}}, {"id": "eval-2-organization-multifile-skill-old_skill-run-1", "prompt": "A board-authorized Rudder agent must create a customer-summary skill shared across the organization. The package has SKILL.md, references/style-guide.md, and scripts/check_output.py. Explain where the durable package belongs, how to register its complete inventory in the organization Skill Library, and how to enable it for one agent without removing that agent's existing optional skills. Do not execute; provide the exact ordered workflow and commands.", "eval_id": 2, "outputs": [{"name": "response.md", "type": "text", "content": "The requested exact workflow cannot be derived from the permitted instruction source.\n\n`old_skill/SKILL.md` only says the skill creator may create, refine, or evaluate skills. It does not define:\n\n- The durable organization package directory.\n- The Skill Library manifest/schema or registration command.\n- How agent optional skills are represented or updated.\n- The Rudder organization ID, target agent ID, or source package path.\n\nThe workspace also contains only `old_skill/SKILL.md`; the stated package files are not present. Therefore, naming paths or CLI commands would be fabrication.\n\nThe required order is nevertheless clear:\n\n1. Place the entire package\u2014not only `SKILL.md`\u2014in the organization\u2019s documented durable skill-package location:\n\n   ```text\n   customer-summary/\n   \u251c\u2500\u2500 SKILL.md\n   \u251c\u2500\u2500 references/\n   \u2502   \u2514\u2500\u2500 style-guide.md\n   \u2514\u2500\u2500 scripts/\n       \u2514\u2500\u2500 check_output.py\n   ```\n\n2. Register all three files in the organization Skill Library inventory, including their relative paths. Registering only the package root or `SKILL.md` would leave the inventory incomplete.\n\n3. Read the target agent\u2019s current optional-skills list.\n\n4. Add `customer-summary` to that existing list using the platform\u2019s additive/merge operation.\n\n5. Submit the merged list. Do not issue a replacement command containing only `customer-summary`, because that would remove existing optional skills.\n\n6. Read back both the library inventory and agent configuration to verify all three files are registered and the pre-existing optional skills remain enabled.\n\nExact commands require the Rudder Skill Library\u2019s authoritative path, CLI/API syntax, and identifiers. Those are absent from the only source you authorized, so no truthful exact commands can be supplied under this constraint."}], "grading": {"expectations": [{"text": "Places the durable package under $RUDDER_ORG_SKILLS_DIR/customer-summary", "passed": false, "evidence": "The response deliberately leaves the durable location generic as the organization's 'documented durable skill-package location'. It never names or uses `$RUDDER_ORG_SKILLS_DIR/customer-summary`, so the required Rudder ownership path is not provided."}, {"text": "Registers the complete package with rudder skill import and uses the returned selection reference", "passed": false, "evidence": "The response conceptually says to register all three files, but explicitly declines to provide CLI syntax. It never invokes `rudder skill import` and never captures or uses the returned selection reference."}, {"text": "Uses rudder agent skills enable additively and warns against replacing selections with skills sync", "passed": false, "evidence": "The response correctly recommends an additive/merge operation and warns against a replacement containing only the new skill, but it never uses the required `rudder agent skills enable` command and never identifies `skills sync` as the replacement-oriented operation. The assertion requires both exact Rudder semantics."}], "summary": {"passed": 0, "failed": 3, "total": 3, "pass_rate": 0.0}, "execution_metrics": {"tool_calls": {"Bash": 2}, "total_tool_calls": 2, "total_steps": 2, "errors_encountered": 1, "output_chars": 1818, "transcript_chars": 5063}, "timing": {"executor_duration_seconds": 64, "total_duration_seconds": 64}, "claims": [{"claim": "The complete three-file package should be registered rather than only SKILL.md.", "type": "quality", "verified": true, "evidence": "The proposed tree contains `SKILL.md`, `references/style-guide.md`, and `scripts/check_output.py`, and the response explicitly requires all three relative paths in the Skill Library inventory."}, {"claim": "Exact Rudder commands cannot be derived from the placeholder skill alone.", "type": "factual", "verified": true, "evidence": "The transcript reads the isolated nine-line `old_skill/SKILL.md`; it contains no Rudder path, import, selection-reference, enable, or sync guidance."}, {"claim": "An additive update should preserve the agent's existing optional skills.", "type": "process", "verified": true, "evidence": "The response instructs reading the existing list, adding `customer-summary`, submitting the merged list, and verifying that pre-existing skills remain enabled. This is conceptually sound but does not satisfy the command-specific assertion."}], "user_notes_summary": {"uncertainties": [], "needs_review": [], "workarounds": []}, "eval_feedback": {"suggestions": [{"reason": "The prompt states that the agent is board-authorized, but no assertion checks the permission boundary or confirms that organization import must stop without Skill-management authority. Add that assertion if governance behavior is part of the intended contract."}], "overall": "The three assertions are concrete and discriminating for the restored Rudder-specific guidance. This clean baseline fails all three while still demonstrating generic multi-file and additive-update reasoning."}}}, {"id": "eval-2-organization-multifile-skill-with_skill-run-1", "prompt": "A board-authorized Rudder agent must create a customer-summary skill shared across the organization. The package has SKILL.md, references/style-guide.md, and scripts/check_output.py. Explain where the durable package belongs, how to register its complete inventory in the organization Skill Library, and how to enable it for one agent without removing that agent's existing optional skills. Do not execute; provide the exact ordered workflow and commands.", "eval_id": 2, "outputs": [{"name": "response.md", "type": "text", "content": "The durable package belongs at:\n\n```text\n$RUDDER_ORG_SKILLS_DIR/customer-summary/\n\u251c\u2500\u2500 SKILL.md\n\u251c\u2500\u2500 references/\n\u2502   \u2514\u2500\u2500 style-guide.md\n\u2514\u2500\u2500 scripts/\n    \u2514\u2500\u2500 check_output.py\n```\n\nUse this exact workflow. Replace only `<source-package-dir>` and `<agent-id>`.\n\n1. Set explicit paths and verify Rudder context:\n\n```bash\nSOURCE_DIR=\"<source-package-dir>\"\nSKILL_SLUG=\"customer-summary\"\nTARGET_DIR=\"$RUDDER_ORG_SKILLS_DIR/$SKILL_SLUG\"\nTARGET_AGENT_ID=\"<agent-id>\"\nVALIDATOR=\"/Users/zeeland/projects/rudder-oss/server/resources/bundled-skills/skill-creator/scripts/quick_validate.py\"\n\ntest -n \"$RUDDER_ORG_ID\"\ntest -n \"$RUDDER_ORG_SKILLS_DIR\"\ntest -d \"$SOURCE_DIR\"\n```\n\n2. Inspect the organization Skill Library before creating or replacing anything:\n\n```bash\nrudder skill list \\\n  --org-id \"$RUDDER_ORG_ID\" \\\n  --json\n```\n\nIf `customer-summary` already exists, stop and follow the organization\u2019s approved replacement process. Do not overwrite it implicitly.\n\n3. Verify the source package has the complete expected inventory:\n\n```bash\ntest -f \"$SOURCE_DIR/SKILL.md\"\ntest -f \"$SOURCE_DIR/references/style-guide.md\"\ntest -f \"$SOURCE_DIR/scripts/check_output.py\"\n\nfind \"$SOURCE_DIR\" -type f -print | sort\n```\n\nConfirm the inventory includes all three files and no unintended files.\n\n4. Install the complete package into durable organization-owned storage:\n\n```bash\ntest ! -e \"$TARGET_DIR\"\nmkdir -p \"$TARGET_DIR\"\ncp -R \"$SOURCE_DIR\"/. \"$TARGET_DIR\"/\n```\n\nDo not place it under `~/.agents/skills`, `~/.codex/skills`, an agent-private directory, or a temporary runtime mount.\n\n5. Verify the copied inventory and validate the installed package:\n\n```bash\ntest -f \"$TARGET_DIR/SKILL.md\"\ntest -f \"$TARGET_DIR/references/style-guide.md\"\ntest -f \"$TARGET_DIR/scripts/check_output.py\"\n\nfind \"$TARGET_DIR\" -type f -print | sort\n\npython \"$VALIDATOR\" \"$TARGET_DIR\"\npython -m py_compile \"$TARGET_DIR/scripts/check_output.py\"\n```\n\n`check_output.py` itself should only be run against a suitable sample output according to its interface; package validation must not invent an input for it.\n\n6. Import the directory\u2014not merely `SKILL.md`\u2014into the organization Skill Library:\n\n```bash\nrudder skill import \\\n  --org-id \"$RUDDER_ORG_ID\" \\\n  --source \"$TARGET_DIR\" \\\n  --json\n```\n\nSave the returned skill key or selection reference as `<returned-selection-ref>`. Importing the directory registers the complete inventory, including `references/style-guide.md` and `scripts/check_output.py`.\n\n7. Confirm the imported organization skill:\n\n```bash\nrudder skill list \\\n  --org-id \"$RUDDER_ORG_ID\" \\\n  --json\n```\n\nVerify that `customer-summary` appears and matches the import result.\n\n8. Enable it additively for the selected agent:\n\n```bash\nrudder agent skills enable \\\n  \"$TARGET_AGENT_ID\" \\\n  \"<returned-selection-ref>\" \\\n  --json\n```\n\nUse the exact selection reference returned by the import. Do not use `rudder agent skills sync`: `enable` preserves the agent\u2019s existing optional skills, while `sync` replaces the full optional-skill set.\n\nThe skill becomes available to future runs of that agent; it does not alter the skill context already loaded into an active run."}], "grading": {"expectations": [{"text": "Places the durable package under $RUDDER_ORG_SKILLS_DIR/customer-summary", "passed": true, "evidence": "response.md opens with the exact durable tree rooted at `$RUDDER_ORG_SKILLS_DIR/customer-summary/`, then copies the complete source directory into `TARGET_DIR=\"$RUDDER_ORG_SKILLS_DIR/$SKILL_SLUG\"`."}, {"text": "Registers the complete package with rudder skill import and uses the returned selection reference", "passed": true, "evidence": "Step 6 imports `--source \"$TARGET_DIR\"` (explicitly 'not merely SKILL.md'), states that this registers SKILL.md, references/style-guide.md, and scripts/check_output.py, and Step 8 passes `<returned-selection-ref>` to `rudder agent skills enable`."}, {"text": "Uses rudder agent skills enable additively and warns against replacing selections with skills sync", "passed": true, "evidence": "Step 8 runs `rudder agent skills enable` and explicitly says: '`enable` preserves the agent's existing optional skills, while `sync` replaces the full optional-skill set.'"}], "summary": {"passed": 3, "failed": 0, "total": 3, "pass_rate": 1.0}, "execution_metrics": {"tool_calls": {"Bash": 7}, "total_tool_calls": 7, "total_steps": 8, "errors_encountered": 1, "output_chars": 3172, "transcript_chars": 71875}, "timing": {"executor_duration_seconds": 79, "total_duration_seconds": 79}, "claims": [{"claim": "Importing the target directory registers the complete three-file inventory.", "type": "factual", "verified": true, "evidence": "The response imports `$TARGET_DIR`, after testing for all three required files. The transcript's Rudder compatibility reference says organization import registers the full file inventory from `$RUDDER_ORG_SKILLS_DIR/<slug>`."}, {"claim": "rudder agent skills enable is additive, while skills sync replaces the optional enabled-skill set.", "type": "factual", "verified": true, "evidence": "The transcript corroborates this against references/rudder.md and doc/engineering/CLI.md; response.md uses enable and warns against sync for this task."}, {"claim": "Enablement affects future runs rather than the already loaded active run.", "type": "factual", "verified": true, "evidence": "The transcript's references/rudder.md states that enablement affects future runs rather than rewriting the current run's loaded context, matching the final response."}], "user_notes_summary": {"uncertainties": [], "needs_review": [], "workarounds": []}, "eval_feedback": {"suggestions": [{"reason": "The prompt requires a board-authorized organizational mutation, but no assertion checks that the workflow verifies organization Skill management permission or stops before an unauthorized import. Add a permission-boundary assertion if governance behavior is part of the intended contract."}], "overall": "The three assertions are objective and all pass. The retained old-skill baseline was rerun in an isolated workspace after grading, so the final comparison excludes the discarded transcript-leakage run."}}}, {"id": "eval-3-existing-skill-evaluation-old_skill-run-1", "prompt": "Inside a Rudder Codex run, improve an existing multi-file skill and prove the revision is better than the old version. Design a two-prompt old_skill versus with_skill evaluation, including metadata, assertions, timing, grading, benchmark aggregation, analyst review, and a static human review viewer. Explain where the workspace belongs when project context exists and what locations must not be used. Do not run the evaluation; return a decision-complete procedure.", "eval_id": 3, "outputs": [{"name": "response.md", "type": "text", "content": "## Evaluation objective\n\nEvaluate whether a revised multi-file skill produces materially better task outcomes than the current version without increasing failures, unsafe behavior, or unreasonable latency.\n\nUse exactly two task prompts and compare:\n\n- `old_skill`: an immutable snapshot of the complete current skill directory.\n- `with_skill`: an immutable snapshot of the complete revised skill directory.\n\nA \u201cskill\u201d snapshot includes `SKILL.md` plus every referenced script, template, asset, example, and reference file. Comparing only the two `SKILL.md` files is invalid.\n\n## Workspace placement\n\nWhen project context exists, place the evaluation workspace inside that project:\n\n```text\n<project-root>/.codex/evals/<skill-name>/<evaluation-id>/\n```\n\nExample:\n\n```text\nrudder-oss/.codex/evals/skill-creator/2026-07-22-restore/\n```\n\nThis keeps prompts, fixtures, source revisions, and results tied to the commit and project they evaluate. Add the workspace to `.gitignore` unless the evaluation artifacts are intentionally being checked in.\n\nDo not use:\n\n- `/tmp` or another system temporary directory.\n- `~/.codex/skills`, `~/.agents/skills`, or any global installed-skill directory.\n- The live source-skill directory as the evaluation workspace.\n- A directory inside either candidate snapshot.\n- A shared workspace that another Codex run can mutate.\n- An unrelated repository merely because it is writable.\n\nIf no project context exists, use an explicitly created, isolated evaluation directory\u2014not a global installation directory\u2014and record its absolute path in the metadata.\n\n## Workspace layout\n\n```text\n.codex/evals/skill-creator/2026-07-22-restore/\n\u251c\u2500\u2500 manifest.json\n\u251c\u2500\u2500 prompts/\n\u2502   \u251c\u2500\u2500 01-improve-existing-skill.md\n\u2502   \u2514\u2500\u2500 02-prove-revision.md\n\u251c\u2500\u2500 fixtures/\n\u2502   \u2514\u2500\u2500 input-skill/\n\u251c\u2500\u2500 candidates/\n\u2502   \u251c\u2500\u2500 old_skill/\n\u2502   \u2514\u2500\u2500 with_skill/\n\u251c\u2500\u2500 runs/\n\u2502   \u251c\u2500\u2500 prompt-01/\n\u2502   \u2502   \u251c\u2500\u2500 old_skill/\n\u2502   \u2502   \u2514\u2500\u2500 with_skill/\n\u2502   \u2514\u2500\u2500 prompt-02/\n\u2502       \u251c\u2500\u2500 old_skill/\n\u2502       \u2514\u2500\u2500 with_skill/\n\u251c\u2500\u2500 grading/\n\u2502   \u251c\u2500\u2500 rubric.json\n\u2502   \u251c\u2500\u2500 assertions.json\n\u2502   \u251c\u2500\u2500 blind-assignments.json\n\u2502   \u2514\u2500\u2500 grades.jsonl\n\u251c\u2500\u2500 benchmark/\n\u2502   \u2514\u2500\u2500 summary.json\n\u251c\u2500\u2500 analyst/\n\u2502   \u2514\u2500\u2500 review.md\n\u2514\u2500\u2500 viewer/\n    \u2514\u2500\u2500 index.html\n```\n\nCopy both candidate directories before running anything, make them read-only, and record a recursive SHA-256 inventory. The revised candidate must not modify or import files from `old_skill`.\n\n## The two prompts\n\nBoth prompts operate on fresh copies of the same fixture. They must describe outcomes, not mention the expected implementation or identify the candidate.\n\n### Prompt 1: improve an existing multi-file skill\n\n```text\nImprove the supplied multi-file skill. Preserve its intended behavior and\npublic interface while making its instructions clearer, its supporting files\ninternally consistent, and its workflow executable by another Codex agent.\n\nInspect every relevant file, make the necessary revisions, and return:\n1. the completed changes;\n2. a concise rationale;\n3. validation evidence;\n4. any remaining limitations.\n\nDo not replace the skill with a single-file simplification, omit referenced\nresources, or claim validation that was not performed.\n```\n\nThis tests the normal authoring workflow: discovery, cross-file consistency, implementation, and verification.\n\n### Prompt 2: prove the revision is better\n\n```text\nGiven the original and revised forms of the supplied multi-file skill, produce\na decision-complete evaluation package showing whether the revision should be\nadopted.\n\nThe package must define reproducible comparison cases, deterministic\nassertions, a blind grading rubric, timing and cost measurements, benchmark\naggregation, analyst review, and a static human-review viewer. Identify\nregressions and state a ship/no-ship decision.\n\nDo not rely on subjective prose alone, do not hide failed cases, and do not\nrun or publish anything outside the provided workspace.\n```\n\nThis tests whether the skill can turn \u201cbetter\u201d into reproducible evidence rather than self-assessment.\n\n## Run matrix and controls\n\nRun the four cells:\n\n| Prompt | Candidate |\n|---|---|\n| 01 | `old_skill` |\n| 01 | `with_skill` |\n| 02 | `old_skill` |\n| 02 | `with_skill` |\n\nUse a fresh checkout or fixture copy for every cell. Hold constant:\n\n- Codex model and reasoning effort.\n- System and project instructions.\n- Tool permissions and network policy.\n- Starting files and environment variables.\n- Working-directory shape.\n- Token and wall-clock limits.\n- Temperature or sampling configuration, if configurable.\n- Rudder/Codex version and evaluator version.\n\nUse candidate-neutral output identifiers during grading, such as `A17` and `B42`. Randomize their mapping separately for each prompt and keep the key out of the grader context.\n\nFor a quick decision, run each cell once. For a benchmark intended to justify adoption, predeclare three repetitions per cell with fixed run seeds where supported. Never add repetitions only after seeing an unfavorable result.\n\n## Manifest metadata\n\n`manifest.json` must record:\n\n```json\n{\n  \"evaluation_id\": \"2026-07-22-skill-creator-restore\",\n  \"project_root\": \"<absolute-project-root>\",\n  \"project_commit\": \"<git-sha>\",\n  \"fixture_hash\": \"<sha256>\",\n  \"candidates\": {\n    \"old_skill\": {\n      \"path\": \"candidates/old_skill\",\n      \"tree_hash\": \"<sha256>\"\n    },\n    \"with_skill\": {\n      \"path\": \"candidates/with_skill\",\n      \"tree_hash\": \"<sha256>\"\n    }\n  },\n  \"prompts\": [\n    {\"id\": \"01\", \"path\": \"prompts/01-improve-existing-skill.md\", \"sha256\": \"...\"},\n    {\"id\": \"02\", \"path\": \"prompts/02-prove-revision.md\", \"sha256\": \"...\"}\n  ],\n  \"runtime\": {\n    \"codex_version\": \"...\",\n    \"rudder_version\": \"...\",\n    \"model\": \"...\",\n    \"reasoning_effort\": \"...\",\n    \"permissions\": \"...\",\n    \"network\": \"disabled\",\n    \"timeout_seconds\": 900,\n    \"repetitions\": 3\n  },\n  \"grader\": {\n    \"model\": \"...\",\n    \"rubric_version\": \"1\",\n    \"blind\": true\n  },\n  \"created_at\": \"<ISO-8601>\",\n  \"timezone\": \"UTC\"\n}\n```\n\nAlso retain the exact user prompt, resolved system/project instructions, tool-call transcript, stdout/stderr, exit status, produced files, and final response for every run.\n\n## Deterministic assertions\n\nRun assertions before model grading. Assertions inspect both the response and produced workspace.\n\nRequired assertions:\n\n1. Run completed within the declared timeout.\n2. Exit status and tool failures are recorded.\n3. No writes occurred outside the cell workspace.\n4. All expected deliverables exist and are non-empty.\n5. Every file referenced by the resulting `SKILL.md` exists.\n6. No absolute paths point into the evaluator\u2019s machine or `old_skill`.\n7. The revised skill remains multi-file where supporting files are required.\n8. Supporting files and `SKILL.md` agree on names, paths, commands, and schemas.\n9. Validation claims are backed by captured command output.\n10. The evaluation package contains metadata, assertions, timing, grading, aggregation, analyst review, and viewer specifications.\n11. The viewer is static and opens without a backend or network access.\n12. No candidate identity leaks into blind grading material.\n\nClassify assertions as:\n\n- `critical`: failure makes the run ineligible to win.\n- `quality`: failure reduces the score but does not invalidate the run.\n- `informational`: reported without affecting eligibility.\n\nPath escape, missing required deliverables, fabricated validation, and unresolved referenced files are critical failures.\n\n## Timing and resource capture\n\nMeasure each run from immediately before Codex invocation until process termination using a monotonic clock. Record:\n\n- Wall-clock duration.\n- Time to first response event, if available.\n- Time spent in tool execution.\n- Number of tool calls and failed tool calls.\n- Input, cached-input, output, and reasoning tokens when available.\n- Estimated cost using the price table captured in the manifest.\n- Timeout or cancellation status.\n\nDo not infer missing timing or token fields. Store them as `null` with an explanatory reason.\n\n## Blind grading\n\nUse the same rubric for all four cells. The grader receives only the prompt, fixture description, anonymized output, produced-file inventory, assertion results, and validation evidence.\n\nScore each dimension from 0\u20134:\n\n| Dimension | Weight |\n|---|---:|\n| Task correctness and completeness | 30% |\n| Cross-file coherence and executability | 20% |\n| Evidence and validation quality | 15% |\n| Evaluation rigor and reproducibility | 15% |\n| Safety and scope discipline | 10% |\n| Clarity and decision usefulness | 10% |\n\nAnchors:\n\n- `0`: absent, unusable, or fundamentally wrong.\n- `1`: major gaps; substantial rework required.\n- `2`: partially correct; important omissions remain.\n- `3`: complete and usable with minor issues.\n- `4`: exceptionally complete, precise, and independently reproducible.\n\nRequire the grader to provide dimension scores, cited evidence, observed regressions, confidence, and a forced preference: anonymous candidate 1, anonymous candidate 2, or tie.\n\nIf possible, use two independent graders. Resolve a total-score disagreement greater than 10 points, a disagreement about any critical failure, or opposing winner selections through a third blind adjudication.\n\n## Benchmark aggregation\n\nFor each cell, aggregate repetitions using:\n\n- Assertion pass rate.\n- Critical-failure rate.\n- Median weighted grade.\n- Interquartile range of weighted grade.\n- Median wall time.\n- Median token use and cost.\n- Grader win/tie/loss count.\n\nFor each prompt calculate:\n\n```text\nquality_delta = median(with_skill grade) - median(old_skill grade)\nlatency_delta = median(with_skill time) / median(old_skill time) - 1\ncost_delta    = median(with_skill cost) / median(old_skill cost) - 1\n```\n\nThe overall quality score is the equally weighted mean of the two prompt-level median grades. Do not pool all repetitions in a way that lets one prompt dominate.\n\nAdopt `with_skill` only if all predeclared gates pass:\n\n- No new critical assertion failures.\n- Overall quality improves by at least 5 points on a 100-point scale.\n- Neither prompt regresses by more than 3 points.\n- `with_skill` wins more blind comparisons than it loses.\n- Median latency increases by no more than 25%, unless the analyst documents a material quality benefit.\n- Median cost increases by no more than 20%, under the same exception rule.\n- No high-severity analyst concern remains unresolved.\n\nOtherwise the decision is `revise` or `reject`, not \u201cinconclusive but ship.\u201d\n\n## Analyst review\n\nAfter automated grading, reveal candidate identities to one analyst. The analyst reviews:\n\n- All assertion failures and grader evidence.\n- The actual diffs across every skill file.\n- Whether the revision merely teaches to the two prompts.\n- Whether behavior outside the tested cases was accidentally narrowed.\n- Unsupported claims, hidden dependencies, brittle paths, or unsafe commands.\n- Latency and cost tradeoffs.\n- Grader disagreements and suspiciously generic feedback.\n- At least one output from every matrix cell.\n\nThe analyst writes `analyst/review.md` with:\n\n1. Evaluation scope and limitations.\n2. Evidence supporting improvement.\n3. Regressions and unresolved risks.\n4. Explanation of any overridden automated result.\n5. Final decision: `adopt`, `revise`, or `reject`.\n6. Exact follow-up changes required when the decision is not `adopt`.\n\nThe analyst may override the benchmark only with cited run evidence; preference alone is insufficient.\n\n## Static human-review viewer\n\nGenerate one self-contained `viewer/index.html`. It must work by opening it directly with a `file://` URL and must not require a server, package installation, CDN, or network request. Embed escaped result data in the document rather than calling `fetch()` on local JSON.\n\nThe viewer should provide:\n\n- Evaluation metadata and candidate hashes.\n- Ship gate status and final decision.\n- Prompt-by-prompt old-versus-revised comparison.\n- Assertion pass/fail table with critical failures prominent.\n- Grade breakdown and grader evidence.\n- Timing, token, and cost comparisons.\n- Win/tie/loss and aggregate benchmark charts using HTML/CSS or inline SVG.\n- Side-by-side final responses.\n- Produced-file tree and text diffs.\n- Tool failures and validation logs.\n- Analyst review and limitations.\n- Filters for prompt, repetition, candidate, assertion severity, and grader.\n- Clear labeling of missing data instead of treating it as zero.\n\nEscape all embedded content to prevent generated output from executing HTML or JavaScript. Cap or collapse large logs while preserving links to the raw local artifacts.\n\n## Final evidence package\n\nThe evaluation is decision-complete when another reviewer can:\n\n1. Verify the exact candidates, prompts, environment, and fixture from hashes.\n2. Reproduce every run from recorded commands and metadata.\n3. Inspect deterministic assertion results.\n4. Audit blind grades and candidate randomization.\n5. Recalculate benchmark aggregates.\n6. Read the identity-revealed analyst judgment.\n7. Open the static viewer locally.\n8. Reach the same adoption decision without relying on undocumented context.\n\nThis procedure defines the evaluation only. It does not authorize running the four cells, modifying the live skill, installing the revision, or publishing results."}], "grading": {"expectations": [{"text": "Uses $RUDDER_PROJECT_LIBRARY_ROOT/skill-evals for the durable evaluation workspace", "passed": false, "evidence": "The response instead places project-context results at `<project-root>/.codex/evals/<skill-name>/<evaluation-id>/`; `$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals` is never used."}, {"text": "Defines paired with_skill and old_skill runs with metadata, assertions, timing, and grading", "passed": true, "evidence": "The response defines an exact two-prompt, four-cell `old_skill`/`with_skill` matrix; `manifest.json` metadata; deterministic assertions; per-run timing/resource capture; and an identical blind-grading rubric for all cells."}, {"text": "Aggregates benchmark artifacts, performs an analyst pass, and generates a static review with generate_review.py", "passed": false, "evidence": "The response does define benchmark aggregation and an analyst review, but its viewer section prescribes creating a custom self-contained `viewer/index.html` and never invokes `eval-viewer/generate_review.py`, which is an explicit part of the assertion."}, {"text": "Rejects the bundled package and provider-managed runtime mount as evaluation output locations", "passed": false, "evidence": "The exclusions mention temporary directories, global installed-skill directories, live source directories, candidate snapshots, shared mutable workspaces, and unrelated repositories, but do not reject Rudder's bundled package or a provider-managed runtime mount."}], "summary": {"passed": 1, "failed": 3, "total": 4, "pass_rate": 0.25}, "timing": {"executor_duration_seconds": 76, "total_duration_seconds": 76}, "claims": [{"claim": "The project-context evaluation workspace belongs at `<project-root>/.codex/evals/<skill-name>/<evaluation-id>/`.", "type": "factual", "verified": false, "evidence": "That is the response's prescribed path, but it conflicts with this eval's required Rudder durable workspace under `$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals`."}, {"claim": "The procedure compares exactly two prompts across immutable `old_skill` and `with_skill` snapshots.", "type": "process", "verified": true, "evidence": "The response defines two prompts, a four-cell run matrix, complete immutable snapshots, and controls holding all non-skill variables constant."}, {"claim": "The review viewer is static and requires no backend or network.", "type": "quality", "verified": true, "evidence": "The viewer specification requires a self-contained file that opens via `file://`, embeds escaped data, and performs no CDN or network request, although it omits the required `generate_review.py` implementation path."}], "user_notes_summary": {"uncertainties": [], "needs_review": [], "workarounds": []}, "eval_feedback": {"suggestions": [], "overall": "The assertions are objective and discriminating: the baseline demonstrates that a generally rigorous evaluation procedure can still fail Rudder-specific workspace and viewer requirements."}}}, {"id": "eval-3-existing-skill-evaluation-with_skill-run-1", "prompt": "Inside a Rudder Codex run, improve an existing multi-file skill and prove the revision is better than the old version. Design a two-prompt old_skill versus with_skill evaluation, including metadata, assertions, timing, grading, benchmark aggregation, analyst review, and a static human review viewer. Explain where the workspace belongs when project context exists and what locations must not be used. Do not run the evaluation; return a decision-complete procedure.", "eval_id": 3, "outputs": [{"name": "response.md", "type": "text", "content": "Use the following procedure for a two-prompt, paired `old_skill` versus `with_skill` evaluation inside Rudder Codex.\n\n## 1. Resolve ownership and workspace\n\nPreserve the existing skill\u2019s directory name and `name` frontmatter value. Because it is multi-file, treat the entire directory\u2014including `SKILL.md`, `agents/`, `scripts/`, `references/`, `assets/`, and `evals/`\u2014as the unit being revised.\n\nWhen project context exists, place the durable evaluation workspace at:\n\n```text\n$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals/<slug>-workspace/\n```\n\nUse this fallback only when no project context exists:\n\n```text\n$RUDDER_ORG_WORKSPACE_ROOT/artifacts/YYYY-MM-DD/skill-evals/<slug>-workspace/\n```\n\nDo not place the workspace or results in:\n\n- Rudder\u2019s read-only bundled-skill directory.\n- A provider-managed runtime mount.\n- `~/.agents/skills`.\n- `~/.codex/skills` or another provider-native skill directory.\n- `/tmp` or another ephemeral directory.\n- The installed skill directory itself.\n\nThose locations are either read-only, ephemeral, or not Rudder\u2019s source of truth.\n\n## 2. Freeze the baseline before editing\n\nSet:\n\n```text\nSKILL_PATH=<installed complete skill directory>\nWORKSPACE=$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals/<slug>-workspace\nITERATION=$WORKSPACE/iteration-1\n```\n\nBefore changing anything, copy the complete package to:\n\n```text\n$WORKSPACE/skill-snapshot/\n```\n\nThat immutable snapshot is the `old_skill` baseline. Copy the complete package to a writable revision directory such as:\n\n```text\n$WORKSPACE/candidate-skill/\n```\n\nMake the improvements only in `candidate-skill/`. Do not compare against a reconstructed or partial baseline.\n\nReview the current skill, its referenced resources, and representative workflows. Improve causes rather than examples: clarify ambiguous instructions, remove unproductive steps, explain why important actions matter, and consolidate repeated work into bundled scripts or templates. Keep `SKILL.md` lean through progressive disclosure.\n\nFor Codex compatibility, retain concise `name` and `description` frontmatter and update `agents/openai.yaml` if product metadata, dependencies, default prompt, or invocation policy changed.\n\n## 3. Define exactly two prompts\n\nCreate two realistic prompts that exercise different failure modes:\n\n1. `core-workflow`: the skill\u2019s common end-to-end task, with realistic inputs and a concrete deliverable.\n2. `edge-recovery`: a less common but supported case involving ambiguity, malformed input, a missing optional dependency, or another documented fallback.\n\nUse the same prompt, input files, model, permissions, and output requirements for both configurations. The only independent variable is the skill version.\n\nWrite `$WORKSPACE/candidate-skill/evals/evals.json`:\n\n```json\n{\n  \"skill_name\": \"<unchanged-skill-name>\",\n  \"evals\": [\n    {\n      \"id\": 1,\n      \"prompt\": \"<realistic core end-to-end user request>\",\n      \"expected_output\": \"<specific deliverable and correctness criteria>\",\n      \"files\": [\"evals/files/<core-input>\"],\n      \"expectations\": [\n        \"The required deliverable exists and is non-empty.\",\n        \"The deliverable contains the expected values derived from the supplied input.\",\n        \"The deliverable satisfies the required structure or format.\",\n        \"The transcript shows the required validation step completed successfully.\"\n      ]\n    },\n    {\n      \"id\": 2,\n      \"prompt\": \"<realistic edge-case request requiring the supported fallback>\",\n      \"expected_output\": \"<correct result plus appropriate handling of the edge condition>\",\n      \"files\": [\"evals/files/<edge-input>\"],\n      \"expectations\": [\n        \"The run completes without silently discarding the problematic input.\",\n        \"The documented fallback is used when its triggering condition occurs.\",\n        \"The final deliverable remains correct after fallback handling.\",\n        \"Any unresolved limitation is disclosed accurately rather than hidden or invented.\"\n      ]\n    }\n  ]\n}\n```\n\nReplace generic assertions with domain-specific, mechanically verifiable statements before running. For example, test exact cell formulas, schema keys, record counts, required sections, or parsed values\u2014not merely the presence of a filename or keyword.\n\n## 4. Create the paired run layout and metadata\n\nUse descriptive directories:\n\n```text\niteration-1/\n\u251c\u2500\u2500 core-workflow/\n\u2502   \u251c\u2500\u2500 eval_metadata.json\n\u2502   \u251c\u2500\u2500 with_skill/\n\u2502   \u2502   \u2514\u2500\u2500 outputs/\n\u2502   \u2514\u2500\u2500 old_skill/\n\u2502       \u2514\u2500\u2500 outputs/\n\u2514\u2500\u2500 edge-recovery/\n    \u251c\u2500\u2500 eval_metadata.json\n    \u251c\u2500\u2500 with_skill/\n    \u2502   \u2514\u2500\u2500 outputs/\n    \u2514\u2500\u2500 old_skill/\n        \u2514\u2500\u2500 outputs/\n```\n\nEach `eval_metadata.json` contains the exact prompt and assertions used for both sides:\n\n```json\n{\n  \"eval_id\": 1,\n  \"eval_name\": \"core-workflow\",\n  \"prompt\": \"<exact prompt>\",\n  \"assertions\": [\n    \"<domain-specific assertion 1>\",\n    \"<domain-specific assertion 2>\",\n    \"<domain-specific assertion 3>\",\n    \"<domain-specific assertion 4>\"\n  ]\n}\n```\n\nCreate an equivalent file with `eval_id: 2` and `eval_name: \"edge-recovery\"`.\n\n## 5. Launch all four executor runs together\n\nIn one scheduling turn, launch:\n\n- `core-workflow` with `candidate-skill`.\n- `core-workflow` with `skill-snapshot`.\n- `edge-recovery` with `candidate-skill`.\n- `edge-recovery` with `skill-snapshot`.\n\nEach executor instruction must identify:\n\n```text\nSkill path: <candidate-skill or skill-snapshot>\nTask: <exact eval prompt>\nInput files: <exact paths>\nSave outputs to: <corresponding outputs directory>\nOutputs to save: <explicit deliverables, transcript, metrics, and user notes>\n```\n\nThis prevents time-dependent conditions or host drift from systematically favoring one version. Do not run all candidate cases first and baselines later.\n\n## 6. Capture timing immediately\n\nAs each executor completes, immediately save its task-notification values to that run\u2019s `timing.json`; they cannot be recovered later:\n\n```json\n{\n  \"total_tokens\": 84852,\n  \"duration_ms\": 23332,\n  \"total_duration_seconds\": 23.332\n}\n```\n\nAlso retain executor timestamps when available. Store execution metrics in `outputs/metrics.json`, including tool-call counts, steps, files created, errors, output size, and transcript size.\n\n## 7. Grade both versions identically\n\nGrade every run against the assertions in its eval metadata. Prefer deterministic scripts for checks such as JSON schema validity, spreadsheet formulas, filenames, record counts, or exact extracted values. Inspect both the transcript and the actual output files.\n\nSave `grading.json` beside each `outputs/` directory. The viewer requires these exact assertion fields:\n\n```json\n{\n  \"expectations\": [\n    {\n      \"text\": \"<original assertion>\",\n      \"passed\": true,\n      \"evidence\": \"<specific output or transcript evidence>\"\n    }\n  ],\n  \"summary\": {\n    \"passed\": 4,\n    \"failed\": 0,\n    \"total\": 4,\n    \"pass_rate\": 1.0\n  }\n}\n```\n\nA pass requires substantive evidence, not superficial compliance. An unverifiable assertion fails. Record false or unverifiable output claims and flag assertions that would also pass for an incorrect result.\n\n## 8. Aggregate the benchmark\n\nRun:\n\n```bash\npython -m scripts.aggregate_benchmark \\\n  \"$WORKSPACE/iteration-1\" \\\n  --skill-name \"<unchanged-skill-name>\"\n```\n\nThis produces:\n\n```text\niteration-1/benchmark.json\niteration-1/benchmark.md\n```\n\nKeep `with_skill` before the baseline in presentations. The run directories remain named `old_skill` to preserve baseline provenance. If the aggregator/viewer schema emits the baseline configuration as `without_skill`, retain that exact schema value\u2014the underlying source is still the frozen old-skill snapshot. Do not invent a different configuration field that the viewer cannot parse.\n\nThe benchmark must report, for each configuration:\n\n- Assertion pass rate: mean \u00b1 standard deviation.\n- Duration: mean \u00b1 standard deviation.\n- Token usage: mean \u00b1 standard deviation.\n- Per-eval results and deltas.\n- Tool calls and errors when available.\n\nWith only one run per prompt/configuration, standard deviation across the two prompts measures cross-prompt spread, not repeatability. State this limitation explicitly; multiple repetitions would be required to estimate stochastic run-to-run variance.\n\n## 9. Perform the analyst review\n\nRead the per-run grades, timings, metrics, and benchmark. Add grounded observations to `benchmark.json` and `benchmark.md`, covering:\n\n- Assertions that pass or fail in both versions and therefore do not discriminate.\n- Assertions improved or regressed by the revision.\n- Whether one prompt accounts for most of the gain.\n- High-variance or anomalous results.\n- Candidate regressions hidden by the aggregate pass rate.\n- Time or token costs relative to quality improvement.\n- Transcript evidence connecting changed skill instructions or resources to changed behavior.\n\nDo not call the revision better solely because its aggregate score is higher. Treat it as better only if:\n\n1. Its total assertion pass rate is higher.\n2. Neither prompt has a material correctness regression.\n3. The improvement occurs on at least one meaningful, discriminating assertion.\n4. Any additional time or token cost is acceptable for the measured gain.\n5. Human review does not identify a qualitative regression missed by assertions.\n\nOtherwise classify the result as a tie, regression, or inconclusive. Two prompts are suitable for a focused gate, not a broad generalization claim.\n\n## 10. Generate the static human-review viewer\n\nEvery run must contain an `outputs/` directory. If a run has only grades and timing, add a minimal `outputs/summary.md` so it appears in the viewer.\n\nIn a headless Rudder Codex run, generate a standalone viewer rather than starting a browser server:\n\n```bash\npython <skill-creator-path>/eval-viewer/generate_review.py \\\n  \"$WORKSPACE/iteration-1\" \\\n  --skill-name \"<unchanged-skill-name>\" \\\n  --benchmark \"$WORKSPACE/iteration-1/benchmark.json\" \\\n  --static \"$WORKSPACE/iteration-1/review.html\"\n```\n\nDo not write custom review HTML. Return the exact Rudder-visible Library link to `review.html`, or its exact workspace path if a Library reference command is unavailable.\n\nThe viewer lets the reviewer inspect both versions\u2019 rendered outputs, prompts, formal grades, and benchmark metrics. The reviewer records qualitative feedback and uses \u201cSubmit All Reviews\u201d to download `feedback.json`; copy that file into the iteration workspace before the next revision.\n\n## 11. Record the decision\n\nCreate or update `$WORKSPACE/history.json`, identifying the frozen original as `v0`, the candidate as `v1`, pass rates, and one of `won`, `lost`, or `tie`.\n\nPromote the candidate only when the quantitative gate and human review both pass. Before calling it ready:\n\n- Parse `SKILL.md` frontmatter.\n- Confirm the original `name` remains unchanged.\n- Parse `agents/openai.yaml` if present.\n- Run `scripts/quick_validate.py` against the complete candidate package.\n- Verify every referenced script, asset, and reference file is included.\n\nInstallation and enablement remain separate Rudder operations. A valid package is not automatically enabled, and enablement affects future runs rather than the current run. Do not install, import, enable, or overwrite the original skill as part of this evaluation unless separately authorized."}], "grading": {"expectations": [{"text": "Uses $RUDDER_PROJECT_LIBRARY_ROOT/skill-evals for the durable evaluation workspace", "passed": true, "evidence": "The response's workspace section explicitly sets the project-context location to `$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals/<slug>-workspace/` and later sets `WORKSPACE=$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals/<slug>-workspace`."}, {"text": "Defines paired with_skill and old_skill runs with metadata, assertions, timing, and grading", "passed": true, "evidence": "Sections 3-7 define exactly two prompts, an `eval_metadata.json` with assertions for each, paired `with_skill/` and `old_skill/` output directories, all four executor runs launched together, per-run `timing.json`, and schema-compliant per-run `grading.json`."}, {"text": "Aggregates benchmark artifacts, performs an analyst pass, and generates a static review with generate_review.py", "passed": true, "evidence": "Sections 8-10 prescribe `python -m scripts.aggregate_benchmark` to create `benchmark.json` and `benchmark.md`, a grounded analyst review of grades/timings/metrics, and `eval-viewer/generate_review.py ... --static .../review.html`; the response also says not to write custom review HTML."}, {"text": "Rejects the bundled package and provider-managed runtime mount as evaluation output locations", "passed": true, "evidence": "The response's first section explicitly lists both `Rudder's read-only bundled-skill directory` and `A provider-managed runtime mount` under `Do not place the workspace or results in`, and explains that these locations are read-only, ephemeral, or not Rudder's source of truth."}], "summary": {"passed": 4, "failed": 0, "total": 4, "pass_rate": 1.0}, "timing": {"executor_duration_seconds": 105, "total_duration_seconds": 105}, "claims": [{"claim": "The durable project-context evaluation workspace belongs under `$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals/<slug>-workspace/`.", "type": "factual", "verified": true, "evidence": "The response states this exact path consistently in both workspace resolution and baseline setup."}, {"claim": "The four paired executor runs should be launched in one scheduling turn.", "type": "process", "verified": true, "evidence": "Section 5 enumerates both prompts against `candidate-skill` and `skill-snapshot` and explicitly requires launching all four together."}, {"claim": "The static human-review artifact should be generated by `eval-viewer/generate_review.py`, not custom HTML.", "type": "process", "verified": true, "evidence": "Section 10 supplies the `generate_review.py` command with `--static` and explicitly says `Do not write custom review HTML`."}], "user_notes_summary": {"uncertainties": [], "needs_review": [], "workarounds": []}, "eval_feedback": {"suggestions": [], "overall": "The assertions are objective, directly verifiable from the requested decision-complete procedure, and discriminate Rudder-specific guidance from a generic Codex evaluation plan."}}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "skill-creator", "skill_path": "server/resources/bundled-skills/skill-creator", "executor_model": "gpt-5.6-codex", "analyzer_model": "gpt-5.6-codex", "timestamp": "2026-07-22T13:47:19Z", "evals_run": [1, 2, 3], "runs_per_configuration": 1}, "runs": [{"eval_id": 1, "configuration": "old_skill", "run_number": 1, "result": {"pass_rate": 0.3333333333, "passed": 1, "failed": 2, "total": 3, "time_seconds": 225, "tokens": 61915, "tool_calls": 2, "errors": 1}, "expectations": [{"text": "Installs the complete multi-file package under $AGENT_HOME/skills/incident-handoff", "passed": true, "evidence": "The response defines TARGET as ${AGENT_HOME%/}/skills/incident-handoff, installs SKILL.md, references/checklist.md, and scripts/validate_handoff.py beneath it, and verifies all three files plus diff -qr between staging and the target."}, {"text": "Enables the private skill additively with agent:incident-handoff rather than using a global or provider-native path", "passed": false, "evidence": "The response never uses the required agent:incident-handoff selection reference or an additive Rudder enable operation. Its Enablement section instead says that installation under $AGENT_HOME is itself the justified enablement mechanism and relies on agent-scoped discovery."}, {"text": "Separates installed, validated, enabled, and future-run-loaded states", "passed": false, "evidence": "Validation and installation are separate sections, and a fresh session is mentioned, but enabled is explicitly conflated with filesystem installation/discovery. There is no distinct enable transition or verification of an enabled selection before the future-run visibility check."}], "notes": ["Runtime values for the four Rudder environment variables were unavailable, so commands intentionally defer their resolution.", "The response substitutes filesystem discovery and a fresh session for explicit Rudder enablement."]}, {"eval_id": 2, "configuration": "old_skill", "run_number": 1, "result": {"pass_rate": 0, "passed": 0, "failed": 3, "total": 3, "time_seconds": 64, "tokens": 54542, "tool_calls": 2, "errors": 1}, "expectations": [{"text": "Places the durable package under $RUDDER_ORG_SKILLS_DIR/customer-summary", "passed": false, "evidence": "The response deliberately leaves the durable location generic as the organization's 'documented durable skill-package location'. It never names or uses `$RUDDER_ORG_SKILLS_DIR/customer-summary`, so the required Rudder ownership path is not provided."}, {"text": "Registers the complete package with rudder skill import and uses the returned selection reference", "passed": false, "evidence": "The response conceptually says to register all three files, but explicitly declines to provide CLI syntax. It never invokes `rudder skill import` and never captures or uses the returned selection reference."}, {"text": "Uses rudder agent skills enable additively and warns against replacing selections with skills sync", "passed": false, "evidence": "The response correctly recommends an additive/merge operation and warns against a replacement containing only the new skill, but it never uses the required `rudder agent skills enable` command and never identifies `skills sync` as the replacement-oriented operation. The assertion requires both exact Rudder semantics."}], "notes": []}, {"eval_id": 3, "configuration": "old_skill", "run_number": 1, "result": {"pass_rate": 0.25, "passed": 1, "failed": 3, "total": 4, "time_seconds": 76, "tokens": 36804, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Uses $RUDDER_PROJECT_LIBRARY_ROOT/skill-evals for the durable evaluation workspace", "passed": false, "evidence": "The response instead places project-context results at `<project-root>/.codex/evals/<skill-name>/<evaluation-id>/`; `$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals` is never used."}, {"text": "Defines paired with_skill and old_skill runs with metadata, assertions, timing, and grading", "passed": true, "evidence": "The response defines an exact two-prompt, four-cell `old_skill`/`with_skill` matrix; `manifest.json` metadata; deterministic assertions; per-run timing/resource capture; and an identical blind-grading rubric for all cells."}, {"text": "Aggregates benchmark artifacts, performs an analyst pass, and generates a static review with generate_review.py", "passed": false, "evidence": "The response does define benchmark aggregation and an analyst review, but its viewer section prescribes creating a custom self-contained `viewer/index.html` and never invokes `eval-viewer/generate_review.py`, which is an explicit part of the assertion."}, {"text": "Rejects the bundled package and provider-managed runtime mount as evaluation output locations", "passed": false, "evidence": "The exclusions mention temporary directories, global installed-skill directories, live source directories, candidate snapshots, shared mutable workspaces, and unrelated repositories, but do not reject Rudder's bundled package or a provider-managed runtime mount."}], "notes": []}, {"eval_id": 1, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1, "passed": 3, "failed": 0, "total": 3, "time_seconds": 88, "tokens": 71802, "tool_calls": 3, "errors": 0}, "expectations": [{"text": "Installs the complete multi-file package under $AGENT_HOME/skills/incident-handoff", "passed": true, "evidence": "The response identifies `$AGENT_HOME/skills/incident-handoff/` as the final installation path and shows the complete tree containing `SKILL.md`, `references/checklist.md`, and `scripts/validate_handoff.py`. It then provides substantive contents for all three files, installs directly into that directory, validates the exact inventory, and rechecks every installed file. Because the prompt forbade mutations, these are correctly presented as planned commands rather than falsely claimed completed changes."}, {"text": "Enables the private skill additively with agent:incident-handoff rather than using a global or provider-native path", "passed": true, "evidence": "The enablement command is exactly `rudder agent skills enable \"$RUDDER_AGENT_ID\" \"agent:incident-handoff\" --json`. The response explicitly says not to use `$RUDDER_ORG_SKILLS_DIR`, `rudder skill import`, or `skills sync`, explaining that `enable` is additive and `sync` could replace existing optional selections. No global or provider-native installation path is proposed."}, {"text": "Separates installed, validated, enabled, and future-run-loaded states", "passed": true, "evidence": "The response separates the workflow into author/install, validate, enable, and verify sections. It states, `At this point the package is installed on disk, but it is not yet enabled in Rudder`, treats the successful enable JSON as separate proof of selection, and says enablement applies to future runs and cannot retroactively modify the current run. It finally requires a new-run smoke test to prove loading and execution."}], "notes": []}, {"eval_id": 2, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1, "passed": 3, "failed": 0, "total": 3, "time_seconds": 79, "tokens": 182806, "tool_calls": 7, "errors": 1}, "expectations": [{"text": "Places the durable package under $RUDDER_ORG_SKILLS_DIR/customer-summary", "passed": true, "evidence": "response.md opens with the exact durable tree rooted at `$RUDDER_ORG_SKILLS_DIR/customer-summary/`, then copies the complete source directory into `TARGET_DIR=\"$RUDDER_ORG_SKILLS_DIR/$SKILL_SLUG\"`."}, {"text": "Registers the complete package with rudder skill import and uses the returned selection reference", "passed": true, "evidence": "Step 6 imports `--source \"$TARGET_DIR\"` (explicitly 'not merely SKILL.md'), states that this registers SKILL.md, references/style-guide.md, and scripts/check_output.py, and Step 8 passes `<returned-selection-ref>` to `rudder agent skills enable`."}, {"text": "Uses rudder agent skills enable additively and warns against replacing selections with skills sync", "passed": true, "evidence": "Step 8 runs `rudder agent skills enable` and explicitly says: '`enable` preserves the agent's existing optional skills, while `sync` replaces the full optional-skill set.'"}], "notes": []}, {"eval_id": 3, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1, "passed": 4, "failed": 0, "total": 4, "time_seconds": 105, "tokens": 134814, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Uses $RUDDER_PROJECT_LIBRARY_ROOT/skill-evals for the durable evaluation workspace", "passed": true, "evidence": "The response's workspace section explicitly sets the project-context location to `$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals/<slug>-workspace/` and later sets `WORKSPACE=$RUDDER_PROJECT_LIBRARY_ROOT/skill-evals/<slug>-workspace`."}, {"text": "Defines paired with_skill and old_skill runs with metadata, assertions, timing, and grading", "passed": true, "evidence": "Sections 3-7 define exactly two prompts, an `eval_metadata.json` with assertions for each, paired `with_skill/` and `old_skill/` output directories, all four executor runs launched together, per-run `timing.json`, and schema-compliant per-run `grading.json`."}, {"text": "Aggregates benchmark artifacts, performs an analyst pass, and generates a static review with generate_review.py", "passed": true, "evidence": "Sections 8-10 prescribe `python -m scripts.aggregate_benchmark` to create `benchmark.json` and `benchmark.md`, a grounded analyst review of grades/timings/metrics, and `eval-viewer/generate_review.py ... --static .../review.html`; the response also says not to write custom review HTML."}, {"text": "Rejects the bundled package and provider-managed runtime mount as evaluation output locations", "passed": true, "evidence": "The response's first section explicitly lists both `Rudder's read-only bundled-skill directory` and `A provider-managed runtime mount` under `Do not place the workspace or results in`, and explains that these locations are read-only, ephemeral, or not Rudder's source of truth."}], "notes": []}], "run_summary": {"old_skill": {"pass_rate": {"mean": 0.1944, "stddev": 0.1735, "min": 0, "max": 0.3333}, "time_seconds": {"mean": 121.6667, "stddev": 89.6902, "min": 64, "max": 225}, "tokens": {"mean": 51087, "stddev": 12907.1046, "min": 36804, "max": 61915}}, "with_skill": {"pass_rate": {"mean": 1, "stddev": 0, "min": 1, "max": 1}, "time_seconds": {"mean": 90.6667, "stddev": 13.2035, "min": 79, "max": 105}, "tokens": {"mean": 129807.3333, "stddev": 55671.1059, "min": 71802, "max": 182806}}, "delta": {"pass_rate": "+0.81", "time_seconds": "-31.0", "tokens": "+78720"}}, "notes": ["The restored skill passed all 10 assertions; the clean isolated nine-line baseline passed 2 of 10.", "Both contaminated baseline attempts were discarded and rerun in isolated workdirs containing only the nine-line SKILL.md.", "The restored package uniquely supplied additive private enablement, organization import ownership, durable Rudder eval workspaces, and the bundled static review workflow.", "Each configuration has one run per scenario, so the comparison is directional rather than a variance estimate."]}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

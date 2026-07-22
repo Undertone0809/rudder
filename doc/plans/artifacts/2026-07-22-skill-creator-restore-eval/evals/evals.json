@@ -1,0 +1,39 @@
+{
+  "skill_name": "skill-creator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "You are running as a Rudder agent with RUDDER_AGENT_ID, RUDDER_ORG_ID, AGENT_HOME, and RUDDER_ORG_SKILLS_DIR available. The user wants a reusable incident-handoff skill only for this current agent. It must contain SKILL.md, references/checklist.md, and scripts/validate_handoff.py. Explain the exact authoring, validation, installation, enablement, and verification workflow. Do not execute mutations; return the implementation plan and exact paths/commands.",
+      "expected_output": "A Rudder-aware private multi-file skill workflow using AGENT_HOME, validation, additive agent enablement, and separate installed/enabled state reporting.",
+      "files": [],
+      "expectations": [
+        "Installs the complete multi-file package under $AGENT_HOME/skills/incident-handoff",
+        "Enables the private skill additively with agent:incident-handoff rather than using a global or provider-native path",
+        "Separates installed, validated, enabled, and future-run-loaded states"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "A board-authorized Rudder agent must create a customer-summary skill shared across the organization. The package has SKILL.md, references/style-guide.md, and scripts/check_output.py. Explain where the durable package belongs, how to register its complete inventory in the organization Skill Library, and how to enable it for one agent without removing that agent's existing optional skills. Do not execute; provide the exact ordered workflow and commands.",
+      "expected_output": "An organization-owned workflow using RUDDER_ORG_SKILLS_DIR, skill import, the returned selection reference, and additive enable semantics.",
+      "files": [],
+      "expectations": [
+        "Places the durable package under $RUDDER_ORG_SKILLS_DIR/customer-summary",
+        "Registers the complete package with rudder skill import and uses the returned selection reference",
+        "Uses rudder agent skills enable additively and warns against replacing selections with skills sync"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Inside a Rudder Codex run, improve an existing multi-file skill and prove the revision is better than the old version. Design a two-prompt old_skill versus with_skill evaluation, including metadata, assertions, timing, grading, benchmark aggregation, analyst review, and a static human review viewer. Explain where the workspace belongs when project context exists and what locations must not be used. Do not run the evaluation; return a decision-complete procedure.",
+      "expected_output": "A complete Rudder-safe skill evaluation loop using a durable project Library workspace, old_skill baseline, benchmark artifacts, and generate_review.py static viewer.",
+      "files": [],
+      "expectations": [
+        "Uses $RUDDER_PROJECT_LIBRARY_ROOT/skill-evals for the durable evaluation workspace",
+        "Defines paired with_skill and old_skill runs with metadata, assertions, timing, and grading",
+        "Aggregates benchmark artifacts, performs an analyst pass, and generates a static review with generate_review.py",
+        "Rejects the bundled package and provider-managed runtime mount as evaluation output locations"
+      ]
+    }
+  ]
+}

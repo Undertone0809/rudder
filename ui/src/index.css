@@ -3344,6 +3344,111 @@ button[draggable="false"] {
   min-height: 2rem;
 }
 
+.issue-detail-container {
+  container-name: issue-detail;
+  container-type: inline-size;
+}
+
+.issue-detail-layout {
+  display: grid;
+  /* Reserve the InlineEditor hover gutter without introducing page overflow. */
+  width: calc(100% - 0.5rem);
+  grid-template-areas:
+    "heading"
+    "rail"
+    "body";
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.issue-detail-heading {
+  grid-area: heading;
+}
+
+.issue-detail-actions {
+  display: flex;
+}
+
+.issue-detail-rail {
+  grid-area: rail;
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.issue-detail-body {
+  grid-area: body;
+}
+
+.issue-detail-heading,
+.issue-detail-rail,
+.issue-detail-properties,
+.issue-detail-body,
+.issue-detail-body > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.issue-detail-heading,
+.issue-detail-body {
+  overflow-wrap: anywhere;
+}
+
+.issue-detail-body .comment-thread-fixed-composer {
+  margin-right: 0;
+  margin-left: 0;
+}
+
+.issue-detail-properties-panel {
+  border-right-width: 0;
+  border-left-width: 0;
+  border-radius: 0;
+  background: transparent;
+  padding-right: 0;
+  padding-left: 0;
+}
+
+@container issue-detail (min-width: 56rem) {
+  .issue-detail-layout {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    grid-template-areas:
+      "heading rail"
+      "body rail";
+    column-gap: 1.5rem;
+    row-gap: 1.5rem;
+  }
+
+  .issue-detail-rail {
+    position: sticky;
+    top: 1rem;
+    min-height: 0;
+    align-self: start;
+  }
+
+  .issue-detail-properties-panel {
+    border-right-width: 1px;
+    border-left-width: 1px;
+    border-radius: var(--radius-lg);
+    background: rgb(from var(--background) r g b / 0.8);
+    padding-right: 0.75rem;
+    padding-left: 0.75rem;
+  }
+}
+
+@media (max-width: 47.999rem) {
+  .issue-detail-layout {
+    grid-template-areas:
+      "heading"
+      "body";
+  }
+
+  .issue-detail-rail {
+    display: none;
+  }
+}
+
 .rudder-milkdown-content a[href^="agent://"],
 .rudder-milkdown-content a[href^="automation://"],
 .rudder-milkdown-content a[href^="chat://"],

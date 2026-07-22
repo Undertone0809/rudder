@@ -1,0 +1,11 @@
+{
+  "eval_id": 3,
+  "eval_name": "existing-skill-evaluation",
+  "prompt": "Inside a Rudder Codex run, improve an existing multi-file skill and prove the revision is better than the old version. Design a two-prompt old_skill versus with_skill evaluation, including metadata, assertions, timing, grading, benchmark aggregation, analyst review, and a static human review viewer. Explain where the workspace belongs when project context exists and what locations must not be used. Do not run the evaluation; return a decision-complete procedure.",
+  "assertions": [
+    "Uses $RUDDER_PROJECT_LIBRARY_ROOT/skill-evals for the durable evaluation workspace",
+    "Defines paired with_skill and old_skill runs with metadata, assertions, timing, and grading",
+    "Aggregates benchmark artifacts, performs an analyst pass, and generates a static review with generate_review.py",
+    "Rejects the bundled package and provider-managed runtime mount as evaluation output locations"
+  ]
+}

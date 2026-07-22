@@ -11,6 +11,8 @@ related_code:
   - packages/shared/src/organization-skill-reference.ts
   - server/resources/bundled-skills/browser/SKILL.md
   - server/resources/bundled-skills/rudder-docs/SKILL.md
+  - server/resources/bundled-skills/skill-creator/SKILL.md
+  - server/resources/bundled-skills/skill-creator/references/rudder.md
   - server/resources/bundled-skills/rudder-docs/references/agent-creation.md
   - server/resources/bundled-skills/rudder-docs/references/plugin-authoring.md
   - packages/agent-runtime-utils/src/server-utils.cli.ts
@@ -63,6 +65,15 @@ Product model:
   Rudder-resolved set unless they are introduced through a non-bundled
   selection path. The retired `skill-optimizer` package is not shipped or
   available for selection.
+- `skill-creator` is the intent-triggered, self-contained workflow for creating,
+  improving, evaluating, benchmarking, and packaging skills. Its bundled
+  scripts, references, agents, assets, and review viewer remain part of the
+  runtime skill package rather than depending on another bundled skill.
+- In Rudder, skill ownership determines installation: current-agent skills live
+  under `AGENT_HOME/skills` and require explicit enablement, while shared skills
+  live under `RUDDER_ORG_SKILLS_DIR`, require an authorized organization Skill
+  Library import, and are enabled separately for the intended agents. Global or
+  provider-native discovery alone is not Rudder runtime enablement.
 - `visualize` uses `CHAT.INLINE.VISUAL.001` for custom declarative Chat visuals.
   Its authoring contract is a provider-neutral Rudder message envelope, never a
   provider filesystem directory, iframe, attachment id, or provider-named
@@ -129,6 +140,10 @@ Flow:
 Invariants:
 
 - Bundled Rudder skills are not disabled by normal optional-skill toggles.
+- The bundled `skill-creator` package must retain the resources referenced by
+  its workflow, including evaluation, review, grading, compatibility, and
+  packaging support; a metadata-only placeholder does not satisfy the bundled
+  skill contract.
 - Always-enabled or materialized means available for discovery, not selected by
   the model for every turn and not evidence that the skill was used.
 - Greetings, casual conversation, unrelated coding tasks, and questions fully

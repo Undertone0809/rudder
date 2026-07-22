@@ -137,7 +137,13 @@ test.describe("Organization and agent skills", () => {
 
     const skillsRes = await page.request.get(`/api/orgs/${organization.id}/skills`);
     expect(skillsRes.ok()).toBe(true);
-    const skills = await skillsRes.json() as Array<{ key: string }>;
+    const skills = await skillsRes.json() as Array<{
+      id: string;
+      key: string;
+      slug: string;
+      trustLevel: string;
+      fileInventory: Array<{ path: string; kind: string }>;
+    }>;
     expect(skills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
       "rudder/para-memory-files",
       "rudder/rudder-docs",
@@ -153,6 +159,26 @@ test.describe("Organization and agent skills", () => {
       "rudder/conversation-to-skill",
       "rudder/skill-optimizer",
     ]));
+    const skillCreator = skills.find((skill) => skill.key === "rudder/skill-creator");
+    expect(skillCreator).toMatchObject({
+      slug: "skill-creator",
+      trustLevel: "scripts_executables",
+    });
+    expect(skillCreator?.fileInventory).toEqual(expect.arrayContaining([
+      { path: "references/rudder.md", kind: "reference" },
+      { path: "scripts/package_skill.py", kind: "script" },
+    ]));
+
+    const rudderReferenceRes = await page.request.get(
+      `/api/orgs/${organization.id}/skills/${skillCreator!.id}/files?path=references%2Frudder.md`,
+    );
+    expect(rudderReferenceRes.ok()).toBe(true);
+    const rudderReference = await rudderReferenceRes.json();
+    expect(rudderReference).toMatchObject({
+      path: "references/rudder.md",
+      kind: "reference",
+      content: expect.stringContaining("# Rudder Compatibility"),
+    });
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -179,12 +205,20 @@ test.describe("Organization and agent skills", () => {
     const libraryFiles = page.getByTestId("org-workspaces-files-scroll");
     await expect(libraryFiles).toContainText("para-memory-files");
     await expect(libraryFiles).toContainText("rudder-docs");
+    await expect(libraryFiles).toContainText("skill-creator");
     await expect(libraryFiles).not.toContainText("rudder-create-agent");
     await expect(libraryFiles).not.toContainText("rudder-create-plugin");
     await expect(libraryFiles).toContainText("visualize");
     await expect(skillsMain.getByText("conversation-to-skill")).toHaveCount(0);
     await expect(skillsMain.getByText("skill-optimizer")).toHaveCount(0);
     await expect(libraryFiles).toContainText("deep-research");
+
+    await page.goto(
+      `/${organization.urlKey}/library?skill=${skillCreator!.id}&skillFile=references%2Frudder.md`,
+    );
+    await expect(page.getByTestId("org-workspaces-virtual-skill-readonly")).toContainText(
+      "Rudder Compatibility",
+    );
 
     await page.goto(`/${organization.urlKey}/agents/${agent.id}/skills`);
     const agentMain = page.locator("#main-content");
@@ -859,5 +893,15 @@ test.describe("Organization and agent skills", () => {
     await expect(fs.access(path.join(managedCodexHome, "skills", ".system"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+    const materializedSkillCreator = path.join(managedCodexHome, "skills", "skill-creator");
+    await expect(
+      fs.readFile(path.join(materializedSkillCreator, "references", "rudder.md"), "utf8"),
+    ).resolves.toContain("# Rudder Compatibility");
+    await expect(
+      fs.readFile(path.join(materializedSkillCreator, "scripts", "package_skill.py"), "utf8"),
+    ).resolves.toContain("def main");
+    await expect(
+      fs.readFile(path.join(materializedSkillCreator, "eval-viewer", "generate_review.py"), "utf8"),
+    ).resolves.toContain("def main");
   });
 });

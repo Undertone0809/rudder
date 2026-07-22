@@ -64,15 +64,18 @@ contracts:
       - ui/src/pages/Issues.tsx
     related_tests:
       - ui/src/components/InlineEditor.test.tsx
+      - ui/src/lib/index-css.test.ts
       - ui/src/lib/new-issue-dialog.test.ts
       - ui/src/pages/IssueDetail.test.tsx
       - tests/e2e/codex-model-order.spec.ts
+      - tests/e2e/issue-detail-properties-layout.spec.ts
       - tests/e2e/issue-detail-toolbar-actions.spec.ts
       - tests/e2e/issue-description-image-preview.spec.ts
       - tests/e2e/issue-board-display-properties.spec.ts
       - tests/e2e/new-issue-project-context.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-21-responsive-issue-detail-layout.md
   RUN.WAKEUP.001:
     owner: product
     domain: execution
@@ -800,6 +803,7 @@ contracts:
       - doc/product/domains/library-and-context/resources-library-workspaces.md
     related_code:
       - packages/db/src/schema/library_entries.ts
+      - packages/shared/src/types/organization.ts
       - server/src/home-paths.ts
       - server/src/routes/orgs.ts
       - server/src/services/library-entries.ts
@@ -808,6 +812,7 @@ contracts:
       - ui/src/components/InspectableImage.tsx
       - ui/src/context/ImagePreviewContext.tsx
       - ui/src/components/WorkspaceFilePreview.tsx
+      - ui/src/components/WorkspaceMediaPreview.tsx
       - ui/src/components/WorkspacePdfPreview.tsx
       - ui/src/components/workspaces/WorkspaceLaunchControls.tsx
       - ui/src/lib/workspace-preferences.ts
@@ -819,6 +824,7 @@ contracts:
       - server/src/__tests__/home-paths.test.ts
       - server/src/__tests__/library-path-markdown.test.ts
       - server/src/__tests__/organization-workspace-browser.test.ts
+      - server/src/__tests__/organization-workspace-media-routes.test.ts
       - desktop/src/ide-opener.test.ts
       - ui/src/components/ImagePreviewDialog.test.tsx
       - ui/src/context/ImagePreviewContext.test.tsx
@@ -826,16 +832,19 @@ contracts:
       - ui/src/pages/OrganizationWorkspaceFilesSidebar.test.tsx
       - ui/src/pages/OrganizationWorkspaces.scrollbars.test.tsx
       - ui/src/components/WorkspaceFilePreview.test.tsx
+      - ui/src/components/WorkspaceMediaPreview.test.tsx
       - ui/src/components/WorkspacePdfPreview.test.tsx
       - ui/src/components/workspaces/WorkspaceLaunchControls.test.tsx
       - ui/src/lib/workspace-preferences.test.ts
       - tests/e2e/chat-side-panel.spec.ts
       - tests/e2e/organization-workspaces-image-preview.spec.ts
       - tests/e2e/organization-workspaces-launcher.spec.ts
+      - tests/e2e/library-media-preview.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-30-org-library-folder-and-backup-zip.md
       - doc/plans/2026-07-20-library-unsupported-file-launcher.md
+      - doc/plans/2026-07-21-library-media-preview.md
   LIBRARY.WEB.PREVIEW.001:
     owner: product
     domain: library-and-context
@@ -1299,6 +1308,7 @@ contracts:
       - ui/src/components/IssueProperties.tsx
       - ui/src/components/Layout.tsx
       - ui/src/components/WorkspaceFilePreview.tsx
+      - ui/src/components/WorkspaceMediaPreview.tsx
       - ui/src/components/transcript/TranscriptLocalFilePreview.tsx
       - ui/src/components/WorkspacePdfPreview.tsx
       - ui/src/components/ui/context-menu.tsx
@@ -1324,12 +1334,14 @@ contracts:
       - ui/src/components/Layout.test.ts
       - ui/src/context/SidePanelContext.test.tsx
       - ui/src/components/WorkspaceFilePreview.test.tsx
+      - ui/src/components/WorkspaceMediaPreview.test.tsx
       - ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx
       - ui/src/components/WorkspacePdfPreview.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
       - tests/e2e/built-in-browser.spec.ts
       - tests/e2e/chat-side-panel.spec.ts
       - tests/e2e/chat-transcript-internal-events.spec.ts
+      - tests/e2e/library-media-preview.spec.ts
     related_plans:
       - doc/plans/2026-07-01-global-side-panel-workbench.md
       - doc/plans/2026-07-07-messenger-side-panel-session-state.md
@@ -1338,6 +1350,7 @@ contracts:
       - doc/plans/2026-07-19-side-chat.md
       - doc/plans/2026-07-20-messenger-saved-views.md
       - doc/plans/2026-07-21-chat-local-file-side-panel.md
+      - doc/plans/2026-07-21-library-media-preview.md
   MESSENGER.ATTENTION.001:
     owner: product
     domain: collaboration

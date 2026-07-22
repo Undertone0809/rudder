@@ -1,0 +1,10 @@
+{
+  "eval_id": 1,
+  "eval_name": "private-multifile-skill",
+  "prompt": "You are running as a Rudder agent with RUDDER_AGENT_ID, RUDDER_ORG_ID, AGENT_HOME, and RUDDER_ORG_SKILLS_DIR available. The user wants a reusable incident-handoff skill only for this current agent. It must contain SKILL.md, references/checklist.md, and scripts/validate_handoff.py. Explain the exact authoring, validation, installation, enablement, and verification workflow. Do not execute mutations; return the implementation plan and exact paths/commands.",
+  "assertions": [
+    "Installs the complete multi-file package under $AGENT_HOME/skills/incident-handoff",
+    "Enables the private skill additively with agent:incident-handoff rather than using a global or provider-native path",
+    "Separates installed, validated, enabled, and future-run-loaded states"
+  ]
+}

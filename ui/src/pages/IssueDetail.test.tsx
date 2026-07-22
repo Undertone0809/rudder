@@ -694,31 +694,46 @@ describe("IssueDetail", () => {
     expect(html).toContain('href="/library?path=docs%2Fproduct-brief.md"');
   });
 
-  it("keeps the desktop issue detail in one page-level scroll flow with a sticky sidebar", () => {
+  it("keeps one semantic responsive layout in the page-level scroll flow", () => {
     const html = renderToStaticMarkup(<IssueDetail />);
+    const headingIndex = html.indexOf('data-testid="issue-detail-heading"');
+    const actionsIndex = html.indexOf('data-testid="issue-detail-actions"');
+    const propertiesIndex = html.indexOf('data-testid="issue-detail-sidebar"');
+    const bodyIndex = html.indexOf('data-testid="issue-detail-primary-content"');
+    const descriptionIndex = html.indexOf("Parent description");
 
     expect(html).toContain('data-testid="issue-detail-main-scroll"');
-    expect(html).toContain("h-full min-h-0 w-full scrollbar-auto-hide overflow-y-auto overscroll-contain");
-    expect(html).toContain("mx-auto flex min-h-full w-full max-w-6xl flex-col xl:grid");
-    expect(html).toContain('<div class="min-w-0 space-y-6">');
-    expect(html).toContain('class="min-w-0 space-y-6" data-testid="issue-detail-primary-content"');
+    expect(html).toContain("issue-detail-container h-full min-h-0 w-full scrollbar-auto-hide overflow-x-hidden overflow-y-auto overscroll-contain");
+    expect(html).toContain('class="issue-detail-layout mx-auto min-h-full max-w-6xl"');
+    expect(html).toContain('class="issue-detail-body min-w-0 space-y-6" data-testid="issue-detail-primary-content"');
     expect(html).toContain('aria-label="Activity" class="flex flex-col space-y-2"');
+    expect(headingIndex).toBeGreaterThanOrEqual(0);
+    expect(headingIndex).toBeLessThan(actionsIndex);
+    expect(actionsIndex).toBeLessThan(propertiesIndex);
+    expect(propertiesIndex).toBeLessThan(bodyIndex);
+    expect(bodyIndex).toBeLessThan(descriptionIndex);
+    expect(html.match(/aria-label="Issue properties"/g)).toHaveLength(1);
+    expect(html.match(/>Copy ID</g)).toHaveLength(1);
+    expect(html.match(/>Chat</g)).toHaveLength(1);
+    expect(html.match(/>Pin Issue</g)).toHaveLength(1);
+    expect(html.match(/>Delete Issue</g)).toHaveLength(1);
     expect(capturedCommentThreadProps).toMatchObject({
       fixedComposer: true,
       fixedComposerTimelineScroll: false,
     });
     expect(html).not.toContain('data-testid="issue-detail-primary-scroll"');
     expect(html).not.toContain('data-testid="comment-thread-timeline-scroll"');
-    expect(html).toContain('class="mt-6 xl:sticky xl:top-4 xl:mt-0 xl:min-h-0 xl:self-start" data-testid="issue-detail-sidebar"');
+    expect(html).toContain('class="issue-detail-properties min-w-0" data-testid="issue-detail-sidebar"');
+    expect(html).not.toContain("xl:grid");
+    expect(html).not.toContain("xl:sticky");
     expect(html).not.toContain('xl:overflow-y-auto');
-    expect(html).not.toContain('class="space-y-3 xl:sticky xl:top-4"');
   });
 
   it("keeps an embedded issue detail in its own scroll flow", () => {
     const html = renderToStaticMarkup(<IssueDetail embedded embeddedIssueId="ORG2-1" />);
 
     expect(html).toContain('data-testid="embedded-issue-detail"');
-    expect(html).toContain("h-full min-h-0 w-full scrollbar-auto-hide overflow-y-auto overscroll-contain");
+    expect(html).toContain("h-full min-h-0 w-full scrollbar-auto-hide overflow-x-hidden overflow-y-auto overscroll-contain");
     expect(html).not.toContain('data-testid="issue-detail-main-scroll"');
   });
 

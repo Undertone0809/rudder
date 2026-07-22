@@ -9,6 +9,7 @@ import { InspectableImage } from "./InspectableImage";
 import { MarkdownBody } from "./MarkdownBody";
 import { WorkspaceCodeEditor } from "./WorkspaceCodeEditor";
 import { WorkspaceHtmlPreview, WorkspaceHtmlPreviewToolbar } from "./WorkspaceHtmlPreview";
+import { WorkspaceMediaPreview } from "./WorkspaceMediaPreview";
 import { WorkspacePdfPreview } from "./WorkspacePdfPreview";
 
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = [".md", ".markdown", ".mdown", ".mdx"];
@@ -131,6 +132,7 @@ export function WorkspaceFilePreview({
   mode = "preview",
   onModeChange = () => {},
   htmlOpenAction,
+  mediaOpenAction,
   testIdPrefix = "workspace-file",
 }: {
   file: OrganizationWorkspaceFileDetail;
@@ -138,6 +140,7 @@ export function WorkspaceFilePreview({
   mode?: WorkspaceFilePreviewMode;
   onModeChange?: (mode: WorkspaceFilePreviewMode) => void;
   htmlOpenAction?: ReactNode;
+  mediaOpenAction?: ReactNode;
   testIdPrefix?: string;
 }) {
   const htmlIdentity = `${organizationId}:${file.filePath}`;
@@ -258,6 +261,20 @@ export function WorkspaceFilePreview({
           title={file.filePath || "Library PDF preview"}
         />
       </div>
+    );
+  }
+
+  if ((file.previewKind === "video" || file.previewKind === "audio") && file.contentPath) {
+    return (
+      <WorkspaceMediaPreview
+        key={`${organizationId}:${file.filePath}`}
+        kind={file.previewKind}
+        src={file.contentPath}
+        contentType={file.contentType}
+        title={file.filePath || `Library ${file.previewKind}`}
+        openAction={mediaOpenAction}
+        testId={`${testIdPrefix}-${file.previewKind}-preview`}
+      />
     );
   }
 
