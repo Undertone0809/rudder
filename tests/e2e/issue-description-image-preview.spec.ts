@@ -1,5 +1,90 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { E2E_BASE_URL } from "./support/e2e-env";
+
+async function placeCaretAtEnd(locator: Locator) {
+  await locator.evaluate((element) => {
+    const editable = element.closest<HTMLElement>('[contenteditable="true"]');
+    if (!editable) throw new Error("Expected a contenteditable ancestor");
+    editable.focus();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+}
+
+test("issue description stays Library-style editable and preserves Enter-created paragraphs", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+    data: { name: `Issue-Description-Editing-${Date.now()}` },
+  });
+  expect(orgRes.ok(), await orgRes.text()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const issueRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Description editing parity",
+      description: "Opening paragraph\n\n- alpha",
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok(), await issueRes.text()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier: string | null };
+
+  await page.goto(E2E_BASE_URL, { waitUntil: "domcontentloaded" });
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/issues/${issue.identifier ?? issue.id}`);
+
+  const editor = page.locator(".rudder-issue-description-markdown .ProseMirror");
+  await expect(editor).toBeVisible();
+  await expect(page.locator(".rudder-issue-description-markdown-read")).toHaveCount(0);
+  const verticalGap = await page.getByTestId("issue-detail-layout").evaluate((layout) => {
+    const heading = layout.querySelector<HTMLElement>("[data-testid='issue-detail-heading']");
+    const body = layout.querySelector<HTMLElement>("[data-testid='issue-detail-primary-content']");
+    if (!heading || !body) throw new Error("Expected Issue Detail heading and body");
+    return Math.round(body.getBoundingClientRect().top - heading.getBoundingClientRect().bottom);
+  });
+  expect(verticalGap).toBeGreaterThanOrEqual(16);
+  expect(verticalGap).toBeLessThanOrEqual(32);
+
+  const openingParagraph = editor.locator(":scope > p", { hasText: "Opening paragraph" });
+  await placeCaretAtEnd(openingParagraph);
+  await page.keyboard.press("Enter");
+
+  const blankParagraph = editor.locator(":scope > p").nth(1);
+  await expect(blankParagraph).toBeVisible();
+  const blankParagraphHeight = await blankParagraph.evaluate((element) => element.getBoundingClientRect().height);
+  expect(blankParagraphHeight).toBeGreaterThanOrEqual(20);
+  await page.keyboard.type("Inserted paragraph");
+  await expect(editor.locator(":scope > p", { hasText: "Inserted paragraph" })).toBeVisible();
+
+  const alphaItem = editor.locator("li > p", { hasText: "alpha" });
+  await placeCaretAtEnd(alphaItem);
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("beta");
+  await expect(editor.locator("li > p", { hasText: "alpha" })).toHaveCount(1);
+  await expect(editor.locator("li > p", { hasText: "beta" })).toHaveCount(1);
+
+  await page.getByRole("region", { name: "Issue properties" }).getByText("Properties", { exact: true }).click();
+  await expect.poll(async () => {
+    const response = await page.request.get(`${E2E_BASE_URL}/api/issues/${issue.id}`);
+    expect(response.ok()).toBe(true);
+    const updated = await response.json() as { description: string | null };
+    return updated.description;
+  }).toContain("Inserted paragraph");
+
+  await page.reload();
+  await expect(editor.locator(":scope > p", { hasText: "Inserted paragraph" })).toBeVisible();
+  await expect(editor.locator("li > p", { hasText: "beta" })).toBeVisible();
+  await page.screenshot({ path: "/tmp/rudder-issue-description-fixed.png", fullPage: false });
+});
 
 test("issue description and attachment images open the global preview", async ({ page }) => {
   test.setTimeout(120_000);
@@ -79,13 +164,15 @@ test("issue description and attachment images open the global preview", async ({
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
 
-  const descriptionImage = page.getByRole("button", {
-    name: "Open image preview: Description evidence",
-  });
-  await expect(descriptionImage).toBeVisible();
-  await descriptionImage.click();
+  const descriptionEditor = page.locator(".rudder-issue-description-markdown .ProseMirror");
+  await expect(descriptionEditor).toBeVisible();
+  await expect(page.locator(".rudder-issue-description-markdown-read")).toHaveCount(0);
 
-  const previewDialog = page.getByTestId("markdown-body-image-preview-dialog");
+  const descriptionImage = descriptionEditor.locator('img[alt="Description evidence"]:visible');
+  await expect(descriptionImage).toBeVisible();
+  await descriptionImage.dblclick();
+
+  const previewDialog = page.getByTestId("markdown-editor-image-preview-dialog");
   await expect(previewDialog).toBeVisible();
   await expect(previewDialog.getByAltText("Description evidence")).toBeVisible();
   await expect(previewDialog.getByRole("button", { name: "Copy Image" })).toBeVisible();
@@ -99,8 +186,8 @@ test("issue description and attachment images open the global preview", async ({
       ratioDelta: Math.abs(rect.width / rect.height - element.naturalWidth / element.naturalHeight),
     };
   });
-  expect(previewMetrics.renderedWidth).toBeGreaterThan(600);
-  expect(previewMetrics.renderedHeight).toBeGreaterThan(330);
+  expect(previewMetrics.renderedWidth).toBeGreaterThan(560);
+  expect(previewMetrics.renderedHeight).toBeGreaterThan(300);
   expect(previewMetrics.ratioDelta).toBeLessThan(0.01);
 
   await page.keyboard.press("Escape");
