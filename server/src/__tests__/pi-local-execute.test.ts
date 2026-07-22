@@ -944,7 +944,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
           [...RUDDER_BROWSER_MCP_TOOL_NAMES],
         ]);
         expect(meta.rudderNativeTools).toMatchObject({ available: true, serverName: "rudder-tools", toolCount: 69 });
-        expect(meta.browserNativeTools).toMatchObject({ available: true, serverName: "rudder-browser", toolCount: 8 });
+        expect(meta.browserNativeTools).toMatchObject({ available: true, serverName: "rudder-browser", toolCount: 26 });
       } finally {
         installedDesktopMcp.restore();
         if (previousHome === undefined) delete process.env.HOME;
@@ -1073,7 +1073,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
           diagnosticCode: "browser_bundle_version_mismatch",
           provenance: "desktop_bundle",
           serverName: "rudder-browser",
-          toolCount: 8,
+          toolCount: 26,
           version: "0.4.5",
         });
         expect((meta.browserMcp as { fallbackReason?: string }).fallbackReason).toContain(

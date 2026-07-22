@@ -97,4 +97,35 @@ describe("Desktop Browser Broker server", () => {
       await broker.stop();
     }
   });
+
+  it("preserves the stable full-page size failure through the HTTP Broker boundary", async () => {
+    const broker = await startBrowserBrokerServer({
+      execute: async () => {
+        throw new BrowserAgentError(
+          "browser_result_too_large",
+          "Browser full-page screenshot exceeds Chromium's 16384-pixel dimension limit.",
+        );
+      },
+    });
+    try {
+      const response = await fetch(broker.endpoint, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${broker.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(command),
+      });
+      expect(response.status).toBe(413);
+      await expect(response.json()).resolves.toEqual({
+        ok: false,
+        error: {
+          code: "browser_result_too_large",
+          message: "Browser full-page screenshot exceeds Chromium's 16384-pixel dimension limit.",
+        },
+      });
+    } finally {
+      await broker.stop();
+    }
+  });
 });

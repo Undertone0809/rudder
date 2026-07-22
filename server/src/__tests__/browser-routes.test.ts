@@ -142,6 +142,24 @@ describe("Browser routes", () => {
     expect(registry.forward).not.toHaveBeenCalled();
   });
 
+  it("exposes a Broker-free liveness probe that revokes disabled or inactive Browser MCP processes", async () => {
+    const actor = runtimeActor();
+    const live = await request(createApp(actor)).post("/api/browser/liveness").send({});
+    expect(live.status).toBe(204);
+    expect(registry.forward).not.toHaveBeenCalled();
+    expect(recordActivity).not.toHaveBeenCalled();
+
+    getBrowserSettings.mockResolvedValueOnce({ enabled: false, openLinksIn: "built_in" });
+    const disabled = await request(createApp(actor)).post("/api/browser/liveness").send({});
+    expect(disabled.status).toBe(409);
+    expect(disabled.body).toMatchObject({ code: "browser_disabled" });
+
+    findRun.mockResolvedValueOnce({ id: "run-1", orgId: "org-1", agentId: "agent-1", status: "succeeded" });
+    const inactive = await request(createApp(actor)).post("/api/browser/liveness").send({});
+    expect(inactive.status).toBe(409);
+    expect(inactive.body).toMatchObject({ code: "browser_run_inactive" });
+  });
+
   it("rejects Browser calls from a runtime without managed Browser tools", async () => {
     const unsupported = await request(createApp(runtimeActor({ adapterType: "gemini_local" })))
       .post("/api/browser/tabs")
@@ -173,12 +191,12 @@ describe("Browser routes", () => {
     expect(missingRun.status).toBe(400);
     expect(missingRun.body.code).toBe("browser_run_required");
 
-    findRun.mockResolvedValueOnce({ id: "run-1", orgId: "org-1", agentId: "agent-2", status: "running" });
+    findRun.mockResolvedValue({ id: "run-1", orgId: "org-1", agentId: "agent-2", status: "running" });
     const foreignRun = await request(createApp(runtimeActor())).post("/api/browser/tabs").send({});
     expect(foreignRun.status).toBe(403);
     expect(foreignRun.body.code).toBe("browser_run_forbidden");
 
-    findRun.mockResolvedValueOnce({ id: "run-1", orgId: "org-1", agentId: "agent-1", status: "succeeded" });
+    findRun.mockResolvedValue({ id: "run-1", orgId: "org-1", agentId: "agent-1", status: "succeeded" });
     const finishedRun = await request(createApp(runtimeActor())).post("/api/browser/tabs").send({});
     expect(finishedRun.status).toBe(409);
     expect(finishedRun.body.code).toBe("browser_run_inactive");
@@ -259,8 +277,36 @@ describe("Browser routes", () => {
 
   it.each([
     ["tabs", {}],
+    ["user_tabs", {}],
     ["open", { url: "https://example.com" }],
     ["navigate", { tabId: "tab-1", url: "https://example.com/next" }],
+    ["back", { tabId: "tab-1" }],
+    ["forward", { tabId: "tab-1" }],
+    ["reload", { tabId: "tab-1" }],
+    ["viewport", { action: "set", width: 390, height: 844 }],
+    ["visibility", { visible: true }],
+    ["snapshot", { tabId: "tab-1", boxes: true, depth: 12 }],
+    ["locator", {
+      tabId: "tab-1",
+      action: "click",
+      locator: { strategy: "role", value: "button", name: "Continue", exact: true },
+      expectNavigation: { url: "/next", waitUntil: "load", timeoutMs: 10_000 },
+      dialogResponse: { accept: true, promptText: "accepted" },
+    }],
+    ["cua", { tabId: "tab-1", action: "click", x: 20, y: 30, keys: ["Shift"] }],
+    ["dom_cua", { tabId: "tab-1", action: "get", maxNodes: 500 }],
+    ["evaluate", { tabId: "tab-1", function: "() => document.title", arg: null }],
+    ["dialog", { tabId: "tab-1", action: "get" }],
+    ["clipboard", { action: "writeText", text: "session-only" }],
+    ["logs", { tabId: "tab-1", levels: ["warn", "error"], limit: 20 }],
+    ["download", {
+      tabId: "tab-1",
+      mode: "media",
+      locator: { strategy: "css", value: "img.hero" },
+    }],
+    ["assets", { tabId: "tab-1", action: "list" }],
+    ["content", { tabId: "tab-1", format: "html" }],
+    ["wait", { tabId: "tab-1", text: "Ready", timeoutMs: 5_000 }],
     ["read", { tabId: "tab-1" }],
     ["click", { tabId: "tab-1", ref: "ref-1" }],
     ["type", { tabId: "tab-1", ref: "ref-1", text: "hello", submit: true }],
@@ -276,6 +322,43 @@ describe("Browser routes", () => {
       action,
       args: payload,
     });
+  });
+
+  it.each([
+    ["locator", { tabId: "tab-1", action: "click", locator: { strategy: "role", value: "button" }, rawCdp: "Runtime.evaluate" }],
+    ["locator", { tabId: "tab-1", action: "count", locator: { strategy: "role", value: "button" }, dialogResponse: { accept: true } }],
+    ["cua", { tabId: "tab-1", action: "click", x: 20 }],
+    ["dom_cua", { tabId: "tab-1", action: "click" }],
+    ["clipboard", { action: "write", items: [{ entries: [{ mimeType: "text/plain", text: "a", base64: "YQ==" }] }] }],
+    ["assets", { tabId: "tab-1", action: "bundle" }],
+    ["assets", { tabId: "tab-1", action: "bundle", inventoryId: "11111111-1111-4111-8111-111111111111" }],
+    ["wait", { tabId: "tab-1", url: "example", urlRegex: true }],
+    ["locator", {
+      tabId: "tab-1",
+      action: "click",
+      locator: { strategy: "css", value: "button" },
+      expectNavigation: { url: "(a+)+$", urlRegex: true },
+    }],
+    ["wait", { tabId: "tab-1" }],
+    ["screenshot", { tabId: "tab-1", fullPage: true, clip: { x: 0, y: 0, width: 100, height: 100 } }],
+  ])("rejects invalid or over-broad %s arguments before Broker dispatch", async (action, payload) => {
+    const response = await request(createApp(runtimeActor())).post(`/api/browser/${action}`).send(payload);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: "browser_invalid_argument" });
+    expect(registry.forward).not.toHaveBeenCalled();
+  });
+
+  it("never records clipboard contents in activity metadata", async () => {
+    const response = await request(createApp(runtimeActor()))
+      .post("/api/browser/clipboard")
+      .send({ action: "writeText", text: "private clipboard value" });
+
+    expect(response.status).toBe(200);
+    const serializedActivity = JSON.stringify(recordActivity.mock.calls);
+    expect(serializedActivity).not.toContain("private clipboard value");
+    expect(serializedActivity).not.toContain("writeText");
+    expect(serializedActivity).toContain("agent.browser.clipboard");
   });
 
   it("preserves the stable missing-ref status returned by Desktop", async () => {

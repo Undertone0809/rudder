@@ -4,7 +4,7 @@ import type { BrowserAgentCommand } from "./browser-agent-tabs.js";
 import { BrowserAgentError } from "./browser-agent-tabs.js";
 
 const MAX_BROWSER_COMMAND_BYTES = 1_048_576;
-const BROWSER_COMMAND_DEADLINE_MS = 10_000;
+const BROWSER_COMMAND_DEADLINE_MS = 35_000;
 
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);

@@ -33,6 +33,7 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
   let lifecycleQueue: Promise<void> = Promise.resolve();
   let lifecycleEpoch = 0;
   let acceptingCommands = false;
+  let reconcileRequested = false;
 
   const warn = (message: string, error: unknown) => {
     options.onWarning?.(message, error);
@@ -40,17 +41,22 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
 
   const syncProfileSetting = async (apiUrl: string, expectedEpoch: number) => {
     const settings = await options.readSettings(apiUrl);
-    if (expectedEpoch !== lifecycleEpoch) return;
+    if (expectedEpoch !== lifecycleEpoch) return null;
     if (settings.enabled !== options.getProfileEnabled()) {
       await options.setProfileEnabled(settings.enabled);
     }
+    return settings;
   };
 
   const runSweep = (apiUrl: string, expectedEpoch: number): Promise<void> => {
     if (sweepInFlight) return sweepInFlight;
     sweepInFlight = (async () => {
       try {
-        await syncProfileSetting(apiUrl, expectedEpoch);
+        const settings = await syncProfileSetting(apiUrl, expectedEpoch);
+        if (settings && Boolean(broker) !== settings.enabled) {
+          acceptingCommands = false;
+          reconcileRequested = true;
+        }
       } catch (error) {
         warn("Rudder Browser settings sync failed.", error);
       }
@@ -65,6 +71,10 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
       }
     })().finally(() => {
       sweepInFlight = null;
+      if (reconcileRequested && expectedEpoch === lifecycleEpoch) {
+        reconcileRequested = false;
+        void connect(apiUrl);
+      }
     });
     return sweepInFlight;
   };
@@ -103,13 +113,26 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
     return result;
   };
 
+  const startSweepTimer = (apiUrl: string, expectedEpoch: number) => {
+    const intervalMs = options.sweepIntervalMs ?? 15_000;
+    sweepTimer = setInterval(() => {
+      void runSweep(apiUrl, expectedEpoch);
+    }, intervalMs);
+    sweepTimer.unref?.();
+  };
+
   const connect = (apiUrl: string): Promise<void> => {
     acceptingCommands = false;
     const expectedEpoch = ++lifecycleEpoch;
     return enqueue(async () => {
     await disconnectCurrent();
-    await syncProfileSetting(apiUrl, expectedEpoch);
+    const settings = await syncProfileSetting(apiUrl, expectedEpoch);
     if (expectedEpoch !== lifecycleEpoch) return;
+    registeredApiUrl = apiUrl;
+    if (!settings?.enabled) {
+      startSweepTimer(apiUrl, expectedEpoch);
+      return;
+    }
     const nextBroker = await options.startBroker({
       execute: async (command) => {
         if (!acceptingCommands || expectedEpoch !== lifecycleEpoch) {
@@ -121,6 +144,7 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
     try {
       await options.registerBroker(apiUrl, nextBroker);
     } catch (error) {
+      registeredApiUrl = null;
       await options.unregisterBroker(apiUrl, nextBroker.token).catch((unregisterError) => {
         warn("Rudder Browser Broker registration rollback failed.", unregisterError);
       });
@@ -137,13 +161,8 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
       return;
     }
     broker = nextBroker;
-    registeredApiUrl = apiUrl;
     acceptingCommands = true;
-    const intervalMs = options.sweepIntervalMs ?? 15_000;
-    sweepTimer = setInterval(() => {
-      void runSweep(apiUrl, expectedEpoch);
-    }, intervalMs);
-    sweepTimer.unref?.();
+    startSweepTimer(apiUrl, expectedEpoch);
     });
   };
 

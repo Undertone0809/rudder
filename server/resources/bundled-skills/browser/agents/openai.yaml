@@ -1,4 +1,14 @@
 interface:
   display_name: "Browser"
-  short_description: "Control Rudder built-in Browser tabs safely"
-  default_prompt: "Use $browser to open and interact with a web page in the Rudder built-in Browser."
+  short_description: "Control and test pages in Rudder Browser"
+  default_prompt: "Use $browser to inspect and interact with this page in Rudder's built-in Browser."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "rudder-browser"
+      description: "Run-scoped Rudder Browser automation"
+      transport: "stdio"
+
+policy:
+  allow_implicit_invocation: true

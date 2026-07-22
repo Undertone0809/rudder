@@ -61,7 +61,7 @@ describe("Rudder MCP Browser capability", () => {
     };
     expect(module.rudderBrowserMcpRuntimeMetadata).toBeTypeOf("function");
     if (!module.rudderBrowserMcpRuntimeMetadata) return;
-    expect(module.rudderBrowserMcpRuntimeMetadata().toolCount).toBe(8);
+    expect(module.rudderBrowserMcpRuntimeMetadata().toolCount).toBe(26);
     expect(module.rudderBrowserMcpRuntimeMetadata().serverName).toBe("rudder-browser");
   });
 

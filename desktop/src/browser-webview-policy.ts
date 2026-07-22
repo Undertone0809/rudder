@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { handleAgentBrowserDownload } from "./browser-agent-downloads.js";
 import {
   isAllowedBrowserBootstrapUrl,
   isAllowedBrowserNavigationUrl,
@@ -38,6 +40,8 @@ type BrowserSessionPolicyTarget = {
 export type BrowserGuest = {
   isDestroyed(): boolean;
   close(options?: { waitForBeforeUnload?: boolean }): void;
+  getTitle?(): string;
+  getURL?(): string;
   on(event: string, handler: (...args: any[]) => void): unknown;
   setWindowOpenHandler(handler: (details: { url: string }) => { action: "deny" }): void;
 };
@@ -107,7 +111,9 @@ export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicy
   browserSession.setPermissionRequestHandler((_webContents, _permission, callback: (granted: boolean) => void) => {
     denyBrowserPermissionRequest(callback);
   });
-  browserSession.on("will-download", denyBrowserDownload);
+  browserSession.on("will-download", (event, item, webContents) => {
+    handleAgentBrowserDownload(event, item, webContents);
+  });
   browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
     if (details.resourceType === "mainFrame" && !isAllowedMainFrameRequestUrl(details.url)) {
       callback({ cancel: true });
@@ -124,20 +130,34 @@ export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicy
 }
 
 export function createBrowserGuestRegistry(): {
-  register(guest: BrowserGuest): void;
+  register(guest: BrowserGuest, source?: "agent" | "user"): void;
+  listUserTabs(): Array<{ id: string; title?: string; url?: string }>;
   closeAll(): Promise<void>;
 } {
-  const guests = new Set<BrowserGuest>();
+  const guests = new Map<BrowserGuest, { id: string; source: "agent" | "user" }>();
 
-  const register = (guest: BrowserGuest): void => {
-    guests.add(guest);
+  const register = (guest: BrowserGuest, source: "agent" | "user" = "user"): void => {
+    guests.set(guest, { id: randomUUID(), source });
     guest.on("destroyed", () => {
       guests.delete(guest);
     });
   };
 
+  const listUserTabs = () => Array.from(guests.entries()).flatMap(([guest, record]) => {
+    if (record.source !== "user" || guest.isDestroyed()) return [];
+    const rawUrl = guest.getURL?.().trim();
+    if (!rawUrl) return [];
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return [];
+      return [{ id: record.id, title: parsed.hostname.slice(0, 500), url: `${parsed.origin}/` }];
+    } catch {
+      return [];
+    }
+  });
+
   const closeAll = async (): Promise<void> => {
-    for (const guest of Array.from(guests)) {
+    for (const guest of Array.from(guests.keys())) {
       guests.delete(guest);
       if (!guest.isDestroyed()) {
         guest.close({ waitForBeforeUnload: false });
@@ -145,7 +165,7 @@ export function createBrowserGuestRegistry(): {
     }
   };
 
-  return { register, closeAll };
+  return { register, listUserTabs, closeAll };
 }
 
 export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, options: {

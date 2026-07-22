@@ -10,6 +10,8 @@ import { fingerprintRudderMcpToolManifest } from "@rudderhq/agent-runtime-utils/
 import {
   RUDDER_AGENT_V1_MCP_SERVER_NAME,
   RUDDER_AGENT_V1_MCP_TOOL_NAMES,
+  RUDDER_BROWSER_MCP_SERVER_NAME,
+  RUDDER_BROWSER_MCP_TOOL_NAMES,
 } from "@rudderhq/shared";
 import fs from "node:fs";
 import path from "node:path";
@@ -83,8 +85,26 @@ describe("agent-v1 registry", () => {
       "skill.scan-local",
       "skill.scan-projects",
       "browser.tabs",
+      "browser.user-tabs",
       "browser.open",
       "browser.navigate",
+      "browser.back",
+      "browser.forward",
+      "browser.reload",
+      "browser.viewport",
+      "browser.visibility",
+      "browser.snapshot",
+      "browser.locator",
+      "browser.cua",
+      "browser.dom-cua",
+      "browser.evaluate",
+      "browser.dialog",
+      "browser.clipboard",
+      "browser.logs",
+      "browser.download",
+      "browser.assets",
+      "browser.content",
+      "browser.wait",
       "browser.read",
       "browser.click",
       "browser.type",
@@ -163,6 +183,7 @@ describe("agent-v1 registry", () => {
   });
 
   it("builds stable core MCP metadata without Browser tools", () => {
+
     const cliManifest = buildAgentCliCapabilitiesManifest("agent-v1");
     const mcpManifest = buildAgentV1McpToolsManifest("agent-v1");
 
@@ -173,6 +194,7 @@ describe("agent-v1 registry", () => {
       cliManifest.capabilities.length - browserToolNames.length,
     );
     expect(mcpManifest.tools.map((tool) => tool.name)).toEqual(coreToolNames);
+
     expect(mcpManifest.tools.every((tool) => tool.category !== "browser")).toBe(true);
     expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_issue_checkout");
     expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_runs_errors");
@@ -234,10 +256,22 @@ describe("agent-v1 registry", () => {
     expect(cliManifest.capabilities.map((entry) => entry.id)).toContain("browser.open");
     expect(core.serverName).toBe(RUDDER_AGENT_V1_MCP_SERVER_NAME);
     expect(core.tools.map((tool) => tool.name)).not.toContain("rudder_browser_open");
-    expect(browser.serverName).toBe("rudder-browser");
-    expect(browser.tools.map((tool) => tool.name)).toEqual(browserToolNames);
+    expect(browser.serverName).toBe(RUDDER_BROWSER_MCP_SERVER_NAME);
+    expect(browser.tools.map((tool) => tool.name)).toEqual([...RUDDER_BROWSER_MCP_TOOL_NAMES]);
     expect(browser.tools.every((tool) => tool.category === "browser")).toBe(true);
+    expect(browser.tools.find((tool) => tool.capabilityId === "browser.locator")?.inputSchema).toMatchObject({
+      properties: {
+        dialogResponse: {
+          required: ["accept"],
+          properties: {
+            accept: { type: "boolean" },
+            promptText: { type: "string", maxLength: 10_000 },
+          },
+        },
+      },
+    });
     expect(core.tools).toHaveLength(cliManifest.capabilities.length - browser.tools.length);
+
   });
 
   it("keeps compat commands out of the MCP manifest even when CLI capabilities include all", () => {

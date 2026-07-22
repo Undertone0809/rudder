@@ -1,10 +1,29 @@
 import { randomUUID } from "node:crypto";
+import type { BrowserAdvancedAction } from "./browser-agent-advanced.js";
 import { isAllowedBrowserNavigationUrl } from "./browser-profile.js";
 
 export const BROWSER_AGENT_ACTIONS = [
   "tabs",
+  "user_tabs",
   "open",
   "navigate",
+  "back",
+  "forward",
+  "reload",
+  "viewport",
+  "visibility",
+  "snapshot",
+  "locator",
+  "cua",
+  "dom_cua",
+  "evaluate",
+  "dialog",
+  "clipboard",
+  "logs",
+  "download",
+  "assets",
+  "content",
+  "wait",
   "read",
   "click",
   "type",
@@ -29,11 +48,20 @@ export type BrowserAgentCommand = {
 
 export type BrowserAgentTab = {
   loadURL(url: string): Promise<void>;
+  goBack(): Promise<void>;
+  goForward(): Promise<void>;
+  reload(): Promise<void>;
+  getViewport(): { width: number; height: number };
+  setViewport(width: number, height: number): void;
+  resetViewport(): void;
+  isVisible(): boolean;
+  setVisible(visible: boolean): void;
+  advanced(action: BrowserAdvancedAction, args: Record<string, unknown>): Promise<unknown>;
   getURL(): string;
   getTitle(): string;
   isDestroyed(): boolean;
   stop(): void;
-  close(): void;
+  close(): Promise<void>;
   onDestroyed(listener: () => void): void;
   executeIsolatedJavaScript(script: string): Promise<unknown>;
   capturePng(): Promise<Buffer>;
@@ -64,6 +92,19 @@ type BrowserTabRecord = {
   operationQueue: Promise<void>;
 };
 
+type BrowserRunState = {
+  identity: BrowserRuntimeIdentity;
+  selectedTabId: string | null;
+  viewport: { width: number; height: number } | null;
+  visible: boolean;
+  clipboard: Array<{
+    entries: Array<{ mimeType: string; text?: string; base64?: string }>;
+    presentationStyle?: "unspecified" | "inline" | "attachment";
+  }>;
+  assetBundleBytes: number;
+  assetBundleQueue: Promise<void>;
+};
+
 type BrowserReadRef = {
   ref: string;
   role: string;
@@ -87,6 +128,53 @@ function requiredString(value: unknown, field: string, maxLength = 8_192): strin
     throw new BrowserAgentError("browser_invalid_argument", `Browser ${field} is invalid.`);
   }
   return value;
+}
+
+function optionalString(value: unknown, field: string, maxLength: number): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length > maxLength) {
+    throw new BrowserAgentError("browser_invalid_argument", `Browser ${field} is invalid.`);
+  }
+  return value;
+}
+
+function boundedClipboardItems(value: unknown): BrowserRunState["clipboard"] {
+  if (!Array.isArray(value) || value.length > 20) {
+    throw new BrowserAgentError("browser_invalid_argument", "Browser clipboard items are invalid.");
+  }
+  const items = value.map((item) => {
+    if (!isRecord(item) || !Array.isArray(item.entries) || item.entries.length > 20) {
+      throw new BrowserAgentError("browser_invalid_argument", "Browser clipboard item is invalid.");
+    }
+    const entries = item.entries.map((entry) => {
+      if (!isRecord(entry)) throw new BrowserAgentError("browser_invalid_argument", "Browser clipboard entry is invalid.");
+      const mimeType = requiredString(entry.mimeType, "clipboard MIME type", 200);
+      const text = optionalString(entry.text, "clipboard text", 500_000);
+      const base64 = optionalString(entry.base64, "clipboard binary payload", 1_400_000);
+      if ((text === undefined) === (base64 === undefined)) {
+        throw new BrowserAgentError("browser_invalid_argument", "Browser clipboard entry requires exactly one text or Base64 payload.");
+      }
+      if (base64 !== undefined) {
+        const bytes = Buffer.from(base64, "base64");
+        if (bytes.length > 1_000_000 || bytes.toString("base64").replace(/=+$/u, "") !== base64.replace(/=+$/u, "")) {
+          throw new BrowserAgentError("browser_invalid_argument", "Browser clipboard Base64 payload is invalid.");
+        }
+      }
+      return { mimeType, ...(text !== undefined ? { text } : { base64 }) };
+    });
+    const presentationStyle = item.presentationStyle;
+    if (presentationStyle !== undefined && !["unspecified", "inline", "attachment"].includes(String(presentationStyle))) {
+      throw new BrowserAgentError("browser_invalid_argument", "Browser clipboard presentation style is invalid.");
+    }
+    return {
+      entries,
+      ...(presentationStyle !== undefined ? { presentationStyle: presentationStyle as "unspecified" | "inline" | "attachment" } : {}),
+    };
+  });
+  if (Buffer.byteLength(JSON.stringify(items), "utf8") > 1_500_000) {
+    throw new BrowserAgentError("browser_result_too_large", "Browser clipboard exceeded the session limit.");
+  }
+  return items;
 }
 
 function requiredIdentity(value: unknown): BrowserRuntimeIdentity {
@@ -364,9 +452,29 @@ function tabSummary(record: BrowserTabRecord) {
   };
 }
 
+function privacySafeUserTabs(
+  tabs: Array<{ id: string; title?: string; url?: string }>,
+): Array<{ id: string; title: string; url: string }> {
+  return tabs.flatMap((tab) => {
+    if (typeof tab.id !== "string" || typeof tab.url !== "string") return [];
+    try {
+      const parsed = new URL(tab.url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return [];
+      return [{
+        id: tab.id.slice(0, 160),
+        title: parsed.hostname.slice(0, 500),
+        url: `${parsed.origin}/`,
+      }];
+    } catch {
+      return [];
+    }
+  });
+}
+
 export function createBrowserAgentTabController(options: {
   createTab: BrowserAgentTabFactory;
   getRudderAppOrigins(): string[];
+  listUserTabs?(): Array<{ id: string; title?: string; url?: string }>;
   createId?: () => string;
   createSnapshotId?: () => string;
   now?: () => Date;
@@ -375,11 +483,13 @@ export function createBrowserAgentTabController(options: {
   maxTabsTotal?: number;
   commandTimeoutMs?: number;
   maxScreenshotBytes?: number;
+  maxAssetBundleBytesPerRun?: number;
   maxRunStatusFailures?: number;
 }) {
   const records = new Map<string, BrowserTabRecord>();
   const pendingOpensByOwner = new Map<string, number>();
   const ownerGenerations = new Map<string, number>();
+  const runStates = new Map<string, BrowserRunState>();
   let pendingOpensTotal = 0;
   let globalGeneration = 0;
   const createId = options.createId ?? randomUUID;
@@ -388,8 +498,9 @@ export function createBrowserAgentTabController(options: {
   const clock = options.clock ?? Date.now;
   const maxTabsPerRun = options.maxTabsPerRun ?? 8;
   const maxTabsTotal = options.maxTabsTotal ?? 32;
-  const commandTimeoutMs = options.commandTimeoutMs ?? 12_000;
+  const commandTimeoutMs = options.commandTimeoutMs ?? 35_000;
   const maxScreenshotBytes = options.maxScreenshotBytes ?? 10_000_000;
+  const maxAssetBundleBytesPerRun = options.maxAssetBundleBytesPerRun ?? 250_000_000;
   const maxRunStatusFailures = options.maxRunStatusFailures ?? 3;
   const runStatusFailures = new Map<string, number>();
 
@@ -400,14 +511,43 @@ export function createBrowserAgentTabController(options: {
     runStatusFailures.delete(key);
   };
 
-  const closeRecord = (record: BrowserTabRecord) => {
+  const runState = (identity: BrowserRuntimeIdentity): BrowserRunState => {
+    const key = ownerKey(identity);
+    const current = runStates.get(key);
+    if (current) return current;
+    const created = {
+      identity: { ...identity },
+      selectedTabId: null,
+      viewport: null,
+      visible: false,
+      clipboard: [],
+      assetBundleBytes: 0,
+      assetBundleQueue: Promise.resolve(),
+    };
+    runStates.set(key, created);
+    return created;
+  };
+
+  const closeRecord = async (record: BrowserTabRecord) => {
     records.delete(record.tabId);
+    const state = runStates.get(record.ownerKey);
+    if (state?.selectedTabId === record.tabId) {
+      const replacement = Array.from(records.values()).find((candidate) => candidate.ownerKey === record.ownerKey);
+      state.selectedTabId = replacement?.tabId ?? null;
+      if (replacement && state.visible) replacement.tab.setVisible(true);
+    }
     record.refs.clear();
     try {
-      if (!record.tab.isDestroyed()) record.tab.close();
+      if (!record.tab.isDestroyed()) await record.tab.close();
     } finally {
       cleanupOwnerState(record.ownerKey);
     }
+  };
+
+  const runAssetBundleOperation = <T>(state: BrowserRunState, operation: () => Promise<T>): Promise<T> => {
+    const result = state.assetBundleQueue.then(operation);
+    state.assetBundleQueue = result.then(() => undefined, () => undefined);
+    return result;
   };
 
   const withDeadline = async <T>(
@@ -430,12 +570,11 @@ export function createBrowserAgentTabController(options: {
             } catch {
               // The tab is closed below even when Chromium cannot stop a pending load.
             }
-            try {
-              closeRecord(record);
-            } catch {
-              // Rejecting the command remains mandatory even if native cleanup fails.
-            }
-            reject(new BrowserAgentError("browser_timeout", "Browser action timed out and the tab was closed."));
+            void closeRecord(record).catch(() => undefined);
+            reject(new BrowserAgentError(
+              "browser_timeout",
+              "Browser action timed out and the tab was closed.",
+            ));
           }, remainingMs);
         }),
       ]);
@@ -496,7 +635,7 @@ export function createBrowserAgentTabController(options: {
       });
       if (globalGeneration !== expectedGlobalGeneration
         || (ownerGenerations.get(key) ?? 0) !== expectedOwnerGeneration) {
-        if (!tab.isDestroyed()) tab.close();
+        if (!tab.isDestroyed()) await tab.close();
         throw new BrowserAgentError("browser_tab_not_found", "Browser tab open was cancelled.");
       }
       const record: BrowserTabRecord = {
@@ -509,12 +648,16 @@ export function createBrowserAgentTabController(options: {
         refs: new Set(),
         operationQueue: Promise.resolve(),
       };
+      const state = runState(identity);
+      if (state.viewport) tab.setViewport(state.viewport.width, state.viewport.height);
       records.set(tabId, record);
+      state.selectedTabId = tabId;
+      tab.setVisible(state.visible);
       tab.onDestroyed(() => records.delete(tabId));
       try {
         await withDeadline(record, deadlineAt, () => tab.loadURL(url));
       } catch (error) {
-        closeRecord(record);
+        await closeRecord(record);
         if (error instanceof BrowserAgentError) throw error;
         throw new BrowserAgentError("browser_navigation_failed", "Browser navigation failed.");
       }
@@ -532,12 +675,13 @@ export function createBrowserAgentTabController(options: {
     const identity = requiredIdentity(rawIdentity);
     const key = ownerKey(identity);
     ownerGenerations.set(key, (ownerGenerations.get(key) ?? 0) + 1);
+    runStates.delete(key);
     runStatusFailures.delete(key);
     let firstError: unknown = null;
     for (const record of Array.from(records.values())) {
       if (record.ownerKey !== key) continue;
       try {
-        closeRecord(record);
+        await closeRecord(record);
       } catch (error) {
         firstError ??= error;
       }
@@ -548,11 +692,12 @@ export function createBrowserAgentTabController(options: {
 
   const closeAll = async () => {
     globalGeneration += 1;
+    runStates.clear();
     runStatusFailures.clear();
     let firstError: unknown = null;
     for (const record of Array.from(records.values())) {
       try {
-        closeRecord(record);
+        await closeRecord(record);
       } catch (error) {
         firstError ??= error;
       }
@@ -579,17 +724,113 @@ export function createBrowserAgentTabController(options: {
     }
     const args = isRecord(rawCommand.args) ? rawCommand.args : {};
 
+    if (action === "user_tabs") {
+      return { tabs: privacySafeUserTabs(options.listUserTabs?.() ?? []) };
+    }
     if (action === "tabs") {
+      const key = ownerKey(identity);
+      const state = runStates.get(key);
       return {
         tabs: Array.from(records.values())
-          .filter((record) => record.ownerKey === ownerKey(identity) && !record.tab.isDestroyed())
+          .filter((record) => record.ownerKey === key && !record.tab.isDestroyed())
           .map(tabSummary),
+        selectedTabId: state?.selectedTabId ?? null,
       };
+    }
+    if (action === "viewport") {
+      const state = runState(identity);
+      const operation = requiredString(args.action, "viewport action", 20);
+      if (operation === "set") {
+        const width = typeof args.width === "number" && Number.isInteger(args.width) && args.width >= 320 && args.width <= 3_840
+          ? args.width
+          : (() => { throw new BrowserAgentError("browser_invalid_argument", "Browser viewport width is invalid."); })();
+        const height = typeof args.height === "number" && Number.isInteger(args.height) && args.height >= 240 && args.height <= 2_160
+          ? args.height
+          : (() => { throw new BrowserAgentError("browser_invalid_argument", "Browser viewport height is invalid."); })();
+        state.viewport = { width, height };
+        for (const candidate of records.values()) {
+          if (candidate.ownerKey === ownerKey(identity)) candidate.tab.setViewport(width, height);
+        }
+      } else if (operation === "reset") {
+        state.viewport = null;
+        for (const candidate of records.values()) {
+          if (candidate.ownerKey === ownerKey(identity)) candidate.tab.resetViewport();
+        }
+      } else if (operation !== "get") {
+        throw new BrowserAgentError("browser_invalid_argument", "Browser viewport action is invalid.");
+      }
+      const selected = state.selectedTabId ? records.get(state.selectedTabId) : null;
+      return {
+        viewport: state.viewport ?? selected?.tab.getViewport() ?? null,
+        overridden: state.viewport !== null,
+      };
+    }
+    if (action === "visibility") {
+      const state = runState(identity);
+      if (args.visible !== undefined && typeof args.visible !== "boolean") {
+        throw new BrowserAgentError("browser_invalid_argument", "Browser visibility is invalid.");
+      }
+      if (typeof args.visible === "boolean") state.visible = args.visible;
+      for (const candidate of records.values()) {
+        if (candidate.ownerKey !== ownerKey(identity)) continue;
+        candidate.tab.setVisible(state.visible && candidate.tabId === state.selectedTabId);
+      }
+      return { visible: state.visible, selectedTabId: state.selectedTabId };
+    }
+    if (action === "clipboard") {
+      const state = runState(identity);
+      const operation = requiredString(args.action, "clipboard action", 30);
+      if (operation === "writeText") {
+        const text = optionalString(args.text, "clipboard text", 500_000) ?? "";
+        state.clipboard = [{ entries: [{ mimeType: "text/plain", text }] }];
+      } else if (operation === "write") {
+        state.clipboard = boundedClipboardItems(args.items);
+      } else if (operation === "clear") {
+        state.clipboard = [];
+      } else if (operation === "readText") {
+        const selected = state.selectedTabId ? records.get(state.selectedTabId) : null;
+        if (selected && selected.ownerKey === ownerKey(identity) && !selected.tab.isDestroyed()) {
+          const result = await runRecordOperation(selected, deadlineAt, () => (
+            selected.tab.advanced("clipboard", { action: "read" })
+          ));
+          if (isRecord(result)) state.clipboard = boundedClipboardItems(result.items);
+        }
+        const text = state.clipboard
+          .flatMap((item) => item.entries)
+          .find((entry) => entry.mimeType === "text/plain" && entry.text !== undefined)?.text ?? "";
+        return { text };
+      } else if (operation !== "read") {
+        throw new BrowserAgentError("browser_invalid_argument", "Browser clipboard action is invalid.");
+      }
+      if (operation === "read") {
+        const selected = state.selectedTabId ? records.get(state.selectedTabId) : null;
+        if (selected && selected.ownerKey === ownerKey(identity) && !selected.tab.isDestroyed()) {
+          const result = await runRecordOperation(selected, deadlineAt, () => (
+            selected.tab.advanced("clipboard", { action: "read" })
+          ));
+          if (isRecord(result)) state.clipboard = boundedClipboardItems(result.items);
+        }
+      } else {
+        const ownedTabs = Array.from(records.values()).filter((record) => (
+          record.ownerKey === ownerKey(identity) && !record.tab.isDestroyed()
+        ));
+        await Promise.all(ownedTabs.map((record) => runRecordOperation(record, deadlineAt, () => (
+          record.tab.advanced("clipboard", { action: "write", items: state.clipboard })
+        ))));
+      }
+      return { items: structuredClone(state.clipboard) };
     }
     if (action === "open") return openTab(identity, args.url, deadlineAt);
 
     const tabId = requiredString(args.tabId, "tab ID", 160);
     const record = ownedRecord(tabId, identity);
+    const state = runState(identity);
+    state.selectedTabId = tabId;
+    if (state.visible) {
+      for (const candidate of records.values()) {
+        if (candidate.ownerKey === record.ownerKey) candidate.tab.setVisible(candidate.tabId === tabId);
+      }
+    }
     if (action === "navigate") {
       return runRecordOperation(record, deadlineAt, async () => {
         const url = safeWebUrl(requiredString(args.url, "URL"), options.getRudderAppOrigins());
@@ -599,6 +840,72 @@ export function createBrowserAgentTabController(options: {
           await record.tab.loadURL(url);
         } catch {
           throw new BrowserAgentError("browser_navigation_failed", "Browser navigation failed.");
+        }
+        return tabSummary(record);
+      });
+    }
+    if (["snapshot", "locator", "cua", "dom_cua", "evaluate", "dialog", "logs", "download", "assets", "content", "wait"].includes(action)) {
+      return runRecordOperation(record, deadlineAt, async () => {
+        const performAdvancedAction = async () => {
+          try {
+          const advancedArgs = action === "assets" && args.action === "bundle"
+            ? {
+                ...args,
+                maxTotalBytes: Math.min(100_000_000, maxAssetBundleBytesPerRun - state.assetBundleBytes),
+              }
+            : args;
+          if (action === "assets" && args.action === "bundle" && Number(advancedArgs.maxTotalBytes) <= 0) {
+            throw new BrowserAgentError("browser_result_too_large", "Browser asset run quota is exhausted.");
+          }
+          const shortcutKeys = (action === "cua" || action === "dom_cua") && args.action === "keypress" && Array.isArray(args.keys)
+            ? args.keys.map(String)
+            : [];
+          const primary = shortcutKeys.findLast((key) => !["Alt", "Control", "Meta", "ControlOrMeta", "Shift"].includes(key));
+          const usesVirtualClipboard = Boolean(primary
+            && ["c", "v", "x"].includes(primary.toLowerCase())
+            && shortcutKeys.some((key) => ["Control", "Meta", "ControlOrMeta"].includes(key)));
+          if (usesVirtualClipboard) {
+            await record.tab.advanced("clipboard", { action: "write", items: state.clipboard });
+          }
+          const result = await record.tab.advanced(action as BrowserAdvancedAction, advancedArgs);
+          if (usesVirtualClipboard) {
+            const clipboardResult = await record.tab.advanced("clipboard", { action: "read" });
+            if (isRecord(clipboardResult)) state.clipboard = boundedClipboardItems(clipboardResult.items);
+          }
+          if (action === "assets" && args.action === "bundle" && isRecord(result) && isRecord(result.summary)) {
+            const totalBytes = Number(result.summary.totalBytes || 0);
+            if (Number.isFinite(totalBytes) && totalBytes > 0) state.assetBundleBytes += totalBytes;
+          }
+          return { tabId, url: record.tab.getURL().slice(0, 8_192), ...(isRecord(result) ? result : { result }) };
+          } catch (error) {
+            if (error instanceof BrowserAgentError) throw error;
+            const message = error instanceof Error && error.message.trim()
+              ? error.message.trim().slice(0, 500)
+              : "Browser action failed.";
+            if (/timed out/iu.test(message)) throw new BrowserAgentError("browser_timeout", message);
+            if (/missing|stale|resolve|matched/iu.test(message)) throw new BrowserAgentError("browser_ref_not_found", message);
+            throw new BrowserAgentError("browser_action_failed", message);
+          }
+        };
+        if (action !== "assets" || args.action !== "bundle") return performAdvancedAction();
+        return runAssetBundleOperation(state, async () => {
+          if (records.get(record.tabId) !== record || record.tab.isDestroyed()) {
+            throw new BrowserAgentError("browser_tab_not_found", "Browser tab was not found.");
+          }
+          return performAdvancedAction();
+        });
+      });
+    }
+    if (action === "back" || action === "forward" || action === "reload") {
+      return runRecordOperation(record, deadlineAt, async () => {
+        record.snapshotId = null;
+        record.refs.clear();
+        try {
+          if (action === "back") await record.tab.goBack();
+          else if (action === "forward") await record.tab.goForward();
+          else await record.tab.reload();
+        } catch {
+          throw new BrowserAgentError("browser_navigation_failed", `Browser ${action} failed.`);
         }
         return tabSummary(record);
       });
@@ -641,20 +948,35 @@ export function createBrowserAgentTabController(options: {
     }
     if (action === "screenshot") {
       return runRecordOperation(record, deadlineAt, async () => {
-        const png = await record.tab.capturePng();
-        if (png.length > maxScreenshotBytes) {
+        let capture: {
+          base64: string;
+          mimeType: string;
+          width?: number;
+          height?: number;
+          fullPage?: boolean;
+        };
+        try {
+          capture = await record.tab.advanced("screenshot", args) as typeof capture;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/16384-pixel dimension limit|screenshot exceeded the response limit/iu.test(message)) {
+            throw new BrowserAgentError("browser_result_too_large", message.slice(0, 300));
+          }
+          throw error;
+        }
+        const bytes = Buffer.from(capture.base64, "base64");
+        if (bytes.length > maxScreenshotBytes) {
           throw new BrowserAgentError("browser_result_too_large", "Browser screenshot exceeded the response limit.");
         }
         return {
           tabId,
           url: record.tab.getURL().slice(0, 8_192),
-          mimeType: "image/png",
-          base64: png.toString("base64"),
+          ...capture,
         };
       });
     }
     return runRecordOperation(record, deadlineAt, async () => {
-      closeRecord(record);
+      await closeRecord(record);
       return { tabId, closed: true };
     });
   };
@@ -662,6 +984,7 @@ export function createBrowserAgentTabController(options: {
   const reapInactiveRuns = async (isRunActive: (identity: BrowserRuntimeIdentity) => Promise<boolean>) => {
     const identities = new Map<string, BrowserRuntimeIdentity>();
     for (const record of records.values()) identities.set(record.ownerKey, record.identity);
+    for (const [key, state] of runStates) identities.set(key, state.identity);
     await Promise.all(Array.from(identities.entries()).map(async ([key, identity]) => {
       try {
         const active = await isRunActive(identity);

@@ -1,7 +1,25 @@
 export const BROWSER_ACTIONS = [
   "tabs",
+  "user_tabs",
   "open",
   "navigate",
+  "back",
+  "forward",
+  "reload",
+  "viewport",
+  "visibility",
+  "snapshot",
+  "locator",
+  "cua",
+  "dom_cua",
+  "evaluate",
+  "dialog",
+  "clipboard",
+  "logs",
+  "download",
+  "assets",
+  "content",
+  "wait",
   "read",
   "click",
   "type",
@@ -131,7 +149,7 @@ export function createBrowserBrokerRegistry(options: {
   maxResponseBytes?: number;
 } = {}) {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
-  const requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
+  const requestTimeoutMs = options.requestTimeoutMs ?? 40_000;
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_BROWSER_BROKER_MAX_RESPONSE_BYTES;
   let registration: BrowserBrokerRegistration | null = null;
 

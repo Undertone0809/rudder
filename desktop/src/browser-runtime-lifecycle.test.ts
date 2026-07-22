@@ -8,6 +8,7 @@ function createHarness(options: {
   registrationFails?: boolean;
   unregisterFails?: boolean;
   registrationGate?: Promise<void>;
+  initialServerEnabled?: boolean;
 } = {}) {
   const broker = {
     endpoint: "http://127.0.0.1:43123/browser",
@@ -31,7 +32,8 @@ function createHarness(options: {
   const unregisterBroker = options.unregisterFails
     ? vi.fn(async () => { throw new Error("unregister failed"); })
     : vi.fn(async () => undefined);
-  const readSettings = vi.fn(async () => ({ enabled: false, openLinksIn: "built_in" as const }));
+  let serverEnabled = options.initialServerEnabled ?? true;
+  const readSettings = vi.fn(async () => ({ enabled: serverEnabled, openLinksIn: "built_in" as const }));
   const setProfileEnabled = vi.fn(async (value: boolean) => { enabled = value; });
   const isRunActive = vi.fn(async () => true);
   const onWarning = vi.fn();
@@ -64,6 +66,7 @@ function createHarness(options: {
     readSettings,
     registerBroker,
     setProfileEnabled,
+    setServerEnabled: (value: boolean) => { serverEnabled = value; },
     tabs,
     unregisterBroker,
   };
@@ -77,12 +80,37 @@ describe("Desktop Browser runtime lifecycle", () => {
     const harness = createHarness();
 
     await harness.lifecycle.connect("http://127.0.0.1:3100/api");
-    expect(harness.setProfileEnabled).toHaveBeenCalledWith(false);
+    expect(harness.setProfileEnabled).not.toHaveBeenCalled();
     expect(harness.registerBroker).toHaveBeenCalledWith("http://127.0.0.1:3100/api", harness.broker);
 
     await vi.advanceTimersByTimeAsync(1_000);
     expect(harness.tabs.reapInactiveRuns).toHaveBeenCalledTimes(1);
     expect(harness.isRunActive).toHaveBeenCalledWith("http://127.0.0.1:3100/api", identity);
+  });
+
+  it("keeps the Broker offline while Browser is disabled and starts it after re-enable", async () => {
+    const harness = createHarness({ initialServerEnabled: false });
+
+    await harness.lifecycle.connect("http://127.0.0.1:3100/api");
+    expect(harness.setProfileEnabled).toHaveBeenCalledWith(false);
+    expect(harness.registerBroker).not.toHaveBeenCalled();
+
+    harness.setServerEnabled(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(harness.registerBroker).toHaveBeenCalledTimes(1));
+  });
+
+  it("unregisters and stops an active Broker when Browser becomes disabled", async () => {
+    const harness = createHarness();
+    await harness.lifecycle.connect("http://127.0.0.1:3100/api");
+
+    harness.setServerEnabled(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(harness.broker.stop).toHaveBeenCalledTimes(1));
+    expect(harness.unregisterBroker).toHaveBeenCalledWith(
+      "http://127.0.0.1:3100/api",
+      harness.broker.token,
+    );
   });
 
   it("unregisters, stops, and closes leases before reconnecting or disconnecting", async () => {

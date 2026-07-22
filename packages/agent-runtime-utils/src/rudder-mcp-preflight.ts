@@ -22,6 +22,14 @@ const RUDDER_SCHEMA_KEYS = new Set([
   "items",
   "additionalProperties",
   "required",
+  "enum",
+  "minimum",
+  "maximum",
+  "minLength",
+  "maxLength",
+  "minItems",
+  "maxItems",
+  "oneOf",
 ]);
 const JSON_SCHEMA_TYPES = new Set([
   "array",
@@ -76,9 +84,29 @@ function isValidRudderSchemaNode(value: unknown): value is Record<string, unknow
   const schema = value as Record<string, unknown>;
   if (Object.keys(schema).some((key) => !RUDDER_SCHEMA_KEYS.has(key))) return false;
 
-  const types = schemaTypes(schema.type);
-  if (!types) return false;
+  const types = schema.type === undefined ? [] : schemaTypes(schema.type);
+  if (types === null) return false;
   if (schema.description !== undefined && typeof schema.description !== "string") return false;
+
+  if (schema.enum !== undefined && (!Array.isArray(schema.enum) || schema.enum.length === 0)) return false;
+  for (const key of ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]) {
+    if (
+      schema[key] !== undefined
+      && (typeof schema[key] !== "number" || !Number.isFinite(schema[key]) || Number(schema[key]) < 0)
+    ) {
+      return false;
+    }
+  }
+  if (
+    schema.oneOf !== undefined
+    && (
+      !Array.isArray(schema.oneOf)
+      || schema.oneOf.length === 0
+      || !schema.oneOf.every(isValidRudderSchemaNode)
+    )
+  ) {
+    return false;
+  }
 
   const supportsObject = types.includes("object");
   const supportsArray = types.includes("array");

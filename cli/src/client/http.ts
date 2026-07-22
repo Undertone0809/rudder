@@ -30,6 +30,7 @@ interface ApiClientOptions {
   apiKey?: string;
   agentId?: string;
   runId?: string;
+  signal?: AbortSignal;
   recoverAuth?: (input: RecoverAuthInput) => Promise<string | null>;
 }
 
@@ -38,6 +39,7 @@ export class RudderApiClient {
   apiKey?: string;
   readonly agentId?: string;
   readonly runId?: string;
+  readonly signal?: AbortSignal;
   readonly recoverAuth?: (input: RecoverAuthInput) => Promise<string | null>;
 
   constructor(opts: ApiClientOptions) {
@@ -45,6 +47,7 @@ export class RudderApiClient {
     this.apiKey = opts.apiKey?.trim() || undefined;
     this.agentId = opts.agentId?.trim() || undefined;
     this.runId = opts.runId?.trim() || undefined;
+    this.signal = opts.signal;
     this.recoverAuth = opts.recoverAuth;
   }
 
@@ -121,6 +124,7 @@ export class RudderApiClient {
     const response = await fetch(url, {
       ...init,
       headers,
+      signal: init.signal ?? this.signal,
     });
 
     if (opts?.ignoreNotFound && response.status === 404) {

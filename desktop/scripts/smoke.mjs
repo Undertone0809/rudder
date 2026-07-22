@@ -42,8 +42,26 @@ const browserImportSmokeCookieUrl = "http://127.0.0.1/";
 const browserSmokeScreenshotPath = process.env.RUDDER_DESKTOP_SMOKE_SCREENSHOT?.trim() || null;
 const expectedBrowserToolNames = [
   "rudder_browser_tabs",
+  "rudder_browser_user_tabs",
   "rudder_browser_open",
   "rudder_browser_navigate",
+  "rudder_browser_back",
+  "rudder_browser_forward",
+  "rudder_browser_reload",
+  "rudder_browser_viewport",
+  "rudder_browser_visibility",
+  "rudder_browser_snapshot",
+  "rudder_browser_locator",
+  "rudder_browser_cua",
+  "rudder_browser_dom_cua",
+  "rudder_browser_evaluate",
+  "rudder_browser_dialog",
+  "rudder_browser_clipboard",
+  "rudder_browser_logs",
+  "rudder_browser_download",
+  "rudder_browser_assets",
+  "rudder_browser_content",
+  "rudder_browser_wait",
   "rudder_browser_read",
   "rudder_browser_click",
   "rudder_browser_type",
@@ -174,20 +192,106 @@ async function getAvailablePort() {
 
 async function startBrowserSmokeFixture() {
   const server = http.createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (requestUrl.pathname === "/asset.png") {
+      const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+      response.writeHead(200, {
+        "cache-control": "no-store",
+        "content-length": png.length,
+        "content-type": "image/png",
+      });
+      response.end(png);
+      return;
+    }
+    if (requestUrl.pathname === "/download") {
+      const body = Buffer.from("rudder-browser-download", "utf8");
+      response.writeHead(200, {
+        "cache-control": "no-store",
+        "content-disposition": 'attachment; filename="rudder-smoke.txt"',
+        "content-length": body.length,
+        "content-type": "text/plain; charset=utf-8",
+      });
+      response.end(body);
+      return;
+    }
+    if (requestUrl.pathname === "/frame") {
+      response.writeHead(200, {
+        "cache-control": "no-store",
+        "content-type": "text/html; charset=utf-8",
+      });
+      response.end(`<!doctype html><html><body>
+        <label for="frame-input">Frame input</label>
+        <input id="frame-input" data-testid="frame-input" />
+        <button id="frame-button" onclick="document.body.dataset.clicked='yes'">Frame action</button>
+      </body></html>`);
+      return;
+    }
     response.writeHead(200, {
       "cache-control": "no-store",
       "content-type": "text/html; charset=utf-8",
     });
     response.end(`<!doctype html>
       <html>
-        <head><title>Rudder Browser smoke</title></head>
+        <head>
+          <title>Rudder Browser smoke</title>
+          <style>
+            body { margin: 0; font-family: sans-serif; }
+            main { padding: 24px; }
+            .spacer { height: 1400px; }
+            @media (max-width: 500px) { body { background: rgb(1, 2, 3); } }
+          </style>
+        </head>
         <body>
           <main>
             <h1>Rudder Browser fixture</h1>
-            <button id="continue" type="button">Continue</button>
-            <input aria-label="Smoke input" />
+            <button id="continue" type="button" data-testid="continue">Continue</button>
+            <button id="cua-button" type="button">CUA action</button>
+            <button id="dom-button" type="button">DOM action</button>
+            <button id="dialog-button" type="button">Open prompt</button>
+            <label for="smoke-input">Smoke input</label>
+            <input id="smoke-input" data-testid="smoke-input" placeholder="Search fixture" />
+            <label for="smoke-upload">Smoke upload</label>
+            <input id="smoke-upload" type="file" />
+            <label><input id="smoke-check" type="checkbox" /> Accept smoke terms</label>
+            <label for="smoke-select">Smoke color</label>
+            <select id="smoke-select"><option value="red">Red</option><option value="blue">Blue</option></select>
+            <div id="editable" contenteditable="true" aria-label="Smoke editor"></div>
+            <a id="download-link" href="/download" download="rudder-smoke.txt">Download fixture</a>
+            <img class="hero" src="/asset.png" alt="Fixture asset" width="32" height="32" />
+            <iframe id="fixture-frame" src="/frame" title="Fixture frame"></iframe>
+            <p id="status">idle</p>
+            <p id="trusted-result">untrusted</p>
+            <p id="upload-result">none</p>
+            <p id="prompt-result">none</p>
+            <p id="cua-result">0</p>
+            <p id="dom-result">0</p>
+            <div class="spacer"></div>
+            <p id="below-fold">Below the fold</p>
             <p>${request.url ?? "/"}</p>
           </main>
+          <script>
+            document.querySelector("#continue").addEventListener("click", (event) => {
+              document.querySelector("#status").textContent = "continued";
+              document.querySelector("#trusted-result").textContent = event.isTrusted ? "trusted" : "untrusted";
+              console.warn("fixture-continued");
+            });
+            document.querySelector("#smoke-upload").addEventListener("change", (event) => {
+              document.querySelector("#upload-result").textContent = event.target.files?.[0]?.name || "none";
+            });
+            document.querySelector("#cua-button").addEventListener("click", () => {
+              const result = document.querySelector("#cua-result");
+              result.textContent = String(Number(result.textContent || "0") + 1);
+            });
+            document.querySelector("#dom-button").addEventListener("click", () => {
+              const result = document.querySelector("#dom-result");
+              result.textContent = String(Number(result.textContent || "0") + 1);
+            });
+            document.querySelector("#dialog-button").addEventListener("click", () => {
+              const value = prompt("Smoke prompt", "default");
+              document.querySelector("#prompt-result").textContent = value === null ? "dismissed" : value;
+            });
+            console.log("fixture-ready");
+          </script>
         </body>
       </html>`);
   });
@@ -484,6 +588,9 @@ async function createChat(baseUrl, companyId) {
       title: "Desktop browser smoke chat",
       issueCreationMode: "manual_approval",
       planMode: false,
+      initialMessage: {
+        body: "Open the browser fixture for the desktop smoke test.",
+      },
     }),
   });
   if (response.status !== 201) {
@@ -528,11 +635,11 @@ function createSmokeAgentJwt(agentId, orgId, runId) {
   return `${signingInput}.${signature}`;
 }
 
-async function createSmokeMcpClient(env) {
+async function createSmokeMcpClient(env, surface = "browser") {
   const executablePath = smokeMode === "packaged" ? await resolvePackagedExecutablePath() : process.execPath;
   const args = smokeMode === "packaged"
-    ? ["--desktop-cli", "mcp-server"]
-    : [path.resolve(repoRoot, "cli/dist/index.js"), "mcp-server"];
+    ? ["--desktop-cli", "mcp-server", "--server", surface]
+    : [path.resolve(repoRoot, "cli/dist/index.js"), "mcp-server", "--server", surface];
   const child = spawn(executablePath, args, {
     env: { ...process.env, ...env },
     stdio: ["pipe", "pipe", "pipe"],
@@ -542,6 +649,8 @@ async function createSmokeMcpClient(env) {
   let nextId = 1;
   let stderr = "";
   let exited = false;
+  let resolveExit;
+  const exitPromise = new Promise((resolve) => { resolveExit = resolve; });
 
   child.stderr.on("data", (chunk) => {
     stderr += chunk.toString();
@@ -562,6 +671,7 @@ async function createSmokeMcpClient(env) {
   });
   child.on("exit", (code, signal) => {
     exited = true;
+    resolveExit({ code, signal });
     for (const waiter of pending.values()) {
       clearTimeout(waiter.timer);
       waiter.reject(new Error(
@@ -573,16 +683,24 @@ async function createSmokeMcpClient(env) {
 
   return {
     request(method, params) {
+      if (exited) return Promise.reject(new Error(`Browser MCP server already exited: ${stderr}`));
       const id = nextId;
       nextId += 1;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error(`Browser MCP request timed out: ${method}`));
-        }, 15_000);
+        }, 45_000);
         pending.set(id, { resolve, reject, timer });
         child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, ...(params ? { params } : {}) })}\n`);
       });
+    },
+    async waitForExit(timeoutMs = 5_000) {
+      if (exited) return exitPromise;
+      return await Promise.race([
+        exitPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Browser MCP server did not exit after revocation")), timeoutMs)),
+      ]);
     },
     async close() {
       lines.close();
@@ -624,17 +742,18 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawn } = require("node:child_process");
 
-function parseManagedMcpConfig(configPath) {
+function parseManagedMcpConfig(configPath, serverName) {
   const lines = fs.readFileSync(configPath, "utf8").split(/\\r?\\n/u);
   let section = null;
   const result = { command: null, args: null, env: {} };
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (line === "[mcp_servers.rudder-tools]") {
+    if (line === "[mcp_servers." + serverName + "]") {
       section = "server";
       continue;
     }
-    if (line === "[mcp_servers.rudder-tools.env]") {
+    if (line === "[mcp_servers." + serverName + ".env]") {
+
       section = "env";
       continue;
     }
@@ -734,49 +853,67 @@ function readToolResult(response, toolName) {
 async function main() {
   const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
   const desktopCliEntryVisible = Boolean(process.env.RUDDER_DESKTOP_CLI_ENTRY);
-  const config = parseManagedMcpConfig(path.join(process.env.CODEX_HOME, "config.toml"));
+  const configPath = path.join(process.env.CODEX_HOME, "config.toml");
+  const controlConfig = parseManagedMcpConfig(configPath, "rudder-tools");
+  const browserConfig = parseManagedMcpConfig(configPath, "rudder-browser");
   const expectedCommand = process.env.RUDDER_TEST_EXPECTED_MCP_COMMAND;
-  if (config.command !== expectedCommand) {
-    throw new Error("managed Codex MCP command mismatch: " + config.command);
+  if (controlConfig.command !== expectedCommand || browserConfig.command !== expectedCommand) {
+    throw new Error("managed Codex MCP command mismatch: " + controlConfig.command + " / " + browserConfig.command);
   }
-  if (JSON.stringify(config.args) !== JSON.stringify(["--desktop-cli", "mcp-server"])) {
-    throw new Error("managed Codex MCP args mismatch: " + JSON.stringify(config.args));
+  if (JSON.stringify(controlConfig.args) !== JSON.stringify(["--desktop-cli", "mcp-server"])) {
+    throw new Error("managed Codex control MCP args mismatch: " + JSON.stringify(controlConfig.args));
+  }
+  if (JSON.stringify(browserConfig.args) !== JSON.stringify(["--desktop-cli", "mcp-server", "--server", "browser"])) {
+    throw new Error("managed Codex Browser MCP args mismatch: " + JSON.stringify(browserConfig.args));
   }
   if (desktopCliEntryVisible) throw new Error("provider inherited RUDDER_DESKTOP_CLI_ENTRY");
 
-  const client = createMcpClient(config);
+  const controlClient = createMcpClient(controlConfig);
+  const browserClient = createMcpClient(browserConfig);
   try {
-    const initialized = await client.request("initialize", {
+    const controlInitialized = await controlClient.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "packaged-codex-control-probe", version: "1" },
+    });
+    controlClient.notify("notifications/initialized", {});
+    const controlListed = await controlClient.request("tools/list", {});
+    const initialized = await browserClient.request("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
       clientInfo: { name: "packaged-codex-probe", version: "1" },
     });
-    client.notify("notifications/initialized", {});
-    const listed = await client.request("tools/list", {});
+    browserClient.notify("notifications/initialized", {});
+    const listed = await browserClient.request("tools/list", {});
     const browserToolNames = listed.result.tools
       .map((tool) => tool.name)
       .filter((name) => name.startsWith("rudder_browser_"));
-    const opened = readToolResult(await client.request("tools/call", {
+    const controlBrowserToolNames = controlListed.result.tools
+      .map((tool) => tool.name)
+      .filter((name) => name.startsWith("rudder_browser_"));
+    if (controlBrowserToolNames.length !== 0) throw new Error("core surface exposed Browser tools");
+    const opened = readToolResult(await browserClient.request("tools/call", {
       name: "rudder_browser_open",
       arguments: { url: process.env.RUDDER_TEST_BROWSER_URL },
     }), "rudder_browser_open");
-    const snapshot = readToolResult(await client.request("tools/call", {
+    const snapshot = readToolResult(await browserClient.request("tools/call", {
       name: "rudder_browser_read",
       arguments: { tabId: opened.tabId },
     }), "rudder_browser_read");
-    readToolResult(await client.request("tools/call", {
+    readToolResult(await browserClient.request("tools/call", {
       name: "rudder_browser_close",
       arguments: { tabId: opened.tabId },
     }), "rudder_browser_close");
     fs.writeFileSync(capturePath, JSON.stringify({
       browserToolNames,
-      command: config.command,
+      command: browserConfig.command,
+      controlContract: controlInitialized.result.capabilities.experimental.rudder,
       contract: initialized.result.capabilities.experimental.rudder,
       desktopCliEntryVisible,
       snapshotText: snapshot.text,
     }), "utf8");
   } finally {
-    await client.close();
+    await Promise.all([controlClient.close(), browserClient.close()]);
   }
   console.log(JSON.stringify({ type: "thread.started", thread_id: "packaged-codex-probe" }));
   console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "packaged adapter MCP probe passed" } }));
@@ -890,11 +1027,36 @@ async function verifyPackagedExternalRuntimeAdapterBrowser(input) {
   }
 }
 
-async function verifyAgentBrowserBroker(baseUrl, databaseUrl, company, agent, packagedRuntime = null) {
-  console.log("[desktop-smoke] verifying Agent Browser Broker open/read/close");
+function readSmokeMcpToolError(response, toolName) {
+  const result = response?.result;
+  assert.equal(result?.isError, true, `${toolName} should return an MCP tool error`);
+  const text = result.content?.find((item) => item?.type === "text")?.text;
+  const payload = text ? JSON.parse(text) : result.structuredContent ?? {};
+  assert.equal(typeof payload.code, "string", `${toolName} should return a stable Browser error code`);
+  return payload;
+}
+
+function findBrowserSnapshotNode(root, predicate) {
+  if (!root || typeof root !== "object") return null;
+  if (predicate(root)) return root;
+  for (const child of Array.isArray(root.children) ? root.children : []) {
+    const match = findBrowserSnapshotNode(child, predicate);
+    if (match) return match;
+  }
+  return null;
+}
+
+async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, company, agent, packagedRuntime = null) {
+  console.log("[desktop-smoke] verifying complete Agent Browser MCP parity workflow");
   const fixture = await startBrowserSmokeFixture();
   const postgres = await loadPostgres();
   const sql = postgres(databaseUrl, { max: 1, onnotice: () => {} });
+  const observeAgentBrowserDialog = (windowPage) => {
+    windowPage.on("dialog", () => {
+      // Rudder owns Agent Browser dialog handling; Playwright must only observe it.
+    });
+  };
+  electronApp.on("window", observeAgentBrowserDialog);
   const runId = randomUUID();
   try {
     await sql`
@@ -913,7 +1075,6 @@ async function verifyAgentBrowserBroker(baseUrl, databaseUrl, company, agent, pa
         token,
       });
       console.log("[desktop-smoke] external-runtime Codex adapter used packaged MCP config for Browser open/read/close");
-      return;
     }
     const mcp = await createSmokeMcpClient({
       RUDDER_AGENT_ID: agent.id,
@@ -929,7 +1090,21 @@ async function verifyAgentBrowserBroker(baseUrl, databaseUrl, company, agent, pa
       const browserToolNames = listed.result.tools
         .map((tool) => tool.name)
         .filter((name) => name.startsWith("rudder_browser_"));
-      assert.equal(browserToolNames.length, 8, "Agent Browser MCP should expose eight bounded tools");
+      assert.equal(browserToolNames.length, 26, "Agent Browser MCP should expose the complete Browser parity tool surface");
+      const userTabs = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_user_tabs",
+        arguments: {},
+      }), "rudder_browser_user_tabs");
+      assert.ok(Array.isArray(userTabs.tabs), "Agent Browser should return the user-visible built-in Browser tab inventory");
+      for (const tab of userTabs.tabs) {
+        const summarizedUrl = new URL(tab.url);
+        assert.equal(tab.title, summarizedUrl.hostname, "user Browser tab titles should be privacy-safe hostnames");
+        assert.equal(summarizedUrl.pathname, "/", "user Browser tabs should not expose paths");
+        assert.equal(summarizedUrl.search, "", "user Browser tabs should not expose queries");
+        assert.equal(summarizedUrl.hash, "", "user Browser tabs should not expose fragments");
+        assert.equal(summarizedUrl.username, "", "user Browser tabs should not expose URL credentials");
+        assert.equal(summarizedUrl.password, "", "user Browser tabs should not expose URL credentials");
+      }
 
       const rejectedFileOpen = await mcp.request("tools/call", {
         name: "rudder_browser_open",
@@ -947,6 +1122,230 @@ async function verifyAgentBrowserBroker(baseUrl, databaseUrl, company, agent, pa
       }), "rudder_browser_open");
       assert.equal(typeof opened.tabId, "string", "Agent Browser open should return a tab id");
 
+      const viewport = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_viewport",
+        arguments: { action: "set", width: 390, height: 844 },
+      }), "rudder_browser_viewport");
+      assert.deepEqual(viewport.viewport, { width: 390, height: 844 }, "Agent Browser should apply a run viewport override");
+
+      const domSnapshot = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_snapshot",
+        arguments: { tabId: opened.tabId, boxes: true, depth: 20, maxNodes: 2000 },
+      }), "rudder_browser_snapshot");
+      assert.equal(domSnapshot.chromiumSnapshot, true, "Agent Browser should include a real Chromium DOM snapshot");
+      assert.ok(domSnapshot.frameDocuments.length >= 1, "Agent Browser should include frame document metadata");
+      assert.ok(domSnapshot.accessibility.length > 0, "Agent Browser should include accessibility nodes");
+      const cuaButton = findBrowserSnapshotNode(domSnapshot.root, (node) => node.name === "CUA action");
+      const domButton = findBrowserSnapshotNode(domSnapshot.root, (node) => node.name === "DOM action");
+      assert.ok(cuaButton?.box, "Agent Browser snapshot should include a CUA target box");
+      assert.equal(typeof domButton?.nodeId, "string", "Agent Browser snapshot should include a DOM CUA node id");
+
+      const continueCount = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: {
+          tabId: opened.tabId,
+          action: "count",
+          locator: { strategy: "role", value: "button", name: "Continue", exact: true },
+        },
+      }), "rudder_browser_locator");
+      assert.equal(continueCount.count, 1, "semantic role locator should be unique");
+
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: {
+          tabId: opened.tabId,
+          action: "fill",
+          locator: { strategy: "label", value: "Smoke input", exact: true },
+          value: "rudder locator",
+        },
+      }), "rudder_browser_locator fill");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: {
+          tabId: opened.tabId,
+          action: "check",
+          locator: { strategy: "css", value: "#smoke-check" },
+        },
+      }), "rudder_browser_locator check");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: {
+          tabId: opened.tabId,
+          action: "select",
+          locator: { strategy: "label", value: "Smoke color", exact: true },
+          values: ["blue"],
+        },
+      }), "rudder_browser_locator select");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: {
+          tabId: opened.tabId,
+          action: "fill",
+          locator: { strategy: "label", value: "Frame input", exact: true, frame: ["#fixture-frame"] },
+          value: "inside frame",
+        },
+      }), "rudder_browser_locator frame fill");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: {
+          tabId: opened.tabId,
+          action: "click",
+          locator: { strategy: "testId", value: "continue" },
+        },
+      }), "rudder_browser_locator click");
+
+      const trusted = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: { tabId: opened.tabId, action: "innerText", locator: { strategy: "css", value: "#trusted-result" } },
+      }), "rudder_browser_locator trusted click result");
+      assert.equal(trusted.value, "trusted", "semantic locator click should use trusted Chromium input");
+
+      const uploadPath = path.join(tmpRoot, "browser-upload-fixture.txt");
+      await writeFile(uploadPath, "browser upload payload", "utf8");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: {
+          tabId: opened.tabId,
+          action: "setFiles",
+          locator: { strategy: "css", value: "#smoke-upload" },
+          paths: [uploadPath],
+        },
+      }), "rudder_browser_locator setFiles");
+      const uploaded = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: { tabId: opened.tabId, action: "innerText", locator: { strategy: "css", value: "#upload-result" } },
+      }), "rudder_browser_locator upload result");
+      assert.equal(uploaded.value, "browser-upload-fixture.txt", "file upload should reach the real Chromium file input");
+
+      const state = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_evaluate",
+        arguments: {
+          tabId: opened.tabId,
+          function: "() => ({ input: document.querySelector('#smoke-input').value, checked: document.querySelector('#smoke-check').checked, selected: document.querySelector('#smoke-select').value, status: document.querySelector('#status').textContent, viewport: [innerWidth, innerHeight] })",
+        },
+      }), "rudder_browser_evaluate");
+      assert.deepEqual(state.value, {
+        input: "rudder locator",
+        checked: true,
+        selected: "blue",
+        status: "continued",
+        viewport: [390, 844],
+      }, "read-only evaluate should observe locator and viewport results");
+
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_dom_cua",
+        arguments: { tabId: opened.tabId, action: "click", nodeId: domButton.nodeId },
+      }), "rudder_browser_dom_cua");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_cua",
+        arguments: {
+          tabId: opened.tabId,
+          action: "click",
+          x: cuaButton.box.x + cuaButton.box.width / 2,
+          y: cuaButton.box.y + cuaButton.box.height / 2,
+        },
+      }), "rudder_browser_cua");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_wait",
+        arguments: { tabId: opened.tabId, text: "continued", timeoutMs: 5000 },
+      }), "rudder_browser_wait");
+      const cuaCount = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: { tabId: opened.tabId, action: "innerText", locator: { strategy: "css", value: "#cua-result" } },
+      }), "rudder_browser_locator CUA result");
+      const domCount = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: { tabId: opened.tabId, action: "innerText", locator: { strategy: "css", value: "#dom-result" } },
+      }), "rudder_browser_locator DOM result");
+      assert.deepEqual({ cua: cuaCount.value, dom: domCount.value }, { cua: "1", dom: "1" });
+      const elementInfo = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_cua",
+        arguments: {
+          tabId: opened.tabId,
+          action: "elementInfo",
+          x: cuaButton.box.x + cuaButton.box.width / 2,
+          y: cuaButton.box.y + cuaButton.box.height / 2,
+        },
+      }), "rudder_browser_cua elementInfo");
+      assert.ok(elementInfo.elements.some((element) => element.name === "CUA action"), "coordinate inspection should describe the target element");
+
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_clipboard",
+        arguments: { action: "writeText", text: "virtual clipboard only" },
+      }), "rudder_browser_clipboard writeText");
+      const clipboard = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_clipboard",
+        arguments: { action: "readText" },
+      }), "rudder_browser_clipboard readText");
+      assert.equal(clipboard.text, "virtual clipboard only", "virtual Browser clipboard should round-trip text");
+
+      const logs = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_logs",
+        arguments: { tabId: opened.tabId, levels: ["warn"], filter: "fixture-continued", limit: 20 },
+      }), "rudder_browser_logs");
+      assert.ok(logs.logs.some((entry) => entry.message.includes("fixture-continued")), "Agent Browser should capture page console warnings");
+
+      const assets = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_assets",
+        arguments: { tabId: opened.tabId, action: "list" },
+      }), "rudder_browser_assets list");
+      const imageAsset = assets.assets.find((asset) => asset.url.endsWith("/asset.png"));
+      assert.ok(imageAsset, "page asset inventory should include the fixture image");
+      const bundle = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_assets",
+        arguments: { tabId: opened.tabId, action: "bundle", inventoryId: assets.id, assetIds: [imageAsset.id] },
+      }), "rudder_browser_assets bundle");
+      assert.equal(bundle.summary.downloadedCount, 1, "page asset bundle should download the selected image");
+      assert.equal(await pathExists(bundle.manifestPath), true, "page asset bundle should write a manifest");
+      const contentExport = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_content",
+        arguments: { tabId: opened.tabId, format: "html" },
+      }), "rudder_browser_content");
+      assert.equal(await pathExists(contentExport.path), true, "page content export should write a run-owned artifact");
+      assert.match(await readFile(contentExport.path, "utf8"), /Rudder Browser fixture/, "content export should contain the current page");
+
+      const mediaDownload = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_download",
+        arguments: { tabId: opened.tabId, mode: "media", locator: { strategy: "css", value: "img.hero" } },
+      }), "rudder_browser_download media");
+      assert.equal(await pathExists(mediaDownload.path), true, "media download should write a run-owned artifact");
+      const triggeredDownload = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_download",
+        arguments: { tabId: opened.tabId, mode: "trigger", locator: { strategy: "css", value: "#download-link" }, timeoutMs: 10000 },
+      }), "rudder_browser_download trigger");
+      assert.equal(triggeredDownload.state, "completed", "one-shot browser download should complete");
+      assert.equal(await pathExists(triggeredDownload.path), true, "one-shot browser download should use its opaque artifact path");
+
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_locator",
+        arguments: {
+          tabId: opened.tabId,
+          action: "click",
+          locator: { strategy: "css", value: "#dialog-button" },
+          dialogResponse: { accept: true, promptText: "accepted" },
+        },
+      }), "rudder_browser_locator dialog click");
+      readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_wait",
+        arguments: { tabId: opened.tabId, text: "accepted", timeoutMs: 5000 },
+      }), "rudder_browser_wait prompt result");
+
+      const viewportScreenshot = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_screenshot",
+        arguments: { tabId: opened.tabId },
+      }), "rudder_browser_screenshot viewport");
+      assert.deepEqual([viewportScreenshot.width, viewportScreenshot.height], [390, 844], "viewport screenshot should report responsive dimensions");
+      const fullScreenshot = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_screenshot",
+        arguments: { tabId: opened.tabId, fullPage: true },
+      }), "rudder_browser_screenshot full page");
+      assert.ok(fullScreenshot.height > 844, "full-page screenshot should exceed the viewport height");
+      const elementScreenshot = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_screenshot",
+        arguments: { tabId: opened.tabId, locator: { strategy: "css", value: "#continue" } },
+      }), "rudder_browser_screenshot locator");
+      assert.ok(elementScreenshot.width > 0 && elementScreenshot.height > 0, "locator screenshot should report element dimensions");
+
       const snapshot = readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_read",
         arguments: { tabId: opened.tabId },
@@ -954,15 +1353,113 @@ async function verifyAgentBrowserBroker(baseUrl, databaseUrl, company, agent, pa
       assert.match(snapshot.text, /Rudder Browser fixture/, "Agent Browser should read the fixture page");
       assert.ok(snapshot.refs.some((ref) => ref.name === "Continue"), "Agent Browser should return bounded element refs");
 
-      readSmokeMcpToolResult(await mcp.request("tools/call", {
-        name: "rudder_browser_close",
+      const foreignRunId = randomUUID();
+      await sql`
+        insert into heartbeat_runs (id, org_id, agent_id, invocation_source, status, started_at)
+        values (${foreignRunId}::uuid, ${company.id}::uuid, ${agent.id}::uuid, 'desktop_smoke_foreign', 'running', now())
+      `;
+      const foreignMcp = await createSmokeMcpClient({
+        RUDDER_AGENT_ID: agent.id,
+        RUDDER_API_KEY: createSmokeAgentJwt(agent.id, company.id, foreignRunId),
+        RUDDER_API_URL: baseUrl,
+        RUDDER_BROWSER_ENABLED: "true",
+        RUDDER_ORG_ID: company.id,
+        RUDDER_RUN_ID: foreignRunId,
+      });
+      try {
+        await foreignMcp.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "desktop-smoke-foreign", version: "1" } });
+        const denied = readSmokeMcpToolError(await foreignMcp.request("tools/call", {
+          name: "rudder_browser_snapshot",
+          arguments: { tabId: opened.tabId },
+        }), "rudder_browser_snapshot foreign run");
+        assert.equal(denied.code, "browser_tab_forbidden", "another run must not inspect the tab");
+      } finally {
+        await foreignMcp.close();
+        await sql`update heartbeat_runs set status = 'succeeded', finished_at = now(), updated_at = now() where id = ${foreignRunId}::uuid`.catch(() => {});
+      }
+
+      const navigated = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_navigate",
+        arguments: { tabId: opened.tabId, url: `${fixture.url}/second` },
+      }), "rudder_browser_navigate");
+      assert.match(navigated.url, /\/second$/, "Agent Browser should navigate to the second fixture page");
+
+      const backed = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_back",
         arguments: { tabId: opened.tabId },
-      }), "rudder_browser_close");
+      }), "rudder_browser_back");
+      assert.match(backed.url, /\/agent$/, "Agent Browser should navigate back through real Electron history");
+
+      const forwarded = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_forward",
+        arguments: { tabId: opened.tabId },
+      }), "rudder_browser_forward");
+      assert.match(forwarded.url, /\/second$/, "Agent Browser should navigate forward through real Electron history");
+
+      const reloaded = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_reload",
+        arguments: { tabId: opened.tabId },
+      }), "rudder_browser_reload");
+      assert.match(reloaded.url, /\/second$/, "Agent Browser should reload the active page");
+
+      const coreMcp = await createSmokeMcpClient({
+        RUDDER_AGENT_ID: agent.id,
+        RUDDER_API_KEY: token,
+        RUDDER_API_URL: baseUrl,
+        RUDDER_ORG_ID: company.id,
+        RUDDER_RUN_ID: runId,
+      }, "core");
+      try {
+        await coreMcp.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "desktop-smoke-core", version: "1" } });
+        const disabledResponse = await fetch(`${baseUrl}/api/instance/settings/browser`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: false }),
+        });
+        assert.equal(disabledResponse.status, 200, "Desktop smoke should disable Browser settings");
+        await mcp.waitForExit(8_000);
+        const coreTools = await coreMcp.request("tools/list");
+        assert.equal(coreTools.result.tools.length, 69, "core MCP should remain available after Browser disable");
+        await new Promise((resolve) => setTimeout(resolve, 6_000));
+        assert.equal(await pathExists(bundle.directoryPath), false, "live disable should clean page-asset artifacts");
+        assert.equal(await pathExists(contentExport.directoryPath), false, "live disable should clean content-export artifacts");
+        assert.equal(await pathExists(mediaDownload.directoryPath), false, "live disable should clean media-download artifacts");
+        assert.equal(await pathExists(triggeredDownload.directoryPath), false, "live disable should clean triggered-download artifacts");
+
+        const reenabledResponse = await fetch(`${baseUrl}/api/instance/settings/browser`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: true }),
+        });
+        assert.equal(reenabledResponse.status, 200, "Desktop smoke should restore Browser settings");
+        await new Promise((resolve) => setTimeout(resolve, 6_000));
+        const freshBrowserMcp = await createSmokeMcpClient({
+          RUDDER_AGENT_ID: agent.id,
+          RUDDER_API_KEY: token,
+          RUDDER_API_URL: baseUrl,
+          RUDDER_BROWSER_ENABLED: "true",
+          RUDDER_ORG_ID: company.id,
+          RUDDER_RUN_ID: runId,
+        });
+        try {
+          await freshBrowserMcp.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "desktop-smoke-fresh-browser", version: "1" } });
+          const reopenedSurface = readSmokeMcpToolResult(await freshBrowserMcp.request("tools/call", {
+            name: "rudder_browser_tabs",
+            arguments: {},
+          }), "fresh rudder_browser_tabs after re-enable");
+          assert.deepEqual(reopenedSurface.tabs, [], "re-enabled Browser should require a fresh MCP with no prior tabs");
+        } finally {
+          await freshBrowserMcp.close();
+        }
+      } finally {
+        await coreMcp.close();
+      }
     } finally {
       await mcp.close();
     }
-    console.log("[desktop-smoke] Agent Browser MCP completed tool discovery and open/read/close");
+    console.log("[desktop-smoke] Agent Browser MCP completed full parity, isolation, and live-disable workflow");
   } finally {
+    electronApp.off("window", observeAgentBrowserDialog);
     await sql`update heartbeat_runs set status = 'succeeded', finished_at = now(), updated_at = now() where id = ${runId}::uuid`.catch(() => {});
     await sql.end({ timeout: 2 }).catch(() => {});
     await fixture.stop().catch(() => {});
@@ -2472,7 +2969,14 @@ async function runCleanScenario(mode) {
     await verifyBundledSkills(firstRun.baseUrl, company.id);
     await verifySyntheticBrowserCookieImport(firstRun.electronApp, firstRun.page, browserImportFixture);
     const ceo = await createCeo(firstRun.baseUrl, company.id);
-    await verifyAgentBrowserBroker(firstRun.baseUrl, runtimeUrls.databaseUrl, company, ceo, packagedRuntime);
+    await verifyAgentBrowserBroker(
+      firstRun.electronApp,
+      firstRun.baseUrl,
+      runtimeUrls.databaseUrl,
+      company,
+      ceo,
+      packagedRuntime,
+    );
     const issue = await createIssue(firstRun.baseUrl, company.id, ceo.id);
     if (mode === "packaged") {
       await verifyPackagedDesktopCli(firstRun.baseUrl, ceo, issue);
@@ -2523,6 +3027,7 @@ async function runCleanScenario(mode) {
     const secondCompany = await createCompany(firstRun.baseUrl, "DS2");
     const secondCompanyRouteKey = secondCompany.urlKey ?? secondCompany.issuePrefix;
     await verifyBundledSkills(firstRun.baseUrl, secondCompany.id);
+    await createCeo(firstRun.baseUrl, secondCompany.id);
     firstRun.page = await verifyChatSidePanelBrowser(
       firstRun.page,
       firstRun.baseUrl,
@@ -2649,6 +3154,7 @@ async function runBrowserScenario(mode) {
   const fixture = await startBrowserSmokeFixture();
   try {
     const company = await createCompany(run.baseUrl);
+    await createCeo(run.baseUrl, company.id);
     await verifyChatSidePanelBrowser(
       run.page,
       run.baseUrl,
@@ -2669,6 +3175,23 @@ async function runBrowserScenario(mode) {
     throw error;
   } finally {
     await fixture.stop().catch(() => {});
+  }
+}
+
+async function runAgentBrowserScenario(mode) {
+  const scenarioRoot = path.join(tmpRoot, "agent-browser");
+  const ports = await allocateSmokePorts();
+  const runtimeUrls = createRuntimeUrls(ports);
+  const run = await launchDesktop(scenarioRoot, mode, ports);
+  try {
+    const company = await createCompany(run.baseUrl);
+    const ceo = await createCeo(run.baseUrl, company.id);
+    await verifyAgentBrowserBroker(run.electronApp, run.baseUrl, runtimeUrls.databaseUrl, company, ceo);
+    await closeDesktop(run.electronApp);
+  } catch (error) {
+    console.error("[desktop-smoke] Agent Browser scenario failed", error);
+    await closeDesktop(run.electronApp).catch(() => {});
+    throw error;
   }
 }
 
@@ -2699,7 +3222,7 @@ function resolveScenarioList(mode, scenario) {
       : ["startup-recovery", "clean"];
   }
   if (scenario === "all") return ["startup-recovery", "clean", "upgrade"];
-  if (scenario === "startup-recovery" || scenario === "clean" || scenario === "upgrade" || scenario === "browser") {
+  if (scenario === "startup-recovery" || scenario === "clean" || scenario === "upgrade" || scenario === "browser" || scenario === "agent-browser") {
     return [scenario];
   }
   throw new Error(`Unknown smoke scenario: ${scenario}`);
@@ -2715,6 +3238,8 @@ try {
       await runCleanScenario(smokeMode);
     } else if (scenario === "browser") {
       await runBrowserScenario(smokeMode);
+    } else if (scenario === "agent-browser") {
+      await runAgentBrowserScenario(smokeMode);
     } else {
       await runUpgradeScenario(smokeMode);
     }
