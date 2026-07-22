@@ -291,7 +291,10 @@ async function writeMcpProcessCleanupNoiseCodexCommand(commandPath: string): Pro
   const script = `#!/usr/bin/env node
 process.stdin.resume();
 process.stdin.on("end", () => {
-  process.stderr.write("2026-07-01T06:12:02.158754Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server rudder-tools: No such process (os error 3)\\n");
+  process.stderr.write([
+    "2026-07-01T06:12:02.158754Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server rudder-tools: No such process (os error 3)",
+    "2026-07-01T06:12:02.158755Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server rudder-browser: No such process (os error 3)",
+  ].join("\\n") + "\\n");
   console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
   console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
   console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
