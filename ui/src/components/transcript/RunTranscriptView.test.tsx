@@ -694,6 +694,16 @@ describe("RunTranscriptView", () => {
               text: "turn started",
             },
             {
+              kind: "system",
+              ts: "2026-07-19T00:00:00.250Z",
+              text: "item started: userMessage (id=user-message-1)",
+            },
+            {
+              kind: "system",
+              ts: "2026-07-19T00:00:00.500Z",
+              text: "item completed: userMessage (id=user-message-1)",
+            },
+            {
               kind: "tool_call",
               ts: "2026-07-19T00:00:01.000Z",
               name: "command_execution",
@@ -749,6 +759,7 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Ran printf done");
     expect(html).not.toContain("reasoning started");
     expect(html).not.toContain("reasoning completed");
+    expect(html).not.toContain("UserMessage");
     expect(html).not.toContain("RUDDER_RESULT");
     expect(html).not.toContain("Final answer shown in the assistant message.");
   });
