@@ -2,10 +2,16 @@
 
 import { chatsApi } from "@/api/chats";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ChatConversation, ChatInlineAnnotationInput } from "@rudderhq/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useChatDraftQueries } from "./Chat.workspace-helpers";
+import {
+  canQueueComposerDraft,
+  createQueuedComposerMessage,
+  queuedMessagePayloadForBodyEdit,
+  useChatDraftQueries,
+} from "./Chat.workspace-helpers";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -13,6 +19,7 @@ import { useChatDraftQueries } from "./Chat.workspace-helpers";
 
 vi.mock("@/api/chats", () => ({
   chatsApi: {
+    createQueuedMessage: vi.fn(),
     list: vi.fn(),
     preflightDraft: vi.fn(),
   },
@@ -123,5 +130,115 @@ describe("useChatDraftQueries", () => {
 
     unmountProbe(second.root, second.container);
     queryClient.clear();
+  });
+});
+
+describe("createQueuedComposerMessage", () => {
+  it("passes annotation file indexes and files through to the Queue request", async () => {
+    const queryClient = new QueryClient();
+    const conversation = {
+      id: "chat-1",
+      orgId: "org-1",
+    } as ChatConversation;
+    const annotation: ChatInlineAnnotationInput = {
+      id: "00000000-0000-4000-8000-000000000001",
+      selectedText: "quoted answer",
+      comment: "Explain this",
+      sourceConversationId: "00000000-0000-4000-8000-000000000002",
+      sourceMessageId: "00000000-0000-4000-8000-000000000003",
+      surface: "assistant_body",
+      sourceHash: "a".repeat(64),
+      start: 4,
+      end: 17,
+      prefix: "the ",
+      suffix: " next",
+      attachmentFileIndexes: [0],
+    };
+    const annotationFile = new File(["proof"], "proof.png", { type: "image/png" });
+    const queued = {
+      id: "queue-1",
+      conversationId: conversation.id,
+      payload: {
+        body: "",
+        inlineAnnotations: [{ ...annotation, attachmentFileIndexes: undefined }],
+      },
+    };
+    vi.mocked(chatsApi.createQueuedMessage).mockResolvedValue(queued as never);
+
+    await createQueuedComposerMessage({
+      conversation,
+      body: "",
+      inlineAnnotations: [annotation],
+      files: [annotationFile],
+      orgId: "org-1",
+      projectId: null,
+      serverActiveGenerationId: "generation-1",
+      queueSnapshot: undefined,
+      queryClient,
+    });
+
+    expect(chatsApi.createQueuedMessage).toHaveBeenCalledWith(
+      conversation.id,
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          body: "",
+          inlineAnnotations: [annotation],
+        }),
+      }),
+      { files: [annotationFile] },
+    );
+  });
+});
+
+describe("canQueueComposerDraft", () => {
+  it("allows annotation-only Queue turns while a reply is active", () => {
+    expect(canQueueComposerDraft({
+      activeReply: true,
+      body: "",
+      annotationCount: 1,
+      pendingRegularFileCount: 0,
+      newConversationSendInFlight: false,
+    })).toBe(true);
+  });
+
+  it("keeps unsupported regular Composer files out of Queue", () => {
+    expect(canQueueComposerDraft({
+      activeReply: true,
+      body: "",
+      annotationCount: 1,
+      pendingRegularFileCount: 1,
+      newConversationSendInFlight: false,
+    })).toBe(false);
+  });
+});
+
+describe("queuedMessagePayloadForBodyEdit", () => {
+  it("omits annotations so the server preserves their queued assets", () => {
+    const payload = queuedMessagePayloadForBodyEdit({
+      body: "",
+      inlineAnnotations: [{
+        id: "00000000-0000-4000-8000-000000000001",
+        selectedText: "quoted answer",
+        comment: "Explain this",
+        sourceConversationId: "00000000-0000-4000-8000-000000000002",
+        sourceMessageId: "00000000-0000-4000-8000-000000000003",
+        surface: "assistant_body",
+        sourceHash: "a".repeat(64),
+        start: 4,
+        end: 17,
+        prefix: "the ",
+        suffix: " next",
+        attachmentIds: ["00000000-0000-4000-8000-000000000004"],
+      }],
+      attachmentIds: [],
+      skillRefs: [],
+    }, "Updated prompt");
+
+    expect(payload).toEqual({
+      body: "Updated prompt",
+      attachmentIds: [],
+      skillRefs: [],
+    });
+    expect(payload).not.toHaveProperty("inlineAnnotations");
   });
 });

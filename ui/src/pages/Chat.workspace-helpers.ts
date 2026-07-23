@@ -3,7 +3,7 @@ import { chatsApi, type ChatSteerQueuedMessageRequest } from "@/api/chats";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { displayChatTitle } from "@/lib/chat-title";
 import { queryKeys } from "@/lib/queryKeys";
-import { buildChatMentionHref, type ChatConversation, type ChatGenerationStatus, type ChatInlineAnnotation, type ChatMessage, type ChatStreamEvent } from "@rudderhq/shared";
+import { buildChatMentionHref, type ChatConversation, type ChatGenerationStatus, type ChatInlineAnnotationInput, type ChatMessage, type ChatQueuedMessagePayload, type ChatStreamEvent } from "@rudderhq/shared";
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 
 export type SendButtonMode = "send" | "stop" | "sending" | "stopping" | "queue";
@@ -183,30 +183,35 @@ export function useChatDraftQueries(input: {
 export async function createQueuedComposerMessage(input: {
   conversation: ChatConversation;
   body: string;
-  inlineAnnotations?: ChatInlineAnnotation[];
+  inlineAnnotations?: ChatInlineAnnotationInput[];
+  files?: File[];
   orgId: string;
   projectId: string | null;
   serverActiveGenerationId: string | null;
   queueSnapshot: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined;
   queryClient: QueryClient;
 }) {
-  const queued = await chatsApi.createQueuedMessage(input.conversation.id, {
-    clientMutationId: `ui:${Date.now()}:${Math.random().toString(36).slice(2)}`,
-    expectedGenerationId: input.serverActiveGenerationId,
-    payload: {
-      body: input.body,
-      ...(input.inlineAnnotations?.length
-        ? { inlineAnnotations: input.inlineAnnotations }
-        : {}),
-      attachmentIds: [],
-      skillRefs: [],
-      projectId: input.projectId,
-      accessMode: null,
-      model: null,
-      effort: null,
-      metadata: { source: "chat_composer" },
+  const queued = await chatsApi.createQueuedMessage(
+    input.conversation.id,
+    {
+      clientMutationId: `ui:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      expectedGenerationId: input.serverActiveGenerationId,
+      payload: {
+        body: input.body,
+        ...(input.inlineAnnotations?.length
+          ? { inlineAnnotations: input.inlineAnnotations }
+          : {}),
+        attachmentIds: [],
+        skillRefs: [],
+        projectId: input.projectId,
+        accessMode: null,
+        model: null,
+        effort: null,
+        metadata: { source: "chat_composer" },
+      },
     },
-  });
+    { files: input.files },
+  );
   input.queryClient.setQueryData(
     queryKeys.chats.queue(input.orgId, input.conversation.id),
     (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
@@ -218,4 +223,30 @@ export async function createQueuedComposerMessage(input: {
     }),
   );
   return queued;
+}
+
+export function canQueueComposerDraft(input: {
+  activeReply: boolean;
+  body: string;
+  annotationCount: number;
+  pendingRegularFileCount: number;
+  newConversationSendInFlight: boolean;
+}) {
+  return Boolean(
+    input.activeReply
+    && !input.newConversationSendInFlight
+    && input.pendingRegularFileCount === 0
+    && (input.body.trim().length > 0 || input.annotationCount > 0),
+  );
+}
+
+export function queuedMessagePayloadForBodyEdit(
+  payload: ChatQueuedMessagePayload,
+  body: string,
+) {
+  const {
+    inlineAnnotations: _preservedInlineAnnotations,
+    ...payloadWithoutAnnotations
+  } = payload;
+  return { ...payloadWithoutAnnotations, body };
 }

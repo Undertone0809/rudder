@@ -10,6 +10,7 @@ import type {
   ChatQueueSnapshot,
   ChatQueuedMessage,
   ChatQueuedMessagePayload,
+  ChatQueuedMessagePayloadInput,
   ChatRuntimeDescriptor,
   ChatSteerResponse,
   ChatStreamEvent,
@@ -224,9 +225,25 @@ export const chatsApi = {
     data: {
       clientMutationId: string;
       expectedGenerationId?: string | null;
-      payload: ChatQueuedMessagePayload;
+      payload: ChatQueuedMessagePayloadInput;
     },
-  ) => api.post<ChatQueuedMessage>(`/chats/${chatId}/queue`, data),
+    options: { files?: File[] } = {},
+  ) => {
+    const files = options.files ?? [];
+    if (files.length === 0) {
+      return api.post<ChatQueuedMessage>(`/chats/${chatId}/queue`, data);
+    }
+    const form = new FormData();
+    form.append("clientMutationId", data.clientMutationId);
+    if (data.expectedGenerationId) {
+      form.append("expectedGenerationId", data.expectedGenerationId);
+    }
+    form.append("payload", JSON.stringify(data.payload));
+    for (const file of files) {
+      form.append("files", file, file.name || "attachment");
+    }
+    return api.postForm<ChatQueuedMessage>(`/chats/${chatId}/queue`, form);
+  },
   claimNextQueuedMessage: (chatId: string) =>
     api.post<ChatQueueClaimResponse>(`/chats/${chatId}/queue/next/claim`, {}),
   updateQueuedMessage: (

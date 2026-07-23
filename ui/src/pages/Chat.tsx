@@ -180,7 +180,7 @@ import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-contr
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
 import { ChatWorkManifest, ChatWorkManifestToggle, hasChatWorkManifestContent } from "./Chat.work-manifest";
-import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, chatMessageJumpTargetFromHref, chatReferenceMarkdown, clipboardAttachmentPayloadKey, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry, type SendButtonMode } from "./Chat.workspace-helpers";
+import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, canQueueComposerDraft, chatMessageJumpTargetFromHref, chatReferenceMarkdown, clipboardAttachmentPayloadKey, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, queuedMessagePayloadForBodyEdit, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry, type SendButtonMode } from "./Chat.workspace-helpers";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
@@ -1129,33 +1129,24 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     }
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
       return false; } const body = (bodyOverride ?? readComposerDraft()).trim();
+    const regularFiles = options?.files ?? pendingFiles;
     const composerAnnotationSubmission = options?.inlineAnnotations
       ? {
         inlineAnnotations: options.inlineAnnotations,
         files: options.annotationFiles ?? [],
       }
-      : serializeChatResponseAnnotations(responseAnnotationState, {
-        fileIndexOffset: (options?.files ?? pendingFiles).length,
-      });
+      : serializeChatResponseAnnotations(responseAnnotationState);
     if (!body && composerAnnotationSubmission.inlineAnnotations.length === 0) { pushToast({ title: "Message cannot be empty", tone: "error" });
-      return false; } const filesToUpload = [
-      ...(options?.files ?? pendingFiles),
-      ...composerAnnotationSubmission.files,
-    ];
-    if (filesToUpload.length > 0) {
+      return false; }
+    if (regularFiles.length > 0) {
       pushToast({ title: "Queue does not support new files yet", tone: "error" });
       return false;
     }
     await createQueuedComposerMessage({
       conversation,
       body,
-      inlineAnnotations: composerAnnotationSubmission.inlineAnnotations.map((annotation) => {
-        const { attachmentFileIndexes: _attachmentFileIndexes, ...persistable } = annotation;
-        return {
-          ...persistable,
-          attachmentIds: persistable.attachmentIds ?? [],
-        };
-      }),
+      inlineAnnotations: composerAnnotationSubmission.inlineAnnotations,
+      files: composerAnnotationSubmission.files,
       orgId: selectedOrganizationId,
       projectId: activeProjectId === NO_PROJECT_ID ? null : activeProjectId,
       serverActiveGenerationId,
@@ -2362,7 +2353,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     && responseAnnotationState.annotations.length === 0;
   const emptyStatePromptFlowState = showEmptyStateSupplementalContent ? "starters" : showEmptyStatePromptSuggestions ? "suggestions" : "hidden";
   const hasRecentProjectConversations = allRecentProjectConversations.length > 0;
-  const canQueueDraft = Boolean(selectedConversationHasActiveReply && draft.trim().length > 0 && !newConversationSendInFlight);
+  const canQueueDraft = canQueueComposerDraft({
+    activeReply: selectedConversationHasActiveReply,
+    body: draft,
+    annotationCount: responseAnnotationState.annotations.length,
+    pendingRegularFileCount: pendingFiles.length,
+    newConversationSendInFlight,
+  });
   const activeStreamStopState = activeStream?.state === "stopping" || activeStream?.state === "stopped";
   const selectedStopRequestPending = Boolean(selectedConversation && stoppingChatIds.has(selectedConversation.id));
   const sendButtonMode: SendButtonMode = newConversationSendInFlight || (activeSendInFlight && !activeStream) ? "sending" : selectedStopRequestPending || activeStreamStopState ? "stopping" : canQueueDraft ? "queue" : activeSendInFlight ? "stop" : "send";
@@ -2784,11 +2781,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const saveQueuedMessage = (item: ChatQueuedMessage) => {
     if (!selectedConversation || editingQueuedItem?.itemId !== item.id || !selectedOrganizationId) return;
     const body = editingQueuedItem.value.trim();
-    if (!body) { pushToast({ title: "Queued message cannot be empty", tone: "error" }); return; }
+    if (!body && (item.payload.inlineAnnotations?.length ?? 0) === 0) {
+      pushToast({ title: "Queued message cannot be empty", tone: "error" });
+      return;
+    }
     const chatId = selectedConversation.id;
     void chatsApi.updateQueuedMessage(chatId, item.id, {
       version: editingQueuedItem.version,
-      payload: { ...item.payload, body },
+      payload: queuedMessagePayloadForBodyEdit(item.payload, body),
     }).then((updated) => {
       queryClient.setQueryData(
         queryKeys.chats.queue(selectedOrganizationId, chatId),

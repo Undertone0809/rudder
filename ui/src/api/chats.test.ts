@@ -133,7 +133,7 @@ describe("atomic chat draft API", () => {
     });
 
     const [, request] = fetchMock.mock.calls[0]!;
-    expect(request?.headers).toBeUndefined();
+    expect(new Headers(request?.headers).has("Content-Type")).toBe(false);
     expect(request?.body).toBeInstanceOf(FormData);
     const form = request?.body as FormData;
     expect(form.get("body")).toBe("Inspect the evidence");
@@ -192,5 +192,59 @@ describe("atomic chat draft API", () => {
     expect(form.get("body")).toBe("Review this");
     expect(form.get("inlineAnnotations")).toBe(JSON.stringify([annotationWithFile]));
     expect(form.getAll("files")).toEqual([regularFile, annotationFile]);
+  });
+
+  it("creates an annotation-only queued message with annotation-owned files", async () => {
+    const queuedMessage = {
+      id: "queue-1",
+      conversationId: "chat-1",
+      payload: {
+        body: "",
+        inlineAnnotations: [{ ...inlineAnnotation, attachmentIds: [] }],
+      },
+    };
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify(queuedMessage),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const annotationFile = new File(["proof"], "proof.png", { type: "image/png" });
+    const annotationWithFile: ChatInlineAnnotationInput = {
+      ...inlineAnnotation,
+      attachmentFileIndexes: [0],
+    };
+
+    await chatsApi.createQueuedMessage("chat-1", {
+      clientMutationId: "ui:queue-1",
+      expectedGenerationId: "00000000-0000-4000-8000-000000000004",
+      payload: {
+        body: "",
+        inlineAnnotations: [annotationWithFile],
+        attachmentIds: [],
+        skillRefs: [],
+      },
+    }, {
+      files: [annotationFile],
+    });
+
+    const [url, request] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/chats/chat-1/queue");
+    expect(new Headers(request?.headers).has("Content-Type")).toBe(false);
+    expect(request?.body).toBeInstanceOf(FormData);
+    const form = request?.body as FormData;
+    expect(form.get("clientMutationId")).toBe("ui:queue-1");
+    expect(form.get("expectedGenerationId")).toBe(
+      "00000000-0000-4000-8000-000000000004",
+    );
+    expect(JSON.parse(String(form.get("payload")))).toEqual({
+      body: "",
+      inlineAnnotations: [annotationWithFile],
+      attachmentIds: [],
+      skillRefs: [],
+    });
+    expect(form.getAll("files")).toEqual([annotationFile]);
   });
 });
