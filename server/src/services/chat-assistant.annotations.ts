@@ -1,3 +1,7 @@
+import type {
+  AgentRuntimeControlSteerInput,
+  AgentRuntimeMediaAttachment,
+} from "@rudderhq/agent-runtime-utils";
 import {
   chatInlineAnnotationsFromStructuredPayload,
   type ChatMessage,
@@ -65,6 +69,38 @@ export function buildChatInlineAnnotationsPromptSection(
   }
 
   return null;
+}
+
+export function buildChatNativeSteerPrompt(
+  message: ChatMessage,
+  attachmentReferences: Map<string, ChatAnnotationAttachmentPromptReference> = new Map(),
+) {
+  const body = message.body.trim();
+  const annotations = buildChatInlineAnnotationsPromptSection(
+    [message],
+    attachmentReferences,
+  );
+  if (!annotations) return body;
+  return [
+    body || "This is an annotation-only Steer request. Respond to the referenced user context below.",
+    annotations,
+  ].join("\n\n");
+}
+
+export function buildChatNativeSteerFeedback(input: {
+  message: ChatMessage;
+  clientMessageId: string;
+  attachmentReferences?: Map<string, ChatAnnotationAttachmentPromptReference>;
+  media?: AgentRuntimeMediaAttachment[];
+}): AgentRuntimeControlSteerInput {
+  return {
+    text: buildChatNativeSteerPrompt(
+      input.message,
+      input.attachmentReferences,
+    ),
+    clientMessageId: input.clientMessageId,
+    ...(input.media && input.media.length > 0 ? { media: input.media } : {}),
+  };
 }
 
 export function buildCurrentUserAttachmentPromptSection(

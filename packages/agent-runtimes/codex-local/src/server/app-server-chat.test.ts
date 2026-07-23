@@ -26,6 +26,7 @@ beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-chat-"));
   fakeCodex = path.join(root, "fake-codex.mjs");
   await fs.writeFile(fakeCodex, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
 import readline from "node:readline";
 
 const threadId = "thread-app-1";
@@ -202,6 +203,9 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "turn/steer") {
+    if (process.env.RUDDER_TEST_STEER_CAPTURE_PATH) {
+      writeFileSync(process.env.RUDDER_TEST_STEER_CAPTURE_PATH, JSON.stringify(message));
+    }
     send({ id: message.id, result: { turnId } });
     finish("completed");
     return;
@@ -443,6 +447,9 @@ describe("executeCodexAppServerChat", () => {
   it("publishes a native same-turn Steer handle and returns per-turn usage", async () => {
     let handle: AgentRuntimeControlHandle | null = null;
     const stdoutLines: string[] = [];
+    const steerCapturePath = path.join(root, "steer-request.json");
+    const steerImagePath = path.join(root, "steer-image.png");
+    await fs.writeFile(steerImagePath, "image");
     const handleLease: AgentRuntimeControlHandleLease = {
       isCurrent: () => true,
       release: vi.fn(async () => handle?.dispose()),
@@ -450,7 +457,11 @@ describe("executeCodexAppServerChat", () => {
     const execution = executeCodexAppServerChat({
       command: fakeCodex,
       cwd: root,
-      env: { ...process.env, PATH: process.env.PATH ?? "" } as Record<string, string>,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_STEER_CAPTURE_PATH: steerCapturePath,
+      } as Record<string, string>,
       prompt: "Initial request",
       model: "gpt-test",
       modelReasoningEffort: "high",
@@ -474,11 +485,23 @@ describe("executeCodexAppServerChat", () => {
     });
     const activeHandle = await waitFor(() => handle);
 
-    const steerResult = await activeHandle.steer({
+    const steerFeedback = {
       text: "Change direction",
       clientMessageId: "client-control-1",
-    });
+      media: [{
+        source: "chat_attachment" as const,
+        attachmentId: "attachment-1",
+        assetId: "asset-1",
+        name: "steer-image.png",
+        originalFilename: "steer-image.png",
+        contentType: "image/png",
+        byteSize: 5,
+        localPath: steerImagePath,
+      }],
+    };
+    const steerResult = await activeHandle.steer(steerFeedback);
     const result = await execution;
+    const steerRequest = JSON.parse(await fs.readFile(steerCapturePath, "utf8"));
 
     expect(steerResult).toEqual({
       disposition: "accepted_current",
@@ -494,6 +517,10 @@ describe("executeCodexAppServerChat", () => {
       usage: { inputTokens: 4, cachedInputTokens: 1, outputTokens: 5 },
     });
     expect(result.stdout).toContain('"type":"turn.completed"');
+    expect(steerRequest.params.input).toEqual([
+      { type: "text", text: "Change direction", text_elements: [] },
+      { type: "localImage", path: steerImagePath },
+    ]);
     const assistantEntries = stdoutLines
       .filter((line) => line.includes('"type":"item.completed"'))
       .flatMap((line) => parseCodexStdoutLine(line, "2026-07-16T00:00:00.000Z"))

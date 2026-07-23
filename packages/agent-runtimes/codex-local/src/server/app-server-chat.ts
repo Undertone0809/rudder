@@ -580,7 +580,12 @@ export async function executeCodexAppServerChat(
               threadId: activeThreadId,
               expectedTurnId: activeTurnId,
               clientUserMessageId: feedback.clientMessageId,
-              input: [{ type: "text", text: feedback.text, text_elements: [] }],
+              input: [
+                { type: "text", text: feedback.text, text_elements: [] },
+                ...(feedback.media ?? [])
+                  .filter((attachment) => attachment.contentType.toLowerCase().startsWith("image/"))
+                  .map((attachment) => ({ type: "localImage", path: attachment.localPath })),
+              ],
             }, 5_000));
             const acknowledgedTurnId = asString(response?.turnId);
             if (acknowledgedTurnId !== activeTurnId) {

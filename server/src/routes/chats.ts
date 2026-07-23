@@ -12,6 +12,7 @@ import {
   steerChatQueuedMessageSchema,
   updateChatConversationSchema,
   updateChatQueuedMessageSchema,
+  type AgentRuntimeType,
   type ChatAttachment,
   type ChatContextLink,
   type ChatControlDisposition,
@@ -28,11 +29,13 @@ import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { assertTimeZone } from "../services/automations.scheduler.js";
 import { chatAgentRunService } from "../services/chat-agent-runs.js";
+import { buildChatNativeSteerFeedback } from "../services/chat-assistant.annotations.js";
 import {
   CHAT_ASSISTANT_USER_ERROR_MESSAGE,
   chatAssistantErrorForLog,
   chatAssistantService,
   ChatAssistantStreamError,
+  prepareChatAttachmentReferences,
   userVisiblePartialBodyFromError,
   type ChatAssistantResult,
   type ChatGeneratedAttachment,
@@ -2383,60 +2386,102 @@ export function chatRoutes(
       { sendDenied: true }
     >;
     const providerSendState: { denied: DeniedProviderSend | null } = { denied: null };
-    const runtimeResult = await steerActiveChatGeneration({
-      conversationId: conversation.id,
-      expectedGenerationId: durableGenerationId,
-      expectedAttemptEpoch: durableAttemptEpoch,
-      feedback: {
-        text: started.item.payload.body,
-        clientMessageId: started.action.providerClientMessageId ?? durableControlActionId,
-      },
-      claimProviderSend: async () => {
-        const sendClaim = await svc.claimSteerProviderSend({
-          orgId: conversation.orgId,
-          controlActionId: durableControlActionId,
-        });
-        if (!sendClaim) return null;
-        if ("sendDenied" in sendClaim) {
-          providerSendState.denied = sendClaim;
-          return {
-            sendDenied: true as const,
-            reason: "generation_fence_changed" as const,
-          };
-        }
-        try {
-          await svc.appendGenerationEvent({
+    const nativeSteerMessageId = started.item.continuationMessageId
+      ?? started.item.sourceMessageId;
+    const nativeSteerMessage = nativeSteerMessageId
+      ? await svc.getMessage(conversation.id, nativeSteerMessageId)
+      : null;
+    if (
+      (started.item.payload.inlineAnnotations?.length ?? 0) > 0
+      && !nativeSteerMessage
+    ) {
+      throw conflict("Materialized Steer annotation message could not be loaded");
+    }
+    const nativeSteerRuntimeType = (
+      started.generation?.controlRuntimeType
+      ?? getActiveChatGeneration(conversation.id)?.runtimeType
+      ?? active?.runtimeType
+      ?? null
+    ) as AgentRuntimeType | null;
+    const preparedSteerAttachments = nativeSteerMessage && nativeSteerRuntimeType
+      ? await prepareChatAttachmentReferences({
+          runtimeType: nativeSteerRuntimeType,
+          messages: [nativeSteerMessage],
+          storage,
+          runId: durableControlActionId,
+        })
+      : {
+          references: new Map(),
+          media: [],
+          cleanup: async () => undefined,
+        };
+    const nativeSteerFeedback = nativeSteerMessage
+      ? buildChatNativeSteerFeedback({
+          message: nativeSteerMessage,
+          clientMessageId: started.action.providerClientMessageId ?? durableControlActionId,
+          attachmentReferences: preparedSteerAttachments.references,
+          media: preparedSteerAttachments.media,
+        })
+      : {
+          text: started.item.payload.body,
+          clientMessageId: started.action.providerClientMessageId ?? durableControlActionId,
+        };
+    let runtimeResult: Awaited<ReturnType<typeof steerActiveChatGeneration>>;
+    try {
+      runtimeResult = await steerActiveChatGeneration({
+        conversationId: conversation.id,
+        expectedGenerationId: durableGenerationId,
+        expectedAttemptEpoch: durableAttemptEpoch,
+        feedback: nativeSteerFeedback,
+        claimProviderSend: async () => {
+          const sendClaim = await svc.claimSteerProviderSend({
             orgId: conversation.orgId,
-            generationId: durableGenerationId,
-            attemptEpoch: durableAttemptEpoch,
-            eventKind: "steer_requested",
-            payload: { controlActionId: durableControlActionId, queueItemId: started.item.id },
             controlActionId: durableControlActionId,
-            queueItemId: started.item.id,
           });
-        } catch (error) {
-          await svc.releaseSteerProviderSendClaim({
-            orgId: conversation.orgId,
-            controlActionId: durableControlActionId,
-            reason: "steer_requested_event_failed",
-          }).catch(() => null);
-          throw error;
-        }
-        return {
-          clientMessageId: sendClaim.providerClientMessageId ?? durableControlActionId,
-          release: async () => {
-            const released = await svc.releaseSteerProviderSendClaim({
+          if (!sendClaim) return null;
+          if ("sendDenied" in sendClaim) {
+            providerSendState.denied = sendClaim;
+            return {
+              sendDenied: true as const,
+              reason: "generation_fence_changed" as const,
+            };
+          }
+          try {
+            await svc.appendGenerationEvent({
+              orgId: conversation.orgId,
+              generationId: durableGenerationId,
+              attemptEpoch: durableAttemptEpoch,
+              eventKind: "steer_requested",
+              payload: { controlActionId: durableControlActionId, queueItemId: started.item.id },
+              controlActionId: durableControlActionId,
+              queueItemId: started.item.id,
+            });
+          } catch (error) {
+            await svc.releaseSteerProviderSendClaim({
               orgId: conversation.orgId,
               controlActionId: durableControlActionId,
-              reason: "runtime_owner_changed_before_provider_send",
-            });
-            if (!released) {
-              throw new Error("Steer provider send claim could not be safely released before send");
-            }
-          },
-        };
-      },
-    });
+              reason: "steer_requested_event_failed",
+            }).catch(() => null);
+            throw error;
+          }
+          return {
+            clientMessageId: sendClaim.providerClientMessageId ?? durableControlActionId,
+            release: async () => {
+              const released = await svc.releaseSteerProviderSendClaim({
+                orgId: conversation.orgId,
+                controlActionId: durableControlActionId,
+                reason: "runtime_owner_changed_before_provider_send",
+              });
+              if (!released) {
+                throw new Error("Steer provider send claim could not be safely released before send");
+              }
+            },
+          };
+        },
+      });
+    } finally {
+      await preparedSteerAttachments.cleanup().catch(() => undefined);
+    }
 
     if (runtimeResult.status === "provider_send_in_flight") {
       res.json(responseForDurableDisposition(started.item, started.action.localDisposition));
