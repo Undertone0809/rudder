@@ -4,7 +4,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   resolveManagedExternalOpenCodeMcpConfigs,
   resolveRudderOpenCodeMcpConfigs,
@@ -91,6 +91,7 @@ function healthyProxy(
 describe("OpenCode managed external MCP config", () => {
   it("adds two remote servers without changing the first-party server", async () => {
     const { server, origin } = await listen(healthyProxy);
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
     try {
       const env = {
         RUDDER_API_URL: origin,
@@ -116,7 +117,7 @@ describe("OpenCode managed external MCP config", () => {
           enabled: true,
           oauth: false,
           headers: { Authorization: "Bearer {env:RUDDER_API_KEY}" },
-          timeout: 10_000,
+          timeout: 60_000,
         },
         "linear-product": {
           type: "remote",
@@ -124,9 +125,11 @@ describe("OpenCode managed external MCP config", () => {
           enabled: true,
           oauth: false,
           headers: { Authorization: "Bearer {env:RUDDER_API_KEY}" },
-          timeout: 12_000,
+          timeout: 45_000,
         },
       });
+      expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+      expect(timeoutSpy).toHaveBeenCalledWith(12_000);
       expect(Object.keys(combined)).toEqual([
         "rudder-tools",
         "supabase-memos",
@@ -135,6 +138,7 @@ describe("OpenCode managed external MCP config", () => {
       expect(JSON.stringify(external)).not.toContain("run-secret");
       expect(JSON.stringify(combined["rudder-tools"])).not.toContain("external.");
     } finally {
+      timeoutSpy.mockRestore();
       await close(server);
     }
   });

@@ -292,7 +292,7 @@ export async function resolveManagedExternalOpenCodeMcpConfigs(
         headers: {
           Authorization: `Bearer {env:${binding.bearerTokenEnvVar}}`,
         },
-        timeout: binding.startupTimeoutMs,
+        timeout: binding.toolTimeoutMs,
       },
     ]),
   );

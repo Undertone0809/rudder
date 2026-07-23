@@ -309,6 +309,51 @@ describe("Pi managed external MCP bridge", () => {
     }
   });
 
+  it("aborts a slow generated extension call promptly", async () => {
+    let markRequestStarted: (() => void) | undefined;
+    const requestStarted = new Promise<void>((resolve) => {
+      markRequestStarted = resolve;
+    });
+    const { server, origin } = await listen((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write('{"jsonrpc":"2.0","id":"pi-managed-mcp","result":{"content":[');
+      markRequestStarted?.();
+    });
+    const controller = new AbortController();
+    try {
+      const source = renderPiManagedExternalMcpExtension([{
+        ...binding(),
+        toolPolicy: {
+          mode: "allowlist" as const,
+          allowedToolNames: ["external.supabase-memos.list_tables"],
+        },
+        proxyUrl: `${origin}/api/mcp/runtime/bindings/${FIRST_BINDING_ID}`,
+        bearerTokenEnvVar: "RUDDER_API_KEY",
+        tools: [{
+          name: "external.supabase-memos.list_tables",
+          inputSchema: { type: "object" },
+        }],
+      }]);
+      const callManagedMcp = loadGeneratedCallManagedMcp(source);
+      const pendingCall = callManagedMcp(
+        `${origin}/api/mcp/runtime/bindings/${FIRST_BINDING_ID}`,
+        "external.supabase-memos.list_tables",
+        {},
+        5_000,
+        controller.signal,
+      );
+      await requestStarted;
+
+      const abortStartedAt = performance.now();
+      controller.abort();
+      await expect(pendingCall).rejects.toThrow();
+      expect(performance.now() - abortStartedAt).toBeLessThan(1_000);
+    } finally {
+      controller.abort();
+      await close(server);
+    }
+  });
+
   it("fails required schema discovery and omits optional discovery failures", async () => {
     const { server, origin } = await listen((_req, res) => {
       res.setHeader("content-type", "application/json");
