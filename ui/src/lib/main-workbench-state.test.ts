@@ -857,7 +857,7 @@ describe("Main Workbench state", () => {
     });
   });
 
-  it("focuses and binds an existing exact Main tab while disposing a distinct promotion source", () => {
+  it("focuses and binds an existing exact Main tab while transferring the exact source runtime", () => {
     let state = reduce(
       createMainWorkbenchState(),
       {
@@ -910,13 +910,15 @@ describe("Main Workbench state", () => {
     expect(organization.activeViewInstanceId).toBe("view-source");
     expect(organization.tabsByViewInstanceId["view-source"]).toMatchObject({
       savedViewId: "saved-source",
-      runtimeId: "runtime-main",
+      runtimeId: "runtime-source",
     });
     expect(organization.runtimesById["runtime-main"]?.host).toEqual({
+      kind: "disposed",
+    });
+    expect(organization.runtimesById["runtime-source"]?.host).toEqual({
       kind: "main",
       organizationId: ORGANIZATION_A,
     });
-    expect(organization.runtimesById["runtime-source"]?.host).toEqual({ kind: "disposed" });
     expect(mainWorkbenchLiveBrowserCount(state, ORGANIZATION_A)).toBe(1);
   });
 

@@ -1087,6 +1087,7 @@ function succeedPromotion(
 
   if (exactTab) {
     let claimed = organization;
+    let claimedRuntimeId = exactTab.runtimeId;
     if (exactTab.runtimeId === promotion.source.runtimeId) {
       const sourceRuntime = claimed.runtimesById[promotion.source.runtimeId]!;
       claimed = withRuntime(claimed, organizationId, {
@@ -1101,6 +1102,7 @@ function succeedPromotion(
         !existingRuntime
         || existingRuntime.viewInstanceId !== exactTab.viewInstanceId
         || existingRuntime.targetKind !== exactTab.target.kind
+        || isLiveRuntimeHost(existingRuntime.host)
       ) {
         return promotionClaimConflict(
           organization,
@@ -1115,15 +1117,9 @@ function succeedPromotion(
         id: sourceRuntime.id,
         viewInstanceId: sourceRuntime.viewInstanceId,
         targetKind: sourceRuntime.targetKind,
-        host: { kind: "disposed" },
-      });
-      claimed = withRuntime(claimed, organizationId, {
-        id: existingRuntime.id,
-        viewInstanceId: existingRuntime.viewInstanceId,
-        targetKind: existingRuntime.targetKind,
         host: { kind: "main", organizationId },
       });
-      if (claimed.runtimesById[existingRuntime.id]?.host.kind !== "main") {
+      if (claimed.runtimesById[sourceRuntime.id]?.host.kind !== "main") {
         return promotionClaimConflict(
           organization,
           organizationId,
@@ -1132,17 +1128,20 @@ function succeedPromotion(
           "existing_tab_runtime_unavailable",
         );
       }
+      claimedRuntimeId = sourceRuntime.id;
     }
     claimed = {
       ...claimed,
       activeViewInstanceId: exactTab.viewInstanceId,
       tabsByViewInstanceId: exactTab.savedViewId === savedViewId
+        && exactTab.runtimeId === claimedRuntimeId
         ? claimed.tabsByViewInstanceId
         : {
             ...claimed.tabsByViewInstanceId,
             [exactTab.viewInstanceId]: {
               ...exactTab,
               savedViewId,
+              runtimeId: claimedRuntimeId,
             },
           },
     };
