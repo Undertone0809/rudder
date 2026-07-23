@@ -32,7 +32,7 @@ describe("managed MCP connection schema", () => {
       "access_mode",
       "status",
       "safe_config",
-      "connect_timeout_ms",
+      "startup_timeout_ms",
       "tool_timeout_ms",
       "enabled",
       "required",
@@ -43,6 +43,7 @@ describe("managed MCP connection schema", () => {
       "created_at",
       "updated_at",
     ]));
+    expect(columnNames(connections)).not.toContain("connect_timeout_ms");
 
     expect(getTableConfig(grants).name).toBe("mcp_oauth_grants");
     expect(columnNames(grants)).toEqual(expect.arrayContaining([

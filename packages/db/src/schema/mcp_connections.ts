@@ -33,7 +33,7 @@ export const mcpConnections = pgTable(
     accessMode: text("access_mode").notNull().default("provider_default"),
     status: text("status").notNull().default("draft"),
     safeConfig: jsonb("safe_config").$type<Record<string, unknown>>().notNull().default({}),
-    connectTimeoutMs: integer("connect_timeout_ms").notNull().default(10_000),
+    startupTimeoutMs: integer("startup_timeout_ms").notNull().default(10_000),
     toolTimeoutMs: integer("tool_timeout_ms").notNull().default(60_000),
     enabled: boolean("enabled").notNull().default(true),
     required: boolean("required").notNull().default(false),
@@ -61,7 +61,7 @@ export const mcpConnections = pgTable(
     ),
     positiveTimeoutsCheck: check(
       "mcp_connections_positive_timeouts_check",
-      sql`${table.connectTimeoutMs} > 0 and ${table.toolTimeoutMs} > 0`,
+      sql`${table.startupTimeoutMs} > 0 and ${table.toolTimeoutMs} > 0`,
     ),
   }),
 );

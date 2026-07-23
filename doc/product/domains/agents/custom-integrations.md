@@ -153,10 +153,13 @@ tool naming, identity, and fallback semantics for that built-in surface.
     through `authorizing`, `selecting_scope`, `active`, `needs_reauth`,
     `disabled`, `revoked`, or `error` without putting provider credentials in
     connection rows or public responses.
-12. Supabase selects one project and defaults to read-only; Linear binds one
-    authorized workspace with read-only or read/write access; Notion uses the
-    provider-granted workspace permissions and Rudder's agent tool allowlist.
-    The existing Linear issue-import plugin remains separate and unchanged.
+12. Supabase selects one project and defaults to `read_only`; a Supabase Owner
+    may explicitly enable `read_write` (read/write). Linear binds one authorized
+    workspace with `read_only` or `read_write` access. Notion supports only
+    `provider_default`: its provider-granted workspace permissions are not
+    presented as a provider-native read-only mode, while Rudder still limits
+    agent exposure through the binding tool allowlist. The existing Linear
+    issue-import plugin remains separate and unchanged.
 13. Real MCP tool discovery stores raw schemas for evidence and sanitized
     schemas for operator/runtime exposure. Removed tools remain explicit.
     Current discovered tools may be enabled on the first binding, but newly
@@ -165,11 +168,18 @@ tool naming, identity, and fallback semantics for that built-in surface.
     grant, binding, and enabled tool before forwarding. Audit evidence stores
     sanitized input/result and a redacted dispatch outcome.
 15. Custom STDIO accepts Codex-compatible command, arguments, working
-    directory, safe environment handling, enablement, required behavior, and
-    timeouts within the deployment boundary owned by
-    `AGENT.RUNTIME.PERMISSIONS.001`. Custom Streamable HTTP keeps URLs, safe
-    headers, Bearer environment references, and timeouts separate from
-    encrypted credentials.
+    directory, non-sensitive static environment values, forwarded environment
+    names, secret environment names, enablement, required behavior, and startup
+    and tool timeouts within the deployment boundary owned by
+    `AGENT.RUNTIME.PERMISSIONS.001`. Custom Streamable HTTP keeps URLs,
+    non-sensitive static headers, header-name-to-environment-name mappings,
+    Bearer environment references, secret header names, and credential-presence
+    markers separate from encrypted credentials. Secret environment, header,
+    and direct Bearer values enter only through a mutation-only `secrets`
+    payload that the service encrypts as a whole and never returns. Manual
+    Authorization header, Bearer environment, and direct Bearer sources are
+    mutually exclusive; OAuth-grant conflicts are checked at the service
+    boundary.
 
 ### Decision Table
 
@@ -191,6 +201,9 @@ tool naming, identity, and fallback semantics for that built-in surface.
 | Discovery finds a new tool on an existing binding | Tool is persisted but not automatically enabled for that binding. |
 | Discovery no longer returns a prior tool | Tool is marked removed and cannot be dispatched; history remains. |
 | Public connection or grant response | Exposes safe config and `hasCredentials` only, never secret ids, tokens, client secrets, or PKCE material. |
+| Curated provider create or update supplies URL, headers, STDIO, legacy config, or manual secrets | Rejected; curated endpoints, transport, and OAuth credential handling are Rudder-managed. |
+| Custom safe config marks an environment or header value secret | The public config retains only its name, mapping, or presence; the value must arrive in the mutation-only encrypted `secrets` payload. |
+| Custom HTTP config selects more than one manual Authorization/Bearer source | Rejected before persistence. |
 
 ### Actor-Visible Input
 

@@ -1,5 +1,5 @@
 {
-  "id": "25c85413-26e9-4ab4-bb69-5c45b1e1f30a",
+  "id": "d36926ab-0c67-4dbf-849a-469129134037",
   "prevId": "15f9ef0e-8bfd-443d-b9f4-aea906e1337a",
   "version": "7",
   "dialect": "postgresql",
@@ -15975,8 +15975,8 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
-        "connect_timeout_ms": {
-          "name": "connect_timeout_ms",
+        "startup_timeout_ms": {
+          "name": "startup_timeout_ms",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -16217,7 +16217,7 @@
         },
         "mcp_connections_positive_timeouts_check": {
           "name": "mcp_connections_positive_timeouts_check",
-          "value": "\"mcp_connections\".\"connect_timeout_ms\" > 0 and \"mcp_connections\".\"tool_timeout_ms\" > 0"
+          "value": "\"mcp_connections\".\"startup_timeout_ms\" > 0 and \"mcp_connections\".\"tool_timeout_ms\" > 0"
         }
       },
       "isRLSEnabled": false

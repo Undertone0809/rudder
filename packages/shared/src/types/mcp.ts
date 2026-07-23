@@ -11,16 +11,24 @@ export interface McpStdioSafeConfig {
   command: string;
   args?: string[];
   cwd?: string;
-  env?: Record<string, string>;
+  staticEnv?: Record<string, string>;
   forwardedEnv?: string[];
-  credentialEnvNames?: string[];
+  secretEnvNames?: string[];
 }
 
 export interface McpStreamableHttpSafeConfig {
   url?: string;
+  staticHeaders?: Record<string, string>;
+  headersFromEnv?: Record<string, string>;
+  bearerTokenEnvVar?: string;
+  secretHeaderNames?: string[];
+  hasBearerToken?: boolean;
+}
+
+export interface McpConnectionSecretsMutation {
+  env?: Record<string, string>;
   headers?: Record<string, string>;
-  bearerEnvVar?: string;
-  credentialHeaderNames?: string[];
+  bearerToken?: string;
 }
 
 export interface McpLegacyManualSafeConfig {
@@ -43,7 +51,7 @@ export interface McpConnectionSummary {
   accessMode: McpConnectionAccessMode;
   status: McpConnectionStatus;
   safeConfig: McpConnectionSafeConfig | Record<string, never>;
-  connectTimeoutMs: number;
+  startupTimeoutMs: number;
   toolTimeoutMs: number;
   enabled: boolean;
   required: boolean;
@@ -126,18 +134,22 @@ export interface McpAgentBinding {
 /**
  * Provider-neutral, run-scoped proxy descriptor consumed by runtime adapters.
  *
- * Provider scope and credentials stay on the Rudder server. Adapters receive
- * only the managed proxy address, a run-owned authorization environment name,
- * and the allowlisted tool surface.
+ * Provider scope, proxy coordinates, and credentials stay on the Rudder server.
+ * Adapters receive only the binding identity, proxy server name, and explicit
+ * allowlisted tool surface. Fixed proxy authentication is derived from run
+ * context outside this array.
  */
+export interface ManagedExternalMcpToolPolicy {
+  mode: "allowlist";
+  allowedToolNames: string[];
+}
+
 export interface ManagedExternalMcpBinding {
-  connectionId: string;
+  bindingId: string;
   serverName: string;
-  proxyUrl: string;
-  authorizationEnvVar: string;
-  enabledToolNames: string[];
+  toolPolicy: ManagedExternalMcpToolPolicy;
   required: boolean;
-  connectTimeoutMs: number;
+  startupTimeoutMs: number;
   toolTimeoutMs: number;
 }
 

@@ -30,6 +30,22 @@ describe("managed MCP shared contracts", () => {
         "revoked",
         "error",
       ]);
+    expect((shared as unknown as {
+      MCP_PROVIDER_CATALOG: Array<{ id: string; accessModes: string[] }>;
+    }).MCP_PROVIDER_CATALOG).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "supabase",
+        accessModes: ["read_only", "read_write"],
+      }),
+      expect.objectContaining({
+        id: "linear",
+        accessModes: ["read_only", "read_write"],
+      }),
+      expect.objectContaining({
+        id: "notion",
+        accessModes: ["provider_default"],
+      }),
+    ]));
   });
 
   it("accepts curated HTTP and custom STDIO connection inputs with safe config only", () => {
@@ -43,7 +59,7 @@ describe("managed MCP shared contracts", () => {
       transport: "streamable_http",
       accessMode: "read_only",
       safeConfig: {},
-      connectTimeoutMs: 10_000,
+      startupTimeoutMs: 10_000,
       toolTimeoutMs: 60_000,
       enabled: true,
       required: false,
@@ -59,15 +75,19 @@ describe("managed MCP shared contracts", () => {
         command: "npx",
         args: ["-y", "@example/mcp-server"],
         cwd: "/workspace",
-        env: { LOG_LEVEL: "info" },
+        staticEnv: { LOG_LEVEL: "info" },
         forwardedEnv: ["HOME"],
+        secretEnvNames: ["API_TOKEN"],
+      },
+      secrets: {
+        env: { API_TOKEN: "mutation-only-secret" },
       },
       enabled: true,
       required: true,
     }).success).toBe(true);
   });
 
-  it("rejects secret values and secret identifiers from safe connection config", () => {
+  it("keeps secret mutation fields out of safe connection config", () => {
     const schema = exportedSchema("createMcpConnectionSchema");
     if (!schema) return;
 
@@ -75,6 +95,8 @@ describe("managed MCP shared contracts", () => {
       { accessToken: "raw-token" },
       { clientSecret: "raw-secret" },
       { credentialSecretId: "11111111-1111-4111-8111-111111111111" },
+      { secrets: { bearerToken: "raw-token" } },
+      { secretValues: { API_TOKEN: "raw-token" } },
     ]) {
       expect(schema.safeParse({
         name: "unsafe",
@@ -88,6 +110,120 @@ describe("managed MCP shared contracts", () => {
         },
       }).success).toBe(false);
     }
+  });
+
+  it("separates static HTTP config, environment mappings, and mutation-only secrets", () => {
+    const schema = exportedSchema("createMcpConnectionSchema");
+    if (!schema) return;
+
+    const parsed = schema.safeParse({
+      name: "custom-http",
+      displayName: "Custom HTTP",
+      provider: "custom",
+      transport: "streamable_http",
+      accessMode: "provider_default",
+      safeConfig: {
+        url: "https://mcp.example.com",
+        staticHeaders: { Accept: "application/json" },
+        headersFromEnv: { "X-Api-Key": "MCP_API_KEY" },
+      },
+      secrets: {
+        env: { MCP_API_KEY: "env-secret" },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects conflicting manual Authorization and Bearer sources", () => {
+    const schema = exportedSchema("createMcpConnectionSchema");
+    if (!schema) return;
+
+    const base = {
+      name: "conflicting-auth",
+      displayName: "Conflicting auth",
+      provider: "custom",
+      transport: "streamable_http",
+      accessMode: "provider_default",
+    };
+    const authorizationHeader = {
+      headersFromEnv: { Authorization: "MCP_AUTHORIZATION" },
+    };
+    const bearerEnvironment = {
+      bearerTokenEnvVar: "MCP_BEARER_TOKEN",
+    };
+    const directBearer = {
+      hasBearerToken: true,
+    };
+
+    for (const input of [
+      {
+        safeConfig: { url: "https://mcp.example.com", ...authorizationHeader, ...bearerEnvironment },
+        secrets: {
+          env: {
+            MCP_AUTHORIZATION: "Bearer header-token",
+            MCP_BEARER_TOKEN: "bearer-env-token",
+          },
+        },
+      },
+      {
+        safeConfig: { url: "https://mcp.example.com", ...authorizationHeader, ...directBearer },
+        secrets: {
+          env: { MCP_AUTHORIZATION: "Bearer header-token" },
+          bearerToken: "direct-bearer-token",
+        },
+      },
+      {
+        safeConfig: { url: "https://mcp.example.com", ...bearerEnvironment, ...directBearer },
+        secrets: {
+          env: { MCP_BEARER_TOKEN: "bearer-env-token" },
+          bearerToken: "direct-bearer-token",
+        },
+      },
+      {
+        safeConfig: {
+          url: "https://mcp.example.com",
+          secretHeaderNames: ["Authorization"],
+          ...bearerEnvironment,
+        },
+        secrets: {
+          env: { MCP_BEARER_TOKEN: "bearer-env-token" },
+          headers: { Authorization: "Bearer header-token" },
+        },
+      },
+    ]) {
+      expect(schema.safeParse({ ...base, ...input }).success).toBe(false);
+    }
+  });
+
+  it("rejects sensitive names when their values remain in static safe config", () => {
+    const schema = exportedSchema("createMcpConnectionSchema");
+    if (!schema) return;
+
+    expect(schema.safeParse({
+      name: "unsafe-stdio",
+      displayName: "Unsafe STDIO",
+      provider: "custom",
+      transport: "stdio",
+      accessMode: "provider_default",
+      safeConfig: {
+        command: "node",
+        staticEnv: { API_TOKEN: "must-not-remain" },
+        secretEnvNames: ["API_TOKEN"],
+      },
+    }).success).toBe(false);
+
+    expect(schema.safeParse({
+      name: "unsafe-http",
+      displayName: "Unsafe HTTP",
+      provider: "custom",
+      transport: "streamable_http",
+      accessMode: "provider_default",
+      safeConfig: {
+        url: "https://mcp.example.com",
+        staticHeaders: { Authorization: "Bearer raw-secret" },
+      },
+    }).success).toBe(false);
   });
 
   it("keeps public summaries free of credential references and values", () => {
@@ -105,7 +241,7 @@ describe("managed MCP shared contracts", () => {
       accessMode: "provider_default",
       status: "active",
       safeConfig: {},
-      connectTimeoutMs: 10_000,
+      startupTimeoutMs: 10_000,
       toolTimeoutMs: 60_000,
       enabled: true,
       required: false,
@@ -126,6 +262,106 @@ describe("managed MCP shared contracts", () => {
     expect(schema.safeParse({
       ...safeSummary,
       accessToken: "raw-token",
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      ...safeSummary,
+      secrets: { bearerToken: "raw-token" },
+    }).success).toBe(false);
+  });
+
+  it("enforces the curated provider access and configuration matrix", () => {
+    const createSchema = exportedSchema("createMcpConnectionSchema");
+    const updateSchema = exportedSchema("updateMcpConnectionSchema");
+    const mergedConfigSchema = exportedSchema("mcpConnectionMergedConfigSchema");
+    if (!createSchema || !updateSchema || !mergedConfigSchema) return;
+
+    const supabaseBase = {
+      name: "supabase-team",
+      displayName: "Supabase Team",
+      provider: "supabase",
+      transport: "streamable_http",
+      safeConfig: {},
+    };
+    const supabaseDefault = createSchema.safeParse(supabaseBase);
+    expect(supabaseDefault.success).toBe(true);
+    if (supabaseDefault.success) {
+      expect((supabaseDefault.data as { accessMode?: string }).accessMode).toBe("read_only");
+    }
+    expect(createSchema.safeParse({ ...supabaseBase, accessMode: "read_write" }).success).toBe(true);
+    expect(createSchema.safeParse({ ...supabaseBase, accessMode: "provider_default" }).success).toBe(false);
+
+    const linearBase = {
+      name: "linear-team",
+      displayName: "Linear Team",
+      provider: "linear",
+      transport: "streamable_http",
+      safeConfig: {},
+    };
+    expect(createSchema.safeParse({ ...linearBase, accessMode: "read_only" }).success).toBe(true);
+    expect(createSchema.safeParse({ ...linearBase, accessMode: "read_write" }).success).toBe(true);
+    expect(createSchema.safeParse({ ...linearBase, accessMode: "provider_default" }).success).toBe(false);
+
+    const notionBase = {
+      name: "notion-team",
+      displayName: "Notion Team",
+      provider: "notion",
+      transport: "streamable_http",
+      safeConfig: {},
+    };
+    expect(createSchema.safeParse({ ...notionBase, accessMode: "provider_default" }).success).toBe(true);
+    expect(createSchema.safeParse({ ...notionBase, accessMode: "read_only" }).success).toBe(false);
+    expect(createSchema.safeParse({ ...notionBase, accessMode: "read_write" }).success).toBe(false);
+
+    for (const override of [
+      { safeConfig: { url: "https://override.example.com" } },
+      { safeConfig: { staticHeaders: { Accept: "application/json" } } },
+      { transport: "stdio", safeConfig: { command: "node" } },
+      { transport: "legacy_manual", enabled: false, safeConfig: { legacyConfigRetained: true } },
+      { secrets: { bearerToken: "curated-secret-override" } },
+    ]) {
+      expect(createSchema.safeParse({
+        ...supabaseBase,
+        accessMode: "read_only",
+        ...override,
+      }).success).toBe(false);
+    }
+
+    expect(updateSchema.safeParse({
+      accessMode: "read_write",
+    }).success).toBe(true);
+    expect(updateSchema.safeParse({
+      provider: "supabase",
+      transport: "streamable_http",
+      accessMode: "read_write",
+    }).success).toBe(false);
+
+    expect(mergedConfigSchema.safeParse({
+      provider: "supabase",
+      transport: "streamable_http",
+      accessMode: "read_write",
+      safeConfig: {},
+      enabled: true,
+    }).success).toBe(true);
+    expect(mergedConfigSchema.safeParse({
+      provider: "supabase",
+      transport: "streamable_http",
+      accessMode: "provider_default",
+      safeConfig: {},
+      enabled: true,
+    }).success).toBe(false);
+    expect(mergedConfigSchema.safeParse({
+      provider: "notion",
+      transport: "streamable_http",
+      accessMode: "read_only",
+      safeConfig: {},
+      enabled: true,
+    }).success).toBe(false);
+    expect(mergedConfigSchema.safeParse({
+      provider: "linear",
+      transport: "streamable_http",
+      accessMode: "read_only",
+      safeConfig: { url: "https://override.example.com" },
+      enabled: true,
     }).success).toBe(false);
   });
 
@@ -181,13 +417,14 @@ describe("managed MCP shared contracts", () => {
     }).success).toBe(true);
 
     const runtimeBinding = {
-      connectionId: "22222222-2222-4222-8222-222222222222",
+      bindingId: "22222222-2222-4222-8222-222222222222",
       serverName: "team-tools",
-      proxyUrl: "http://127.0.0.1:3100/api/runtime/mcp/connection",
-      authorizationEnvVar: "RUDDER_EXTERNAL_MCP_TOKEN_1",
-      enabledToolNames: ["search"],
+      toolPolicy: {
+        mode: "allowlist",
+        allowedToolNames: ["search"],
+      },
       required: false,
-      connectTimeoutMs: 10_000,
+      startupTimeoutMs: 10_000,
       toolTimeoutMs: 60_000,
     };
     expect(runtimeBindingSchema.safeParse(runtimeBinding).success).toBe(true);
@@ -195,6 +432,9 @@ describe("managed MCP shared contracts", () => {
       ...runtimeBinding,
       provider: "supabase",
       projectRef: "provider-specific-field",
+      connectionId: "22222222-2222-4222-8222-222222222222",
+      proxyUrl: "http://127.0.0.1:3100/api/runtime/mcp/connection",
+      authorizationEnvVar: "RUDDER_EXTERNAL_MCP_TOKEN_1",
       credentialSecretId: "55555555-5555-4555-8555-555555555555",
       accessToken: "raw-token",
     }).success).toBe(false);

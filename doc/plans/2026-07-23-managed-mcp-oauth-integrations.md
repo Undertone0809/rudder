@@ -69,9 +69,12 @@ or tool arguments.
   current tools on first agent binding, and never auto-enable newly discovered
   tools on existing bindings.
 - Inject one run-scoped Rudder proxy per bound connection through a generic
-  `managedExternalMcpBindings` runtime contract. Codex, Claude, and OpenCode
-  render the list as independent MCP servers; Pi exposes the same dynamic tools
-  through its generic native bridge.
+  `managedExternalMcpBindings` runtime contract containing only binding id,
+  server name, explicit tool policy, required behavior, startup timeout, and
+  tool timeout. The fixed proxy URL and run-owned authorization are derived
+  outside the array. Codex, Claude, and OpenCode render the list as independent
+  MCP servers; Pi exposes the same dynamic tools through its generic native
+  bridge.
 - Keep all external credentials server-side. Each call revalidates
   organization, agent, run, connection, grant, binding, and tool allowlist,
   then writes a redacted audit record.
@@ -79,11 +82,14 @@ or tool arguments.
 ## Curated Providers
 
 - Supabase uses the official MCP endpoint. OAuth is followed by project
-  selection; active connections are project-scoped and read-only by default.
+  selection; active connections are project-scoped and `read_only` by default,
+  while a Supabase Owner may explicitly enable `read_write`.
 - Linear uses the official MCP endpoint with read/write and read-only modes and
   binds each connection to one authorized workspace.
 - Notion uses the official MCP endpoint and its provider-granted workspace
-  permissions; Rudder limits exposure through per-agent tool allowlists.
+  permissions with only `provider_default`; Rudder does not represent Notion as
+  provider-native read-only and limits exposure through per-agent tool
+  allowlists.
 - Existing Linear issue-import plugin behavior remains unchanged.
 
 ## Product Logic Registry Delta

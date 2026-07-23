@@ -100,8 +100,10 @@ export type { LiveEvent } from "./live.js";
 export type {
   ManagedExternalMcpBinding,
   ManagedExternalMcpBindings,
+  ManagedExternalMcpToolPolicy,
   McpAgentBinding,
   McpConnectionSafeConfig,
+  McpConnectionSecretsMutation,
   McpConnectionSummary,
   McpDiscoveredTool,
   McpExternalScopeOption,

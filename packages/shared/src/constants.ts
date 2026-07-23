@@ -421,7 +421,7 @@ export const MCP_PROVIDER_CATALOG = [
     requiresScopeSelection: true,
     scopeLabel: "Project",
     transports: ["streamable_http"],
-    accessModes: ["read_only"],
+    accessModes: ["read_only", "read_write"],
   },
   {
     id: "linear",

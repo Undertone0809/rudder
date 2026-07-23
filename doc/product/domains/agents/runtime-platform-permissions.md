@@ -233,9 +233,12 @@ dynamic client secrets, or organization secret identifiers.
     outcomes.
 
 12. Runtime adapters receive a provider-neutral, run-scoped external MCP proxy
-    binding. The runtime identity authorizes only the selected organization,
-    agent, run, connection, binding, and enabled tools; it does not become the
-    provider OAuth identity.
+    binding containing only binding id, proxy server name, explicit tool
+    allowlist policy, required behavior, startup timeout, and tool timeout. The
+    fixed Rudder proxy URL and run-owned authorization are derived outside the
+    binding array. The runtime identity authorizes only the selected
+    organization, agent, run, connection, binding, and enabled tools; it does
+    not become the provider OAuth identity.
 
 13. Arbitrary custom STDIO execution is permitted only in `local_trusted`.
     Authenticated deployments require instance-administrator allowlists for
@@ -249,7 +252,11 @@ dynamic client secrets, or organization secret identifiers.
     deployment-administrator allowlists. Resolution and redirect handling must
     resist DNS rebinding, and authorization, cookie, proxy authorization, API
     key, host, and other unsafe headers cannot be smuggled through non-secret
-    config.
+    config. Safe config may retain non-sensitive static headers and
+    header-name-to-environment-name mappings, but secret header, environment,
+    and Bearer values enter only through mutation-only encrypted input. Manual
+    Authorization header, Bearer environment, and direct Bearer sources are
+    mutually exclusive.
 
 15. Every discovery and dispatch revalidates the current deployment boundary.
     Required connections fail the run with safe actionable evidence when

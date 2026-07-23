@@ -112,9 +112,10 @@ current run.
   controls manifest projection, while the Browser API independently enforces
   the live instance setting and active-run/tab ownership on every call.
 - Managed external MCP binding: provider-neutral run-scoped descriptor with a
-  connection id, server name, Rudder proxy URL, authorization environment
-  variable name, enabled tool names, required behavior, and timeouts. Provider
-  scope and provider credentials remain server-side.
+  binding id, proxy server name, explicit allowlist tool policy, required
+  behavior, startup timeout, and tool timeout. The fixed Rudder proxy URL and
+  run-owned proxy authorization are derived outside the binding array. Provider
+  scope, connection identity, and provider credentials remain server-side.
 
 ### Entry Points / Inputs
 
@@ -169,12 +170,15 @@ current run.
     URL, and run-owned tab before forwarding an allowed action to the in-memory
     Desktop Broker. A stale manifest cannot bypass live disablement.
 13. Separately, run context selects active organization connections and emits a
-    provider-neutral `managedExternalMcpBindings` list. Each binding points to
-    a Rudder-owned proxy and names only the tools enabled for that exact agent.
+    provider-neutral `managedExternalMcpBindings` list. Each binding contains
+    only `bindingId`, `serverName`, explicit `toolPolicy`, `required`,
+    `startupTimeoutMs`, and `toolTimeoutMs`; the allowlist names only the tools
+    enabled for that exact agent.
 14. The adapter renders every external binding as its own server or generic
-    native-tool group. The model receives a run-scoped proxy authorization
-    environment name, never provider OAuth tokens, organization secret ids, or
-    provider-specific project/workspace fields.
+    native-tool group. The adapter derives the fixed Rudder proxy URL and
+    run-scoped proxy authorization once outside the array. The binding never
+    carries those coordinates, provider OAuth tokens, organization secret ids,
+    connection ids, or provider-specific project/workspace fields.
 15. Every external tool call returns through the Rudder proxy, which
     revalidates run and binding identity and writes redacted audit evidence.
     Failure of an external server does not alter first-party `rudder-tools`

@@ -22,6 +22,10 @@ test("custom integration contract owns managed OAuth discovery, dispatch, and le
     "sanitized",
     "organization owner",
     "external MCP credentials",
+    "Supabase Owner",
+    "read/write",
+    "Notion",
+    "provider_default",
   ]) {
     assert.match(contract, new RegExp(expected, "i"), `missing ${expected}`);
   }
@@ -62,4 +66,17 @@ test("registry and agent traceability map the managed MCP data contract and appr
   assert.match(traceability, /AGENT\.CUSTOM\.INTEGRATIONS\.001/);
   assert.match(traceability, /AGENT\.CONTROL\.TOOLS\.001/);
   assert.match(traceability, /AGENT\.RUNTIME\.PERMISSIONS\.001/);
+
+  const entry = (contractId) => (
+    registry.match(new RegExp(`  ${contractId.replaceAll(".", "\\.")}:[\\s\\S]*?(?=\\n  [A-Z][A-Z0-9.]+:\\n)`))?.[0] ?? ""
+  );
+  for (const contractId of [
+    "AGENT.CUSTOM.INTEGRATIONS.001",
+    "AGENT.CONTROL.TOOLS.001",
+    "AGENT.RUNTIME.PERMISSIONS.001",
+  ]) {
+    assert.match(entry(contractId), /2026-07-23-managed-mcp-oauth-integrations/);
+  }
+  const skillsEntry = entry("AGENT.SKILLS.001");
+  assert.doesNotMatch(skillsEntry, /2026-07-23-managed-mcp-oauth-integrations/);
 });

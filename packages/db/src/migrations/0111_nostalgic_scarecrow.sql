@@ -11,7 +11,7 @@ CREATE TABLE "mcp_connections" (
 	"access_mode" text DEFAULT 'provider_default' NOT NULL,
 	"status" text DEFAULT 'draft' NOT NULL,
 	"safe_config" jsonb DEFAULT '{}'::jsonb NOT NULL,
-	"connect_timeout_ms" integer DEFAULT 10000 NOT NULL,
+	"startup_timeout_ms" integer DEFAULT 10000 NOT NULL,
 	"tool_timeout_ms" integer DEFAULT 60000 NOT NULL,
 	"enabled" boolean DEFAULT true NOT NULL,
 	"required" boolean DEFAULT false NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE "mcp_connections" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "mcp_connections_legacy_manual_disabled_check" CHECK ("mcp_connections"."transport" <> 'legacy_manual' or "mcp_connections"."enabled" = false),
-	CONSTRAINT "mcp_connections_positive_timeouts_check" CHECK ("mcp_connections"."connect_timeout_ms" > 0 and "mcp_connections"."tool_timeout_ms" > 0)
+	CONSTRAINT "mcp_connections_positive_timeouts_check" CHECK ("mcp_connections"."startup_timeout_ms" > 0 and "mcp_connections"."tool_timeout_ms" > 0)
 );
 --> statement-breakpoint
 CREATE TABLE "mcp_oauth_grants" (

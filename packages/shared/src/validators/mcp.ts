@@ -27,7 +27,19 @@ export const mcpConnectionStatusSchema = z.enum(MCP_CONNECTION_STATUSES);
 export const mcpOAuthGrantStatusSchema = z.enum(MCP_OAUTH_GRANT_STATUSES);
 export const mcpAgentBindingStatusSchema = z.enum(MCP_AGENT_BINDING_STATUSES);
 
-const safeHeaderSchema = z.record(z.string().max(8_192)).superRefine((headers, ctx) => {
+const stringMapSchema = z.record(z.string().max(8_192));
+const environmentValueMapSchema = stringMapSchema.superRefine((values, ctx) => {
+  for (const name of Object.keys(values)) {
+    if (!environmentNameSchema.safeParse(name).success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [name],
+        message: `${name} must be a valid environment variable name`,
+      });
+    }
+  }
+});
+const safeHeaderSchema = stringMapSchema.superRefine((headers, ctx) => {
   const forbidden = new Set(["authorization", "cookie", "proxy-authorization", "x-api-key"]);
   for (const name of Object.keys(headers)) {
     if (forbidden.has(name.toLowerCase())) {
@@ -44,17 +56,64 @@ export const mcpStdioSafeConfigSchema = z.object({
   command: z.string().min(1).max(2_048),
   args: z.array(z.string().max(8_192)).max(200).optional(),
   cwd: z.string().min(1).max(4_096).optional(),
-  env: z.record(z.string().max(8_192)).optional(),
+  staticEnv: environmentValueMapSchema.optional(),
   forwardedEnv: z.array(environmentNameSchema).max(100).optional(),
-  credentialEnvNames: z.array(environmentNameSchema).max(100).optional(),
-}).strict();
+  secretEnvNames: z.array(environmentNameSchema).max(100).optional(),
+}).strict().superRefine((value, ctx) => {
+  const staticNames = new Set(Object.keys(value.staticEnv ?? {}));
+  for (const name of value.secretEnvNames ?? []) {
+    if (staticNames.has(name)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["staticEnv", name],
+        message: `${name} is marked secret and cannot remain in safe config`,
+      });
+    }
+  }
+});
 
 export const mcpStreamableHttpSafeConfigSchema = z.object({
   url: z.string().url().max(8_192).optional(),
-  headers: safeHeaderSchema.optional(),
-  bearerEnvVar: environmentNameSchema.optional(),
-  credentialHeaderNames: z.array(z.string().min(1).max(256)).max(100).optional(),
-}).strict();
+  staticHeaders: safeHeaderSchema.optional(),
+  headersFromEnv: z.record(environmentNameSchema).optional(),
+  bearerTokenEnvVar: environmentNameSchema.optional(),
+  secretHeaderNames: z.array(z.string().min(1).max(256)).max(100).optional(),
+  hasBearerToken: z.boolean().optional(),
+}).strict().superRefine((value, ctx) => {
+  const staticNames = new Set(Object.keys(value.staticHeaders ?? {}).map((name) => name.toLowerCase()));
+  const mappedNames = new Set(Object.keys(value.headersFromEnv ?? {}).map((name) => name.toLowerCase()));
+
+  for (const name of value.secretHeaderNames ?? []) {
+    if (staticNames.has(name.toLowerCase())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["staticHeaders", name],
+        message: `${name} is marked secret and cannot remain in safe config`,
+      });
+    }
+  }
+  for (const name of mappedNames) {
+    if (staticNames.has(name)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["headersFromEnv", name],
+        message: `${name} cannot have both a static value and an environment mapping`,
+      });
+    }
+  }
+});
+
+export const mcpConnectionSecretsMutationSchema = z.object({
+  env: environmentValueMapSchema.optional(),
+  headers: stringMapSchema.optional(),
+  bearerToken: z.string().min(1).max(1_000_000).optional(),
+}).strict().refine((value) => (
+  Object.keys(value.env ?? {}).length > 0
+  || Object.keys(value.headers ?? {}).length > 0
+  || Boolean(value.bearerToken)
+), {
+  message: "At least one secret value is required",
+});
 
 export const mcpLegacyManualSafeConfigSchema = z.object({
   legacyConfigRetained: z.literal(true),
@@ -72,35 +131,81 @@ const mcpConnectionInputFields = {
   provider: mcpConnectionProviderSchema,
   transport: mcpConnectionTransportSchema,
   externalScope: z.string().trim().min(1).max(512).optional().nullable(),
-  accessMode: mcpConnectionAccessModeSchema.default("provider_default"),
+  accessMode: mcpConnectionAccessModeSchema.optional(),
   safeConfig: mcpConnectionSafeConfigSchema.default({}),
-  connectTimeoutMs: z.number().int().min(100).max(300_000).default(10_000),
+  startupTimeoutMs: z.number().int().min(100).max(300_000).default(10_000),
   toolTimeoutMs: z.number().int().min(100).max(900_000).default(60_000),
   enabled: z.boolean().default(true),
   required: z.boolean().default(false),
-  credential: z.object({
-    name: z.string().trim().min(1).max(160).optional(),
-    value: z.string().min(1).max(1_000_000),
-  }).strict().optional(),
+  secrets: mcpConnectionSecretsMutationSchema.optional(),
 };
 
-function validateTransportConfig(
+const providerAccessModes = {
+  supabase: ["read_only", "read_write"],
+  linear: ["read_only", "read_write"],
+  notion: ["provider_default"],
+  custom: ["provider_default", "read_only", "read_write"],
+} as const;
+
+function defaultAccessMode(provider: string | undefined) {
+  if (provider === "supabase" || provider === "linear") return "read_only";
+  return "provider_default";
+}
+
+function validateConnectionConfig(
   value: {
     provider?: string;
     transport?: string;
+    accessMode?: string;
     safeConfig?: unknown;
     enabled?: boolean;
+    secrets?: z.infer<typeof mcpConnectionSecretsMutationSchema>;
   },
   ctx: z.RefinementCtx,
 ) {
-  if (value.transport === "stdio") {
-    if (value.provider !== "custom") {
+  const accessMode = value.accessMode ?? defaultAccessMode(value.provider);
+  const allowedAccessModes = value.provider
+    ? providerAccessModes[value.provider as keyof typeof providerAccessModes]
+    : undefined;
+  if (!allowedAccessModes?.some((allowed) => allowed === accessMode)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["accessMode"],
+      message: `${value.provider ?? "Unknown"} does not support ${accessMode}`,
+    });
+  }
+
+  if (value.provider !== "custom") {
+    if (value.transport !== "streamable_http") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["provider"],
-        message: "STDIO connections must use the custom provider",
+        path: ["transport"],
+        message: "Curated providers use Rudder-managed Streamable HTTP",
       });
     }
+    if (
+      typeof value.safeConfig !== "object"
+      || value.safeConfig === null
+      || Array.isArray(value.safeConfig)
+      || Object.keys(value.safeConfig).length > 0
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["safeConfig"],
+        message: "Curated provider URL, headers, and transport config are Rudder-managed",
+      });
+    }
+    if (value.secrets) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["secrets"],
+        message: "Curated provider credentials must come from its OAuth grant",
+      });
+    }
+    return;
+  }
+
+  if (value.transport === "stdio") {
     if (!mcpStdioSafeConfigSchema.safeParse(value.safeConfig).success) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -122,11 +227,11 @@ function validateTransportConfig(
   }
 
   if (value.transport === "legacy_manual") {
-    if (value.provider !== "custom") {
+    if (!mcpLegacyManualSafeConfigSchema.safeParse(value.safeConfig).success) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["provider"],
-        message: "Legacy manual connections must use the custom provider",
+        path: ["safeConfig"],
+        message: "Legacy manual connections require compatibility config",
       });
     }
     if (value.enabled !== false) {
@@ -137,23 +242,63 @@ function validateTransportConfig(
       });
     }
   }
+
+  if (value.transport === "streamable_http") {
+    const parsed = mcpStreamableHttpSafeConfigSchema.safeParse(value.safeConfig);
+    if (parsed.success) {
+      const authorizationHeader = (
+        Object.keys(parsed.data.headersFromEnv ?? {})
+          .some((name) => name.toLowerCase() === "authorization")
+        || (parsed.data.secretHeaderNames ?? [])
+          .some((name) => name.toLowerCase() === "authorization")
+      );
+      const bearerEnvironment = Boolean(parsed.data.bearerTokenEnvVar);
+      const directBearer = Boolean(parsed.data.hasBearerToken || value.secrets?.bearerToken);
+      if ([authorizationHeader, bearerEnvironment, directBearer].filter(Boolean).length > 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["safeConfig"],
+          message: "Configure only one manual Authorization or Bearer source",
+        });
+      }
+    }
+  }
 }
 
 export const createMcpConnectionSchema = z.object(mcpConnectionInputFields)
   .strict()
-  .superRefine(validateTransportConfig);
+  .superRefine(validateConnectionConfig)
+  .transform((value) => ({
+    ...value,
+    accessMode: value.accessMode ?? defaultAccessMode(value.provider),
+  }));
 
 export const updateMcpConnectionSchema = z.object({
   displayName: mcpConnectionInputFields.displayName.optional(),
   externalScope: mcpConnectionInputFields.externalScope.optional(),
-  accessMode: mcpConnectionInputFields.accessMode.optional(),
-  safeConfig: mcpConnectionInputFields.safeConfig.optional(),
-  connectTimeoutMs: mcpConnectionInputFields.connectTimeoutMs.optional(),
-  toolTimeoutMs: mcpConnectionInputFields.toolTimeoutMs.optional(),
-  enabled: mcpConnectionInputFields.enabled.optional(),
-  required: mcpConnectionInputFields.required.optional(),
-  credential: mcpConnectionInputFields.credential,
-}).strict();
+  accessMode: mcpConnectionAccessModeSchema.optional(),
+  safeConfig: mcpConnectionSafeConfigSchema.optional(),
+  startupTimeoutMs: z.number().int().min(100).max(300_000).optional(),
+  toolTimeoutMs: z.number().int().min(100).max(900_000).optional(),
+  enabled: z.boolean().optional(),
+  required: z.boolean().optional(),
+  secrets: mcpConnectionSecretsMutationSchema.optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, {
+  message: "At least one connection field is required",
+});
+
+/**
+ * Service-side validation target after an immutable provider/transport record
+ * has been merged with a public update payload.
+ */
+export const mcpConnectionMergedConfigSchema = z.object({
+  provider: mcpConnectionProviderSchema,
+  transport: mcpConnectionTransportSchema,
+  accessMode: mcpConnectionAccessModeSchema,
+  safeConfig: mcpConnectionSafeConfigSchema,
+  enabled: z.boolean(),
+  secrets: mcpConnectionSecretsMutationSchema.optional(),
+}).strict().superRefine(validateConnectionConfig);
 
 export const mcpConnectionSummarySchema = z.object({
   id: uuidSchema,
@@ -166,7 +311,7 @@ export const mcpConnectionSummarySchema = z.object({
   accessMode: mcpConnectionAccessModeSchema,
   status: mcpConnectionStatusSchema,
   safeConfig: mcpConnectionSafeConfigSchema,
-  connectTimeoutMs: z.number().int().positive(),
+  startupTimeoutMs: z.number().int().positive(),
   toolTimeoutMs: z.number().int().positive(),
   enabled: z.boolean(),
   required: z.boolean(),
@@ -273,13 +418,14 @@ export const updateMcpAgentBindingSchema = z.object({
 });
 
 export const managedExternalMcpBindingSchema = z.object({
-  connectionId: uuidSchema,
+  bindingId: uuidSchema,
   serverName: connectionNameSchema,
-  proxyUrl: z.string().url().max(8_192),
-  authorizationEnvVar: environmentNameSchema,
-  enabledToolNames: z.array(z.string().min(1).max(240)).max(500),
+  toolPolicy: z.object({
+    mode: z.literal("allowlist"),
+    allowedToolNames: z.array(z.string().min(1).max(240)).max(500),
+  }).strict(),
   required: z.boolean(),
-  connectTimeoutMs: z.number().int().positive(),
+  startupTimeoutMs: z.number().int().positive(),
   toolTimeoutMs: z.number().int().positive(),
 }).strict();
 
