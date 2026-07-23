@@ -747,7 +747,7 @@ describe("steer fallback chat rendering", () => {
     const container = renderChatMessageItem(message({
       status: "failed",
       body: "Useful partial answer.",
-      generationTerminalReason: "steer_fallback",
+      generationTerminalReason: "steer_fallback_unverified",
     }));
 
     expect(container.textContent).toContain("Useful partial answer.");
@@ -760,7 +760,7 @@ describe("steer fallback chat rendering", () => {
     const container = renderChatMessageItem(message({
       status: "stopped",
       body: "Chat run stopped before a final reply. Continue the conversation to resume from the preserved context.",
-      generationTerminalReason: "steer_fallback_runtime_owner_missing",
+      generationTerminalReason: "steer_fallback_unverified",
     }));
 
     expect(container.querySelector('[data-testid="chat-assistant-message"]')).toBeNull();
@@ -772,7 +772,7 @@ describe("steer fallback chat rendering", () => {
       <StreamTranscriptItem
         entries={[{ kind: "stderr", ts: "2026-06-15T10:00:00.000Z", text: "partial tool output" }]}
         state="failed"
-        generationTerminalReason="steer_fallback_runtime_owner_missing"
+        generationTerminalReason="steer_fallback_unverified"
         streamStartedAt={new Date("2026-06-15T10:00:00.000Z")}
         defaultOpen
       />,

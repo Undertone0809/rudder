@@ -56,7 +56,7 @@ import {
 import { estimateCodexCostUsd } from "./cost.js";
 import { captureCodexInlineVisuals, codexInlineVisualDirectiveBody } from "./inline-visuals.js";
 import { isCodexUnknownSessionError, parseCodexJsonl } from "./parse.js";
-import { createCodexStderrLineFilter, splitCompleteLines, stripCodexBenignStderr } from "./stderr-filter.js";
+import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompleteLines, stripCodexBenignStderr } from "./stderr-filter.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const CODEX_PROTECTED_ENV_KEYS = new Set([
@@ -834,6 +834,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           return;
         }
         stderrBuffer += chunk;
+        if (stderrBuffer.length > CODEX_STDERR_LINE_BUFFER_LIMIT) {
+          const overflow = stderrBuffer.slice(0, stderrBuffer.length - CODEX_STDERR_LINE_BUFFER_LIMIT);
+          stderrBuffer = stderrBuffer.slice(-CODEX_STDERR_LINE_BUFFER_LIMIT);
+          if (!isBenignStderrLine(overflow)) await onLog("stderr", overflow);
+        }
         await flushBufferedStderr(false);
       },
     });
