@@ -14,6 +14,8 @@ export interface McpStdioSafeConfig {
   staticEnv?: Record<string, string>;
   forwardedEnv?: string[];
   secretEnvNames?: string[];
+  toolAllowlist?: string[];
+  toolDenylist?: string[];
 }
 
 export interface McpStreamableHttpSafeConfig {
@@ -23,6 +25,8 @@ export interface McpStreamableHttpSafeConfig {
   bearerTokenEnvVar?: string;
   secretHeaderNames?: string[];
   hasBearerToken?: boolean;
+  toolAllowlist?: string[];
+  toolDenylist?: string[];
 }
 
 export interface McpConnectionSecretsMutation {
@@ -81,6 +85,7 @@ export interface McpProviderCatalogEntry {
   scopeLabel: string;
   transports: McpConnectionTransport[];
   accessModes: McpConnectionAccessMode[];
+  defaultAccessMode: McpConnectionAccessMode;
 }
 
 export interface McpOAuthGrantSummary {

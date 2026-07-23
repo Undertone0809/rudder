@@ -26,6 +26,11 @@ export interface NormalizedMcpDiscoveredTool {
   outputSchema: Record<string, unknown> | null;
 }
 
+export interface McpToolDiscoveryFilter {
+  toolAllowlist?: string[];
+  toolDenylist?: string[];
+}
+
 const AjvCtor = (Ajv as any).default ?? Ajv;
 const ajv = new AjvCtor({
   allErrors: false,
@@ -153,6 +158,7 @@ function boundedNamespacedToolName(
 export function normalizeMcpDiscoveredTools(
   connectionName: string,
   tools: RawMcpDiscoveredTool[],
+  filter: McpToolDiscoveryFilter = {},
 ): NormalizedMcpDiscoveredTool[] {
   if (tools.length > MCP_TOOL_DISCOVERY_LIMITS.maxTools) {
     throw new Error("Managed MCP tool count exceeds the discovery limit");
@@ -173,14 +179,23 @@ export function normalizeMcpDiscoveredTools(
     names.add(tool.name);
   }
 
+  const allowlist = filter.toolAllowlist?.length
+    ? new Set(filter.toolAllowlist)
+    : null;
+  const denylist = new Set(filter.toolDenylist ?? []);
+  const exposedTools = tools.filter((tool) => (
+    (!allowlist || allowlist.has(tool.name))
+    && !denylist.has(tool.name)
+  ));
+
   const connectionPrefix = `external.${managedMcpRuntimeServerName(connectionName)}`;
   const slugCounts = new Map<string, number>();
-  for (const tool of tools) {
+  for (const tool of exposedTools) {
     const slug = toolSlug(tool.name);
     slugCounts.set(slug, (slugCounts.get(slug) ?? 0) + 1);
   }
 
-  return tools.map((tool) => {
+  return exposedTools.map((tool) => {
     const input = normalizeSchema(tool.inputSchema ?? { type: "object" }, "input");
     const output = tool.outputSchema
       ? normalizeSchema(tool.outputSchema, "output")
@@ -212,6 +227,7 @@ export function normalizeMcpDiscoveredTools(
 export interface ExistingMcpToolCatalogEntry {
   externalToolName: string;
   enabled: boolean;
+  status?: string;
 }
 
 export interface ReconciledMcpToolCatalogEntry {
@@ -235,7 +251,10 @@ export function reconcileMcpToolCatalog(
       const prior = existingByName.get(tool.externalToolName);
       return {
         externalToolName: tool.externalToolName,
-        enabled: prior?.enabled ?? true,
+        // A tool disabled because it disappeared (including through a custom
+        // discovery filter) becomes available again when it reappears. Preserve
+        // an explicit disable on an otherwise-active tool.
+        enabled: prior?.status === "removed" ? true : prior?.enabled ?? true,
         status: "active" as const,
         isNew: !prior,
       };

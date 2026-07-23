@@ -422,6 +422,7 @@ export const MCP_PROVIDER_CATALOG = [
     scopeLabel: "Project",
     transports: ["streamable_http"],
     accessModes: ["read_only", "read_write"],
+    defaultAccessMode: "read_only",
   },
   {
     id: "linear",
@@ -432,6 +433,7 @@ export const MCP_PROVIDER_CATALOG = [
     scopeLabel: "Workspace",
     transports: ["streamable_http"],
     accessModes: ["read_only", "read_write"],
+    defaultAccessMode: "read_write",
   },
   {
     id: "notion",
@@ -442,6 +444,7 @@ export const MCP_PROVIDER_CATALOG = [
     scopeLabel: "Workspace",
     transports: ["streamable_http"],
     accessModes: ["provider_default"],
+    defaultAccessMode: "provider_default",
   },
   {
     id: "custom",
@@ -450,8 +453,9 @@ export const MCP_PROVIDER_CATALOG = [
     requiresOAuth: false,
     requiresScopeSelection: false,
     scopeLabel: "Server",
-    transports: ["stdio", "streamable_http", "legacy_manual"],
+    transports: ["stdio", "streamable_http"],
     accessModes: ["provider_default", "read_only", "read_write"],
+    defaultAccessMode: "provider_default",
   },
 ] as const;
 

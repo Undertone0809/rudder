@@ -127,6 +127,19 @@ describe("managed MCP tool discovery normalization", () => {
     );
   });
 
+  it("applies exact custom allowlist and denylist filters before exposing schemas", () => {
+    const tools = normalizeMcpDiscoveredTools("filtered", [
+      { name: "read_rows", inputSchema: { type: "object" } },
+      { name: "write_rows", inputSchema: { type: "object" } },
+      { name: "delete_rows", inputSchema: { type: "object" } },
+    ], {
+      toolAllowlist: ["read_rows", "write_rows"],
+      toolDenylist: ["write_rows"],
+    });
+
+    expect(tools.map((tool) => tool.externalToolName)).toEqual(["read_rows"]);
+  });
+
   it("truncates and hashes namespaced tool names to a stable 128 characters", () => {
     const input = [{
       name: "x".repeat(128),
@@ -156,6 +169,22 @@ describe("managed MCP schema drift", () => {
       { externalToolName: "kept", enabled: true, status: "active", isNew: false },
       { externalToolName: "new", enabled: true, status: "active", isNew: true },
       { externalToolName: "gone", enabled: false, status: "removed", isNew: false },
+    ]);
+  });
+
+  it("restores tools that reappear without overriding an explicit active disable", () => {
+    expect(reconcileMcpToolCatalog(
+      [
+        { externalToolName: "returned", enabled: false, status: "removed" },
+        { externalToolName: "manually_disabled", enabled: false, status: "active" },
+      ],
+      [
+        { externalToolName: "returned" },
+        { externalToolName: "manually_disabled" },
+      ],
+    )).toEqual([
+      { externalToolName: "returned", enabled: true, status: "active", isNew: false },
+      { externalToolName: "manually_disabled", enabled: false, status: "active", isNew: false },
     ]);
   });
 

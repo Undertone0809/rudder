@@ -95,7 +95,7 @@ const EMPTY_ALLOWLISTS: McpDeploymentAllowlists = {
 };
 
 const SENSITIVE_STATIC_NAME_RE =
-  /(api[-_]?key|access[-_]?token|auth(?:[-_]?token)?|authorization|bearer|secret|passwd|password|credential|cookie|jwt|private[-_]?key|connectionstring|(?:^|[-_])token(?:$|[-_]))/iu;
+  /(api[-_]?key|client[-_]?key|access[-_]?token|auth(?:[-_]?token)?|authorization|bearer|secret|passwd|password|credential|cookie|jwt|private[-_]?key|connectionstring|(?:^|[-_])(?:token|key)(?:$|[-_]))/iu;
 const RECONNECT_REQUIRED_STATUSES = new Set([
   "disabled",
   "revoked",
@@ -195,6 +195,8 @@ function asStdioConfig(config: Record<string, unknown>) {
     staticEnv?: Record<string, string>;
     forwardedEnv?: string[];
     secretEnvNames?: string[];
+    toolAllowlist?: string[];
+    toolDenylist?: string[];
   };
 }
 
@@ -206,6 +208,22 @@ function asHttpConfig(config: Record<string, unknown>) {
     bearerTokenEnvVar?: string;
     secretHeaderNames?: string[];
     hasBearerToken?: boolean;
+    toolAllowlist?: string[];
+    toolDenylist?: string[];
+  };
+}
+
+function discoveryFilter(row: McpConnectionRow): {
+  toolAllowlist?: string[];
+  toolDenylist?: string[];
+} {
+  if (row.provider !== "custom") return {};
+  const config = row.transport === "stdio"
+    ? asStdioConfig(row.safeConfig)
+    : asHttpConfig(row.safeConfig);
+  return {
+    toolAllowlist: config.toolAllowlist,
+    toolDenylist: config.toolDenylist,
   };
 }
 
@@ -1035,6 +1053,7 @@ export function managedMcpConnectionService(
         const normalized = normalizeMcpDiscoveredTools(
           existing.name,
           await client.discoverTools(),
+          discoveryFilter(existing),
         );
         const normalizedByName = new Map(normalized.map((tool) => [tool.externalToolName, tool]));
         await db.transaction(async (tx) => {

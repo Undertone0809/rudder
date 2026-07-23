@@ -7,12 +7,12 @@ import { auth } from "@modelcontextprotocol/client";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createSecureMcpFetch } from "../services/mcp/pinned-fetch.js";
 import {
   PersistentMcpOAuthClientProvider,
   resolveMcpOAuthRedirectUri,
   type ManagedMcpOAuthMaterial,
 } from "../services/mcp/oauth-provider.js";
+import { createSecureMcpFetch } from "../services/mcp/pinned-fetch.js";
 
 const servers: Array<ReturnType<typeof createServer>> = [];
 

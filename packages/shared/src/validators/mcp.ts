@@ -20,6 +20,11 @@ const environmentNameSchema = z.string()
   .min(1)
   .max(160)
   .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Use a valid environment variable name");
+const externalMcpToolNameSchema = z.string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_.-]+$/, "Use an exact MCP tool name");
+const externalMcpToolFilterSchema = z.array(externalMcpToolNameSchema).max(500);
 
 export const mcpConnectionProviderSchema = z.enum(MCP_CONNECTION_PROVIDERS);
 export const mcpConnectionTransportSchema = z.enum(MCP_CONNECTION_TRANSPORTS);
@@ -60,6 +65,8 @@ export const mcpStdioSafeConfigSchema = z.object({
   staticEnv: environmentValueMapSchema.optional(),
   forwardedEnv: z.array(environmentNameSchema).max(100).optional(),
   secretEnvNames: z.array(environmentNameSchema).max(100).optional(),
+  toolAllowlist: externalMcpToolFilterSchema.optional(),
+  toolDenylist: externalMcpToolFilterSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   const staticNames = new Set(Object.keys(value.staticEnv ?? {}));
   for (const name of value.secretEnvNames ?? []) {
@@ -80,6 +87,8 @@ export const mcpStreamableHttpSafeConfigSchema = z.object({
   bearerTokenEnvVar: environmentNameSchema.optional(),
   secretHeaderNames: z.array(z.string().min(1).max(256)).max(100).optional(),
   hasBearerToken: z.boolean().optional(),
+  toolAllowlist: externalMcpToolFilterSchema.optional(),
+  toolDenylist: externalMcpToolFilterSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   const staticNames = new Set(Object.keys(value.staticHeaders ?? {}).map((name) => name.toLowerCase()));
   const mappedNames = new Set(Object.keys(value.headersFromEnv ?? {}).map((name) => name.toLowerCase()));
@@ -457,7 +466,16 @@ export const mcpProviderCatalogEntrySchema = z.object({
   scopeLabel: z.string().min(1),
   transports: z.array(mcpConnectionTransportSchema).min(1),
   accessModes: z.array(mcpConnectionAccessModeSchema).min(1),
-}).strict();
+  defaultAccessMode: mcpConnectionAccessModeSchema,
+}).strict().superRefine((value, ctx) => {
+  if (!value.accessModes.includes(value.defaultAccessMode)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["defaultAccessMode"],
+      message: "Default access mode must be included in accessModes",
+    });
+  }
+});
 
 export const mcpProviderCatalogSchema = z.array(mcpProviderCatalogEntrySchema);
 mcpProviderCatalogSchema.parse(MCP_PROVIDER_CATALOG);

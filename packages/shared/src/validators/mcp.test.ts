@@ -36,14 +36,21 @@ describe("managed MCP shared contracts", () => {
       expect.objectContaining({
         id: "supabase",
         accessModes: ["read_only", "read_write"],
+        defaultAccessMode: "read_only",
       }),
       expect.objectContaining({
         id: "linear",
         accessModes: ["read_only", "read_write"],
+        defaultAccessMode: "read_write",
       }),
       expect.objectContaining({
         id: "notion",
         accessModes: ["provider_default"],
+        defaultAccessMode: "provider_default",
+      }),
+      expect.objectContaining({
+        id: "custom",
+        transports: ["stdio", "streamable_http"],
       }),
     ]));
   });
@@ -150,6 +157,34 @@ describe("managed MCP shared contracts", () => {
     });
 
     expect(parsed.success).toBe(true);
+  });
+
+  it("accepts bounded exact-name tool allowlists and denylists for custom MCPs", () => {
+    const schema = exportedSchema("createMcpConnectionSchema");
+    if (!schema) return;
+
+    const base = {
+      name: "filtered-tools",
+      displayName: "Filtered tools",
+      provider: "custom",
+      transport: "streamable_http",
+      accessMode: "provider_default",
+    };
+    expect(schema.safeParse({
+      ...base,
+      safeConfig: {
+        url: "https://mcp.example.com",
+        toolAllowlist: ["read_rows", "search.docs"],
+        toolDenylist: ["delete_rows"],
+      },
+    }).success).toBe(true);
+    expect(schema.safeParse({
+      ...base,
+      safeConfig: {
+        url: "https://mcp.example.com",
+        toolAllowlist: ["read rows"],
+      },
+    }).success).toBe(false);
   });
 
   it("accepts exactly one manual Authorization or Bearer source and rejects every pair", () => {

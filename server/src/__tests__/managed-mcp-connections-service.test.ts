@@ -639,6 +639,7 @@ describe("managedMcpConnectionService", () => {
       { staticHeaders: { Connection: "keep-alive" } },
       { staticHeaders: { Forwarded: "for=127.0.0.1" } },
       { staticHeaders: { "X-MCP-Token": "plaintext-token" } },
+      { staticHeaders: { "X-Client-Key": "plaintext-key" } },
       { headersFromEnv: { Host: "SAFE_ENV" } },
     ];
     for (const [index, config] of unsafeHttpConfigs.entries()) {
@@ -732,6 +733,82 @@ describe("managedMcpConnectionService", () => {
     expect(firstClient.close).toHaveBeenCalledOnce();
     expect(secondClient.close).toHaveBeenCalledOnce();
     expect((await svc.get(orgId, connection.id)).status).toBe("active");
+  });
+
+  it("persists only custom tools admitted by the connection allowlist and denylist", async () => {
+    const orgId = await seedOrg(db);
+    createClient.mockResolvedValue(clientWithTools([
+      { name: "read_rows", inputSchema: { type: "object" } },
+      { name: "write_rows", inputSchema: { type: "object" } },
+      { name: "delete_rows", inputSchema: { type: "object" } },
+    ]));
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "filtered-tools",
+      displayName: "Filtered tools",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: {
+        url: "https://mcp.example.test/mcp",
+        toolAllowlist: ["read_rows", "write_rows"],
+        toolDenylist: ["write_rows"],
+      },
+    }, { userId: "owner-1" });
+
+    const tools = await svc.refreshTools(orgId, connection.id);
+    expect(tools.map((tool) => tool.externalToolName)).toEqual(["read_rows"]);
+  });
+
+  it("restores a tool after a denylist round trip", async () => {
+    const orgId = await seedOrg(db);
+    createClient.mockResolvedValue(clientWithTools([
+      { name: "read_rows", inputSchema: { type: "object" } },
+    ]));
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "round-trip-filter",
+      displayName: "Round trip filter",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: {
+        url: "https://mcp.example.test/mcp",
+        toolAllowlist: ["read_rows"],
+      },
+    }, { userId: "owner-1" });
+
+    expect(await svc.refreshTools(orgId, connection.id)).toEqual([
+      expect.objectContaining({
+        externalToolName: "read_rows",
+        enabled: true,
+        removedAt: null,
+      }),
+    ]);
+    await svc.update(orgId, connection.id, {
+      safeConfig: {
+        url: "https://mcp.example.test/mcp",
+        toolAllowlist: ["read_rows"],
+        toolDenylist: ["read_rows"],
+      },
+    }, { userId: "owner-1" });
+    expect(await svc.refreshTools(orgId, connection.id)).toEqual([
+      expect.objectContaining({
+        externalToolName: "read_rows",
+        enabled: false,
+      }),
+    ]);
+    await svc.update(orgId, connection.id, {
+      safeConfig: {
+        url: "https://mcp.example.test/mcp",
+        toolAllowlist: ["read_rows"],
+      },
+    }, { userId: "owner-1" });
+    expect(await svc.refreshTools(orgId, connection.id)).toEqual([
+      expect.objectContaining({
+        externalToolName: "read_rows",
+        enabled: true,
+        removedAt: null,
+      }),
+    ]);
   });
 
   it("does not let a slow discovery revive a connection disconnected during network I/O", async () => {
