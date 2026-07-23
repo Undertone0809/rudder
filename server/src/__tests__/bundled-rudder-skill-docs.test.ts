@@ -319,7 +319,8 @@ describe("bundled rudder docs skill", () => {
     const contents = await readReferences();
 
     const requiredPatterns = [
-      /checkout[\s\S]*before[\s\S]*issue-scoped (?:execution|work)/i,
+      /checkout-eligible[\s\S]*checkout/i,
+      /explicit comment wake[\s\S]*without[\s\S]*checkout/i,
       /(?:do not|never) retry[\s\S]*409/i,
       /(?:do not|never) look for unassigned work/i,
       /intent=wake/,

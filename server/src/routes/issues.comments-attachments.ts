@@ -186,13 +186,21 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
       return;
     }
     assertCompanyAccess(req, issue.orgId);
-    if (!(await assertAgentRunCheckoutOwnership(req, res, issue))) return;
+    if (!(await assertAgentRunCheckoutOwnership(req, res, issue, { allowBoundCollaborator: true }))) return;
     const commentRun = await resolveAgentIssueRunId(req, res, issue);
     if (!commentRun.ok) return;
 
     const actor = getActorInfo(req);
     const reopenRequested = req.body.reopen === true;
     const interruptRequested = req.body.interrupt === true;
+    const actorIsCurrentRelationship =
+      actor.actorType !== "agent"
+      || actor.agentId === issue.assigneeAgentId
+      || actor.agentId === issue.reviewerAgentId;
+    if (reopenRequested && !actorIsCurrentRelationship) {
+      res.status(403).json({ error: "Only the current assignee or reviewer can reopen an issue" });
+      return;
+    }
     const isClosed = issue.status === "done" || issue.status === "cancelled";
     let reopened = false;
     let reopenFromStatus: string | null = null;
@@ -200,7 +208,18 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
     let currentIssue = issue;
 
     if (reopenRequested && isClosed) {
-      const reopenedIssue = await svc.update(id, { status: "todo" });
+      const reopenedIssue =
+        actor.actorType === "agent" && actor.agentId
+          ? await svc.update(
+              id,
+              { status: "todo" },
+              {
+                agentId: actor.agentId,
+                runId: actor.runId,
+                relationship: "assignee_or_reviewer",
+              },
+            )
+          : await svc.update(id, { status: "todo" });
       if (!reopenedIssue) {
         res.status(404).json({ error: "Issue not found" });
         return;
@@ -390,6 +409,7 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
           issue: currentIssue,
           comment,
           actor,
+          targetAgentId: mentionedId,
         }));
       }
 
