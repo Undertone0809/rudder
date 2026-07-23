@@ -241,6 +241,51 @@ describe("managed MCP shared contracts", () => {
     }
   });
 
+  it("validates persisted secret declarations without requiring plaintext again", () => {
+    const mergedConfigSchema = exportedSchema("mcpConnectionMergedConfigSchema");
+    const mutationConfigSchema = exportedSchema("mcpConnectionMutationConfigSchema");
+    if (!mergedConfigSchema || !mutationConfigSchema) return;
+
+    const persistedStdio = {
+      provider: "custom",
+      transport: "stdio",
+      accessMode: "provider_default",
+      safeConfig: {
+        command: "node",
+        secretEnvNames: ["API_TOKEN"],
+      },
+      enabled: true,
+    };
+    const persistedHttp = {
+      provider: "custom",
+      transport: "streamable_http",
+      accessMode: "provider_default",
+      safeConfig: {
+        url: "https://mcp.example.com",
+        secretHeaderNames: ["X-Api-Key"],
+        hasBearerToken: true,
+      },
+      enabled: true,
+    };
+
+    expect(mergedConfigSchema.safeParse(persistedStdio).success).toBe(true);
+    expect(mergedConfigSchema.safeParse(persistedHttp).success).toBe(true);
+
+    expect(mutationConfigSchema.safeParse(persistedStdio).success).toBe(false);
+    expect(mutationConfigSchema.safeParse({
+      ...persistedStdio,
+      secrets: { env: { API_TOKEN: "rotated-secret" } },
+    }).success).toBe(true);
+    expect(mutationConfigSchema.safeParse(persistedHttp).success).toBe(false);
+    expect(mutationConfigSchema.safeParse({
+      ...persistedHttp,
+      secrets: {
+        headers: { "X-Api-Key": "rotated-header-secret" },
+        bearerToken: "rotated-bearer-secret",
+      },
+    }).success).toBe(true);
+  });
+
   it("rejects sensitive names when their values remain in static safe config", () => {
     const schema = exportedSchema("createMcpConnectionSchema");
     if (!schema) return;

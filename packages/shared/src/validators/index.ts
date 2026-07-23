@@ -153,6 +153,7 @@ export {
   mcpAgentBindingStatusSchema,
   mcpConnectionAccessModeSchema,
   mcpConnectionMergedConfigSchema,
+  mcpConnectionMutationConfigSchema,
   mcpConnectionProviderSchema,
   mcpConnectionSafeConfigSchema,
   mcpConnectionSecretsMutationSchema,

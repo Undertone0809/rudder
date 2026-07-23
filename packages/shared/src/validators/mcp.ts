@@ -161,7 +161,7 @@ function sameNames(left: string[], right: string[], caseInsensitive = false) {
     && [...leftNames].every((name) => rightNames.has(name));
 }
 
-function validateConnectionConfig(
+function validateSafeConnectionConfig(
   value: {
     provider?: string;
     transport?: string;
@@ -222,20 +222,6 @@ function validateConnectionConfig(
         path: ["safeConfig"],
         message: "STDIO connections require command-based safe config",
       });
-    } else {
-      const declaredEnvNames = parsed.data.secretEnvNames ?? [];
-      const suppliedEnvNames = Object.keys(value.secrets?.env ?? {});
-      if (
-        !sameNames(declaredEnvNames, suppliedEnvNames)
-        || Object.keys(value.secrets?.headers ?? {}).length > 0
-        || Boolean(value.secrets?.bearerToken)
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["secrets"],
-          message: "STDIO secret values must exactly match declared secret environment names",
-        });
-      }
     }
   }
 
@@ -265,34 +251,15 @@ function validateConnectionConfig(
         message: "Legacy manual connections cannot be executable",
       });
     }
-    if (value.secrets) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["secrets"],
-        message: "Legacy manual connections cannot accept new secret values",
-      });
-    }
   }
 
   if (value.transport === "streamable_http") {
     const parsed = mcpStreamableHttpSafeConfigSchema.safeParse(value.safeConfig);
     if (parsed.success) {
-      const suppliedEnvNames = Object.keys(value.secrets?.env ?? {});
       const declaredHeaderNames = parsed.data.secretHeaderNames ?? [];
       const suppliedHeaderNames = Object.keys(value.secrets?.headers ?? {});
       const declaredBearer = parsed.data.hasBearerToken === true;
       const suppliedBearer = Boolean(value.secrets?.bearerToken);
-      if (
-        suppliedEnvNames.length > 0
-        || !sameNames(declaredHeaderNames, suppliedHeaderNames, true)
-        || declaredBearer !== suppliedBearer
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["secrets"],
-          message: "HTTP mutations accept only exactly declared encrypted headers and direct Bearer values",
-        });
-      }
 
       const authorizationFromEnv = Object.keys(parsed.data.headersFromEnv ?? {})
         .some((name) => name.toLowerCase() === "authorization");
@@ -318,9 +285,71 @@ function validateConnectionConfig(
   }
 }
 
+function validateConnectionSecretMutation(
+  value: {
+    provider?: string;
+    transport?: string;
+    safeConfig?: unknown;
+    secrets?: z.infer<typeof mcpConnectionSecretsMutationSchema>;
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (value.provider !== "custom") return;
+
+  if (value.transport === "stdio") {
+    const parsed = mcpStdioSafeConfigSchema.safeParse(value.safeConfig);
+    if (parsed.success) {
+      const declaredEnvNames = parsed.data.secretEnvNames ?? [];
+      const suppliedEnvNames = Object.keys(value.secrets?.env ?? {});
+      if (
+        !sameNames(declaredEnvNames, suppliedEnvNames)
+        || Object.keys(value.secrets?.headers ?? {}).length > 0
+        || Boolean(value.secrets?.bearerToken)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["secrets"],
+          message: "STDIO secret values must exactly match declared secret environment names",
+        });
+      }
+    }
+  }
+
+  if (value.transport === "legacy_manual" && value.secrets) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["secrets"],
+      message: "Legacy manual connections cannot accept new secret values",
+    });
+  }
+
+  if (value.transport === "streamable_http") {
+    const parsed = mcpStreamableHttpSafeConfigSchema.safeParse(value.safeConfig);
+    if (parsed.success) {
+      const suppliedEnvNames = Object.keys(value.secrets?.env ?? {});
+      const declaredHeaderNames = parsed.data.secretHeaderNames ?? [];
+      const suppliedHeaderNames = Object.keys(value.secrets?.headers ?? {});
+      const declaredBearer = parsed.data.hasBearerToken === true;
+      const suppliedBearer = Boolean(value.secrets?.bearerToken);
+      if (
+        suppliedEnvNames.length > 0
+        || !sameNames(declaredHeaderNames, suppliedHeaderNames, true)
+        || declaredBearer !== suppliedBearer
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["secrets"],
+          message: "HTTP mutations accept only exactly declared encrypted headers and direct Bearer values",
+        });
+      }
+    }
+  }
+}
+
 export const createMcpConnectionSchema = z.object(mcpConnectionInputFields)
   .strict()
-  .superRefine(validateConnectionConfig)
+  .superRefine(validateSafeConnectionConfig)
+  .superRefine(validateConnectionSecretMutation)
   .transform((value) => ({
     ...value,
     accessMode: value.accessMode ?? defaultAccessMode(value.provider),
@@ -341,17 +370,32 @@ export const updateMcpConnectionSchema = z.object({
 });
 
 /**
- * Service-side validation target after an immutable provider/transport record
- * has been merged with a public update payload.
+ * Persisted-safe validation target after an immutable provider/transport
+ * record has been merged with a public update payload. Existing encrypted
+ * secret material is intentionally not required.
  */
-export const mcpConnectionMergedConfigSchema = z.object({
+const mcpConnectionMergedConfigFields = {
   provider: mcpConnectionProviderSchema,
   transport: mcpConnectionTransportSchema,
   accessMode: mcpConnectionAccessModeSchema,
   safeConfig: mcpConnectionSafeConfigSchema,
   enabled: z.boolean(),
+};
+
+export const mcpConnectionMergedConfigSchema = z.object(
+  mcpConnectionMergedConfigFields,
+).strict().superRefine(validateSafeConnectionConfig);
+
+/**
+ * Mutation-aware validation target for create, secret rotation, or a safe
+ * config change that alters secret declarations.
+ */
+export const mcpConnectionMutationConfigSchema = z.object({
+  ...mcpConnectionMergedConfigFields,
   secrets: mcpConnectionSecretsMutationSchema.optional(),
-}).strict().superRefine(validateConnectionConfig);
+}).strict()
+  .superRefine(validateSafeConnectionConfig)
+  .superRefine(validateConnectionSecretMutation);
 
 export const mcpConnectionSummarySchema = z.object({
   id: uuidSchema,
