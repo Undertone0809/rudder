@@ -1008,6 +1008,7 @@ async function startServerRuntime(
     workspacePreviewOrigin: config.workspacePreviewOrigin,
     authReady,
     companyDeletionEnabled: config.companyDeletionEnabled,
+    mcpDeploymentAllowlists: config.mcpDeploymentAllowlists,
     instanceId,
     localEnv,
     runtimeOwnerKind,
