@@ -90,7 +90,7 @@ describe("RunTranscriptView Codex-style chat activity", () => {
     expect(html).toContain("text-muted-foreground");
   });
 
-  it("keeps tool disclosures hidden outside hover or focus even when details are open", () => {
+  it("keeps detail-view tool disclosures hidden outside hover or focus even when details are open", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <TranscriptChatToolActionRow
@@ -106,7 +106,7 @@ describe("RunTranscriptView Codex-style chat activity", () => {
           }}
           density="compact"
           defaultOpenOnError
-          quiet
+          quiet={false}
         />
       </ThemeProvider>,
     );

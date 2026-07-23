@@ -91,7 +91,8 @@ test.describe("Run transcript detail", () => {
     await expect(githubMcpRow.locator('img[src="/brands/github-logo.svg"]')).toBeVisible();
     await expect(rudderMcpRow.locator('img[src="/rudder-logo.png"]')).toBeVisible();
 
-    const groupIconBox = await externalToolGroup.locator('[data-transcript-action-summary-icon="true"]').boundingBox();
+    const expandedExternalToolGroup = page.getByRole("button", { name: /Collapse tool activity group 2/ });
+    const groupIconBox = await expandedExternalToolGroup.locator('[data-transcript-action-summary-icon="true"]').boundingBox();
     const githubIconBox = await githubMcpRow.locator('[data-transcript-action-icon-slot="true"]').boundingBox();
     expect(groupIconBox).not.toBeNull();
     expect(githubIconBox).not.toBeNull();
