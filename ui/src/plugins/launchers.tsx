@@ -1,6 +1,7 @@
 import { authApi } from "@/api/auth";
 import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { Button } from "@/components/ui/button";
+import { LiquidGlassSurface } from "@/components/ui/liquid-glass-surface";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
 import { cn } from "@/lib/utils";
@@ -521,10 +522,10 @@ function LauncherModalShell({
     : launcherShellBoundsStyle(instance.bounds);
 
   const panelClassName = shellType === "openDrawer"
-    ? "fixed right-0 top-0 h-full max-w-[min(44rem,100vw)] overflow-hidden border-l border-border bg-background shadow-2xl"
+    ? "liquid-glass-host fixed right-0 top-0 h-full max-w-[min(44rem,100vw)] overflow-hidden border-l border-border bg-background shadow-2xl"
     : shellType === "openPopover"
-      ? "fixed overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
-      : "fixed left-1/2 top-1/2 max-h-[calc(100vh-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-border bg-background shadow-2xl";
+      ? "liquid-glass-host fixed overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
+      : "liquid-glass-host fixed left-1/2 top-1/2 max-h-[calc(100vh-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-border bg-background shadow-2xl";
 
   return (
     <>
@@ -553,6 +554,7 @@ function LauncherModalShell({
         }}
         onMouseDown={(event) => event.stopPropagation()}
       >
+        <LiquidGlassSurface variant={shellType === "openPopover" ? "menu" : "modal"} />
         <div className="flex items-center gap-3 border-b border-border px-4 py-3">
           <div className="min-w-0">
             <h2 id={titleId} className="truncate text-sm font-semibold">
