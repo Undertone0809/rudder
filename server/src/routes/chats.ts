@@ -1236,8 +1236,10 @@ export function chatRoutes(
 
     let leaseRenewing = false;
     let leaseLost = false;
+    let deliveryAcknowledged = false;
+    let deliveryAcknowledging = false;
     const renewLease = async () => {
-      if (leaseRenewing || leaseLost) return;
+      if (leaseRenewing || leaseLost || deliveryAcknowledged || deliveryAcknowledging) return;
       leaseRenewing = true;
       try {
         const renewed = await svc.renewServerQueuedMessageClaim({
@@ -1247,7 +1249,7 @@ export function chatRoutes(
           leaseEpoch: claim.leaseEpoch,
           leaseMs: queueLeaseMs,
         });
-        if (!renewed) {
+        if (!renewed && !deliveryAcknowledged && !deliveryAcknowledging) {
           leaseLost = true;
           abortController.abort(new Error("Queued chat continuation lost its delivery lease"));
         }
@@ -1264,7 +1266,6 @@ export function chatRoutes(
 
     let terminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
     let terminalReason: string | null = null;
-    let completionRecorded = false;
     let assistantConversation = conversation;
     let activeChatRunId: string | null = null;
     const transcript: TranscriptEntry[] = [];
@@ -1333,6 +1334,24 @@ export function chatRoutes(
                 providerThreadId: handle.providerThreadId ?? null,
                 providerTurnId: handle.providerTurnId ?? null,
               });
+              if (!deliveryAcknowledged) {
+                deliveryAcknowledging = true;
+                try {
+                  const acknowledged = await svc.acknowledgeServerQueuedMessageDelivery({
+                    itemId: claim.item.id,
+                    generationId: claim.generationId,
+                    leaseToken: claim.leaseToken,
+                    leaseEpoch: claim.leaseEpoch,
+                  });
+                  if (!acknowledged) {
+                    throw new Error("Queued chat continuation delivery acknowledgement was not recorded");
+                  }
+                  deliveryAcknowledged = true;
+                  backgroundRuntime.clearTimer(leaseTimer);
+                } finally {
+                  deliveryAcknowledging = false;
+                }
+              }
             },
             onAttemptLeaseRenewed: async ({ generationId, attemptEpoch, ownerToken }) => {
               await svc.renewGenerationControlLease({ generationId, attemptEpoch, ownerToken });
@@ -1507,23 +1526,9 @@ export function chatRoutes(
               return null;
             })
           : null;
-        if (terminalEvidence) {
-          wakeTerminalProjector();
-          const completed = await svc.completeServerQueuedMessageDelivery({
-            itemId: claim.item.id,
-            generationId: claim.generationId,
-            leaseToken: claim.leaseToken,
-            leaseEpoch: claim.leaseEpoch,
-            status: terminalStatus,
-            reason: terminalReason,
-          }).catch((error: unknown) => {
-            logger.warn({ err: error, queuedMessageId: claim.item.id }, "failed to complete queued chat continuation");
-            return null;
-          });
-          completionRecorded = Boolean(completed);
-        }
+        if (terminalEvidence) wakeTerminalProjector();
       }
-      if (!completionRecorded && !leaseLost) {
+      if (!deliveryAcknowledged && !leaseLost) {
         await svc.releaseServerQueuedMessageClaim({
           itemId: claim.item.id,
           generationId: claim.generationId,
