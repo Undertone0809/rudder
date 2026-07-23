@@ -14,7 +14,8 @@ import {
 import {
   readPendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
-import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type BrowserShortcutAction, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
+import type { SidePanelTarget } from "@/lib/side-panel-targets";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AgentSkillSnapshot, type AutomationDetail, type AutomationRunSummary, type BrowserShortcutAction, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationSkillListItem, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -57,6 +58,8 @@ const mockState = vi.hoisted(() => ({
   automations: {} as Record<string, AutomationDetail>,
   automationRuns: {} as Record<string, AutomationRunSummary[]>,
   projects: [] as Project[],
+  organizationSkills: [] as OrganizationSkillListItem[],
+  agentSkillSnapshot: null as AgentSkillSnapshot | null,
   routeBase: "/messenger/chat",
   workspaceDirectories: {} as Record<string, { directoryPath: string; entries: OrganizationWorkspaceFileEntry[] }>,
   workspaceFiles: {} as Record<string, { rootPath?: string | null; filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; message?: string | null; truncated: boolean }>,
@@ -83,6 +86,8 @@ const mockState = vi.hoisted(() => ({
   removeQueries: vi.fn(),
   destroySideChat: vi.fn(),
   keepSideChat: vi.fn(),
+  createSideChat: vi.fn(),
+  updateConversation: vi.fn(),
   updateWorkspaceFile: vi.fn(),
   sendInFlightByChatId: {} as Record<string, true>,
   setChatSendInFlight: vi.fn(),
@@ -304,7 +309,7 @@ vi.mock("@tanstack/react-query", () => ({
       return { data: mockState.intelligenceProfiles, isPending: false, isLoading: false, error: null };
     }
     if (queryKey[0] === "organization-skills") {
-      return { data: [], isPending: false, isLoading: false, error: null };
+      return { data: mockState.organizationSkills, isPending: false, isLoading: false, error: null };
     }
     if (queryKey[0] === "access") {
       return { data: { user: { id: "local-board" }, userId: "local-board" }, isPending: false, isLoading: false, error: null };
@@ -312,6 +317,14 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "agents") {
       if (mockState.failAgents) {
         return { data: undefined, isPending: false, isLoading: false, error: new Error("Internal server error") };
+      }
+      if (queryKey[1] === "skills") {
+        return {
+          data: mockState.agentSkillSnapshot,
+          isPending: false,
+          isLoading: false,
+          error: null,
+        };
       }
       return {
         data: mockState.agents,
@@ -488,13 +501,11 @@ vi.mock("@/context/ChatGenerationContext", () => ({
 vi.mock("@/api/chats", () => ({
   chatsApi: {
     create: mockState.createConversation,
+    createSideChat: mockState.createSideChat,
     preflightDraft: mockState.preflightDraft,
     sendFirstMessageStream: mockState.sendFirstMessageStream,
     get: vi.fn(),
-    update: vi.fn(async (_chatId: string, patch: Partial<ChatConversation>) => ({
-      ...mockState.conversations[0],
-      ...patch,
-    })),
+    update: mockState.updateConversation,
     regenerateTitle: vi.fn(async (chatId: string) => ({
       ...mockState.conversations.find((conversation) => conversation.id === chatId),
       title: "Regenerated Feishu title",
@@ -732,6 +743,60 @@ function agent(overrides: Partial<Agent> = {}): Agent {
     metadata: null,
     createdAt: new Date("2026-05-12T09:00:00.000Z"),
     updatedAt: new Date("2026-05-12T09:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function organizationSkill(
+  overrides: Partial<OrganizationSkillListItem> = {},
+): OrganizationSkillListItem {
+  return {
+    id: "skill-1",
+    orgId: "org-1",
+    key: "build-advisor",
+    slug: "build-advisor",
+    name: "Build Advisor",
+    description: "Reviews implementation choices.",
+    sourceType: "catalog",
+    sourceLocator: null,
+    sourceRef: null,
+    trustLevel: "markdown_only",
+    compatibility: "compatible",
+    fileInventory: [],
+    createdAt: new Date("2026-05-12T09:00:00.000Z"),
+    updatedAt: new Date("2026-05-12T09:00:00.000Z"),
+    attachedAgentCount: 1,
+    editable: true,
+    editableReason: null,
+    sourceLabel: "Organization",
+    sourceBadge: "rudder",
+    sourcePath: null,
+    workspaceEditPath: null,
+    ...overrides,
+  };
+}
+
+function agentSkillSnapshot(
+  overrides: Partial<AgentSkillSnapshot> = {},
+): AgentSkillSnapshot {
+  return {
+    agentRuntimeType: "codex_local",
+    supported: true,
+    mode: "persistent",
+    desiredSkills: ["org:build-advisor"],
+    entries: [{
+      key: "build-advisor",
+      selectionKey: "org:build-advisor",
+      runtimeName: "Build Advisor",
+      description: "Reviews implementation choices.",
+      desired: true,
+      configurable: true,
+      alwaysEnabled: false,
+      managed: true,
+      state: "installed",
+      sourceClass: "organization",
+    }],
+    warnings: [],
     ...overrides,
   };
 }
@@ -1275,6 +1340,20 @@ async function clickEnabledButtonByAriaLabel(container: Element, label: string) 
   });
 }
 
+async function openComposerOptionsMenu(container: Element) {
+  const button = container.querySelector<HTMLButtonElement>('button[aria-label="Add files and options"]');
+  expect(button).not.toBeNull();
+  expect(button?.disabled).toBe(false);
+  await act(async () => {
+    button?.dispatchEvent(new MouseEvent("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+    }));
+    await Promise.resolve();
+  });
+}
+
 async function startControlledChatStream() {
   let onStreamEvent!: (event: ChatStreamEvent) => void | Promise<void>;
   let resolveStream!: () => void;
@@ -1354,7 +1433,7 @@ async function startControlledChatStream() {
   };
 }
 
-async function renderPersistedSideChatPanel(conversationId: string) {
+async function renderSideChatPanel(conversationId: string | null = null) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -1372,7 +1451,7 @@ async function renderPersistedSideChatPanel(conversationId: string) {
               sourceMessageId: "assistant-source",
               sourcePreview: "Source answer",
               conversationId,
-              clientMutationId: `client-${conversationId}`,
+              clientMutationId: `client-${conversationId ?? "draft"}`,
               label: "Side Chat",
             }}
           />
@@ -1383,6 +1462,36 @@ async function renderPersistedSideChatPanel(conversationId: string) {
   });
 
   return container;
+}
+
+async function renderSwitchableSideChatPanel(initialTarget: Extract<SidePanelTarget, { kind: "side_chat" }>) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  cleanupFn = () => act(() => root.unmount());
+
+  const renderTarget = async (target: Extract<SidePanelTarget, { kind: "side_chat" }>) => {
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={target}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+  };
+
+  await renderTarget(initialTarget);
+  return { container, renderTarget };
+}
+
+async function renderPersistedSideChatPanel(conversationId: string) {
+  return renderSideChatPanel(conversationId);
 }
 
 beforeEach(() => {
@@ -1417,6 +1526,8 @@ beforeEach(() => {
       color: "#2f80ed",
     }),
   ];
+  mockState.organizationSkills = [];
+  mockState.agentSkillSnapshot = null;
   mockState.routeBase = "/messenger/chat";
   mockState.workspaceDirectories = {};
   mockState.workspaceFiles = {};
@@ -1482,6 +1593,43 @@ beforeEach(() => {
   mockState.destroySideChat.mockReset();
   mockState.destroySideChat.mockResolvedValue(undefined);
   mockState.keepSideChat.mockReset();
+  mockState.createSideChat.mockReset();
+  mockState.createSideChat.mockImplementation(async (
+    sourceConversationId: string,
+    data: { clientMutationId: string; planMode?: boolean; sourceMessageId: string },
+  ) => {
+    const source = mockState.conversations.find((conversation) => conversation.id === sourceConversationId)
+      ?? chat({ id: sourceConversationId });
+    const created = chat({
+      id: "side-chat-created",
+      title: `Side chat from: ${source.title}`,
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2099-07-20T10:00:00.000Z"),
+      sideChatClientMutationId: data.clientMutationId,
+      forkedFromConversationId: sourceConversationId,
+      forkedFromMessageId: data.sourceMessageId,
+      preferredAgentId: source.preferredAgentId,
+      planMode: data.planMode ?? source.planMode,
+      contextLinks: source.contextLinks,
+    });
+    mockState.conversations = [...mockState.conversations, created];
+    return created;
+  });
+  mockState.updateConversation.mockReset();
+  mockState.updateConversation.mockImplementation(async (
+    chatId: string,
+    patch: Partial<ChatConversation>,
+  ) => {
+    const current = mockState.conversations.find((conversation) => conversation.id === chatId)
+      ?? mockState.conversations[0]!;
+    const updated = { ...current, ...patch };
+    mockState.conversations = mockState.conversations.map((conversation) => (
+      conversation.id === chatId ? updated : conversation
+    ));
+    return updated;
+  });
   mockState.sendInFlightByChatId = {};
   mockState.setChatSendInFlight.mockReset();
   mockState.createConversation.mockReset();
@@ -1515,25 +1663,23 @@ beforeEach(() => {
   mockState.sendMessageStream.mockImplementation(async (chatId: string, body: string, options: {
     onEvent: (event: unknown) => void | Promise<void>;
   }) => {
+    const sentUserMessage = message({
+      id: "sent-user-message",
+      conversationId: chatId,
+      body,
+      createdAt: new Date("2026-05-12T09:04:00.000Z"),
+    });
+    mockState.messagesByChatId[chatId] = [
+      ...(mockState.messagesByChatId[chatId] ?? []),
+      sentUserMessage,
+    ];
     await options.onEvent({
       type: "ack",
-      userMessage: message({
-        id: "sent-user-message",
-        conversationId: chatId,
-        body,
-        createdAt: new Date("2026-05-12T09:04:00.000Z"),
-      }),
+      userMessage: sentUserMessage,
     });
     await options.onEvent({
       type: "final",
-      messages: [
-        message({
-          id: "sent-user-message",
-          conversationId: chatId,
-          body,
-          createdAt: new Date("2026-05-12T09:04:00.000Z"),
-        }),
-      ],
+      messages: [sentUserMessage],
     });
   });
   mockState.setBreadcrumbs.mockReset();
@@ -1824,6 +1970,361 @@ describe("Chat Side Panel link handling", () => {
     );
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']"))
       .toHaveLength(0);
+  });
+
+  it("omits Project for an inherited no-project Side Chat and uses locked Chat chip semantics", async () => {
+    mockState.conversations = [chat({
+      id: "chat-1",
+      title: "Source without project",
+      contextLinks: [],
+    })];
+
+    const container = await renderSideChatPanel();
+
+    expect(container.querySelector("[data-testid='side-chat-project-chip']")).toBeNull();
+    const agentChip = container.querySelector<HTMLButtonElement>("[data-testid='side-chat-agent-chip']");
+    expect(agentChip).not.toBeNull();
+    expect(agentChip?.disabled).toBe(true);
+    expect(agentChip?.classList.contains("chat-chip")).toBe(true);
+    expect(agentChip?.getAttribute("aria-label")).toContain("Agent:");
+    expect(container.textContent).not.toContain("No project");
+  });
+
+  it("renders inherited Project identity with the context-link label fallback", async () => {
+    mockState.projects = [];
+    mockState.conversations = [chat({
+      id: "chat-1",
+      title: "Source with project",
+      contextLinks: [{
+        id: "context-project-1",
+        orgId: "org-1",
+        conversationId: "chat-1",
+        entityType: "project",
+        entityId: "project-missing",
+        metadata: null,
+        entity: {
+          type: "project",
+          id: "project-missing",
+          label: "Inherited Launch",
+          subtitle: null,
+          identifier: null,
+          status: "active",
+          href: "/projects/project-missing",
+        },
+        createdAt: new Date("2026-05-12T09:00:00.000Z"),
+        updatedAt: new Date("2026-05-12T09:00:00.000Z"),
+      }],
+    })];
+
+    const container = await renderSideChatPanel();
+    const projectChip = container.querySelector<HTMLButtonElement>("[data-testid='side-chat-project-chip']");
+
+    expect(projectChip?.textContent).toContain("Inherited Launch");
+    expect(projectChip?.disabled).toBe(true);
+    expect(projectChip?.classList.contains("chat-chip")).toBe(true);
+    expect(projectChip?.querySelector("[data-testid='side-chat-project-icon']")).not.toBeNull();
+  });
+
+  it("isolates local composer state and conversation refs when switching Side Chat tabs", async () => {
+    const persistedSideChat = chat({
+      id: "side-chat-a",
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2099-07-20T10:00:00.000Z"),
+      messengerVisible: false,
+      planMode: false,
+    });
+    mockState.conversations = [chat({ id: "chat-1" }), persistedSideChat];
+    const targetA = {
+      kind: "side_chat" as const,
+      sourceConversationId: "chat-1",
+      sourceMessageId: "assistant-source",
+      sourcePreview: "Source answer",
+      conversationId: persistedSideChat.id,
+      clientMutationId: "client-a",
+      label: "Side Chat A",
+    };
+    const targetB = {
+      ...targetA,
+      conversationId: null,
+      clientMutationId: "client-b",
+      label: "Side Chat B",
+    };
+    const { container, renderTarget } = await renderSwitchableSideChatPanel(targetA);
+    const activePanel = () => Array.from(
+      container.querySelectorAll<HTMLElement>("[data-testid='side-chat-panel-view']"),
+    ).find((candidate) => candidate.parentElement?.getAttribute("aria-hidden") === "false")!;
+    const editorA = activePanel().querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    const fileInputA = activePanel().querySelector<HTMLInputElement>("input[type='file']");
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editorA, "Only in Side Chat A");
+      editorA?.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.defineProperty(fileInputA!, "files", {
+        configurable: true,
+        value: [new File(["a"], "only-a.txt", { type: "text/plain" })],
+      });
+      fileInputA?.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await renderTarget(targetB);
+
+    expect(activePanel().querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']")?.value).toBe("");
+    expect(activePanel().querySelectorAll("[data-testid='side-chat-pending-attachment']")).toHaveLength(0);
+    await openComposerOptionsMenu(activePanel());
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("[role='switch'][aria-label='Plan mode']")?.click();
+      await Promise.resolve();
+    });
+    expect(mockState.updateConversation).not.toHaveBeenCalled();
+
+    const editorB = activePanel().querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    const fileInputB = activePanel().querySelector<HTMLInputElement>("input[type='file']");
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editorB, "Only in Side Chat B");
+      editorB?.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.defineProperty(fileInputB!, "files", {
+        configurable: true,
+        value: [new File(["b"], "only-b.txt", { type: "text/plain" })],
+      });
+      fileInputB?.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await renderTarget(targetA);
+    expect(activePanel().querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']")?.value)
+      .toBe("Only in Side Chat A");
+    expect(activePanel().querySelector("[data-testid='side-chat-pending-attachment']")?.textContent)
+      .toContain("only-a.txt");
+
+    await renderTarget(targetB);
+    expect(activePanel().querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']")?.value)
+      .toBe("Only in Side Chat B");
+    expect(activePanel().querySelector("[data-testid='side-chat-pending-attachment']")?.textContent)
+      .toContain("only-b.txt");
+    expect(activePanel().querySelector("button[aria-label='Turn off plan mode']")).not.toBeNull();
+  });
+
+  it("shares options, files, Plan mode, and deduplicated Skills on first Side Chat Send", async () => {
+    mockState.organizationSkills = [organizationSkill()];
+    mockState.agentSkillSnapshot = agentSkillSnapshot();
+    mockState.conversations = [chat({
+      id: "chat-1",
+      title: "Side Chat source",
+      planMode: false,
+    })];
+    const container = await renderSideChatPanel();
+    const fileInput = container.querySelector<HTMLInputElement>("input[type='file']");
+    expect(fileInput).not.toBeNull();
+    const fileInputClick = vi.spyOn(fileInput!, "click");
+
+    await openComposerOptionsMenu(container);
+    const addFilesItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .find((candidate) => candidate.textContent?.trim() === "Add files");
+    expect(addFilesItem).not.toBeUndefined();
+    await act(async () => {
+      addFilesItem?.click();
+      await Promise.resolve();
+    });
+    expect(fileInputClick).toHaveBeenCalledTimes(1);
+
+    const attachment = new File(["evidence"], "evidence.txt", { type: "text/plain" });
+    await act(async () => {
+      Object.defineProperty(fileInput!, "files", { configurable: true, value: [attachment] });
+      fileInput!.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelectorAll("[data-testid='side-chat-pending-attachment']")).toHaveLength(1);
+    await clickEnabledButtonByAriaLabel(container, "Remove evidence.txt");
+    expect(container.querySelectorAll("[data-testid='side-chat-pending-attachment']")).toHaveLength(0);
+    await act(async () => {
+      const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+      dispatchPasteFiles(editor!, [attachment]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await openComposerOptionsMenu(container);
+    const planToggle = document.querySelector<HTMLButtonElement>("[role='switch'][aria-label='Plan mode']");
+    expect(planToggle?.getAttribute("aria-checked")).toBe("false");
+    await act(async () => {
+      planToggle?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("button[aria-label='Turn off plan mode']")).not.toBeNull();
+    await act(async () => {
+      document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await clickEnabledButtonByAriaLabel(container, "Skills");
+    const skillMenu = document.querySelector<HTMLElement>("[data-testid='side-chat-skill-menu']");
+    expect(skillMenu).not.toBeNull();
+    const skillItem = Array.from(skillMenu!.querySelectorAll<HTMLButtonElement>("[role='menuitem']"))
+      .find((candidate) => candidate.textContent?.includes("Build Advisor"));
+    await act(async () => {
+      skillItem?.click();
+      await Promise.resolve();
+    });
+    await clickEnabledButtonByAriaLabel(container, "Skills");
+    const repeatedSkillItem = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-testid='side-chat-skill-menu'] [role='menuitem']"))
+      .find((candidate) => candidate.textContent?.includes("Build Advisor"));
+    await act(async () => {
+      repeatedSkillItem?.click();
+      await Promise.resolve();
+    });
+
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    expect(editor).not.toBeNull();
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, `Review this ${editor!.value}`);
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await clickEnabledButtonByAriaLabel(container, "Send Side Chat message");
+    await vi.waitFor(() => expect(mockState.createSideChat).toHaveBeenCalledTimes(1));
+
+    expect(mockState.createSideChat).toHaveBeenCalledWith("chat-1", expect.objectContaining({
+      planMode: true,
+      sourceMessageId: "assistant-source",
+    }));
+    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    const [sentChatId, sentBody, sentOptions] = mockState.sendMessageStream.mock.calls[0]!;
+    expect(sentChatId).toBe("side-chat-created");
+    expect(sentBody.match(/\[build-advisor\]\(skill:\/\/org\/skill-1\?ref=build-advisor\)/g)).toHaveLength(1);
+    expect(sentOptions.files).toHaveLength(1);
+    expect(sentOptions.files[0]?.name).toBe("evidence.txt");
+    expect(container.querySelectorAll("[data-testid='side-chat-pending-attachment']")).toHaveLength(0);
+    expect(container.querySelector("[data-testid='side-chat-messages'] [data-skill-token='true']")?.textContent)
+      .toContain("build-advisor");
+  });
+
+  it("retains the Side Chat draft and files when upload/send fails", async () => {
+    mockState.conversations = [chat({ id: "chat-1", title: "Retry source" })];
+    const sendResult = deferred<void>();
+    mockState.sendMessageStream.mockImplementationOnce(() => sendResult.promise);
+    const container = await renderSideChatPanel();
+    const fileInput = container.querySelector<HTMLInputElement>("input[type='file']");
+    const attachment = new File(["retry"], "retry.txt", { type: "text/plain" });
+    await act(async () => {
+      Object.defineProperty(fileInput!, "files", { configurable: true, value: [attachment] });
+      fileInput!.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "Keep this draft");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await clickEnabledButtonByAriaLabel(container, "Send Side Chat message");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "Next thought");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+      sendResult.reject(new Error("Attachment upload failed"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(container.querySelector("[role='alert']")?.textContent)
+      .toContain("Attachment upload failed"));
+    expect(editor?.value).toBe("Keep this draft\n\nNext thought");
+    expect(container.querySelectorAll("[data-testid='side-chat-pending-attachment']")).toHaveLength(1);
+  });
+
+  it("removes only acknowledged files while preserving next-turn composer work", async () => {
+    mockState.conversations = [chat({ id: "chat-1", title: "Sequential source" })];
+    const sendResult = deferred<void>();
+    let onEvent: ((event: unknown) => void | Promise<void>) | null = null;
+    mockState.sendMessageStream.mockImplementationOnce(async (
+      _chatId: string,
+      _body: string,
+      options: { onEvent: (event: unknown) => void | Promise<void> },
+    ) => {
+      onEvent = options.onEvent;
+      await sendResult.promise;
+    });
+    const container = await renderSideChatPanel();
+    const fileInput = container.querySelector<HTMLInputElement>("input[type='file']");
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    const setEditorValue = async (value: string) => {
+      await act(async () => {
+        const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+        valueSetter?.call(editor, value);
+        editor!.dispatchEvent(new Event("input", { bubbles: true }));
+        await Promise.resolve();
+      });
+    };
+    const stageFile = async (file: File) => {
+      await act(async () => {
+        Object.defineProperty(fileInput!, "files", { configurable: true, value: [file] });
+        fileInput!.dispatchEvent(new Event("change", { bubbles: true }));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+
+    await stageFile(new File(["first"], "first.txt", { type: "text/plain" }));
+    await setEditorValue("First turn");
+    await clickEnabledButtonByAriaLabel(container, "Send Side Chat message");
+    await vi.waitFor(() => expect(onEvent).not.toBeNull());
+    await stageFile(new File(["second"], "second.txt", { type: "text/plain" }));
+    await setEditorValue("Next turn");
+
+    await act(async () => {
+      await onEvent?.({
+        type: "ack",
+        userMessage: message({
+          id: "acknowledged-user-message",
+          conversationId: "side-chat-created",
+          body: "First turn",
+        }),
+      });
+      sendResult.resolve();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(container.querySelectorAll("[data-testid='side-chat-pending-attachment']")).toHaveLength(1));
+    expect(container.querySelector("[data-testid='side-chat-pending-attachment']")?.textContent).toContain("second.txt");
+    expect(editor?.value).toBe("Next turn");
+  });
+
+  it("rolls back an active Side Chat Plan mode update and explains the failure", async () => {
+    const sideChat = chat({
+      id: "side-chat-plan-failure",
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      sideChatExpiresAt: new Date("2099-07-20T10:00:00.000Z"),
+      messengerVisible: false,
+      planMode: false,
+    });
+    mockState.conversations = [chat({ id: "chat-1" }), sideChat];
+    mockState.updateConversation.mockRejectedValueOnce(new Error("Plan persistence failed"));
+    const container = await renderPersistedSideChatPanel(sideChat.id);
+
+    await openComposerOptionsMenu(container);
+    const planToggle = document.querySelector<HTMLButtonElement>("[role='switch'][aria-label='Plan mode']");
+    await act(async () => {
+      planToggle?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(container.textContent).toContain(
+      "Plan mode was restored because the update failed: Plan persistence failed",
+    ));
+    expect(container.querySelector("button[aria-label='Turn off plan mode']")).toBeNull();
+    expect(mockState.updateConversation).toHaveBeenCalledWith(sideChat.id, { planMode: true });
   });
 
   it("explains why a draft Side Chat cannot move to Messenger", async () => {

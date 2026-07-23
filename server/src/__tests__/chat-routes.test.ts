@@ -883,7 +883,7 @@ describe("chat routes", () => {
 
     const res = await request(createApp())
       .post("/api/chats/chat-source/side-chats")
-      .send({ sourceMessageId, clientMutationId });
+      .send({ sourceMessageId, clientMutationId, planMode: true });
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({
@@ -897,6 +897,7 @@ describe("chat routes", () => {
       sourceMessageId,
       clientMutationId,
       orgId: "organization-1",
+      planMode: true,
       userId: "user-1",
     });
     expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({

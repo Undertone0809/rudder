@@ -1201,9 +1201,12 @@ before the exploration proves useful.
 - Type `/side` in a normal Rudder Chat composer and select the composer command.
 - Choose `Open Side Chat` on a completed assistant message.
 - Choose `Side Chat` from the Side Panel empty/add-target surface.
-- First Send posts the exact source assistant message plus the provisional
-  mutation id to `POST /api/chats/:sourceId/side-chats`, then uses the normal
-  Chat message stream route.
+- First Send posts the exact source assistant message, provisional mutation id,
+  and an optional operator-selected Plan mode override to
+  `POST /api/chats/:sourceId/side-chats`, then uses the normal Chat message
+  stream route.
+- Side Chat uses the normal Chat composer options menu, attachment picker and
+  paste input, Plan mode controls, and inherited-agent Skill picker.
 - Closing a persisted Side Chat posts to `DELETE /api/chats/:id/side-chat`.
 - `Move to Messenger` in the Side Chat tab context menu posts to the
   compatibility endpoint `/api/chats/:id/side-chat/keep`.
@@ -1218,18 +1221,27 @@ before the exploration proves useful.
    remain untouched.
 3. On first Send, the server validates organization access, operator ownership,
    and a completed assistant-message anchor. Creation is idempotent for the
-   organization, owner, and client mutation id. The persisted title snapshots
-   the direct source title with the `Side chat from: ` prefix and stays within
-   the 200-character Chat title limit.
+   organization, owner, client mutation id, source boundary, and supplied Plan
+   mode override. The persisted title snapshots the direct source title with
+   the `Side chat from: ` prefix and stays within the 200-character Chat title
+   limit. If the operator selected Plan mode provisionally, that value is
+   stored atomically on the hidden conversation; when no override is supplied,
+   the source conversation's Plan mode is inherited.
 4. The server copies source context links, messages, and message attachments
    through the anchor. Copied messages do not acquire new run, approval, turn,
    or output ownership. A boundary system event records the Side Chat source.
-5. The user message and assistant response run through the normal Chat runtime
-   and Agent Run evidence path. Each persisted send while `active` refreshes
-   the two-hour send window.
-6. Hidden Side Chats are excluded from ordinary Chat lists, Messenger threads,
+5. The user message, selected or pasted attachments, rich Skill references,
+   and assistant response run through the normal Chat message, attachment,
+   rich-reference, runtime, and Agent Run evidence paths. Draft text and
+   pending files remain local to that Side Chat until the user message is
+   acknowledged; creation or upload/send failure retains them for retry.
+6. Plan mode changes after persistence use the ordinary guarded Chat update
+   path. The composer updates optimistically, then rolls back and shows the
+   failure if persistence is rejected.
+7. Hidden Side Chats are excluded from ordinary Chat lists, Messenger threads,
    recent chats, search results, and custom groups.
-7. Closing a provisional tab discards the unsent client draft. Closing a
+8. Closing a provisional tab discards the unsent client draft and pending
+   files. Closing a
    persisted temporary tab cancels any active generation, deletes the hidden
    Side Chat and its owned rows, and closes the tab. Close failures stay visible
    and do not silently remove the tab. Move and Close are mutually exclusive for
@@ -1238,7 +1250,7 @@ before the exploration proves useful.
    if Move committed but its response was lost, the kept conversation remains
    intact and a later close conflict only reconciles the stale tab into
    Messenger.
-8. `Move to Messenger` changes an `active` Side Chat to `kept`, preserves the
+9. `Move to Messenger` changes an `active` Side Chat to `kept`, preserves the
    same conversation id, removes expiry, and makes it visible. It reuses the
    root conversation's existing custom group when present; otherwise it creates
    the same default-leaf family group used by Fork. The family root, direct
@@ -1248,10 +1260,10 @@ before the exploration proves useful.
    Chat remains hidden and `active`. The Side Panel tab closes only after a
    successful Move, then that same id opens as an ordinary Messenger Chat with
    the ordinary Chat UI.
-9. When the send window elapses, the open Side Chat becomes locally read-only
+10. When the send window elapses, the open Side Chat becomes locally read-only
    immediately. The first server mutation at or after expiry atomically marks
    it `expired` and rejects the mutation without creating a message or run.
-10. When a kept Side Chat is open as an ordinary Messenger conversation, the
+11. When a kept Side Chat is open as an ordinary Messenger conversation, the
     source title in its `side_chat_started` boundary event navigates directly
     to the source Chat's main Messenger route. It does not open the source Chat
     as a Side Panel target.
@@ -1261,8 +1273,10 @@ before the exploration proves useful.
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
 | Provisional open | Valid normal Chat; completed assistant anchor available | Open one unsaved Side Panel target | Create a conversation before first Send or change parent state | Side Chat E2E entry screenshots |
-| First Send | Owner and organization match; anchor is completed; mutation id is new or an identical retry | Create exactly one hidden active Side Chat with the bounded direct-source title snapshot and start the ordinary Chat runtime flow | Duplicate records, copy messages after the anchor, expose the thread in Messenger, or run automatic title generation | Service, route, and E2E tests |
+| First Send | Owner and organization match; anchor is completed; mutation id is new or an identical retry; optional Plan override is valid | Create exactly one hidden active Side Chat with the bounded direct-source title snapshot, inherited or overridden Plan mode, uploaded attachments, and ordinary Chat runtime flow | Duplicate records, copy messages after the anchor, expose the thread in Messenger, lose a selected file, or run automatic title generation | Validator, service, route, UI, and E2E tests |
 | Active follow-up | Owner matches and expiry is in the future | Persist the message and refresh expiry to two hours | Let another user send or silently retain the old expiry | Service and route tests |
+| Select Skill | Inherited Agent has an enabled Skill | Insert one deduplicated rich Skill token into only the Side Chat draft and render the same token metadata after Send | Mutate the parent draft, insert duplicates, or render an opaque raw target | UI and E2E tests |
+| Change Plan mode after persistence | Side Chat is active and owned by the operator | Optimistically update through the guarded Chat path; persist on success or visibly roll back on failure | Leave a false active state after a failed update | UI and E2E tests |
 | Close provisional | No persisted conversation id | Discard the client draft and close the tab | Create or retain a server record | UI and E2E tests |
 | Close persisted | Hidden Side Chat belongs to operator | Cancel any live generation, delete the temporary conversation, and close the tab | Leave a hidden recoverable thread or delete a kept Messenger Chat | Service, route, and E2E tests |
 | Expire | Active send window has elapsed | Transition to expired and reject mutation | Create a user message, generation, or other mutation side effect | Service and route tests |
@@ -1281,8 +1295,18 @@ before the exploration proves useful.
   sparkle icon is not the Side Chat identity.
 - Apart from its source-answer preview and expiry state, the Side Chat
   transcript and composer use the normal Chat visual and interaction grammar:
-  normal user messages, assistant attribution, process transcript, streaming
-  answer, editor, send affordance, and visible Project, Agent, and Skills chips.
+  normal user messages and attachments, assistant attribution, process
+  transcript, streaming answer, editor, options menu, Plan mode controls, send
+  affordance, locked inherited Agent chip, searchable Skills chip, and a locked
+  Project chip only when inherited Project context exists.
+- Add files accepts picker and paste input. Pending files use the normal
+  removable Chat previews and remain available after a failed create or send.
+- Selecting an inherited Agent Skill inserts one deduplicated normal rich Skill
+  reference into the Side Chat draft. Loading, empty, search-empty, and failed
+  Skill states remain visible in the picker.
+- A source without Project context renders no Project chip. A source with
+  Project context renders the normal locked Project identity and uses the
+  context-link label when the Project record cannot be resolved.
 - The Side Chat composer does not show the redundant `Enter to send ·
   Shift+Enter for a new line` helper, and there is no Done action.
 - The Side Chat tab context menu shows `Move to Messenger`, a separator, and
@@ -1298,6 +1322,8 @@ before the exploration proves useful.
 ### Operator-Visible Output
 
 - Before first Send, the operator sees an independent provisional composer.
+- The operator sees Side-Chat-owned draft text, files, Plan mode, menus, and
+  Skill references without changing any corresponding parent Chat state.
 - While active, the operator sees user/assistant turns and a remaining-time
   label without any new row in Messenger.
 - Expiry replaces the composer with a read-only explanation.
@@ -1318,7 +1344,9 @@ before the exploration proves useful.
 - Copied source messages and attachments preserve the bounded context through
   the anchor. The `side_chat_started` system event records the source boundary.
 - Normal `chat_messages`, `chat_generations`, Agent Runs, transcripts, and cost
-  evidence record executed follow-ups.
+  evidence record executed follow-ups. Normal Chat attachment rows record files,
+  message markdown records selected Skill tokens, and `planMode` records the
+  inherited or operator-selected planning state.
 - Activity entries record `chat.side_chat_created`,
   `chat.side_chat_destroyed`, and `chat.side_chat_kept`.
 
@@ -1357,7 +1385,8 @@ before the exploration proves useful.
 ### Invariants / Non-Goals
 
 - A Side Chat never mutates the parent Chat's draft, transcript, scroll,
-  selected branch, or active generation.
+  attachments, Plan mode, selected menus, selected branch, or active
+  generation.
 - A hidden Side Chat never appears in ordinary Chat or Messenger discovery,
   unread counts, recent results, search, or custom groups.
 - Expiry is terminal and read-only. An expired temporary Side Chat can only be
@@ -1396,6 +1425,7 @@ Related code:
 - `ui/src/api/chats.ts`
 - `ui/src/lib/side-chat.ts`
 - `ui/src/lib/side-panel-targets.ts`
+- `ui/src/pages/Chat.composer-controls.tsx`
 - `ui/src/components/side-panel/SideChatPanelView.tsx`
 - `ui/src/pages/Chat.tsx`
 - `ui/src/pages/Chat.side-panel.tsx`
@@ -1403,6 +1433,9 @@ Related code:
 Related tests:
 
 - `server/src/__tests__/chat-routes.test.ts`
+- `server/src/__tests__/side-chats.test.ts`
+- `packages/shared/src/validators/chat.test.ts`
+- `ui/src/api/chats.test.ts`
 - `ui/src/lib/side-chat.test.ts`
 - `ui/src/lib/side-panel-targets.test.ts`
 - `ui/src/pages/Chat.messages.test.tsx`

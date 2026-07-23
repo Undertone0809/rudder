@@ -7,6 +7,29 @@ afterEach(() => {
 });
 
 describe("atomic chat draft API", () => {
+  it("posts an optional Plan mode override when creating a Side Chat", async () => {
+    const conversation = { id: "side-chat-1", orgId: "org-1" } as ChatConversation;
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(conversation), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(chatsApi.createSideChat("source-chat-1", {
+      sourceMessageId: "message-1",
+      clientMutationId: "side-chat-create-1",
+      planMode: true,
+    })).resolves.toEqual(conversation);
+
+    const [url, request] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/chats/source-chat-1/side-chats");
+    expect(JSON.parse(String(request?.body))).toEqual({
+      sourceMessageId: "message-1",
+      clientMutationId: "side-chat-create-1",
+      planMode: true,
+    });
+  });
+
   it("preflights a draft without creating a conversation", async () => {
     const descriptor: ChatRuntimeDescriptor = {
       sourceType: "unconfigured",

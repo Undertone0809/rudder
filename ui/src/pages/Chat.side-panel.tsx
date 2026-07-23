@@ -1421,6 +1421,10 @@ export function ChatSidePanel({
     () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "local_app" }> => candidate.kind === "local_app"),
     [visibleTabs],
   );
+  const sideChatTargets = useMemo(
+    () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "side_chat" }> => candidate.kind === "side_chat"),
+    [visibleTabs],
+  );
   const liveSurfaceTargets = useMemo(() => {
     if (!liveSurfaceRuntime || !selectedOrganizationId) return [];
     return visibleTabs.flatMap((candidate) => {
@@ -2084,7 +2088,25 @@ export function ChatSidePanel({
               </div>
             );
           }) : null}
-          {activeLiveSurfaceTarget ? null : !activeTarget ? (
+          {selectedOrganizationId ? sideChatTargets.map((target) => {
+            const targetKey = sidePanelTargetKey(target);
+            const active = targetKey === activeTargetKey;
+            return (
+              <div
+                key={target.clientMutationId}
+                className={cn("h-full min-h-0", active ? "block" : "hidden")}
+                aria-hidden={!active}
+              >
+                <SideChatPanelView
+                  organizationId={selectedOrganizationId}
+                  target={target}
+                  onRegisterCloseHandler={registerSideChatCloseHandler}
+                  onReplaceTarget={replaceSidePanelTarget}
+                />
+              </div>
+            );
+          }) : null}
+          {activeLiveSurfaceTarget || sideChatTarget ? null : !activeTarget ? (
             <SidePanelEmptyState
               browserAvailable={browserAvailable}
               localAppsAvailable={localAppsAvailable}
@@ -2138,13 +2160,6 @@ export function ChatSidePanel({
             <LocalAppsPanel onOpenTarget={openSidePanelTarget} />
           ) : placeholderTarget ? (
             <SidePanelPlaceholderView browserAvailable={browserAvailable} target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
-          ) : sideChatTarget && selectedOrganizationId ? (
-            <SideChatPanelView
-              organizationId={selectedOrganizationId}
-              target={sideChatTarget}
-              onRegisterCloseHandler={registerSideChatCloseHandler}
-              onReplaceTarget={replaceSidePanelTarget}
-            />
           ) : subagentTarget ? (
             <SubagentPanelView target={subagentTarget} />
           ) : chatTarget ? (

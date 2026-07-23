@@ -117,7 +117,6 @@ import {
   Archive,
   ArrowUp,
   Bot,
-  Boxes,
   ChevronDown,
   CirclePlus,
   Copy,
@@ -131,7 +130,6 @@ import {
   MoreHorizontal,
   PanelLeft,
   PanelRight,
-  Paperclip,
   Pencil,
   PencilLine,
   Pin,
@@ -145,9 +143,16 @@ import {
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { PendingAttachmentPreview } from "./Chat.attachments";
+import {
+  ChatComposerOptionsMenu,
+  ChatLockedAgentChip,
+  ChatLockedContextChip,
+  ChatSkillPickerMenuContent,
+  ChatSkillsButton,
+} from "./Chat.composer-controls";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
 import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatAgentRunMenuItem, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDisplay, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
-import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-controls";
+import { ChatPlanModeChip } from "./Chat.plan-mode-controls";
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
 import { ChatWorkManifest, ChatWorkManifestToggle, hasChatWorkManifestContent } from "./Chat.work-manifest";
@@ -2074,34 +2079,18 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 <AgentIcon icon={agent.icon} role={agent.role} className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate font-medium">{formatChatAgentLabel(agent)}</span> </button>
             ))} </> ) : null}
-        {skillMenuOpen ? ( <>
-            <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Skills</div>
-            {chatSkillsPending ? (
-              <div className="flex items-center gap-2 rounded-[var(--radius-md)] px-3 py-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Loading skills...</span> </div> ) : availableChatSkills.length === 0 ? (
-              <div className="rounded-[var(--radius-md)] px-3 py-2 text-sm leading-6 text-muted-foreground">
-                This agent has no enabled skills. </div> ) : ( <>
-                <div className="px-2 pb-2">
-                  <input ref={skillSearchInputRef} className="w-full rounded-[var(--radius-md)] border border-border bg-transparent px-2.5 py-2 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-ring" placeholder="Search skills..." value={skillSearchQuery} onChange={(event) => { setSkillSearchQuery(event.target.value);
-                    }} onKeyDown={(event) => { event.stopPropagation();
-                    }} /> </div>
-                <div>
-                  {filteredChatSkills.length === 0 ? (
-                    <div className="rounded-[var(--radius-md)] px-3 py-2 text-sm leading-6 text-muted-foreground">
-                      No skills match search. </div> ) : filteredChatSkills.map((entry) => (
-                    <button key={entry.id} type="button" role="menuitem"
-                      data-chat-composer-menu-item className="chat-composer-menu-row" onClick={() => insertSkillReference(entry)} >
-                      <Boxes className="h-4 w-4 shrink-0 text-[#2f80ed]" />
-                      <span className="flex min-w-0 flex-1 items-center gap-2">
-                        <span className="min-w-0 shrink truncate font-medium text-foreground">
-                          {entry.skillDisplayName} </span>
-                        {entry.skillCategoryLabel ? (
-                          <span className="inline-flex shrink-0 items-center rounded-[var(--radius-sm)] border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
-                            {entry.skillCategoryLabel} </span> ) : null}
-                        <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                          {entry.skillDescription ?? entry.skillLocationLabel ?? entry.skillRefLabel} </span> </span> </button>
-                  ))} </div> </> )} </> ) : null} </div>, document.body, ); }; const refreshQueue = (chatId: string) => {
+        {skillMenuOpen ? (
+          <ChatSkillPickerMenuContent
+            error={organizationSkillsError ?? activeAgentSkillsError}
+            filteredItems={filteredChatSkills}
+            items={availableChatSkills}
+            onSearchQueryChange={setSkillSearchQuery}
+            onSelect={insertSkillReference}
+            pending={chatSkillsPending}
+            searchInputRef={skillSearchInputRef}
+            searchQuery={skillSearchQuery}
+          />
+        ) : null} </div>, document.body, ); }; const refreshQueue = (chatId: string) => {
     if (!selectedOrganizationId) return;
     void queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, chatId) });
   };
@@ -2438,26 +2427,36 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             Open agents </Link> </div> ) : null}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
-            <DropdownMenuTrigger type="button" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-sm font-medium text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Add files and options" >
-              <Plus className="h-4 w-4" /> </DropdownMenuTrigger>
-            <DropdownMenuContent align="start"
-              sideOffset={8} className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1.5 text-foreground" >
-              <DropdownMenuItem className="rounded-[var(--radius-md)] px-3 py-2.5" onSelect={(e) => { e.preventDefault(); setPlusMenuOpen(false); window.setTimeout(() => fileInputRef.current?.click(), 0);
-                }} >
-                <Paperclip className="mr-2 h-4 w-4" />
-                Add files </DropdownMenuItem>
-              <ChatPlanModeMenuToggle active={activePlanMode} onChange={applyPlanMode} />
-              </DropdownMenuContent> </DropdownMenu>
+          <ChatComposerOptionsMenu
+            open={plusMenuOpen}
+            onOpenChange={setPlusMenuOpen}
+            onAddFiles={() => fileInputRef.current?.click()}
+            planMode={activePlanMode}
+            onPlanModeChange={applyPlanMode}
+          />
           {activePlanMode ? <ChatPlanModeChip onDisable={() => applyPlanMode(false)} /> : null}
-          {showProjectSelector ? (
+          {showProjectSelector ? projectSelectionLocked ? (
+            <ChatLockedContextChip
+              ariaLabel={`Project context: ${projectPillLabel}`}
+              icon={hasSelectedProject ? (
+                <ProjectIcon
+                  color={activeProject?.color}
+                  icon={activeProject?.icon}
+                  size="xs"
+                  testId="chat-project-icon"
+                />
+              ) : undefined}
+              label={projectPillLabel}
+              testId="chat-project-selector"
+              title="Project context is locked after conversation starts."
+            />
+          ) : (
             <div className="group/project relative inline-flex max-w-[min(100%,15rem)] min-w-0">
-              <button type="button" data-testid="chat-project-selector" aria-label={`Project context: ${projectPillLabel}`} aria-expanded={projectSelectionLocked ? false : projectMenuOpen} disabled={projectSelectionLocked} title={projectSelectionLocked ? "Project context is locked after conversation starts." : undefined} className={cn(
+              <button type="button" data-testid="chat-project-selector" aria-label={`Project context: ${projectPillLabel}`} aria-expanded={projectMenuOpen} className={cn(
                   "chat-chip inline-flex w-full min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium",
-                  projectSelectionLocked ? "cursor-default" : "transition-colors hover:bg-[color:var(--surface-active)]",
+                  "transition-colors hover:bg-[color:var(--surface-active)]",
                   projectMenuOpen && "bg-[color:var(--surface-active)]",
-                )} onClick={() => { if (projectSelectionLocked) return;
-                  if (projectMenuOpen) { closeComposerContextMenus();
+                )} onClick={() => { if (projectMenuOpen) { closeComposerContextMenus();
                     return; } openComposerContextMenu("project");
                 }} >
                 {hasSelectedProject ? (
@@ -2468,13 +2467,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     testId="chat-project-icon"
                     className={cn(
                       "transition-opacity",
-                      !projectSelectionLocked && "group-focus-within/project:opacity-0 group-hover/project:opacity-0",
+                      "group-focus-within/project:opacity-0 group-hover/project:opacity-0",
                     )}
                   />
                 ) : null}
                 <span className="min-w-0 truncate">{projectPillLabel}</span>
               </button>
-              {hasSelectedProject && !projectSelectionLocked ? (
+              {hasSelectedProject ? (
                 <button type="button" data-testid="chat-project-clear" aria-label={`Clear project context: ${projectPillLabel}`} title="Clear project context" className="absolute left-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground opacity-0 pointer-events-none transition-[color,background-color,opacity] hover:bg-[color:var(--surface-inset)] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100 group-hover/project:pointer-events-auto group-hover/project:opacity-100" onClick={(event) => {
                     event.stopPropagation();
                     applyProjectContext(NO_PROJECT_ID);
@@ -2484,27 +2483,32 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               ) : null}
             </div>
           ) : null}
-          <button type="button" data-testid="chat-agent-selector" aria-expanded={agentMenuOpen} disabled={agentSelectionLocked} className={cn(
+          {agentSelectionLocked ? (
+            <ChatLockedAgentChip
+              agent={activeSkillAgent}
+              fallbackSeed={activeSkillAgentId}
+              iconTestId="chat-agent-selector-icon"
+              label={agentPillLabel}
+              testId="chat-agent-selector"
+            />
+          ) : (
+          <button type="button" data-testid="chat-agent-selector" aria-expanded={agentMenuOpen} className={cn(
               "chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium",
-              agentSelectionLocked ? "cursor-default" : "transition-colors hover:bg-[color:var(--surface-active)]",
+              "transition-colors hover:bg-[color:var(--surface-active)]",
               agentMenuOpen && "bg-[color:var(--surface-active)]",
-            )} onClick={() => { if (agentSelectionLocked) return;
-              if (agentMenuOpen) { closeComposerContextMenus();
+            )} onClick={() => { if (agentMenuOpen) { closeComposerContextMenus();
                 return; } openComposerContextMenu("agent");
             }} >
             {activeSkillAgent ? (
               <span data-testid="chat-agent-selector-icon" className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true" >
                 <AgentIcon icon={activeSkillAgent.icon} role={activeSkillAgent.role} className="h-3.5 w-3.5" /> </span> ) : null}
             <span className="min-w-0 truncate">{agentPillLabel}</span> </button>
+          )}
           {showChatSkillsPicker ? (
-            <button type="button" className={cn(
-                "chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)]",
-                skillMenuOpen && "bg-[color:var(--surface-active)]",
-              )} aria-label="Skills" aria-expanded={skillMenuOpen} onClick={() => {
+            <ChatSkillsButton open={skillMenuOpen} onClick={() => {
                 if (skillMenuOpen) { closeComposerContextMenus();
                   return; } openComposerContextMenu("skill");
-              }} >
-              <span className="min-w-0 truncate">Skills</span> </button> ) : null} </div>
+              }} /> ) : null} </div>
         {canStopSelectedConversationReply && selectedConversation && sendButtonMode !== "stop" && sendButtonMode !== "sending" && sendButtonMode !== "stopping" ? (
           <Button type="button" variant="ghost" size="icon-sm" aria-label="Stop streaming" onClick={() => stopStreaming(selectedConversation.id)} className={cn(
             "shrink-0 rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground",

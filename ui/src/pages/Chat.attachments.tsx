@@ -119,7 +119,7 @@ export function PendingAttachmentPreview({
   onRemove,
 }: {
   file: File;
-  onRemove: () => void;
+  onRemove?: () => void;
 }) {
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const isImage = isImageContentType(file.type);

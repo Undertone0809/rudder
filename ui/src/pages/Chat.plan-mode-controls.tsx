@@ -4,15 +4,18 @@ import { PLAN_MODE_HELP_TEXT } from "./Chat.parts";
 
 export function ChatPlanModeMenuToggle({
   active,
+  disabled = false,
   onChange,
 }: {
   active: boolean;
+  disabled?: boolean;
   onChange: (active: boolean) => void;
 }) {
   return (
-    <button type="button" role="switch" aria-checked={active} aria-label="Plan mode" data-testid="chat-plan-mode-toggle" title={PLAN_MODE_HELP_TEXT} className={cn(
+    <button type="button" role="switch" aria-checked={active} aria-label="Plan mode" aria-busy={disabled || undefined} data-testid="chat-plan-mode-toggle" title={PLAN_MODE_HELP_TEXT} disabled={disabled} className={cn(
       "flex w-full cursor-pointer items-center justify-between gap-2 rounded-[var(--radius-md)] px-3 py-2.5 text-left text-sm outline-hidden transition-colors focus:bg-accent focus:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/40",
       active && "bg-[color:color-mix(in_oklab,var(--accent-soft)_72%,transparent)] text-foreground focus:bg-[color:color-mix(in_oklab,var(--accent-soft)_88%,transparent)]",
+      disabled && "cursor-wait opacity-60",
     )} onClick={(event) => { event.preventDefault(); onChange(!active); }} >
       <div className="flex min-w-0 items-center">
         <ListChecks className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -29,9 +32,15 @@ export function ChatPlanModeMenuToggle({
   );
 }
 
-export function ChatPlanModeChip({ onDisable }: { onDisable: () => void }) {
+export function ChatPlanModeChip({
+  disabled = false,
+  onDisable,
+}: {
+  disabled?: boolean;
+  onDisable: () => void;
+}) {
   return (
-    <button type="button" className="group/plan inline-flex max-w-[10rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:color-mix(in_oklab,var(--accent-soft)_78%,var(--surface-elevated))] px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:color-mix(in_oklab,var(--accent-soft)_92%,var(--surface-elevated))] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Turn off plan mode" title={PLAN_MODE_HELP_TEXT} onClick={onDisable} >
+    <button type="button" className="group/plan inline-flex max-w-[10rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:color-mix(in_oklab,var(--accent-soft)_78%,var(--surface-elevated))] px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:color-mix(in_oklab,var(--accent-soft)_92%,var(--surface-elevated))] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-wait disabled:opacity-60" aria-label="Turn off plan mode" aria-busy={disabled || undefined} title={PLAN_MODE_HELP_TEXT} disabled={disabled} onClick={onDisable} >
       <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
         <ListChecks data-testid="chat-plan-mode-icon" className="h-3.5 w-3.5 group-hover/plan:hidden" aria-hidden="true" />
         <span data-testid="chat-plan-mode-dismiss-icon" className="hidden h-4 w-4 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--ink-muted)_78%,transparent)] text-[color:var(--surface-elevated)] group-hover/plan:inline-flex">

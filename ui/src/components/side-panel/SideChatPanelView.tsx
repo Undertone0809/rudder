@@ -2,20 +2,46 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
+import { organizationSkillsApi } from "@/api/organizationSkills";
 import { projectsApi } from "@/api/projects";
-import { AgentIcon } from "@/components/AgentIconPicker";
 import { MarkdownBody } from "@/components/MarkdownBody";
-import { MarkdownEditor } from "@/components/MarkdownEditor";
+import { MarkdownEditor, type MarkdownEditorRef } from "@/components/MarkdownEditor";
+import { ProjectIcon } from "@/components/ProjectIdentity";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import type { ChatStreamDraftState } from "@/context/ChatGenerationContext";
+import { useOrganization } from "@/context/OrganizationContext";
+import { useToast } from "@/context/ToastContext";
+import { formatChatAgentLabel } from "@/lib/agent-labels";
+import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
+import { appendSkillReferencesToDraft } from "@/lib/organization-skill-picker";
 import { queryKeys } from "@/lib/queryKeys";
 import { latestSideChatAnchor, sideChatConversationMessages, sideChatIsReadOnly } from "@/lib/side-chat";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
+import { PendingAttachmentPreview } from "@/pages/Chat.attachments";
+import {
+  ChatComposerOptionsMenu,
+  ChatLockedAgentChip,
+  ChatLockedContextChip,
+  ChatSkillPickerMenuContent,
+  ChatSkillsButton,
+} from "@/pages/Chat.composer-controls";
 import { AssistantDraftItem, ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
+import { composerMenuPositionForAnchor, materializePendingAttachment, pendingAttachmentKey } from "@/pages/Chat.parts";
+import { ChatPlanModeChip } from "@/pages/Chat.plan-mode-controls";
+import { clipboardAttachmentPayloadKey } from "@/pages/Chat.workspace-helpers";
 import type { Agent, ChatConversation, ChatMessage } from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, CirclePlus, Clock3, Folder, Loader2, Plus } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, CirclePlus, Clock3, Loader2 } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ClipboardEvent as ReactClipboardEvent,
+} from "react";
+import { createPortal } from "react-dom";
 
 type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
 
@@ -26,8 +52,6 @@ type SideChatStream = {
   state: ChatStreamDraftState;
   transcript: TranscriptEntry[];
 };
-
-const EMPTY_SKILL_REFERENCES: MarkdownSkillReferencePreview[] = [];
 
 function expiryLabel(expiresAt: Date | string | null | undefined, now: Date) {
   if (!expiresAt) return null;
@@ -57,11 +81,28 @@ export function SideChatPanelView({
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
 }) {
   const queryClient = useQueryClient();
+  const { selectedOrganization } = useOrganization();
+  const { pushToast } = useToast();
   const [draft, setDraft] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  const [skillMenuOpen, setSkillMenuOpen] = useState(false);
+  const [skillSearchQuery, setSkillSearchQuery] = useState("");
+  const [skillMenuPosition, setSkillMenuPosition] = useState<CSSProperties | null>(null);
+  const [provisionalPlanModeOverride, setProvisionalPlanModeOverride] = useState<boolean | null>(null);
+  const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null);
+  const [planModeUpdating, setPlanModeUpdating] = useState(false);
+  const [planModeError, setPlanModeError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [stream, setStream] = useState<SideChatStream | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const composerSurfaceRef = useRef<HTMLDivElement>(null);
+  const composerEditorRef = useRef<MarkdownEditorRef>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const skillMenuRef = useRef<HTMLDivElement>(null);
+  const skillSearchInputRef = useRef<HTMLInputElement>(null);
   const closeRequestedRef = useRef(false);
   const createPromiseRef = useRef<Promise<ChatConversation> | null>(null);
   const conversationIdRef = useRef(target.conversationId);
@@ -105,6 +146,116 @@ export function SideChatPanelView({
     const timer = window.setInterval(() => setNow(new Date()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const appendPendingFiles = useCallback(async (incomingFiles: Iterable<File>) => {
+    const files = Array.from(incomingFiles).filter((file) => file.size > 0);
+    if (files.length === 0) return;
+    setAttachmentError(null);
+    try {
+      const safeFiles = await Promise.all(
+        files.map((file, index) => materializePendingAttachment(file, index)),
+      );
+      setPendingFiles((current) => [...current, ...safeFiles]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not stage this attachment.";
+      setAttachmentError(message);
+      pushToast({
+        title: "Failed to stage attachment",
+        body: message,
+        tone: "error",
+      });
+    }
+  }, [pushToast]);
+
+  const removePendingFile = useCallback((targetKey: string) => {
+    setPendingFiles((current) => (
+      current.filter((file) => pendingAttachmentKey(file) !== targetKey)
+    ));
+  }, []);
+
+  const handlePendingAttachmentPasteCapture = useCallback((
+    event: ReactClipboardEvent<HTMLElement>,
+  ) => {
+    const clipboardData = event.clipboardData;
+    const filesFromItems = Array.from(clipboardData?.items ?? [])
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file instanceof File);
+    const seenItemPayloads = new Map<string, number>();
+    for (const file of filesFromItems) {
+      const key = clipboardAttachmentPayloadKey(file);
+      seenItemPayloads.set(key, (seenItemPayloads.get(key) ?? 0) + 1);
+    }
+    const filesFromList = Array.from(clipboardData?.files ?? [])
+      .filter((file) => {
+        const key = clipboardAttachmentPayloadKey(file);
+        const remaining = seenItemPayloads.get(key) ?? 0;
+        if (remaining <= 0) return true;
+        if (remaining === 1) seenItemPayloads.delete(key);
+        else seenItemPayloads.set(key, remaining - 1);
+        return false;
+      });
+    const files = [...filesFromItems, ...filesFromList];
+    if (files.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void appendPendingFiles(files);
+  }, [appendPendingFiles]);
+
+  const closeSkillMenu = useCallback(() => {
+    setSkillMenuOpen(false);
+    setSkillSearchQuery("");
+  }, []);
+
+  const openSkillMenu = useCallback(() => {
+    const anchor = composerSurfaceRef.current;
+    if (anchor) setSkillMenuPosition(composerMenuPositionForAnchor(anchor));
+    setPlusMenuOpen(false);
+    setSkillMenuOpen(true);
+  }, []);
+
+  useEffect(() => {
+    if (!skillMenuOpen) {
+      setSkillMenuPosition(null);
+      return undefined;
+    }
+    const updatePosition = () => {
+      const anchor = composerSurfaceRef.current;
+      if (anchor) setSkillMenuPosition(composerMenuPositionForAnchor(anchor));
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [skillMenuOpen]);
+
+  useEffect(() => {
+    if (!skillMenuOpen) return undefined;
+    const handlePointerDown = (event: PointerEvent) => {
+      const eventTarget = event.target;
+      if (!(eventTarget instanceof Node)) return;
+      if (skillMenuRef.current?.contains(eventTarget)) return;
+      if (composerSurfaceRef.current?.contains(eventTarget)) return;
+      closeSkillMenu();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeSkillMenu();
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [closeSkillMenu, skillMenuOpen]);
+
+  useEffect(() => {
+    if (!skillMenuOpen) return;
+    requestAnimationFrame(() => skillSearchInputRef.current?.focus());
+  }, [skillMenuOpen]);
 
   const sourceConversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(organizationId, target.sourceConversationId),
@@ -155,30 +306,152 @@ export function SideChatPanelView({
   const selectedAgent = selectedAgentId
     ? (agentsQuery.data ?? []).find((agent) => agent.id === selectedAgentId) ?? null
     : null;
+  const organizationSkillsQuery = useQuery({
+    queryKey: queryKeys.organizationSkills.list(organizationId),
+    queryFn: () => organizationSkillsApi.list(organizationId),
+  });
+  const agentSkillsQuery = useQuery({
+    queryKey: queryKeys.agents.skills(selectedAgentId ?? "__none__"),
+    queryFn: () => agentsApi.skills(selectedAgentId!, organizationId),
+    enabled: Boolean(selectedAgentId),
+  });
+  const availableChatSkills = useMemo(
+    () => buildChatSkillOptions({
+      agent: selectedAgent,
+      orgUrlKey: selectedOrganization?.id === organizationId
+        ? selectedOrganization.urlKey
+        : "organization",
+      organizationSkills: organizationSkillsQuery.data,
+      skillSnapshot: agentSkillsQuery.data,
+    }),
+    [
+      agentSkillsQuery.data,
+      organizationId,
+      organizationSkillsQuery.data,
+      selectedAgent,
+      selectedOrganization?.id,
+      selectedOrganization?.urlKey,
+    ],
+  );
+  const filteredChatSkills = useMemo(
+    () => filterChatSkillOptions(availableChatSkills, skillSearchQuery),
+    [availableChatSkills, skillSearchQuery],
+  );
+  const chatSkillReferences = useMemo<MarkdownSkillReferencePreview[]>(
+    () => availableChatSkills.map((skill) => ({
+      href: skill.skillMarkdownTarget,
+      label: skill.skillRefLabel,
+      displayName: skill.skillDisplayName,
+      description: skill.skillDescription,
+      categoryLabel: skill.skillCategoryLabel,
+      locationLabel: skill.skillLocationLabel,
+      detailsHref: skill.skillDetailsHref,
+    })),
+    [availableChatSkills],
+  );
+  const chatSkillsPending = Boolean(selectedAgentId)
+    && (agentsQuery.isPending || organizationSkillsQuery.isPending || agentSkillsQuery.isPending);
+  const chatSkillsError = agentsQuery.error
+    ?? organizationSkillsQuery.error
+    ?? agentSkillsQuery.error;
   const contextConversation = conversation?.contextLinks.some((link) => link.entityType === "project")
     ? conversation
     : sourceConversationQuery.data;
-  const projectId = contextConversation?.contextLinks.find((link) => link.entityType === "project")?.entityId ?? null;
+  const projectContextLink = contextConversation?.contextLinks.find((link) => link.entityType === "project") ?? null;
+  const projectId = projectContextLink?.entityId ?? null;
   const selectedProject = projectId
     ? (projectsQuery.data ?? []).find((project) => project.id === projectId) ?? null
     : null;
+  const projectLabel = selectedProject?.name?.trim()
+    || projectContextLink?.entity?.label?.trim()
+    || "Project context";
+  const agentLabel = selectedAgent
+    ? formatChatAgentLabel(selectedAgent)
+    : displayConversation?.chatRuntime?.sourceLabel ?? "Assistant";
+  const activePlanMode = pendingPlanModeOverride
+    ?? conversation?.planMode
+    ?? provisionalPlanModeOverride
+    ?? sourceConversationQuery.data?.planMode
+    ?? false;
 
-  const setConversationCache = (updated: ChatConversation) => {
+  const setConversationCache = useCallback((updated: ChatConversation) => {
     queryClient.setQueryData(queryKeys.chats.detail(organizationId, updated.id), updated);
-  };
+  }, [organizationId, queryClient]);
 
-  const appendMessage = (conversationId: string, message: ChatMessage) => {
+  const appendMessage = useCallback((conversationId: string, message: ChatMessage) => {
     queryClient.setQueryData<ChatMessage[]>(
       queryKeys.chats.messages(organizationId, conversationId),
       (current = []) => current.some((candidate) => candidate.id === message.id)
         ? current
         : [...current, message],
     );
-  };
+  }, [organizationId, queryClient]);
+
+  const insertSkillReference = useCallback((entry: (typeof availableChatSkills)[number]) => {
+    if (!entry.skillRefLabel || !entry.skillMarkdownTarget) {
+      closeSkillMenu();
+      return;
+    }
+    const nextDraft = appendSkillReferencesToDraft(
+      draft,
+      [`[${entry.skillRefLabel}](${entry.skillMarkdownTarget})`],
+    );
+    setDraft(nextDraft);
+    closeSkillMenu();
+    requestAnimationFrame(() => composerEditorRef.current?.focus());
+    if (nextDraft === draft) {
+      pushToast({
+        title: "Selected skills already in message",
+        tone: "success",
+      });
+    }
+  }, [availableChatSkills, closeSkillMenu, draft, pushToast]);
+
+  const applyPlanMode = useCallback(async (value: boolean) => {
+    setPlanModeError(null);
+    const conversationId = target.conversationId ?? conversationIdRef.current;
+    if (!conversationId) {
+      setProvisionalPlanModeOverride(value);
+      return;
+    }
+    if (planModeUpdating) return;
+
+    const previousConversation = conversation;
+    const previousPlanMode = activePlanMode;
+    setPlanModeUpdating(true);
+    setPendingPlanModeOverride(value);
+    if (previousConversation) {
+      setConversationCache({ ...previousConversation, planMode: value });
+    }
+    try {
+      const updated = await chatsApi.update(conversationId, { planMode: value });
+      setConversationCache(updated);
+      setProvisionalPlanModeOverride(null);
+      setPendingPlanModeOverride(null);
+    } catch (error) {
+      if (previousConversation) setConversationCache(previousConversation);
+      setPendingPlanModeOverride(null);
+      setProvisionalPlanModeOverride(previousPlanMode);
+      setPlanModeError(error instanceof Error
+        ? error.message
+        : "Could not update Plan mode.");
+    } finally {
+      setPlanModeUpdating(false);
+    }
+  }, [
+    activePlanMode,
+    conversation,
+    planModeUpdating,
+    setConversationCache,
+    target.conversationId,
+  ]);
 
   const handleSend = async () => {
     const body = draft.trim();
-    if (!body || sending || readOnly || !sourceMessageId) return;
+    if (!body || sending || planModeUpdating || readOnly || !sourceMessageId) return;
+    const filesToUpload = [...pendingFiles];
+    const sentFileKeys = new Set(filesToUpload.map(pendingAttachmentKey));
+    let acknowledged = false;
     const createdAt = new Date();
     setSending(true);
     setSendError(null);
@@ -196,6 +469,9 @@ export function SideChatPanelView({
         const createPromise = chatsApi.createSideChat(target.sourceConversationId, {
           sourceMessageId,
           clientMutationId: target.clientMutationId,
+          ...(provisionalPlanModeOverride === null
+            ? {}
+            : { planMode: provisionalPlanModeOverride }),
         });
         createPromiseRef.current = createPromise;
         const created = await createPromise;
@@ -207,6 +483,7 @@ export function SideChatPanelView({
           return;
         }
         setConversationCache(created);
+        setProvisionalPlanModeOverride(null);
         queryClient.setQueryData(queryKeys.chats.messages(organizationId, created.id), []);
         onReplaceTarget(sidePanelTargetKey(target), {
           ...target,
@@ -223,8 +500,16 @@ export function SideChatPanelView({
       streamAbortControllerRef.current = abortController;
       await chatsApi.sendMessageStream(conversationId, body, {
         signal: abortController.signal,
+        files: filesToUpload,
         onEvent: async (event) => {
-          if (event.type === "ack") appendMessage(conversationId!, event.userMessage);
+          if (event.type === "ack") {
+            acknowledged = true;
+            appendMessage(conversationId!, event.userMessage);
+            setPendingFiles((current) => (
+              current.filter((file) => !sentFileKeys.has(pendingAttachmentKey(file)))
+            ));
+            setAttachmentError(null);
+          }
           if (event.type === "assistant_delta") {
             setStream((current) => current ? { ...current, body: `${current.body}${event.delta}` } : current);
           }
@@ -252,7 +537,9 @@ export function SideChatPanelView({
       ]);
     } catch (error) {
       if (closeRequestedRef.current) return;
-      setDraft((current) => current || body);
+      if (!acknowledged) {
+        setDraft((current) => current.trim() ? `${body}\n\n${current}` : body);
+      }
       setStream((current) => current ? { ...current, state: "failed" } : current);
       setSendError(error instanceof Error ? error.message : "Could not send this message.");
     } finally {
@@ -267,6 +554,17 @@ export function SideChatPanelView({
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="side-chat-panel-view">
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        multiple
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          void appendPendingFiles(files);
+          event.currentTarget.value = "";
+        }}
+      />
       <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
           <section className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3">
@@ -327,7 +625,7 @@ export function SideChatPanelView({
                     actionPending={false}
                     onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}
                     onOpenFile={noop}
-                    skillReferences={EMPTY_SKILL_REFERENCES}
+                    skillReferences={chatSkillReferences}
                   />
                 </div>
               );
@@ -349,7 +647,7 @@ export function SideChatPanelView({
                   conversation={displayConversation}
                   agents={agents}
                   onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}
-                  skillReferences={EMPTY_SKILL_REFERENCES}
+                  skillReferences={chatSkillReferences}
                 />
               </div>
             ) : null}
@@ -358,47 +656,142 @@ export function SideChatPanelView({
       </div>
 
       {sendError ? <div role="alert" className="px-4 pb-2 text-sm text-destructive">{sendError}</div> : null}
+      {planModeError ? (
+        <div role="alert" className="px-4 pb-2 text-sm text-destructive">
+          Plan mode was restored because the update failed: {planModeError}
+        </div>
+      ) : null}
 
       {!readOnly ? (
         <div className="shrink-0 px-4 pb-4" data-testid="side-chat-composer">
-          <div className="chat-composer mx-auto w-full max-w-4xl rounded-[var(--radius-lg)] p-3">
-            <MarkdownEditor
-              value={draft}
-              onChange={setDraft}
-              submitShortcut="enter"
-              plainText
-              bordered={false}
-              className="rounded-[var(--radius-md)] bg-transparent"
-              contentClassName="min-h-[88px] bg-transparent text-[15px] leading-7 text-foreground"
-              placeholder="Ask a focused follow-up…"
-              onSubmit={() => void handleSend()}
-            />
+          <div
+            ref={composerSurfaceRef}
+            className="chat-composer mx-auto w-full max-w-4xl rounded-[var(--radius-lg)] p-3"
+          >
+            <div onPasteCapture={handlePendingAttachmentPasteCapture}>
+              <MarkdownEditor
+                ref={composerEditorRef}
+                value={draft}
+                onChange={(value) => {
+                  setDraft(value);
+                  setSendError(null);
+                }}
+                mentions={availableChatSkills}
+                submitShortcut="enter"
+                plainText
+                bordered={false}
+                className="rounded-[var(--radius-md)] bg-transparent"
+                contentClassName="min-h-[88px] bg-transparent text-[15px] leading-7 text-foreground"
+                placeholder={activePlanMode ? "Describe the plan you want…" : "Ask a focused follow-up…"}
+                onSubmit={() => void handleSend()}
+              />
+            </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="side-chat-composer-toolbar">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <button type="button" aria-label="Add files and options" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground">
-                  <Plus className="h-4 w-4" />
-                </button>
-                <span className="inline-flex max-w-[11rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:var(--surface-active)] px-2.5 py-1.5 text-xs font-medium text-muted-foreground" data-testid="side-chat-project-chip">
-                  <Folder className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{selectedProject?.name ?? "No project"}</span>
-                </span>
-                <span className="inline-flex max-w-[13rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:var(--surface-active)] px-2.5 py-1.5 text-xs font-medium text-muted-foreground" data-testid="side-chat-agent-chip">
-                  <AgentIcon icon={selectedAgent?.icon} role={selectedAgent?.role} fallbackSeed={selectedAgent?.id ?? selectedAgentId} className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{selectedAgent?.name ?? displayConversation?.chatRuntime?.sourceLabel ?? "Assistant"}</span>
-                </span>
-                <span className="inline-flex rounded-[var(--radius-md)] bg-[color:var(--surface-active)] px-2.5 py-1.5 text-xs font-medium text-muted-foreground">Skills</span>
+                <ChatComposerOptionsMenu
+                  open={plusMenuOpen}
+                  onOpenChange={(open) => {
+                    setPlusMenuOpen(open);
+                    if (open) closeSkillMenu();
+                  }}
+                  onAddFiles={() => fileInputRef.current?.click()}
+                  planMode={activePlanMode}
+                  onPlanModeChange={(value) => void applyPlanMode(value)}
+                  planModeDisabled={sending || planModeUpdating}
+                />
+                {activePlanMode ? (
+                  <ChatPlanModeChip
+                    disabled={sending || planModeUpdating}
+                    onDisable={() => void applyPlanMode(false)}
+                  />
+                ) : null}
+                {projectContextLink ? (
+                  <ChatLockedContextChip
+                    ariaLabel={`Project context: ${projectLabel}`}
+                    icon={(
+                      <ProjectIcon
+                        color={selectedProject?.color}
+                        icon={selectedProject?.icon}
+                        size="xs"
+                        testId="side-chat-project-icon"
+                      />
+                    )}
+                    label={projectLabel}
+                    testId="side-chat-project-chip"
+                    title="Project context is inherited from the main chat."
+                  />
+                ) : null}
+                <ChatLockedAgentChip
+                  agent={selectedAgent}
+                  fallbackSeed={selectedAgent?.id ?? selectedAgentId}
+                  label={agentLabel}
+                  testId="side-chat-agent-chip"
+                />
+                {selectedAgentId ? (
+                  <ChatSkillsButton
+                    open={skillMenuOpen}
+                    onClick={() => {
+                      if (skillMenuOpen) closeSkillMenu();
+                      else openSkillMenu();
+                    }}
+                  />
+                ) : null}
               </div>
               <button
                 type="button"
                 aria-label="Send Side Chat message"
+                aria-busy={sending || undefined}
                 className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:cursor-not-allowed disabled:opacity-45"
-                disabled={!draft.trim() || sending || noAnchor}
+                disabled={!draft.trim() || sending || planModeUpdating || noAnchor}
                 onClick={() => void handleSend()}
               >
                 {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
               </button>
             </div>
+            {pendingFiles.length > 0 ? (
+              <div data-testid="side-chat-pending-attachments" className="mt-2.5 flex flex-wrap gap-2">
+                {pendingFiles.map((file) => {
+                  const fileKey = pendingAttachmentKey(file);
+                  return (
+                    <div key={fileKey} data-testid="side-chat-pending-attachment" className="max-w-full">
+                      <PendingAttachmentPreview
+                        file={file}
+                        onRemove={sending ? undefined : () => removePendingFile(fileKey)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+            {attachmentError ? (
+              <div role="alert" className="mt-2 text-sm text-destructive">
+                {attachmentError}
+              </div>
+            ) : null}
           </div>
+          {skillMenuOpen && skillMenuPosition && typeof document !== "undefined"
+            ? createPortal(
+              <div
+                ref={skillMenuRef}
+                data-testid="side-chat-skill-menu"
+                role="menu"
+                className="chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay fixed z-50 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
+                style={skillMenuPosition}
+              >
+                <ChatSkillPickerMenuContent
+                  error={chatSkillsError}
+                  filteredItems={filteredChatSkills}
+                  items={availableChatSkills}
+                  onSearchQueryChange={setSkillSearchQuery}
+                  onSelect={insertSkillReference}
+                  pending={chatSkillsPending}
+                  searchInputRef={skillSearchInputRef}
+                  searchQuery={skillSearchQuery}
+                />
+              </div>,
+              document.body,
+            )
+            : null}
         </div>
       ) : (
         <div className="shrink-0 border-t border-[color:var(--border-soft)] px-4 py-3 text-sm text-muted-foreground" data-testid="side-chat-read-only">

@@ -144,6 +144,7 @@ export function sideChatService(db: Db) {
     sourceMessageId: string;
     clientMutationId: string;
     orgId: string;
+    planMode?: boolean;
     userId: string;
   }) {
     const createdId = await db.transaction(async (tx) => {
@@ -161,6 +162,7 @@ export function sideChatService(db: Db) {
           existing.conversationKind !== "side_chat"
           || existing.forkedFromConversationId !== input.sourceConversationId
           || existing.forkedFromMessageId !== input.sourceMessageId
+          || (input.planMode !== undefined && existing.planMode !== input.planMode)
         ) {
           throw conflict("Side Chat creation id was already used for different source context");
         }
@@ -213,7 +215,7 @@ export function sideChatService(db: Db) {
           forkedFromMessageId: anchor.id,
           forkRootConversationId: rootConversationId,
           issueCreationMode: source.issueCreationMode,
-          planMode: source.planMode,
+          planMode: input.planMode ?? source.planMode,
           createdByUserId: input.userId,
           createdAt: now,
           updatedAt: now,
@@ -235,6 +237,7 @@ export function sideChatService(db: Db) {
           raced.conversationKind !== "side_chat"
           || raced.forkedFromConversationId !== input.sourceConversationId
           || raced.forkedFromMessageId !== input.sourceMessageId
+          || (input.planMode !== undefined && raced.planMode !== input.planMode)
         ) {
           throw conflict("Side Chat creation id was already used for different source context");
         }

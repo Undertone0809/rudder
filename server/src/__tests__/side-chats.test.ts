@@ -110,7 +110,11 @@ describe("sideChatService", () => {
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  async function createSource(userId = "side-chat-owner", title = "Source answer") {
+  async function createSource(
+    userId = "side-chat-owner",
+    title = "Source answer",
+    planMode = false,
+  ) {
     const orgId = randomUUID();
     const sourceConversationId = randomUUID();
     const anchorMessageId = randomUUID();
@@ -128,7 +132,7 @@ describe("sideChatService", () => {
       title,
       createdByUserId: userId,
       issueCreationMode: "manual_approval",
-      planMode: false,
+      planMode,
     });
     await db.insert(chatMessages).values([
       {
@@ -230,6 +234,30 @@ describe("sideChatService", () => {
       .from(chatConversations)
       .where(eq(chatConversations.id, sideChat.id));
     expect(persisted?.title).toBe(sideChat.title);
+  });
+
+  it("inherits source Plan mode unless creation supplies an atomic override", async () => {
+    const source = await createSource("side-chat-plan-owner", "Planning source", true);
+    const inherited = await service.create({
+      ...source,
+      sourceMessageId: source.anchorMessageId,
+      clientMutationId: "side-chat-plan-inherited",
+    });
+    const overridden = await service.create({
+      ...source,
+      sourceMessageId: source.anchorMessageId,
+      clientMutationId: "side-chat-plan-overridden",
+      planMode: false,
+    });
+
+    expect(inherited.planMode).toBe(true);
+    expect(overridden.planMode).toBe(false);
+    await expect(service.create({
+      ...source,
+      sourceMessageId: source.anchorMessageId,
+      clientMutationId: "side-chat-plan-overridden",
+      planMode: true,
+    })).rejects.toMatchObject({ status: 409 });
   });
 
   it("destroys an unkept Side Chat and turns an elapsed Side Chat read-only", async () => {

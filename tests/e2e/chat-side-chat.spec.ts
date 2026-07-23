@@ -2,6 +2,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
+  chatAttachments,
+  chatContextLinks,
   chatConversations,
   chatMessages,
   createDb,
@@ -18,7 +20,11 @@ function threadTestId(threadKey: string) {
   return `messenger-thread-${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
-async function seedSideChatSource(page: Page, name: string) {
+async function seedSideChatSource(
+  page: Page,
+  name: string,
+  options: { project?: boolean; skill?: boolean } = {},
+) {
   const orgRes = await page.request.post("/api/orgs", { data: { name } });
   expect(orgRes.ok(), await orgRes.text()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -26,6 +32,35 @@ async function seedSideChatSource(page: Page, name: string) {
     name: "Sidekick",
     command: E2E_CODEX_STUB,
   }) as { id: string };
+  let skill: { id: string; key: string; slug: string } | null = null;
+  if (options.skill) {
+    const skillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
+      data: {
+        name: "Build Advisor",
+        slug: "build-advisor",
+        markdown: "---\nname: Build Advisor\n---\n\n# Build Advisor\n",
+      },
+    });
+    expect(skillRes.ok(), await skillRes.text()).toBe(true);
+    skill = await skillRes.json() as { id: string; key: string; slug: string };
+    const syncRes = await page.request.post(
+      `/api/agents/${agent.id}/skills/sync?orgId=${encodeURIComponent(organization.id)}`,
+      { data: { desiredSkills: [`org:${skill.key}`] } },
+    );
+    expect(syncRes.ok(), await syncRes.text()).toBe(true);
+  }
+  let project: { id: string; name: string } | null = null;
+  if (options.project) {
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Inherited Launch",
+        description: "Inherited Side Chat project context.",
+        status: "in_progress",
+      },
+    });
+    expect(projectRes.ok(), await projectRes.text()).toBe(true);
+    project = await projectRes.json() as { id: string; name: string };
+  }
   const conversationId = randomUUID();
   const assistantMessageId = randomUUID();
   await e2eDb.insert(chatConversations).values({
@@ -59,12 +94,20 @@ async function seedSideChatSource(page: Page, name: string) {
       replyingAgentId: agent.id,
     },
   ]);
+  if (project) {
+    await e2eDb.insert(chatContextLinks).values({
+      orgId: organization.id,
+      conversationId,
+      entityType: "project",
+      entityId: project.id,
+    });
+  }
   await page.goto("/");
   await page.evaluate((orgId) => localStorage.setItem("rudder.selectedOrganizationId", orgId), organization.id);
   await page.setViewportSize({ width: 1500, height: 940 });
   await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`);
   await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "narrow cohort" })).toBeVisible({ timeout: 15_000 });
-  return { organization, conversationId, assistantMessageId };
+  return { organization, agent, conversationId, assistantMessageId, project, skill };
 }
 
 async function openFromAssistantAction(page: Page, assistantMessageId: string) {
@@ -116,7 +159,7 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
   await page.screenshot({ path: testInfo.outputPath("01-assistant-action-draft.png"), fullPage: true });
   await expect(panel.locator(".chat-composer")).toBeVisible();
-  await expect(panel.getByTestId("side-chat-project-chip")).toBeVisible();
+  await expect(panel.getByTestId("side-chat-project-chip")).toHaveCount(0);
   await expect(panel.getByTestId("side-chat-agent-chip")).toContainText("Sidekick");
   await expect(panel).not.toContainText("Enter to send · Shift+Enter for a new line");
   await expect(panel.getByTestId("side-chat-icon")).toHaveClass(/lucide-circle-plus/);
@@ -149,6 +192,113 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   expect((await page.request.get(`/api/chats/${sideChat.id}`)).status()).toBe(404);
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
   await page.screenshot({ path: testInfo.outputPath("03-side-chat-destroyed.png"), fullPage: true });
+});
+
+test("Side Chat sends isolated files, Plan mode, and one rich Skill reference", async ({ page }, testInfo) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Parity-${Date.now()}`, { skill: true });
+  const mainComposer = page.getByTestId("chat-composer-editor-scroll").locator(".rudder-mdxeditor-content").first();
+  await mainComposer.fill("Keep the parent draft untouched");
+  const mainFileInput = page.locator('input[type="file"]').first();
+  await mainFileInput.setInputFiles({
+    name: "parent-note.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("parent evidence"),
+  });
+  await expect(page.getByTestId("chat-pending-attachment")).toContainText("parent-note.txt");
+
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  await expect(panel.getByTestId("side-chat-project-chip")).toHaveCount(0);
+  await sideComposerEditor(panel).fill("Review this evidence");
+
+  await panel.getByRole("button", { name: "Add files and options" }).focus();
+  await page.keyboard.press("Enter");
+  const optionsMenu = page.getByRole("menu");
+  await expect(optionsMenu.getByRole("menuitem", { name: "Add files" })).toBeVisible();
+  const planModeToggle = optionsMenu.getByRole("switch", { name: "Plan mode" });
+  await planModeToggle.click();
+  await expect(planModeToggle).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+  await expect(panel.getByRole("button", { name: "Turn off plan mode" })).toBeVisible({ timeout: 15_000 });
+
+  await panel.getByRole("button", { name: "Skills" }).focus();
+  await page.keyboard.press("Enter");
+  const skillMenu = page.getByTestId("side-chat-skill-menu");
+  await expect(skillMenu.getByRole("menuitem").filter({ hasText: "Build Advisor" })).toBeVisible();
+  await skillMenu.getByRole("menuitem").filter({ hasText: "Build Advisor" }).click();
+  await panel.getByRole("button", { name: "Skills" }).click();
+  await page.getByTestId("side-chat-skill-menu").getByRole("menuitem")
+    .filter({ hasText: "Build Advisor" })
+    .click();
+  await expect(panel.locator("[data-skill-token='true']")).toHaveCount(1);
+
+  const sideFileInput = panel.locator('input[type="file"]');
+  await sideFileInput.setInputFiles({
+    name: "side-evidence.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("side evidence"),
+  });
+  await expect(panel.getByTestId("side-chat-pending-attachment")).toContainText("side-evidence.txt");
+  await panel.getByRole("button", { name: "Remove side-evidence.txt" }).click();
+  await expect(panel.getByTestId("side-chat-pending-attachment")).toHaveCount(0);
+  await sideFileInput.setInputFiles({
+    name: "side-evidence.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("side evidence"),
+  });
+
+  const createRequestPromise = page.waitForRequest((request) => (
+    request.method() === "POST"
+    && request.url().includes(`/api/chats/${source.conversationId}/side-chats`)
+  ));
+  await panel.getByRole("button", { name: "Send Side Chat message" }).click();
+  const createRequest = await createRequestPromise;
+  expect(createRequest.postDataJSON()).toMatchObject({ planMode: true });
+  const createResponse = await createRequest.response();
+  expect(createResponse?.ok(), await createResponse?.text()).toBe(true);
+  const sideChat = await createResponse!.json() as { id: string; planMode: boolean };
+  expect(sideChat.planMode).toBe(true);
+
+  await expect(panel.getByTestId("side-chat-messages")).toContainText("side-evidence.txt", { timeout: 20_000 });
+  await expect(panel.getByTestId("side-chat-messages").locator("[data-skill-token='true']")).toHaveCount(1);
+  const sideMessages = await e2eDb
+    .select()
+    .from(chatMessages)
+    .where(eq(chatMessages.conversationId, sideChat.id));
+  const sideUserMessage = sideMessages.find((message) => (
+    message.role === "user" && message.body.includes("Review this evidence")
+  ));
+  expect(sideUserMessage?.body.match(/\[build-advisor\]\(skill:\/\/org\//g)).toHaveLength(1);
+  const sideAttachments = await e2eDb
+    .select()
+    .from(chatAttachments)
+    .where(eq(chatAttachments.conversationId, sideChat.id));
+  expect(sideAttachments).toHaveLength(1);
+
+  const planUpdatePromise = page.waitForResponse((response) => (
+    response.request().method() === "PATCH"
+    && response.url().includes(`/api/chats/${sideChat.id}`)
+  ));
+  await panel.getByRole("button", { name: "Turn off plan mode" }).click();
+  expect((await planUpdatePromise).ok()).toBe(true);
+  const persistedSideChat = await page.request.get(`/api/chats/${sideChat.id}`);
+  expect((await persistedSideChat.json() as { planMode: boolean }).planMode).toBe(false);
+
+  await expect(mainComposer).toContainText("Keep the parent draft untouched");
+  await expect(page.getByTestId("chat-pending-attachment")).toContainText("parent-note.txt");
+  const sourceConversation = await page.request.get(`/api/chats/${source.conversationId}`);
+  expect((await sourceConversation.json() as { planMode: boolean }).planMode).toBe(false);
+  await page.screenshot({ path: testInfo.outputPath("04-side-chat-composer-parity.png"), fullPage: true });
+});
+
+test("Side Chat renders its inherited Project as a locked normal Chat chip", async ({ page }, testInfo) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Project-${Date.now()}`, { project: true });
+  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const projectChip = panel.getByTestId("side-chat-project-chip");
+
+  await expect(projectChip).toContainText("Inherited Launch");
+  await expect(projectChip).toBeDisabled();
+  await expect(projectChip).toHaveAttribute("aria-label", "Project context: Inherited Launch");
+  await page.screenshot({ path: testInfo.outputPath("05-side-chat-inherited-project.png"), fullPage: true });
 });
 
 test("the /side menu matches composer popovers and can move the same Side Chat to Messenger", async ({ page }, testInfo) => {
@@ -308,7 +458,7 @@ test("the Side Panel empty state opens the same provisional Side Chat flow", asy
 });
 
 test("the Side Chat tab menu and disabled explanation fit a narrow viewport", async ({ page }, testInfo) => {
-  const source = await seedSideChatSource(page, `Side-Chat-Narrow-${Date.now()}`);
+  const source = await seedSideChatSource(page, `Side-Chat-Narrow-${Date.now()}`, { skill: true });
   await page.setViewportSize({ width: 390, height: 844 });
   const panel = await openFromAssistantAction(page, source.assistantMessageId);
   const { menu } = await openSideChatTabContextMenu(page, panel);
@@ -325,6 +475,26 @@ test("the Side Chat tab menu and disabled explanation fit a narrow viewport", as
   expect(tooltipBox!.x).toBeGreaterThanOrEqual(0);
   expect(tooltipBox!.x + tooltipBox!.width).toBeLessThanOrEqual(390);
   await page.screenshot({ path: testInfo.outputPath("12-side-chat-narrow-menu.png"), fullPage: true });
+  await page.keyboard.press("Escape");
+  await expect(tooltip).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await panel.getByRole("button", { name: "Add files and options" }).click();
+  const composerMenu = page.getByRole("menu");
+  await expect(composerMenu.getByRole("menuitem", { name: "Add files" })).toBeVisible();
+  const composerMenuBox = await composerMenu.boundingBox();
+  expect(composerMenuBox).not.toBeNull();
+  expect(composerMenuBox!.x).toBeGreaterThanOrEqual(0);
+  expect(composerMenuBox!.x + composerMenuBox!.width).toBeLessThanOrEqual(390);
+  await page.keyboard.press("Escape");
+  await panel.getByRole("button", { name: "Skills" }).click();
+  const skillMenu = page.getByTestId("side-chat-skill-menu");
+  await expect(skillMenu.getByRole("menuitem").filter({ hasText: "Build Advisor" })).toBeVisible();
+  const skillMenuBox = await skillMenu.boundingBox();
+  expect(skillMenuBox).not.toBeNull();
+  expect(skillMenuBox!.x).toBeGreaterThanOrEqual(0);
+  expect(skillMenuBox!.x + skillMenuBox!.width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath("13-side-chat-narrow-composer-menus.png"), fullPage: true });
 });
 
 test("a failed Move to Messenger keeps the Side Chat tab and can be retried", async ({ page }) => {

@@ -360,6 +360,7 @@ export const forkChatConversationSchema = z.object({
 export const createSideChatSchema = z.object({
   sourceMessageId: z.string().uuid(),
   clientMutationId: z.string().trim().min(1).max(120),
+  planMode: z.boolean().optional(),
 });
 
 export const addChatMessageSchema = z.object({

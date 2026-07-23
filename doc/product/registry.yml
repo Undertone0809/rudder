@@ -1190,12 +1190,15 @@ contracts:
       - ui/src/lib/side-panel-targets.ts
       - ui/src/components/ui/context-menu.tsx
       - ui/src/components/side-panel/SideChatPanelView.tsx
+      - ui/src/pages/Chat.composer-controls.tsx
       - ui/src/pages/Chat.tsx
       - ui/src/pages/Chat.messages.tsx
       - ui/src/pages/Chat.side-panel.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
       - server/src/__tests__/side-chats.test.ts
+      - packages/shared/src/validators/chat.test.ts
+      - ui/src/api/chats.test.ts
       - ui/src/lib/side-chat.test.ts
       - ui/src/lib/side-panel-targets.test.ts
       - ui/src/pages/Chat.messages.test.tsx

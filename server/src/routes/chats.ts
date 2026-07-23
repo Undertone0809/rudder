@@ -1793,6 +1793,7 @@ export function chatRoutes(
       sourceMessageId: req.body.sourceMessageId,
       clientMutationId: req.body.clientMutationId,
       orgId: existing.orgId,
+      ...(req.body.planMode === undefined ? {} : { planMode: req.body.planMode }),
       userId,
     });
     const actor = getActorInfo(req);

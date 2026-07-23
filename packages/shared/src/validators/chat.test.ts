@@ -9,6 +9,7 @@ import {
   chatQueuedMessageStatusSchema,
   chatRichReferencesFromStructuredPayload,
   convertChatToIssueSchema,
+  createSideChatSchema,
   sanitizeChatStructuredPayload,
   steerChatQueuedMessageSchema,
   stopChatGenerationSchema,
@@ -16,6 +17,33 @@ import {
 
 const generationId = "11111111-1111-4111-8111-111111111111";
 const controlActionId = "22222222-2222-4222-8222-222222222222";
+
+describe("Side Chat creation", () => {
+  it("accepts an optional atomic Plan mode override", () => {
+    const sourceMessageId = "33333333-3333-4333-8333-333333333333";
+    expect(createSideChatSchema.parse({
+      sourceMessageId,
+      clientMutationId: "side-chat-with-inheritance",
+    })).toEqual({
+      sourceMessageId,
+      clientMutationId: "side-chat-with-inheritance",
+    });
+    expect(createSideChatSchema.parse({
+      sourceMessageId,
+      clientMutationId: "side-chat-with-plan",
+      planMode: true,
+    })).toEqual({
+      sourceMessageId,
+      clientMutationId: "side-chat-with-plan",
+      planMode: true,
+    });
+    expect(createSideChatSchema.safeParse({
+      sourceMessageId,
+      clientMutationId: "side-chat-invalid-plan",
+      planMode: "true",
+    }).success).toBe(false);
+  });
+});
 
 describe("durable chat controls", () => {
   it("accepts every honest queue disposition and durable state", () => {
