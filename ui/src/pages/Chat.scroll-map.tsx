@@ -1,4 +1,5 @@
 import { MarkdownBody } from "@/components/MarkdownBody";
+import { LiquidGlassSurface } from "@/components/ui/liquid-glass-surface";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@rudderhq/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -312,9 +313,10 @@ export function ChatScrollMap({ messages, onJump }: { messages: ChatMessage[]; o
       {showPreview ? createPortal(
         <div
           data-testid="chat-scroll-map-preview"
-          className="chat-scroll-map-preview pointer-events-none fixed z-50 w-[40rem] max-w-[calc(100vw-2rem)] -translate-y-1/2 rounded-[18px] border border-white/10 bg-[rgba(42,42,42,0.94)] px-4 py-3.5 text-left shadow-[0_24px_70px_-34px_rgb(0_0_0/0.88)] backdrop-blur-xl"
+          className="chat-scroll-map-preview liquid-glass-host pointer-events-none fixed z-50 w-[40rem] max-w-[calc(100vw-2rem)] -translate-y-1/2 rounded-[18px] border border-white/10 bg-[rgba(42,42,42,0.94)] px-4 py-3.5 text-left shadow-[0_24px_70px_-34px_rgb(0_0_0/0.88)] backdrop-blur-xl"
           style={{ left: previewPosition!.left, top: previewPosition!.top }}
         >
+          <LiquidGlassSurface variant="preview" />
           <MarkdownBody className="chat-scroll-map-preview-title line-clamp-1 text-[15px] font-semibold leading-6 [&_*]:text-current [&_a]:pointer-events-none [&_a]:align-baseline [&_code]:bg-white/10 [&_p]:inline">
             {hoveredPreview?.title ?? ""}
           </MarkdownBody>

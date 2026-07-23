@@ -67,6 +67,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LiquidGlassSurface } from "@/components/ui/liquid-glass-surface";
 import {
   Popover,
   PopoverContent,
@@ -559,6 +560,76 @@ export function DesignGuide() {
       </Section>
 
       {/* ============================================================ */}
+      {/*  LIQUID GLASS TRANSIENT SURFACES                             */}
+      {/* ============================================================ */}
+      <Section title="Liquid Glass Transient Surfaces">
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          Shared material tiers for temporary, elevated UI. The surrounding color field makes
+          refraction and edge tinting visible while keeping content readable.
+        </p>
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div
+            data-liquid-glass-sample="modal"
+            className="relative min-h-48 overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_18%_20%,rgb(38_207_171/0.8),transparent_38%),radial-gradient(circle_at_86%_78%,hsl(283_70%_60%/0.7),transparent_42%),linear-gradient(135deg,hsl(202_90%_45%),hsl(245_65%_34%))] p-5"
+          >
+            <div className="liquid-glass-host relative flex min-h-[9.5rem] flex-col justify-between rounded-2xl p-5">
+              <LiquidGlassSurface variant="modal" />
+              <div>
+                <div className="text-xs font-medium uppercase tracking-[0.18em] text-foreground/60">
+                  Modal
+                </div>
+                <div className="mt-2 text-base font-semibold">Focused decision surface</div>
+              </div>
+              <p className="text-sm text-foreground/70">
+                Strongest tint and edge definition for dialogs and sheets.
+              </p>
+            </div>
+          </div>
+
+          <div
+            data-liquid-glass-sample="menu"
+            className="relative min-h-48 overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_82%_18%,hsl(160_76%_48%/0.8),transparent_34%),radial-gradient(circle_at_12%_88%,hsl(39_92%_58%/0.75),transparent_38%),linear-gradient(150deg,hsl(181_70%_30%),hsl(215_60%_28%))] p-5"
+          >
+            <div className="liquid-glass-host relative rounded-2xl p-3">
+              <LiquidGlassSurface variant="menu" />
+              <div className="px-2 pb-2 text-xs font-medium uppercase tracking-[0.18em] text-foreground/60">
+                Menu
+              </div>
+              {["Open details", "Move to project", "Share link"].map((label, index) => (
+                <div
+                  key={label}
+                  className={`rounded-lg px-3 py-2 text-sm ${
+                    index === 0 ? "bg-foreground/10" : ""
+                  }`}
+                >
+                  {label}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div
+            data-liquid-glass-sample="preview"
+            className="relative min-h-48 overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_22%_75%,hsl(335_86%_64%/0.82),transparent_36%),radial-gradient(circle_at_78%_25%,hsl(48_94%_62%/0.72),transparent_36%),linear-gradient(135deg,hsl(280_52%_35%),hsl(224_64%_30%))] p-5"
+          >
+            <div className="liquid-glass-host relative rounded-2xl p-4">
+              <LiquidGlassSurface variant="preview" />
+              <div className="text-xs font-medium uppercase tracking-[0.18em] text-foreground/60">
+                Preview
+              </div>
+              <div className="mt-3 font-semibold">Agent run · Ready for review</div>
+              <p className="mt-2 text-sm text-foreground/70">
+                Lightweight context for entity cards and rich hover previews.
+              </p>
+              <div className="mt-4 border-t border-foreground/10 pt-3 text-xs text-foreground/60">
+                Updated moments ago
+              </div>
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      {/* ============================================================ */}
       {/*  SELECT                                                       */}
       {/* ============================================================ */}
       <Section title="Select">
@@ -605,7 +676,7 @@ export function DesignGuide() {
               <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56">
+          <DropdownMenuContent align="start" className="max-h-40 w-56 overflow-y-auto">
             <DropdownMenuItem>
               <Check className="h-4 w-4" />
               Mark as done
@@ -622,6 +693,15 @@ export function DesignGuide() {
             >
               Watch issue
             </DropdownMenuCheckboxItem>
+            {[
+              "Assign to agent",
+              "Move to project",
+              "Copy issue link",
+              "Add to sprint",
+              "View activity",
+            ].map((label) => (
+              <DropdownMenuItem key={label}>{label}</DropdownMenuItem>
+            ))}
             <DropdownMenuItem variant="destructive">
               <Trash2 className="h-4 w-4" />
               Delete issue

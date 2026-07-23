@@ -3,6 +3,7 @@
 import { ContextMenu as ContextMenuPrimitive } from "radix-ui";
 import * as React from "react";
 
+import { LiquidGlassSurface } from "@/components/ui/liquid-glass-surface";
 import { cn } from "@/lib/utils";
 
 function ContextMenu({
@@ -52,6 +53,7 @@ function ContextMenuTrigger({
 
 function ContextMenuContent({
   className,
+  children,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
   return (
@@ -59,11 +61,14 @@ function ContextMenuContent({
       <ContextMenuPrimitive.Content
         data-slot="context-menu-content"
         className={cn(
-          "motion-surface-pop bg-popover text-popover-foreground z-50 min-w-[8rem] overflow-hidden rounded-md border p-1 shadow-md",
+          "liquid-glass-host motion-surface-pop bg-popover text-popover-foreground z-50 min-w-[8rem] overflow-hidden rounded-md border p-1 shadow-md",
           className,
         )}
         {...props}
-      />
+      >
+        <LiquidGlassSurface variant="menu" />
+        {children}
+      </ContextMenuPrimitive.Content>
     </ContextMenuPrimitive.Portal>
   )
 }
