@@ -1,16 +1,22 @@
 import {
   applyPendingMigrations,
+  assets,
   chatAttachments,
   chatContextLinks,
   chatConversations,
   chatMessages,
+  chatWorkManifestItems,
   createDb,
   ensurePostgresDatabase,
   messengerCustomGroupEntries,
   messengerCustomGroups,
   organizations,
 } from "@rudderhq/db";
-import { deriveOrganizationUrlKey, MESSENGER_FORK_GROUP_DEFAULT_ICON } from "@rudderhq/shared";
+import {
+  chatInlineAnnotationsFromStructuredPayload,
+  deriveOrganizationUrlKey,
+  MESSENGER_FORK_GROUP_DEFAULT_ICON,
+} from "@rudderhq/shared";
 import { asc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -18,6 +24,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { chatWorkManifestService } from "../services/chat-work-manifest.js";
 import { SIDE_CHAT_TTL_MS, sideChatService } from "../services/side-chats.js";
 
 type EmbeddedPostgresInstance = {
@@ -98,7 +105,9 @@ describe("sideChatService", () => {
   afterEach(async () => {
     await db.delete(messengerCustomGroupEntries);
     await db.delete(messengerCustomGroups);
+    await db.delete(chatWorkManifestItems);
     await db.delete(chatAttachments);
+    await db.delete(assets);
     await db.delete(chatContextLinks);
     await db.delete(chatMessages);
     await db.delete(chatConversations);
@@ -211,6 +220,137 @@ describe("sideChatService", () => {
     expect(copiedAnchor).toMatchObject({ runId: null, approvalId: null, structuredPayload: null });
     expect(await db.select().from(messengerCustomGroups)).toHaveLength(0);
     expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(0);
+  });
+
+  it("remaps copied annotation sources and attachment ownership without exposing annotation files to the manifest", async () => {
+    const source = await createSource();
+    const selectedText = "Selected answer text";
+    const sourceMessageId = randomUUID();
+    const annotatedMessageId = randomUUID();
+    const annotationAttachmentId = randomUUID();
+    const ordinaryAttachmentId = randomUUID();
+    const startedAt = new Date("2026-07-19T02:00:00.000Z");
+    await db.insert(chatMessages).values([
+      {
+        id: sourceMessageId,
+        orgId: source.orgId,
+        conversationId: source.sourceConversationId,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: selectedText,
+        createdAt: new Date(startedAt.getTime() + 250),
+        updatedAt: new Date(startedAt.getTime() + 250),
+      },
+      {
+        id: annotatedMessageId,
+        orgId: source.orgId,
+        conversationId: source.sourceConversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Please explain this evidence.",
+        structuredPayload: {
+          inlineAnnotations: [{
+            id: randomUUID(),
+            selectedText,
+            comment: "Compare this with the attached image.",
+            sourceConversationId: source.sourceConversationId,
+            sourceMessageId,
+            surface: "assistant_body",
+            sourceHash: "a".repeat(64),
+            start: 0,
+            end: selectedText.length,
+            prefix: "",
+            suffix: "",
+            attachmentIds: [annotationAttachmentId],
+          }],
+        },
+        createdAt: new Date(startedAt.getTime() + 500),
+        updatedAt: new Date(startedAt.getTime() + 500),
+      },
+    ]);
+    const [annotationAsset, ordinaryAsset] = await db.insert(assets).values([
+      {
+        orgId: source.orgId,
+        provider: "local",
+        objectKey: `side-chat-annotation-${randomUUID()}`,
+        contentType: "image/png",
+        byteSize: 12,
+        sha256: "b".repeat(64),
+        originalFilename: "annotation-context.png",
+        createdByUserId: source.userId,
+      },
+      {
+        orgId: source.orgId,
+        provider: "local",
+        objectKey: `side-chat-ordinary-${randomUUID()}`,
+        contentType: "text/plain",
+        byteSize: 12,
+        sha256: "c".repeat(64),
+        originalFilename: "ordinary-source.txt",
+        createdByUserId: source.userId,
+      },
+    ]).returning();
+    await db.insert(chatAttachments).values([
+      {
+        id: annotationAttachmentId,
+        orgId: source.orgId,
+        conversationId: source.sourceConversationId,
+        messageId: annotatedMessageId,
+        assetId: annotationAsset!.id,
+      },
+      {
+        id: ordinaryAttachmentId,
+        orgId: source.orgId,
+        conversationId: source.sourceConversationId,
+        messageId: annotatedMessageId,
+        assetId: ordinaryAsset!.id,
+      },
+    ]);
+
+    const sideChat = await createSideChat(source);
+    const copiedMessages = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, sideChat.id));
+    const copiedSource = copiedMessages.find((message) => message.body === selectedText);
+    const copiedAnnotated = copiedMessages.find((message) => message.body === "Please explain this evidence.");
+    expect(copiedSource).toBeDefined();
+    expect(copiedAnnotated).toBeDefined();
+    const [copiedAnnotation] = chatInlineAnnotationsFromStructuredPayload(
+      copiedAnnotated?.structuredPayload,
+    );
+    expect(copiedAnnotation).toMatchObject({
+      selectedText,
+      sourceConversationId: sideChat.id,
+      sourceMessageId: copiedSource?.id,
+    });
+    expect(copiedAnnotation?.attachmentIds).toHaveLength(1);
+    expect(copiedAnnotation?.attachmentIds[0]).not.toBe(annotationAttachmentId);
+
+    const copiedAttachments = await db
+      .select()
+      .from(chatAttachments)
+      .where(eq(chatAttachments.conversationId, sideChat.id));
+    expect(copiedAttachments).toHaveLength(2);
+    expect(copiedAttachments).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: copiedAnnotation?.attachmentIds[0],
+        messageId: copiedAnnotated?.id,
+        assetId: annotationAsset?.id,
+      }),
+      expect.objectContaining({
+        messageId: copiedAnnotated?.id,
+        assetId: ordinaryAsset?.id,
+      }),
+    ]));
+
+    const manifestService = chatWorkManifestService(db);
+    await manifestService.reconcileConversation(sideChat.id);
+    const manifest = await manifestService.getConversationManifest(sideChat.id);
+    expect(manifest.sources.map((item) => item.title)).toContain("ordinary-source.txt");
+    expect(manifest.sources.map((item) => item.title)).not.toContain("annotation-context.png");
   });
 
   it("snapshots and bounds the direct source title when the Side Chat is created", async () => {
