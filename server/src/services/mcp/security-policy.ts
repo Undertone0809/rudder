@@ -20,6 +20,11 @@ export interface McpStdioDeploymentPolicy {
   stdioEnvironmentNames: string[];
 }
 
+export interface ValidatedMcpStdioTarget {
+  command: string;
+  cwd: string | undefined;
+}
+
 export interface McpDnsAnswer {
   address: string;
   family: 4 | 6;
@@ -107,8 +112,10 @@ export async function validateMcpStdioPolicy(
   dependencies: {
     realpath?: (value: string) => Promise<string>;
   } = {},
-): Promise<void> {
-  if (policy.deploymentMode === "local_trusted") return;
+): Promise<ValidatedMcpStdioTarget> {
+  if (policy.deploymentMode === "local_trusted") {
+    return { command: input.command, cwd: input.cwd };
+  }
 
   if (!path.isAbsolute(input.command)) {
     throw new Error("Authenticated MCP STDIO executable must use an absolute path");
@@ -168,6 +175,10 @@ export async function validateMcpStdioPolicy(
   if (input.environmentNames.some((name) => !allowedEnvironmentNames.has(name))) {
     throw new Error("MCP STDIO environment name is not allowed by deployment policy");
   }
+  return {
+    command: executableRealpath,
+    cwd: cwdRealpath,
+  };
 }
 
 const blockedAddresses = new BlockList();
@@ -213,12 +224,58 @@ function unwrapMappedIpv4(address: string): string | null {
   return match?.[1] ?? null;
 }
 
+function parseIpv6Words(address: string): number[] | null {
+  let normalized = address.toLowerCase();
+  if (normalized.includes(".")) {
+    const lastColon = normalized.lastIndexOf(":");
+    const octets = normalized.slice(lastColon + 1).split(".").map(Number);
+    if (
+      octets.length !== 4
+      || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)
+    ) {
+      return null;
+    }
+    normalized = `${normalized.slice(0, lastColon)}:${(
+      (octets[0]! << 8) | octets[1]!
+    ).toString(16)}:${((octets[2]! << 8) | octets[3]!).toString(16)}`;
+  }
+
+  const halves = normalized.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if ((halves.length === 1 && missing !== 0) || missing < 0) return null;
+  const words = [
+    ...left,
+    ...Array.from({ length: missing }, () => "0"),
+    ...right,
+  ].map((word) => Number.parseInt(word, 16));
+  return words.length === 8 && words.every((word) => Number.isInteger(word))
+    ? words
+    : null;
+}
+
+function isIpv4TranslatedAddress(address: string): boolean {
+  const words = parseIpv6Words(address);
+  // Node's BlockList normalizes this translated prefix as IPv4-mapped,
+  // so match its 96-bit IPv6 prefix explicitly without affecting IPv4.
+  return Boolean(
+    words
+    && words.slice(0, 4).every((word) => word === 0)
+    && words[4] === 0xffff
+    && words[5] === 0,
+  );
+}
+
 export function isBlockedMcpNetworkAddress(address: string): boolean {
   const mappedIpv4 = unwrapMappedIpv4(address);
   if (mappedIpv4) return blockedAddresses.check(mappedIpv4, "ipv4");
   const family = isIP(address);
   if (family === 4) return blockedAddresses.check(address, "ipv4");
-  if (family === 6) return blockedAddresses.check(address, "ipv6");
+  if (family === 6) {
+    return isIpv4TranslatedAddress(address) || blockedAddresses.check(address, "ipv6");
+  }
   return true;
 }
 

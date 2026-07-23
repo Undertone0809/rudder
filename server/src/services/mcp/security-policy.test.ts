@@ -36,7 +36,10 @@ describe("managed MCP deployment policy", () => {
       stdioCommands: [],
       stdioWorkingDirectories: [],
       stdioEnvironmentNames: [],
-    })).resolves.toBeUndefined();
+    })).resolves.toEqual({
+      command: "arbitrary-command",
+      cwd: "/anywhere",
+    });
 
     await expect(validateMcpStdioPolicy({
       command: "/usr/local/bin/acme-mcp",
@@ -50,7 +53,10 @@ describe("managed MCP deployment policy", () => {
       stdioEnvironmentNames: ["SAFE_TOKEN"],
     }, {
       realpath: async (value) => value,
-    })).resolves.toBeUndefined();
+    })).resolves.toEqual({
+      command: "/usr/local/bin/acme-mcp",
+      cwd: "/srv/mcp",
+    });
 
     await expect(validateMcpStdioPolicy({
       command: "/usr/local/bin/acme-mcp",
@@ -86,7 +92,10 @@ describe("managed MCP deployment policy", () => {
       stdioCommands: [["/allowed/acme", "--stdio"]],
       stdioWorkingDirectories: ["/allowed/workspace"],
       stdioEnvironmentNames: [],
-    }, { realpath })).resolves.toBeUndefined();
+    }, { realpath })).resolves.toEqual({
+      command: "/opt/bin/acme",
+      cwd: "/srv/real-workspace",
+    });
 
     await expect(validateMcpStdioPolicy({
       command: "node",
@@ -148,6 +157,7 @@ describe("managed MCP outbound target policy", () => {
       "64:ff9b::7f00:1",
       "64:ff9b:1::7f00:1",
       "::7f00:1",
+      "::ffff:0:127.0.0.1",
       "2002:7f00:1::",
     ]) {
       await expect(resolveMcpHttpTarget("https://encoded.example/mcp", {

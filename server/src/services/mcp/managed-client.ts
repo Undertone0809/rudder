@@ -172,13 +172,17 @@ function boundedResult(result: CallToolResult, maxOutputBytes: number): CallTool
   return result;
 }
 
-async function buildStdioEnvironment(options: ManagedMcpStdioClientOptions): Promise<Record<string, string>> {
+async function prepareStdioLaunch(options: ManagedMcpStdioClientOptions): Promise<{
+  command: string;
+  cwd: string | undefined;
+  env: Record<string, string>;
+}> {
   const environmentNames = new Set([
     ...Object.keys(options.staticEnv),
     ...Object.keys(options.secretEnv),
     ...options.forwardedEnv,
   ]);
-  await validateMcpStdioPolicy({
+  const target = await validateMcpStdioPolicy({
     command: options.command,
     args: options.args,
     cwd: options.cwd,
@@ -199,7 +203,7 @@ async function buildStdioEnvironment(options: ManagedMcpStdioClientOptions): Pro
       if (!environmentNames.has(name)) env[name] = "";
     }
   }
-  return env;
+  return { ...target, env };
 }
 
 export async function createManagedMcpClient(
@@ -239,11 +243,12 @@ export async function createManagedMcpClient(
       onInsufficientScope: "throw",
     });
   } else {
+    const launch = await prepareStdioLaunch(options);
     transport = new StdioClientTransport({
-      command: options.command,
+      command: launch.command,
       args: options.args,
-      cwd: options.cwd,
-      env: await buildStdioEnvironment(options),
+      cwd: launch.cwd,
+      env: launch.env,
       stderr: "pipe",
       maxBufferSize: maxOutputBytes,
     });
