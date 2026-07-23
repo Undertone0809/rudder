@@ -164,6 +164,29 @@ export function chatSteerMessageService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
+  function assertFailedActionRetryable(
+    item: typeof chatQueuedMessages.$inferSelect,
+    action: typeof chatControlActions.$inferSelect | null,
+  ) {
+    if (item.status !== "failed_actionable") return;
+    const confirmedPreDeliveryFailure = Boolean(
+      action
+      && action.actionKind === "steer"
+      && action.localDisposition === "failed_actionable"
+      && (
+        action.providerDisposition === "rejected"
+        || (action.providerDisposition === "not_sent" && !action.providerSentAt)
+      )
+      && !action.providerAcknowledgedAt
+      && !item.sourceMessageId
+      && !item.deliveredMessageId
+      && !item.continuationMessageId,
+    );
+    if (!confirmedPreDeliveryFailure) {
+      throw conflict("Queued feedback delivery is not safely retryable");
+    }
+  }
+
   async function scheduleContinuation(input: {
     orgId: string;
     conversationId: string;
@@ -190,7 +213,12 @@ export function chatSteerMessageService(db: Db) {
           eq(chatQueuedMessages.orgId, input.orgId),
           eq(chatQueuedMessages.conversationId, input.conversationId),
           isNull(chatQueuedMessages.cancelledAt),
-          inArray(chatQueuedMessages.status, ["queued", "steer_pending", "continuation_pending"]),
+          inArray(chatQueuedMessages.status, [
+            "queued",
+            "steer_pending",
+            "continuation_pending",
+            "failed_actionable",
+          ]),
         ))
         .limit(1)
         .then((rows) => rows[0] ?? null);
@@ -200,10 +228,11 @@ export function chatSteerMessageService(db: Db) {
         orgId: input.orgId,
         controlActionId: item.controlActionId,
       });
+      assertFailedActionRetryable(item, existingBoundAction);
       if (item.controlActionId && (!existingBoundAction || existingBoundAction.actionKind !== "steer")) {
         throw conflict("Queued feedback has an unresolved Steer action");
       }
-      if (existingBoundAction) {
+      if (existingBoundAction && item.status !== "failed_actionable") {
         const materialized = await materializeUserMessage(tx, {
           orgId: input.orgId,
           conversationId: input.conversationId,
@@ -332,7 +361,12 @@ export function chatSteerMessageService(db: Db) {
           eq(chatQueuedMessages.orgId, input.orgId),
           eq(chatQueuedMessages.conversationId, input.conversationId),
           isNull(chatQueuedMessages.cancelledAt),
-          inArray(chatQueuedMessages.status, ["queued", "steer_pending", "continuation_pending"]),
+          inArray(chatQueuedMessages.status, [
+            "queued",
+            "steer_pending",
+            "continuation_pending",
+            "failed_actionable",
+          ]),
         ))
         .limit(1)
         .then((rows) => rows[0] ?? null);
@@ -342,10 +376,11 @@ export function chatSteerMessageService(db: Db) {
         orgId: input.orgId,
         controlActionId: item.controlActionId,
       });
+      assertFailedActionRetryable(item, existingBoundAction);
       if (item.controlActionId && (!existingBoundAction || existingBoundAction.actionKind !== "steer")) {
         throw conflict("Queued feedback has an unresolved Steer action");
       }
-      if (existingBoundAction) {
+      if (existingBoundAction && item.status !== "failed_actionable") {
         const existingGeneration = existingBoundAction.expectedGenerationId
           ? await tx
             .select()
