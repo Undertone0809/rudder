@@ -142,7 +142,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { PendingAttachmentPreview } from "./Chat.attachments";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
@@ -152,6 +152,9 @@ import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
 import { ChatWorkManifest, ChatWorkManifestToggle, hasChatWorkManifestContent } from "./Chat.work-manifest";
 import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, chatMessageJumpTargetFromHref, chatReferenceMarkdown, clipboardAttachmentPayloadKey, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry, type SendButtonMode } from "./Chat.workspace-helpers";
+
+const LiquidGlass = lazy(() => import("liquid-glass-react"));
+
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
@@ -2578,6 +2581,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       </div>
     );
   };
+  const showDesktopLiquidGlass =
+    !isMobile
+    && typeof document !== "undefined"
+    && document.documentElement.classList.contains("desktop-shell-macos");
   return (
     <div className="chat-shell relative flex min-h-[calc(100dvh-8rem)] flex-col overflow-hidden text-foreground md:h-full md:min-h-0">
       {isMessengerChatRoute && !isMobile && !sidebarOpen ? (
@@ -2604,7 +2611,26 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               aria-hidden="true"
               data-testid="chat-desktop-toolbar-clearance"
               className="chat-desktop-toolbar-clearance workspace-main-header hidden shrink-0 md:block"
-            />
+            >
+              {showDesktopLiquidGlass ? (
+                <Suspense fallback={null}>
+                  <LiquidGlass
+                    className="chat-toolbar-liquid-glass"
+                    displacementScale={64}
+                    blurAmount={0}
+                    saturation={140}
+                    aberrationIntensity={0.65}
+                    elasticity={0.08}
+                    cornerRadius={0}
+                    padding="0"
+                    mode="standard"
+                    style={{ position: "absolute" }}
+                  >
+                    <span className="chat-toolbar-liquid-glass-fill" />
+                  </LiquidGlass>
+                </Suspense>
+              ) : null}
+            </div>
           ) : null}
           {loadErrorMessage && conversationId ? (
             <div

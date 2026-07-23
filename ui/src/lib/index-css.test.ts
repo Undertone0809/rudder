@@ -455,12 +455,31 @@ describe("index.css motion rules", () => {
     expect(lightChatHeader).toContain("position: absolute");
     expect(lightChatHeader).toContain("inset: 0 0 auto");
     expect(lightChatHeader).toContain("height: 2.75rem");
-    expect(lightChatHeader).toContain("border-top-left-radius: max(0px, calc(var(--desktop-workspace-radius) - 1px))");
-    expect(lightChatHeader).toContain("border-top-right-radius: max(0px, calc(var(--desktop-workspace-radius) - 1px))");
-    expect(lightChatHeader).toContain("var(--desktop-content-surface-light) 26%");
-    expect(lightChatHeader).toContain("backdrop-filter: blur(18px) saturate(128%)");
-    expect(darkChatHeader).toContain("var(--desktop-content-surface-dark) 24%");
-    expect(darkChatHeader).toContain("backdrop-filter: blur(18px) saturate(132%)");
+    expect(lightChatHeader).toContain(
+      "--chat-toolbar-liquid-radius: max(0px, calc(var(--desktop-workspace-radius) - 1px))",
+    );
+    expect(lightChatHeader).toContain("border-top-left-radius: var(--chat-toolbar-liquid-radius)");
+    expect(lightChatHeader).toContain("border-top-right-radius: var(--chat-toolbar-liquid-radius)");
+    expect(lightChatHeader).toContain("background: transparent");
+    expect(lightChatHeader).not.toContain("backdrop-filter");
+    expect(darkChatHeader).not.toContain("background:");
+    expect(darkChatHeader).not.toContain("backdrop-filter");
+    expect(cssBlock("html.desktop-shell-macos .chat-toolbar-liquid-glass .glass__warp")).toContain(
+      "backdrop-filter: saturate(140%) contrast(106%)",
+    );
+    expect(
+      cssBlock('html.desktop-shell-macos [data-testid="chat-desktop-toolbar-clearance"] > :is(div, span)'),
+    ).toContain(
+      "border-radius: var(--chat-toolbar-liquid-radius) var(--chat-toolbar-liquid-radius) 0 0 !important",
+    );
+    expect(
+      cssBlock('html.desktop-shell-macos [data-testid="chat-desktop-toolbar-clearance"] > :is(div, span)'),
+    ).toContain("transition: none !important");
+    const liquidGlassSurface = cssBlock("html.desktop-shell-macos .chat-toolbar-liquid-glass > .glass");
+    expect(liquidGlassSurface).toContain(
+      "border-radius: var(--chat-toolbar-liquid-radius) var(--chat-toolbar-liquid-radius) 0 0 !important",
+    );
+    expect(liquidGlassSurface).toContain("transition: none !important");
     expect(activeChatCardSelector).toContain(":has(>");
     expect(indexCss).not.toContain("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
   });

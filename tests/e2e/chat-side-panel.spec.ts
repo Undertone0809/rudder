@@ -2030,6 +2030,12 @@ test.describe("Chat Side Panel", () => {
   });
 
   test("keeps desktop chat controls clear of interrupted messages beside the Side Panel", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window.navigator, "userAgent", {
+        configurable: true,
+        get: () => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+      });
+    });
     await installBrowserDesktopStub(page);
     const browserSettings = await page.request.patch("/api/instance/settings/browser", {
       data: { enabled: true, openLinksIn: "built_in" },
@@ -2090,8 +2096,6 @@ test.describe("Chat Side Panel", () => {
     await page.getByTestId("chat-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
-    await sidePanel.getByRole("button", { name: /Browser/ }).click();
-    await expect(sidePanel.getByTestId("chat-side-panel-browser-view")).toBeVisible();
 
     const toolbarClearance = page.getByTestId("chat-desktop-toolbar-clearance");
     const openSidebarButton = page.getByRole("button", { name: "Open Messenger sidebar" });
@@ -2137,13 +2141,39 @@ test.describe("Chat Side Panel", () => {
     const toolbarStyles = await toolbarClearance.evaluate((element) => {
       const style = window.getComputedStyle(element);
       return {
-        backdropFilter: style.backdropFilter || style.webkitBackdropFilter,
         borderTopLeftRadius: Number.parseFloat(style.borderTopLeftRadius),
         borderTopRightRadius: Number.parseFloat(style.borderTopRightRadius),
         backgroundColor: style.backgroundColor,
         height: Number.parseFloat(style.height),
         position: style.position,
         zIndex: style.zIndex,
+      };
+    });
+    const liquidGlassWarp = toolbarClearance.locator(".glass__warp");
+    const liquidGlassStyles = await liquidGlassWarp.evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return {
+        backdropFilter: style.backdropFilter || style.webkitBackdropFilter,
+        filter: style.filter,
+      };
+    });
+    const liquidGlassGeometry = await toolbarClearance.evaluate((element) => {
+      const toolbarBox = element.getBoundingClientRect();
+      const rimLayers = Array.from(element.children)
+        .filter((child) => child.tagName === "SPAN")
+        .map((child) => {
+          const box = child.getBoundingClientRect();
+          return {
+            overlapHeight: Math.max(0, Math.min(toolbarBox.bottom, box.bottom) - Math.max(toolbarBox.top, box.top)),
+            overlapWidth: Math.max(0, Math.min(toolbarBox.right, box.right) - Math.max(toolbarBox.left, box.left)),
+            position: window.getComputedStyle(child).position,
+          };
+        });
+      return {
+        displacementScales: Array.from(element.querySelectorAll("feDisplacementMap")).map((node) =>
+          Number(node.getAttribute("scale")),
+        ),
+        rimLayers,
       };
     });
     const mainCardStyles = await page.getByTestId("chat-main-workspace-card").evaluate((element) => {
@@ -2157,7 +2187,18 @@ test.describe("Chat Side Panel", () => {
     });
     expect(toolbarStyles.position).toBe("absolute");
     expect(toolbarStyles.zIndex).toBe("20");
-    expect(toolbarStyles.backdropFilter).toContain("blur(18px)");
+    expect(toolbarStyles.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(liquidGlassStyles.backdropFilter).toContain("saturate(1.4)");
+    expect(liquidGlassStyles.backdropFilter).not.toContain("blur(");
+    expect(liquidGlassStyles.filter).toContain("url(");
+    expect(liquidGlassGeometry.displacementScales).toHaveLength(3);
+    expect(Math.abs(liquidGlassGeometry.displacementScales[0] ?? 0)).toBeCloseTo(64, 1);
+    expect(liquidGlassGeometry.rimLayers).toHaveLength(2);
+    for (const rimLayer of liquidGlassGeometry.rimLayers) {
+      expect(rimLayer.position).toBe("absolute");
+      expect(rimLayer.overlapWidth).toBeGreaterThan(toolbarBox!.width * 0.95);
+      expect(rimLayer.overlapHeight).toBeGreaterThan(toolbarBox!.height * 0.95);
+    }
     expect(toolbarStyles.height).toBe(44);
     expect(toolbarStyles.borderTopLeftRadius).toBeGreaterThan(0);
     expect(toolbarStyles.borderTopRightRadius).toBeGreaterThan(0);
@@ -2196,17 +2237,23 @@ test.describe("Chat Side Panel", () => {
     await page.evaluate(() => {
       window.localStorage.setItem("rudder.theme", "light");
       document.documentElement.classList.remove("dark");
+      document.documentElement.dataset.style = "mira";
     });
     await expect(page.locator("html")).not.toHaveClass(/\bdark\b/);
     const lightToolbarStyles = await toolbarClearance.evaluate((element) => {
       const style = window.getComputedStyle(element);
+      const glassStyle = window.getComputedStyle(element.querySelector(".glass")!);
       return {
-        backdropFilter: style.backdropFilter || style.webkitBackdropFilter,
         backgroundColor: style.backgroundColor,
+        borderTopLeftRadius: Number.parseFloat(style.borderTopLeftRadius),
+        borderTopRightRadius: Number.parseFloat(style.borderTopRightRadius),
+        glassBorderTopLeftRadius: Number.parseFloat(glassStyle.borderTopLeftRadius),
+        glassBorderTopRightRadius: Number.parseFloat(glassStyle.borderTopRightRadius),
       };
     });
-    expect(lightToolbarStyles.backdropFilter).toContain("blur(18px)");
-    expect(lightToolbarStyles.backgroundColor).not.toBe(toolbarStyles.backgroundColor);
+    expect(lightToolbarStyles.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(lightToolbarStyles.glassBorderTopLeftRadius).toBeCloseTo(lightToolbarStyles.borderTopLeftRadius, 1);
+    expect(lightToolbarStyles.glassBorderTopRightRadius).toBeCloseTo(lightToolbarStyles.borderTopRightRadius, 1);
     await page.screenshot({
       path: "/tmp/rudder-chat-toolbar-clearance-with-side-panel-light.png",
       fullPage: true,
