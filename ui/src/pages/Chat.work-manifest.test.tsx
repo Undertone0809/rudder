@@ -211,6 +211,34 @@ describe("ChatWorkManifest", () => {
     expect(iconFor("Daily report")).toBe("automation");
     expect(iconFor("Planning chat")).toBe("chat");
   });
+
+  it("keeps the full reference title accessible while constraining long rows to one truncated line", () => {
+    const longTitle = "Original referenced chat title that is deliberately longer than the compact manifest shelf";
+    const container = render(
+      <ChatWorkManifest
+        manifest={{
+          ...manifest,
+          totalCount: 1,
+          outputs: [],
+          sources: [],
+          references: [referenceItem("chat-long", "chat_conversation", longTitle)],
+        }}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        wideOpen
+        {...handlers}
+      />,
+    );
+
+    const row = container.querySelector<HTMLButtonElement>(`button[title="${longTitle}"]`);
+    const label = row?.querySelector("span.truncate");
+    expect(row?.title).toBe(longTitle);
+    expect(label?.textContent).toBe(longTitle);
+    expect(label?.className).toContain("block");
+    expect(label?.className).toContain("truncate");
+  });
+
   it("does not render while loading or when thread work is empty", () => {
     const loading = render(
       <ChatWorkManifest manifest={null} loading error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,

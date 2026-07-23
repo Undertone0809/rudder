@@ -13,6 +13,7 @@ import {
 import {
   chatInlineVisualMappingsFromStructuredPayload,
   extractVisibleChatWorkTargets,
+  isUuidLike,
   normalizeChatWorkExternalUrl,
   preferChatWorkManifestCategory,
   rudderInlineVisualMappingsFromStructuredPayload,
@@ -252,6 +253,38 @@ export function chatWorkManifestService(db: Db) {
             },
           });
         }
+      }
+    }
+
+    const referencedConversationIds = [...new Set(
+      [...candidates.values()]
+        .filter((candidate) => candidate.targetType === "chat_conversation")
+        .map((candidate) => typeof candidate.metadata?.conversationId === "string"
+          ? candidate.metadata.conversationId.trim()
+          : "")
+        .filter((referencedConversationId) => isUuidLike(referencedConversationId)),
+    )];
+    if (referencedConversationIds.length > 0) {
+      const referencedConversations = await db
+        .select({ id: chatConversations.id, title: chatConversations.title })
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.orgId, conversation.orgId),
+          inArray(chatConversations.id, referencedConversationIds),
+        ));
+      const referencedConversationTitles = new Map(
+        referencedConversations.map((referencedConversation) => [
+          referencedConversation.id,
+          referencedConversation.title,
+        ]),
+      );
+      for (const candidate of candidates.values()) {
+        if (candidate.targetType !== "chat_conversation") continue;
+        const referencedConversationId = typeof candidate.metadata?.conversationId === "string"
+          ? candidate.metadata.conversationId.trim()
+          : "";
+        const referencedConversationTitle = referencedConversationTitles.get(referencedConversationId);
+        if (referencedConversationTitle?.trim()) candidate.title = referencedConversationTitle;
       }
     }
 

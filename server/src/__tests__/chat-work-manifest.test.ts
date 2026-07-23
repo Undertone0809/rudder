@@ -317,6 +317,15 @@ describe("chatWorkManifestService", () => {
 
   it("includes visible Rudder entity links in references", async () => {
     const { orgId, conversationId } = await seedBase("References");
+    const referencedConversationId = randomUUID();
+    const referencedConversationTitle = "Original referenced chat title that is much longer than the compact manifest row";
+    const renamedConversationTitle = "Renamed referenced chat title that remains much longer than the compact manifest row";
+    await db.insert(chatConversations).values({
+      id: referencedConversationId,
+      orgId,
+      title: referencedConversationTitle,
+    });
+    const crossOrganizationConversation = await seedBase("Cross organization");
     await db.insert(chatMessages).values({
       orgId,
       conversationId,
@@ -324,24 +333,54 @@ describe("chatWorkManifestService", () => {
       body: [
         "[Issue](issue://issue-1?r=REF-1)",
         "[Automation](automation://automation-1?t=Daily%20report)",
-        "[Chat](chat://chat-1?messageId=message-1)",
+        `[Stale referenced title](chat://${referencedConversationId}?messageId=message-1)`,
+        `[](chat://${crossOrganizationConversation.conversationId})`,
+        "[](chat://chat-123)",
       ].join(" "),
     });
 
     await svc.reconcileConversation(conversationId);
     const manifest = await svc.getConversationManifest(conversationId);
+    const referencedChat = manifest.references.find((item) =>
+      item.metadata?.conversationId === referencedConversationId
+    );
 
     expect(manifest.references.map((item) => item.targetType)).toEqual([
       "issue",
       "automation",
       "chat_conversation",
+      "chat_conversation",
+      "chat_conversation",
     ]);
-    expect(manifest.references.map((item) => item.title)).toEqual(["Issue", "Automation", "Chat"]);
+    expect(manifest.references.map((item) => item.title)).toEqual([
+      "Issue",
+      "Automation",
+      referencedConversationTitle,
+      "Chat",
+      "Chat",
+    ]);
     expect(manifest.references.map((item) => item.metadata)).toEqual([
       { issueId: "issue-1", ref: "REF-1", commentId: null },
       { automationId: "automation-1" },
-      { conversationId: "chat-1", messageId: "message-1" },
+      { conversationId: referencedConversationId, messageId: "message-1" },
+      { conversationId: crossOrganizationConversation.conversationId, messageId: null },
+      { conversationId: "chat-123", messageId: null },
     ]);
+
+    await db.update(chatConversations)
+      .set({ title: renamedConversationTitle })
+      .where(eq(chatConversations.id, referencedConversationId));
+    await svc.reconcileConversation(conversationId);
+    const renamedManifest = await svc.getConversationManifest(conversationId);
+    const renamedReferencedChats = renamedManifest.references.filter((item) =>
+      item.metadata?.conversationId === referencedConversationId
+    );
+
+    expect(renamedReferencedChats).toHaveLength(1);
+    expect(renamedReferencedChats[0]).toMatchObject({
+      id: referencedChat?.id,
+      title: renamedConversationTitle,
+    });
   });
 
   it("keeps project resources in the project roll-up and enforces organization boundaries", async () => {
