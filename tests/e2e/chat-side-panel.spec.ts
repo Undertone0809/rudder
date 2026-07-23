@@ -2060,6 +2060,7 @@ test.describe("Chat Side Panel", () => {
         title: "Interrupted chat beside Browser",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Keep the desktop toolbar readable while the transcript scrolls beneath it." },
       },
     });
     expect(chatRes.ok(), await chatRes.text()).toBe(true);
@@ -2072,7 +2073,13 @@ test.describe("Chat Side Panel", () => {
       role: "assistant",
       kind: "message",
       status: "interrupted",
-      body: "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.",
+      body: [
+        "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.",
+        ...Array.from(
+          { length: 32 },
+          (_, index) => `Preserved transcript line ${index + 1} remains visible while scrolling beneath the desktop toolbar.`,
+        ),
+      ].join("\n\n"),
       structuredPayload: null,
       replyingAgentId: null,
       chatTurnId: randomUUID(),
@@ -2083,6 +2090,7 @@ test.describe("Chat Side Panel", () => {
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
 
@@ -2098,31 +2106,118 @@ test.describe("Chat Side Panel", () => {
     const openSidebarButton = page.getByRole("button", { name: "Open Messenger sidebar" });
     const chatActionsButton = page.getByTestId("chat-actions-trigger");
     const assistantMessage = page.getByTestId("chat-assistant-message");
+    const transcriptLine = assistantMessage.getByText(
+      "Preserved transcript line 1 remains visible while scrolling beneath the desktop toolbar.",
+      { exact: true },
+    );
+    const scrollRegion = page.getByTestId("chat-messages-scroll-region");
     await expect(toolbarClearance).toBeVisible();
     await expect(chatActionsButton).toBeVisible();
     await expect(assistantMessage).toContainText("Chat run interrupted before a final reply.");
+    await expect(transcriptLine).toBeVisible();
+    await scrollRegion.evaluate((element) => {
+      element.scrollTop = 0;
+    });
 
-    const [toolbarBox, openSidebarBox, chatActionsBox, messageBox, scrollRegionBox] = await Promise.all([
-      toolbarClearance.boundingBox(),
-      openSidebarButton.boundingBox(),
-      chatActionsButton.boundingBox(),
-      assistantMessage.boundingBox(),
-      page.getByTestId("chat-messages-scroll-region").boundingBox(),
-    ]);
+    const [toolbarBox, openSidebarBox, chatActionsBox, messageBox, transcriptLineBox, scrollRegionBox, mainCardBox] =
+      await Promise.all([
+        toolbarClearance.boundingBox(),
+        openSidebarButton.boundingBox(),
+        chatActionsButton.boundingBox(),
+        assistantMessage.boundingBox(),
+        transcriptLine.boundingBox(),
+        scrollRegion.boundingBox(),
+        page.getByTestId("chat-main-workspace-card").boundingBox(),
+      ]);
     expect(toolbarBox).not.toBeNull();
     expect(openSidebarBox).not.toBeNull();
     expect(chatActionsBox).not.toBeNull();
     expect(messageBox).not.toBeNull();
+    expect(transcriptLineBox).not.toBeNull();
     expect(scrollRegionBox).not.toBeNull();
+    expect(mainCardBox).not.toBeNull();
 
     const toolbarBottom = toolbarBox!.y + toolbarBox!.height;
     expect(openSidebarBox!.y + openSidebarBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
     expect(chatActionsBox!.y + chatActionsBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
-    expect(scrollRegionBox!.y).toBeGreaterThanOrEqual(toolbarBottom - 1);
+    expect(scrollRegionBox!.y).toBeLessThanOrEqual(toolbarBox!.y + 1);
     expect(messageBox!.y).toBeGreaterThanOrEqual(toolbarBottom - 1);
 
+    const toolbarStyles = await toolbarClearance.evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return {
+        backdropFilter: style.backdropFilter || style.webkitBackdropFilter,
+        borderTopLeftRadius: Number.parseFloat(style.borderTopLeftRadius),
+        borderTopRightRadius: Number.parseFloat(style.borderTopRightRadius),
+        backgroundColor: style.backgroundColor,
+        height: Number.parseFloat(style.height),
+        position: style.position,
+        zIndex: style.zIndex,
+      };
+    });
+    const mainCardStyles = await page.getByTestId("chat-main-workspace-card").evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return {
+        borderLeftWidth: Number.parseFloat(style.borderLeftWidth),
+        borderTopWidth: Number.parseFloat(style.borderTopWidth),
+        borderTopLeftRadius: Number.parseFloat(style.borderTopLeftRadius),
+        borderTopRightRadius: Number.parseFloat(style.borderTopRightRadius),
+      };
+    });
+    expect(toolbarStyles.position).toBe("absolute");
+    expect(toolbarStyles.zIndex).toBe("20");
+    expect(toolbarStyles.backdropFilter).toContain("blur(18px)");
+    expect(toolbarStyles.height).toBe(44);
+    expect(toolbarStyles.borderTopLeftRadius).toBeGreaterThan(0);
+    expect(toolbarStyles.borderTopRightRadius).toBeGreaterThan(0);
+    const toolbarLeftInset = toolbarBox!.x - mainCardBox!.x;
+    const toolbarTopInset = toolbarBox!.y - mainCardBox!.y;
+    expect(toolbarLeftInset).toBeCloseTo(mainCardStyles.borderLeftWidth, 0);
+    expect(toolbarTopInset).toBeCloseTo(mainCardStyles.borderTopWidth, 0);
+    expect(mainCardStyles.borderTopLeftRadius - toolbarStyles.borderTopLeftRadius).toBeCloseTo(toolbarLeftInset, 0);
+    expect(mainCardStyles.borderTopRightRadius - toolbarStyles.borderTopRightRadius).toBeCloseTo(toolbarLeftInset, 0);
+    expect(toolbarBox!.width).toBeCloseTo(mainCardBox!.width - (2 * toolbarLeftInset), 0);
+
+    const scrollAmount = Math.max(1, transcriptLineBox!.y - (toolbarBox!.y + 10));
+    await scrollRegion.evaluate((element, nextScrollTop) => {
+      element.scrollTop = nextScrollTop;
+      element.dispatchEvent(new Event("scroll"));
+    }, scrollAmount);
+    await expect.poll(() => scrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    const scrolledTranscriptLineBox = await transcriptLine.boundingBox();
+    expect(scrolledTranscriptLineBox).not.toBeNull();
+    expect(scrolledTranscriptLineBox!.y).toBeLessThan(toolbarBottom - 4);
+    expect(scrolledTranscriptLineBox!.y + scrolledTranscriptLineBox!.height).toBeGreaterThan(toolbarBox!.y + 4);
+    const toolbarCenterHitTarget = await page.evaluate(
+      ({ x, y }) => document.elementFromPoint(x, y)?.getAttribute("data-testid"),
+      {
+        x: toolbarBox!.x + (toolbarBox!.width / 2),
+        y: toolbarBox!.y + (toolbarBox!.height / 2),
+      },
+    );
+    expect(toolbarCenterHitTarget).toBe("chat-desktop-toolbar-clearance");
+
     await page.screenshot({
-      path: "/tmp/rudder-chat-toolbar-clearance-with-side-panel.png",
+      path: "/tmp/rudder-chat-toolbar-clearance-with-side-panel-dark.png",
+      fullPage: true,
+    });
+
+    await page.evaluate(() => {
+      window.localStorage.setItem("rudder.theme", "light");
+      document.documentElement.classList.remove("dark");
+    });
+    await expect(page.locator("html")).not.toHaveClass(/\bdark\b/);
+    const lightToolbarStyles = await toolbarClearance.evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return {
+        backdropFilter: style.backdropFilter || style.webkitBackdropFilter,
+        backgroundColor: style.backgroundColor,
+      };
+    });
+    expect(lightToolbarStyles.backdropFilter).toContain("blur(18px)");
+    expect(lightToolbarStyles.backgroundColor).not.toBe(toolbarStyles.backgroundColor);
+    await page.screenshot({
+      path: "/tmp/rudder-chat-toolbar-clearance-with-side-panel-light.png",
       fullPage: true,
     });
   });
