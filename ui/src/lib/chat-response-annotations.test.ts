@@ -2,9 +2,11 @@ import type { ChatInlineAnnotationInput } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import {
   canSubmitChatResponseAnnotations,
+  chatResponseAnnotationsForDraft,
   createChatResponseAnnotationState,
   responseAnnotationReducer,
   serializeChatResponseAnnotations,
+  validateChatResponseAnnotationAdd,
 } from "./chat-response-annotations";
 
 type AssistantAnnotationInput = Extract<
@@ -34,6 +36,27 @@ function annotation(
 }
 
 describe("chat response annotation state", () => {
+  it("resets a conversation-scoped draft without carrying pending files across scopes", () => {
+    const first = annotation("30000000-0000-4000-8000-000000000001");
+    const second = annotation("30000000-0000-4000-8000-000000000002", {
+      selectedText: "Second scope",
+    });
+    let state = createChatResponseAnnotationState([first]);
+    state = responseAnnotationReducer(state, {
+      type: "addFiles",
+      id: first.id,
+      files: [new File(["draft"], "draft.png", { type: "image/png" })],
+    });
+
+    const next = responseAnnotationReducer(state, {
+      type: "reset",
+      annotations: [second],
+    });
+
+    expect(next.annotations.map((entry) => entry.id)).toEqual([second.id]);
+    expect(next.pendingFilesByAnnotationId).toEqual({});
+  });
+
   it("keeps insertion ordinals and deduplicates an identical source range", () => {
     const first = annotation("30000000-0000-4000-8000-000000000001");
     const duplicate = annotation("30000000-0000-4000-8000-000000000002");
@@ -114,6 +137,65 @@ describe("chat response annotation state", () => {
 
     state = responseAnnotationReducer(state, { type: "delete", id: first.id });
     expect(state.pendingFilesByAnnotationId[first.id]).toBeUndefined();
+  });
+
+  it("commits comment and attachment edits as one editor transaction", () => {
+    const first = annotation("30000000-0000-4000-8000-000000000001", {
+      attachmentIds: ["40000000-0000-4000-8000-000000000001"],
+    });
+    const screenshot = new File(["image"], "screenshot.png", { type: "image/png" });
+    let state = createChatResponseAnnotationState([first]);
+
+    state = responseAnnotationReducer(state, {
+      type: "replaceDraft",
+      id: first.id,
+      comment: "Updated",
+      attachmentIds: [],
+      files: [screenshot],
+    });
+
+    expect(state.annotations[0]).toMatchObject({
+      id: first.id,
+      ordinal: 1,
+      comment: "Updated",
+      attachmentIds: [],
+    });
+    expect(state.pendingFilesByAnnotationId[first.id]).toEqual([screenshot]);
+  });
+
+  it("strips reducer-only ordinals at the draft persistence boundary", () => {
+    const state = createChatResponseAnnotationState([
+      annotation("30000000-0000-4000-8000-000000000001"),
+    ]);
+
+    expect(chatResponseAnnotationsForDraft(state)).toEqual([
+      annotation("30000000-0000-4000-8000-000000000001"),
+    ]);
+    expect(chatResponseAnnotationsForDraft(state)[0]).not.toHaveProperty("ordinal");
+  });
+
+  it("rejects additions that exceed shared annotation count and text limits", () => {
+    let state = createChatResponseAnnotationState(
+      Array.from({ length: 10 }, (_, index) => annotation(
+        `30000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        { start: index * 10, end: index * 10 + 8 },
+      )),
+    );
+    const overflow = annotation("30000000-0000-4000-8000-000000000099", {
+      start: 200,
+      end: 208,
+    });
+
+    expect(validateChatResponseAnnotationAdd(state, overflow)).toMatch(/10/);
+    expect(responseAnnotationReducer(state, { type: "add", annotation: overflow })).toBe(state);
+
+    state = createChatResponseAnnotationState();
+    const tooLong = annotation("30000000-0000-4000-8000-000000000098", {
+      selectedText: "x".repeat(4_001),
+      end: 4_001,
+    });
+    expect(validateChatResponseAnnotationAdd(state, tooLong)).toMatch(/4,000/);
+    expect(responseAnnotationReducer(state, { type: "add", annotation: tooLong })).toBe(state);
   });
 
   it("allows annotation-only submission but rejects a completely empty composer", () => {

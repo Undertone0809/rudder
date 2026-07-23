@@ -1,8 +1,10 @@
 import { cn } from "@/lib/utils";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type KeyboardEvent,
   type RefObject,
 } from "react";
@@ -48,9 +50,11 @@ export function placeSelectionAnnotationToolbar(
 export function SelectionAnnotationToolbar({
   open,
   anchorRect,
+  getAnchorRect,
   onAddToChat,
   onMoreDetails,
   onAskInSideChat,
+  askInSideChatDisabled = false,
   onDismiss,
   labels = DEFAULT_LABELS,
   returnFocusRef,
@@ -59,9 +63,11 @@ export function SelectionAnnotationToolbar({
 }: {
   open: boolean;
   anchorRect: RectLike;
+  getAnchorRect?: () => RectLike | null;
   onAddToChat: () => void;
   onMoreDetails: () => void;
   onAskInSideChat: () => void;
+  askInSideChatDisabled?: boolean;
   onDismiss: () => void;
   labels?: SelectionAnnotationToolbarLabels;
   returnFocusRef?: RefObject<HTMLElement | null>;
@@ -69,14 +75,19 @@ export function SelectionAnnotationToolbar({
   className?: string;
 }) {
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const [liveAnchorRect, setLiveAnchorRect] = useState(anchorRect);
+  const [toolbarSize, setToolbarSize] = useState(() => ({
+    width: Math.min(360, Math.max(0, (typeof window === "undefined" ? 1024 : window.innerWidth) - 16)),
+    height: 40,
+  }));
   const actions = useMemo(() => [
-    { label: labels.addToChat, run: onAddToChat },
-    { label: labels.moreDetails, run: onMoreDetails },
-    { label: labels.askInSideChat, run: onAskInSideChat },
-  ], [labels, onAddToChat, onAskInSideChat, onMoreDetails]);
+    { label: labels.addToChat, run: onAddToChat, disabled: false },
+    { label: labels.moreDetails, run: onMoreDetails, disabled: false },
+    { label: labels.askInSideChat, run: onAskInSideChat, disabled: askInSideChatDisabled },
+  ], [askInSideChatDisabled, labels, onAddToChat, onAskInSideChat, onMoreDetails]);
   const placement = placeSelectionAnnotationToolbar(
-    anchorRect,
-    { width: 360, height: 40 },
+    liveAnchorRect,
+    toolbarSize,
     {
       width: typeof window === "undefined" ? 1024 : window.innerWidth,
       height: typeof window === "undefined" ? 768 : window.innerHeight,
@@ -90,12 +101,69 @@ export function SelectionAnnotationToolbar({
     toolbarRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
   }, [autoFocus, open]);
 
+  useEffect(() => {
+    setLiveAnchorRect(anchorRect);
+  }, [anchorRect]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const toolbar = toolbarRef.current;
+    if (!toolbar) return;
+    const measure = () => {
+      const rect = toolbar.getBoundingClientRect();
+      const width = rect.width || toolbar.scrollWidth;
+      const height = rect.height || toolbar.scrollHeight;
+      if (width <= 0 || height <= 0) return;
+      setToolbarSize((current) => (
+        current.width === width && current.height === height
+          ? current
+          : { width, height }
+      ));
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(toolbar);
+    return () => observer?.disconnect();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const updateAnchor = () => {
+      const next = getAnchorRect?.();
+      if (next) setLiveAnchorRect(next);
+    };
+    updateAnchor();
+    window.addEventListener("resize", updateAnchor);
+    window.addEventListener("scroll", updateAnchor, true);
+    document.addEventListener("selectionchange", updateAnchor);
+    return () => {
+      window.removeEventListener("resize", updateAnchor);
+      window.removeEventListener("scroll", updateAnchor, true);
+      document.removeEventListener("selectionchange", updateAnchor);
+    };
+  }, [getAnchorRect, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleGlobalKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      onDismiss();
+      returnFocusRef?.current?.focus();
+    };
+    document.addEventListener("keydown", handleGlobalKeyDown);
+    return () => document.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [onDismiss, open, returnFocusRef]);
+
   if (!open || typeof document === "undefined") return null;
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const buttons = Array.from(toolbarRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    const buttons = Array.from(
+      toolbarRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
+    );
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       onDismiss();
       returnFocusRef?.current?.focus();
       return;
@@ -113,7 +181,7 @@ export function SelectionAnnotationToolbar({
     }
     if ((event.key === "Enter" || event.key === " ") && currentIndex >= 0) {
       event.preventDefault();
-      actions[currentIndex]?.run();
+      buttons[currentIndex]?.click();
     }
   }
 
@@ -135,7 +203,9 @@ export function SelectionAnnotationToolbar({
         <button
           key={action.label}
           type="button"
-          className="min-h-9 whitespace-nowrap border-r border-[color:var(--border-soft)] px-3 text-sm text-foreground transition-colors last:border-r-0 hover:bg-[color:var(--surface-active)] focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 [@media(pointer:coarse)]:min-h-11 motion-reduce:transition-none"
+          disabled={action.disabled}
+          aria-disabled={action.disabled}
+          className="min-h-9 whitespace-nowrap border-r border-[color:var(--border-soft)] px-3 text-sm text-foreground transition-colors last:border-r-0 hover:bg-[color:var(--surface-active)] focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent [@media(pointer:coarse)]:min-h-11 motion-reduce:transition-none"
           onClick={action.run}
         >
           {action.label}

@@ -2,6 +2,7 @@ import type {
   ChatAttachment,
   ChatContextLink,
   ChatConversation,
+  ChatInlineAnnotationInput,
   ChatIssueCreationMode,
   ChatMessage,
   ChatOperationProposalDecisionAction,
@@ -53,6 +54,7 @@ export type ChatDraftRequest = {
 export type ChatFirstMessageStreamOptions = ChatDraftRequest & {
   signal?: AbortSignal;
   files?: File[];
+  inlineAnnotations?: ChatInlineAnnotationInput[];
   onEvent: (event: ChatStreamEvent) => Promise<void> | void;
 };
 
@@ -180,6 +182,7 @@ export const chatsApi = {
     options: ChatFirstMessageStreamOptions,
   ) => {
     const files = options.files ?? [];
+    const inlineAnnotations = options.inlineAnnotations ?? [];
     const requestBody = files.length > 0
       ? (() => {
         const form = new FormData();
@@ -188,6 +191,9 @@ export const chatsApi = {
         form.append("issueCreationMode", options.issueCreationMode);
         form.append("planMode", String(options.planMode));
         form.append("contextLinks", JSON.stringify(options.contextLinks));
+        if (inlineAnnotations.length > 0) {
+          form.append("inlineAnnotations", JSON.stringify(inlineAnnotations));
+        }
         for (const file of files) {
           form.append("files", file, file.name || "attachment");
         }
@@ -199,6 +205,7 @@ export const chatsApi = {
         issueCreationMode: options.issueCreationMode,
         planMode: options.planMode,
         contextLinks: options.contextLinks,
+        ...(inlineAnnotations.length > 0 ? { inlineAnnotations } : {}),
       });
     const res = await fetch(`/api/orgs/${orgId}/chats/messages/stream`, {
       method: "POST",
@@ -247,16 +254,21 @@ export const chatsApi = {
       editUserMessageId?: string | null;
       queuedMessageId?: string | null;
       files?: File[];
+      inlineAnnotations?: ChatInlineAnnotationInput[];
       onEvent: (event: ChatStreamEvent) => Promise<void> | void;
     },
   ) => {
     const files = options.files ?? [];
+    const inlineAnnotations = options.inlineAnnotations ?? [];
     const requestBody = files.length > 0
       ? (() => {
         const form = new FormData();
         form.append("body", body);
         if (options.editUserMessageId) form.append("editUserMessageId", options.editUserMessageId);
         if (options.queuedMessageId) form.append("queuedMessageId", options.queuedMessageId);
+        if (inlineAnnotations.length > 0) {
+          form.append("inlineAnnotations", JSON.stringify(inlineAnnotations));
+        }
         for (const file of files) {
           form.append("files", file, file.name || "attachment");
         }
@@ -266,6 +278,7 @@ export const chatsApi = {
         body,
         ...(options.editUserMessageId ? { editUserMessageId: options.editUserMessageId } : {}),
         ...(options.queuedMessageId ? { queuedMessageId: options.queuedMessageId } : {}),
+        ...(inlineAnnotations.length > 0 ? { inlineAnnotations } : {}),
       });
     const res = await fetch(`/api/chats/${chatId}/messages/stream`, {
       method: "POST",

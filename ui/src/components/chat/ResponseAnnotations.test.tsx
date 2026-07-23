@@ -129,30 +129,28 @@ describe("response annotation components", () => {
     expect(marker.getAttribute("aria-label")).toBe(
       "Annotation 2: Only real send failures show Retry.",
     );
+    expect(marker.hasAttribute("data-chat-annotation-ignore")).toBe(true);
     click(marker);
     expect(onActivate).toHaveBeenCalledOnce();
   });
 
   it("edits a comment and accepts annotation-owned images and files", () => {
     const onSave = vi.fn();
-    const onAddFiles = vi.fn();
-    const onRemovePendingFile = vi.fn();
-    const onRemoveAttachment = vi.fn();
+    const onCancel = vi.fn();
     const pendingImage = new File(["image"], "screenshot.png", { type: "image/png" });
     render(
       <ResponseAnnotationEditor
         annotation={annotation}
+        ordinal={2}
         pendingFiles={[pendingImage]}
         attachments={[attachment]}
         onSave={onSave}
-        onCancel={vi.fn()}
+        onCancel={onCancel}
         onDelete={vi.fn()}
-        onAddFiles={onAddFiles}
-        onRemovePendingFile={onRemovePendingFile}
-        onRemoveAttachment={onRemoveAttachment}
       />,
     );
 
+    expect(host.textContent).toContain("2. Selected text:");
     expect(host.textContent).toContain(annotation.selectedText);
     expect(host.textContent).toContain("screenshot.png");
     const textarea = host.querySelector("textarea")!;
@@ -168,15 +166,41 @@ describe("response annotation components", () => {
     act(() => {
       fileInput.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    expect(onAddFiles).toHaveBeenCalledWith([report]);
 
     click(host.querySelector("[aria-label='Remove screenshot.png']")!);
-    expect(onRemovePendingFile).toHaveBeenCalledWith(0);
     click(host.querySelector("[aria-label='Remove failure-notes.pdf']")!);
-    expect(onRemoveAttachment).toHaveBeenCalledWith(attachment.id);
 
     click(Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "Save")!);
-    expect(onSave).toHaveBeenCalledWith({ comment: "Add a concrete example." });
+    expect(onSave).toHaveBeenCalledWith({
+      comment: "Add a concrete example.",
+      pendingFiles: [report],
+      attachmentIds: [],
+    });
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("keeps file and comment edits local when the editor is cancelled", () => {
+    const onSave = vi.fn();
+    const onCancel = vi.fn();
+    const pendingImage = new File(["image"], "screenshot.png", { type: "image/png" });
+    render(
+      <ResponseAnnotationEditor
+        annotation={annotation}
+        ordinal={1}
+        pendingFiles={[pendingImage]}
+        attachments={[attachment]}
+        onSave={onSave}
+        onCancel={onCancel}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    click(host.querySelector("[aria-label='Remove screenshot.png']")!);
+    click(host.querySelector("[aria-label='Remove failure-notes.pdf']")!);
+    click(Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "Cancel")!);
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledOnce();
   });
 
   it("renders sent annotations as an immutable ordered card with their own attachments", () => {
@@ -191,16 +215,32 @@ describe("response annotation components", () => {
 
     expect(host.textContent).toContain("1 annotation");
     click(host.querySelector("[aria-label='Show 1 annotation']")!);
-    expect(host.textContent).toContain("1. Selected text:");
-    expect(host.textContent).toContain(annotation.selectedText);
-    expect(host.textContent).toContain("User comment:");
-    expect(host.textContent).toContain("When can this happen?");
-    expect(host.textContent).toContain("failure-notes.pdf");
-    expect(host.querySelector("textarea")).toBeNull();
-    expect(host.querySelector("[aria-label^='Delete annotation']")).toBeNull();
-    expect(host.querySelector("button a")).toBeNull();
+    expect(document.body.textContent).toContain("1. Selected text:");
+    expect(document.body.textContent).toContain(annotation.selectedText);
+    expect(document.body.textContent).toContain("User comment:");
+    expect(document.body.textContent).toContain("When can this happen?");
+    expect(document.body.textContent).toContain("failure-notes.pdf");
+    expect(document.body.querySelector("textarea")).toBeNull();
+    expect(document.body.querySelector("[aria-label^='Delete annotation']")).toBeNull();
+    expect(document.body.querySelector("button a")).toBeNull();
+    expect(document.body.querySelector("[data-annotation-id] p, [data-annotation-id] blockquote")).toBeNull();
 
-    click(host.querySelector("[data-annotation-id]")!);
-    expect(onSelect).toHaveBeenCalledWith(annotation);
+    click(document.body.querySelector("[data-annotation-id]")!);
+    expect(onSelect).toHaveBeenCalledWith(annotation, 1);
+  });
+
+  it("keeps the immutable snapshot visible when its source can no longer be located", () => {
+    render(
+      <SentResponseAnnotationsCard
+        annotations={[annotation]}
+        attachments={[]}
+        unlocatableAnnotationId={annotation.id}
+      />,
+    );
+
+    click(host.querySelector("[aria-label='Show 1 annotation']")!);
+    expect(document.body.querySelector("[data-testid='chat-response-annotation-unlocatable']")?.textContent)
+      .toBe("Source is no longer available.");
+    expect(document.body.textContent).toContain(annotation.selectedText);
   });
 });

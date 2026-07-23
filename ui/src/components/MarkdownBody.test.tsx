@@ -459,6 +459,25 @@ describe("MarkdownBody", () => {
     expect(copyEvent.defaultPrevented).toBe(true);
   });
 
+  it("exposes Markdown source offsets on inline formatting nodes for precise selections", () => {
+    const source = "Use **bold**, *emphasis*, ~~removed~~, and `code`.";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    for (const selector of ["strong", "em", "del", "code"]) {
+      const element = container.querySelector<HTMLElement>(selector);
+      expect(element, selector).toBeTruthy();
+      const start = Number(element?.dataset.markdownSourceStart);
+      const end = Number(element?.dataset.markdownSourceEnd);
+      expect(Number.isInteger(start), `${selector} start`).toBe(true);
+      expect(Number.isInteger(end), `${selector} end`).toBe(true);
+      expect(source.slice(start, end)).toContain(element?.textContent ?? "");
+    }
+  });
+
   it("copies block code when code-block copy is enabled without adding inline-code buttons", async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", {

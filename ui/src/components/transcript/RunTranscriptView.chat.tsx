@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
+import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
@@ -519,6 +519,7 @@ export function TranscriptChatActionGroup({
   onOpenFile,
   agentInspections = EMPTY_AGENT_INSPECTIONS,
   onOpenAgent,
+  annotationSource,
 }: {
   actions: ChatTranscriptAction[];
   density: TranscriptDensity;
@@ -528,6 +529,7 @@ export function TranscriptChatActionGroup({
   onOpenFile?: (targetPath: string, label: string) => void;
   agentInspections?: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  annotationSource?: TranscriptAnnotationSourceContext;
 }) {
   const compact = density === "compact";
   const singleAction = actions[0];
@@ -661,6 +663,7 @@ export function TranscriptChatTurn({
   onOpenFile,
   agentInspections = EMPTY_AGENT_INSPECTIONS,
   onOpenAgent,
+  annotationSource,
 }: {
   turn: ChatTranscriptTurn;
   density: TranscriptDensity;
@@ -670,6 +673,7 @@ export function TranscriptChatTurn({
   onOpenFile?: (targetPath: string, label: string) => void;
   agentInspections?: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  annotationSource?: TranscriptAnnotationSourceContext;
 }) {
   const detailVariant = variant === "detail";
   const segments = segmentChatTranscriptBlocks(turn.blocks);
@@ -686,6 +690,7 @@ export function TranscriptChatTurn({
               collapseStdout: true,
               thinkingClassName,
               onMarkdownLinkClick,
+              annotationSource,
             })
           : (
             <TranscriptChatActionGroup
@@ -893,6 +898,7 @@ export function TranscriptChatTimeline({
   onOpenFile,
   agentInspections,
   onOpenAgent,
+  annotationSource,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
@@ -906,6 +912,7 @@ export function TranscriptChatTimeline({
   onOpenFile?: (targetPath: string, label: string) => void;
   agentInspections: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  annotationSource?: TranscriptAnnotationSourceContext;
 }) {
   const timelineEntries = useMemo(
     () => filterChatAssistantTranscriptEntries(entries, {
@@ -931,6 +938,7 @@ export function TranscriptChatTimeline({
         collapseStdout,
         thinkingClassName,
         onMarkdownLinkClick,
+        annotationSource,
       }))}
       {turns.map((turn) => (
         <TranscriptChatTurn
@@ -942,6 +950,7 @@ export function TranscriptChatTimeline({
           onOpenFile={onOpenFile}
           agentInspections={agentInspections}
           onOpenAgent={onOpenAgent}
+          annotationSource={annotationSource}
         />
       ))}
     </div>

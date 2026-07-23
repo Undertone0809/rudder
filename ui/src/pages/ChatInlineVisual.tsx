@@ -1,5 +1,6 @@
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { useTheme } from "@/context/ThemeContext";
+import { CHAT_ANNOTATION_IGNORE_ATTRIBUTE } from "@/lib/chat-response-annotation-selection";
 import {
   MAX_RUDDER_INLINE_VISUAL_FRAGMENT_BYTES,
   chatInlineVisualMappingsFromStructuredPayload,
@@ -472,6 +473,7 @@ function InlineVisualFrame({ attachment, theme }: { attachment: ChatAttachment; 
   return (
     <iframe
       ref={iframeRef}
+      {...{ [CHAT_ANNOTATION_IGNORE_ATTRIBUTE]: "" }}
       className="my-2 block w-full border-0 bg-transparent"
       title={attachment.originalFilename ?? "Visual artifact"}
       sandbox="allow-same-origin"

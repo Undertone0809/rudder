@@ -8,6 +8,10 @@ import {
   saveChatComposerDraft,
   saveChatDraft,
 } from "./chat-draft-storage";
+import {
+  chatResponseAnnotationsForDraft,
+  createChatResponseAnnotationState,
+} from "./chat-response-annotations";
 
 const assistantAnnotation = {
   id: "10000000-0000-4000-8000-000000000001",
@@ -146,6 +150,38 @@ describe("chat draft storage", () => {
       body: "",
       inlineAnnotations: [assistantAnnotation],
     });
+  });
+
+  it("round-trips reducer annotations through the explicit draft serializer", () => {
+    const state = createChatResponseAnnotationState([assistantAnnotation]);
+    saveChatComposerDraft("org-1", "chat-1", {
+      version: CHAT_COMPOSER_DRAFT_VERSION,
+      body: "",
+      inlineAnnotations: chatResponseAnnotationsForDraft(state),
+    });
+
+    expect(readChatComposerDraft("org-1", "chat-1").inlineAnnotations).toEqual([
+      assistantAnnotation,
+    ]);
+  });
+
+  it("preserves valid annotations when one persisted item is invalid", () => {
+    localStorage.setItem("rudder:chat-drafts", JSON.stringify({
+      "org-1": {
+        "chat-1": {
+          version: CHAT_COMPOSER_DRAFT_VERSION,
+          body: "Question",
+          inlineAnnotations: [
+            assistantAnnotation,
+            { ...assistantAnnotation, id: "not-a-uuid" },
+          ],
+        },
+      },
+    }));
+
+    expect(readChatComposerDraft("org-1", "chat-1").inlineAnnotations).toEqual([
+      assistantAnnotation,
+    ]);
   });
 
   it("drops dangling pending-file indexes and invalid persisted annotations", () => {

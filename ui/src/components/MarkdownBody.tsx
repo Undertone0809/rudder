@@ -980,6 +980,18 @@ export function MarkdownBody({
     h6: ({ node, children: headingChildren, ...headingProps }) => (
       <h6 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h6>
     ),
+    strong: ({ node, children: strongChildren, ...strongProps }) => (
+      <strong {...strongProps} {...markdownSourceAttributes(node)}>{strongChildren}</strong>
+    ),
+    em: ({ node, children: emphasisChildren, ...emphasisProps }) => (
+      <em {...emphasisProps} {...markdownSourceAttributes(node)}>{emphasisChildren}</em>
+    ),
+    del: ({ node, children: deletedChildren, ...deletedProps }) => (
+      <del {...deletedProps} {...markdownSourceAttributes(node)}>{deletedChildren}</del>
+    ),
+    code: ({ node, children: codeChildren, ...codeProps }) => (
+      <code {...codeProps} {...markdownSourceAttributes(node)}>{codeChildren}</code>
+    ),
     li: MarkdownListItem,
     table: ({ node, children: tableChildren, ...tableProps }) => (
       <div className="rudder-markdown-table-scroll">

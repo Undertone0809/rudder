@@ -185,11 +185,47 @@ export interface MarkdownEditorProps {
 
 export interface MarkdownEditorRef {
   focus: () => void;
+  insertTextAtSelection: (text: string) => boolean;
   getMarkdown?: () => string;
   undo?: () => boolean;
   redo?: () => boolean;
   canUndo?: () => boolean;
   canRedo?: () => boolean;
+}
+
+function isCjkBoundaryCharacter(value: string) {
+  return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}。！？；：，、]/u.test(value);
+}
+
+export function formatComposerCursorInsertion(
+  source: string,
+  offset: number,
+  text: string,
+) {
+  const insertionOffset = Math.max(0, Math.min(offset, source.length));
+  const before = source.slice(0, insertionOffset);
+  const after = source.slice(insertionOffset);
+  const beforeCharacter = before.at(-1) ?? "";
+  const afterCharacter = after[0] ?? "";
+  const firstCharacter = text[0] ?? "";
+  const lastCharacter = text.at(-1) ?? "";
+  const leading = beforeCharacter
+    && !/\s/u.test(beforeCharacter)
+    && !/^\s/u.test(text)
+    && !(isCjkBoundaryCharacter(beforeCharacter) && isCjkBoundaryCharacter(firstCharacter))
+    ? " "
+    : "";
+  const trailing = afterCharacter
+    && !/\s/u.test(afterCharacter)
+    && !/\s$/u.test(text)
+    && !(isCjkBoundaryCharacter(lastCharacter) && isCjkBoundaryCharacter(afterCharacter))
+    ? " "
+    : "";
+  const insertedText = `${leading}${text}${trailing}`;
+  return {
+    value: before + insertedText + after,
+    caretOffset: before.length + insertedText.length,
+  };
 }
 
 type CaretTarget =
@@ -363,6 +399,27 @@ function canonicalMarkdownFromFragment(fragment: DocumentFragment) {
   };
 
   return Array.from(fragment.childNodes).map(read).join("");
+}
+
+function markdownOffsetAtEditorBoundary(
+  editable: HTMLElement,
+  container: Node,
+  offset: number,
+  plainText: boolean,
+) {
+  const range = document.createRange();
+  range.setStart(editable, 0);
+  try {
+    range.setEnd(container, offset);
+  } catch {
+    return null;
+  }
+  const fragment = range.cloneContents();
+  return (
+    plainText
+      ? canonicalMarkdownFromFragment(fragment)
+      : readCanonicalFragmentMarkdown(fragment)
+  ).length;
 }
 
 function normalizeVisibleCopyText(value: string) {
@@ -1157,6 +1214,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   const ref = useRef<MDXEditorMethods>(null);
   const lexicalEditorRef = useRef<LexicalEditor | null>(null);
   const latestValueRef = useRef(value);
+  const lastSelectionOffsetsRef = useRef({ start: value.length, end: value.length });
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const { openImagePreview } = useImagePreview();
@@ -1459,16 +1517,57 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     return removeAtomicToken(token);
   }, [removeAtomicToken]);
 
+  const insertTextAtRememberedSelection = useCallback((text: string) => {
+    if (!text) return false;
+    const editor = ref.current;
+    if (!editor) return false;
+    if (!plainText) {
+      editor.insertMarkdown(text);
+      editor.focus(undefined, { preventScroll: true });
+      return true;
+    }
+    const current = latestValueRef.current;
+    const insertionOffset = Math.max(
+      0,
+      Math.min(lastSelectionOffsetsRef.current.end, current.length),
+    );
+    const { value: next, caretOffset } = formatComposerCursorInsertion(
+      current,
+      insertionOffset,
+      text,
+    );
+    lastSelectionOffsetsRef.current = { start: caretOffset, end: caretOffset };
+    latestValueRef.current = next;
+    editor.setMarkdown(next);
+    onChange(next);
+    requestAnimationFrame(() => {
+      const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+      if (!(editable instanceof HTMLElement)) return;
+      const lexicalEditor = lexicalEditorRef.current;
+      if (lexicalEditor) {
+        focusLexicalTextOffset(lexicalEditor, caretOffset);
+      } else {
+        editor.focus(() => selectLexicalTextOffset(caretOffset), {
+          defaultSelection: "rootEnd",
+          preventScroll: true,
+        });
+        placeCaretAtVisibleTextOffset(editable, caretOffset);
+      }
+    });
+    return true;
+  }, [onChange, plainText]);
+
   useImperativeHandle(forwardedRef, () => ({
     focus: () => {
       focusEditorAtEnd();
     },
+    insertTextAtSelection: insertTextAtRememberedSelection,
     getMarkdown: () => {
       const editorMarkdown = ref.current?.getMarkdown();
       if (typeof editorMarkdown !== "string") return latestValueRef.current;
       return plainText ? normalizePlainTextComposerMarkdown(editorMarkdown) : editorMarkdown;
     },
-  }), [focusEditorAtEnd, plainText]);
+  }), [focusEditorAtEnd, insertTextAtRememberedSelection, plainText]);
 
   // Whether the image plugin should be included (boolean is stable across renders
   // as long as the handler presence doesn't toggle)
@@ -1552,8 +1651,45 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     if (value !== latestValueRef.current) {
       ref.current?.setMarkdown(value);
       latestValueRef.current = value;
+      lastSelectionOffsetsRef.current = {
+        start: Math.min(lastSelectionOffsetsRef.current.start, value.length),
+        end: Math.min(lastSelectionOffsetsRef.current.end, value.length),
+      };
     }
   }, [value]);
+
+  useEffect(() => {
+    const rememberSelection = () => {
+      const selection = window.getSelection();
+      const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+      if (
+        !selection
+        || selection.rangeCount === 0
+        || !(editable instanceof HTMLElement)
+        || !editable.contains(selection.anchorNode)
+        || !editable.contains(selection.focusNode)
+      ) {
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const start = markdownOffsetAtEditorBoundary(
+        editable,
+        range.startContainer,
+        range.startOffset,
+        plainText,
+      );
+      const end = markdownOffsetAtEditorBoundary(
+        editable,
+        range.endContainer,
+        range.endOffset,
+        plainText,
+      );
+      if (start === null || end === null) return;
+      lastSelectionOffsetsRef.current = { start, end };
+    };
+    document.addEventListener("selectionchange", rememberSelection);
+    return () => document.removeEventListener("selectionchange", rememberSelection);
+  }, [plainText]);
 
   useEffect(() => {
     if (!plainText) return;

@@ -66,6 +66,95 @@ describe("transcript file target resolution", () => {
 });
 
 describe("RunTranscriptView", () => {
+  it("exposes each persisted process prose projection as one provenance-backed annotation source", () => {
+    const entries = [
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:00.000Z",
+        text: "Inspecting the edge case.",
+        generationId: "30000000-0000-4000-8000-000000000001",
+        generationSeqStart: 4,
+        generationSeqEnd: 6,
+      },
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:01.000Z",
+        text: "Checking another path.",
+        generationId: "30000000-0000-4000-8000-000000000001",
+        generationSeqStart: 8,
+        generationSeqEnd: 8,
+      },
+    ] as unknown as TranscriptEntry[];
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={entries}
+          annotationSource={{
+            sourceConversationId: "10000000-0000-4000-8000-000000000001",
+            sourceMessageId: "20000000-0000-4000-8000-000000000001",
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(countOccurrences(html, 'data-annotation-surface="process_transcript"')).toBe(2);
+    expect(html).toContain('data-transcript-kind="thinking"');
+    expect(html).toContain('data-generation-seq-start="4"');
+    expect(html).toContain('data-generation-seq-end="6"');
+  });
+
+  it("coalesces only contiguous same-generation process deltas and expands their provenance", () => {
+    const blocks = normalizeTranscript([
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:00.000Z",
+        text: "First ",
+        delta: true,
+        generationId: "generation-a",
+        generationSeqStart: 4,
+        generationSeqEnd: 4,
+      },
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:01.000Z",
+        text: "second",
+        delta: true,
+        generationId: "generation-a",
+        generationSeqStart: 5,
+        generationSeqEnd: 5,
+      },
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:02.000Z",
+        text: "gap",
+        delta: true,
+        generationId: "generation-a",
+        generationSeqStart: 7,
+        generationSeqEnd: 7,
+      },
+    ] as unknown as TranscriptEntry[], false);
+
+    expect(blocks).toMatchObject([
+      {
+        type: "thinking",
+        text: "First second",
+        generationId: "generation-a",
+        generationSeqStart: 4,
+        generationSeqEnd: 5,
+      },
+      {
+        type: "thinking",
+        text: "gap",
+        generationId: "generation-a",
+        generationSeqStart: 7,
+        generationSeqEnd: 7,
+      },
+    ]);
+  });
+
   it("recognizes only local file targets for transcript links", () => {
     expect(resolveTranscriptLocalFileTarget("/Users/zeeland/work/result.md")).toBe("/Users/zeeland/work/result.md");
     expect(resolveTranscriptLocalFileTarget("file:///Users/zeeland/work/result%20copy.md")).toBe("/Users/zeeland/work/result copy.md");
@@ -371,7 +460,7 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("<strong>world</strong>");
+    expect(html).toContain('<strong data-markdown-source-start="6" data-markdown-source-end="15">world</strong>');
     expect(html).toContain(">first</li>");
     expect(html).toContain(">second</li>");
   });
@@ -886,7 +975,9 @@ describe("RunTranscriptView", () => {
 
     expect(html).not.toContain("Expand thinking");
     expect(html).not.toContain("Collapse thinking");
-    expect(html).toContain("<strong>Planning the response</strong>");
+    expect(html).toContain(
+      '<strong data-markdown-source-start="0" data-markdown-source-end="25">Planning the response</strong>',
+    );
     expect(html).toContain("Final planning checkpoint remains visible inline.");
   });
 

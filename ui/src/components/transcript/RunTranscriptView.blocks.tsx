@@ -1,4 +1,5 @@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { AnchoredResponseAnnotationMarkers } from "@/components/chat/ResponseAnnotations";
 import {
   Check,
   ChevronRight,
@@ -10,12 +11,16 @@ import {
   TerminalSquare,
   User
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useScrollbarActivityRef } from "../../hooks/useScrollbarActivityRef";
+import {
+  CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
+  CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+} from "../../lib/chat-response-annotation-selection";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
 import { MarkdownBody } from "../MarkdownBody";
-import { asRecord, compactWhitespace, formatTranscriptDuration, formatTranscriptTimestamp, getTranscriptTimestampTitle, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStack, TranscriptActionIconStatus, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptPresentation, TranscriptToolCardEntry, truncate } from "./RunTranscriptView.common";
+import { asRecord, compactWhitespace, formatTranscriptDuration, formatTranscriptTimestamp, getTranscriptTimestampTitle, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStack, TranscriptActionIconStatus, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptPresentation, TranscriptToolCardEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, getTodoListCompletedCount } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
 import { formatMemoryScopeLabel, stripWrappedShell } from "./RunTranscriptView.shell";
@@ -44,6 +49,70 @@ async function writeTranscriptClipboardText(text: string) {
   const copied = document.execCommand?.("copy");
   textarea.remove();
   if (!copied) throw new Error("Clipboard write failed.");
+}
+
+function TranscriptAnnotationSource({
+  block,
+  context,
+  transcriptKind,
+  children,
+}: {
+  block: Extract<TranscriptBlock, { type: "message" | "thinking" }>;
+  context?: TranscriptAnnotationSourceContext;
+  transcriptKind: "assistant" | "thinking";
+  children: ReactNode;
+}) {
+  const sourceRootRef = useRef<HTMLDivElement>(null);
+  if (
+    !context
+    || block.streaming
+    || typeof block.generationId !== "string"
+    || !Number.isInteger(block.generationSeqStart)
+    || !Number.isInteger(block.generationSeqEnd)
+  ) {
+    return children;
+  }
+  const annotations = (context.annotations ?? []).filter((annotation) => (
+    annotation.surface === "process_transcript"
+    && annotation.sourceMessageId === context.sourceMessageId
+    && annotation.transcriptKind === transcriptKind
+    && annotation.generationId === block.generationId
+    && annotation.generationSeqStart === block.generationSeqStart
+    && annotation.generationSeqEnd === block.generationSeqEnd
+  ));
+  const blockId = [
+    "process",
+    context.sourceMessageId,
+    block.generationId,
+    block.generationSeqStart,
+    block.generationSeqEnd,
+    transcriptKind,
+  ].join(":");
+  return (
+    <div
+      ref={sourceRootRef}
+      {...{
+        [CHAT_ANNOTATION_SOURCE_ATTRIBUTE]: blockId,
+        [CHAT_ANNOTATION_BLOCK_ATTRIBUTE]: blockId,
+      }}
+      data-annotation-surface="process_transcript"
+      data-message-id={context.sourceMessageId}
+      data-conversation-id={context.sourceConversationId}
+      data-transcript-kind={transcriptKind}
+      data-generation-id={block.generationId}
+      data-generation-seq-start={block.generationSeqStart}
+      data-generation-seq-end={block.generationSeqEnd}
+      className="relative"
+    >
+      {children}
+      <AnchoredResponseAnnotationMarkers
+        sourceRootRef={sourceRootRef}
+        source={block.text}
+        annotations={annotations}
+        onActivate={context.onActivateAnnotation}
+      />
+    </div>
+  );
 }
 
 function formatCommandCopyText(command: string, output: string | null) {
@@ -148,6 +217,7 @@ export function TranscriptMessageBlock({
   className,
   collapsibleSummary = false,
   onMarkdownLinkClick,
+  annotationSource,
 }: {
   block: Extract<TranscriptBlock, { type: "message" }>;
   density: TranscriptDensity;
@@ -155,6 +225,7 @@ export function TranscriptMessageBlock({
   className?: string;
   collapsibleSummary?: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
+  annotationSource?: TranscriptAnnotationSourceContext;
 }) {
   const compact = density === "compact";
   const isUser = block.role === "user";
@@ -163,20 +234,26 @@ export function TranscriptMessageBlock({
   const [open, setOpen] = useState(true);
 
   const body = (
-    <MarkdownBody
-      className={cn(
-        "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-        compact
-          ? "text-xs leading-5 text-foreground/85"
-          : presentation === "detail"
-            ? "text-sm leading-7"
-            : "text-sm",
-        className,
-      )}
-      onLinkClick={onMarkdownLinkClick}
+    <TranscriptAnnotationSource
+      block={block}
+      context={block.role === "assistant" ? annotationSource : undefined}
+      transcriptKind="assistant"
     >
-      {block.text}
-    </MarkdownBody>
+      <MarkdownBody
+        className={cn(
+          "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          compact
+            ? "text-xs leading-5 text-foreground/85"
+            : presentation === "detail"
+              ? "text-sm leading-7"
+              : "text-sm",
+          className,
+        )}
+        onLinkClick={onMarkdownLinkClick}
+      >
+        {block.text}
+      </MarkdownBody>
+    </TranscriptAnnotationSource>
   );
 
   if (isSteer) {
@@ -244,12 +321,14 @@ export function TranscriptThinkingBlock({
   className,
   collapsibleSummary = false,
   onMarkdownLinkClick,
+  annotationSource,
 }: {
   block: Extract<TranscriptBlock, { type: "thinking" }>;
   density: TranscriptDensity;
   className?: string;
   collapsibleSummary?: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
+  annotationSource?: TranscriptAnnotationSourceContext;
 }) {
   const [open, setOpen] = useState(() => Boolean(block.streaming));
 
@@ -263,16 +342,22 @@ export function TranscriptThinkingBlock({
   const preview = truncate(previewSource, density === "compact" ? 100 : 160);
 
   const body = (
-    <MarkdownBody
-      className={cn(
-        "italic text-foreground/75 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-        density === "compact" ? "text-[11px] leading-5" : "text-sm leading-6",
-        className,
-      )}
-      onLinkClick={onMarkdownLinkClick}
+    <TranscriptAnnotationSource
+      block={block}
+      context={annotationSource}
+      transcriptKind="thinking"
     >
-      {block.text}
-    </MarkdownBody>
+      <MarkdownBody
+        className={cn(
+          "italic text-foreground/75 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          density === "compact" ? "text-[11px] leading-5" : "text-sm leading-6",
+          className,
+        )}
+        onLinkClick={onMarkdownLinkClick}
+      >
+        {block.text}
+      </MarkdownBody>
+    </TranscriptAnnotationSource>
   );
 
   if (!collapsibleSummary) {
@@ -315,6 +400,7 @@ export function renderTranscriptBlock({
   collapseStdout,
   thinkingClassName,
   onMarkdownLinkClick,
+  annotationSource,
 }: {
   block: TranscriptBlock;
   index: number;
@@ -323,6 +409,7 @@ export function renderTranscriptBlock({
   collapseStdout: boolean;
   thinkingClassName?: string;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
+  annotationSource?: TranscriptAnnotationSourceContext;
 }) {
   return (
     <div
@@ -336,6 +423,7 @@ export function renderTranscriptBlock({
           presentation={presentation}
           collapsibleSummary={presentation === "chat"}
           onMarkdownLinkClick={onMarkdownLinkClick}
+          annotationSource={annotationSource}
         />
       )}
       {block.type === "thinking" && (
@@ -344,6 +432,7 @@ export function renderTranscriptBlock({
           density={density}
           className={thinkingClassName}
           onMarkdownLinkClick={onMarkdownLinkClick}
+          annotationSource={annotationSource}
         />
       )}
       {block.type === "tool" && <TranscriptToolCard block={block} density={density} presentation={presentation} />}

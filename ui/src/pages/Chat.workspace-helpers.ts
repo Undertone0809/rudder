@@ -3,7 +3,7 @@ import { chatsApi, type ChatSteerQueuedMessageRequest } from "@/api/chats";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { displayChatTitle } from "@/lib/chat-title";
 import { queryKeys } from "@/lib/queryKeys";
-import { buildChatMentionHref, type ChatConversation, type ChatGenerationStatus, type ChatMessage, type ChatStreamEvent } from "@rudderhq/shared";
+import { buildChatMentionHref, type ChatConversation, type ChatGenerationStatus, type ChatInlineAnnotation, type ChatMessage, type ChatStreamEvent } from "@rudderhq/shared";
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 
 export type SendButtonMode = "send" | "stop" | "sending" | "stopping" | "queue";
@@ -183,6 +183,7 @@ export function useChatDraftQueries(input: {
 export async function createQueuedComposerMessage(input: {
   conversation: ChatConversation;
   body: string;
+  inlineAnnotations?: ChatInlineAnnotation[];
   orgId: string;
   projectId: string | null;
   serverActiveGenerationId: string | null;
@@ -194,6 +195,9 @@ export async function createQueuedComposerMessage(input: {
     expectedGenerationId: input.serverActiveGenerationId,
     payload: {
       body: input.body,
+      ...(input.inlineAnnotations?.length
+        ? { inlineAnnotations: input.inlineAnnotations }
+        : {}),
       attachmentIds: [],
       skillRefs: [],
       projectId: input.projectId,

@@ -13,6 +13,7 @@ import {
   TerminalSquare,
   Wrench
 } from "lucide-react";
+import type { ChatInlineAnnotationInput } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { stripBenignStderr } from "../../lib/benign-stderr";
 import { cn } from "../../lib/utils";
@@ -113,6 +114,21 @@ export interface RunTranscriptViewProps {
   onOpenFile?: (targetPath: string, label: string) => void;
   /** Inspect a spawned Codex sub-agent in the read-only Side Panel. */
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  /** Stable owning assistant message for selectable persisted Process prose. */
+  annotationSource?: TranscriptAnnotationSourceContext;
+}
+
+export interface TranscriptAnnotationSourceContext {
+  sourceConversationId: string;
+  sourceMessageId: string;
+  annotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
+  onActivateAnnotation?: (annotationId: string) => void;
+}
+
+export interface TranscriptGenerationProvenance {
+  generationId: string;
+  generationSeqStart: number;
+  generationSeqEnd: number;
 }
 
 export interface TranscriptAgentInspection {
@@ -137,13 +153,13 @@ export type TranscriptBlock =
       ts: string;
       text: string;
       streaming: boolean;
-    }
+    } & Partial<TranscriptGenerationProvenance>
   | {
       type: "thinking";
       ts: string;
       text: string;
       streaming: boolean;
-    }
+    } & Partial<TranscriptGenerationProvenance>
   | {
       type: "tool";
       ts: string;

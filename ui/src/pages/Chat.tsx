@@ -15,6 +15,12 @@ import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { ProjectIcon } from "@/components/ProjectIdentity";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
+import {
+  EditableResponseAnnotationsCard,
+  ResponseAnnotationCountChip,
+  ResponseAnnotationEditor,
+} from "@/components/chat/ResponseAnnotations";
+import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
 import type { TranscriptAgentInspection } from "@/components/transcript/RunTranscriptView";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,7 +58,12 @@ import {
   chatClientCheckpointKey,
   createChatClientCheckpointDispatcher,
 } from "@/lib/chat-client-checkpoints";
-import { clearChatAskUserDraft, readChatDraft, saveChatDraft } from "@/lib/chat-draft-storage";
+import {
+  CHAT_COMPOSER_DRAFT_VERSION,
+  clearChatAskUserDraft,
+  readChatComposerDraft,
+  saveChatComposerDraft,
+} from "@/lib/chat-draft-storage";
 import {
   readChatPendingAttachmentsForScope,
   resolveChatPendingAttachmentScopeKey,
@@ -63,6 +74,22 @@ import {
   resolvePersistedChatProcessEndedAt,
   resolvePersistedChatProcessStartedAt
 } from "@/lib/chat-process-duration";
+import {
+  CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+  hashChatAnnotationSource,
+  resolveChatAnnotationRange,
+  type ChatAnnotationSelectionAnchor,
+} from "@/lib/chat-response-annotation-selection";
+import {
+  canSubmitChatResponseAnnotations,
+  chatResponseAnnotationsForDraft,
+  createChatResponseAnnotationState,
+  responseAnnotationReducer,
+  serializeChatResponseAnnotations,
+  validateChatResponseAnnotationAdd,
+  type ChatResponseAnnotationDraft,
+  type ChatResponseAnnotationState,
+} from "@/lib/chat-response-annotations";
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
 import {
@@ -107,6 +134,8 @@ import { latestSideChatAnchor } from "@/lib/side-chat";
 import { cn } from "@/lib/utils";
 import {
   type ChatConversation,
+  type ChatInlineAnnotation,
+  type ChatInlineAnnotationInput,
   type ChatMessage,
   type ChatOperationProposalDecisionAction,
   type ChatQueuedMessage,
@@ -142,7 +171,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { PendingAttachmentPreview } from "./Chat.attachments";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
@@ -156,6 +185,19 @@ export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
 export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
+
+type PendingChatResponseAnnotationSelection = {
+  range: Range;
+  sourceRoot: HTMLElement;
+  source: string;
+  sourceConversationId: string;
+  sourceMessageId: string;
+  surface: "assistant_body" | "process_transcript";
+  anchor: ChatAnnotationSelectionAnchor;
+  anchorRect: DOMRect;
+  sideChatEligible: boolean;
+};
+
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
   const { openImagePreview } = useImagePreview(); const {
@@ -180,9 +222,35 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const stopRecoveryRetrier = stopRecoveryRetrierRef.current;
   const steerRetryStatesRef = useRef(new Map<string, PendingChatSteerRetry>());
   const submitSteerRetryRef = useRef<(pending: PendingChatSteerRetry) => void>(() => {});
+  const initialComposerDraftRef = useRef<ReturnType<typeof readChatComposerDraft> | null>(null);
+  if (!initialComposerDraftRef.current) {
+    initialComposerDraftRef.current = readChatComposerDraft(
+      draftStorageOrgId,
+      draftStorageConversationId,
+    );
+  }
   const [draftState, setDraftState] = useState(() => ({
     scopeKey: draftStorageScopeKey,
-    value: readChatDraft(draftStorageOrgId, draftStorageConversationId), })); const draft = draftState.scopeKey === draftStorageScopeKey ? draftState.value : ""; const setDraft = useCallback((nextDraft: string) => { setDraftState((current) => ({ ...current, value: nextDraft })); }, []); const [, refreshPendingFiles] = useState(0); const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
+    value: initialComposerDraftRef.current?.body ?? "",
+  }));
+  const [responseAnnotationState, dispatchResponseAnnotation] = useReducer(
+    responseAnnotationReducer,
+    initialComposerDraftRef.current?.inlineAnnotations ?? [],
+    createChatResponseAnnotationState,
+  );
+  const responseAnnotationStateByScopeRef = useRef<Record<string, ChatResponseAnnotationState>>({});
+  const [responseAnnotationsExpanded, setResponseAnnotationsExpanded] = useState(false);
+  const [editingResponseAnnotationId, setEditingResponseAnnotationId] = useState<string | null>(null);
+  const [historicalResponseAnnotations, setHistoricalResponseAnnotations] = useState<ChatResponseAnnotationDraft[]>([]);
+  const [unlocatableResponseAnnotationId, setUnlocatableResponseAnnotationId] = useState<string | null>(null);
+  const [pendingResponseAnnotationSelection, setPendingResponseAnnotationSelection] = useState<PendingChatResponseAnnotationSelection | null>(null);
+  const [responseAnnotationAnnouncement, setResponseAnnotationAnnouncement] = useState("");
+  const draft = draftState.scopeKey === draftStorageScopeKey ? draftState.value : "";
+  const setDraft = useCallback((nextDraft: string) => {
+    setDraftState((current) => ({ ...current, value: nextDraft }));
+  }, []);
+  const [, refreshPendingFiles] = useState(0);
+  const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
   const setPendingFilesForCurrentScope = useCallback((updater: (current: File[]) => File[]) => { updateChatPendingAttachmentsForScope(draftStorageScopeKey, updater); refreshPendingFiles((version) => version + 1); }, [draftStorageScopeKey]); const clearPendingFilesForCurrentScope = useCallback(() => { setPendingFilesForCurrentScope(() => []); }, [setPendingFilesForCurrentScope]); const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false); const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, true>>({}); const [loadingTranscriptMessageIds, setLoadingTranscriptMessageIds] = useState<Record<string, true>>({}); const [loadedTranscriptsByMessageId, setLoadedTranscriptsByMessageId] = useState<Record<string, TranscriptEntry[]>>({}); const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>(NO_CHAT_AGENT_ID); const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
   const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [libraryFileMentionQuery, setLibraryFileMentionQuery] = useState<string | null>(null); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [sideChatSlashMenuPosition, setSideChatSlashMenuPosition] = useState<CSSProperties | null>(null); const [inlineEditUserMessageId, setInlineEditUserMessageId] = useState<string | null>(null); const [inlineEditDraft, setInlineEditDraft] = useState(""); const [editingQueuedItem, setEditingQueuedItem] = useState<{ itemId: string; value: string; version: number } | null>(null); const [stoppingChatIds, setStoppingChatIds] = useState<Set<string>>(() => new Set()); const [steeringQueuedItemIds, setSteeringQueuedItemIds] = useState<Set<string>>(() => new Set()); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [emptyStateActiveTab, setEmptyStateActiveTab] = useState<"recent" | "use-cases">("use-cases"); const [emptyStateActiveSuggestionIndex, setEmptyStateActiveSuggestionIndex] = useState(0); const [dismissedEmptyStatePromptQuery, setDismissedEmptyStatePromptQuery] = useState<string | null>(null); const [retainedEmptyStatePromptSuggestions, setRetainedEmptyStatePromptSuggestions] = useState<readonly EmptyStatePromptSuggestion[]>([]); const [recentProjectConversationLimit, setRecentProjectConversationLimit] = useState(RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT); const [recentAskUserAnswerMessageId, setRecentAskUserAnswerMessageId] = useState<string | null>(null); const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null); const [renameDraft, setRenameDraft] = useState(""); const [generatingChatTitleIds, setGeneratingChatTitleIds] = useState<Set<string>>(() => new Set()); const [workManifestWideOpen, setWorkManifestWideOpen] = useState(true); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const inlineEditSurfaceRef = useRef<HTMLDivElement>(null); const inlineEditEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const manuallyMarkedUnreadKeyRef = useRef<string | null>(null); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const stoppingChatIdsRef = useRef(new Set<string>()); const steeringQueuedItemIdsRef = useRef(new Set<string>()); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const draftProjectScopeKeyRef = useRef<string | null>(null); const draftProjectDefaultKeyRef = useRef<string | null>(null); const draftProjectManuallySelectedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile, setSidebarOpen, sidebarOpen } = useSidebar(); const { open: sidePanelOpen, openTarget: openSidePanelTarget, openTargetForContext: openSidePanelTargetForContext, showPanelForContext: showSidePanelForContext } = useSidePanel(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const pendingTargetMessageId = (searchParams.get("messageId") ?? searchParams.get("targetMessageId") ?? "").trim(); const isMessengerChatRoute = /^\/(?:[^/]+\/)?messenger\/chat(?:\/|$)/.test(location.pathname); const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const chatRootPath = chatRouteBase; const chatConversationPath = useCallback((id: string) => `${chatRouteBase}/${id}`, [chatRouteBase]); const resolveCurrentSidePanelChatContextKey = useCallback(() => { const activePath = typeof window === "undefined" ? relativePath : toOrganizationRelativePath(window.location.pathname); const match = activePath.match(/^\/(?:messenger\/)?chat\/([^/?#]+)/); const chatId = match?.[1] ?? conversationId ?? null; return chatId ? `chat:${chatId}` : null; }, [conversationId, relativePath]); const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
     if (!desktopShell) {
@@ -253,10 +321,57 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           tone: "error",
         }); } }, [pushToast, setPendingFilesForCurrentScope], ); const removePendingFile = useCallback((targetKey: string) => { setPendingFilesForCurrentScope((current) => current.filter((file) => pendingAttachmentKey(file) !== targetKey)); }, [setPendingFilesForCurrentScope]);
   const handlePendingAttachmentPasteCapture = useCallback((event: ReactClipboardEvent<HTMLElement>) => { const clipboardData = event.clipboardData; const filesFromItems = Array.from(clipboardData?.items ?? []) .filter((item) => item.kind === "file") .map((item) => item.getAsFile()) .filter((file): file is File => file instanceof File); const seenItemPayloads = new Map<string, number>(); for (const file of filesFromItems) { const key = clipboardAttachmentPayloadKey(file); seenItemPayloads.set(key, (seenItemPayloads.get(key) ?? 0) + 1); } const filesFromList = Array.from(clipboardData?.files ?? []) .filter((file) => { const key = clipboardAttachmentPayloadKey(file); const remaining = seenItemPayloads.get(key) ?? 0; if (remaining <= 0) return true; if (remaining === 1) { seenItemPayloads.delete(key); } else { seenItemPayloads.set(key, remaining - 1); } return false; }); const files = [...filesFromItems, ...filesFromList]; if (files.length === 0) return; event.preventDefault(); event.stopPropagation(); void appendPendingFiles(files); }, [appendPendingFiles]);
-  useEffect(() => { if (draftState.scopeKey === draftStorageScopeKey) return;
+  useEffect(() => {
+    if (draftState.scopeKey === draftStorageScopeKey) return;
+    responseAnnotationStateByScopeRef.current[draftState.scopeKey] = responseAnnotationState;
+    const storedDraft = readChatComposerDraft(
+      draftStorageOrgId,
+      draftStorageConversationId,
+    );
+    const inMemoryAnnotations = responseAnnotationStateByScopeRef.current[draftStorageScopeKey];
     setDraftState({
-      scopeKey: draftStorageScopeKey, value: readChatDraft(draftStorageOrgId, draftStorageConversationId), }); }, [draftState.scopeKey, draftStorageConversationId, draftStorageOrgId, draftStorageScopeKey]);
-  useEffect(() => { if (draftState.scopeKey !== draftStorageScopeKey) return; saveChatDraft(draftStorageOrgId, draftStorageConversationId, draftState.value); }, [draftState.scopeKey, draftState.value, draftStorageConversationId, draftStorageOrgId, draftStorageScopeKey]);
+      scopeKey: draftStorageScopeKey,
+      value: storedDraft.body,
+    });
+    dispatchResponseAnnotation({
+      type: "reset",
+      annotations: inMemoryAnnotations
+        ? chatResponseAnnotationsForDraft(inMemoryAnnotations)
+        : storedDraft.inlineAnnotations,
+      pendingFilesByAnnotationId: inMemoryAnnotations?.pendingFilesByAnnotationId,
+    });
+    setResponseAnnotationsExpanded(false);
+    setEditingResponseAnnotationId(null);
+    setPendingResponseAnnotationSelection(null);
+    setHistoricalResponseAnnotations([]);
+    setUnlocatableResponseAnnotationId(null);
+  }, [
+    draftState.scopeKey,
+    draftStorageConversationId,
+    draftStorageOrgId,
+    draftStorageScopeKey,
+    responseAnnotationState,
+  ]);
+  useEffect(() => {
+    if (draftState.scopeKey !== draftStorageScopeKey) return;
+    responseAnnotationStateByScopeRef.current[draftStorageScopeKey] = responseAnnotationState;
+    saveChatComposerDraft(
+      draftStorageOrgId,
+      draftStorageConversationId,
+      {
+        version: CHAT_COMPOSER_DRAFT_VERSION,
+        body: draftState.value,
+        inlineAnnotations: chatResponseAnnotationsForDraft(responseAnnotationState),
+      },
+    );
+  }, [
+    draftState.scopeKey,
+    draftState.value,
+    draftStorageConversationId,
+    draftStorageOrgId,
+    draftStorageScopeKey,
+    responseAnnotationState,
+  ]);
   useEffect(() => { if (!pendingPrefill) return; if (pendingPrefill === lastAppliedPrefillRef.current) return; if (draft.trim().length > 0) return; lastAppliedPrefillRef.current = pendingPrefill; setDraft(pendingPrefill);
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); const nextSearch = new URLSearchParams(searchParams); nextSearch.delete("prefill");
     navigate( {
@@ -1001,7 +1116,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const queueComposerMessage = async (
     conversation: ChatConversation,
     bodyOverride?: string,
-    options?: { files?: File[]; clearComposerOnSuccess?: boolean },
+    options?: {
+      files?: File[];
+      inlineAnnotations?: ChatInlineAnnotationInput[];
+      annotationFiles?: File[];
+      clearComposerOnSuccess?: boolean;
+    },
   ) => {
     if (isExternalBoundConversation(conversation)) {
       pushToast({ title: "Fork this Feishu chat to continue in Rudder", tone: "error" });
@@ -1009,8 +1129,19 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     }
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
       return false; } const body = (bodyOverride ?? readComposerDraft()).trim();
-    if (!body) { pushToast({ title: "Message cannot be empty", tone: "error" });
-      return false; } const filesToUpload = [...(options?.files ?? pendingFiles)];
+    const composerAnnotationSubmission = options?.inlineAnnotations
+      ? {
+        inlineAnnotations: options.inlineAnnotations,
+        files: options.annotationFiles ?? [],
+      }
+      : serializeChatResponseAnnotations(responseAnnotationState, {
+        fileIndexOffset: (options?.files ?? pendingFiles).length,
+      });
+    if (!body && composerAnnotationSubmission.inlineAnnotations.length === 0) { pushToast({ title: "Message cannot be empty", tone: "error" });
+      return false; } const filesToUpload = [
+      ...(options?.files ?? pendingFiles),
+      ...composerAnnotationSubmission.files,
+    ];
     if (filesToUpload.length > 0) {
       pushToast({ title: "Queue does not support new files yet", tone: "error" });
       return false;
@@ -1018,6 +1149,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     await createQueuedComposerMessage({
       conversation,
       body,
+      inlineAnnotations: composerAnnotationSubmission.inlineAnnotations.map((annotation) => {
+        const { attachmentFileIndexes: _attachmentFileIndexes, ...persistable } = annotation;
+        return {
+          ...persistable,
+          attachmentIds: persistable.attachmentIds ?? [],
+        };
+      }),
       orgId: selectedOrganizationId,
       projectId: activeProjectId === NO_PROJECT_ID ? null : activeProjectId,
       serverActiveGenerationId,
@@ -1026,6 +1164,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     });
     if (options?.clearComposerOnSuccess ?? true) {
       setBranchPreview(null); setDraft(""); clearPendingFilesForCurrentScope();
+      dispatchResponseAnnotation({ type: "clear" });
+      setResponseAnnotationsExpanded(false);
+      setEditingResponseAnnotationId(null);
     }
     await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, conversation.id) });
     pushToast({ title: "Queued", body: "Added to Queue.", tone: "info" });
@@ -1033,14 +1174,28 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   };
   const sendMessage = async (
     options?: { bodyOverride?: string; filesOverride?: File[]; conversationOverride?: ChatConversation;
+      inlineAnnotationsOverride?: ChatInlineAnnotationInput[];
       editUserMessageIdOverride?: string | null; editIntent?: "edit" | "retry"; clearPendingFilesOnSuccess?: boolean; onUserMessageAcknowledged?: () => void; queuedMessageId?: string | null; },
   ) => {
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
-      return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined; const body = (options?.bodyOverride ?? readComposerDraft()).trim();
-    if (!body) { pushToast({ title: "Message cannot be empty", tone: "error" });
-      return; } const filesToUpload = [...(options?.filesOverride ?? pendingFiles)]; let pendingFilesClearedAfterAck = false; const submittedComposerDraft = usesComposerState ? {
+      return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined && options?.inlineAnnotationsOverride === undefined; const body = (options?.bodyOverride ?? readComposerDraft()).trim();
+    const regularFilesToUpload = [...(options?.filesOverride ?? pendingFiles)];
+    const serializedAnnotations = usesComposerState
+      ? serializeChatResponseAnnotations(responseAnnotationState, {
+        fileIndexOffset: regularFilesToUpload.length,
+      })
+      : {
+        inlineAnnotations: options?.inlineAnnotationsOverride ?? [],
+        files: [] as File[],
+      };
+    if (!canSubmitChatResponseAnnotations(
+      body,
+      createChatResponseAnnotationState(serializedAnnotations.inlineAnnotations),
+    )) { pushToast({ title: "Message cannot be empty", tone: "error" });
+      return; } const filesToUpload = [...regularFilesToUpload, ...serializedAnnotations.files]; let pendingFilesClearedAfterAck = false; const submittedComposerDraft = usesComposerState ? {
           body,
-          files: filesToUpload,
+          files: regularFilesToUpload,
+          inlineAnnotations: chatResponseAnnotationsForDraft(responseAnnotationState),
           orgId: draftStorageOrgId, conversationId: draftStorageConversationId, } : null; const editUserMessageId = options?.editUserMessageIdOverride ?? null; const editTargetMessage = editUserMessageId ? rawMessages.find((message) => message.id === editUserMessageId) ?? null : null; let conversation = options?.conversationOverride ?? selectedConversation; let activeChatId: string | null = null; let activeStreamKey: string | null = null; let newConversationLockAcquired = false; let chatSendLockAcquired = false; let userMessageAcknowledged = false;
     try {
       if (!conversation && conversationId) { conversation = await chatsApi.get(conversationId); upsertConversation(conversation);
@@ -1088,6 +1243,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           ),
           signal: abortController.signal,
           files: filesToUpload,
+          inlineAnnotations: serializedAnnotations.inlineAnnotations,
           onEvent: async (event) => {
             if (event.type === "ack") {
               if (!event.conversation) {
@@ -1120,6 +1276,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 setBranchPreview(null);
                 setDraft("");
                 clearPendingFilesForCurrentScope();
+                dispatchResponseAnnotation({ type: "clear" });
+                setResponseAnnotationsExpanded(false);
+                setEditingResponseAnnotationId(null);
               }
               options?.onUserMessageAcknowledged?.();
               if (options?.clearPendingFilesOnSuccess && !pendingFilesClearedAfterAck) {
@@ -1187,7 +1346,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           });
           return;
         }
-        await queueComposerMessage(conversation, body, { files: filesToUpload, clearComposerOnSuccess: usesComposerState });
+        await queueComposerMessage(conversation, body, {
+          files: regularFilesToUpload,
+          inlineAnnotations: serializedAnnotations.inlineAnnotations,
+          annotationFiles: serializedAnnotations.files,
+          clearComposerOnSuccess: usesComposerState,
+        });
         return;
       } if (!acquireChatSendLock(chatId)) return; chatSendLockAcquired = true; activeChatId = chatId; const selectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId;
       if (!conversation.preferredAgentId && selectedAgentId) { conversation = await chatsApi.update(conversation.id, { preferredAgentId: selectedAgentId }); setDraftPreferredAgentId(selectedAgentId); rememberChatAgentId(selectedOrganizationId, selectedAgentId); upsertConversation(conversation);
@@ -1217,6 +1381,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         signal: abortController.signal,
         editUserMessageId,
         files: filesToUpload,
+        inlineAnnotations: serializedAnnotations.inlineAnnotations,
         queuedMessageId: options?.queuedMessageId ?? null,
         onEvent: async (event) => {
           if (event.type === "queued") {
@@ -1230,11 +1395,22 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 items: [...(current?.items ?? []), event.item],
               }),
             );
-            if (usesComposerState) { setDraft(""); clearPendingFilesForCurrentScope(); }
+            if (usesComposerState) {
+              setDraft("");
+              clearPendingFilesForCurrentScope();
+              dispatchResponseAnnotation({ type: "clear" });
+              setResponseAnnotationsExpanded(false);
+              setEditingResponseAnnotationId(null);
+            }
             setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
             return;
           }
           if (event.type === "ack") { userMessageAcknowledged = true; upsertMessages(chatId, [event.userMessage]);
+            if (usesComposerState) {
+              dispatchResponseAnnotation({ type: "clear" });
+              setResponseAnnotationsExpanded(false);
+              setEditingResponseAnnotationId(null);
+            }
             if (body.startsWith(ASK_USER_ANSWER_PREFIX)) {
               setRecentAskUserAnswerMessageId(event.userMessage.id);
               window.setTimeout(() => {
@@ -1309,12 +1485,26 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           conversation.id, (current) => (current?.streamKey === activeStreamKey ? { ...current, state: "failed" } : current), ); await refreshChat(conversation.id);
         setStreamDraftForChat(conversation.id, (current) => current?.streamKey === activeStreamKey ? null : current); }
       if (submittedComposerDraft && !userMessageAcknowledged) { const restoreConversationId = conversation?.id ?? submittedComposerDraft.conversationId; const restoreScopeKey = resolveChatPendingAttachmentScopeKey(
-          submittedComposerDraft.orgId, restoreConversationId, ); saveChatDraft(submittedComposerDraft.orgId, restoreConversationId, submittedComposerDraft.body); updateChatPendingAttachmentsForScope(restoreScopeKey, () => submittedComposerDraft.files); refreshPendingFiles((version) => version + 1);
+          submittedComposerDraft.orgId, restoreConversationId, ); saveChatComposerDraft(
+          submittedComposerDraft.orgId,
+          restoreConversationId,
+          {
+            version: CHAT_COMPOSER_DRAFT_VERSION,
+            body: submittedComposerDraft.body,
+            inlineAnnotations: submittedComposerDraft.inlineAnnotations,
+          },
+        ); updateChatPendingAttachmentsForScope(restoreScopeKey, () => submittedComposerDraft.files); refreshPendingFiles((version) => version + 1);
         if (activeDraftScopeRef.current === restoreScopeKey) {
           setDraftState({
             scopeKey: restoreScopeKey,
             value: submittedComposerDraft.body,
-          }); } } else if (editUserMessageId && !userMessageAcknowledged) {
+          });
+          dispatchResponseAnnotation({
+            type: "reset",
+            annotations: submittedComposerDraft.inlineAnnotations,
+            pendingFilesByAnnotationId: responseAnnotationState.pendingFilesByAnnotationId,
+          });
+        } } else if (editUserMessageId && !userMessageAcknowledged) {
         setInlineEditUserMessageId(editUserMessageId);
         setInlineEditDraft(body);
         requestAnimationFrame(() => { inlineEditEditorRef.current?.focus(); });
@@ -1340,7 +1530,311 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         if (chatSendLockAcquired) {
           releaseChatSendLock(activeChatId); } }
       if (newConversationLockAcquired) { releaseNewConversationSendLock(); } } }; const conversations = useMemo(() => { const items = conversationsQuery.data ?? [];
-    return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]); const rawMessages = messagesQuery.data ?? []; const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
+    return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]);
+  const rawMessages = messagesQuery.data ?? [];
+  useEffect(() => {
+    const updateSelection = (event: Event) => {
+      const eventTarget = event.target;
+      if (
+        eventTarget instanceof Element
+        && (
+          eventTarget.closest('[role="toolbar"][aria-label="Response annotation actions"]')
+          || eventTarget.closest("[data-testid='chat-response-annotation-editor']")
+          || eventTarget.closest("[data-testid='chat-response-annotation-card']")
+        )
+      ) {
+        return;
+      }
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        setPendingResponseAnnotationSelection(null);
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const startElement = range.startContainer instanceof Element
+        ? range.startContainer
+        : range.startContainer.parentElement;
+      const endElement = range.endContainer instanceof Element
+        ? range.endContainer
+        : range.endContainer.parentElement;
+      const sourceRoot = startElement?.closest<HTMLElement>(
+        `[${CHAT_ANNOTATION_SOURCE_ATTRIBUTE}]`,
+      ) ?? null;
+      if (
+        !sourceRoot
+        || endElement?.closest(`[${CHAT_ANNOTATION_SOURCE_ATTRIBUTE}]`) !== sourceRoot
+      ) {
+        setPendingResponseAnnotationSelection(null);
+        return;
+      }
+      const surface = sourceRoot.dataset.annotationSurface;
+      if (surface !== "assistant_body" && surface !== "process_transcript") {
+        setPendingResponseAnnotationSelection(null);
+        return;
+      }
+      const sourceMessageId = sourceRoot.dataset.messageId?.trim() ?? "";
+      const sourceMessage = rawMessages.find((message) => message.id === sourceMessageId);
+      if (
+        !sourceMessage
+        || sourceMessage.role !== "assistant"
+        || sourceMessage.kind !== "message"
+        || sourceMessage.supersededAt
+        || !(
+          sourceMessage.status === "completed"
+          || sourceMessage.status === "stopped"
+          || sourceMessage.status === "failed"
+        )
+      ) {
+        setPendingResponseAnnotationSelection(null);
+        return;
+      }
+      let source = sourceMessage.body;
+      let processProvenance: {
+        transcriptKind: "assistant" | "thinking";
+        generationId: string;
+        generationSeqStart: number;
+        generationSeqEnd: number;
+      } | null = null;
+      if (surface === "process_transcript") {
+        const transcriptKind = sourceRoot.dataset.transcriptKind;
+        const generationId = sourceRoot.dataset.generationId?.trim() ?? "";
+        const generationSeqStart = Number(sourceRoot.dataset.generationSeqStart);
+        const generationSeqEnd = Number(sourceRoot.dataset.generationSeqEnd);
+        if (
+          (transcriptKind !== "assistant" && transcriptKind !== "thinking")
+          || !generationId
+          || !Number.isInteger(generationSeqStart)
+          || !Number.isInteger(generationSeqEnd)
+        ) {
+          setPendingResponseAnnotationSelection(null);
+          return;
+        }
+        const transcriptEntries = loadedTranscriptsByMessageId[sourceMessage.id]
+          ?? sourceMessage.transcript
+          ?? [];
+        const sourceEntry = transcriptEntries.find((entry) => {
+          const candidate = entry as typeof entry & {
+            generationId?: string;
+            generationSeqStart?: number;
+            generationSeqEnd?: number;
+          };
+          return candidate.kind === transcriptKind
+            && candidate.generationId === generationId
+            && candidate.generationSeqStart === generationSeqStart
+            && candidate.generationSeqEnd === generationSeqEnd;
+        });
+        if (
+          !sourceEntry
+          || (sourceEntry.kind !== "assistant" && sourceEntry.kind !== "thinking")
+        ) {
+          setPendingResponseAnnotationSelection(null);
+          return;
+        }
+        source = sourceEntry.text;
+        processProvenance = {
+          transcriptKind,
+          generationId,
+          generationSeqStart,
+          generationSeqEnd,
+        };
+      }
+      const stableRange = range.cloneRange();
+      const anchorRect = range.getBoundingClientRect();
+      void hashChatAnnotationSource(source).then((sourceHash) => {
+        const common = {
+          range: stableRange,
+          sourceRoot,
+          source,
+          sourceHash,
+          sourceConversationId: sourceMessage.conversationId,
+          sourceMessageId: sourceMessage.id,
+        };
+        const anchor = processProvenance
+          ? resolveChatAnnotationRange({
+              ...common,
+              surface: "process_transcript",
+              ...processProvenance,
+            })
+          : resolveChatAnnotationRange({
+              ...common,
+              surface: "assistant_body",
+            });
+        if (!anchor) {
+          setPendingResponseAnnotationSelection(null);
+          return;
+        }
+        setPendingResponseAnnotationSelection({
+          range: stableRange,
+          sourceRoot,
+          source,
+          sourceConversationId: sourceMessage.conversationId,
+          sourceMessageId: sourceMessage.id,
+          surface,
+          anchor,
+          anchorRect,
+          sideChatEligible: sourceMessage.status === "completed",
+        });
+      });
+    };
+    document.addEventListener("mouseup", updateSelection);
+    document.addEventListener("touchend", updateSelection);
+    document.addEventListener("keyup", updateSelection);
+    return () => {
+      document.removeEventListener("mouseup", updateSelection);
+      document.removeEventListener("touchend", updateSelection);
+      document.removeEventListener("keyup", updateSelection);
+    };
+  }, [loadedTranscriptsByMessageId, rawMessages]);
+  const addPendingResponseAnnotation = useCallback(async (
+    options: { focusComposer?: boolean } = {},
+  ) => {
+    const pending = pendingResponseAnnotationSelection;
+    if (!pending) return null;
+    const annotation: ChatInlineAnnotationInput = {
+      ...pending.anchor,
+      id: globalThis.crypto.randomUUID(),
+      comment: null,
+      attachmentIds: [],
+    };
+    const validationError = validateChatResponseAnnotationAdd(
+      responseAnnotationState,
+      annotation,
+    );
+    if (validationError) {
+      pushToast({
+        title: t("chat.annotations.couldNotAdd"),
+        body: validationError,
+        tone: "error",
+      });
+      return null;
+    }
+    const existing = responseAnnotationState.annotations.find((candidate) => (
+      candidate.sourceConversationId === annotation.sourceConversationId
+      && candidate.sourceMessageId === annotation.sourceMessageId
+      && candidate.surface === annotation.surface
+      && candidate.sourceHash === annotation.sourceHash
+      && candidate.start === annotation.start
+      && candidate.end === annotation.end
+    ));
+    if (!existing) {
+      dispatchResponseAnnotation({ type: "add", annotation });
+      setResponseAnnotationAnnouncement(t("chat.annotations.added"));
+    }
+    setPendingResponseAnnotationSelection(null);
+    window.getSelection()?.removeAllRanges();
+    if (options.focusComposer !== false) {
+      requestAnimationFrame(() => composerEditorRef.current?.focus());
+    }
+    return existing ?? annotation;
+  }, [
+    pendingResponseAnnotationSelection,
+    pushToast,
+    responseAnnotationState,
+    t,
+  ]);
+  const handleMoreDetailsForSelection = useCallback(async () => {
+    const annotation = await addPendingResponseAnnotation({ focusComposer: false });
+    if (!annotation) return;
+    const prompt = t("chat.annotations.moreDetailsPrompt");
+    if (!composerEditorRef.current?.insertTextAtSelection(prompt)) {
+      const current = readComposerDraft();
+      setDraft(`${current}${current.trim() ? "\n\n" : ""}${prompt}`);
+      requestAnimationFrame(() => composerEditorRef.current?.focus());
+    }
+  }, [addPendingResponseAnnotation, readComposerDraft, setDraft, t]);
+  const handleAskSelectionInSideChat = useCallback(async () => {
+    const pending = pendingResponseAnnotationSelection;
+    if (!pending || !pending.sideChatEligible || !selectedConversation) return;
+    const sourceMessage = rawMessages.find((message) => message.id === pending.sourceMessageId);
+    if (!sourceMessage) return;
+    openSidePanelTargetForContext(
+      resolveCurrentSidePanelChatContextKey(),
+      {
+        ...sideChatTargetFromMessage(selectedConversation, sourceMessage),
+        sourcePreview: pending.anchor.selectedText,
+      },
+    );
+    setPendingResponseAnnotationSelection(null);
+    window.getSelection()?.removeAllRanges();
+  }, [
+    openSidePanelTargetForContext,
+    pendingResponseAnnotationSelection,
+    rawMessages,
+    resolveCurrentSidePanelChatContextKey,
+    selectedConversation,
+  ]);
+  const handleSelectSentResponseAnnotation = useCallback((
+    annotation: ChatInlineAnnotation,
+    ordinal: number,
+  ) => {
+    const sourceMessage = rawMessages.find((message) => message.id === annotation.sourceMessageId);
+    setHistoricalResponseAnnotations((current) => (
+      current.some((candidate) => candidate.id === annotation.id)
+        ? current
+        : [...current, { ...annotation, ordinal }]
+    ));
+    setUnlocatableResponseAnnotationId(null);
+    if (!sourceMessage || sourceMessage.supersededAt) {
+      setUnlocatableResponseAnnotationId(annotation.id);
+      return;
+    }
+    if (annotation.surface === "process_transcript") {
+      setProcessOpenForMessage(sourceMessage.id, true);
+      const transcript = loadedTranscriptsByMessageId[sourceMessage.id]
+        ?? sourceMessage.transcript
+        ?? [];
+      const sourceEntry = transcript.find((entry) => {
+        const candidate = entry as typeof entry & {
+          generationId?: string;
+          generationSeqStart?: number;
+          generationSeqEnd?: number;
+        };
+        return candidate.kind === annotation.transcriptKind
+          && candidate.generationId === annotation.generationId
+          && candidate.generationSeqStart === annotation.generationSeqStart
+          && candidate.generationSeqEnd === annotation.generationSeqEnd;
+      });
+      if (
+        (!sourceEntry || (sourceEntry.kind !== "assistant" && sourceEntry.kind !== "thinking"))
+        && sourceMessage.transcriptSummary?.entryCount
+      ) {
+        void loadMessageTranscript(sourceMessage.conversationId, sourceMessage.id);
+      }
+    }
+    const locate = (attempt: number) => {
+      requestAnimationFrame(() => {
+        const candidates = Array.from(document.querySelectorAll<HTMLElement>(
+          `[data-message-id="${annotation.sourceMessageId}"][data-annotation-surface="${annotation.surface}"]`,
+        ));
+        const sourceRoot = candidates.find((candidate) => (
+          annotation.surface === "assistant_body"
+          || (
+            candidate.dataset.transcriptKind === annotation.transcriptKind
+            && candidate.dataset.generationId === annotation.generationId
+            && Number(candidate.dataset.generationSeqStart) === annotation.generationSeqStart
+            && Number(candidate.dataset.generationSeqEnd) === annotation.generationSeqEnd
+          )
+        )) ?? null;
+        if (!sourceRoot) {
+          if (attempt < 20) {
+            window.setTimeout(() => locate(attempt + 1), 50);
+          } else {
+            setUnlocatableResponseAnnotationId(annotation.id);
+          }
+          return;
+        }
+        sourceRoot.scrollIntoView?.({ block: "center", behavior: "smooth" });
+        sourceRoot.dataset.chatAnnotationInspected = annotation.id;
+      });
+    };
+    locate(0);
+  }, [
+    loadMessageTranscript,
+    loadedTranscriptsByMessageId,
+    rawMessages,
+    setProcessOpenForMessage,
+  ]);
+  const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
     () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined); const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => !(item.deliveredMessageId && ["dequeue_claimed", "running_next"].includes(item.status)) && !["delivered", "completed", "cancelled", "steered", "running"].includes(item.status)); const agentSelectionLocked = isChatAgentSelectionLocked({
     hasConversation: Boolean(selectedConversation),
     preferredAgentId: selectedConversation?.preferredAgentId,
@@ -1863,7 +2357,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     }
   }, [emptyStatePromptSuggestions]);
   const selectedEmptyStatePromptGroup = useMemo(() => chatPromptGroupForExactTrigger(draft), [draft]);
-  const showEmptyStateSupplementalContent = emptyStatePromptQuery.length === 0 && pendingFiles.length === 0;
+  const showEmptyStateSupplementalContent = emptyStatePromptQuery.length === 0
+    && pendingFiles.length === 0
+    && responseAnnotationState.annotations.length === 0;
   const emptyStatePromptFlowState = showEmptyStateSupplementalContent ? "starters" : showEmptyStatePromptSuggestions ? "suggestions" : "hidden";
   const hasRecentProjectConversations = allRecentProjectConversations.length > 0;
   const canQueueDraft = Boolean(selectedConversationHasActiveReply && draft.trim().length > 0 && !newConversationSendInFlight);
@@ -1946,7 +2442,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       document.body,
     );
   };
-  const sendButtonDisabled = selectedConversationExternalBound || composerUnavailable || sendButtonMode === "sending" || sendButtonMode === "stopping" || ((sendButtonMode === "send" || sendButtonMode === "queue") && draft.trim().length === 0);
+  const sendButtonDisabled = selectedConversationExternalBound
+    || composerUnavailable
+    || sendButtonMode === "sending"
+    || sendButtonMode === "stopping"
+    || (
+      (sendButtonMode === "send" || sendButtonMode === "queue")
+      && !canSubmitChatResponseAnnotations(draft, responseAnnotationState)
+    );
   const canSteerQueuedMessages = Boolean(
     (
       serverActiveGenerationId
@@ -2383,6 +2886,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   ) : (
                     <>
                       <span className="min-w-0 flex-1 truncate text-foreground">{item.payload.body}</span>
+                      {item.payload.inlineAnnotations?.length ? (
+                        <span
+                          data-testid="chat-running-queue-annotation-count"
+                          className="chat-chip shrink-0 px-2 py-0.5 text-[11px] text-muted-foreground"
+                        >
+                          {item.payload.inlineAnnotations.length} {item.payload.inlineAnnotations.length === 1 ? "annotation" : "annotations"}
+                        </span>
+                      ) : null}
                       {itemRunning || deliveryLabel ? (
                         <span className={cn(
                           "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium",
@@ -2408,6 +2919,68 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           </div>
         </div>
       ) : null}
+      {responseAnnotationState.annotations.length > 0 ? (
+        <div className="mb-2.5 flex flex-col items-start gap-2">
+          <ResponseAnnotationCountChip
+            count={responseAnnotationState.annotations.length}
+            expanded={responseAnnotationsExpanded}
+            controlsId="chat-response-annotations-draft"
+            onToggle={() => setResponseAnnotationsExpanded((current) => !current)}
+            onClear={() => {
+              dispatchResponseAnnotation({ type: "clear" });
+              setResponseAnnotationsExpanded(false);
+              setEditingResponseAnnotationId(null);
+              setResponseAnnotationAnnouncement(t("chat.annotations.removed"));
+            }}
+          />
+          {responseAnnotationsExpanded ? (
+            <EditableResponseAnnotationsCard
+              annotations={responseAnnotationState.annotations}
+              pendingFilesByAnnotationId={responseAnnotationState.pendingFilesByAnnotationId}
+              onEdit={(annotation) => setEditingResponseAnnotationId(annotation.id)}
+              onDelete={(annotationId) => {
+                dispatchResponseAnnotation({ type: "delete", id: annotationId });
+                setEditingResponseAnnotationId((current) => (
+                  current === annotationId ? null : current
+                ));
+                setResponseAnnotationAnnouncement(t("chat.annotations.removed"));
+              }}
+            />
+          ) : null}
+          {editingResponseAnnotationId ? (() => {
+            const annotation = responseAnnotationState.annotations.find(
+              (candidate) => candidate.id === editingResponseAnnotationId,
+            );
+            if (!annotation) return null;
+            return (
+              <ResponseAnnotationEditor
+                key={annotation.id}
+                annotation={annotation}
+                ordinal={annotation.ordinal}
+                pendingFiles={
+                  responseAnnotationState.pendingFilesByAnnotationId[annotation.id] ?? []
+                }
+                onSave={(changes) => {
+                  dispatchResponseAnnotation({
+                    type: "replaceDraft",
+                    id: annotation.id,
+                    comment: changes.comment,
+                    attachmentIds: changes.attachmentIds,
+                    files: changes.pendingFiles,
+                  });
+                  setEditingResponseAnnotationId(null);
+                }}
+                onCancel={() => setEditingResponseAnnotationId(null)}
+                onDelete={() => {
+                  dispatchResponseAnnotation({ type: "delete", id: annotation.id });
+                  setEditingResponseAnnotationId(null);
+                  setResponseAnnotationAnnouncement(t("chat.annotations.removed"));
+                }}
+              />
+            );
+          })() : null}
+        </div>
+      ) : null}
       <div ref={composerEditorScrollRef} data-testid="chat-composer-editor-scroll" className="chat-composer-editor-scroll scrollbar-auto-hide overflow-y-auto overscroll-contain" onKeyDownCapture={handleComposerSuggestionKeyDown} onPasteCapture={handlePendingAttachmentPasteCapture} >
         <MarkdownEditor ref={composerEditorRef} value={draft} onChange={handleComposerDraftChange}
           mentions={mentionOptions}
@@ -2430,6 +3003,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             if (!controlsDisabled) {
               void sendMessage(); }
           }} /> </div>
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {responseAnnotationAnnouncement}
+      </div>
       {renderSideChatSlashCommandMenu()}
       {composerUnavailable && composerUnavailableMessage ? (
         <div className="chat-warning mt-2.5 rounded-[var(--radius-md)] px-3 py-2.5 text-sm">
@@ -2540,7 +3116,26 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             return (
               <div key={fileKey} data-testid="chat-pending-attachment" className="max-w-full" >
                 <PendingAttachmentPreview file={file} onRemove={() => removePendingFile(fileKey)} /> </div> );
-          })} </div> ) : null} {renderComposerContextMenu()} </div> );
+          })} </div> ) : null}
+      {pendingResponseAnnotationSelection ? (
+        <SelectionAnnotationToolbar
+          open
+          anchorRect={pendingResponseAnnotationSelection.anchorRect}
+          getAnchorRect={() => {
+            try {
+              return pendingResponseAnnotationSelection.range.getBoundingClientRect();
+            } catch {
+              return null;
+            }
+          }}
+          onAddToChat={() => void addPendingResponseAnnotation()}
+          onMoreDetails={() => void handleMoreDetailsForSelection()}
+          onAskInSideChat={() => void handleAskSelectionInSideChat()}
+          askInSideChatDisabled={!pendingResponseAnnotationSelection.sideChatEligible}
+          onDismiss={() => setPendingResponseAnnotationSelection(null)}
+        />
+      ) : null}
+      {renderComposerContextMenu()} </div> );
   };
   const renderEmptyStatePromptFlow = () => {
     const starterActive = emptyStatePromptFlowState === "starters";
@@ -2932,6 +3527,18 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                               && messageCanShowProcess; const shouldRenderLazyTranscript = persistedTranscript.length === 0 && messageSteerMessages.length === 0 && messageCanShowProcess && Boolean(message.transcriptSummary?.entryCount); const persistedProcessStartedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript) : null; const persistedProcessEndedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessEndedAt(message, persistedTranscript) : null;
                             const messageTurnBranchControls = turnBranchControlsFor(message);
                             const refreshTurnBranchControls = message.chatTurnId ? turnBranchControlsForTurn(message.chatTurnId) : null;
+                            const historicalAnnotationsForMessage = historicalResponseAnnotations.filter(
+                              (annotation) => annotation.sourceMessageId === message.id,
+                            );
+                            const historicalAnnotationIds = new Set(
+                              historicalAnnotationsForMessage.map((annotation) => annotation.id),
+                            );
+                            const responseAnnotationsForMessage = [
+                              ...responseAnnotationState.annotations.filter(
+                                (annotation) => !historicalAnnotationIds.has(annotation.id),
+                              ),
+                              ...historicalAnnotationsForMessage,
+                            ];
                             return (
                               <Fragment key={message.id}>
                                 {shouldRenderPersistedTranscript ? (
@@ -2945,7 +3552,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
                                     defaultOpen={Boolean(openProcessMessageIds[message.id])} onOpenChange={(open) => setProcessOpenForMessage(message.id, open)}
                                     onOpenFile={openTranscriptFile}
-                                    onOpenAgent={openSubagentInspection} /> ) : shouldRenderLazyTranscript && message.transcriptSummary ? (
+                                    onOpenAgent={openSubagentInspection}
+                                    annotationSource={
+                                      message.role === "assistant"
+                                      && (message.status === "completed" || message.status === "stopped" || message.status === "failed")
+                                          ? {
+                                            sourceConversationId: message.conversationId,
+                                            sourceMessageId: message.id,
+                                            annotations: responseAnnotationsForMessage,
+                                            onActivateAnnotation: (annotationId) => {
+                                              setResponseAnnotationsExpanded(true);
+                                              setEditingResponseAnnotationId(annotationId);
+                                            },
+                                          }
+                                        : undefined
+                                    } /> ) : shouldRenderLazyTranscript && message.transcriptSummary ? (
                                   <LazyStreamTranscriptItem
                                     summary={message.transcriptSummary}
                                     state={message.status}
@@ -2990,6 +3611,24 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     chatId: selectedConversation.id,
                                     sourceMessageId: messageToFork.id,
                                   })} onOpenFile={openLocalFile} onMarkdownLinkClick={handleChatMarkdownLinkClick}
+                                  responseAnnotations={responseAnnotationsForMessage}
+                                  onEditResponseAnnotation={(annotationId) => {
+                                    setResponseAnnotationsExpanded(true);
+                                    setEditingResponseAnnotationId(annotationId);
+                                  }}
+                                  onSelectResponseAnnotation={handleSelectSentResponseAnnotation}
+                                  onResponseAnnotationsExpanded={(annotations, expanded) => {
+                                    setHistoricalResponseAnnotations(expanded
+                                      ? annotations.map((annotation, index) => ({
+                                          ...annotation,
+                                          ordinal: index + 1,
+                                        }))
+                                      : []);
+                                    if (!expanded) {
+                                      setUnlocatableResponseAnnotationId(null);
+                                    }
+                                  }}
+                                  unlocatableResponseAnnotationId={unlocatableResponseAnnotationId}
                                   turnBranchControls={messageTurnBranchControls}
                                   skillReferences={chatSkillReferences}
                                   issueCreatedMessage={issueCreatedMessage}

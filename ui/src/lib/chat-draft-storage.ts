@@ -1,4 +1,5 @@
 import {
+  chatInlineAnnotationInputSchema,
   chatInlineAnnotationsInputSchema,
   type ChatInlineAnnotationInput,
 } from "@rudderhq/shared";
@@ -70,10 +71,18 @@ function normalizeStoredChatDraft(value: unknown): ChatComposerDraft {
   if (draft.version !== CHAT_COMPOSER_DRAFT_VERSION || typeof draft.body !== "string") {
     return emptyChatComposerDraft();
   }
-  const parsedAnnotations = chatInlineAnnotationsInputSchema.safeParse(draft.inlineAnnotations);
-  const inlineAnnotations = parsedAnnotations.success
-    ? parsedAnnotations.data.map(({ attachmentFileIndexes: _attachmentFileIndexes, ...annotation }) => annotation)
-    : [];
+  const inlineAnnotations: ChatInlineAnnotationInput[] = [];
+  if (Array.isArray(draft.inlineAnnotations)) {
+    for (const entry of draft.inlineAnnotations) {
+      const parsed = chatInlineAnnotationInputSchema.safeParse(entry);
+      if (!parsed.success) continue;
+      const { attachmentFileIndexes: _attachmentFileIndexes, ...annotation } = parsed.data;
+      const candidate = [...inlineAnnotations, annotation];
+      if (chatInlineAnnotationsInputSchema.safeParse(candidate).success) {
+        inlineAnnotations.push(annotation);
+      }
+    }
+  }
   return {
     version: CHAT_COMPOSER_DRAFT_VERSION,
     body: draft.body,

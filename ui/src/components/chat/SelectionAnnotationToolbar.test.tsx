@@ -109,4 +109,76 @@ describe("selection annotation toolbar", () => {
     expect(firstButton.className).toContain("[@media(pointer:coarse)]:min-h-11");
     expect(firstButton.className).toContain("motion-reduce:transition-none");
   });
+
+  it("disables Side Chat when the owning assistant message is not completed", () => {
+    act(() => {
+      root.render(
+        <SelectionAnnotationToolbar
+          open
+          anchorRect={{ left: 40, right: 140, top: 100, bottom: 120, width: 100, height: 20 }}
+          onAddToChat={vi.fn()}
+          onMoreDetails={vi.fn()}
+          onAskInSideChat={vi.fn()}
+          askInSideChatDisabled
+          onDismiss={vi.fn()}
+        />,
+      );
+    });
+
+    const sideChat = document.body.querySelector<HTMLButtonElement>(
+      "[role='toolbar'] button:last-child",
+    );
+    expect(sideChat?.disabled).toBe(true);
+    expect(sideChat?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("measures its portal content, repositions from the live range, and handles global Escape", () => {
+    const onDismiss = vi.fn();
+    const getAnchorRect = vi.fn()
+      .mockReturnValueOnce({ left: 260, right: 300, top: 100, bottom: 120, width: 40, height: 20 })
+      .mockReturnValue({ left: 20, right: 60, top: 160, bottom: 180, width: 40, height: 20 });
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = vi.fn(() => ({
+      left: 0,
+      right: 250,
+      top: 0,
+      bottom: 44,
+      width: 250,
+      height: 44,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }));
+
+    act(() => {
+      root.render(
+        <SelectionAnnotationToolbar
+          open
+          anchorRect={{ left: 260, right: 300, top: 100, bottom: 120, width: 40, height: 20 }}
+          getAnchorRect={getAnchorRect}
+          onAddToChat={vi.fn()}
+          onMoreDetails={vi.fn()}
+          onAskInSideChat={vi.fn()}
+          onDismiss={onDismiss}
+        />,
+      );
+    });
+
+    const toolbar = document.body.querySelector<HTMLElement>("[role='toolbar']")!;
+    expect(toolbar.style.left).toBe("155px");
+
+    act(() => {
+      window.dispatchEvent(new Event("scroll"));
+    });
+    expect(getAnchorRect).toHaveBeenCalled();
+    expect(toolbar.style.left).toBe("8px");
+
+    act(() => {
+      document.body.focus();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onDismiss).toHaveBeenCalledOnce();
+
+    HTMLElement.prototype.getBoundingClientRect = originalRect;
+  });
 });

@@ -1,4 +1,8 @@
 import { isImageContentType } from "@/lib/image-actions";
+import {
+  CHAT_ANNOTATION_IGNORE_ATTRIBUTE,
+  restoreChatAnnotationRange,
+} from "@/lib/chat-response-annotation-selection";
 import { cn } from "@/lib/utils";
 import type {
   ChatAttachment,
@@ -16,9 +20,14 @@ import {
 } from "lucide-react";
 import {
   useId,
+  useLayoutEffect,
+  useRef,
   useState,
   type ChangeEvent,
+  type CSSProperties,
+  type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   ChatFileAttachmentChip,
   ChatImageAttachmentTile,
@@ -38,6 +47,8 @@ export type ResponseAnnotationLabels = {
   delete: string;
   cancel: string;
   save: string;
+  showSource: string;
+  sourceUnavailable: string;
 };
 
 const DEFAULT_LABELS: ResponseAnnotationLabels = {
@@ -53,6 +64,8 @@ const DEFAULT_LABELS: ResponseAnnotationLabels = {
   delete: "Delete",
   cancel: "Cancel",
   save: "Save",
+  showSource: "Show source",
+  sourceUnavailable: "Source is no longer available.",
 };
 
 function countLabel(count: number, labels: ResponseAnnotationLabels) {
@@ -78,6 +91,7 @@ export function ResponseAnnotationCountChip({
 }) {
   return (
     <div
+      data-testid="chat-response-annotation-count"
       className={cn(
         "inline-flex h-8 items-center overflow-hidden rounded-full border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] text-xs font-medium text-foreground shadow-[var(--shadow-xs)] [@media(pointer:coarse)]:h-11",
         className,
@@ -116,28 +130,110 @@ export function ResponseAnnotationMarker({
   excerpt,
   onActivate,
   className,
+  style,
 }: {
   ordinal: number;
   excerpt: string;
   onActivate: () => void;
   className?: string;
+  style?: CSSProperties;
 }) {
   const boundedExcerpt = excerpt.replace(/\s+/gu, " ").trim().slice(0, 80);
   return (
     <button
       type="button"
+      data-testid="chat-response-annotation-marker"
+      {...{ [CHAT_ANNOTATION_IGNORE_ATTRIBUTE]: "" }}
       className={cn(
-        "inline-flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11",
+        "inline-flex h-7 w-7 select-none items-center justify-center rounded-full text-[11px] font-semibold text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11",
         className,
       )}
       aria-label={`Annotation ${ordinal}: ${boundedExcerpt}`}
       onClick={onActivate}
+      style={style}
     >
       <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-primary px-1 shadow-[var(--shadow-sm)]">
         {ordinal}
       </span>
     </button>
   );
+}
+
+export function AnchoredResponseAnnotationMarkers({
+  sourceRootRef,
+  source,
+  annotations,
+  onActivate,
+}: {
+  sourceRootRef: RefObject<HTMLElement | null>;
+  source: string;
+  annotations: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
+  onActivate?: (annotationId: string) => void;
+}) {
+  const [positions, setPositions] = useState<Record<string, { left: number; top: number }>>({});
+
+  useLayoutEffect(() => {
+    const sourceRoot = sourceRootRef.current;
+    if (!sourceRoot || annotations.length === 0) {
+      setPositions({});
+      return;
+    }
+    let frameId: number | null = null;
+    const update = () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        frameId = null;
+        const rootRect = sourceRoot.getBoundingClientRect();
+        const next: Record<string, { left: number; top: number }> = {};
+        for (const annotation of annotations) {
+          const range = restoreChatAnnotationRange({
+            sourceRoot,
+            source,
+            start: annotation.start,
+            end: annotation.end,
+          });
+          if (!range || typeof range.getBoundingClientRect !== "function") continue;
+          const rects = typeof range.getClientRects === "function"
+            ? Array.from(range.getClientRects())
+            : [];
+          const anchorRect = rects.at(-1) ?? range.getBoundingClientRect();
+          next[annotation.id] = {
+            left: Math.max(0, anchorRect.right - rootRect.left + 6),
+            top: Math.max(0, anchorRect.top - rootRect.top - 24),
+          };
+        }
+        setPositions(next);
+      });
+    };
+    update();
+    window.addEventListener("resize", update);
+    document.addEventListener("scroll", update, true);
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(update);
+    observer?.observe(sourceRoot);
+    return () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", update);
+      document.removeEventListener("scroll", update, true);
+      observer?.disconnect();
+    };
+  }, [annotations, source, sourceRootRef]);
+
+  return annotations.map((annotation, index) => {
+    const position = positions[annotation.id];
+    if (!position) return null;
+    return (
+      <ResponseAnnotationMarker
+        key={annotation.id}
+        ordinal={annotation.ordinal ?? index + 1}
+        excerpt={annotation.selectedText}
+        onActivate={() => onActivate?.(annotation.id)}
+        className="absolute z-20 -translate-y-0.5"
+        style={position}
+      />
+    );
+  });
 }
 
 function AnnotationAttachment({
@@ -219,40 +315,48 @@ function AnnotationContent({
 
 export function ResponseAnnotationEditor({
   annotation,
+  ordinal,
   pendingFiles,
   attachments = [],
   onSave,
   onCancel,
   onDelete,
-  onAddFiles,
-  onRemovePendingFile,
-  onRemoveAttachment,
   labels = DEFAULT_LABELS,
   className,
 }: {
   annotation: ChatInlineAnnotation | ChatInlineAnnotationInput;
+  ordinal: number;
   pendingFiles: File[];
   attachments?: ChatAttachment[];
-  onSave: (changes: Pick<ChatInlineAnnotationInput, "comment">) => void;
+  onSave: (changes: {
+    comment: string | null;
+    pendingFiles: File[];
+    attachmentIds: string[];
+  }) => void;
   onCancel: () => void;
   onDelete: () => void;
-  onAddFiles: (files: File[]) => void;
-  onRemovePendingFile: (fileIndex: number) => void;
-  onRemoveAttachment?: (attachmentId: string) => void;
   labels?: ResponseAnnotationLabels;
   className?: string;
 }) {
   const [comment, setComment] = useState(annotation.comment ?? "");
+  const [draftPendingFiles, setDraftPendingFiles] = useState(() => [...pendingFiles]);
+  const [draftAttachmentIds, setDraftAttachmentIds] = useState(() => (
+    [...(annotation.attachmentIds ?? attachments.map((attachment) => attachment.id))]
+  ));
   const inputId = useId();
+  const visibleAttachments = attachments.filter((attachment) => draftAttachmentIds.includes(attachment.id));
 
   function handleFiles(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
-    if (files.length > 0) onAddFiles(files);
+    if (files.length > 0) {
+      setDraftPendingFiles((current) => [...current, ...files]);
+    }
     event.target.value = "";
   }
 
   return (
     <section
+      data-testid="chat-response-annotation-editor"
       className={cn(
         "w-[min(22rem,calc(100vw-1rem))] rounded-[var(--radius-xl)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] p-4 shadow-[var(--shadow-lg)]",
         className,
@@ -261,17 +365,19 @@ export function ResponseAnnotationEditor({
     >
       <AnnotationContent
         annotation={annotation}
-        ordinal={1}
-        attachments={onRemoveAttachment ? [] : attachments}
+        ordinal={ordinal}
+        attachments={[]}
         labels={labels}
       />
-      {onRemoveAttachment && attachments.length > 0 ? (
+      {visibleAttachments.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
-          {attachments.map((attachment) => (
+          {visibleAttachments.map((attachment) => (
             <EditableAnnotationAttachment
               key={attachment.id}
               attachment={attachment}
-              onRemove={() => onRemoveAttachment(attachment.id)}
+              onRemove={() => setDraftAttachmentIds((current) => (
+                current.filter((attachmentId) => attachmentId !== attachment.id)
+              ))}
             />
           ))}
         </div>
@@ -287,31 +393,36 @@ export function ResponseAnnotationEditor({
         maxLength={2_000}
         className="mt-1 min-h-20 w-full resize-y rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-transparent px-3 py-2 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20"
       />
-      {pendingFiles.length > 0 ? (
+      {draftPendingFiles.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
-          {pendingFiles.map((file, index) => (
-            <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="max-w-full">
+          {draftPendingFiles.map((file, index) => (
+            <div
+              key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+              data-testid="chat-response-annotation-pending-attachment"
+              className="max-w-full"
+            >
               <span className="sr-only">{file.name}</span>
               <PendingAttachmentPreview
                 file={file}
-                onRemove={() => onRemovePendingFile(index)}
+                onRemove={() => setDraftPendingFiles((current) => (
+                  current.filter((_, fileIndex) => fileIndex !== index)
+                ))}
               />
             </div>
           ))}
         </div>
       ) : null}
       <div className="mt-4 flex items-center gap-2">
-        <input
-          id={`${inputId}-files`}
-          type="file"
-          multiple
-          className="sr-only"
-          onChange={handleFiles}
-        />
         <label
-          htmlFor={`${inputId}-files`}
-          className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-within:ring-2 focus-within:ring-ring/40 [@media(pointer:coarse)]:h-11 motion-reduce:transition-none"
+          className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/40 [@media(pointer:coarse)]:h-11 motion-reduce:transition-none"
         >
+          <input
+            id={`${inputId}-files`}
+            type="file"
+            multiple
+            className="sr-only"
+            onChange={handleFiles}
+          />
           <Paperclip className="h-3.5 w-3.5" />
           {labels.addFiles}
         </label>
@@ -333,7 +444,11 @@ export function ResponseAnnotationEditor({
         <button
           type="button"
           className="inline-flex h-9 items-center rounded-[var(--radius-md)] bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(pointer:coarse)]:h-11 motion-reduce:transition-none"
-          onClick={() => onSave({ comment: comment.trim() || null })}
+          onClick={() => onSave({
+            comment: comment.trim() || null,
+            pendingFiles: draftPendingFiles,
+            attachmentIds: draftAttachmentIds,
+          })}
         >
           {labels.save}
         </button>
@@ -358,7 +473,10 @@ export function EditableResponseAnnotationsCard({
   labels?: ResponseAnnotationLabels;
 }) {
   return (
-    <ol className="w-[min(28rem,calc(100vw-1rem))] divide-y divide-[color:var(--border-soft)] rounded-[var(--radius-xl)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] shadow-[var(--shadow-lg)]">
+    <ol
+      data-testid="chat-response-annotation-card"
+      className="w-[min(28rem,calc(100vw-1rem))] divide-y divide-[color:var(--border-soft)] rounded-[var(--radius-xl)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] shadow-[var(--shadow-lg)]"
+    >
       {annotations.map((annotation, index) => {
         const ownedAttachments = attachments.filter((attachment) => annotation.attachmentIds?.includes(attachment.id));
         return (
@@ -408,50 +526,117 @@ export function SentResponseAnnotationsCard({
   annotations,
   attachments,
   onSelect,
+  onExpandedChange,
+  unlocatableAnnotationId,
   labels = DEFAULT_LABELS,
   className,
 }: {
   annotations: ChatInlineAnnotation[];
   attachments: ChatAttachment[];
-  onSelect?: (annotation: ChatInlineAnnotation) => void;
+  onSelect?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+  onExpandedChange?: (expanded: boolean) => void;
+  unlocatableAnnotationId?: string | null;
   labels?: ResponseAnnotationLabels;
   className?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [cardPosition, setCardPosition] = useState<{ left: number; top: number } | null>(null);
   const annotationsListId = useId();
+  const chipAnchorRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLOListElement>(null);
+  useLayoutEffect(() => {
+    if (!expanded) {
+      setCardPosition(null);
+      return;
+    }
+    let frameId: number | null = null;
+    const update = () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        frameId = null;
+        const anchor = chipAnchorRef.current;
+        const card = cardRef.current;
+        if (!anchor || !card) return;
+        const anchorRect = anchor.getBoundingClientRect();
+        const cardRect = card.getBoundingClientRect();
+        const padding = 8;
+        const gap = 8;
+        const above = anchorRect.top - cardRect.height - gap;
+        const top = above >= padding
+          ? above
+          : Math.min(
+              window.innerHeight - cardRect.height - padding,
+              anchorRect.bottom + gap,
+            );
+        setCardPosition({
+          left: Math.max(
+            padding,
+            Math.min(anchorRect.right - cardRect.width, window.innerWidth - cardRect.width - padding),
+          ),
+          top: Math.max(padding, top),
+        });
+      });
+    };
+    update();
+    window.addEventListener("resize", update);
+    document.addEventListener("scroll", update, true);
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(update);
+    if (chipAnchorRef.current) observer?.observe(chipAnchorRef.current);
+    if (cardRef.current) observer?.observe(cardRef.current);
+    return () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", update);
+      document.removeEventListener("scroll", update, true);
+      observer?.disconnect();
+    };
+  }, [annotations.length, expanded]);
   if (annotations.length === 0) return null;
 
   return (
     <div className={cn("flex flex-col items-start gap-2", className)}>
-      <ResponseAnnotationCountChip
-        count={annotations.length}
-        expanded={expanded}
-        controlsId={annotationsListId}
-        onToggle={() => setExpanded((current) => !current)}
-        labels={labels}
-      />
-      {expanded ? (
+      <div ref={chipAnchorRef}>
+        <ResponseAnnotationCountChip
+          count={annotations.length}
+          expanded={expanded}
+          controlsId={annotationsListId}
+          onToggle={() => setExpanded((current) => {
+            const next = !current;
+            onExpandedChange?.(next);
+            return next;
+          })}
+          labels={labels}
+        />
+      </div>
+      {expanded && typeof document !== "undefined" ? createPortal(
         <ol
+          ref={cardRef}
           id={annotationsListId}
-          className="w-[min(28rem,calc(100vw-1rem))] divide-y divide-[color:var(--border-soft)] overflow-hidden rounded-[var(--radius-xl)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] shadow-[var(--shadow-md)]"
+          data-testid="chat-response-annotation-sent-card"
+          className="fixed z-[90] max-h-[min(28rem,calc(100vh-1rem))] w-[min(28rem,calc(100vw-1rem))] divide-y divide-[color:var(--border-soft)] overflow-y-auto overscroll-contain rounded-[var(--radius-xl)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] shadow-[var(--shadow-md)]"
+          style={{
+            left: cardPosition?.left ?? 8,
+            top: cardPosition?.top ?? 8,
+            visibility: cardPosition ? "visible" : "hidden",
+          }}
         >
           {annotations.map((annotation, index) => {
             const ownedAttachments = attachments.filter((attachment) => annotation.attachmentIds.includes(attachment.id));
             return (
-              <li key={annotation.id} className="p-4">
-                <button
-                  type="button"
-                  data-annotation-id={annotation.id}
-                  className="block w-full rounded-[var(--radius-md)] text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:transition-none"
-                  onClick={() => onSelect?.(annotation)}
-                >
+              <li
+                key={annotation.id}
+                data-testid="chat-response-annotation-sent-card-entry"
+                className="p-4"
+              >
+                <div className="rounded-[var(--radius-md)]">
                   <AnnotationContent
                     annotation={annotation}
                     ordinal={index + 1}
                     attachments={[]}
                     labels={labels}
                   />
-                </button>
+                </div>
                 {ownedAttachments.length > 0 ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {ownedAttachments.map((attachment) => (
@@ -459,10 +644,30 @@ export function SentResponseAnnotationsCard({
                     ))}
                   </div>
                 ) : null}
+                {onSelect ? (
+                  <button
+                    type="button"
+                    data-annotation-id={annotation.id}
+                    className="mt-3 inline-flex min-h-8 items-center rounded-[var(--radius-md)] px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(pointer:coarse)]:min-h-11 motion-reduce:transition-none"
+                    onClick={() => onSelect(annotation, index + 1)}
+                  >
+                    {labels.showSource}
+                  </button>
+                ) : null}
+                {unlocatableAnnotationId === annotation.id ? (
+                  <p
+                    role="status"
+                    data-testid="chat-response-annotation-unlocatable"
+                    className="mt-2 text-xs text-muted-foreground"
+                  >
+                    {labels.sourceUnavailable}
+                  </p>
+                ) : null}
               </li>
             );
           })}
-        </ol>
+        </ol>,
+        document.body,
       ) : null}
     </div>
   );

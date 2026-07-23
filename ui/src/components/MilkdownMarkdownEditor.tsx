@@ -1253,6 +1253,21 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     return available;
   }, [get, getInstance, loading]);
 
+  const insertTextAtSelection = useCallback((text: string) => {
+    if (!text) return false;
+    let inserted = false;
+    const editor = loading ? get() : getInstance();
+    editor?.action((ctx) => {
+      const view = getMilkdownProseMirrorView(ctx);
+      if (!view) return;
+      const { from, to } = view.state.selection;
+      view.dispatch(view.state.tr.insertText(text, from, to));
+      view.focus?.();
+      inserted = true;
+    });
+    return inserted;
+  }, [get, getInstance, loading]);
+
   const repairUnexpectedBlankDom = useCallback(() => {
     const editable = containerRef.current?.querySelector('[contenteditable="true"]');
     if (!(editable instanceof HTMLElement)) return;
@@ -1265,12 +1280,13 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
 
   useImperativeHandle(forwardedRef, () => ({
     focus,
+    insertTextAtSelection,
     getMarkdown: getCurrentMarkdown,
     undo: () => runHistoryCommand("undo"),
     redo: () => runHistoryCommand("redo"),
     canUndo: () => getHistoryAvailability("undo"),
     canRedo: () => getHistoryAvailability("redo"),
-  }), [focus, getCurrentMarkdown, getHistoryAvailability, runHistoryCommand]);
+  }), [focus, getCurrentMarkdown, getHistoryAvailability, insertTextAtSelection, runHistoryCommand]);
 
   useEffect(() => {
     if (editorValue === latestValueRef.current) return;

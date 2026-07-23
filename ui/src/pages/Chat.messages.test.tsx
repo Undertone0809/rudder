@@ -268,6 +268,66 @@ describe("user chat message rendering", () => {
     expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
   });
 
+  it("renders immutable sent annotations above the user bubble and hides their files from the generic gallery", () => {
+    const annotationAttachment = {
+      id: "40000000-0000-4000-8000-000000000001",
+      orgId: "50000000-0000-4000-8000-000000000001",
+      conversationId: "20000000-0000-4000-8000-000000000001",
+      messageId: "60000000-0000-4000-8000-000000000001",
+      assetId: "70000000-0000-4000-8000-000000000001",
+      contentType: "application/pdf",
+      byteSize: 42,
+      sha256: "b".repeat(64),
+      originalFilename: "annotation-proof.pdf",
+      createdByAgentId: null,
+      createdByUserId: "80000000-0000-4000-8000-000000000001",
+      createdAt: new Date("2026-07-23T00:00:00Z"),
+      updatedAt: new Date("2026-07-23T00:00:00Z"),
+      contentPath: "/api/assets/70000000-0000-4000-8000-000000000001/content",
+    };
+    const regularAttachment = {
+      ...annotationAttachment,
+      id: "40000000-0000-4000-8000-000000000002",
+      assetId: "70000000-0000-4000-8000-000000000002",
+      originalFilename: "regular-file.pdf",
+      contentPath: "/api/assets/70000000-0000-4000-8000-000000000002/content",
+    };
+    const container = renderChatMessageItem(message({
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "",
+      structuredPayload: {
+        inlineAnnotations: [{
+          id: "10000000-0000-4000-8000-000000000001",
+          selectedText: "Only real send failures show Retry.",
+          comment: "When can this happen?",
+          sourceConversationId: "20000000-0000-4000-8000-000000000001",
+          sourceMessageId: "30000000-0000-4000-8000-000000000001",
+          surface: "assistant_body",
+          sourceHash: "a".repeat(64),
+          start: 10,
+          end: 45,
+          prefix: "",
+          suffix: "",
+          attachmentIds: [annotationAttachment.id],
+        }],
+      },
+      attachments: [annotationAttachment, regularAttachment],
+    }));
+
+    const bubble = container.querySelector('[data-testid="chat-user-message-bubble"]');
+    expect(container.querySelector("[aria-label='Show 1 annotation']")).not.toBeNull();
+    expect(bubble?.textContent).toContain("regular-file.pdf");
+    expect(bubble?.textContent).not.toContain("annotation-proof.pdf");
+
+    act(() => {
+      container.querySelector<HTMLElement>("[aria-label='Show 1 annotation']")?.click();
+    });
+    expect(document.body.textContent).toContain("annotation-proof.pdf");
+    expect(document.body.querySelectorAll("a").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("keeps user-authored markdown syntax literal while preserving links and Rudder references", () => {
     window.history.pushState({}, "", "/MARAAA/messenger/chat/chat-1");
 
@@ -487,6 +547,32 @@ describe("user chat message rendering", () => {
 });
 
 describe("assistant chat message rendering", () => {
+  it("marks only stable visible assistant bodies as response annotation sources", () => {
+    const completed = renderChatMessageItem(message({
+      id: "assistant-completed",
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Stable answer",
+    }));
+    const stableSource = completed.querySelector("[data-chat-annotation-source]");
+    expect(stableSource?.getAttribute("data-chat-annotation-source")).toBe("assistant:assistant-completed");
+    expect(stableSource?.getAttribute("data-annotation-surface")).toBe("assistant_body");
+    expect(stableSource?.getAttribute("data-message-id")).toBe("assistant-completed");
+
+    cleanupFn?.();
+    cleanupFn = null;
+
+    const streaming = renderChatMessageItem(message({
+      id: "assistant-streaming",
+      role: "assistant",
+      kind: "message",
+      status: "streaming",
+      body: "Growing answer",
+    }));
+    expect(streaming.querySelector("[data-chat-annotation-source]")).toBeNull();
+  });
+
   it("exposes a fork action on persisted assistant responses", () => {
     const container = renderChatMessageItem(message({
       role: "assistant",

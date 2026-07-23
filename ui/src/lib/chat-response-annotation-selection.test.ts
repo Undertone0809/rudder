@@ -3,8 +3,11 @@
 import { describe, expect, it } from "vitest";
 import {
   CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
+  CHAT_ANNOTATION_IGNORE_ATTRIBUTE,
   CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+  hashChatAnnotationSource,
   resolveChatAnnotationRange,
+  restoreChatAnnotationRange,
 } from "./chat-response-annotation-selection";
 
 const sourceHash = "b".repeat(64);
@@ -17,6 +20,12 @@ function sourceRoot(sourceId: string, blockId: string) {
 }
 
 describe("chat response annotation selection", () => {
+  it("hashes the persisted raw source with SHA-256", async () => {
+    await expect(hashChatAnnotationSource("hello")).resolves.toBe(
+      "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    );
+  });
+
   it("maps a precise CJK selection across Markdown links and inline code to source offsets", () => {
     const source = "这是 **Rudder**，查看 [文档](https://rudder.dev) 与 `inline code`。";
     const root = sourceRoot("assistant:message-1", "message-1");
@@ -53,6 +62,141 @@ describe("chat response annotation selection", () => {
       ),
     });
 
+    root.remove();
+  });
+
+  it("uses Markdown source spans to map decoded HTML entities", () => {
+    const source = "Before &amp; after.";
+    const root = sourceRoot("assistant:message-entity", "message-entity");
+    const paragraph = document.createElement("p");
+    paragraph.dataset.markdownSourceStart = "0";
+    paragraph.dataset.markdownSourceEnd = String(source.length);
+    paragraph.textContent = "Before & after.";
+    root.append(paragraph);
+    document.body.appendChild(root);
+
+    const text = paragraph.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, "Before ".length);
+    range.setEnd(text, "Before &".length);
+
+    expect(resolveChatAnnotationRange({
+      range,
+      sourceRoot: root,
+      source,
+      sourceHash,
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    })).toMatchObject({
+      selectedText: "&",
+      start: source.indexOf("&amp;"),
+      end: source.indexOf("&amp;") + "&amp;".length,
+    });
+
+    root.remove();
+  });
+
+  it("uses endpoint source spans without requiring layout wrappers to map to Markdown", () => {
+    const source = "第一段包含链接。\n\n- 第一项";
+    const root = sourceRoot("assistant:message-layout", "message-layout");
+    const layout = document.createElement("div");
+    const nestedLayout = document.createElement("div");
+    const paragraph = document.createElement("p");
+    paragraph.dataset.markdownSourceStart = "0";
+    paragraph.dataset.markdownSourceEnd = String(source.indexOf("\n\n"));
+    paragraph.textContent = "第一段包含链接。";
+    nestedLayout.append(paragraph);
+    layout.append(nestedLayout);
+    root.append(layout);
+    document.body.appendChild(root);
+
+    const text = paragraph.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, "第一段包含".length);
+
+    expect(resolveChatAnnotationRange({
+      range,
+      sourceRoot: root,
+      source,
+      sourceHash,
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    })).toMatchObject({
+      selectedText: "第一段包含",
+      start: 0,
+      end: "第一段包含".length,
+    });
+
+    root.remove();
+  });
+
+  it("uses the nearest Markdown source span for repeated emphasized text", () => {
+    const source = "repeat outside and **repeat repeat**";
+    const root = sourceRoot("assistant:message-repeat", "message-repeat");
+    const paragraph = document.createElement("p");
+    paragraph.dataset.markdownSourceStart = "0";
+    paragraph.dataset.markdownSourceEnd = String(source.length);
+    paragraph.append("repeat outside and ");
+    const strong = document.createElement("strong");
+    strong.dataset.markdownSourceStart = String(source.indexOf("**repeat"));
+    strong.dataset.markdownSourceEnd = String(source.length);
+    strong.textContent = "repeat repeat";
+    paragraph.append(strong);
+    root.append(paragraph);
+    document.body.appendChild(root);
+
+    const text = strong.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, "repeat ".length);
+    range.setEnd(text, "repeat repeat".length);
+
+    expect(resolveChatAnnotationRange({
+      range,
+      sourceRoot: root,
+      source,
+      sourceHash,
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    })).toMatchObject({
+      selectedText: "repeat",
+      start: source.lastIndexOf("repeat"),
+      end: source.lastIndexOf("repeat") + "repeat".length,
+    });
+
+    root.remove();
+  });
+
+  it("restores a source range to its exact rendered endpoint across Markdown nodes", () => {
+    const source = "Prefix **selected** and [linked text](https://rudder.dev).";
+    const root = sourceRoot("assistant:message-restore", "message-restore");
+    const paragraph = document.createElement("p");
+    paragraph.dataset.markdownSourceStart = "0";
+    paragraph.dataset.markdownSourceEnd = String(source.length);
+    paragraph.append("Prefix ");
+    const strong = document.createElement("strong");
+    strong.dataset.markdownSourceStart = String(source.indexOf("**selected**"));
+    strong.dataset.markdownSourceEnd = String(source.indexOf("**selected**") + "**selected**".length);
+    strong.textContent = "selected";
+    const link = document.createElement("a");
+    link.dataset.markdownSourceStart = String(source.indexOf("[linked text]"));
+    link.dataset.markdownSourceEnd = String(source.length - 1);
+    link.textContent = "linked text";
+    paragraph.append(strong, " and ", link, ".");
+    root.append(paragraph);
+    document.body.appendChild(root);
+
+    const restored = restoreChatAnnotationRange({
+      sourceRoot: root,
+      source,
+      start: source.indexOf("selected"),
+      end: source.indexOf("linked text") + "linked text".length,
+    });
+
+    expect(restored?.toString()).toBe("selected and linked text");
     root.remove();
   });
 
@@ -119,7 +263,7 @@ describe("chat response annotation selection", () => {
       sourceMessageId: "20000000-0000-4000-8000-000000000001",
       surface: "assistant_body",
     })).toMatchObject({
-      selectedText: "paragraph.第一项第二项",
+      selectedText: "paragraph.\n第一项\n第二项",
       start: source.indexOf("paragraph."),
       end: source.length,
     });
@@ -192,5 +336,31 @@ describe("chat response annotation selection", () => {
     })).toBeNull();
 
     nestedBlocks.remove();
+  });
+
+  it("rejects a final-answer range that spans an ignored inline visual subtree", () => {
+    const source = "Before visual after";
+    const root = sourceRoot("assistant:message-visual", "message-visual");
+    const before = document.createTextNode("Before ");
+    const visual = document.createElement("iframe");
+    visual.setAttribute(CHAT_ANNOTATION_IGNORE_ATTRIBUTE, "true");
+    const after = document.createTextNode(" after");
+    root.append(before, visual, after);
+    document.body.appendChild(root);
+    const range = document.createRange();
+    range.setStart(before, 0);
+    range.setEnd(after, after.textContent!.length);
+
+    expect(resolveChatAnnotationRange({
+      range,
+      sourceRoot: root,
+      source,
+      sourceHash,
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    })).toBeNull();
+
+    root.remove();
   });
 });
