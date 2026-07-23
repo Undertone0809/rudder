@@ -3,6 +3,8 @@ const SERVER_NAME_RE = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$/;
 const RESERVED_SERVER_NAMES = new Set(["rudder-tools", "rudder-browser"]);
 const MAX_BINDINGS = 100;
 const MAX_TOOLS = 500;
+const MAX_PREFLIGHT_RESPONSE_BYTES = 2 * 1024 * 1024;
+const PREFLIGHT_PROTOCOL_VERSION = "2025-06-18";
 
 export interface ManagedExternalMcpBinding {
   bindingId: string;
@@ -208,4 +210,172 @@ export function resolveManagedExternalMcpBindings(
     ).toString(),
     bearerTokenEnvVar: "RUDDER_API_KEY",
   }));
+}
+
+async function readBoundedPreflightJson(
+  response: Response,
+): Promise<Record<string, unknown>> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (
+    Number.isFinite(declaredLength)
+    && declaredLength > MAX_PREFLIGHT_RESPONSE_BYTES
+  ) {
+    throw new Error("Managed MCP preflight response exceeded the size limit");
+  }
+  if (!response.body) throw new Error("Managed MCP preflight returned an empty response");
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_PREFLIGHT_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error("Managed MCP preflight response exceeded the size limit");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error("Managed MCP preflight returned an invalid response");
+  }
+  return parsed;
+}
+
+async function postPreflightRequest(input: {
+  binding: ResolvedManagedExternalMcpBinding;
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  method: "initialize" | "notifications/initialized" | "tools/list";
+  params?: Record<string, unknown>;
+  protocolVersion?: string;
+  signal: AbortSignal;
+}): Promise<Record<string, unknown> | null> {
+  const token = input.env[input.binding.bearerTokenEnvVar]?.trim();
+  if (!token) throw new Error("Managed MCP run authentication is unavailable");
+  const notification = input.method === "notifications/initialized";
+  const response = await fetch(input.binding.proxyUrl, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      ...(input.protocolVersion
+        ? { "mcp-protocol-version": input.protocolVersion }
+        : {}),
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      ...(!notification ? { id: "rudder-managed-mcp-preflight" } : {}),
+      method: input.method,
+      ...(input.params ? { params: input.params } : {}),
+    }),
+    signal: input.signal,
+  });
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`Managed MCP preflight failed with HTTP ${response.status}`);
+  }
+  if (notification) {
+    await response.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  const payload = await readBoundedPreflightJson(response);
+  if (isRecord(payload.error)) {
+    throw new Error("Managed MCP preflight returned a JSON-RPC error");
+  }
+  if (!isRecord(payload.result)) {
+    throw new Error("Managed MCP preflight returned an invalid result");
+  }
+  return payload.result;
+}
+
+async function preflightBinding(
+  binding: ResolvedManagedExternalMcpBinding,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  parentSignal?: AbortSignal,
+): Promise<void> {
+  const timeoutSignal = AbortSignal.timeout(binding.startupTimeoutMs);
+  const signal = parentSignal
+    ? AbortSignal.any([parentSignal, timeoutSignal])
+    : timeoutSignal;
+  const initialized = await postPreflightRequest({
+    binding,
+    env,
+    method: "initialize",
+    params: {
+      protocolVersion: PREFLIGHT_PROTOCOL_VERSION,
+      capabilities: {},
+      clientInfo: {
+        name: "rudder-managed-mcp-preflight",
+        version: "1.0.0",
+      },
+    },
+    signal,
+  });
+  const protocolVersion = typeof initialized?.protocolVersion === "string"
+    ? initialized.protocolVersion
+    : null;
+  if (!protocolVersion) {
+    throw new Error("Managed MCP preflight returned an invalid protocol version");
+  }
+  await postPreflightRequest({
+    binding,
+    env,
+    method: "notifications/initialized",
+    protocolVersion,
+    signal,
+  });
+  const listed = await postPreflightRequest({
+    binding,
+    env,
+    method: "tools/list",
+    protocolVersion,
+    signal,
+  });
+  if (!Array.isArray(listed?.tools)) {
+    throw new Error("Managed MCP preflight returned an invalid tools list");
+  }
+}
+
+export async function preflightManagedExternalMcpBindings(
+  runtimeConfig: unknown,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  options: {
+    signal?: AbortSignal;
+    onOptionalFailure?: (
+      serverName: string,
+      error: ManagedExternalMcpConfigurationError,
+    ) => void | Promise<void>;
+  } = {},
+): Promise<ResolvedManagedExternalMcpBinding[]> {
+  const bindings = resolveManagedExternalMcpBindings(runtimeConfig, env);
+  const checked = await Promise.all(bindings.map(async (binding) => {
+    try {
+      await preflightBinding(binding, env, options.signal);
+      return binding;
+    } catch {
+      const error = new ManagedExternalMcpConfigurationError(
+        `${binding.required ? "Required" : "Optional"} managed MCP binding "${binding.serverName}" proxy preflight failed`,
+      );
+      if (binding.required) throw error;
+      await options.onOptionalFailure?.(binding.serverName, error);
+      return null;
+    }
+  }));
+  return checked.filter(
+    (binding): binding is ResolvedManagedExternalMcpBinding => binding !== null,
+  );
 }

@@ -5,7 +5,7 @@ import {
   applyRudderBrowserCapabilityEnv,
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
-  resolveManagedExternalMcpBindings,
+  preflightManagedExternalMcpBindings,
   rudderBrowserMcpRuntimeMetadata,
   rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
@@ -272,17 +272,17 @@ export async function resolveRudderOpenCodeMcpConfigs(
   }
   Object.assign(
     configs,
-    resolveManagedExternalOpenCodeMcpConfigs(runtimeConfig, managedEnv),
+    await resolveManagedExternalOpenCodeMcpConfigs(runtimeConfig, managedEnv),
   );
   return configs;
 }
 
-export function resolveManagedExternalOpenCodeMcpConfigs(
+export async function resolveManagedExternalOpenCodeMcpConfigs(
   runtimeConfig: unknown,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-): Record<string, Record<string, unknown>> {
+): Promise<Record<string, Record<string, unknown>>> {
   return Object.fromEntries(
-    resolveManagedExternalMcpBindings(runtimeConfig, env).map((binding) => [
+    (await preflightManagedExternalMcpBindings(runtimeConfig, env)).map((binding) => [
       binding.serverName,
       {
         type: "remote",
@@ -292,7 +292,7 @@ export function resolveManagedExternalOpenCodeMcpConfigs(
         headers: {
           Authorization: `Bearer {env:${binding.bearerTokenEnvVar}}`,
         },
-        timeout: binding.toolTimeoutMs,
+        timeout: binding.startupTimeoutMs,
       },
     ]),
   );

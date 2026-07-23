@@ -8,6 +8,7 @@ export {
 export {
   ManagedExternalMcpConfigurationError,
   parseManagedExternalMcpBindings,
+  preflightManagedExternalMcpBindings,
   resolveManagedExternalMcpBindings,
   type ManagedExternalMcpBinding,
   type ResolvedManagedExternalMcpBinding

@@ -4,6 +4,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import {
   callManagedExternalMcpProxy,
@@ -50,6 +51,48 @@ async function listen(
 async function close(server: Server): Promise<void> {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+function loadGeneratedCallManagedMcp(source: string): (
+  proxyUrl: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+) => Promise<Record<string, unknown>> {
+  const outputText = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2023,
+    },
+  }).outputText;
+  const module = { exports: {} as Record<string, unknown> };
+  const evaluate = new Function(
+    "require",
+    "module",
+    "exports",
+    "process",
+    outputText,
+  ) as (
+    require: (specifier: string) => unknown,
+    module: { exports: Record<string, unknown> },
+    exports: Record<string, unknown>,
+    process: { env: Record<string, string> },
+  ) => void;
+  evaluate(
+    (specifier) => {
+      if (specifier === "@earendil-works/pi-ai") return { Type: {} };
+      throw new Error(`Unexpected generated extension dependency: ${specifier}`);
+    },
+    module,
+    module.exports,
+    { env: { RUDDER_API_KEY: "run-secret" } },
+  );
+  const callManagedMcp = module.exports.callManagedMcp;
+  if (typeof callManagedMcp !== "function") {
+    throw new Error("Generated extension does not export callManagedMcp");
+  }
+  return callManagedMcp as ReturnType<typeof loadGeneratedCallManagedMcp>;
 }
 
 describe("Pi managed external MCP bridge", () => {
@@ -219,6 +262,48 @@ describe("Pi managed external MCP bridge", () => {
         timeoutMs: 20,
         env,
       })).rejects.toThrow(/timed out/i);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("bounds the response read in the generated extension call path", async () => {
+    const { server, origin } = await listen((_req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        jsonrpc: "2.0",
+        id: "pi-managed-mcp",
+        result: {
+          content: [{
+            type: "text",
+            text: "x".repeat((2 * 1024 * 1024) + 1),
+          }],
+        },
+      }));
+    });
+    try {
+      const source = renderPiManagedExternalMcpExtension([{
+        ...binding(),
+        toolPolicy: {
+          mode: "allowlist" as const,
+          allowedToolNames: ["external.supabase-memos.list_tables"],
+        },
+        proxyUrl: `${origin}/api/mcp/runtime/bindings/${FIRST_BINDING_ID}`,
+        bearerTokenEnvVar: "RUDDER_API_KEY",
+        tools: [{
+          name: "external.supabase-memos.list_tables",
+          inputSchema: { type: "object" },
+        }],
+      }]);
+      expect(source).toContain("export async function callManagedMcp");
+      const callManagedMcp = loadGeneratedCallManagedMcp(source);
+
+      await expect(callManagedMcp(
+        `${origin}/api/mcp/runtime/bindings/${FIRST_BINDING_ID}`,
+        "external.supabase-memos.list_tables",
+        {},
+        1_000,
+      )).rejects.toThrow(/size limit/i);
     } finally {
       await close(server);
     }

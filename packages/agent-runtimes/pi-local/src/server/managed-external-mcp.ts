@@ -254,6 +254,8 @@ export function renderPiManagedExternalMcpExtension(
   return `import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+const MAX_MCP_RESPONSE_BYTES = 2 * 1024 * 1024;
+
 const RUDDER_MANAGED_MCP_BINDINGS = ${renderJsonForTs(bridgeDescriptors)} as Array<{
   serverName: string;
   proxyUrl: string;
@@ -265,7 +267,57 @@ const RUDDER_MANAGED_MCP_BINDINGS = ${renderJsonForTs(bridgeDescriptors)} as Arr
   }>;
 }>;
 
-async function callManagedMcp(
+async function readBoundedMcpJson(response: Response): Promise<{
+  result?: Record<string, unknown>;
+  error?: { message?: unknown };
+}> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_MCP_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("Managed MCP response exceeded the size limit");
+  }
+  if (!response.body) throw new Error("Managed MCP returned an empty response");
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_MCP_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error("Managed MCP response exceeded the size limit");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new Error("Managed MCP returned invalid JSON");
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Managed MCP returned an invalid response");
+  }
+  return payload as {
+    result?: Record<string, unknown>;
+    error?: { message?: unknown };
+  };
+}
+
+export async function callManagedMcp(
   proxyUrl: string,
   toolName: string,
   args: Record<string, unknown>,
@@ -306,10 +358,7 @@ async function callManagedMcp(
     await response.body?.cancel().catch(() => undefined);
     throw new Error(\`Managed MCP tool call failed with HTTP \${response.status}\`);
   }
-  const payload = await response.json() as {
-    result?: Record<string, unknown>;
-    error?: { message?: unknown };
-  };
+  const payload = await readBoundedMcpJson(response);
   if (payload.error) {
     throw new Error(
       typeof payload.error.message === "string"

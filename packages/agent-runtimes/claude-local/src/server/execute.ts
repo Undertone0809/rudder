@@ -4,7 +4,7 @@ import {
   RUDDER_MCP_SERVER_NAME,
   applyRudderBrowserCapabilityEnv,
   pickRudderMcpManagedEnv,
-  resolveManagedExternalMcpBindings,
+  preflightManagedExternalMcpBindings,
   resolveOrganizationStorageKey,
   rudderBrowserMcpRuntimeMetadata,
   rudderMcpRuntimeMetadata,
@@ -225,17 +225,17 @@ export async function resolveRudderMcpServerConfigs(
   }
   Object.assign(
     configs,
-    resolveManagedExternalClaudeMcpConfigs(runtimeConfig, managedEnv),
+    await resolveManagedExternalClaudeMcpConfigs(runtimeConfig, managedEnv),
   );
   return configs;
 }
 
-export function resolveManagedExternalClaudeMcpConfigs(
+export async function resolveManagedExternalClaudeMcpConfigs(
   runtimeConfig: unknown,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-): Record<string, Record<string, unknown>> {
+): Promise<Record<string, Record<string, unknown>>> {
   return Object.fromEntries(
-    resolveManagedExternalMcpBindings(runtimeConfig, env).map((binding) => [
+    (await preflightManagedExternalMcpBindings(runtimeConfig, env)).map((binding) => [
       binding.serverName,
       {
         type: "http",
@@ -243,6 +243,7 @@ export function resolveManagedExternalClaudeMcpConfigs(
         headers: {
           Authorization: `Bearer \${${binding.bearerTokenEnvVar}}`,
         },
+        timeout: binding.toolTimeoutMs,
       },
     ]),
   );
