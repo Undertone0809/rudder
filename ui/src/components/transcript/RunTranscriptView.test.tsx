@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { normalizeTranscript, resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget, RunTranscriptView } from "./RunTranscriptView";
-import { filterChatAssistantTranscriptEntries, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
+import { filterChatAssistantTranscriptEntries, getTranscriptMcpBrandIcon, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo } from "./RunTranscriptView.semantic";
 import { getTranscriptAgentAvatarImageSrc } from "./TranscriptAgentAvatarIcon";
@@ -1197,7 +1197,7 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("space-y-1.5");
     expect(html).toContain("Tool");
     const rowClass = classValueForText(html, "Tool");
-    const wrapperClass = html.match(/<div class="([^"]*)" title="[^"]*"><button[^>]*>[\s\S]*?Tool/)?.[1] ?? "";
+    const wrapperClass = html.match(/<div class="(py-[^"]*)" title="[^"]*">[\s\S]*?Tool/)?.[1] ?? "";
     expect(wrapperClass.split(" ")).toContain("py-0.5");
     expect(wrapperClass.split(" ")).not.toContain("py-1");
     expect(wrapperClass.split(" ")).not.toContain("py-1.5");
@@ -2457,7 +2457,7 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Web searched &quot;codex transcript web search keywords&quot;");
   });
 
-  it("renders MCP server, tool, and argument details in transcript summaries", () => {
+  it("keeps MCP summaries human-readable and hides server and argument details until expanded", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <RunTranscriptView
@@ -2486,9 +2486,89 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Called fetch_pr via github");
-    expect(html).toContain("repo_full_name openai/codex");
-    expect(html).toContain("pr_number 123");
+    expect(html).toContain("Call fetch PR");
+    expect(html).toContain("/brands/github-logo.svg");
+    expect(html).toContain("dark:invert");
+    expect(html).not.toContain("Called fetch_pr via github");
+    expect(html).not.toContain("repo_full_name");
+    expect(html).not.toContain("openai/codex");
+    expect(html).not.toContain("pr_number");
+    expect(html).not.toContain("MCP · GitHub");
+    expect(html).toContain("aria-labelledby=");
+    expect(html).toContain("Expand tool details:");
+  });
+
+  it("uses exact MCP server aliases before applying a branded icon", () => {
+    expect(getTranscriptMcpBrandIcon("rudder-tools")?.label).toBe("Rudder");
+    expect(getTranscriptMcpBrandIcon("github-mcp")?.label).toBe("GitHub");
+    expect(getTranscriptMcpBrandIcon("not-rudder-official")).toBeNull();
+    expect(getTranscriptMcpBrandIcon("github-enterprise")).toBeNull();
+  });
+
+  it("falls back to the generic MCP icon for unknown and near-match servers", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "mcp__not-rudder-official__rudder_chat_transcript",
+              toolUseId: "mcp-near-match-1",
+              input: { chatId: "chat-1" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "mcp-near-match-1",
+              content: "transcript",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('data-transcript-action-icon="mcp"');
+    expect(html).not.toContain("/rudder-logo.png");
+  });
+
+  it("uses the Rudder logo and concise copy for Rudder MCP calls", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "mcp__rudder-tools__rudder_chat_transcript",
+              toolUseId: "mcp-rudder-1",
+              input: {
+                full: true,
+                chatId: "eeb73ad1-e000-4dce-9d47-23106fa36bbc",
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "mcp-rudder-1",
+              content: "transcript",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Call Rudder chat transcript");
+    expect(html).toContain("/rudder-logo.png");
+    expect(html).not.toContain("rudder-tools");
+    expect(html).not.toContain("eeb73ad1-e000-4dce-9d47-23106fa36bbc");
+    expect(html).not.toContain("full true");
   });
 
   it("renders Codex spawn agent tool payloads as readable transcript summaries", () => {
@@ -2913,7 +2993,7 @@ describe("RunTranscriptView", () => {
             {
               kind: "tool_call",
               ts: "2026-03-12T00:00:16.000Z",
-              name: "mcp__github__fetch_issue",
+              name: "mcp__example__fetch_issue",
               toolUseId: "mcp-1",
               input: { repo_full_name: "rudder/rudder", issue_number: 126 },
             },

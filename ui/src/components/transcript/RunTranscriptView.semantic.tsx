@@ -319,15 +319,29 @@ export function summarizeMcpArgs(args: Record<string, unknown> | null): string |
   return parts.join(", ") || null;
 }
 
-export function formatMcpLabel(details: McpToolDetails): string {
-  return details.server ? `MCP · ${humanizeLabel(details.server)}` : "MCP";
+export function formatMcpLabel(_details: McpToolDetails): string {
+  return "MCP";
+}
+
+const MCP_SUMMARY_TOKEN_LABELS: Record<string, string> = {
+  api: "API",
+  github: "GitHub",
+  id: "ID",
+  pr: "PR",
+  rudder: "Rudder",
+  url: "URL",
+};
+
+function humanizeMcpToolName(value: string): string {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((token) => MCP_SUMMARY_TOKEN_LABELS[token.toLowerCase()] ?? token.toLowerCase())
+    .join(" ");
 }
 
 export function formatMcpSummary(details: McpToolDetails): string {
-  const tool = details.tool ?? "tool";
-  const server = details.server ? ` via ${details.server}` : "";
-  const args = summarizeMcpArgs(details.args);
-  return `Called ${tool}${server}${args ? ` · ${args}` : ""}`;
+  return `Call ${humanizeMcpToolName(details.tool ?? "tool")}`;
 }
 
 export function formatTargetAction(
