@@ -19,13 +19,39 @@ export type SidePanelOpenResult =
   | { admitted: true }
   | { admitted: false; reason: "browser_capacity" };
 
+export type DisplayedSidePanelContextHold = {
+  organizationId: string;
+  contextKey: string;
+};
+
+export type SidePanelDetachResult =
+  | {
+    detached: true;
+    revision: number;
+    target: SidePanelTarget;
+  }
+  | {
+    detached: false;
+    reason: "not_found" | "revision_mismatch";
+    revision: number | null;
+  };
+
 type SidePanelContextValue = {
   activeKey: string | null;
   open: boolean;
   tabs: SidePanelTarget[];
   contextKey: string;
+  displayedContextHold: DisplayedSidePanelContextHold | null;
   clearCurrentContext: () => void;
+  clearDisplayedContextHold: () => void;
+  detachTargetForContext: (
+    contextKey: string | null,
+    exactKey: string,
+    expectedRevision?: number,
+  ) => SidePanelDetachResult;
+  getTargetRevisionForContext: (contextKey: string | null, exactKey: string) => number | null;
   hidePanel: () => void;
+  holdDisplayedContext: (organizationId: string, contextKey?: string | null) => boolean;
   openTarget: (target: SidePanelTarget) => SidePanelOpenResult;
   openTargetInNewTab: (target: SidePanelTarget) => SidePanelOpenResult;
   openTargetForContext: (contextKey: string | null, target: SidePanelTarget) => SidePanelOpenResult;
@@ -36,6 +62,7 @@ type SidePanelContextValue = {
   closeTarget: (key: string) => void;
   registerCloseRequestHandler: (handler: (target: SidePanelTarget) => void | Promise<void>) => () => void;
   replaceTarget: (key: string, target: SidePanelTarget) => void;
+  replaceTargetForContext: (contextKey: string | null, key: string, target: SidePanelTarget) => boolean;
   reorderTarget: (key: string, targetKey: string, position: "before" | "after") => void;
   setActiveKey: (key: string | null) => void;
   setContextKey: (contextKey: string | null) => void;
@@ -192,15 +219,42 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   const contextStatesRef = useRef<Record<string, SidePanelContextState>>({
     [DEFAULT_SIDE_PANEL_CONTEXT_KEY]: emptyContextState(),
   });
+  const targetRevisionsRef = useRef<Record<string, Record<string, number>>>({
+    [DEFAULT_SIDE_PANEL_CONTEXT_KEY]: {},
+  });
   const currentContextKeyRef = useRef(DEFAULT_SIDE_PANEL_CONTEXT_KEY);
   const [contextKey, setCurrentContextKey] = useState(DEFAULT_SIDE_PANEL_CONTEXT_KEY);
   const [currentContextState, setCurrentContextState] = useState<SidePanelContextState>(() => emptyContextState());
+  const [displayedContextHold, setDisplayedContextHold] = useState<DisplayedSidePanelContextHold | null>(null);
   const [open, setOpen] = useState(false);
   const closeRequestHandlerRef = useRef<((target: SidePanelTarget) => void | Promise<void>) | null>(null);
 
   const writeContextState = useCallback((key: string, updater: (state: SidePanelContextState) => SidePanelContextState) => {
     const current = contextStatesRef.current[key] ?? emptyContextState();
     const next = updater(current);
+    if (next !== current) {
+      const currentTargets = new Map(
+        current.tabs.map((target) => [sidePanelTargetKey(target), target] as const),
+      );
+      const currentRevisions = targetRevisionsRef.current[key] ?? {};
+      const nextRevisions = { ...currentRevisions };
+      for (const target of next.tabs) {
+        const targetKey = sidePanelTargetKey(target);
+        const previousTarget = currentTargets.get(targetKey);
+        const previousRevision = currentRevisions[targetKey] ?? 0;
+        nextRevisions[targetKey] = previousTarget
+          ? previousTarget !== target
+            ? previousRevision + 1
+            : previousRevision
+          : Object.hasOwn(currentRevisions, targetKey)
+            ? previousRevision + 1
+            : 0;
+      }
+      targetRevisionsRef.current = {
+        ...targetRevisionsRef.current,
+        [key]: nextRevisions,
+      };
+    }
     contextStatesRef.current = {
       ...contextStatesRef.current,
       [key]: next,
@@ -308,6 +362,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   }, [contextKey, writeContextState]);
 
   const hidePanel = useCallback(() => {
+    setDisplayedContextHold(null);
     writeContextState(contextKey, (current) => (
       contextHasPanelState(current)
         ? { ...current, open: false }
@@ -317,11 +372,80 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   }, [contextKey, writeContextState]);
 
   const clearCurrentContext = useCallback(() => {
+    setDisplayedContextHold(null);
     writeContextState(contextKey, () => emptyContextState());
     setOpen(false);
   }, [contextKey, writeContextState]);
 
   const closePanel = hidePanel;
+
+  const clearDisplayedContextHold = useCallback(() => {
+    setDisplayedContextHold(null);
+  }, []);
+
+  const holdDisplayedContext = useCallback((
+    organizationId: string,
+    nextContextKey: string | null = currentContextKeyRef.current,
+  ) => {
+    const normalizedOrganizationId = organizationId.trim();
+    const normalizedContextKey = normalizeContextKey(nextContextKey);
+    if (
+      !normalizedOrganizationId
+      || (!normalizedContextKey.startsWith("chat:") && !normalizedContextKey.startsWith("issue:"))
+    ) {
+      return false;
+    }
+    setDisplayedContextHold({
+      organizationId: normalizedOrganizationId,
+      contextKey: normalizedContextKey,
+    });
+    return true;
+  }, []);
+
+  const getTargetRevisionForContext = useCallback((
+    nextContextKey: string | null,
+    exactKey: string,
+  ) => {
+    const normalizedKey = normalizeContextKey(nextContextKey);
+    const targetExists = (contextStatesRef.current[normalizedKey]?.tabs ?? [])
+      .some((target) => sidePanelTargetKey(target) === exactKey);
+    if (!targetExists) return null;
+    return targetRevisionsRef.current[normalizedKey]?.[exactKey] ?? 0;
+  }, []);
+
+  const detachTargetForContext = useCallback((
+    nextContextKey: string | null,
+    exactKey: string,
+    expectedRevision?: number,
+  ): SidePanelDetachResult => {
+    const normalizedKey = normalizeContextKey(nextContextKey);
+    const current = contextStatesRef.current[normalizedKey] ?? emptyContextState();
+    const detachingIndex = current.tabs.findIndex((candidate) => sidePanelTargetKey(candidate) === exactKey);
+    if (detachingIndex < 0) {
+      return { detached: false, reason: "not_found", revision: null };
+    }
+    const revision = targetRevisionsRef.current[normalizedKey]?.[exactKey] ?? 0;
+    if (expectedRevision !== undefined && expectedRevision !== revision) {
+      return { detached: false, reason: "revision_mismatch", revision };
+    }
+    const target = current.tabs[detachingIndex]!;
+    const nextState = writeContextState(normalizedKey, (contextState) => {
+      const nextTabs = contextState.tabs.filter((candidate) => sidePanelTargetKey(candidate) !== exactKey);
+      if (nextTabs.length === 0) {
+        return { activeKey: null, hasPanelState: true, open: false, tabs: [] };
+      }
+      if (contextState.activeKey !== exactKey) return { ...contextState, tabs: nextTabs };
+      const fallbackTarget = nextTabs[Math.min(detachingIndex, nextTabs.length - 1)] ?? null;
+      return {
+        activeKey: fallbackTarget ? sidePanelTargetKey(fallbackTarget) : null,
+        hasPanelState: true,
+        open: true,
+        tabs: nextTabs,
+      };
+    });
+    if (normalizedKey === currentContextKeyRef.current) setOpen(nextState.open);
+    return { detached: true, revision, target };
+  }, [writeContextState]);
 
   const closeTarget = useCallback((key: string) => {
     writeContextState(contextKey, (current) => {
@@ -412,15 +536,26 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [currentContextState.activeKey, open, requestCloseTarget]);
 
-  const replaceTarget = useCallback((key: string, target: SidePanelTarget) => {
+  const replaceTargetForContext = useCallback((
+    nextContextKey: string | null,
+    key: string,
+    target: SidePanelTarget,
+  ) => {
+    const normalizedKey = normalizeContextKey(nextContextKey);
+    const current = contextStatesRef.current[normalizedKey] ?? emptyContextState();
+    if (!current.tabs.some((candidate) => sidePanelTargetKey(candidate) === key)) return false;
     const nextKey = sidePanelTargetKey(target);
-    writeContextState(contextKey, (current) => ({
-      activeKey: current.activeKey === key ? nextKey : current.activeKey,
-      hasPanelState: true,
-      open: true,
-      tabs: current.tabs.map((candidate) => (sidePanelTargetKey(candidate) === key ? target : candidate)),
+    writeContextState(normalizedKey, (contextState) => ({
+      ...contextState,
+      activeKey: contextState.activeKey === key ? nextKey : contextState.activeKey,
+      tabs: contextState.tabs.map((candidate) => (sidePanelTargetKey(candidate) === key ? target : candidate)),
     }));
-  }, [contextKey, writeContextState]);
+    return true;
+  }, [writeContextState]);
+
+  const replaceTarget = useCallback((key: string, target: SidePanelTarget) => {
+    replaceTargetForContext(contextKey, key, target);
+  }, [contextKey, replaceTargetForContext]);
 
   const reorderTarget = useCallback((key: string, targetKey: string, position: "before" | "after") => {
     if (key === targetKey) return;
@@ -445,10 +580,15 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   const value = useMemo<SidePanelContextValue>(() => ({
     activeKey: currentContextState.activeKey,
     clearCurrentContext,
+    clearDisplayedContextHold,
     closePanel,
     closeTarget,
     contextKey,
+    detachTargetForContext,
+    displayedContextHold,
+    getTargetRevisionForContext,
     hidePanel,
+    holdDisplayedContext,
     open,
     openEmpty,
     openTarget,
@@ -456,13 +596,14 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     openTargetForContext,
     registerCloseRequestHandler,
     replaceTarget,
+    replaceTargetForContext,
     reorderTarget,
     setActiveKey,
     setContextKey,
     showPanel,
     showPanelForContext,
     tabs: currentContextState.tabs,
-  }), [clearCurrentContext, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, hidePanel, open, openEmpty, openTarget, openTargetForContext, openTargetInNewTab, registerCloseRequestHandler, reorderTarget, replaceTarget, setActiveKey, setContextKey, showPanel, showPanelForContext]);
+  }), [clearCurrentContext, clearDisplayedContextHold, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, detachTargetForContext, displayedContextHold, getTargetRevisionForContext, hidePanel, holdDisplayedContext, open, openEmpty, openTarget, openTargetForContext, openTargetInNewTab, registerCloseRequestHandler, reorderTarget, replaceTarget, replaceTargetForContext, setActiveKey, setContextKey, showPanel, showPanelForContext]);
 
   return <SidePanelContext.Provider value={value}>{children}</SidePanelContext.Provider>;
 }

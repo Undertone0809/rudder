@@ -18,6 +18,7 @@ export { messengerThreadKindLabel } from "@/lib/messenger-thread-labels";
 
 export type MessengerRouteState =
   | { kind: "root" }
+  | { kind: "workbench" }
   | { kind: "chat"; conversationId?: string }
   | { kind: "issues" }
   | { kind: "issue"; issueId: string }
@@ -43,6 +44,7 @@ const MESSENGER_THREAD_PAGE_SIZE = 40;
 
 export function resolveMessengerRoute(pathname: string): MessengerRouteState {
   if (!/^\/messenger(?:\/|$)/.test(pathname)) return { kind: "root" };
+  if (/^\/messenger\/workbench(?:\/|$)/.test(pathname)) return { kind: "workbench" };
   if (/^\/messenger\/chat\/[^/]+(?:\/|$)/.test(pathname)) {
     const match = pathname.match(/^\/messenger\/chat\/([^/]+)(?:\/|$)/);
     return { kind: "chat", conversationId: match?.[1] };
