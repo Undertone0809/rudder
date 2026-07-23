@@ -1422,7 +1422,7 @@ export function assistantStateLabel(state: ChatStreamDraftState | ChatMessage["s
 
 const STEER_FALLBACK_TERMINAL_REASONS = new Set([
   "steer_fallback",
-  "steer_fallback_runtime_owner_missing",
+  "steer_fallback_unverified",
 ]);
 const STOPPED_REPLY_PLACEHOLDER = "Chat run stopped before a final reply. Continue the conversation to resume from the preserved context.";
 

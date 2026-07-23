@@ -74,6 +74,9 @@ if (process.env.RUDDER_TEST_APP_SERVER_TRAILING_STDERR) {
   process.stderr.write("trailing real stderr");
   process.stderr.write("\\n in-process app-server event stream lagged; dropped 7 events");
 }
+if (process.env.RUDDER_TEST_APP_SERVER_MIXED_STDERR) {
+  process.stderr.write("auth failed: in-process app-server event stream lagged; dropped 9 events\\n");
+}
 
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
@@ -426,6 +429,33 @@ describe("executeCodexAppServerChat", () => {
 
     expect(stderrLines.join("")).toContain("trailing real stderr");
     expect(stderrLines.join("")).not.toContain("app-server event stream lagged");
+  });
+
+  it("keeps mixed stderr lines that merely contain the lag diagnostic", async () => {
+    const stderrLines: string[] = [];
+    await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_APP_SERVER_MIXED_STDERR: "1",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+      } as Record<string, string>,
+      prompt: "Initial request",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stderr") stderrLines.push(chunk);
+      }),
+    });
+
+    expect(stderrLines.join("")).toContain("auth failed: in-process app-server event stream lagged; dropped 9 events");
   });
 
   it("attaches the trusted runtime cwd to command transcript entries", async () => {

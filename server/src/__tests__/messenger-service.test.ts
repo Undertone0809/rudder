@@ -5134,6 +5134,14 @@ describe("messengerService and issue follows", () => {
       terminalReason: "steer_fallback",
       acceptedThroughSeq: 1,
     });
+    await chatSvc.generationProtocol.recordRuntimeTerminal({
+      orgId,
+      conversationId,
+      generationId,
+      expectedAttemptEpoch: 1,
+      finalStatus: "interrupted_unverified",
+      terminalReason: "runtime_interrupted",
+    });
     await db.insert(chatGenerations).values({
       id: operatorStopGenerationId,
       orgId,
@@ -5242,7 +5250,7 @@ describe("messengerService and issue follows", () => {
       | undefined;
 
     expect(hydratedAssistant?.generationId).toBe(generationId);
-    expect(hydratedAssistant?.generationTerminalReason).toBe("steer_fallback");
+    expect(hydratedAssistant?.generationTerminalReason).toBe("steer_fallback_unverified");
     expect(messages.find((message) => message.id === operatorStoppedMessage.id))
       .toMatchObject({ generationTerminalReason: "operator_stop", status: "stopped" });
     expect(hydratedAssistant?.transcript).toEqual([

@@ -266,7 +266,9 @@ process.stdin.on("end", () => {
   process.stderr.write("real stderr before\\n");
   process.stderr.write("  in-process app-server event stream lag");
   process.stderr.write("ged; dropped 42 events\\n");
+  process.stderr.write("x".repeat(70 * 1024));
   process.stderr.write("real stderr after");
+  process.stderr.write("\\nauth failed: in-process app-server event stream lagged; dropped 9 events\\n");
   console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
   console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
   console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
@@ -3300,10 +3302,12 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.errorMessage).toBeNull();
       expect(result.resultJson?.stderr).toContain("real stderr before");
       expect(result.resultJson?.stderr).toContain("real stderr after");
-      expect(result.resultJson?.stderr).not.toContain("app-server event stream lagged");
+      expect(result.resultJson?.stderr).not.toMatch(/^\s*in-process app-server event stream lagged; dropped \d+ events\s*$/m);
+      expect(result.resultJson?.stderr).toContain("auth failed: in-process app-server event stream lagged; dropped 9 events");
       expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("real stderr before"))).toBe(true);
       expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("real stderr after"))).toBe(true);
-      expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("app-server event stream lagged"))).toBe(false);
+      expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("auth failed: in-process"))).toBe(true);
+      expect(logs.filter((entry) => entry.stream === "stderr").every((entry) => entry.chunk.length <= 64 * 1024)).toBe(true);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
