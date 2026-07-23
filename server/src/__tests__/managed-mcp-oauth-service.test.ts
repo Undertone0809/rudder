@@ -56,6 +56,29 @@ async function getAvailablePort(): Promise<number> {
   });
 }
 
+async function startRevocationRecorder() {
+  const port = await getAvailablePort();
+  const receivedTokens: string[] = [];
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      receivedTokens.push(
+        new URLSearchParams(Buffer.concat(chunks).toString("utf8")).get("token") ?? "",
+      );
+      res.writeHead(200).end();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+  return {
+    origin: `http://127.0.0.1:${port}`,
+    receivedTokens,
+    close: () => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    }),
+  };
+}
+
 async function startIdentityMcpServer(input: {
   toolName: string;
   result: Record<string, unknown>;
@@ -626,6 +649,101 @@ describe("managedMcpOAuthService", () => {
     expect(JSON.stringify(await db.select().from(activityLog))).not.toContain(attackerIssuer);
   });
 
+  it.each([
+    {
+      name: "scope discovery fails",
+      provider: "linear" as const,
+      accessMode: "read_write" as const,
+      discoverProviderScope: async () => {
+        throw new Error("upstream workspace identity failed");
+      },
+    },
+    {
+      name: "scope validation rejects an empty Supabase project list",
+      provider: "supabase" as const,
+      accessMode: "read_only" as const,
+      discoverProviderScope: async () => ({ options: [] }),
+    },
+  ])("best-effort revokes a token when post-exchange $name", async (fixture) => {
+    const port = await getAvailablePort();
+    const receivedTokens: string[] = [];
+    const revocationServer = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        receivedTokens.push(
+          new URLSearchParams(Buffer.concat(chunks).toString("utf8")).get("token") ?? "",
+        );
+        res.writeHead(200).end();
+      });
+    });
+    await new Promise<void>((resolve) => revocationServer.listen(port, "127.0.0.1", resolve));
+    try {
+      const { orgId, userId } = await seedOwner(db);
+      const connection = await seedConnection(
+        db,
+        orgId,
+        fixture.provider,
+        fixture.accessMode,
+      );
+      const upstreamOrigin = `http://callback-failure.test:${port}`;
+      const oauthAuth = vi.fn(async (
+        provider: OAuthClientProvider,
+        authOptions: AuthOptions,
+      ): Promise<AuthResult> => {
+        if (authOptions.authorizationCode) {
+          await provider.saveTokens({
+            access_token: "orphaned-callback-access",
+            refresh_token: "orphaned-callback-refresh",
+            token_type: "Bearer",
+          });
+          return "AUTHORIZED";
+        }
+        await provider.saveCodeVerifier("verifier");
+        await provider.saveDiscoveryState?.({
+          authorizationServerUrl: "https://oauth.example.test",
+          authorizationServerMetadata: {
+            issuer: "https://oauth.example.test",
+            authorization_endpoint: "https://oauth.example.test/authorize",
+            token_endpoint: "https://oauth.example.test/token",
+            revocation_endpoint: `${upstreamOrigin}/revoke`,
+          },
+        });
+        await provider.redirectToAuthorization(new URL(
+          `https://oauth.example.test/authorize?state=${await provider.state?.()}`,
+        ));
+        return "REDIRECT";
+      });
+      const svc = managedMcpOAuthService(db, serviceOptions({
+        oauthAuth,
+        discoverProviderScope: fixture.discoverProviderScope,
+        allowlists: {
+          httpOrigins: [upstreamOrigin],
+          stdioCommands: [],
+          stdioWorkingDirectories: [],
+          stdioEnvironmentNames: [],
+        },
+        dnsLookup: async (hostname) => hostname === "callback-failure.test"
+          ? [{ address: "127.0.0.1", family: 4 }]
+          : [{ address: "8.8.8.8", family: 4 }],
+      }));
+      const started = await svc.start(orgId, connection.id, { userId });
+
+      await expect(svc.callback({
+        state: new URL(started.authorizationUrl).searchParams.get("state")!,
+        code: "provider-code",
+      })).rejects.toMatchObject({ status: 422 });
+
+      expect(receivedTokens).toEqual(["orphaned-callback-refresh"]);
+      expect(await db.select().from(mcpOAuthGrants)
+        .where(eq(mcpOAuthGrants.connectionId, connection.id))).toHaveLength(0);
+    } finally {
+      await new Promise<void>((resolve, reject) => revocationServer.close((error) => (
+        error ? reject(error) : resolve()
+      )));
+    }
+  });
+
   it("expires a prior unconsumed session and deletes its secret when starting again", async () => {
     const { orgId, userId } = await seedOwner(db);
     const connection = await seedConnection(db, orgId, "linear", "read_write");
@@ -671,6 +789,93 @@ describe("managedMcpOAuthService", () => {
       state: new URL(started.authorizationUrl).searchParams.get("state")!,
       code: "late-code",
     })).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("does not let an in-flight OAuth start revive a disconnected connection", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "linear", "read_write");
+    let startEntered!: () => void;
+    let releaseStart!: () => void;
+    const startStarted = new Promise<void>((resolve) => {
+      startEntered = resolve;
+    });
+    const startBarrier = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const baseAuth = oauthAuthStub()!;
+    const oauthAuth = vi.fn(async (
+      provider: OAuthClientProvider,
+      authOptions: AuthOptions,
+    ): Promise<AuthResult> => {
+      if (!authOptions.authorizationCode) {
+        startEntered();
+        await startBarrier;
+      }
+      return baseAuth(provider, authOptions);
+    });
+    const svc = managedMcpOAuthService(db, serviceOptions({ oauthAuth }));
+
+    const starting = svc.start(orgId, connection.id, { userId });
+    await startStarted;
+    await svc.revoke(orgId, connection.id, { userId });
+    releaseStart();
+
+    await expect(starting).rejects.toMatchObject({ status: 422 });
+    const [persisted] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    expect(persisted).toMatchObject({ status: "revoked", enabled: false });
+    expect(await db.select().from(mcpOAuthSessions)
+      .where(eq(mcpOAuthSessions.connectionId, connection.id))).toHaveLength(0);
+    expect(await db.select().from(organizationSecrets)
+      .where(eq(organizationSecrets.orgId, orgId))).toHaveLength(0);
+  });
+
+  it("does not let an older in-flight OAuth start replace a reconnect session", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "linear", "read_write");
+    let firstStartEntered!: () => void;
+    let releaseFirstStart!: () => void;
+    const firstStartStarted = new Promise<void>((resolve) => {
+      firstStartEntered = resolve;
+    });
+    const firstStartBarrier = new Promise<void>((resolve) => {
+      releaseFirstStart = resolve;
+    });
+    const baseAuth = oauthAuthStub()!;
+    let startCalls = 0;
+    const oauthAuth = vi.fn(async (
+      provider: OAuthClientProvider,
+      authOptions: AuthOptions,
+    ): Promise<AuthResult> => {
+      if (!authOptions.authorizationCode) {
+        startCalls += 1;
+        if (startCalls === 1) {
+          firstStartEntered();
+          await firstStartBarrier;
+        }
+      }
+      return baseAuth(provider, authOptions);
+    });
+    const svc = managedMcpOAuthService(db, serviceOptions({ oauthAuth }));
+
+    const staleStart = svc.start(orgId, connection.id, { userId });
+    await firstStartStarted;
+    await svc.revoke(orgId, connection.id, { userId }, "connection_reconnect");
+    const currentStart = await svc.start(orgId, connection.id, { userId });
+    const currentState = new URL(currentStart.authorizationUrl).searchParams.get("state")!;
+    releaseFirstStart();
+
+    await expect(staleStart).rejects.toMatchObject({ status: 422 });
+    const sessions = await db.select().from(mcpOAuthSessions)
+      .where(eq(mcpOAuthSessions.connectionId, connection.id));
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      stateHash: createHash("sha256").update(currentState).digest("hex"),
+      status: "authorizing",
+      credentialSecretId: expect.any(String),
+    });
+    expect(await db.select().from(organizationSecrets)
+      .where(eq(organizationSecrets.orgId, orgId))).toHaveLength(1);
   });
 
   it("serializes callback and restart without deadlock or orphaning the consumed session secret", async () => {
@@ -1348,69 +1553,103 @@ describe("managedMcpOAuthService", () => {
   });
 
   it("lets another service take an expired lease and rejects the stale holder by nonce and version CAS", async () => {
-    const { orgId, userId } = await seedOwner(db);
-    const connection = await seedConnection(db, orgId, "linear", "read_write");
-    let firstEntered!: () => void;
-    let releaseFirst!: () => void;
-    const firstStarted = new Promise<void>((resolve) => {
-      firstEntered = resolve;
-    });
-    const firstBarrier = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    let refreshCalls = 0;
-    const baseAuth = oauthAuthStub()!;
-    const oauthAuth = vi.fn(async (
-      provider: OAuthClientProvider,
-      authOptions: AuthOptions,
-    ): Promise<AuthResult> => {
-      if (!authOptions.authorizationCode && await provider.tokens()) {
-        refreshCalls += 1;
-        if (refreshCalls === 1) {
-          firstEntered();
-          await firstBarrier;
-          await provider.saveTokens({
-            access_token: "stale-holder-access",
-            refresh_token: "stale-holder-refresh",
-            token_type: "Bearer",
-          });
-        } else {
-          await provider.saveTokens({
-            access_token: "takeover-access",
-            refresh_token: "takeover-refresh",
-            token_type: "Bearer",
-          });
+    const revocation = await startRevocationRecorder();
+    try {
+      const { orgId, userId } = await seedOwner(db);
+      const connection = await seedConnection(db, orgId, "linear", "read_write");
+      let firstEntered!: () => void;
+      let releaseFirst!: () => void;
+      const firstStarted = new Promise<void>((resolve) => {
+        firstEntered = resolve;
+      });
+      const firstBarrier = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      let refreshCalls = 0;
+      const baseAuth = oauthAuthStub()!;
+      const oauthAuth = vi.fn(async (
+        provider: OAuthClientProvider,
+        authOptions: AuthOptions,
+      ): Promise<AuthResult> => {
+        if (!authOptions.authorizationCode && await provider.tokens()) {
+          refreshCalls += 1;
+          if (refreshCalls === 1) {
+            firstEntered();
+            await firstBarrier;
+            await provider.saveTokens({
+              access_token: "stale-holder-access",
+              refresh_token: "stale-holder-refresh",
+              token_type: "Bearer",
+            });
+          } else {
+            await provider.saveTokens({
+              access_token: "takeover-access",
+              refresh_token: "takeover-refresh",
+              token_type: "Bearer",
+            });
+          }
+          return "AUTHORIZED";
         }
-        return "AUTHORIZED";
-      }
-      return baseAuth(provider, authOptions);
-    });
-    const firstService = managedMcpOAuthService(db, serviceOptions({ oauthAuth }));
-    const secondService = managedMcpOAuthService(db, serviceOptions({ oauthAuth }));
-    const started = await firstService.start(orgId, connection.id, { userId });
-    await firstService.callback({
-      state: new URL(started.authorizationUrl).searchParams.get("state")!,
-      code: "provider-code",
-    });
+        if (!authOptions.authorizationCode) {
+          await provider.saveCodeVerifier("verifier");
+          await provider.saveDiscoveryState?.({
+            authorizationServerUrl: "https://oauth.example.test",
+            authorizationServerMetadata: {
+              issuer: "https://oauth.example.test",
+              authorization_endpoint: "https://oauth.example.test/authorize",
+              token_endpoint: "https://oauth.example.test/token",
+              revocation_endpoint: `${revocation.origin}/revoke`,
+            },
+          });
+          await provider.redirectToAuthorization(new URL(
+            `https://oauth.example.test/authorize?state=${await provider.state?.()}`,
+          ));
+          return "REDIRECT";
+        }
+        return baseAuth(provider, authOptions);
+      });
+      const options = serviceOptions({
+        oauthAuth,
+        allowlists: {
+          httpOrigins: [revocation.origin],
+          stdioCommands: [],
+          stdioWorkingDirectories: [],
+          stdioEnvironmentNames: [],
+        },
+        dnsLookup: async (hostname) => hostname === "127.0.0.1"
+          ? [{ address: "127.0.0.1", family: 4 }]
+          : [{ address: "8.8.8.8", family: 4 }],
+      });
+      const firstService = managedMcpOAuthService(db, options);
+      const secondService = managedMcpOAuthService(db, options);
+      const started = await firstService.start(orgId, connection.id, { userId });
+      await firstService.callback({
+        state: new URL(started.authorizationUrl).searchParams.get("state")!,
+        code: "provider-code",
+      });
 
-    const staleRefresh = firstService.createCredential(orgId, connection.id).refresh();
-    await firstStarted;
-    await db.update(mcpOAuthGrants).set({
-      refreshLeaseExpiresAt: new Date(Date.now() - 1),
-    }).where(eq(mcpOAuthGrants.connectionId, connection.id));
-    await secondService.createCredential(orgId, connection.id).refresh();
-    releaseFirst();
-    await expect(staleRefresh).rejects.toMatchObject({ status: 422 });
+      const staleRefresh = firstService.createCredential(orgId, connection.id).refresh();
+      await firstStarted;
+      await db.update(mcpOAuthGrants).set({
+        refreshLeaseExpiresAt: new Date(Date.now() - 1),
+      }).where(eq(mcpOAuthGrants.connectionId, connection.id));
+      await secondService.createCredential(orgId, connection.id).refresh();
+      releaseFirst();
+      await expect(staleRefresh).rejects.toMatchObject({ status: 422 });
 
-    await expect(firstService.createCredential(orgId, connection.id).token())
-      .resolves.toBe("takeover-access");
-    expect(refreshCalls).toBe(2);
-    const [grant] = await db.select().from(mcpOAuthGrants)
-      .where(eq(mcpOAuthGrants.connectionId, connection.id));
-    const stored = await secretService(db)
-      .resolveSecretValue(orgId, grant!.credentialSecretId!, "latest");
-    expect(stored).toContain("takeover-refresh");
-    expect(stored).not.toContain("stale-holder-refresh");
+      await expect(firstService.createCredential(orgId, connection.id).token())
+        .resolves.toBe("takeover-access");
+      expect(refreshCalls).toBe(2);
+      expect(revocation.receivedTokens).toEqual([]);
+      const [grant] = await db.select().from(mcpOAuthGrants)
+        .where(eq(mcpOAuthGrants.connectionId, connection.id));
+      const stored = await secretService(db)
+        .resolveSecretValue(orgId, grant!.credentialSecretId!, "latest");
+      expect(stored).toContain("takeover-refresh");
+      expect(stored).not.toContain("stale-holder-refresh");
+    } finally {
+      await revocation.close();
+    }
   });
 
   it("commits needs_reauth and deletes credentials on invalid_grant", async () => {
@@ -1755,7 +1994,10 @@ describe("managedMcpOAuthService", () => {
       releaseRefresh();
       expect(await refreshOutcome).toMatchObject({ status: 422 });
 
-      expect(receivedTokens).toEqual(["refresh-before-rotation"]);
+      expect(receivedTokens).toEqual([
+        "refresh-before-rotation",
+        "refresh-after-rotation",
+      ]);
       const [grant] = await db.select().from(mcpOAuthGrants)
         .where(eq(mcpOAuthGrants.connectionId, connection.id));
       const [updated] = await db.select().from(mcpConnections)

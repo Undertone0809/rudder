@@ -84,6 +84,7 @@ export function accessService(db: Db) {
         status: "needs_reauth",
         enabled: false,
         disabledAt: now,
+        lifecycleRevision: connection.lifecycleRevision + 1,
         updatedAt: now,
       }).where(and(
         eq(mcpConnections.orgId, grant.orgId),

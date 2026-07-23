@@ -839,6 +839,7 @@ export function managedMcpOAuthService(
         if (connection.status === "authorizing" && !stillAuthorizing) {
           await tx.update(mcpConnections).set({
             status: "error",
+            lifecycleRevision: connection.lifecycleRevision + 1,
             updatedAt: transactionNow,
           }).where(eq(mcpConnections.id, connection.id));
         }
@@ -918,6 +919,9 @@ export function managedMcpOAuthService(
         .then((rows) => rows[0] ?? null);
       if (!locked) throw notFound("MCP connection not found");
       assertCurated(locked);
+      if (locked.lifecycleRevision !== connection.lifecycleRevision) {
+        throw unprocessable("Managed MCP OAuth connection changed; start authorization again");
+      }
       const priorGrant = await tx.select().from(mcpOAuthGrants)
         .where(and(
           eq(mcpOAuthGrants.orgId, orgId),
@@ -986,6 +990,7 @@ export function managedMcpOAuthService(
         enabled: true,
         disabledAt: null,
         revokedAt: null,
+        lifecycleRevision: locked.lifecycleRevision + 1,
         updatedAt: now,
       }).where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)));
       await tx.insert(activityLog).values(oauthActivityValues({
@@ -1048,6 +1053,7 @@ export function managedMcpOAuthService(
         if (connection.status === "authorizing") {
           await tx.update(mcpConnections).set({
             status: "error",
+            lifecycleRevision: connection.lifecycleRevision + 1,
             updatedAt: now,
           }).where(eq(mcpConnections.id, connection.id));
         }
@@ -1083,7 +1089,7 @@ export function managedMcpOAuthService(
         session: consumedRow,
         sessionMaterial: resolvedSessionSecret.material,
         connection,
-        connectionUpdatedAt: connection.updatedAt.getTime(),
+        connectionLifecycleRevision: connection.lifecycleRevision,
       };
     });
     if (!consumed) {
@@ -1107,7 +1113,7 @@ export function managedMcpOAuthService(
         if (
           !locked
           || locked.status !== "authorizing"
-          || locked.updatedAt.getTime() !== callbackContext.connectionUpdatedAt
+          || locked.lifecycleRevision !== callbackContext.connectionLifecycleRevision
         ) {
           return;
         }
@@ -1117,6 +1123,7 @@ export function managedMcpOAuthService(
           ...(inputFailure.status === "needs_reauth"
             ? { enabled: false, disabledAt: now }
             : {}),
+          lifecycleRevision: locked.lifecycleRevision + 1,
           updatedAt: now,
         }).where(eq(mcpConnections.id, locked.id));
         await tx.insert(activityLog).values(oauthActivityValues({
@@ -1161,6 +1168,20 @@ export function managedMcpOAuthService(
       });
       throw unprocessable("Managed MCP OAuth authorization could not be completed");
     }
+    async function finishUnpersistedGrantFailure(inputFailure: {
+      status: "error" | "needs_reauth";
+      action: string;
+      reason: string;
+    }): Promise<void> {
+      try {
+        await finishFailure(inputFailure);
+      } finally {
+        await bestEffortRevokeMaterial(
+          grantMaterial,
+          Math.min(callbackContext.connection.toolTimeoutMs, 10_000),
+        );
+      }
+    }
     let scope: ManagedMcpProviderScopeResult;
     try {
       const provider = new PersistentMcpOAuthClientProvider({
@@ -1198,7 +1219,7 @@ export function managedMcpOAuthService(
         endpoint: onboardingEndpoint,
       });
     } catch (error) {
-      await finishFailure({
+      await finishUnpersistedGrantFailure({
         status: isInvalidGrantOAuthError(error) ? "needs_reauth" : "error",
         action: "mcp_oauth.authorization_failed",
         reason: isInvalidGrantOAuthError(error)
@@ -1212,7 +1233,7 @@ export function managedMcpOAuthService(
     const safeOptions = sanitizeScopeOptions(scope.options);
     const selected = scope.selected ? safeScopeOption(scope.selected) : undefined;
     if (consumed.connection.provider === "supabase" && safeOptions.length === 0) {
-      await finishFailure({
+      await finishUnpersistedGrantFailure({
         status: "error",
         action: "mcp_oauth.authorization_failed",
         reason: "no_selectable_projects",
@@ -1220,7 +1241,7 @@ export function managedMcpOAuthService(
       throw unprocessable("Supabase OAuth did not return any selectable projects");
     }
     if (consumed.connection.provider !== "supabase" && !selected) {
-      await finishFailure({
+      await finishUnpersistedGrantFailure({
         status: "error",
         action: "mcp_oauth.authorization_failed",
         reason: "workspace_identity_unavailable",
@@ -1228,145 +1249,159 @@ export function managedMcpOAuthService(
       throw unprocessable("Managed MCP OAuth did not identify a provider workspace");
     }
 
-    const grantSecret = await prepareOAuthSecret(
-      consumed.connection.name,
-      "grant",
-      grantMaterial,
-    );
-    const outcome = await db.transaction(async (tx) => {
-      const now = new Date();
-      await lockManagedMcpOAuthAuthorizer(
-        tx,
-        consumed.session.authorizingUserId,
-      );
-      const connection = await tx.select().from(mcpConnections)
-        .where(and(
-          eq(mcpConnections.orgId, consumed.session.orgId),
-          eq(mcpConnections.id, consumed.connection.id),
-        ))
-        .for("update")
-        .then((rows) => rows[0] ?? null);
-      if (
-        !connection
-        || connection.status !== "authorizing"
-        || connection.updatedAt.getTime() !== consumed.connectionUpdatedAt
-      ) {
-        return null;
-      }
-      const stillAuthorized = options.deploymentMode === "local_trusted"
-        && !consumed.session.authorizingUserId
-        ? true
-        : Boolean(
-            await tx.select({ id: organizationMemberships.id })
-              .from(organizationMemberships)
-              .where(and(
-                eq(organizationMemberships.orgId, consumed.session.orgId),
-                eq(organizationMemberships.principalType, "user"),
-                eq(organizationMemberships.principalId, consumed.session.authorizingUserId ?? ""),
-                eq(organizationMemberships.status, "active"),
-                eq(organizationMemberships.membershipRole, "owner"),
-              ))
-              .for("share")
-              .then((rows) => rows[0] ?? null)
-            ?? await tx.select({ id: instanceUserRoles.id })
-              .from(instanceUserRoles)
-              .where(and(
-                eq(instanceUserRoles.userId, consumed.session.authorizingUserId ?? ""),
-                eq(instanceUserRoles.role, "instance_admin"),
-              ))
-              .for("share")
-              .then((rows) => rows[0] ?? null),
+    const outcome = await (async () => {
+      try {
+        const grantSecret = await prepareOAuthSecret(
+          consumed.connection.name,
+          "grant",
+          grantMaterial,
+        );
+        return await db.transaction(async (tx) => {
+          const now = new Date();
+          await lockManagedMcpOAuthAuthorizer(
+            tx,
+            consumed.session.authorizingUserId,
           );
-      if (!stillAuthorized) {
-        await tx.update(mcpConnections).set({
-          status: "needs_reauth",
-          enabled: false,
-          disabledAt: now,
-          updatedAt: now,
-        }).where(eq(mcpConnections.id, connection.id));
-        await tx.insert(activityLog).values(oauthActivityValues({
-          orgId: consumed.session.orgId,
-          connectionId: connection.id,
-          action: "mcp_oauth.authorization_rejected",
-          actorUserId: consumed.session.authorizingUserId,
-          details: { reason: "authorizer_no_longer_authorized" },
-        }));
-        return { kind: "reauth" as const };
-      }
-      await insertOAuthSecret(tx, {
-        orgId: consumed.session.orgId,
-        secret: grantSecret,
-        actorUserId: consumed.session.authorizingUserId,
-      });
-      const existingGrant = await tx.select().from(mcpOAuthGrants)
-        .where(and(
-          eq(mcpOAuthGrants.orgId, consumed.session.orgId),
-          eq(mcpOAuthGrants.connectionId, connection.id),
-        ))
-        .for("update")
-        .then((rows) => rows[0] ?? null);
-      const grantValues = {
-        authorizingUserId: consumed.session.authorizingUserId,
-        providerSubject: scope.providerSubject ?? selected?.id ?? null,
-        providerScopes: tokenScopes(grantMaterial.tokens),
-        externalScopeMetadata: selected?.metadata ?? {},
-        credentialSecretId: grantSecret.id,
-        status: "active",
-        statusMetadata: connection.provider === "supabase"
-          ? { scopeOptions: safeOptions }
-          : {},
-        expiresAt: tokenExpiry(grantMaterial.tokens, now),
-        lastRefreshedAt: now,
-        refreshLeaseNonce: null,
-        refreshLeaseExpiresAt: null,
-        revokedAt: null,
-        updatedAt: now,
-      } as const;
-      if (existingGrant) {
-        await tx.update(mcpOAuthGrants).set(grantValues)
-          .where(eq(mcpOAuthGrants.id, existingGrant.id));
-      } else {
-        await tx.insert(mcpOAuthGrants).values({
-          orgId: consumed.session.orgId,
-          connectionId: connection.id,
-          ...grantValues,
+          const connection = await tx.select().from(mcpConnections)
+            .where(and(
+              eq(mcpConnections.orgId, consumed.session.orgId),
+              eq(mcpConnections.id, consumed.connection.id),
+            ))
+            .for("update")
+            .then((rows) => rows[0] ?? null);
+          if (
+            !connection
+            || connection.status !== "authorizing"
+            || connection.lifecycleRevision !== consumed.connectionLifecycleRevision
+          ) {
+            return null;
+          }
+          const stillAuthorized = options.deploymentMode === "local_trusted"
+            && !consumed.session.authorizingUserId
+            ? true
+            : Boolean(
+                await tx.select({ id: organizationMemberships.id })
+                  .from(organizationMemberships)
+                  .where(and(
+                    eq(organizationMemberships.orgId, consumed.session.orgId),
+                    eq(organizationMemberships.principalType, "user"),
+                    eq(organizationMemberships.principalId, consumed.session.authorizingUserId ?? ""),
+                    eq(organizationMemberships.status, "active"),
+                    eq(organizationMemberships.membershipRole, "owner"),
+                  ))
+                  .for("share")
+                  .then((rows) => rows[0] ?? null)
+                ?? await tx.select({ id: instanceUserRoles.id })
+                  .from(instanceUserRoles)
+                  .where(and(
+                    eq(instanceUserRoles.userId, consumed.session.authorizingUserId ?? ""),
+                    eq(instanceUserRoles.role, "instance_admin"),
+                  ))
+                  .for("share")
+                  .then((rows) => rows[0] ?? null),
+              );
+          if (!stillAuthorized) {
+            await tx.update(mcpConnections).set({
+              status: "needs_reauth",
+              enabled: false,
+              disabledAt: now,
+              lifecycleRevision: connection.lifecycleRevision + 1,
+              updatedAt: now,
+            }).where(eq(mcpConnections.id, connection.id));
+            await tx.insert(activityLog).values(oauthActivityValues({
+              orgId: consumed.session.orgId,
+              connectionId: connection.id,
+              action: "mcp_oauth.authorization_rejected",
+              actorUserId: consumed.session.authorizingUserId,
+              details: { reason: "authorizer_no_longer_authorized" },
+            }));
+            return { kind: "reauth" as const };
+          }
+          await insertOAuthSecret(tx, {
+            orgId: consumed.session.orgId,
+            secret: grantSecret,
+            actorUserId: consumed.session.authorizingUserId,
+          });
+          const existingGrant = await tx.select().from(mcpOAuthGrants)
+            .where(and(
+              eq(mcpOAuthGrants.orgId, consumed.session.orgId),
+              eq(mcpOAuthGrants.connectionId, connection.id),
+            ))
+            .for("update")
+            .then((rows) => rows[0] ?? null);
+          const grantValues = {
+            authorizingUserId: consumed.session.authorizingUserId,
+            providerSubject: scope.providerSubject ?? selected?.id ?? null,
+            providerScopes: tokenScopes(grantMaterial.tokens),
+            externalScopeMetadata: selected?.metadata ?? {},
+            credentialSecretId: grantSecret.id,
+            status: "active",
+            statusMetadata: connection.provider === "supabase"
+              ? { scopeOptions: safeOptions }
+              : {},
+            expiresAt: tokenExpiry(grantMaterial.tokens, now),
+            lastRefreshedAt: now,
+            refreshLeaseNonce: null,
+            refreshLeaseExpiresAt: null,
+            revokedAt: null,
+            updatedAt: now,
+          } as const;
+          if (existingGrant) {
+            await tx.update(mcpOAuthGrants).set(grantValues)
+              .where(eq(mcpOAuthGrants.id, existingGrant.id));
+          } else {
+            await tx.insert(mcpOAuthGrants).values({
+              orgId: consumed.session.orgId,
+              connectionId: connection.id,
+              ...grantValues,
+            });
+          }
+          if (existingGrant?.credentialSecretId) {
+            await tx.delete(organizationSecrets)
+              .where(eq(organizationSecrets.id, existingGrant.credentialSecretId));
+          }
+          const status: "selecting_scope" | "active" =
+            connection.provider === "supabase" ? "selecting_scope" : "active";
+          await tx.update(mcpConnections).set({
+            status,
+            externalScope: selected?.id ?? null,
+            safeConfig: connection.provider === "supabase"
+              ? {}
+              : connection.safeConfig,
+            enabled: true,
+            activatedAt: status === "active" ? connection.activatedAt ?? now : null,
+            lifecycleRevision: connection.lifecycleRevision + 1,
+            updatedAt: now,
+          }).where(eq(mcpConnections.id, connection.id));
+          await tx.insert(activityLog).values(oauthActivityValues({
+            orgId: consumed.session.orgId,
+            connectionId: connection.id,
+            action: "mcp_oauth.authorization_completed",
+            actorUserId: consumed.session.authorizingUserId,
+            details: {
+              provider: connection.provider,
+              status,
+              hasExternalScope: Boolean(selected),
+            },
+          }));
+          return {
+            kind: "completed" as const,
+            connectionId: connection.id,
+            orgId: consumed.session.orgId,
+            authorizingUserId: consumed.session.authorizingUserId,
+            status,
+          };
         });
+      } catch (error) {
+        await finishUnpersistedGrantFailure({
+          status: isInvalidGrantOAuthError(error) ? "needs_reauth" : "error",
+          action: "mcp_oauth.authorization_failed",
+          reason: "grant_persistence_failed",
+        });
+        if (error instanceof HttpError) throw error;
+        throw unprocessable("Managed MCP OAuth authorization could not be completed");
       }
-      if (existingGrant?.credentialSecretId) {
-        await tx.delete(organizationSecrets)
-          .where(eq(organizationSecrets.id, existingGrant.credentialSecretId));
-      }
-      const status: "selecting_scope" | "active" =
-        connection.provider === "supabase" ? "selecting_scope" : "active";
-      await tx.update(mcpConnections).set({
-        status,
-        externalScope: selected?.id ?? null,
-        safeConfig: connection.provider === "supabase"
-          ? {}
-          : connection.safeConfig,
-        enabled: true,
-        activatedAt: status === "active" ? connection.activatedAt ?? now : null,
-        updatedAt: now,
-      }).where(eq(mcpConnections.id, connection.id));
-      await tx.insert(activityLog).values(oauthActivityValues({
-        orgId: consumed.session.orgId,
-        connectionId: connection.id,
-        action: "mcp_oauth.authorization_completed",
-        actorUserId: consumed.session.authorizingUserId,
-        details: {
-          provider: connection.provider,
-          status,
-          hasExternalScope: Boolean(selected),
-        },
-      }));
-      return {
-        kind: "completed" as const,
-        connectionId: connection.id,
-        orgId: consumed.session.orgId,
-        authorizingUserId: consumed.session.authorizingUserId,
-        status,
-      };
-    });
+    })();
     if (!outcome) {
       await bestEffortRevokeMaterial(
         grantMaterial,
@@ -1507,6 +1542,7 @@ export function managedMcpOAuthService(
         status: "active",
         enabled: true,
         activatedAt: connection.activatedAt ?? now,
+        lifecycleRevision: connection.lifecycleRevision + 1,
         updatedAt: now,
       }).where(and(
         eq(mcpConnections.orgId, orgId),
@@ -1637,6 +1673,7 @@ export function managedMcpOAuthService(
         enabled: false,
         disabledAt: now,
         revokedAt: now,
+        lifecycleRevision: connection.lifecycleRevision + 1,
         updatedAt: now,
       }).where(and(
         eq(mcpConnections.orgId, orgId),
@@ -1687,6 +1724,7 @@ export function managedMcpOAuthService(
       status: "needs_reauth",
       enabled: false,
       disabledAt: now,
+      lifecycleRevision: sql`${mcpConnections.lifecycleRevision} + 1`,
       updatedAt: now,
     }).where(and(
       eq(mcpConnections.orgId, grant.orgId),
@@ -1905,9 +1943,15 @@ export function managedMcpOAuthService(
       if (
         !connection
         || !grant
+        || connection.status !== "active"
+        || !connection.enabled
         || grant.status !== "active"
         || !grant.credentialSecretId
-        || grant.id !== claimed!.grant.id
+      ) {
+        return { kind: "invalidated" as const };
+      }
+      if (
+        grant.id !== claimed!.grant.id
         || grant.credentialSecretId !== claimed!.secret.id
         || grant.refreshLeaseNonce !== claimed!.nonce
       ) {
@@ -1987,6 +2031,10 @@ export function managedMcpOAuthService(
       return { kind: "refreshed" as const };
     });
     if (outcome.kind === "refreshed") return;
+    if (outcome.kind === "invalidated") {
+      await bestEffortRevokeMaterial(material, claimed.timeoutMs);
+      throw unprocessable("Managed MCP OAuth authorization changed during token refresh");
+    }
     if (outcome.kind === "needs_reauth") {
       throw unprocessable("Managed MCP OAuth authorization must be reconnected");
     }

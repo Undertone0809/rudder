@@ -32,6 +32,7 @@ export const mcpConnections = pgTable(
     externalScope: text("external_scope"),
     accessMode: text("access_mode").notNull().default("provider_default"),
     status: text("status").notNull().default("draft"),
+    lifecycleRevision: integer("lifecycle_revision").notNull().default(0),
     safeConfig: jsonb("safe_config").$type<Record<string, unknown>>().notNull().default({}),
     startupTimeoutMs: integer("startup_timeout_ms").notNull().default(10_000),
     toolTimeoutMs: integer("tool_timeout_ms").notNull().default(60_000),

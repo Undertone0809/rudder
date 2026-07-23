@@ -20,7 +20,7 @@ import {
   type McpDiscoveredTool,
   type UpdateMcpConnection,
 } from "@rudderhq/shared";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, HttpError, notFound, unprocessable } from "../../errors.js";
 import { getSecretProvider } from "../../secrets/provider-registry.js";
@@ -124,6 +124,7 @@ export class ManagedMcpDiscoveryStaleError extends HttpError {
 interface ManagedMcpDiscoverySnapshot {
   enabled: boolean;
   lastDiscoveredAt: number | null;
+  lifecycleRevision: number;
   status: string;
   updatedAt: number;
 }
@@ -132,6 +133,7 @@ function discoverySnapshot(row: McpConnectionRow): ManagedMcpDiscoverySnapshot {
   return {
     enabled: row.enabled,
     lastDiscoveredAt: row.lastDiscoveredAt?.getTime() ?? null,
+    lifecycleRevision: row.lifecycleRevision,
     status: row.status,
     updatedAt: row.updatedAt.getTime(),
   };
@@ -147,6 +149,7 @@ function assertDiscoverySnapshot(
 ): void {
   if (
     row.enabled !== snapshot.enabled
+    || row.lifecycleRevision !== snapshot.lifecycleRevision
     || row.status !== snapshot.status
     || row.updatedAt.getTime() !== snapshot.updatedAt
     || (row.lastDiscoveredAt?.getTime() ?? null) !== snapshot.lastDiscoveredAt
@@ -829,6 +832,22 @@ export function managedMcpConnectionService(
         if (locked.credentialSecretId !== existing.credentialSecretId) {
           throw conflict("Managed MCP credentials changed; retry the connection update");
         }
+        if (
+          patch.enabled === true
+          && RECONNECT_REQUIRED_STATUSES.has(locked.status)
+        ) {
+          throw reconnectRequiredError();
+        }
+        if (
+          locked.provider === "linear"
+          && locked.accessMode === "read_only"
+          && patch.accessMode === "read_write"
+          && locked.status === "active"
+        ) {
+          throw unprocessable(
+            "Linear write access requires reauthorization: disconnect the read-only grant, select write access, then reconnect OAuth",
+          );
+        }
         if (replacement) {
           await tx.insert(organizationSecrets).values({
             id: replacement.id,
@@ -864,9 +883,10 @@ export function managedMcpConnectionService(
             ...(patch.enabled !== undefined ? {
               enabled: patch.enabled,
               disabledAt: patch.enabled ? null : new Date(),
-              status: patch.enabled ? existing.status : "disabled",
+              status: patch.enabled ? locked.status : "disabled",
             } : {}),
             ...(patch.required !== undefined ? { required: patch.required } : {}),
+            lifecycleRevision: locked.lifecycleRevision + 1,
             updatedAt: nextConnectionMutationTime(locked),
           })
           .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
@@ -910,6 +930,7 @@ export function managedMcpConnectionService(
             enabled: true,
             disabledAt: null,
             revokedAt: null,
+            lifecycleRevision: sql`${mcpConnections.lifecycleRevision} + 1`,
             updatedAt: now,
           })
           .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
@@ -970,6 +991,7 @@ export function managedMcpConnectionService(
             status: "disabled",
             enabled: false,
             disabledAt: now,
+            lifecycleRevision: sql`${mcpConnections.lifecycleRevision} + 1`,
             updatedAt: now,
           })
           .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
@@ -1083,6 +1105,7 @@ export function managedMcpConnectionService(
               activatedAt: locked.activatedAt ?? now,
               lastDiscoveredAt: now,
               disabledAt: null,
+              lifecycleRevision: locked.lifecycleRevision + 1,
               updatedAt: now,
             })
             .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)));
@@ -1114,7 +1137,11 @@ export function managedMcpConnectionService(
           const now = nextConnectionMutationTime(locked);
           await tx
             .update(mcpConnections)
-            .set({ status: "error", updatedAt: now })
+            .set({
+              status: "error",
+              lifecycleRevision: locked.lifecycleRevision + 1,
+              updatedAt: now,
+            })
             .where(and(
               eq(mcpConnections.orgId, orgId),
               eq(mcpConnections.id, connectionId),

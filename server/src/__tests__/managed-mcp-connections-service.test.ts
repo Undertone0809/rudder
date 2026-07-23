@@ -1414,6 +1414,97 @@ describe("managedMcpConnectionService", () => {
     )).resolves.toMatchObject({ accessMode: "read_write" });
   });
 
+  it("rechecks Linear write escalation after locking the current connection lifecycle", async () => {
+    const orgId = await seedOrg(db);
+    const lookupEntered = deferred<void>();
+    const releaseLookup = deferred<void>();
+    const svc = service();
+    const linear = await svc.create(orgId, {
+      name: "linear-racing-permissions",
+      displayName: "Linear",
+      provider: "linear",
+      transport: "streamable_http",
+      accessMode: "read_only",
+      safeConfig: {},
+    }, { userId: "owner-1" });
+    await db.update(mcpConnections).set({ status: "authorizing" })
+      .where(eq(mcpConnections.id, linear.id));
+
+    const racingService = service({
+      dnsLookup: async () => {
+        lookupEntered.resolve();
+        await releaseLookup.promise;
+        return [{ address: "93.184.216.34", family: 4 as const }];
+      },
+    });
+    const escalation = racingService.update(
+      orgId,
+      linear.id,
+      { accessMode: "read_write" },
+      { userId: "owner-1" },
+      { allowCuratedAccessMode: true },
+    );
+    await lookupEntered.promise;
+    await db.update(mcpConnections).set({
+      status: "active",
+      updatedAt: new Date(Date.now() + 1_000),
+    }).where(eq(mcpConnections.id, linear.id));
+    releaseLookup.resolve();
+
+    await expect(escalation).rejects.toThrow(/reconnect|reauthoriz/i);
+    const [persisted] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, linear.id));
+    expect(persisted).toMatchObject({
+      accessMode: "read_only",
+      status: "active",
+    });
+  });
+
+  it("does not regress a concurrently activated connection to its stale pre-lock status", async () => {
+    const orgId = await seedOrg(db);
+    const lookupEntered = deferred<void>();
+    const releaseLookup = deferred<void>();
+    const svc = service();
+    const linear = await svc.create(orgId, {
+      name: "linear-racing-activation",
+      displayName: "Linear",
+      provider: "linear",
+      transport: "streamable_http",
+      safeConfig: {},
+    }, { userId: "owner-1" });
+    await db.update(mcpConnections).set({ status: "authorizing" })
+      .where(eq(mcpConnections.id, linear.id));
+
+    const racingService = service({
+      dnsLookup: async () => {
+        lookupEntered.resolve();
+        await releaseLookup.promise;
+        return [{ address: "93.184.216.34", family: 4 as const }];
+      },
+    });
+    const update = racingService.update(
+      orgId,
+      linear.id,
+      { enabled: true },
+      { userId: "owner-1" },
+    );
+    await lookupEntered.promise;
+    await db.update(mcpConnections).set({
+      status: "active",
+      updatedAt: new Date(Date.now() + 1_000),
+    }).where(eq(mcpConnections.id, linear.id));
+    releaseLookup.resolve();
+
+    await expect(update).resolves.toMatchObject({
+      status: "active",
+      enabled: true,
+    });
+    await expect(svc.get(orgId, linear.id)).resolves.toMatchObject({
+      status: "active",
+      enabled: true,
+    });
+  });
+
   it("scopes reads and mutations to the organization and implements disable/reconnect lifecycle", async () => {
     const orgId = await seedOrg(db);
     const otherOrgId = await seedOrg(db);
