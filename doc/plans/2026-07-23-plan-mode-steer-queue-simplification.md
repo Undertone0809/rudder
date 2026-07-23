@@ -78,6 +78,19 @@ concepts.
 
 ## Product Logic
 
-This restores the existing behavior in `CHAT.LIFECYCLE.001`,
-`RUN.CHAT.AGENT.001`, and `AGENT.RUNTIME.ADAPTERS.001`. No guarded
-`doc/product/**` semantic edit is required.
+The Plan/Steer, delivery acknowledgement, UI projection, fallback rendering,
+and diagnostic filtering changes restore the existing behavior in
+`CHAT.LIFECYCLE.001`, `RUN.CHAT.AGENT.001`, and
+`AGENT.RUNTIME.ADAPTERS.001`.
+
+One requested behavior remains gated by the guarded Product Logic Registry:
+automatically advancing an ordinary queued message after an explicit operator
+Stop. `CHAT.LIFECYCLE.001` currently requires ordinary queued input to remain
+parked after Stop until the user explicitly chooses `Steer`. The implementation
+therefore preserves that behavior pending explicit authorization to update
+`doc/product/**`.
+
+The proposed contract delta is: after an operator Stop reaches its terminal
+state, the server queue worker may automatically deliver the next ordinary
+queued message; the stopped generation remains visibly `Stopped`, while the
+queued message starts a distinct subsequent turn.
