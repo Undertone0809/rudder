@@ -27,9 +27,9 @@ Important constraints:
 - stable source commits must have one committed public package version
 - all public packages must share that same stable semver before release
 - canary publishes derive the next prerelease from the committed stable version
-- after publishing stable `X.Y.Z`, the workflow opens a pull request that bumps
-  the public package version to the next stable base, for example
-  `X.Y.Z -> X.Y.(Z+1)`; a maintainer still reviews and merges that commit
+- after publishing stable `X.Y.Z`, the workflow commits the public package
+  version bump directly to `main`, for example `X.Y.Z -> X.Y.(Z+1)`, marks the
+  maintenance commit `[skip release]`, and explicitly dispatches CI for it
 - `./scripts/release.sh canary --print-version` fails if the committed canary
   base already exists as stable npm package `X.Y.Z` or remote git tag `vX.Y.Z`
 
@@ -74,11 +74,15 @@ a plan do not satisfy the production gate. A staging approval is not production
 approval. Agents and automation must not set `dry_run: false`, enter workflow
 confirmation strings, or synthesize a release tag as evidence of approval. The
 operator's explicit authorization must exist before those values are supplied.
+That stable-release authorization also covers the deterministic post-release
+commit that advances `main` to the next patch base; it does not authorize any
+other direct change to `main`.
 
 The workflow also fails closed unless `npm-stable` has required reviewers,
-`main` is protected, and GitHub Actions is allowed to create the post-stable
-version pull request. These repository settings are part of the release gate,
-not optional documentation.
+`main` is protected for normal changes, and the release workflow has a narrowly
+scoped path to push the generated post-stable version commit and dispatch its
+CI. These repository settings are part of the release gate, not optional
+documentation.
 
 Even when an initial request or plan includes production deployment, always
 pause at the production gate after presenting the reviewed source, target,
@@ -177,8 +181,8 @@ Before running stable:
 6. present the exact source ref, version, checks, targets, and rollback point;
    obtain explicit production approval
 7. run the workflow with `dry_run: false` and `confirm_stable: PUBLISH STABLE`
-8. after stable is published, review and merge the automatically opened
-   next-patch version pull request before expecting later canaries
+8. after stable is published, confirm the workflow directly committed the
+   next-patch base to `main` and its explicitly dispatched CI succeeded
 
 Example:
 
@@ -199,9 +203,9 @@ The workflow:
   the released stable version or older, while preserving the current npm
   `@rudderhq/cli@canary` target if the next-base canary has not been published
   yet
-- opens an idempotent `automation/release-vX.Y.(Z+1)` pull request for the next
-  canary/stable base and dispatches the trusted `main`-branch CI workflow with
-  its immutable head SHA, unless `main` already advanced
+- commits the next canary/stable base directly to `main` with `[skip release]`
+  and dispatches the trusted CI workflow with the immutable bump SHA, unless
+  `main` already advanced
 - records the announcement channel, and publishes docs production when website
   content is part of the release scope
 
