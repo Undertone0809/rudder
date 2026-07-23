@@ -5,6 +5,18 @@ const LIGHT_WORKSPACE_PAPER = "rgb(248, 244, 238)";
 
 test.describe("Chat sidebar layout", () => {
   test("keeps chat load errors inside the main workspace card", async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window.navigator, "userAgent", {
+        configurable: true,
+        get: () => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+      });
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {
+          setBadgeCount: async () => {},
+        },
+      });
+    });
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Chat-Load-Error-${Date.now()}`,
@@ -44,14 +56,22 @@ test.describe("Chat sidebar layout", () => {
     const mainCard = page.getByTestId("chat-main-workspace-card");
     const loadError = mainCard.getByTestId("chat-load-error");
     const toolbarButton = mainCard.getByTestId("chat-side-panel-trigger");
+    const toolbarClearance = mainCard.getByTestId("chat-desktop-toolbar-clearance");
     await expect(mainCard).toBeVisible();
+    await expect(page.locator("html")).toHaveClass(/\bdesktop-shell-macos\b/);
     await expect(loadError).toHaveText("Internal server error", { timeout: 15_000 });
 
     const desktopErrorBox = await loadError.boundingBox();
     const desktopToolbarBox = await toolbarButton.boundingBox();
+    const desktopToolbarClearanceBox = await toolbarClearance.boundingBox();
     expect(desktopErrorBox).not.toBeNull();
     expect(desktopToolbarBox).not.toBeNull();
+    expect(desktopToolbarClearanceBox).not.toBeNull();
     expect(desktopErrorBox!.y).toBeGreaterThanOrEqual(desktopToolbarBox!.y + desktopToolbarBox!.height);
+    expect(desktopErrorBox!.y).toBeGreaterThanOrEqual(
+      desktopToolbarClearanceBox!.y + desktopToolbarClearanceBox!.height + 23,
+    );
+    await expect(loadError).toHaveCSS("margin-top", "68px");
 
     await page.screenshot({
       path: testInfo.outputPath("chat-load-error-position-desktop.png"),
@@ -61,6 +81,7 @@ test.describe("Chat sidebar layout", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(loadError).toHaveText("Internal server error", { timeout: 15_000 });
     await expect(mainCard.getByTestId("chat-load-error-mobile-clearance")).toBeVisible();
+    await expect(loadError).toHaveCSS("margin-top", "24px");
     const mobileErrorBox = await loadError.boundingBox();
     const mobileToolbarBox = await toolbarButton.boundingBox();
     expect(mobileErrorBox).not.toBeNull();

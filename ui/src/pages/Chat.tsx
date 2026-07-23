@@ -2603,7 +2603,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             <div
               aria-hidden="true"
               data-testid="chat-desktop-toolbar-clearance"
-              className="workspace-main-header hidden h-11 shrink-0 md:block"
+              className="chat-desktop-toolbar-clearance workspace-main-header hidden shrink-0 md:block"
             />
           ) : null}
           {loadErrorMessage && conversationId ? (
@@ -2618,7 +2618,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               role="alert"
               data-testid="chat-load-error"
               className={cn(
-                "mx-6 mt-6 rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive",
+                "chat-load-error-offset mx-6 rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive",
                 !conversationId && isMessengerChatRoute && !isMobile && !sidebarOpen && "md:mt-14",
               )}
             >
@@ -2626,7 +2626,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           {!selectedOrganizationId ? (
             <div className="flex flex-1 items-center justify-center px-6 py-12 text-sm text-muted-foreground">
               Select a organization first. </div> ) : showConversationLoading ? (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-5" data-testid="chat-conversation-loading-state">
+            <div className="chat-conversation-loading-offset flex min-h-0 flex-1 flex-col overflow-hidden px-4 md:px-5" data-testid="chat-conversation-loading-state">
               <div ref={chatMessagesScrollRef} data-testid="chat-messages-scroll-region" className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto">
                 <div data-testid="chat-messages-content" className="mx-auto flex w-full max-w-4xl flex-col gap-5 pr-1">
                   <ChatMessagesLoadingState />
@@ -2844,7 +2844,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
                 <div ref={chatMessagesScrollRef} data-testid="chat-messages-scroll-region" className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto" >
                   <div className={cn(
-                    "min-h-full px-4 pt-4 transition-[padding] duration-[var(--motion-duration-standard)] ease-[var(--motion-ease-enter)] motion-reduce:transition-none md:px-5",
+                    "chat-messages-scroll-content min-h-full px-4 transition-[padding] duration-[var(--motion-duration-standard)] ease-[var(--motion-ease-enter)] motion-reduce:transition-none md:px-5",
                     workManifestRailOpen && "xl:pr-[20rem]",
                   )}>
                   <div data-testid="chat-messages-shell" className="relative mx-auto w-full max-w-4xl">
