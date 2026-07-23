@@ -381,6 +381,7 @@ export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
   if (/^\/automations(?:\/|$)/.test(relativePath)) return true;
   if (/^\/chat(?:\/|$)/.test(relativePath)) return true;
   if (/^\/messenger\/chat(?:\/|$)/.test(relativePath)) return true;
+  if (/^\/messenger\/(?:workbench|saved)(?:\/|$)/.test(relativePath)) return true;
   return relativePath === "/messenger";
 }
 
