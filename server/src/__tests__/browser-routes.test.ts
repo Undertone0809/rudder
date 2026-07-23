@@ -1,4 +1,5 @@
-import express from "express";
+import express, { type Express } from "express";
+import { createServer, type Server } from "node:http";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
@@ -7,15 +8,64 @@ import { errorHandler } from "../middleware/index.js";
 import { browserRoutes } from "../routes/browser.js";
 import { BrowserBrokerError } from "../services/browser-broker.js";
 
-const registry = {
-  register: vi.fn(),
-  unregister: vi.fn(),
-  isAvailable: vi.fn(),
-  forward: vi.fn(),
-};
-const getBrowserSettings = vi.fn();
-const findRun = vi.fn();
-const recordActivity = vi.fn();
+function createRegistryMock() {
+  return {
+    register: vi.fn(),
+    unregister: vi.fn(),
+    isAvailable: vi.fn(),
+    forward: vi.fn(),
+  };
+}
+
+let registry = createRegistryMock();
+let getBrowserSettings = vi.fn();
+let findRun = vi.fn();
+let recordActivity = vi.fn();
+
+async function closeTestServer(server: Server) {
+  if (!server.listening) return;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+async function sendRequest(
+  app: Express,
+  method: "post" | "put",
+  path: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+) {
+  const server = createServer(app);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        server.off("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.off("error", onError);
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(0, "127.0.0.1");
+    });
+    let pendingRequest = request(server)[method](path);
+    for (const [name, value] of Object.entries(headers)) {
+      pendingRequest = pendingRequest.set(name, value);
+    }
+    return await pendingRequest.send(body);
+  } finally {
+    await closeTestServer(server);
+  }
+}
 
 function runtimeActor(overrides: Record<string, unknown> = {}) {
   return {
@@ -75,15 +125,12 @@ function createAuthenticatedBrowserApp() {
   return app;
 }
 
-describe("Browser routes", () => {
+describe.sequential("Browser routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    getBrowserSettings.mockReset();
-    findRun.mockReset();
-    recordActivity.mockReset();
-    registry.isAvailable.mockReset();
-    registry.unregister.mockReset();
-    registry.forward.mockReset();
+    registry = createRegistryMock();
+    getBrowserSettings = vi.fn();
+    findRun = vi.fn();
+    recordActivity = vi.fn();
     getBrowserSettings.mockResolvedValue({ enabled: true, openLinksIn: "built_in" });
     findRun.mockResolvedValue({ id: "run-1", orgId: "org-1", agentId: "agent-1", status: "running" });
     recordActivity.mockResolvedValue(undefined);
@@ -104,39 +151,76 @@ describe("Browser routes", () => {
       token: "a".repeat(48),
     };
 
-    const registered = await request(createApp(localBoard))
-      .put("/api/instance/browser/broker")
-      .send(payload);
-    expect(registered.status).toBe(204);
+    const registered = await sendRequest(createApp(localBoard), "put", "/api/instance/browser/broker", payload);
+    expect(registered.status, JSON.stringify({ body: registered.body, text: registered.text })).toBe(204);
     expect(registry.register).toHaveBeenCalledWith(payload);
 
-    const authenticated = await request(createApp(localBoard, "authenticated"))
-      .put("/api/instance/browser/broker")
-      .send(payload);
-    expect(authenticated.status).toBe(422);
+    const authenticated = await sendRequest(
+      createApp(localBoard, "authenticated"),
+      "put",
+      "/api/instance/browser/broker",
+      payload,
+    );
+    expect(authenticated.status, JSON.stringify({ body: authenticated.body, text: authenticated.text })).toBe(422);
 
-    const agent = await request(createApp({
-      type: "agent",
-      orgId: "org-1",
-      agentId: "agent-1",
-      runId: "run-1",
-    }))
-      .put("/api/instance/browser/broker")
-      .send(payload);
+    const agent = await sendRequest(
+      createApp({
+        type: "agent",
+        orgId: "org-1",
+        agentId: "agent-1",
+        runId: "run-1",
+      }),
+      "put",
+      "/api/instance/browser/broker",
+      payload,
+    );
     expect(agent.status).toBe(403);
+  });
+
+  it("validates Browser lifecycle generations and reports stale registration conflicts", async () => {
+    const localBoard = {
+      type: "board",
+      userId: "local-board",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    };
+    const payload = {
+      endpoint: "http://127.0.0.1:4141/browser",
+      token: "a".repeat(48),
+      ownerId: "02ad71bd-dcc1-4c93-9642-b16c8c1d2e08",
+      generation: 2,
+    };
+
+    const invalid = await sendRequest(
+      createApp(localBoard),
+      "put",
+      "/api/instance/browser/broker",
+      { ...payload, generation: undefined },
+    );
+    expect(invalid.status).toBe(400);
+
+    registry.register.mockImplementationOnce(() => {
+      throw new BrowserBrokerError(
+        "browser_broker_stale_registration",
+        "Browser Broker registration was superseded by a newer Desktop lifecycle.",
+      );
+    });
+    const stale = await sendRequest(createApp(localBoard), "put", "/api/instance/browser/broker", payload);
+    expect(stale.status).toBe(409);
+    expect(stale.body).toMatchObject({ code: "browser_broker_stale_registration" });
   });
 
   it("returns stable disabled and unavailable errors before dispatch", async () => {
     const actor = runtimeActor();
     getBrowserSettings.mockResolvedValueOnce({ enabled: false, openLinksIn: "built_in" });
 
-    const disabled = await request(createApp(actor)).post("/api/browser/tabs").send({});
+    const disabled = await sendRequest(createApp(actor), "post", "/api/browser/tabs", {});
     expect(disabled.status).toBe(409);
     expect(disabled.body).toMatchObject({ code: "browser_disabled" });
     expect(registry.forward).not.toHaveBeenCalled();
 
     registry.isAvailable.mockReturnValueOnce(false);
-    const unavailable = await request(createApp(actor)).post("/api/browser/tabs").send({});
+    const unavailable = await sendRequest(createApp(actor), "post", "/api/browser/tabs", {});
     expect(unavailable.status).toBe(503);
     expect(unavailable.body).toMatchObject({ code: "browser_unavailable" });
     expect(registry.forward).not.toHaveBeenCalled();
@@ -144,26 +228,29 @@ describe("Browser routes", () => {
 
   it("exposes a Broker-free liveness probe that revokes disabled or inactive Browser MCP processes", async () => {
     const actor = runtimeActor();
-    const live = await request(createApp(actor)).post("/api/browser/liveness").send({});
+    const live = await sendRequest(createApp(actor), "post", "/api/browser/liveness", {});
     expect(live.status).toBe(204);
     expect(registry.forward).not.toHaveBeenCalled();
     expect(recordActivity).not.toHaveBeenCalled();
 
     getBrowserSettings.mockResolvedValueOnce({ enabled: false, openLinksIn: "built_in" });
-    const disabled = await request(createApp(actor)).post("/api/browser/liveness").send({});
+    const disabled = await sendRequest(createApp(actor), "post", "/api/browser/liveness", {});
     expect(disabled.status).toBe(409);
     expect(disabled.body).toMatchObject({ code: "browser_disabled" });
 
     findRun.mockResolvedValueOnce({ id: "run-1", orgId: "org-1", agentId: "agent-1", status: "succeeded" });
-    const inactive = await request(createApp(actor)).post("/api/browser/liveness").send({});
+    const inactive = await sendRequest(createApp(actor), "post", "/api/browser/liveness", {});
     expect(inactive.status).toBe(409);
     expect(inactive.body).toMatchObject({ code: "browser_run_inactive" });
   });
 
   it("rejects Browser calls from a runtime without managed Browser tools", async () => {
-    const unsupported = await request(createApp(runtimeActor({ adapterType: "gemini_local" })))
-      .post("/api/browser/tabs")
-      .send({});
+    const unsupported = await sendRequest(
+      createApp(runtimeActor({ adapterType: "gemini_local" })),
+      "post",
+      "/api/browser/tabs",
+      {},
+    );
 
     expect(unsupported.status).toBe(403);
     expect(unsupported.body).toMatchObject({ code: "browser_runtime_unsupported" });
@@ -172,9 +259,12 @@ describe("Browser routes", () => {
   });
 
   it("returns a stable unsupported error for Agent Browser calls outside local_trusted", async () => {
-    const unsupported = await request(createApp(runtimeActor(), "authenticated"))
-      .post("/api/browser/tabs")
-      .send({});
+    const unsupported = await sendRequest(
+      createApp(runtimeActor(), "authenticated"),
+      "post",
+      "/api/browser/tabs",
+      {},
+    );
 
     expect(unsupported.status).toBe(403);
     expect(unsupported.body).toMatchObject({ code: "browser_runtime_unsupported" });
@@ -185,19 +275,22 @@ describe("Browser routes", () => {
   });
 
   it("requires a running run owned by the authenticated org and agent", async () => {
-    const missingRun = await request(createApp(runtimeActor({ runId: undefined })))
-      .post("/api/browser/tabs")
-      .send({});
+    const missingRun = await sendRequest(
+      createApp(runtimeActor({ runId: undefined })),
+      "post",
+      "/api/browser/tabs",
+      {},
+    );
     expect(missingRun.status).toBe(400);
     expect(missingRun.body.code).toBe("browser_run_required");
 
     findRun.mockResolvedValue({ id: "run-1", orgId: "org-1", agentId: "agent-2", status: "running" });
-    const foreignRun = await request(createApp(runtimeActor())).post("/api/browser/tabs").send({});
+    const foreignRun = await sendRequest(createApp(runtimeActor()), "post", "/api/browser/tabs", {});
     expect(foreignRun.status).toBe(403);
     expect(foreignRun.body.code).toBe("browser_run_forbidden");
 
     findRun.mockResolvedValue({ id: "run-1", orgId: "org-1", agentId: "agent-1", status: "succeeded" });
-    const finishedRun = await request(createApp(runtimeActor())).post("/api/browser/tabs").send({});
+    const finishedRun = await sendRequest(createApp(runtimeActor()), "post", "/api/browser/tabs", {});
     expect(finishedRun.status).toBe(409);
     expect(finishedRun.body.code).toBe("browser_run_inactive");
   });
@@ -205,15 +298,21 @@ describe("Browser routes", () => {
   it("rejects model-supplied identity and forwards only validated Browser arguments", async () => {
     const actor = runtimeActor();
 
-    const injected = await request(createApp(actor))
-      .post("/api/browser/open")
-      .send({ url: "https://example.com", orgId: "org-other" });
+    const injected = await sendRequest(
+      createApp(actor),
+      "post",
+      "/api/browser/open",
+      { url: "https://example.com", orgId: "org-other" },
+    );
     expect(injected.status).toBe(400);
     expect(registry.forward).not.toHaveBeenCalled();
 
-    const opened = await request(createApp(actor))
-      .post("/api/browser/open")
-      .send({ url: "https://example.com" });
+    const opened = await sendRequest(
+      createApp(actor),
+      "post",
+      "/api/browser/open",
+      { url: "https://example.com" },
+    );
     expect(opened.status).toBe(200);
     expect(registry.forward).toHaveBeenCalledWith({
       identity: { orgId: "org-1", agentId: "agent-1", runId: "run-1" },
@@ -236,11 +335,14 @@ describe("Browser routes", () => {
 
   it("does not dispatch when the durable Browser action intent cannot be recorded", async () => {
     recordActivity.mockRejectedValueOnce(new Error("activity unavailable"));
-    const response = await request(createApp(runtimeActor()))
-      .post("/api/browser/open")
-      .send({ url: "https://example.com" });
+    const response = await sendRequest(
+      createApp(runtimeActor()),
+      "post",
+      "/api/browser/open",
+      { url: "https://example.com" },
+    );
 
-    expect(response.status).toBe(500);
+    expect(response.status, JSON.stringify({ body: response.body, text: response.text })).toBe(500);
     expect(registry.forward).not.toHaveBeenCalled();
   });
 
@@ -248,9 +350,12 @@ describe("Browser routes", () => {
     recordActivity
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error("completion unavailable"));
-    const response = await request(createApp(runtimeActor()))
-      .post("/api/browser/open")
-      .send({ url: "https://example.com" });
+    const response = await sendRequest(
+      createApp(runtimeActor()),
+      "post",
+      "/api/browser/open",
+      { url: "https://example.com" },
+    );
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ tabId: "tab-1" });
@@ -264,7 +369,7 @@ describe("Browser routes", () => {
       .mockResolvedValueOnce(undefined)
       .mockImplementationOnce(() => new Promise(() => undefined));
     const response = await Promise.race([
-      request(createApp(runtimeActor())).post("/api/browser/open").send({ url: "https://example.com" }),
+      sendRequest(createApp(runtimeActor()), "post", "/api/browser/open", { url: "https://example.com" }),
       new Promise<never>((_resolve, reject) => {
         setTimeout(() => reject(new Error("Browser response waited on completion logging")), 250);
       }),
@@ -313,7 +418,7 @@ describe("Browser routes", () => {
     ["close", { tabId: "tab-1" }],
   ])("validates and dispatches the %s action", async (action, payload) => {
     const actor = runtimeActor();
-    const response = await request(createApp(actor)).post(`/api/browser/${action}`).send(payload);
+    const response = await sendRequest(createApp(actor), "post", `/api/browser/${action}`, payload);
 
     expect(response.status).toBe(200);
     expect(registry.forward).toHaveBeenCalledWith({
@@ -324,9 +429,12 @@ describe("Browser routes", () => {
   });
 
   it("does not expose arbitrary evaluation as a Browser route", async () => {
-    const response = await request(createApp(runtimeActor()))
-      .post("/api/browser/evaluate")
-      .send({ tabId: "tab-1", function: "() => document.cookie" });
+    const response = await sendRequest(
+      createApp(runtimeActor()),
+      "post",
+      "/api/browser/evaluate",
+      { tabId: "tab-1", function: "() => document.cookie" },
+    );
 
     expect(response.status).toBe(404);
     expect(registry.forward).not.toHaveBeenCalled();
@@ -336,13 +444,16 @@ describe("Browser routes", () => {
     "click", "dblclick", "hover", "fill", "type", "press", "check", "uncheck",
     "setChecked", "select", "scroll", "drag", "focus", "setFiles",
   ])("rejects mutating locator action %s before Broker dispatch", async (locatorAction) => {
-    const response = await request(createApp(runtimeActor()))
-      .post("/api/browser/locator")
-      .send({
+    const response = await sendRequest(
+      createApp(runtimeActor()),
+      "post",
+      "/api/browser/locator",
+      {
         tabId: "tab-1",
         action: locatorAction,
         locator: { strategy: "css", value: "#target" },
-      });
+      },
+    );
 
     expect(response.status).toBe(400);
     expect(response.body).toMatchObject({ code: "browser_invalid_argument" });
@@ -350,13 +461,16 @@ describe("Browser routes", () => {
   });
 
   it("rejects locator-triggered downloads before Broker dispatch", async () => {
-    const response = await request(createApp(runtimeActor()))
-      .post("/api/browser/download")
-      .send({
+    const response = await sendRequest(
+      createApp(runtimeActor()),
+      "post",
+      "/api/browser/download",
+      {
         tabId: "tab-1",
         mode: "trigger",
         locator: { strategy: "css", value: "#download" },
-      });
+      },
+    );
 
     expect(response.status).toBe(400);
     expect(response.body).toMatchObject({ code: "browser_invalid_argument" });
@@ -384,17 +498,20 @@ describe("Browser routes", () => {
     ["wait", { tabId: "tab-1" }],
     ["screenshot", { tabId: "tab-1", fullPage: true, clip: { x: 0, y: 0, width: 100, height: 100 } }],
   ])("rejects invalid or over-broad %s arguments before Broker dispatch", async (action, payload) => {
-    const response = await request(createApp(runtimeActor())).post(`/api/browser/${action}`).send(payload);
+    const response = await sendRequest(createApp(runtimeActor()), "post", `/api/browser/${action}`, payload);
 
-    expect(response.status).toBe(400);
+    expect(response.status, JSON.stringify({ action, payload, body: response.body, text: response.text })).toBe(400);
     expect(response.body).toMatchObject({ code: "browser_invalid_argument" });
     expect(registry.forward).not.toHaveBeenCalled();
   });
 
   it("never records clipboard contents in activity metadata", async () => {
-    const response = await request(createApp(runtimeActor()))
-      .post("/api/browser/clipboard")
-      .send({ action: "writeText", text: "private clipboard value" });
+    const response = await sendRequest(
+      createApp(runtimeActor()),
+      "post",
+      "/api/browser/clipboard",
+      { action: "writeText", text: "private clipboard value" },
+    );
 
     expect(response.status).toBe(200);
     const serializedActivity = JSON.stringify(recordActivity.mock.calls);
@@ -408,9 +525,12 @@ describe("Browser routes", () => {
       "browser_ref_not_found",
       "Browser element reference is missing or stale.",
     ));
-    const response = await request(createApp(runtimeActor()))
-      .post("/api/browser/click")
-      .send({ tabId: "tab-1", ref: "stale-ref" });
+    const response = await sendRequest(
+      createApp(runtimeActor()),
+      "post",
+      "/api/browser/click",
+      { tabId: "tab-1", ref: "stale-ref" },
+    );
 
     expect(response.status).toBe(404);
     expect(response.body).toEqual({
@@ -420,9 +540,12 @@ describe("Browser routes", () => {
   });
 
   it("rejects a plain Agent API key even when it supplies a run header", async () => {
-    const response = await request(createApp(runtimeActor({ source: "agent_key" })))
-      .post("/api/browser/tabs")
-      .send({});
+    const response = await sendRequest(
+      createApp(runtimeActor({ source: "agent_key" })),
+      "post",
+      "/api/browser/tabs",
+      {},
+    );
 
     expect(response.status).toBe(403);
     expect(response.body).toMatchObject({ code: "browser_run_credential_required" });
@@ -434,11 +557,13 @@ describe("Browser routes", () => {
     const token = createLocalAgentJwt("agent-1", "org-1", "codex_local", "run-1");
     expect(token).toBeTruthy();
 
-    const response = await request(createAuthenticatedBrowserApp())
-      .post("/api/browser/tabs")
-      .set("authorization", `Bearer ${token}`)
-      .set("x-rudder-run-id", "run-1")
-      .send({});
+    const response = await sendRequest(
+      createAuthenticatedBrowserApp(),
+      "post",
+      "/api/browser/tabs",
+      {},
+      { authorization: `Bearer ${token}`, "x-rudder-run-id": "run-1" },
+    );
 
     expect(response.status).toBe(200);
     expect(findRun).toHaveBeenCalledWith("run-1");
@@ -453,11 +578,13 @@ describe("Browser routes", () => {
     const token = createLocalAgentJwt("agent-1", "org-1", "codex_local", "run-a");
     expect(token).toBeTruthy();
 
-    const response = await request(createAuthenticatedBrowserApp())
-      .post("/api/browser/tabs")
-      .set("authorization", `Bearer ${token}`)
-      .set("x-rudder-run-id", "run-b")
-      .send({});
+    const response = await sendRequest(
+      createAuthenticatedBrowserApp(),
+      "post",
+      "/api/browser/tabs",
+      {},
+      { authorization: `Bearer ${token}`, "x-rudder-run-id": "run-b" },
+    );
 
     expect(response.status).toBe(403);
     expect(response.body).toMatchObject({ code: "agent_run_context_mismatch" });

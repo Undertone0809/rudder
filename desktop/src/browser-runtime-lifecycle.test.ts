@@ -81,7 +81,11 @@ describe("Desktop Browser runtime lifecycle", () => {
 
     await harness.lifecycle.connect("http://127.0.0.1:3100/api");
     expect(harness.setProfileEnabled).not.toHaveBeenCalled();
-    expect(harness.registerBroker).toHaveBeenCalledWith("http://127.0.0.1:3100/api", harness.broker);
+    expect(harness.registerBroker).toHaveBeenCalledWith(
+      "http://127.0.0.1:3100/api",
+      harness.broker,
+      undefined,
+    );
 
     await vi.advanceTimersByTimeAsync(1_000);
     expect(harness.tabs.reapInactiveRuns).toHaveBeenCalledTimes(1);

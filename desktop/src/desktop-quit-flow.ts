@@ -239,6 +239,23 @@ export function createDesktopQuitFlow(context: {
     });
   }
 
+  function stopRendererRequestsBeforeRuntimeShutdown(): void {
+    const mainWindow = context.getMainWindow();
+    if (!mainWindow) return;
+
+    try {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.destroy();
+      }
+    } catch (error) {
+      console.warn("[rudder-desktop] failed to close the main window before runtime shutdown", error);
+    } finally {
+      if (mainWindow.isDestroyed()) {
+        context.setMainWindow(null);
+      }
+    }
+  }
+
   async function finalizeQuit(options: { forceExit?: boolean } = {}): Promise<void> {
     if (quitting) return;
     quitting = true;
@@ -246,11 +263,6 @@ export function createDesktopQuitFlow(context: {
     installQuitExceptionGuard();
 
     try {
-      const mainWindow = context.getMainWindow();
-      if (options.forceExit && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.destroy();
-        context.setMainWindow(null);
-      }
       await Promise.all([
         context.prepareForQuit?.().catch((error) => {
           console.warn("[rudder-desktop] failed to finish Browser cleanup before quit", error);
@@ -262,6 +274,7 @@ export function createDesktopQuitFlow(context: {
           );
         }),
       ]);
+      stopRendererRequestsBeforeRuntimeShutdown();
       await context.stopLocalRudder();
     } finally {
       context.destroyResidentTray();

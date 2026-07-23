@@ -21,7 +21,12 @@ import { assertInstanceAdmin } from "./authz.js";
 const brokerRegistrationSchema = z.object({
   endpoint: z.string().min(1).max(2_048),
   token: z.string().min(32).max(512),
-}).strict();
+  ownerId: z.string().uuid().optional(),
+  generation: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+}).strict().refine(
+  (value) => (value.ownerId === undefined) === (value.generation === undefined),
+  "Browser Broker ownerId and generation must be provided together.",
+);
 
 const safeWebUrlSchema = z.string().min(1).max(8_192).refine((value) => {
   try {
@@ -331,7 +336,12 @@ export function browserRoutes(db: Db, options: BrowserRoutesOptions) {
       registry.register(parsed.data);
     } catch (error) {
       if (error instanceof BrowserBrokerError) {
-        sendBrowserError(res, 400, error.code, error.message);
+        sendBrowserError(
+          res,
+          error.code === "browser_broker_stale_registration" ? 409 : 400,
+          error.code,
+          error.message,
+        );
         return;
       }
       throw error;

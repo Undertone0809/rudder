@@ -5,6 +5,13 @@ export type DesktopBrowserSettings = {
   openLinksIn: "built_in" | "default_browser";
 };
 
+type DesktopBrowserBrokerRegistration = {
+  endpoint: string;
+  token: string;
+  ownerId?: string;
+  generation?: number;
+};
+
 const DESKTOP_BROWSER_API_TIMEOUT_MS = 5_000;
 
 function boundedFetch(
@@ -44,7 +51,7 @@ function browserApiUrl(apiUrl: string, path: string): string {
 
 export async function registerDesktopBrowserBroker(
   apiUrl: string,
-  broker: { endpoint: string; token: string },
+  broker: DesktopBrowserBrokerRegistration,
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<void> {
   const response = await boundedFetch(fetchImpl, browserApiUrl(apiUrl, "/instance/browser/broker"), {

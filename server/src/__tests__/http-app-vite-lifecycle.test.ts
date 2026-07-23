@@ -8,6 +8,11 @@ vi.mock("../middleware/auth.js", () => ({
 vi.mock("../middleware/index.js", () => ({
   errorHandler: (_err: unknown, _req: unknown, _res: unknown, next: () => void) => next(),
   httpLogger: (_req: unknown, _res: unknown, next: () => void) => next(),
+  markBrowserHttpRequestBodySensitive: (
+    _req: unknown,
+    _res: unknown,
+    next: () => void,
+  ) => next(),
 }));
 vi.mock("../middleware/private-hostname-guard.js", () => ({
   privateHostnameGuard: vi.fn(() => (_req: unknown, _res: unknown, next: () => void) => next()),

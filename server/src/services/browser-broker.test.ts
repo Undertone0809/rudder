@@ -171,6 +171,47 @@ describe("Browser Broker registry", () => {
     expect(registry.isAvailable()).toBe(false);
   });
 
+  it("rejects a late registration from an older lifecycle generation", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true, result: { tabs: [] } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const registry = createBrowserBrokerRegistry({ fetchImpl });
+    const ownerId = "02ad71bd-dcc1-4c93-9642-b16c8c1d2e08";
+    const replacementToken = "n".repeat(48);
+    registry.register({
+      endpoint: "http://127.0.0.1:4242/browser",
+      token: replacementToken,
+      ownerId,
+      generation: 2,
+    });
+
+    try {
+      registry.register({
+        endpoint: "http://127.0.0.1:4141/browser",
+        token: "o".repeat(48),
+        ownerId,
+        generation: 1,
+      });
+      throw new Error("Expected stale Browser Broker registration to fail");
+    } catch (error) {
+      expect(error).toMatchObject({ code: "browser_broker_stale_registration" });
+    }
+    expect(registry.unregister("o".repeat(48))).toBe(false);
+
+    await registry.forward({
+      identity: { orgId: "org-1", agentId: "agent-1", runId: "run-1" },
+      action: "tabs",
+      args: {},
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:4242/browser",
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: `Bearer ${replacementToken}` }),
+      }),
+    );
+  });
+
   it("aborts admitted Broker requests immediately when Browser is revoked", async () => {
     let admittedSignal: AbortSignal | undefined;
     const registry = createBrowserBrokerRegistry({
