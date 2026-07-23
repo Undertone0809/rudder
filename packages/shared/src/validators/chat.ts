@@ -740,12 +740,21 @@ const messengerItemKeysSchema = z.array(messengerItemKeySchema).min(1).max(50);
 export const createMessengerCustomGroupWithEntriesSchema = createMessengerCustomGroupSchema.extend({
   itemKeys: messengerItemKeysSchema.optional(),
   threadKeys: messengerItemKeysSchema.optional(),
+  anchorItemKey: messengerItemKeySchema.optional(),
   autoGenerateName: z.boolean().optional(),
 }).superRefine((value, ctx) => {
   if (!value.itemKeys && !value.threadKeys) {
     ctx.addIssue({ code: "custom", message: "itemKeys or threadKeys is required", path: ["itemKeys"] });
   } else if (value.itemKeys && value.threadKeys && JSON.stringify(value.itemKeys) !== JSON.stringify(value.threadKeys)) {
     ctx.addIssue({ code: "custom", message: "itemKeys and threadKeys must match", path: ["itemKeys"] });
+  }
+  const itemKeys = value.itemKeys ?? value.threadKeys;
+  if (value.anchorItemKey && itemKeys && !itemKeys.includes(value.anchorItemKey)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "anchorItemKey must be included in itemKeys",
+      path: ["anchorItemKey"],
+    });
   }
 }).transform((value) => ({ ...value, itemKeys: value.itemKeys ?? value.threadKeys! }));
 

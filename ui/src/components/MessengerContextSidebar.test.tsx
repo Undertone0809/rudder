@@ -19,6 +19,18 @@ let queryOptions: Array<{ queryKey?: unknown; enabled?: boolean }>;
 let localStorageValues: Record<string, string>;
 let activeGeneratingChatIds: Set<string>;
 
+vi.mock("@/context/MainWorkbenchContext", () => ({
+  useMainWorkbench: () => ({
+    getState: () => ({ organizations: {} }),
+    unbindSavedViewForOrganization: vi.fn(),
+  }),
+  useOrganizationMainWorkbench: () => ({
+    activeTab: null,
+    tabs: [],
+    unbindSavedView: vi.fn(),
+  }),
+}));
+
 vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useQueryClient: () => ({ invalidateQueries }),
