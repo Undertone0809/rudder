@@ -7,6 +7,15 @@ import { agentsApi } from "../api/agents";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 
+export function buildManagedMcpBindingUpdate(
+  row: McpAgentConnectionSummary,
+  enabledToolIds?: string[],
+  activate = false,
+) {
+  if (!row.binding) return {};
+  return activate ? { status: "active" as const, enabledToolIds } : { enabledToolIds };
+}
+
 export function AgentManagedMcpConnections({
   agentId,
   orgId,
@@ -26,15 +35,14 @@ export function AgentManagedMcpConnections({
     mutationFn: (input: {
       row: McpAgentConnectionSummary;
       enabledToolIds?: string[];
+      activate?: boolean;
       disconnect?: boolean;
     }) => input.disconnect
       ? agentsApi.revokeMcpConnectionBinding(agentId, input.row.connection.id, orgId)
       : agentsApi.updateMcpConnectionBinding(
           agentId,
           input.row.connection.id,
-          input.row.binding
-            ? { status: "active", enabledToolIds: input.enabledToolIds }
-            : {},
+          buildManagedMcpBindingUpdate(input.row, input.enabledToolIds, input.activate),
           orgId,
         ),
     onSuccess: async (_result, input) => {
@@ -128,6 +136,7 @@ export function AgentManagedMcpConnections({
                   onClick={() => mutation.mutate({
                     row,
                     enabledToolIds: activeTools.map((tool) => tool.id),
+                    activate: true,
                   })}
                 >
                   <PlugZap className="size-3.5" /> Bind all current tools
