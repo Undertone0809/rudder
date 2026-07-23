@@ -666,6 +666,11 @@ export function MessengerMainWorkbench({
 
   useEffect(() => {
     if (!activeRoute) {
+      if (lastActiveRouteRef.current !== null) {
+        lastActiveRouteRef.current = null;
+        navigate("/messenger", { replace: true });
+        return;
+      }
       lastActiveRouteRef.current = null;
       return;
     }
