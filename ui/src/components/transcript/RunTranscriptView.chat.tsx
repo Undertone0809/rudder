@@ -1,15 +1,68 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
+import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
-import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
+import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
 import { transcriptAgentInspectionForTool } from "./TranscriptAgentInspection";
 
 const EMPTY_AGENT_INSPECTIONS = new Map<string, TranscriptAgentInspection>();
+
+type TranscriptMcpBrandIcon = {
+  aliases: readonly string[];
+  label: string;
+  src: string;
+  imageClassName?: string;
+};
+
+const TRANSCRIPT_MCP_BRAND_ICONS: readonly TranscriptMcpBrandIcon[] = [
+  {
+    aliases: ["rudder", "rudder-tools", "rudder_tools", "rudder-browser", "rudder_browser"],
+    label: "Rudder",
+    src: "/rudder-logo.png",
+  },
+  {
+    aliases: ["github", "github-tools", "github-mcp", "github-mcp-server"],
+    label: "GitHub",
+    src: "/brands/github-logo.svg",
+    imageClassName: "dark:invert",
+  },
+  {
+    aliases: ["gmail"],
+    label: "Gmail",
+    src: "/brands/gmail-logo.svg",
+  },
+  {
+    aliases: ["google-calendar", "google_calendar"],
+    label: "Google Calendar",
+    src: "/brands/google-calendar-logo.svg",
+  },
+  {
+    aliases: ["google-drive", "google_drive"],
+    label: "Google Drive",
+    src: "/brands/google-drive-logo.svg",
+  },
+  {
+    aliases: ["notion"],
+    label: "Notion",
+    src: "/brands/notion-logo.svg",
+    imageClassName: "dark:invert",
+  },
+  {
+    aliases: ["linear"],
+    label: "Linear",
+    src: "/brands/linear-logo.svg",
+  },
+];
+
+export function getTranscriptMcpBrandIcon(server: string | null | undefined): TranscriptMcpBrandIcon | null {
+  const normalizedServer = server?.trim().toLowerCase();
+  if (!normalizedServer) return null;
+  return TRANSCRIPT_MCP_BRAND_ICONS.find((brand) => brand.aliases.includes(normalizedServer)) ?? null;
+}
 
 export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTranscriptAction[] {
   const actions: ChatTranscriptAction[] = [];
@@ -96,18 +149,16 @@ function TranscriptChatActionIconCell({
   input?: unknown;
 }) {
   const agentAvatarInfo = toolName ? getTranscriptAgentAvatarInfo(toolName, input) : null;
+  const mcpDetails = category === "mcp" && toolName ? extractMcpToolDetails(toolName, input) : null;
+  const mcpBrandIcon = getTranscriptMcpBrandIcon(mcpDetails?.server);
   if (agentAvatarInfo) {
     return compact ? (
       <TranscriptAgentAvatarIcon info={agentAvatarInfo} status={status} />
     ) : (
-      <span className="inline-flex h-5 w-8 shrink-0" data-transcript-action-icon-slot="true">
+      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center" data-transcript-action-icon-slot="true">
         <TranscriptAgentAvatarIcon info={agentAvatarInfo} status={status} />
       </span>
     );
-  }
-
-  if (!compact) {
-    return <TranscriptActionIconSlot category={category} status={status} />;
   }
 
   return (
@@ -115,7 +166,22 @@ function TranscriptChatActionIconCell({
       className="inline-flex h-5 w-5 shrink-0 items-center justify-center"
       data-transcript-action-icon-slot="true"
     >
-      <TranscriptActionIcon category={category} status={status} />
+      {mcpBrandIcon ? (
+        <span
+          className="inline-flex h-4 w-4 items-center justify-center"
+          aria-label={`${mcpBrandIcon.label} MCP tool`}
+          title={mcpBrandIcon.label}
+        >
+          <img
+            src={mcpBrandIcon.src}
+            alt=""
+            aria-hidden="true"
+            className={cn("h-4 w-4 object-contain", mcpBrandIcon.imageClassName)}
+          />
+        </span>
+      ) : (
+        <TranscriptActionIcon category={category} status={status} />
+      )}
     </span>
   );
 }
@@ -250,9 +316,9 @@ export function TranscriptChatToolActionRow({
   const chevronOffsetClass = compact ? "" : "mt-0.5";
   const fileTargets = semantic.fileTargets ?? [];
   const hasOpenableFileTargets = fileTargets.some((target) => target.path);
-  const detailLabel = open
-    ? `Collapse ${isCommand ? "command" : "tool"} details`
-    : `Expand ${isCommand ? "command" : "tool"} details`;
+  const detailStateLabelId = useId();
+  const summaryLabelId = useId();
+  const statusLabelId = useId();
   const toggleDetails = () => {
     if (inline || !canExpand) return;
     setOpen((value) => !value);
@@ -267,10 +333,15 @@ export function TranscriptChatToolActionRow({
       className={cn(rowPaddingClass, highlightError && block.status === "error" && "-mx-2 rounded-lg bg-red-500/[0.04] px-2")}
       title={getTranscriptTimestampTitle(block.ts)}
     >
+      {canExpand && !inline && !inspectAgent ? (
+        <span id={detailStateLabelId} className="sr-only">
+          {open ? "Collapse" : "Expand"} {isCommand ? "command" : "tool"} details:
+        </span>
+      ) : null}
       {hasOpenableFileTargets ? (
         <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
           <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
-          <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
+          <span id={summaryLabelId} className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
             {semantic.category === "edit" ? "Edited " : "Read "}
             {fileTargets.map((target, index) => (
               <span key={`${target.label}-${index}`}>
@@ -297,7 +368,7 @@ export function TranscriptChatToolActionRow({
             </span>
           ) : null}
           {statusText ? (
-            <span className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
+            <span id={statusLabelId} className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
               {statusText}
             </span>
           ) : null}
@@ -305,13 +376,13 @@ export function TranscriptChatToolActionRow({
             <button
               type="button"
               className={cn(
-                "inline-flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                "-my-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                 chevronOffsetClass,
-                quiet && !open && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
+                quiet && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
               )}
               onClick={toggleDetails}
               aria-expanded={open}
-              aria-label={detailLabel}
+              aria-labelledby={`${detailStateLabelId} ${summaryLabelId}${statusText ? ` ${statusLabelId}` : ""}`}
               data-transcript-action-row-disclosure="true"
             >
               <DisclosureChevron open={open} className="h-4 w-4" />
@@ -326,13 +397,14 @@ export function TranscriptChatToolActionRow({
           aria-expanded={!inspectAgent && canExpand && !inline ? open : undefined}
           aria-label={inspectAgent
             ? `Inspect agent ${inspectableAgent?.threadId}`
-            : canExpand && !inline
-              ? detailLabel
-              : undefined}
+            : undefined}
+          aria-labelledby={!inspectAgent && canExpand && !inline
+            ? `${detailStateLabelId} ${summaryLabelId}${statusText ? ` ${statusLabelId}` : ""}`
+            : undefined}
           data-transcript-agent-inspect={inspectAgent ? inspectableAgent?.threadId : undefined}
         >
           <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
-          <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
+          <span id={summaryLabelId} className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
             {displaySummary}
           </span>
           {duration ? (
@@ -341,7 +413,7 @@ export function TranscriptChatToolActionRow({
             </span>
           ) : null}
           {statusText ? (
-            <span className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
+            <span id={statusLabelId} className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
               {statusText}
             </span>
           ) : null}
@@ -350,7 +422,7 @@ export function TranscriptChatToolActionRow({
               className={cn(
                 "inline-flex h-5 w-5 items-center justify-center text-muted-foreground",
                 chevronOffsetClass,
-                quiet && !open && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
+                quiet && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
               )}
               data-transcript-action-row-disclosure="true"
             >
@@ -593,7 +665,8 @@ export function TranscriptChatActionGroup({
       <button
         type="button"
         className={cn(
-          "group/activity -mx-2 inline-flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left transition-colors",
+          "group/activity -mx-2 inline-flex max-w-full items-center rounded-lg px-2 py-1.5 text-left transition-colors",
+          compact ? "gap-1.5" : "gap-2",
           highlightGroupError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
         )}
         onClick={() => setDetailsOpen((value) => !value)}
@@ -623,8 +696,7 @@ export function TranscriptChatActionGroup({
         </span>
         <span
           className={cn(
-            "inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground transition-opacity",
-            detailsOpen ? "opacity-100" : "opacity-0 group-hover/activity:opacity-100 group-focus-visible/activity:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
+            "inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity:opacity-100 group-focus-visible/activity:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
           )}
           data-testid="transcript-action-group-disclosure"
           data-transcript-disclosure-chevron="true"
