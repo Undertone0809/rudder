@@ -126,16 +126,17 @@ describe("managed MCP shared contracts", () => {
         url: "https://mcp.example.com",
         staticHeaders: { Accept: "application/json" },
         headersFromEnv: { "X-Api-Key": "MCP_API_KEY" },
+        secretHeaderNames: ["X-Tenant-Token"],
       },
       secrets: {
-        env: { MCP_API_KEY: "env-secret" },
+        headers: { "X-Tenant-Token": "encrypted-header-secret" },
       },
     });
 
     expect(parsed.success).toBe(true);
   });
 
-  it("rejects conflicting manual Authorization and Bearer sources", () => {
+  it("accepts exactly one manual Authorization or Bearer source and rejects every pair", () => {
     const schema = exportedSchema("createMcpConnectionSchema");
     if (!schema) return;
 
@@ -146,50 +147,94 @@ describe("managed MCP shared contracts", () => {
       transport: "streamable_http",
       accessMode: "provider_default",
     };
-    const authorizationHeader = {
-      headersFromEnv: { Authorization: "MCP_AUTHORIZATION" },
-    };
-    const bearerEnvironment = {
-      bearerTokenEnvVar: "MCP_BEARER_TOKEN",
-    };
-    const directBearer = {
-      hasBearerToken: true,
-    };
+    const sources = [
+      {
+        safeConfig: { headersFromEnv: { Authorization: "MCP_AUTHORIZATION" } },
+      },
+      {
+        safeConfig: { secretHeaderNames: ["Authorization"] },
+        secrets: { headers: { Authorization: "Bearer encrypted-header-token" } },
+      },
+      {
+        safeConfig: { bearerTokenEnvVar: "MCP_BEARER_TOKEN" },
+      },
+      {
+        safeConfig: { hasBearerToken: true },
+        secrets: { bearerToken: "direct-bearer-token" },
+      },
+    ];
 
+    for (const source of sources) {
+      expect(schema.safeParse({
+        ...base,
+        safeConfig: { url: "https://mcp.example.com", ...source.safeConfig },
+        ...("secrets" in source ? { secrets: source.secrets } : {}),
+      }).success).toBe(true);
+    }
+
+    for (let first = 0; first < sources.length; first += 1) {
+      for (let second = first + 1; second < sources.length; second += 1) {
+        const firstSource = sources[first]!;
+        const secondSource = sources[second]!;
+        const headers = {
+          ...firstSource.secrets?.headers,
+          ...secondSource.secrets?.headers,
+        };
+        const bearerToken = (
+          firstSource.secrets?.bearerToken
+          ?? secondSource.secrets?.bearerToken
+        );
+        const secrets = Object.keys(headers).length > 0 || bearerToken
+          ? { headers, bearerToken }
+          : undefined;
+        expect(schema.safeParse({
+          ...base,
+          safeConfig: {
+            url: "https://mcp.example.com",
+            ...firstSource.safeConfig,
+            ...secondSource.safeConfig,
+          },
+          ...(secrets ? { secrets } : {}),
+        }).success).toBe(false);
+      }
+    }
+  });
+
+  it("requires mutation secrets to exactly match their safe declarations", () => {
+    const schema = exportedSchema("createMcpConnectionSchema");
+    if (!schema) return;
+
+    const base = {
+      name: "secret-shape",
+      displayName: "Secret shape",
+      provider: "custom",
+      transport: "streamable_http",
+      accessMode: "provider_default",
+    };
     for (const input of [
       {
-        safeConfig: { url: "https://mcp.example.com", ...authorizationHeader, ...bearerEnvironment },
-        secrets: {
-          env: {
-            MCP_AUTHORIZATION: "Bearer header-token",
-            MCP_BEARER_TOKEN: "bearer-env-token",
-          },
-        },
-      },
-      {
-        safeConfig: { url: "https://mcp.example.com", ...authorizationHeader, ...directBearer },
-        secrets: {
-          env: { MCP_AUTHORIZATION: "Bearer header-token" },
-          bearerToken: "direct-bearer-token",
-        },
-      },
-      {
-        safeConfig: { url: "https://mcp.example.com", ...bearerEnvironment, ...directBearer },
-        secrets: {
-          env: { MCP_BEARER_TOKEN: "bearer-env-token" },
-          bearerToken: "direct-bearer-token",
-        },
+        safeConfig: { url: "https://mcp.example.com" },
+        secrets: { env: { MCP_API_KEY: "HTTP-env-secrets-are-not-accepted" } },
       },
       {
         safeConfig: {
           url: "https://mcp.example.com",
-          secretHeaderNames: ["Authorization"],
-          ...bearerEnvironment,
+          secretHeaderNames: ["X-Api-Key"],
         },
-        secrets: {
-          env: { MCP_BEARER_TOKEN: "bearer-env-token" },
-          headers: { Authorization: "Bearer header-token" },
+      },
+      {
+        safeConfig: { url: "https://mcp.example.com" },
+        secrets: { headers: { "X-Api-Key": "undeclared-secret" } },
+      },
+      {
+        safeConfig: {
+          url: "https://mcp.example.com",
+          hasBearerToken: true,
         },
+      },
+      {
+        safeConfig: { url: "https://mcp.example.com" },
+        secrets: { bearerToken: "undeclared-direct-bearer" },
       },
     ]) {
       expect(schema.safeParse({ ...base, ...input }).success).toBe(false);
@@ -300,6 +345,11 @@ describe("managed MCP shared contracts", () => {
     expect(createSchema.safeParse({ ...linearBase, accessMode: "read_only" }).success).toBe(true);
     expect(createSchema.safeParse({ ...linearBase, accessMode: "read_write" }).success).toBe(true);
     expect(createSchema.safeParse({ ...linearBase, accessMode: "provider_default" }).success).toBe(false);
+    const linearDefault = createSchema.safeParse(linearBase);
+    expect(linearDefault.success).toBe(true);
+    if (linearDefault.success) {
+      expect((linearDefault.data as { accessMode?: string }).accessMode).toBe("read_write");
+    }
 
     const notionBase = {
       name: "notion-team",

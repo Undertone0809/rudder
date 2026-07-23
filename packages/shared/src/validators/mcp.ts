@@ -148,8 +148,17 @@ const providerAccessModes = {
 } as const;
 
 function defaultAccessMode(provider: string | undefined) {
-  if (provider === "supabase" || provider === "linear") return "read_only";
+  if (provider === "supabase") return "read_only";
+  if (provider === "linear") return "read_write";
   return "provider_default";
+}
+
+function sameNames(left: string[], right: string[], caseInsensitive = false) {
+  const normalize = (name: string) => caseInsensitive ? name.toLowerCase() : name;
+  const leftNames = new Set(left.map(normalize));
+  const rightNames = new Set(right.map(normalize));
+  return leftNames.size === rightNames.size
+    && [...leftNames].every((name) => rightNames.has(name));
 }
 
 function validateConnectionConfig(
@@ -206,12 +215,27 @@ function validateConnectionConfig(
   }
 
   if (value.transport === "stdio") {
-    if (!mcpStdioSafeConfigSchema.safeParse(value.safeConfig).success) {
+    const parsed = mcpStdioSafeConfigSchema.safeParse(value.safeConfig);
+    if (!parsed.success) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["safeConfig"],
         message: "STDIO connections require command-based safe config",
       });
+    } else {
+      const declaredEnvNames = parsed.data.secretEnvNames ?? [];
+      const suppliedEnvNames = Object.keys(value.secrets?.env ?? {});
+      if (
+        !sameNames(declaredEnvNames, suppliedEnvNames)
+        || Object.keys(value.secrets?.headers ?? {}).length > 0
+        || Boolean(value.secrets?.bearerToken)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["secrets"],
+          message: "STDIO secret values must exactly match declared secret environment names",
+        });
+      }
     }
   }
 
@@ -241,20 +265,49 @@ function validateConnectionConfig(
         message: "Legacy manual connections cannot be executable",
       });
     }
+    if (value.secrets) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["secrets"],
+        message: "Legacy manual connections cannot accept new secret values",
+      });
+    }
   }
 
   if (value.transport === "streamable_http") {
     const parsed = mcpStreamableHttpSafeConfigSchema.safeParse(value.safeConfig);
     if (parsed.success) {
-      const authorizationHeader = (
-        Object.keys(parsed.data.headersFromEnv ?? {})
-          .some((name) => name.toLowerCase() === "authorization")
-        || (parsed.data.secretHeaderNames ?? [])
-          .some((name) => name.toLowerCase() === "authorization")
+      const suppliedEnvNames = Object.keys(value.secrets?.env ?? {});
+      const declaredHeaderNames = parsed.data.secretHeaderNames ?? [];
+      const suppliedHeaderNames = Object.keys(value.secrets?.headers ?? {});
+      const declaredBearer = parsed.data.hasBearerToken === true;
+      const suppliedBearer = Boolean(value.secrets?.bearerToken);
+      if (
+        suppliedEnvNames.length > 0
+        || !sameNames(declaredHeaderNames, suppliedHeaderNames, true)
+        || declaredBearer !== suppliedBearer
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["secrets"],
+          message: "HTTP mutations accept only exactly declared encrypted headers and direct Bearer values",
+        });
+      }
+
+      const authorizationFromEnv = Object.keys(parsed.data.headersFromEnv ?? {})
+        .some((name) => name.toLowerCase() === "authorization");
+      const encryptedAuthorizationHeader = (
+        declaredHeaderNames.some((name) => name.toLowerCase() === "authorization")
+        || suppliedHeaderNames.some((name) => name.toLowerCase() === "authorization")
       );
       const bearerEnvironment = Boolean(parsed.data.bearerTokenEnvVar);
-      const directBearer = Boolean(parsed.data.hasBearerToken || value.secrets?.bearerToken);
-      if ([authorizationHeader, bearerEnvironment, directBearer].filter(Boolean).length > 1) {
+      const directBearer = declaredBearer || suppliedBearer;
+      if ([
+        authorizationFromEnv,
+        encryptedAuthorizationHeader,
+        bearerEnvironment,
+        directBearer,
+      ].filter(Boolean).length > 1) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["safeConfig"],
