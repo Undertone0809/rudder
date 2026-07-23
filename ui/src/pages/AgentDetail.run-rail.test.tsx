@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { HeartbeatRun } from "@rudderhq/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -40,6 +41,14 @@ vi.mock("../context/ToastContext", () => ({
 
 vi.mock("../context/SidebarContext", () => ({
   useSidebar: () => ({ isMobile: testState.isMobile }),
+}));
+
+vi.mock("../context/DialogContext", () => ({
+  useDialog: () => ({ confirm: vi.fn() }),
+}));
+
+vi.mock("./AgentDetail.chat-context", () => ({
+  RunChatContextCard: () => null,
 }));
 
 vi.mock("./AgentDetail.run-log", () => ({
@@ -111,6 +120,7 @@ function conversationEntry(overrides: Partial<Extract<RunRailEntry, { kind: "con
 }
 
 let container: HTMLDivElement;
+let queryClient: QueryClient;
 let root: Root;
 
 beforeEach(() => {
@@ -119,13 +129,32 @@ beforeEach(() => {
   testState.searchParams = new URLSearchParams("runScene=chat&panel=discarded");
   container = document.createElement("div");
   document.body.appendChild(container);
+  queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        enabled: false,
+        retry: false,
+        staleTime: Infinity,
+      },
+    },
+  });
   root = createRoot(container);
 });
 
 afterEach(() => {
   act(() => root.unmount());
+  queryClient.clear();
   container.remove();
 });
+
+function expectRoundedClipPane(pane: HTMLElement | null) {
+  expect(pane).not.toBeNull();
+  expect(pane?.classList.contains("rounded-lg")).toBe(true);
+  expect(pane?.classList.contains("overflow-clip")).toBe(true);
+  expect(pane?.classList.contains("overflow-x-hidden")).toBe(false);
+  expect(pane?.classList.contains("overflow-hidden")).toBe(false);
+  expect(pane?.classList.contains("overflow-y-auto")).toBe(false);
+}
 
 describe("RunConversationListItem", () => {
   it("renders one accessible group row with representative run semantics and matching count", () => {
@@ -236,6 +265,7 @@ describe("RunsTab shared rail branches", () => {
       />);
     });
 
+    expectRoundedClipPane(container.querySelector<HTMLElement>("[data-testid='agent-runs-list-pane']"));
     expect(container.querySelectorAll("[data-testid='agent-run-conversation-group-row']")).toHaveLength(1);
     expect(container.textContent).toContain("2 runs");
   });
@@ -282,8 +312,38 @@ describe("RunsTab shared rail branches", () => {
       />);
     });
 
+    expectRoundedClipPane(container.querySelector<HTMLElement>("[data-testid='agent-runs-list-pane']"));
     expect(container.querySelector("[data-testid='agent-runs-detail-pane']")).toBeNull();
     expect(container.querySelectorAll("[data-testid='agent-run-conversation-group-row']")).toHaveLength(1);
     expect(container.textContent).toContain("2 runs");
+  });
+
+  it("clips the desktop selected-run rail while preserving its sticky inner scroller", () => {
+    queryClient.setQueryData(["agent-run", groupedRuns[0].id], groupedRuns[0]);
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <RunsTab
+            runs={groupedRuns}
+            orgId="org-1"
+            agentId="agent-1"
+            agentRouteId="agent-route"
+            selectedRunId={groupedRuns[0].id}
+            agentRuntimeType="codex_local"
+          />
+        </QueryClientProvider>,
+      );
+    });
+
+    const pane = container.querySelector<HTMLElement>("[data-testid='agent-runs-list-pane']");
+    expectRoundedClipPane(pane);
+    expect(container.querySelector("[data-testid='agent-runs-detail-pane']")).not.toBeNull();
+
+    const scroller = pane?.firstElementChild as HTMLElement | null;
+    expect(scroller?.classList.contains("sticky")).toBe(true);
+    expect(scroller?.classList.contains("top-4")).toBe(true);
+    expect(scroller?.classList.contains("overflow-y-auto")).toBe(true);
+    expect(scroller?.style.maxHeight).toBe("calc(100vh - 2rem)");
   });
 });
