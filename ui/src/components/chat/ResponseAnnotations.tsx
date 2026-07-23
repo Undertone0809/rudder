@@ -62,6 +62,7 @@ function countLabel(count: number, labels: ResponseAnnotationLabels) {
 export function ResponseAnnotationCountChip({
   count,
   expanded,
+  controlsId,
   onToggle,
   onClear,
   labels = DEFAULT_LABELS,
@@ -69,6 +70,7 @@ export function ResponseAnnotationCountChip({
 }: {
   count: number;
   expanded: boolean;
+  controlsId?: string;
   onToggle: () => void;
   onClear?: () => void;
   labels?: ResponseAnnotationLabels;
@@ -86,6 +88,7 @@ export function ResponseAnnotationCountChip({
         className="inline-flex h-full items-center gap-1.5 px-3 transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 motion-reduce:transition-none"
         aria-label={expanded ? labels.hideAnnotations(count) : labels.showAnnotations(count)}
         aria-expanded={expanded}
+        aria-controls={controlsId}
         onClick={onToggle}
       >
         <MessageSquareText className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
@@ -155,6 +158,29 @@ function AnnotationAttachment({
   return <ChatFileAttachmentChip name={name} href={attachment.contentPath} />;
 }
 
+function EditableAnnotationAttachment({
+  attachment,
+  onRemove,
+}: {
+  attachment: ChatAttachment;
+  onRemove: () => void;
+}) {
+  const name = attachment.originalFilename ?? attachment.assetId;
+  return (
+    <div className="relative inline-flex max-w-full items-center gap-1">
+      <AnnotationAttachment attachment={attachment} />
+      <button
+        type="button"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 motion-reduce:transition-none"
+        aria-label={`Remove ${name}`}
+        onClick={onRemove}
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
 function AnnotationContent({
   annotation,
   ordinal,
@@ -200,6 +226,7 @@ export function ResponseAnnotationEditor({
   onDelete,
   onAddFiles,
   onRemovePendingFile,
+  onRemoveAttachment,
   labels = DEFAULT_LABELS,
   className,
 }: {
@@ -211,6 +238,7 @@ export function ResponseAnnotationEditor({
   onDelete: () => void;
   onAddFiles: (files: File[]) => void;
   onRemovePendingFile: (fileIndex: number) => void;
+  onRemoveAttachment?: (attachmentId: string) => void;
   labels?: ResponseAnnotationLabels;
   className?: string;
 }) {
@@ -231,7 +259,23 @@ export function ResponseAnnotationEditor({
       )}
       aria-label="Edit annotation"
     >
-      <AnnotationContent annotation={annotation} ordinal={1} attachments={attachments} labels={labels} />
+      <AnnotationContent
+        annotation={annotation}
+        ordinal={1}
+        attachments={onRemoveAttachment ? [] : attachments}
+        labels={labels}
+      />
+      {onRemoveAttachment && attachments.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {attachments.map((attachment) => (
+            <EditableAnnotationAttachment
+              key={attachment.id}
+              attachment={attachment}
+              onRemove={() => onRemoveAttachment(attachment.id)}
+            />
+          ))}
+        </div>
+      ) : null}
       <label htmlFor={`${inputId}-comment`} className="mt-3 block text-xs font-medium text-muted-foreground">
         {labels.userComment}
       </label>
@@ -374,6 +418,7 @@ export function SentResponseAnnotationsCard({
   className?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const annotationsListId = useId();
   if (annotations.length === 0) return null;
 
   return (
@@ -381,11 +426,15 @@ export function SentResponseAnnotationsCard({
       <ResponseAnnotationCountChip
         count={annotations.length}
         expanded={expanded}
+        controlsId={annotationsListId}
         onToggle={() => setExpanded((current) => !current)}
         labels={labels}
       />
       {expanded ? (
-        <ol className="w-[min(28rem,calc(100vw-1rem))] divide-y divide-[color:var(--border-soft)] overflow-hidden rounded-[var(--radius-xl)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] shadow-[var(--shadow-md)]">
+        <ol
+          id={annotationsListId}
+          className="w-[min(28rem,calc(100vw-1rem))] divide-y divide-[color:var(--border-soft)] overflow-hidden rounded-[var(--radius-xl)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] shadow-[var(--shadow-md)]"
+        >
           {annotations.map((annotation, index) => {
             const ownedAttachments = attachments.filter((attachment) => annotation.attachmentIds.includes(attachment.id));
             return (

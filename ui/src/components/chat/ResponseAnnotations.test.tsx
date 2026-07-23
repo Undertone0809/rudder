@@ -99,12 +99,15 @@ describe("response annotation components", () => {
       <ResponseAnnotationCountChip
         count={2}
         expanded={false}
+        controlsId="annotation-list"
         onToggle={onToggle}
         onClear={onClear}
       />,
     );
 
     expect(host.textContent).toContain("2 annotations");
+    expect(host.querySelector("[aria-label='Show 2 annotations']")?.getAttribute("aria-controls"))
+      .toBe("annotation-list");
     click(host.querySelector("[aria-label='Show 2 annotations']")!);
     click(host.querySelector("[aria-label='Clear all annotations']")!);
     expect(onToggle).toHaveBeenCalledOnce();
@@ -134,16 +137,19 @@ describe("response annotation components", () => {
     const onSave = vi.fn();
     const onAddFiles = vi.fn();
     const onRemovePendingFile = vi.fn();
+    const onRemoveAttachment = vi.fn();
     const pendingImage = new File(["image"], "screenshot.png", { type: "image/png" });
     render(
       <ResponseAnnotationEditor
         annotation={annotation}
         pendingFiles={[pendingImage]}
+        attachments={[attachment]}
         onSave={onSave}
         onCancel={vi.fn()}
         onDelete={vi.fn()}
         onAddFiles={onAddFiles}
         onRemovePendingFile={onRemovePendingFile}
+        onRemoveAttachment={onRemoveAttachment}
       />,
     );
 
@@ -166,6 +172,8 @@ describe("response annotation components", () => {
 
     click(host.querySelector("[aria-label='Remove screenshot.png']")!);
     expect(onRemovePendingFile).toHaveBeenCalledWith(0);
+    click(host.querySelector("[aria-label='Remove failure-notes.pdf']")!);
+    expect(onRemoveAttachment).toHaveBeenCalledWith(attachment.id);
 
     click(Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "Save")!);
     expect(onSave).toHaveBeenCalledWith({ comment: "Add a concrete example." });
