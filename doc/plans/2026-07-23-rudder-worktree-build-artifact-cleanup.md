@@ -2,7 +2,7 @@
 title: Rudder worktree and build artifact disk cleanup
 date: 2026-07-23
 kind: implementation
-status: in_progress
+status: completed
 area: developer_workflow
 entities:
   - git_worktree
@@ -14,7 +14,9 @@ supersedes: []
 related_code:
   - tests/e2e
   - desktop
-commit_refs: []
+commit_refs:
+  - "chore: plan disk cleanup"
+  - "chore: record disk cleanup completion"
 updated_at: 2026-07-23
 ---
 
@@ -50,3 +52,15 @@ branches, or the running main development environment.
 - Confirm the dev health endpoint remains available.
 - Confirm no orphan E2E PostgreSQL process remains.
 - Measure actual reclaimed space with `df`.
+
+## Result
+
+- Removed nine clean, merged worktrees and seven stale registrations.
+- Removed inactive Rudder temporary release, build, QA, and verification
+  directories; preserved the active landing-page review directory.
+- Removed ignored generated artifacts from the main repository and retained
+  inactive worktrees without changing their Git status.
+- Increased available data-volume space from 14 GiB to 83 GiB, reclaiming
+  approximately 69 GiB.
+- Confirmed the dev health endpoint, protected Rudder data directories, main
+  dependencies, and Desktop compiled output remain available.
