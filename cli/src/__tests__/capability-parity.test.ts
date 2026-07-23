@@ -607,7 +607,10 @@ describe("CLI automation/chat/runs parity", () => {
       "x-rudder-agent-id": "agent-1",
       "x-rudder-run-id": "run-1",
     });
-    expect(JSON.parse(String(init.body))).toEqual({ body: "hello" });
+    expect(JSON.parse(String(init.body))).toEqual({
+      body: "hello",
+      inlineAnnotations: [],
+    });
     expect(JSON.parse(output.stdoutText())).toMatchObject({
       messages: [
         {
