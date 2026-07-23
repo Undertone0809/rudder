@@ -113,6 +113,7 @@ describe("Messenger custom group title routes", () => {
       "Planning and Issues",
       "folder::amber",
       ["chat:chat-1", "issues"],
+      undefined,
     );
   });
 
@@ -135,6 +136,27 @@ describe("Messenger custom group title routes", () => {
       "Planning chat",
       "folder::amber",
       ["chat:chat-1", "issues"],
+      undefined,
+    );
+  });
+
+  it("forwards the exact loose row anchor for atomic group reuse", async () => {
+    const res = await request(createApp())
+      .post("/api/orgs/org-1/messenger/groups/merge")
+      .send({
+        name: "Planning chat",
+        itemKeys: ["chat:chat-1", "saved-view:30000000-0000-4000-8000-000000000001"],
+        anchorItemKey: "chat:chat-1",
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockMessengerService.createCustomGroupWithEntries).toHaveBeenCalledWith(
+      "org-1",
+      "user-1",
+      "Planning chat",
+      null,
+      ["chat:chat-1", "saved-view:30000000-0000-4000-8000-000000000001"],
+      "chat:chat-1",
     );
   });
 

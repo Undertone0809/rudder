@@ -22,9 +22,39 @@ import {
 const keepSavedView = vi.hoisted(() => vi.fn());
 const navigate = vi.hoisted(() => vi.fn());
 const routeState = vi.hoisted(() => ({ pathname: "/messenger/workbench" }));
+const organizationSelection = vi.hoisted(() => {
+  let selectedOrganizationId: string | null = "org-a";
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => selectedOrganizationId,
+    reset: () => {
+      selectedOrganizationId = "org-a";
+    },
+    set: (next: string | null) => {
+      selectedOrganizationId = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+});
 vi.mock("@/api/messenger", () => ({
   messengerApi: { keepSavedView },
 }));
+vi.mock("@/context/OrganizationContext", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useOptionalOrganization: () => ({
+      selectedOrganizationId: useSyncExternalStore(
+        organizationSelection.subscribe,
+        organizationSelection.getSnapshot,
+        organizationSelection.getSnapshot,
+      ),
+    }),
+  };
+});
 vi.mock("@/lib/router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/router")>()),
   useLocation: () => ({ pathname: routeState.pathname }),
@@ -282,6 +312,35 @@ function Harness({
       </button>
       <button
         type="button"
+        onClick={() => promotion.setSavedViewRemovalPending(
+          organizationId,
+          result.savedView.id,
+          true,
+        )}
+      >
+        Begin remove
+      </button>
+      <button
+        type="button"
+        onClick={() => promotion.finalizeSavedViewRemoval(
+          organizationId,
+          result.savedView.id,
+        )}
+      >
+        Finish remove
+      </button>
+      <button
+        type="button"
+        onClick={() => promotion.setSavedViewRemovalPending(
+          organizationId,
+          result.savedView.id,
+          false,
+        )}
+      >
+        Fail remove
+      </button>
+      <button
+        type="button"
         data-testid="mutate-source"
         onClick={() => sidePanel.replaceTargetForContext(
           contextKey,
@@ -397,6 +456,7 @@ async function waitForText(testId: string, expected: string) {
 }
 
 beforeEach(() => {
+  organizationSelection.reset();
   keepSavedView.mockReset().mockResolvedValue(result);
   navigate.mockReset();
   routeState.pathname = "/messenger/workbench";
@@ -470,6 +530,29 @@ describe("SavedViewPromotionProvider", () => {
     await settlePromotion();
     expect(host?.querySelector('[data-testid="moving"]')?.textContent)
       .toBe("false");
+  });
+
+  it("keeps a late organization-A move out of organization B", async () => {
+    const pending = deferred<MessengerSavedViewKeepResult>();
+    keepSavedView.mockReturnValue(pending.promise);
+    renderHarness();
+    await waitForText("side-order", "A,B,C");
+    await clickButton("Move B");
+    await waitForText("moving", "true");
+
+    await act(async () => organizationSelection.set("org-b"));
+    await act(async () => pending.resolve(result));
+    await settlePromotion();
+
+    expect(navigate).not.toHaveBeenCalled();
+    expect(host?.querySelector('[data-testid="side-order"]')?.textContent)
+      .toBe("A,B,C");
+    expect(host?.querySelector('[data-testid="main-order"]')?.textContent)
+      .toBe("");
+    expect(host?.querySelector('[data-testid="move-status"]')?.textContent)
+      .toBe("claim_failed");
+    expect(host?.querySelector('[data-testid="runtime-host"]')?.textContent)
+      .toBe("side");
   });
 
   it("rejects the same runtime from another context without unlocking or rehosting the first move", async () => {
@@ -577,6 +660,57 @@ describe("SavedViewPromotionProvider", () => {
       .toBe("saved-view:saved-b");
     expect(cached?.groups.some((group) => group.id === "group-existing"))
       .toBe(true);
+  });
+
+  it("cancels a retained claim retry when its Saved View is removed", async () => {
+    renderHarness({ mainAnchor: false });
+    await waitForText("side-order", "A,B,C");
+    await clickButton("Move B");
+    await settlePromotion();
+    await waitForText("move-status", "claim_failed");
+
+    await clickButton("Begin remove");
+    await clickButton("Finish remove");
+
+    expect(host?.querySelector('[data-testid="side-order"]')?.textContent)
+      .toBe("A,B,C");
+    expect(host?.querySelector('[data-testid="main-order"]')?.textContent)
+      .toBe("");
+    expect(host?.querySelector('[data-testid="move-status"]')?.textContent)
+      .toBe("idle");
+    expect(host?.querySelector('[data-testid="runtime-host"]')?.textContent)
+      .toBe("side");
+    expect(host?.querySelector('[data-testid="runtime-locked"]')?.textContent)
+      .toBe("false");
+
+    await clickButton("Retry move");
+    expect(host?.querySelector('[data-testid="outcome"]')?.textContent)
+      .toContain("no retained move");
+    expect(host?.querySelector('[data-testid="main-order"]')?.textContent)
+      .toBe("");
+  });
+
+  it("prevents a late Main claim from detaching Side after Remove succeeds", async () => {
+    renderHarness({ mainAnchor: false });
+    await waitForText("side-order", "A,B,C");
+    await clickButton("Move B");
+    await waitForText("move-status", "detaching");
+
+    await clickButton("Begin remove");
+    await clickButton("Finish remove");
+    await clickButton("Fail remove");
+    await settlePromotion();
+
+    expect(host?.querySelector('[data-testid="side-order"]')?.textContent)
+      .toBe("A,B,C");
+    expect(host?.querySelector('[data-testid="main-order"]')?.textContent)
+      .toBe("");
+    expect(host?.querySelector('[data-testid="move-status"]')?.textContent)
+      .toBe("idle");
+    expect(host?.querySelector('[data-testid="runtime-host"]')?.textContent)
+      .toBe("side");
+    expect(host?.querySelector('[data-testid="runtime-locked"]')?.textContent)
+      .toBe("false");
   });
 
   it("keeps an absent groups cache non-synthetic and invalidates it after server commit", async () => {
