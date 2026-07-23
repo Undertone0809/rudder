@@ -2187,7 +2187,10 @@ export function ChatMessageItem({
   ) => void;
   unlocatableResponseAnnotationId?: string | null;
   responseAnnotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
-  onEditResponseAnnotation?: (annotationId: string) => void;
+  onEditResponseAnnotation?: (
+    annotationId: string,
+    anchor: HTMLButtonElement,
+  ) => void;
   skillReferences: MarkdownSkillReferencePreview[];
   inlineEdit?: {
     draft: string;
@@ -2758,7 +2761,10 @@ export function StreamTranscriptItem({
     sourceConversationId: string;
     sourceMessageId: string;
     annotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
-    onActivateAnnotation?: (annotationId: string) => void;
+    onActivateAnnotation?: (
+      annotationId: string,
+      anchor: HTMLButtonElement,
+    ) => void;
   };
 }) {
   const timelineEntries = useMemo(

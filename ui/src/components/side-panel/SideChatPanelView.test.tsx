@@ -210,7 +210,9 @@ describe("SideChatPanelView response annotations", () => {
     const edit = host.querySelector<HTMLButtonElement>('[aria-label="Edit annotation 1"]');
     expect(edit).not.toBeNull();
     act(() => edit?.click());
-    const editor = host.querySelector('[data-testid="chat-response-annotation-editor"]')!;
+    const editor = document.body.querySelector(
+      '[data-testid="chat-response-annotation-editor"]',
+    )!;
     changeTextarea(editor.querySelector("textarea")!, "Please verify this.");
     const fileInput = editor.querySelector<HTMLInputElement>('input[type="file"]')!;
     act(() => {
@@ -220,7 +222,10 @@ describe("SideChatPanelView response annotations", () => {
       });
       fileInput.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    clickButton("Save");
+    const save = Array.from(editor.querySelectorAll("button"))
+      .find((candidate) => candidate.textContent?.trim() === "Save");
+    expect(save).toBeDefined();
+    act(() => save?.click());
 
     const send = host.querySelector<HTMLButtonElement>(
       '[aria-label="Send Side Chat message"]',

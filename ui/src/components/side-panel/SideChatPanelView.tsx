@@ -18,6 +18,7 @@ import {
   createChatResponseAnnotationState,
   responseAnnotationReducer,
   serializeChatResponseAnnotations,
+  validateChatResponseAnnotationReplacement,
 } from "@/lib/chat-response-annotations";
 import { queryKeys } from "@/lib/queryKeys";
 import { latestSideChatAnchor, sideChatConversationMessages, sideChatIsReadOnly } from "@/lib/side-chat";
@@ -82,6 +83,7 @@ export function SideChatPanelView({
     () => annotationState.annotations.length > 0,
   );
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const editingAnnotationAnchorRef = useRef<HTMLButtonElement | null>(null);
   const closeRequestedRef = useRef(false);
   const createPromiseRef = useRef<Promise<ChatConversation> | null>(null);
   const conversationIdRef = useRef(target.conversationId);
@@ -423,7 +425,10 @@ export function SideChatPanelView({
                   <EditableResponseAnnotationsCard
                     annotations={annotationState.annotations}
                     pendingFilesByAnnotationId={annotationState.pendingFilesByAnnotationId}
-                    onEdit={(annotation) => setEditingAnnotationId(annotation.id)}
+                    onEdit={(annotation, anchor) => {
+                      editingAnnotationAnchorRef.current = anchor;
+                      setEditingAnnotationId(annotation.id);
+                    }}
                     onDelete={(annotationId) => {
                       dispatchAnnotation({ type: "delete", id: annotationId });
                       setEditingAnnotationId((current) => (
@@ -437,11 +442,33 @@ export function SideChatPanelView({
                     (candidate) => candidate.id === editingAnnotationId,
                   );
                   if (!annotation) return null;
+                  const editorAnchor = editingAnnotationAnchorRef.current;
+                  const editorBoundary = editorAnchor?.closest<HTMLElement>(
+                    '[data-testid="side-chat-panel-view"]',
+                  ) ?? null;
                   return (
                     <ResponseAnnotationEditor
                       annotation={annotation}
                       ordinal={annotation.ordinal}
                       pendingFiles={annotationState.pendingFilesByAnnotationId[annotation.id] ?? []}
+                      anchorRect={editorAnchor?.getBoundingClientRect() ?? null}
+                      getAnchorRect={() => (
+                        editorAnchor?.isConnected ? editorAnchor.getBoundingClientRect() : null
+                      )}
+                      boundaryRect={editorBoundary?.getBoundingClientRect() ?? null}
+                      getBoundaryRect={() => (
+                        editorBoundary?.isConnected ? editorBoundary.getBoundingClientRect() : null
+                      )}
+                      returnFocusRef={editingAnnotationAnchorRef}
+                      validateSave={(changes) => validateChatResponseAnnotationReplacement(
+                        annotationState,
+                        annotation.id,
+                        {
+                          comment: changes.comment,
+                          attachmentIds: changes.attachmentIds,
+                          files: changes.pendingFiles,
+                        },
+                      )}
                       onSave={({ comment, pendingFiles, attachmentIds }) => {
                         dispatchAnnotation({
                           type: "replaceDraft",

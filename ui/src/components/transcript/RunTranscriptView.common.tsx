@@ -122,7 +122,10 @@ export interface TranscriptAnnotationSourceContext {
   sourceConversationId: string;
   sourceMessageId: string;
   annotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
-  onActivateAnnotation?: (annotationId: string) => void;
+  onActivateAnnotation?: (
+    annotationId: string,
+    anchor: HTMLButtonElement,
+  ) => void;
 }
 
 export interface TranscriptGenerationProvenance {
