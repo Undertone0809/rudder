@@ -5,6 +5,7 @@ import {
   CircleAlert,
   Copy,
   FileDiff,
+  Images,
   Loader2,
   TerminalSquare,
   User
@@ -697,9 +698,19 @@ export function TranscriptActivityRow({
   block: Extract<TranscriptBlock, { type: "activity" }>;
   density: TranscriptDensity;
 }) {
+  const isImageView = block.name.replace(/[\s_-]+/g, "").toLowerCase() === "imageview";
+
   return (
     <div className="flex items-start gap-2" title={getTranscriptTimestampTitle(block.ts)}>
-      {block.status === "completed" ? (
+      {isImageView ? (
+        <Images
+          className={cn(
+            "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground",
+            block.status === "running" && "animate-pulse text-cyan-600 dark:text-cyan-300",
+          )}
+          aria-hidden
+        />
+      ) : block.status === "completed" ? (
         <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-300" />
       ) : (
         <span className="relative mt-1 flex h-2.5 w-2.5 shrink-0">

@@ -8,6 +8,7 @@ import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
 import {
   ExpandableTranscriptResponsePre,
+  TranscriptActivityRow,
   TranscriptEventRow,
   TranscriptMessageBlock,
 } from "./RunTranscriptView.blocks";
@@ -142,6 +143,26 @@ describe("TranscriptEventRow", () => {
     expect(button?.getAttribute("aria-expanded")).toBe("true");
     expect(button?.getAttribute("aria-label")).toBe("Collapse file change details: Updated src/pages/AgentDetail.tsx");
     expect(container.textContent).toContain(rawEvent);
+  });
+});
+
+describe("TranscriptActivityRow", () => {
+  it("uses the image stack icon for a completed ImageView activity", () => {
+    const container = render(
+      <TranscriptActivityRow
+        density="comfortable"
+        block={{
+          type: "activity",
+          ts: "2026-07-23T12:00:00.000Z",
+          name: "ImageView",
+          status: "completed",
+        }}
+      />,
+    );
+
+    expect(container.querySelector(".lucide-images")).not.toBeNull();
+    expect(container.querySelector(".lucide-check")).toBeNull();
+    expect(container.textContent).toContain("ImageView");
   });
 });
 
