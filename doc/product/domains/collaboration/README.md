@@ -54,7 +54,9 @@ edit_policy: user_confirmed_only
   without metadata requests, while unlisted sites retain safe discovery and
   generic-icon fallback.
 - `CHAT.THREAD.MANIFEST.001`: each Chat exposes a typed, provenance-preserving
-  current-thread Outputs/Sources/References index.
+  current-thread Outputs/Sources/References index with organization-scoped
+  normal-Chat reference titles, Side Chat privacy, and accessible one-line
+  truncation.
 - `CHAT.SIDE.PANEL.001`: Side Panel is a global board workbench for opening
   supported referenced issues, automations, Library targets, chats, and browser
   placeholders without replacing the current route.

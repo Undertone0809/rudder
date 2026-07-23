@@ -22,7 +22,7 @@ import {
   type ChatWorkManifestResponse,
   type ChatWorkManifestTargetType,
 } from "@rudderhq/shared";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 
 type ManifestCandidate = {
   orgId: string;
@@ -270,6 +270,7 @@ export function chatWorkManifestService(db: Db) {
         .from(chatConversations)
         .where(and(
           eq(chatConversations.orgId, conversation.orgId),
+          ne(chatConversations.conversationKind, "side_chat"),
           inArray(chatConversations.id, referencedConversationIds),
         ));
       const referencedConversationTitles = new Map(
