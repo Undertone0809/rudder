@@ -2728,6 +2728,7 @@ export function StreamTranscriptItem({
   streamEndedAt,
   assistantMessageBody,
   showDeveloperDiagnostics,
+  open,
   defaultOpen = false,
   onOpenChange,
   onOpenFile,
@@ -2741,6 +2742,7 @@ export function StreamTranscriptItem({
   streamEndedAt?: Date | null;
   assistantMessageBody?: string | null;
   showDeveloperDiagnostics?: boolean;
+  open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   onOpenFile?: (targetPath: string, label: string) => void;
@@ -2758,7 +2760,10 @@ export function StreamTranscriptItem({
   );
   const streamingActive = state === "streaming" || state === "finalizing";
   const hasSteerInterjection = steerMessages.length > 0;
-  const [processOpen, setProcessOpen] = useState(() => streamingActive || defaultOpen || hasSteerInterjection);
+  const [internalProcessOpen, setInternalProcessOpen] = useState(
+    () => streamingActive || defaultOpen || hasSteerInterjection,
+  );
+  const processOpen = open ?? internalProcessOpen;
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -2768,7 +2773,7 @@ export function StreamTranscriptItem({
   }, [streamingActive]);
 
   useEffect(() => {
-    if (defaultOpen || hasSteerInterjection) setProcessOpen(true);
+    if (defaultOpen || hasSteerInterjection) setInternalProcessOpen(true);
   }, [defaultOpen, hasSteerInterjection]);
 
   const durationMs = useMemo(() => {
@@ -2803,11 +2808,9 @@ export function StreamTranscriptItem({
             disabled={streamingActive}
             onClick={() => {
               if (!streamingActive) {
-                setProcessOpen((open) => {
-                  const next = !open;
-                  onOpenChange?.(next);
-                  return next;
-                });
+                const next = !processOpen;
+                if (open === undefined) setInternalProcessOpen(next);
+                onOpenChange?.(next);
               }
             }}
             aria-expanded={showBody}

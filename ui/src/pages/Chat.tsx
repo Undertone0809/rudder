@@ -3550,7 +3550,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     streamEndedAt={persistedProcessEndedAt}
                                     assistantMessageBody={message.body}
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
-                                    defaultOpen={Boolean(openProcessMessageIds[message.id])} onOpenChange={(open) => setProcessOpenForMessage(message.id, open)}
+                                    open={Boolean(openProcessMessageIds[message.id])} onOpenChange={(open) => setProcessOpenForMessage(message.id, open)}
                                     onOpenFile={openTranscriptFile}
                                     onOpenAgent={openSubagentInspection}
                                     annotationSource={

@@ -246,6 +246,41 @@ describe("LazyStreamTranscriptItem", () => {
   });
 });
 
+describe("StreamTranscriptItem controlled disclosure", () => {
+  it("responds to an external open request after the transcript mounts", () => {
+    const entries: TranscriptEntry[] = [{
+      kind: "thinking",
+      ts: "2026-07-23T10:00:00.000Z",
+      text: "Visible process evidence",
+    }];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+    const renderTranscript = (open: boolean) => (
+      <QueryClientProvider client={queryClient}>
+        <StreamTranscriptItem
+          entries={entries}
+          state="completed"
+          streamStartedAt={new Date("2026-07-23T10:00:00.000Z")}
+          streamEndedAt={new Date("2026-07-23T10:00:01.000Z")}
+          open={open}
+          onOpenChange={vi.fn()}
+        />
+      </QueryClientProvider>
+    );
+
+    act(() => root.render(renderTranscript(false)));
+    expect(container.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
+
+    act(() => root.render(renderTranscript(true)));
+    expect(container.querySelector("button")?.getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
 describe("ChatMessagesLoadingState", () => {
   it("uses message skeletons for the chat loading state", () => {
     const container = render(<ChatMessagesLoadingState />);
