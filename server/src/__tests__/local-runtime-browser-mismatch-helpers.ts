@@ -11,6 +11,16 @@ import path from "node:path";
 
 const FIXTURE_ROOT = path.join(os.tmpdir(), "rudder-browser-mismatch-mcp-fixtures");
 
+export async function readRepositoryCliVersion(): Promise<string> {
+  const packageJson = JSON.parse(
+    await fs.readFile(new URL("../../../cli/package.json", import.meta.url), "utf8"),
+  ) as { version?: unknown };
+  if (typeof packageJson.version !== "string") {
+    throw new Error("CLI package version is missing");
+  }
+  return packageJson.version;
+}
+
 export async function createRuntimeSkillFixture(
   root: string,
   runtimeName: string,

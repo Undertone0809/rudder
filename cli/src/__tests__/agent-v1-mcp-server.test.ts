@@ -20,6 +20,16 @@ import {
 import { buildAgentV1McpToolsManifest } from "../agent-v1-registry.js";
 import { ApiRequestError } from "../client/http.js";
 
+async function repositoryCliVersion(): Promise<string> {
+  const packageJson = JSON.parse(
+    await fs.readFile(new URL("../../package.json", import.meta.url), "utf8"),
+  ) as { version?: unknown };
+  if (typeof packageJson.version !== "string") {
+    throw new Error("CLI package version is missing");
+  }
+  return packageJson.version;
+}
+
 const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_agent_update: { title: "Runtime Agent" },
   rudder_agent_skills_create: { name: "local-helper", description: "Local helper" },
@@ -562,7 +572,7 @@ describe("agent-v1 MCP server", () => {
             },
           },
         },
-        serverInfo: { name: "rudder-tools", version: "0.5.1" },
+        serverInfo: { name: "rudder-tools", version: await repositoryCliVersion() },
       },
     });
 
@@ -592,7 +602,9 @@ describe("agent-v1 MCP server", () => {
     );
 
     expect(response).toMatchObject({
-      result: { serverInfo: { name: "rudder-browser", version: "0.5.1" } },
+      result: {
+        serverInfo: { name: "rudder-browser", version: await repositoryCliVersion() },
+      },
     });
   });
 
