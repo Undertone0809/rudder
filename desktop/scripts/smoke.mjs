@@ -568,6 +568,11 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
   const serverEntrypoint = path.resolve(serverPackageDir, serverManifest.main ?? "dist/index.js");
   const runtimeCacheDir = path.join(resolveInstancePaths(userDataDir).rudderHome, "runtimes", serverManifest.version);
   const runtimeServerDir = path.join(runtimeCacheDir, "node_modules", "@rudderhq", "server");
+  const postgresRuntimeSegment = `${process.platform}-${process.arch}`;
+  const packagedPostgresRuntimeDir = path.join(resourcesDir, "postgres-18.4", postgresRuntimeSegment);
+  const runtimePostgresDir = path.join(runtimeCacheDir, "postgres-18.4", postgresRuntimeSegment);
+  const postgresBinDir = path.join(runtimePostgresDir, "bin");
+  const postgresBinDirMarker = path.join(userDataDir, "external-runtime-postgres-bin");
   const packagedCodexAdapterDir = path.join(
     serverPackageDir,
     "node_modules",
@@ -605,8 +610,14 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
   })}\n`, "utf8");
   await writeFile(
     path.join(runtimeServerDir, "index.js"),
-    `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(loadedMarker)}, "loaded");\nexport * from ${JSON.stringify(pathToFileURL(serverEntrypoint).href)};\n`,
+    `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(loadedMarker)}, "loaded");\nfs.writeFileSync(${JSON.stringify(postgresBinDirMarker)}, process.env.RUDDER_POSTGRES_BIN_DIR ?? "");\nexport * from ${JSON.stringify(pathToFileURL(serverEntrypoint).href)};\n`,
     "utf8",
+  );
+  await mkdir(path.dirname(runtimePostgresDir), { recursive: true });
+  await symlink(
+    packagedPostgresRuntimeDir,
+    runtimePostgresDir,
+    process.platform === "win32" ? "junction" : "dir",
   );
   await symlink(
     packagedCodexAdapterDir,
@@ -628,11 +639,16 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
     codexAdapterEntry: path.join(runtimeCodexAdapterDir, "dist", "server", "index.js"),
     executablePath,
     loadedMarker,
+    postgresBinDir,
+    postgresBinDirMarker,
     runtimeCacheDir,
     serverVersion: serverManifest.version,
     staleMarker,
     userDataDir,
-    env: { PATH: `${staleBinDir}${path.delimiter}${process.env.PATH ?? ""}` },
+    env: {
+      PATH: `${staleBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      RUDDER_POSTGRES_BIN_DIR: path.join(packagedPostgresRuntimeDir, "bin"),
+    },
   };
 }
 
@@ -4323,6 +4339,26 @@ async function runAgentBrowserScenario(mode) {
   }
 }
 
+async function runPostgresRuntimeHandoffScenario(mode) {
+  assert.equal(mode, "packaged", "PostgreSQL runtime handoff requires a packaged Desktop app");
+  const scenarioRoot = path.join(tmpRoot, "postgres-runtime-handoff");
+  const ports = await allocateSmokePorts();
+  const packagedRuntime = await preparePackagedExternalRuntimeFixture(scenarioRoot);
+  const run = await launchDesktop(scenarioRoot, mode, ports, packagedRuntime.env);
+  try {
+    assert.equal(await pathExists(packagedRuntime.loadedMarker), true, "packaged Desktop should load the external runtime cache");
+    assert.equal(
+      (await readFile(packagedRuntime.postgresBinDirMarker, "utf8")).trim(),
+      packagedRuntime.postgresBinDir,
+      "packaged Desktop should replace an inherited app-resource PostgreSQL path with the external runtime payload",
+    );
+    await closeDesktop(run.electronApp);
+  } catch (error) {
+    await closeDesktop(run.electronApp).catch(() => {});
+    throw error;
+  }
+}
+
 async function runUpgradeScenario(mode) {
   const scenarioRoot = path.join(tmpRoot, "upgrade");
   const paths = resolveInstancePaths(scenarioRoot);
@@ -4347,11 +4383,14 @@ function resolveScenarioList(mode, scenario) {
   if (!scenario || scenario === "default") {
     const localApps = process.platform === "darwin" ? ["local-apps"] : [];
     return mode === "packaged"
-      ? ["startup-recovery", "clean", ...localApps, "upgrade"]
+      ? ["startup-recovery", "postgres-runtime-handoff", "clean", ...localApps, "upgrade"]
       : ["startup-recovery", "clean", ...localApps];
   }
-  if (scenario === "all") return ["startup-recovery", "clean", "local-apps", "agent-browser", "upgrade"];
+  if (scenario === "all") {
+    return ["startup-recovery", "postgres-runtime-handoff", "clean", "local-apps", "agent-browser", "upgrade"];
+  }
   if (scenario === "startup-recovery"
+    || scenario === "postgres-runtime-handoff"
     || scenario === "clean"
     || scenario === "upgrade"
     || scenario === "browser"
@@ -4371,6 +4410,8 @@ try {
     console.log(`[desktop-smoke] running ${scenario} scenario`);
     if (scenario === "startup-recovery") {
       await runStartupRecoveryScenario(smokeMode);
+    } else if (scenario === "postgres-runtime-handoff") {
+      await runPostgresRuntimeHandoffScenario(smokeMode);
     } else if (scenario === "clean") {
       await runCleanScenario(smokeMode);
     } else if (scenario === "browser") {

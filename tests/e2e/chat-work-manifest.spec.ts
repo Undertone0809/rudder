@@ -89,9 +89,10 @@ test.describe("Chat Work Manifest", () => {
     });
     expect(chatRes.ok(), await chatRes.text()).toBe(true);
     const chat = await chatRes.json() as { id: string };
+    const referencedChatTitle = "Original referenced chat title that is deliberately longer than the compact References shelf can display";
     const otherChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
-        title: "Other project chat",
+        title: referencedChatTitle,
         preferredAgentId: agent.id,
         contextLinks: [{ entityType: "project", entityId: project.id }],
         initialMessage: { body: "Track the other project conversation." },
@@ -175,7 +176,7 @@ test.describe("Chat Work Manifest", () => {
           `Use https://source.example/research, https://source-two.example/data, and ${sourceFile.markdownLink}.`,
           `[${issue.identifier}](issue://${issue.id}?r=${encodeURIComponent(issue.identifier)})`,
           `[${automation.title}](automation://${automation.id}?t=${encodeURIComponent(automation.title)})`,
-          `[Other project chat](chat://${otherChat.id})`,
+          `[](chat://${otherChat.id})`,
         ].join(" "),
         status: "completed",
       },
@@ -252,8 +253,25 @@ test.describe("Chat Work Manifest", () => {
     await expect(issueStatusIcon).toHaveAttribute("data-status", "todo");
     await expect(references.getByRole("button", { name: new RegExp(automation.title) }).locator("[data-file-icon='automation']"))
       .toBeVisible();
-    await expect(references.getByRole("button", { name: /Other project chat/ }).locator("[data-file-icon='chat']"))
-      .toBeVisible();
+    const referencedChatButton = references.getByRole("button", { name: referencedChatTitle, exact: true });
+    await expect(referencedChatButton.locator("[data-file-icon='chat']")).toBeVisible();
+    await expect(referencedChatButton).toHaveAttribute("title", referencedChatTitle);
+    const referencedChatLabel = referencedChatButton.locator("span.truncate").first();
+    await expect(referencedChatLabel).toHaveText(referencedChatTitle);
+    const referencedChatLabelGeometry = await referencedChatLabel.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        overflowX: style.overflowX,
+        textOverflow: style.textOverflow,
+        whiteSpace: style.whiteSpace,
+      };
+    });
+    expect(referencedChatLabelGeometry.scrollWidth).toBeGreaterThan(referencedChatLabelGeometry.clientWidth);
+    expect(referencedChatLabelGeometry.overflowX).toBe("hidden");
+    expect(referencedChatLabelGeometry.textOverflow).toBe("ellipsis");
+    expect(referencedChatLabelGeometry.whiteSpace).toBe("nowrap");
     await expect(shelf).not.toContainText("Project work");
     await expect(shelf).not.toContainText("Project research source");
     await expect(shelf).not.toContainText("stale.example");
@@ -324,11 +342,11 @@ test.describe("Chat Work Manifest", () => {
       .getByRole("button", { name: "View all 29" })
       .click();
 
-    await references.getByRole("button", { name: "Other project chat", exact: true }).click();
+    await references.getByRole("button", { name: referencedChatTitle, exact: true }).click();
     const chatSidePanel = page.getByTestId("chat-side-panel");
     await expect(chatSidePanel).toBeVisible();
     await expect(chatSidePanel.getByTestId("chat-side-panel-chat-view")).toBeVisible();
-    await expect(chatSidePanel).toContainText("Other project chat");
+    await expect(chatSidePanel).toContainText(referencedChatTitle);
     await expect(chatSidePanel).toContainText("Other project source");
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
     await page.screenshot({ path: `${screenshotDir}/chat-side-panel.png`, fullPage: true });

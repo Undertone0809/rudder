@@ -23,7 +23,7 @@ import {
   type ChatWorkManifestResponse,
   type ChatWorkManifestTargetType,
 } from "@rudderhq/shared";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 
 type ManifestCandidate = {
   orgId: string;
@@ -370,6 +370,39 @@ export function chatWorkManifestService(db: Db) {
             },
           });
         }
+      }
+    }
+
+    const referencedConversationIds = [...new Set(
+      [...candidates.values()]
+        .filter((candidate) => candidate.targetType === "chat_conversation")
+        .map((candidate) => typeof candidate.metadata?.conversationId === "string"
+          ? candidate.metadata.conversationId.trim()
+          : "")
+        .filter((referencedConversationId) => isUuidLike(referencedConversationId)),
+    )];
+    if (referencedConversationIds.length > 0) {
+      const referencedConversations = await db
+        .select({ id: chatConversations.id, title: chatConversations.title })
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.orgId, conversation.orgId),
+          ne(chatConversations.conversationKind, "side_chat"),
+          inArray(chatConversations.id, referencedConversationIds),
+        ));
+      const referencedConversationTitles = new Map(
+        referencedConversations.map((referencedConversation) => [
+          referencedConversation.id,
+          referencedConversation.title,
+        ]),
+      );
+      for (const candidate of candidates.values()) {
+        if (candidate.targetType !== "chat_conversation") continue;
+        const referencedConversationId = typeof candidate.metadata?.conversationId === "string"
+          ? candidate.metadata.conversationId.trim()
+          : "";
+        const referencedConversationTitle = referencedConversationTitles.get(referencedConversationId);
+        if (referencedConversationTitle?.trim()) candidate.title = referencedConversationTitle;
       }
     }
 

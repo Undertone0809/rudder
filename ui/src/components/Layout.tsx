@@ -4,7 +4,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { CalendarWorkspaceProvider } from "@/context/CalendarWorkspaceContext";
 import { useI18n } from "@/context/I18nContext";
 import { MarkdownMentionsProvider } from "@/context/MarkdownMentionsContext";
-import { useSidePanel } from "@/context/SidePanelContext";
+import {
+  useSidePanel,
+  type DisplayedSidePanelContextHold,
+} from "@/context/SidePanelContext";
 import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, PanelLeft, PanelRight, Settings, X } from "lucide-react";
@@ -409,6 +412,27 @@ export function resolveSidePanelRouteContextKey(
 ): string {
   return resolveSidePanelContextKey(relativePath)
     ?? (organizationId ? `organization:${organizationId}:global` : "global");
+}
+
+export function resolveDisplayedSidePanelContext(
+  relativePath: string,
+  organizationId: string | null | undefined,
+  hold: DisplayedSidePanelContextHold | null,
+): { contextKey: string; preserveHold: boolean } {
+  const routeContextKey = resolveSidePanelRouteContextKey(relativePath, organizationId);
+  const isWorkbenchRoute = /^\/messenger\/(?:workbench(?:\/|$)|saved\/[^/]+(?:\/|$))/.test(
+    relativePath.split("?")[0]?.split("#")[0] ?? relativePath,
+  );
+  const isHoldableContext = hold?.contextKey.startsWith("chat:")
+    || hold?.contextKey.startsWith("issue:");
+  if (
+    (isWorkbenchRoute || routeContextKey === hold?.contextKey)
+    && isHoldableContext
+    && hold?.organizationId === organizationId
+  ) {
+    return { contextKey: hold!.contextKey, preserveHold: true };
+  }
+  return { contextKey: routeContextKey, preserveHold: false };
 }
 
 function getCurrentViewportWidth(): number | null {
@@ -833,12 +857,19 @@ function DesktopSidePanelSlot({
   );
 }
 
-function SidePanelRouteContextBinder({ contextKey }: { contextKey: string }) {
-  const { setContextKey } = useSidePanel();
+function SidePanelRouteContextBinder({
+  contextKey,
+  preserveHold,
+}: {
+  contextKey: string;
+  preserveHold: boolean;
+}) {
+  const { clearDisplayedContextHold, setContextKey } = useSidePanel();
 
   useLayoutEffect(() => {
+    if (!preserveHold) clearDisplayedContextHold();
     setContextKey(contextKey);
-  }, [contextKey, setContextKey]);
+  }, [clearDisplayedContextHold, contextKey, preserveHold, setContextKey]);
 
   return null;
 }
@@ -855,7 +886,11 @@ export function Layout() {
     openProductTour,
   } = useDialog();
   const { togglePanelVisible } = usePanel();
-  const { contextKey: sidePanelContextKey, open: sidePanelOpen } = useSidePanel();
+  const {
+    contextKey: sidePanelContextKey,
+    displayedContextHold,
+    open: sidePanelOpen,
+  } = useSidePanel();
   const {
     organizations,
     loading: organizationsLoading,
@@ -949,11 +984,12 @@ export function Layout() {
       organizationPrefix: orgPrefix,
     });
   }, [organizations, orgPrefix]);
-  const routeSidePanelContextKey = resolveSidePanelRouteContextKey(
+  const displayedSidePanelContext = resolveDisplayedSidePanelContext(
     relativeBoardPath,
     matchedOrganization?.id,
+    displayedContextHold,
   );
-  const sidePanelContextReady = sidePanelContextKey === routeSidePanelContextKey;
+  const sidePanelContextReady = sidePanelContextKey === displayedSidePanelContext.contextKey;
   const sidePanelOrganizationId = sidePanelContextReady ? matchedOrganization?.id : null;
   const desktopSidePanelContentInactive = sidePanelContextReady
     && sidePanelOpen
@@ -1424,7 +1460,10 @@ export function Layout() {
       <WorktreeBanner />
       <DevRestartBanner devServer={health?.devServer} />
       <MarkdownMentionsProvider>
-      <SidePanelRouteContextBinder contextKey={routeSidePanelContextKey} />
+      <SidePanelRouteContextBinder
+        contextKey={displayedSidePanelContext.contextKey}
+        preserveHold={displayedSidePanelContext.preserveHold}
+      />
       <CalendarWorkspaceProvider>
       <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "flex overflow-hidden")}>
         {isMobile && sidebarOpen && (

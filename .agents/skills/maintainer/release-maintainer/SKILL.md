@@ -45,9 +45,10 @@ cannot be safely inferred.
 - Stables are manually promoted from an explicitly chosen source ref and use
   npm dist-tag `latest`.
 - Stable preflight must fail closed unless `npm-stable` has required reviewers,
-  `main` is protected, and GitHub Actions is allowed to create pull requests.
-  Do not bypass these checks or treat the confirmation string as a substitute
-  for the repository safeguards.
+  `main` is protected for normal changes, and the release workflow has the
+  narrow direct-push and workflow-dispatch permissions needed for its generated
+  post-stable version commit. Do not bypass these checks or treat the
+  confirmation string as a substitute for the repository safeguards.
 - Stable tags point at the original source commit, not at a generated release
   commit.
 - After a stable `vX.Y.Z` is published and verified, older canary GitHub
@@ -99,11 +100,10 @@ cannot be safely inferred.
   FIFO queue and retains only one pending job; if a queued manual stable is
   superseded by another pending run, report it and rerun that same locked
   stable SHA after the active publish finishes.
-- After a stable publish, the workflow should open the next-patch base pull
-  request automatically. Verify that PR exists (or that `main` was already
-  advanced) and that its explicitly dispatched CI succeeds before calling the
-  version handoff complete; merging remains a reviewed maintainer action and
-  does not happen automatically.
+- After a stable publish, the workflow should commit the next-patch base
+  directly to `main` with `[skip release]`. Verify that commit exists (or that
+  `main` was already advanced) and that its explicitly dispatched CI succeeds
+  before calling the version handoff complete.
 - If a normal `main` push is already running while you make release-maintenance
   changes, watch it to completion. It may publish the next canary, and that
   canary still needs npm, tag, Desktop, and Release-title verification. After
@@ -451,11 +451,9 @@ rudder start --no-open
 
 The second command is only expected to work after the persistent CLI exists.
 
-13. Confirm the workflow opened `automation/release-vX.Y.(Z+1)` as a pull
-    request and dispatched the trusted `main`-branch CI workflow with its
-    immutable head SHA, or reported that `main` already has a newer base.
-    Review and merge that PR before expecting the next automatic canary line
-    to publish.
+13. Confirm the workflow committed `X.Y.(Z+1)` directly to `main` with
+    `[skip release]` and dispatched the trusted CI workflow with its immutable
+    head SHA, or reported that `main` already has a newer base.
 
 If the workflow fails after npm publish, do not rerun the whole stable workflow
 without first classifying the partial state. Stable npm versions are immutable;
@@ -554,14 +552,13 @@ known risk is the in-app update path itself.
 
 ### Version Bump
 
-After stable, first use the workflow-created next-patch pull request. The
-workflow runs the equivalent of:
+After stable, the workflow runs the equivalent of:
 
 ```bash
-node scripts/prepare-next-release.mjs --stable-version X.Y.Z --repo Undertone0809/rudder
+node scripts/prepare-next-release.mjs --stable-version X.Y.Z
 ```
 
-If automation could not create the PR, recover manually:
+If automation could not push the handoff commit, recover manually:
 
 ```bash
 node scripts/release-package-map.mjs set-version X.Y.Z
@@ -570,7 +567,8 @@ pnpm test:run
 pnpm build
 ```
 
-Then commit only the intended version and release-note changes.
+Then commit only the intended version changes with `[skip release]`, push them
+to `main`, and explicitly dispatch CI for that commit.
 
 ### Rollback
 

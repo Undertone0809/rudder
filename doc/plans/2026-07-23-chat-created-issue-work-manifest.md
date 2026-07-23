@@ -29,6 +29,7 @@ related_code:
   - doc/product/domains/collaboration/chat-messenger-im.md
 commit_refs:
   - "fix: show chat-created issue in work manifest"
+  - "fix: show issue status in chat work manifest"
 updated_at: 2026-07-23
 ---
 

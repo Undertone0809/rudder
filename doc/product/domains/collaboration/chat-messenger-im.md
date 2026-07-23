@@ -1614,10 +1614,16 @@ them through `CONTEXT.RESOURCES.001`.
   is presentation state and is excluded.
 - Source: user attachment, user-provided URL or Library reference, or a Project
   Context Resource eligible for a project-scoped Chat Run.
-- Reference: deduplicated external HTTP(S) website in a visible user or
-  assistant message that is not promoted by the category precedence rules, or
-  the current conversation's same-organization primary issue after successful
-  creation/conversion.
+- Reference: deduplicated external HTTP(S) website or typed Rudder entity
+  reference in a visible user or assistant message that is not promoted by the
+  category precedence rules, plus the current conversation's same-organization
+  primary issue after successful creation/conversion. A normal Chat reference
+  uses the referenced conversation's current title when that conversation can
+  be resolved inside the same organization. Side Chats are deliberately
+  excluded because their titles are owner-private while manifest rows are
+  conversation-scoped shared state. Unresolved, invalid, Side Chat, or
+  cross-organization targets retain their visible message label, or the safe
+  generic `Chat` label when the message provides no usable label.
 
 ## Entry Points / Inputs
 
@@ -1625,6 +1631,8 @@ them through `CONTEXT.RESOURCES.001`.
 - User message bodies and user-created Chat attachments.
 - Completed assistant message bodies, Run attribution, replying Agent identity,
   and Agent-created Chat attachments.
+- Typed Rudder entity references in visible user and assistant message bodies,
+  including `chat://` conversation targets.
 - `library-entry://` and `library-file://` references in visible message bodies.
 - The Chat's explicit Project context and that Project's attached resources.
 - The Chat's `primaryIssueId` and its matching issue context-link metadata.
@@ -1657,21 +1665,29 @@ them through `CONTEXT.RESOURCES.001`.
    `sourceMessageId` still belongs to the active visible message set. Pending,
    rejected, or revision-requested proposals have no primary issue and add
    nothing.
-8. Rudder canonicalizes target keys, removes URL fragments/default ports,
+8. Before persistence, Chat reference candidates with UUID-like conversation
+   ids are resolved in one organization-scoped lookup that excludes Side Chats.
+   A same-organization normal conversation's current stored title replaces
+   stale, empty, or generic link text. Missing, malformed, Side Chat, or
+   cross-organization targets are not disclosed and keep the visible message
+   label or generic `Chat` fallback. Reconciliation refreshes the persisted
+   manifest title after a referenced normal Chat is renamed and overwrites any
+   previously persisted Side Chat title with the safe message-derived label.
+9. Rudder canonicalizes target keys, removes URL fragments/default ports,
    deduplicates candidates, and applies `output > source > reference` so one
    target appears once in its strongest supported category. The canonical
    primary-issue target key also deduplicates an explicit visible link to the
    same issue.
-9. Reconciliation removes stale derived Sources/References from superseded or
+10. Reconciliation removes stale derived Sources/References from superseded or
    edited visible messages, but it does not silently delete a durable Output
    merely because the message that announced it was refreshed. A historical row
    now proven to be trusted inline visual presentation is removed because it
    was never production evidence. A primary-issue Reference is also removed
    when the association is cleared or the issue is deleted.
-10. The API returns the current Chat sections. It may continue returning a
+11. The API returns the current Chat sections. It may continue returning a
    Project id/count as compatibility metadata, but Chat does not render it or
    include it in the visible category count.
-11. When at least one current-thread item exists, wide Chat renders the compact
+12. When at least one current-thread item exists, wide Chat renders the compact
     shelf. Its fixed top row renders the first non-empty category in
     `Outputs > Sources > References` order as a normal category header, with
     the same icon, label, count, height, background, and typography used by
@@ -1686,7 +1702,7 @@ them through `CONTEXT.RESOURCES.001`.
     `32rem` (512 CSS pixels) on normal viewports, shrink to the available
     viewport allowance when necessary, and keep longer lists internally
     scrollable.
-12. Opening an image attachment uses the application-level image preview shared
+13. Opening an image attachment uses the application-level image preview shared
     with Chat message and Markdown images. The overlay exposes an explicit close
     control plus copy/download actions, closes on `Escape`, and does not create a
     Browser Side Panel tab. Non-image attachments keep their normal file-open
@@ -1706,6 +1722,8 @@ them through `CONTEXT.RESOURCES.001`.
 | Chat issue proposal is pending, rejected, or revision requested | Conversation has no successfully created primary issue | No issue Reference from the proposal | A proposed issue must not appear as if it already exists | Service tests and proposal-review E2E |
 | Chat creates or converts to an issue | Current conversation has a same-organization `primaryIssueId` | One issue Reference with identifier/title and valid proposal provenance when available | The issue must not be labeled Output or duplicated by an explicit visible issue link | Service tests and proposal-review E2E |
 | Primary issue association becomes stale | Association is cleared, issue is deleted, or id does not resolve in the conversation organization | Derived primary-issue Reference is removed | A foreign, deleted, or detached issue must not remain in the current Chat manifest | Service tests |
+| Message references another normal Chat | Visible `chat://` target resolves to a normal conversation in the same organization | The Reference uses the target conversation's current complete title and refreshes after rename; the compact row visually truncates it to one line while preserving the complete title for hover and accessibility | Stale link text must not replace the stored title, long text must not widen the shelf, and title lookup must not cross organization boundaries | Service, component, and Chat Work Manifest E2E |
+| Chat reference cannot be resolved safely | Target id is malformed, missing, a Side Chat in any lifecycle state, or belongs to another organization | Keep the visible message label, or generic `Chat` when none is usable, plus normal typed target metadata; reconciliation repairs any previously hydrated Side Chat title | Rudder must not load or persist the private or cross-organization conversation title | Service tests |
 | Link appears in tool history only | URL exists only in transcript, reasoning, stdout, or stderr | No manifest item | Tool exploration must not pollute the visible manifest | Service tests |
 | Answer is refreshed or edited | Prior message becomes superseded | Stale derived References disappear; durable Outputs remain inspectable | Refresh must not erase a real artifact | Service tests |
 | Chat is forked | Copied historical assistant rows have no producing Run id | Sources can be re-derived; copied rows do not gain Output ownership | Fork must not claim the source thread's Outputs as newly produced | Fork/service tests |
@@ -1720,9 +1738,12 @@ them through `CONTEXT.RESOURCES.001`.
 The operator sees the selected Chat, its normal transcript/composer, and a
 category-led files-and-links shelf containing only the current thread's
 Outputs, Sources, and References. Each row exposes a readable title and type
-icon. Website rows expose the normalized URL and website icon instead of a
-generic link icon or redundant `From Agent` origin label. A successfully
-created primary issue appears in References with its identifier and title.
+icon. Normal Chat Reference rows expose the current same-organization
+conversation title; the complete title remains the row's text, hover title,
+and accessible name while compact layout applies a one-line ellipsis. Website
+rows expose the normalized URL and website icon instead of a generic link icon
+or redundant `From Agent` origin label. A successfully created primary issue
+appears in References with its identifier, title, and current status icon.
 
 ## Operator-Visible Output
 
@@ -1736,6 +1757,10 @@ created primary issue appears in References with its identifier and title.
   placement for the first section must not imply a higher level.
 - Actions: the shelf provides open and source-message navigation, but no add or
   create icon.
+- Normal Chat References: use the current same-organization conversation
+  title, keep the complete title accessible, and constrain long visible labels
+  to a one-line ellipsis without widening the compact shelf. Side Chat titles
+  are never hydrated into this shared projection.
 - Empty state: no shelf, count, trigger, or reserved rail is rendered.
 - Error state: a compact, category-neutral files-and-links error remains visible
   so retrieval failure is not mistaken for confirmed absence.
@@ -1765,6 +1790,10 @@ context links, and Project resource attachments remain the source evidence used
 to reconcile the projection. `chat_conversations.primary_issue_id` is the
 authoritative current-thread association for the created issue; the matching
 issue context link is optional provenance, not authority.
+
+For normal Chat References, reconciliation persists the latest safely resolved
+full title; visual truncation does not shorten the stored value. Side Chat
+titles are not persisted into manifest rows.
 
 ## Canonical Scenarios
 
@@ -1799,14 +1828,28 @@ issue context link is optional provenance, not authority.
    - Expected state/action: one issue Reference appears using
      `issue:<issue-id>` and any valid visible proposal provenance; an explicit
      link to the same issue is deduplicated.
-   - Visible output: identifier plus title in References; opening it uses the
-     current Chat's issue Side Panel and closing the panel restores the shelf.
+   - Visible output: identifier, title, and current status icon in References;
+     opening it uses the current Chat's issue Side Panel and closing the panel
+     restores the shelf.
    - Evidence: conversation primary issue id, issue context link, manifest row,
      service tests, and proposal-review E2E.
+6. Long renamed normal Chat reference:
+   - Trigger: a visible message references a same-organization normal Chat,
+     then that target conversation receives a newer long title.
+   - Expected state/action: reconciliation replaces stale link text and the
+     previous manifest title with the current conversation title.
+   - Visible output: the row remains one compact ellipsized line while hover and
+     accessibility expose the complete title; opening the row targets the same
+     Chat.
+   - Evidence: manifest service, component, and real Chat Work Manifest E2E.
 
 ## Invariants / Non-Goals
 
 - Organization access is enforced before reconciliation or listing.
+- Chat Reference title lookup is organization-scoped and excludes Side Chats in
+  every lifecycle state under `CHAT.SIDE.CHAT.001`; an unresolved, malformed,
+  private, or cross-organization target must not disclose or persist the target
+  conversation's stored title.
 - Project membership does not import work from other conversations into the
   current Chat manifest.
 - Only the current conversation's same-organization primary issue may be
@@ -1831,10 +1874,11 @@ issue context link is optional provenance, not authority.
 
 Update this contract when categories, production evidence, reconciliation,
 Project membership isolation, provenance, visible category hierarchy,
-responsive visibility, or item-open behavior changes. Parser implementation,
-row-limit constants, icon choices, compatibility metadata, and query batching
-may change without a contract edit when the visible semantics and invariants
-remain intact.
+responsive visibility, internal-reference label resolution, accessible
+truncation, or item-open behavior changes. Parser implementation, row-limit
+constants, icon choices, compatibility metadata, and query batching may change
+without a contract edit when the visible semantics and invariants remain
+intact.
 
 ## Traceability
 

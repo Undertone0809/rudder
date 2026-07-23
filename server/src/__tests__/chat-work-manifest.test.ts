@@ -319,6 +319,35 @@ describe("chatWorkManifestService", () => {
 
   it("includes visible Rudder entity links in references", async () => {
     const { orgId, conversationId } = await seedBase("References");
+    const referencedConversationId = randomUUID();
+    const referencedConversationTitle = "Original referenced chat title that is much longer than the compact manifest row";
+    const renamedConversationTitle = "Renamed referenced chat title that remains much longer than the compact manifest row";
+    await db.insert(chatConversations).values({
+      id: referencedConversationId,
+      orgId,
+      title: referencedConversationTitle,
+    });
+    const privateSideChatId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: privateSideChatId,
+      orgId,
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      title: "Another user's private Side Chat title",
+      createdByUserId: "other-user",
+    });
+    const keptSideChatId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: keptSideChatId,
+      orgId,
+      conversationKind: "side_chat",
+      messengerVisible: true,
+      sideChatState: "kept",
+      title: "A kept but still owner-private Side Chat title",
+      createdByUserId: "other-user",
+    });
+    const crossOrganizationConversation = await seedBase("Cross organization");
     await db.insert(chatMessages).values({
       orgId,
       conversationId,
@@ -326,24 +355,79 @@ describe("chatWorkManifestService", () => {
       body: [
         "[Issue](issue://issue-1?r=REF-1)",
         "[Automation](automation://automation-1?t=Daily%20report)",
-        "[Chat](chat://chat-1?messageId=message-1)",
+        `[Stale referenced title](chat://${referencedConversationId}?messageId=message-1)`,
+        `[](chat://${privateSideChatId})`,
+        `[](chat://${keptSideChatId})`,
+        `[](chat://${crossOrganizationConversation.conversationId})`,
+        "[](chat://chat-123)",
       ].join(" "),
     });
 
     await svc.reconcileConversation(conversationId);
     const manifest = await svc.getConversationManifest(conversationId);
+    const referencedChat = manifest.references.find((item) =>
+      item.metadata?.conversationId === referencedConversationId
+    );
 
     expect(manifest.references.map((item) => item.targetType)).toEqual([
       "issue",
       "automation",
       "chat_conversation",
+      "chat_conversation",
+      "chat_conversation",
+      "chat_conversation",
+      "chat_conversation",
     ]);
-    expect(manifest.references.map((item) => item.title)).toEqual(["Issue", "Automation", "Chat"]);
+    expect(manifest.references.map((item) => item.title)).toEqual([
+      "Issue",
+      "Automation",
+      referencedConversationTitle,
+      "Chat",
+      "Chat",
+      "Chat",
+      "Chat",
+    ]);
     expect(manifest.references.map((item) => item.metadata)).toEqual([
       { issueId: "issue-1", ref: "REF-1", commentId: null },
       { automationId: "automation-1" },
-      { conversationId: "chat-1", messageId: "message-1" },
+      { conversationId: referencedConversationId, messageId: "message-1" },
+      { conversationId: privateSideChatId, messageId: null },
+      { conversationId: keptSideChatId, messageId: null },
+      { conversationId: crossOrganizationConversation.conversationId, messageId: null },
+      { conversationId: "chat-123", messageId: null },
     ]);
+
+    const privateSideChat = manifest.references.find((item) =>
+      item.metadata?.conversationId === privateSideChatId
+    );
+    expect(privateSideChat).toMatchObject({ title: "Chat" });
+    if (!privateSideChat) throw new Error("Expected private Side Chat manifest reference");
+    await db.update(chatWorkManifestItems)
+      .set({ title: "Previously persisted private Side Chat title" })
+      .where(eq(chatWorkManifestItems.id, privateSideChat.id));
+    await svc.reconcileConversation(conversationId);
+    const repairedManifest = await svc.getConversationManifest(conversationId);
+    expect(repairedManifest.references.find((item) =>
+      item.metadata?.conversationId === privateSideChatId
+    )).toMatchObject({
+      id: privateSideChat.id,
+      title: "Chat",
+    });
+
+    await db.update(chatConversations)
+      .set({ title: renamedConversationTitle })
+      .where(eq(chatConversations.id, referencedConversationId));
+    await svc.reconcileConversation(conversationId);
+    const renamedManifest = await svc.getConversationManifest(conversationId);
+    const renamedReferencedChats = renamedManifest.references.filter((item) =>
+      item.metadata?.conversationId === referencedConversationId
+    );
+
+    expect(renamedReferencedChats).toHaveLength(1);
+    expect(renamedReferencedChats[0]).toMatchObject({
+      id: referencedChat?.id,
+      title: renamedConversationTitle,
+    });
   });
 
   it("does not project an issue before the conversation has a created primary issue", async () => {

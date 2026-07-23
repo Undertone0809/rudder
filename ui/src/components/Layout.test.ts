@@ -6,6 +6,7 @@ import {
   resolveDefaultSidePanelWidth,
   resolveProportionalSidePanelWidth,
   resolveProportionalWorkspaceColumnWidth,
+  resolveDisplayedSidePanelContext,
   resolveSidePanelCollapseWidth,
   resolveSidePanelContextKey,
   resolveSidePanelDragWidth,
@@ -135,6 +136,51 @@ describe("side panel route context", () => {
 
   it("keeps malformed route segments from crashing layout context resolution", () => {
     expect(resolveSidePanelContextKey("/messenger/chat/%E0%A4%A")).toBe("chat:%E0%A4%A");
+  });
+
+  it("preserves a held chat context only on Messenger workbench routes in the same organization", () => {
+    const hold = { organizationId: "org-a", contextKey: "chat:chat-1" };
+
+    expect(resolveDisplayedSidePanelContext("/messenger/chat/chat-1", "org-a", hold)).toEqual({
+      contextKey: "chat:chat-1",
+      preserveHold: true,
+    });
+    expect(resolveDisplayedSidePanelContext("/messenger/saved/saved-1", "org-a", hold)).toEqual({
+      contextKey: "chat:chat-1",
+      preserveHold: true,
+    });
+    expect(resolveDisplayedSidePanelContext("/messenger/workbench", "org-a", hold)).toEqual({
+      contextKey: "chat:chat-1",
+      preserveHold: true,
+    });
+  });
+
+  it("uses the organization-global context for direct or cross-organization workbench routes", () => {
+    expect(resolveDisplayedSidePanelContext("/messenger/saved/saved-1", "org-a", null)).toEqual({
+      contextKey: "organization:org-a:global",
+      preserveHold: false,
+    });
+    expect(resolveDisplayedSidePanelContext(
+      "/messenger/workbench",
+      "org-b",
+      { organizationId: "org-a", contextKey: "chat:chat-1" },
+    )).toEqual({
+      contextKey: "organization:org-b:global",
+      preserveHold: false,
+    });
+  });
+
+  it("clears a hold when navigating to another chat or issue", () => {
+    const hold = { organizationId: "org-a", contextKey: "chat:chat-1" };
+
+    expect(resolveDisplayedSidePanelContext("/messenger/chat/chat-2", "org-a", hold)).toEqual({
+      contextKey: "chat:chat-2",
+      preserveHold: false,
+    });
+    expect(resolveDisplayedSidePanelContext("/messenger/issues/RUD-42", "org-a", hold)).toEqual({
+      contextKey: "issue:RUD-42",
+      preserveHold: false,
+    });
   });
 });
 
