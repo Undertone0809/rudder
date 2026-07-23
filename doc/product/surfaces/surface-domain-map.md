@@ -92,6 +92,9 @@ owning domain contract.
 
 - Chat conversation/message lifecycle, attachments, rich references, and
   assistant turns: `CHAT.LIFECYCLE.001`, `RUN.CHAT.AGENT.001`.
+- Precise final-answer/visible-Process selections, optional comments and files,
+  source markers, immutable sent evidence, and Queue/Steer/Fork/Side Chat
+  preservation: `CHAT.RESPONSE.ANNOTATION.001`.
 - Runtime-neutral scriptless visuals embedded in completed assistant messages,
   including trusted backing state and sandbox rendering:
   `CHAT.INLINE.VISUAL.001`.

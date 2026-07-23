@@ -111,6 +111,11 @@ Product model:
 
 - Feedback can target issue context, Library docs, skills, workflow docs,
   agent instructions, decisions, eval cases, or no-op.
+- Response annotations under `CHAT.RESPONSE.ANNOTATION.001` are bounded
+  user-authored context for a Chat turn, not automatic feedback records,
+  learning evidence, target artifacts, eval cases, or promotion requests. An
+  operator may later create an explicit learning proposal that cites the sent
+  message through this contract's normal governed path.
 - Promotion requires a human or policy-approved path appropriate to risk.
 - Product Logic Registry updates are governed by `doc/product/GOVERNANCE.md`.
 
@@ -127,6 +132,8 @@ Flow:
 Invariants:
 
 - Feedback is not automatically promoted into durable agent behavior.
+- Response-annotation selected text, comments, and files are never harvested
+  automatically into learning or durable agent behavior.
 - A learning update must cite the evidence that justified it.
 
 Evidence:

@@ -5,6 +5,7 @@ status: active
 coverage: detailed
 contract_ids:
   - CHAT.LIFECYCLE.001
+  - CHAT.RESPONSE.ANNOTATION.001
   - CHAT.INLINE.VISUAL.001
   - CHAT.TITLE.GENERATION.001
   - CHAT.FORK.001
@@ -35,6 +36,8 @@ related_code:
   - packages/db/src/schema/agent_integrations.ts
   - packages/shared/src/constants.ts
   - packages/shared/src/types/chat.ts
+  - packages/shared/src/validators/chat.ts
+  - packages/shared/src/chat-transcript-provenance.ts
   - packages/shared/src/project-mentions.ts
   - packages/shared/src/chat-work-manifest.ts
   - packages/shared/src/browser-shortcuts.ts
@@ -45,6 +48,8 @@ related_code:
   - server/src/services/chats.ts
   - server/src/services/chat-work-manifest.ts
   - server/src/services/chat-agent-runs.ts
+  - server/src/services/chat-assistant.helpers.ts
+  - server/src/services/chat-inline-annotations.ts
   - server/src/services/chat-steer-messages.ts
   - server/src/services/side-chats.ts
   - server/src/services/messenger.ts
@@ -57,6 +62,7 @@ related_code:
   - server/src/services/integrations/feishu/event-verifier.ts
   - ui/src/index.css
   - ui/src/components/MarkdownBody.tsx
+  - ui/src/lib/chat-pending-attachments.ts
   - ui/src/api/websiteMetadata.ts
   - ui/src/lib/source-badge.ts
   - ui/src/lib/browser-side-panel.ts
@@ -116,6 +122,9 @@ related_tests:
   - packages/shared/src/browser-shortcuts.test.ts
   - ui/src/components/MilkdownMarkdownEditor.test.ts
   - ui/src/components/MarkdownBody.test.tsx
+  - packages/shared/src/chat-transcript-provenance.test.ts
+  - server/src/services/chat-assistant.annotations.test.ts
+  - server/src/services/chat-inline-annotations.test.ts
   - ui/src/lib/side-panel-targets.test.ts
   - ui/src/lib/side-chat.test.ts
   - ui/src/context/SidePanelContext.test.tsx
@@ -152,6 +161,7 @@ related_tests:
   - tests/e2e/chat-work-manifest.spec.ts
   - tests/e2e/chat-composer-at-mentions.spec.ts
   - tests/e2e/chat-transcript-internal-events.spec.ts
+  - tests/e2e/chat-response-annotations.spec.ts
   - tests/e2e/agent-detail-feishu-integration.spec.ts
   - tests/e2e/feishu-source-badges.spec.ts
   - desktop/scripts/smoke.mjs
@@ -188,6 +198,10 @@ Product model:
   API, CLI, MCP, automation, and IM entry points.
 - Messages have role, status, body, attachments, rich references, structured
   payloads, and optional run attribution.
+- A user message may carry response annotations under
+  `CHAT.RESPONSE.ANNOTATION.001`. An annotation-only message is valid in an
+  existing Chat, and Queue, Steer, retry, and edit branching preserve the
+  annotation evidence with the same durability as the message body.
 - Completed assistant messages may own scriptless inline visual presentation
   under `CHAT.INLINE.VISUAL.001`. Its backing asset and trusted placement mapping
   are internal message state, not a normal attachment, Library artifact, or work
@@ -247,9 +261,10 @@ Product model:
   Stop that response first; the edit or retry must never be converted into a
   Queue row or presented as Steer feedback.
 - Queued follow-ups preserve the queued body and composer context until they are
-  delivered. Operators can edit or delete ordinary queued follow-ups while they
-  remain queued. The server, rather than the open browser, owns claiming and
-  delivering eligible follow-ups.
+  delivered, including response annotations and their annotation-owned files.
+  Operators can edit or delete ordinary queued follow-ups while they remain
+  queued. The server, rather than the open browser, owns claiming and delivering
+  eligible follow-ups.
 - Steer is a durable operator command, not an optimistic queue label. If the
   active runtime attempt supports native steering, Rudder submits the feedback
   to that same provider turn. Otherwise Rudder interrupts the current attempt
@@ -475,7 +490,8 @@ Invariants:
   once. The selected-agent candidate wins so the composer preserves the
   agent-specific enabled-skill boundary and metadata.
 - Work-manifest reconciliation must not read hidden reasoning, transcript tool
-  payloads, stdout, or stderr as user-visible Sources or References.
+  payloads, stdout, stderr, or response-annotation payloads as user-visible
+  Sources or References.
 - Project-scoped recent-conversation rows must remain visually scan-friendly at
   rest: separators span the list width and rows do not carry rounded corners or
   inset margins until the operator hovers that row.
@@ -538,6 +554,9 @@ Evidence:
 - Chat route and UI tests cover queue snapshots, active-generation reporting,
   queued follow-up editing/cancellation/claiming, hidden delivered rows,
   retained parked rows, and Feishu-bound queue mutation rejection.
+- Shared, route, UI, and Chat response-annotation E2E tests cover
+  annotation-only messages, Queue and Steer preservation, immutable historical
+  evidence, failure recovery, and annotation-owned image/file attachments.
 - Chat empty-state UI and E2E coverage verify aligned tabs/Project context,
   the selected Project icon/clear-action swap, the locked-conversation icon,
   full-width square resting rows, and inset rounded hover emphasis for recent
@@ -545,6 +564,363 @@ Evidence:
 - Chat prompt-flow UI, motion-contract, and E2E coverage verify compact starters,
   the two-page transition lock, reduced-motion behavior, context preservation,
   editable prompt completion, retained hidden DOM, and the existing-chat boundary.
+
+## CHAT.RESPONSE.ANNOTATION.001
+
+## Contract Summary
+
+Rudder lets an operator quote a precise selection from a stable assistant
+answer or already-loaded, operator-visible Process prose and attach that quote
+to a Chat message. Each annotation may include an optional operator comment and
+its own images or files. Draft annotations remain editable; after Send they are
+immutable, message-owned evidence that Queue, Steer, retry, edit branching,
+Fork, and Side Chat preserve.
+
+## Intent / User Job
+
+An operator can point to the exact part of a long answer or visible work
+transcript that needs clarification, correction, or follow-up without manually
+copying context into the composer or losing the relationship to its source.
+
+## Why / Design Reasoning
+
+- Plain copy/paste loses source identity, makes several quoted passages hard to
+  distinguish, and cannot return the operator to the original evidence.
+- Process prose can be useful quoted context, but it remains Run evidence. A
+  deliberate user selection must not silently promote Thinking into an
+  assistant final answer or system instruction.
+- Annotation comments and files belong to an individual quote. Keeping that
+  ownership explicit prevents an image or document from becoming ambiguous
+  generic message context.
+- Stable hashes, canonical source offsets, bounded surrounding context, and
+  generation-event provenance detect stale or fabricated anchors without
+  storing a second mutable copy of the source.
+- The user message owns the immutable sent snapshot. A separate annotation
+  table would introduce an independently mutable lifecycle that this workflow
+  does not need.
+
+## Actors / Objects / State
+
+- Board operator: creates, comments on, attaches files to, removes, inspects,
+  and sends annotations in a Chat the operator can access.
+- Annotation draft: an ordered, mutable item with a client id, exact selected
+  text snapshot, optional comment, source anchor, and zero or more pending
+  image/file attachments.
+- Canonical annotation: a typed `ChatInlineAnnotation` stored in the owning user
+  message's structured payload. It contains `id`, `selectedText`, nullable
+  `comment`, `sourceConversationId`, `sourceMessageId`, `surface`,
+  `sourceHash`, source `start`/`end`, bounded `prefix`/`suffix`, and canonical
+  annotation attachment ids.
+- Assistant-body source: one stable `completed`, `stopped`, or `failed`
+  assistant message. Its hash and offsets address the canonical Markdown
+  source while `selectedText` preserves the exact rendered text the operator
+  saw; Markdown links, inline code, lists, CJK text, and selections spanning
+  visible paragraphs remain supported.
+- Process source: one visible assistant/thinking prose transcript block from a
+  terminal generation. In addition to the common anchor it stores
+  `transcriptKind`, `generationId`, and inclusive
+  `generationSeqStart`/`generationSeqEnd`. Generation event sequence is source
+  identity; transcript-array index and wall-clock timestamp are not.
+- Annotation attachment: an ordinary governed Chat asset and
+  `chat_attachment`, but assigned to exactly one annotation and owned by the
+  same organization, conversation, and user message as its annotation. Before
+  a queued message is materialized, its upload may exist only as a bounded,
+  server-owned staged asset reference.
+- Draft annotation set: at most ten ordered annotations associated with one
+  organization and conversation composer. Its markers are numbered by current
+  order.
+- Sent annotation set: the immutable canonical snapshot on one user message.
+  Its count chip, quoted text, comments, files, source status, and source-jump
+  behavior remain inspectable after reload.
+
+## Entry Points / Inputs
+
+- A mouse, touch, or keyboard text selection contained within one eligible
+  assistant body or one eligible visible Process transcript block.
+- `Add to chat`, `More details`, and `Ask in side chat` on the selection toolbar.
+- The annotation editor's optional comment field plus image/file add and remove
+  actions.
+- Existing Chat JSON, stream, multipart, Queue, and Steer message admission
+  paths.
+- Historical user-message edit/retry, conversation Fork, and Side Chat first
+  Send.
+
+## Product Logic Flow
+
+1. The operator completes a non-empty selection in one eligible source. Rudder
+   maps the rendered range to one canonical source anchor and rejects a range
+   that crosses messages, transcript blocks, user/system messages, hidden
+   content, raw tool output, stdout/stderr, or an iframe.
+2. Rudder shows a portal-based selection toolbar positioned with flip/shift
+   collision handling. `Add to chat` adds only the annotation. `More details`
+   adds it and inserts the localized equivalent of “Please explain this in more
+   detail” at the current main-composer cursor without sending.
+3. `Ask in side chat` places the same annotation in a provisional Side Chat
+   draft and leaves the main Chat draft unchanged. Opening the draft creates no
+   conversation; first Send follows `CHAT.SIDE.CHAT.001`.
+4. Adding the same source surface and canonical range to the same draft is
+   idempotent. New distinct annotations append in order and immediately render
+   an accent marker at the source. Deleting an item renumbers the remaining
+   markers.
+5. The composer renders an `N annotations` chip. Expanding it shows an ordered
+   list of Selected text, optional User comment, and annotation-owned files.
+   Draft rows expose edit and delete actions. Closing the chip clears all
+   annotations and their draft-only files but preserves the message body and
+   unrelated composer attachments.
+6. Marker or edit activation opens an anchored editor with the selection
+   snapshot, text comment input, image/file add and remove controls, Delete,
+   Cancel, and Save. Cancel restores the prior draft item; Save commits the
+   local draft changes without sending.
+7. An existing Chat message may be sent with an empty body when it has at least
+   one annotation. If both body and annotations are empty, normal validation
+   rejects Send. A direct first-message Chat create still requires its normal
+   non-empty first message because no eligible in-conversation source exists.
+8. The client serializes a versioned draft by organization and conversation.
+   It reads legacy string-only drafts as body-only drafts. Draft annotation
+   metadata survives reload; pending local files follow the governed pending
+   attachment lifecycle and never serialize file bytes into browser storage.
+9. On admission, the server validates organization and conversation access,
+   the source message and Side Chat lineage, eligible surface and terminal
+   status, source hash, range, surrounding context, generation sequence
+   provenance, annotation limits, and every file reference. A source or file
+   from another organization, conversation, user message, or annotation is
+   rejected without revealing its content.
+10. Multipart input refers to newly uploaded annotation files by bounded request
+    indexes. Queue uses private staged asset references, never client-supplied
+    persisted staging ids. On message materialization Rudder creates
+    organization- and message-scoped attachment rows, replaces temporary
+    references with canonical attachment ids, and commits the message,
+    attachment ownership, annotation payload, Queue/Steer linkage, and activity
+    evidence atomically. Failed admission cleans up unowned staged uploads.
+11. A successful send clears the matching draft only after server
+    acknowledgement. A network, upload, runtime-admission, or server validation
+    failure retains body, ordinary attachments, annotations, comments, and
+    annotation files for correction or retry.
+12. The assistant prompt receives annotations as an ordered, bounded
+    user-authored quote section. Selected text is explicitly untrusted quoted
+    context, not a system/developer instruction. Operator comments retain their
+    user origin, and annotation attachment metadata preserves which files
+    belong to which quote. Process text remains Run evidence under
+    `RUN.RESULT.001`; prompt projection does not turn it into assistant final
+    body.
+13. After Send, the user message renders a read-only count chip above the
+   message. Its card shows Selected text, optional User comment, and
+   annotation-owned files without edit/delete controls or duplicate generic
+   attachment tiles. Editing that historical user message creates a new turn
+   variant carrying the annotation semantic snapshots unchanged while remapping
+   attachment ids to the new user message; retry, queued delivery, and Steer
+   reuse the same evidence.
+14. Expanding historical annotations temporarily restores their numbered source
+    markers. Selecting a card item reveals eligible collapsed Process details,
+    scrolls to the source, and briefly highlights it. If the immutable snapshot
+    remains readable but its source cannot be loaded or verified, the card says
+    it cannot be located and does not fabricate a marker.
+15. Fork copies annotation snapshots with copied user messages, remaps source
+    message ids to the child copies, and creates child-owned annotation
+    attachment rows. Side Chat validates the owning completed assistant anchor
+    and uses the exact selected snapshot in its preview and first user message.
+    Work Manifest, automatic learning, and artifact discovery ignore annotation
+    payloads.
+
+## Decision Table
+
+| Case | Conditions | Product result | Must not happen | Evidence |
+| --- | --- | --- | --- | --- |
+| Stable final-answer selection | One completed/stopped/failed assistant body; one valid range | Add one ordered annotation and source marker | Select a user/system message, cross-message range, or streaming content | UI, service, and E2E tests |
+| Visible Process selection | Loaded visible assistant/thinking prose; terminal generation; one provenance range | Add one process annotation with generation sequence identity | Use transcript index/timestamp, hidden reasoning, tool payload, stdout/stderr, or lifecycle events | Provenance, service, UI, and E2E tests |
+| Comment and files | Draft annotation is editable and uploads satisfy Chat file policy | Save optional comment and annotation-owned images/files | Attach a foreign asset, duplicate the file as a generic message tile, or log its contents | Multipart, ownership, UI, and E2E tests |
+| More details | Eligible selection; main composer available | Add the annotation and insert localized detail request at the cursor | Send automatically or replace existing draft text | UI and E2E tests |
+| Annotation-only Send | Existing Chat; body empty; at least one valid annotation | Persist and run one normal user turn | Reject solely for empty body or create an empty first Chat | Shared, route, and E2E tests |
+| Duplicate selection | Same source surface and canonical range already in draft | Keep one item and one marker | Add duplicate payloads or skip numbering | UI tests |
+| Send failure | Upload, validation, admission, or network failure | Preserve the complete draft and surface the failure | Clear comments/files or leave unowned staged assets | Route, UI, and E2E tests |
+| Queue or Steer | Active generation; valid annotated follow-up/control message | Preserve annotations/files through materialization and exactly one visible user message | Lose evidence, expose staged ids, or duplicate a Steer message | Queue/Steer service and E2E tests |
+| Historical edit/retry | Sent annotated user message | Carry immutable annotations and remapped attachments into the new turn variant/retry | Mutate the old snapshot or silently drop a file | Service, UI, and E2E tests |
+| Fork | Copied range includes source and owning user message | Remap source-message and attachment ids to child-owned copies | Retain foreign mutable attachment ownership or claim copied Run/output ownership | Fork service and E2E tests |
+| Side Chat | Exact selection belongs to the validated completed assistant anchor | Stage client-only; persist once on first Send with exact quote/files | Mutate the parent draft or create a Side Chat merely by selecting | Side Chat service, UI, and E2E tests |
+| Historical source unavailable | Snapshot is valid but source is absent, collapsed evidence cannot load, or variant differs | Show immutable snapshot with cannot-locate state | Re-anchor to a different answer variant or invent source text | UI and E2E tests |
+
+## Actor-Visible Input
+
+- The toolbar uses the labels `Add to chat`, `More details`, and
+  `Ask in side chat`.
+- Desktop controls use the normal 32–36 CSS-pixel Rudder control rhythm. Coarse
+  pointer controls have at least a 44 CSS-pixel target.
+- Toolbar, marker, chip, list, and editor are keyboard operable. `Escape`
+  dismisses the active surface, arrow keys move within the toolbar, and
+  Enter/Space activates the focused command. Focus returns to the selection,
+  marker, or composer that opened it.
+- The editor accepts text comments plus the same governed image/file types and
+  size limits as normal Chat attachments. It shows pending/upload failure and
+  removal state per file.
+- Selection, toolbar, count changes, deletion, source-unavailable state, and
+  upload failure have appropriate labels or polite live announcements. Reduced
+  motion preserves the same state changes without movement-dependent meaning.
+
+## Operator-Visible Output
+
+- Draft source text shows ordered accent markers; the composer shows one compact
+  count chip and, when expanded, the ordered annotation details.
+- Each detail distinguishes Selected text from User comment and displays its own
+  image/file attachments.
+- Sent user messages retain the read-only chip and card after reload. Annotation
+  attachments open through normal governed Chat image/file inspection.
+- Source navigation expands Process evidence when required, scrolls to the
+  matching source, and uses a brief non-essential highlight.
+- Narrow Chat and an open Side Panel use collision-aware placement without
+  clipping the toolbar/editor or covering the active composer action.
+
+## Persisted Evidence
+
+- No new annotation database table is created.
+- `chat_messages.structuredPayload.inlineAnnotations` stores the normalized
+  ordered annotation snapshots. Canonical attachment ids point only to
+  `chat_attachments` owned by that same user message.
+- Queue payloads preserve typed annotations plus private staged asset
+  references until one message is materialized. Steer, retry, edit variants,
+  and Fork preserve or remap that same typed evidence.
+- Draft storage is a client-side versioned organization/conversation object;
+  legacy body-only string drafts remain readable.
+- Activity and diagnostic logs record only annotation count and source ids
+  needed for audit. They never copy selected text, operator comments, visible
+  Thinking, attachment contents, or temporary file paths.
+
+## Limits
+
+- At most 10 annotations per user message.
+- At most 4,000 characters of selected text per annotation.
+- At most 2,000 characters of operator comment per annotation.
+- At most 16,000 characters across all selected text and comments in one user
+  message.
+- Prefix and suffix anchor context are each bounded to 160 characters.
+- One annotation set references at most 10 total annotation-owned attachments,
+  additionally subject to ordinary Chat file count, byte-size, and type policy.
+- Server prompt projection and rendered previews remain independently bounded;
+  truncation must not alter the persisted immutable snapshot.
+
+## Canonical Scenarios
+
+1. Explain two passages with supporting screenshots:
+   - Trigger: select two final-answer ranges, choose Add to chat, comment on each,
+     and attach one screenshot to each annotation.
+   - Expected state/action: two numbered markers and one `2 annotations` chip;
+     annotation-only Send persists two quoted contexts and two message-owned
+     image attachments.
+   - Visible output: immutable sent card with each screenshot under its own
+     quote, then source jump/highlight after reload.
+   - Evidence: shared/service/UI tests and response-annotation E2E.
+2. Ask about visible Thinking:
+   - Trigger: expand completed Process details, select meaningful thinking prose,
+     and choose More details.
+   - Expected state/action: provenance uses generation sequence, and the
+     localized detail request appears in the composer.
+   - Visible output: Process marker plus composer annotation preview; prompt
+     labels the excerpt as a user quote rather than instructions.
+   - Evidence: generation-provenance, prompt, UI, and E2E tests.
+3. Queue then Steer:
+   - Trigger: submit an annotated follow-up with a file during an active answer,
+     then choose Steer.
+   - Expected state/action: the server preserves one staged asset set and
+     materializes exactly one visible annotated user message.
+   - Visible output: Queue count remains inspectable until delivery; sent
+     annotation survives reload without duplicate message/file tiles.
+   - Evidence: Queue/Steer service and E2E tests.
+4. Focused Side Chat:
+   - Trigger: select an assistant passage, choose Ask in side chat, attach a
+     document, and Send.
+   - Expected state/action: parent draft remains unchanged; first Send creates
+     one hidden Side Chat with exact quote, comment/file, and validated lineage.
+   - Visible output: selected-answer preview and normal Side Chat response.
+   - Evidence: Side Chat service and E2E tests.
+
+## Invariants / Non-Goals
+
+- Only an explicit operator selection creates an annotation. Rudder does not
+  infer annotations from copied text or model output.
+- Streaming/growing content is not eligible in V1. Stable
+  completed/stopped/failed assistant content and terminal, loaded, visible
+  Process prose are the only selectable sources.
+- Hidden reasoning, tool request/response payloads, raw logs, stdout/stderr,
+  lifecycle events, system/user messages, inline-visual iframes, and
+  cross-message/block ranges are never valid sources.
+- Canonical identity uses source hashes, offsets, bounded context, and generation
+  event sequence where applicable. Transcript array indexes and timestamps are
+  not identities.
+- Sent annotations are immutable snapshots. A refreshed answer or later variant
+  never silently re-anchors them, and a historical user-message edit cannot
+  change or remove the original annotation set.
+- Annotation files cannot be borrowed across organization, conversation,
+  message, draft, or annotation boundaries. Public request payloads cannot
+  claim server-owned staged asset ids.
+- Selected text is user-quoted context, not trusted instructions. It cannot
+  override system/developer policy merely because it came from assistant or
+  Process output.
+- Annotation payloads and files do not become Work Manifest items, automatic
+  learning input, artifacts, or assistant final body merely by being attached
+  to a user message.
+- V1 has no collaborative annotation thread, reaction, reply, resolved state,
+  server-side annotation search, automatic re-anchoring, or audio comment
+  recording.
+
+## Drift Boundaries
+
+Changes to eligible sources, source identity, data limits, annotation file
+ownership, draft/sent mutability, selection actions, Queue/Steer/edit/retry
+durability, Side Chat/Fork mapping, prompt trust boundaries, source navigation,
+logging redaction, or Manifest/learning/artifact exclusion require updating this
+contract. Visual token tuning that preserves the documented interaction,
+accessibility, and responsive outcomes does not.
+
+## Traceability
+
+Related contracts:
+
+- `CHAT.LIFECYCLE.001`
+- `CHAT.FORK.001`
+- `CHAT.SIDE.CHAT.001`
+- `CHAT.THREAD.MANIFEST.001`
+- `RUN.RESULT.001`
+- `RUN.CHAT.AGENT.001`
+- `LEARNING.PROMOTION.001`
+
+Related plan:
+
+- `doc/plans/2026-07-23-chat-response-annotations.md`
+
+Related code:
+
+- `packages/shared/src/types/chat.ts`
+- `packages/shared/src/validators/chat.ts`
+- `packages/shared/src/chat-transcript-provenance.ts`
+- `server/src/services/chat-inline-annotations.ts`
+- `server/src/services/chat-assistant.helpers.ts`
+- `server/src/services/chat-generation-protocol.ts`
+- `server/src/services/chats.ts`
+- `server/src/routes/chats.ts`
+- `server/src/routes/chats.stream-routes.ts`
+- `server/src/services/side-chats.ts`
+- `ui/src/api/chats.ts`
+- `ui/src/components/MarkdownBody.tsx`
+- `ui/src/components/transcript/RunTranscriptView.chat.tsx`
+- `ui/src/pages/Chat.messages.tsx`
+- `ui/src/pages/Chat.tsx`
+
+Related tests:
+
+- `packages/shared/src/chat-transcript-provenance.test.ts`
+- `packages/shared/src/validators/chat.test.ts`
+- `server/src/services/chat-inline-annotations.test.ts`
+- `server/src/services/chat-assistant.annotations.test.ts`
+- `server/src/services/chat-generation-protocol.test.ts`
+- `server/src/__tests__/chat-routes.test.ts`
+- `server/src/__tests__/messenger-service.test.ts`
+- `ui/src/components/MarkdownBody.test.tsx`
+- `ui/src/components/transcript/RunTranscriptView.test.tsx`
+- `ui/src/pages/Chat.messages.test.tsx`
+- `tests/e2e/chat-response-annotations.spec.ts`
+
+Known gaps:
+
+- None for the V1 contract.
 
 ## CHAT.INLINE.VISUAL.001
 
@@ -1077,6 +1453,10 @@ Product model:
 - Refreshing a completed assistant answer is not a conversation fork. It creates
   another variant inside the same chat turn, while `Fork` / `Fork from here`
   create separate conversations with lineage.
+- Response annotations copied with a user message remain immutable snapshots
+  under `CHAT.RESPONSE.ANNOTATION.001`. The child receives remapped source
+  message ids and child-owned annotation attachment rows rather than retaining
+  mutable ownership in the source conversation.
 
 Flow:
 
@@ -1088,12 +1468,16 @@ Flow:
    `(2)`.
 3. Rudder copies context links and messages up to the requested fork point. If
    no source message is supplied, it copies through the latest eligible message.
-4. Rudder writes a system message in the child conversation naming the fork
+4. For every copied response annotation, Rudder maps the source-message anchor
+   to the corresponding child message, copies its annotation-owned files, and
+   rewrites attachment ids to child-owned rows without assigning copied Run or
+   Output provenance.
+5. Rudder writes a system message in the child conversation naming the fork
    source.
-5. When the source is Feishu-bound, Rudder leaves the Feishu binding on the
+6. When the source is Feishu-bound, Rudder leaves the Feishu binding on the
    source conversation only. The fork has no provider source metadata or
    outbound Feishu binding.
-6. Rudder ensures the fork-family Messenger custom group contains the root and
+7. Rudder ensures the fork-family Messenger custom group contains the root and
    forked conversations, then navigates the operator to the child conversation.
 
 Invariants:
@@ -1119,6 +1503,10 @@ Invariants:
   Server-owned inline visual presentation is the narrow exception: the copied
   child message receives its own attachment row and trusted mapping to the
   governed immutable asset, without Run or Work Output provenance.
+- Annotation-owned attachments are the other narrow exception because the
+  copied immutable annotation would otherwise point outside the child. They
+  receive child message attachment rows and remapped ids but do not become
+  ordinary copied attachments, Outputs, or new Run evidence.
 - Nested forks must not produce duplicate fork-family custom groups.
 - Forking must not attempt to put the root conversation in multiple custom
   groups; preexisting root group membership is the fork-family grouping anchor.
@@ -1139,7 +1527,8 @@ Evidence:
   activity logging.
 - Messenger service tests cover message-level copy bounds and nested fork group
   reuse, concurrent and nested title allocation, manual numeric suffixes, and
-  the title-length boundary.
+  the title-length boundary, plus annotation source-message and attachment-id
+  remapping.
 - Chat message/UI tests cover the message-level fork action.
 - Chat fork E2E covers the visible fork workflow, copied-message boundary,
   `(2)` naming, and numbered-title stability with Fast Intelligence configured
@@ -1183,8 +1572,10 @@ before the exploration proves useful.
   organization and the creating user.
 - A provisional `side_chat` Side Panel target contains the source conversation,
   optional completed assistant-message anchor, source preview, and an
-  owner-scoped client mutation id. It has no persisted conversation id before
-  the first Send.
+  owner-scoped client mutation id. When opened from
+  `CHAT.RESPONSE.ANNOTATION.001`, it also owns the exact selected annotation
+  draft, comment, and pending annotation files while leaving the main Chat
+  composer unchanged. It has no persisted conversation id before the first Send.
 - A persisted Side Chat is a `chat_conversations` row with
   `conversationKind=side_chat`, source lineage, `messengerVisible`, lifecycle
   state, expiry/keep timestamps, the client mutation id, and a bounded
@@ -1200,6 +1591,7 @@ before the exploration proves useful.
 
 - Type `/side` in a normal Rudder Chat composer and select the composer command.
 - Choose `Open Side Chat` on a completed assistant message.
+- Choose `Ask in side chat` on an eligible response selection.
 - Choose `Side Chat` from the Side Panel empty/add-target surface.
 - First Send posts the exact source assistant message plus the provisional
   mutation id to `POST /api/chats/:sourceId/side-chats`, then uses the normal
@@ -1217,10 +1609,14 @@ before the exploration proves useful.
    Chat stays mounted and its draft, transcript, scroll, and active generation
    remain untouched.
 3. On first Send, the server validates organization access, operator ownership,
-   and a completed assistant-message anchor. Creation is idempotent for the
-   organization, owner, and client mutation id. The persisted title snapshots
-   the direct source title with the `Side chat from: ` prefix and stays within
-   the 200-character Chat title limit.
+   and a completed assistant-message anchor. When the provisional draft
+   contains response annotations, their source conversation, owning assistant
+   message, source anchors, and files must satisfy
+   `CHAT.RESPONSE.ANNOTATION.001`; the exact quote is used in the preview and
+   first user message. Creation is idempotent for the organization, owner, and
+   client mutation id. The persisted title snapshots the direct source title
+   with the `Side chat from: ` prefix and stays within the 200-character Chat
+   title limit.
 4. The server copies source context links, messages, and message attachments
    through the anchor. Copied messages do not acquire new run, approval, turn,
    or output ownership. A boundary system event records the Side Chat source.
@@ -1261,7 +1657,7 @@ before the exploration proves useful.
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
 | Provisional open | Valid normal Chat; completed assistant anchor available | Open one unsaved Side Panel target | Create a conversation before first Send or change parent state | Side Chat E2E entry screenshots |
-| First Send | Owner and organization match; anchor is completed; mutation id is new or an identical retry | Create exactly one hidden active Side Chat with the bounded direct-source title snapshot and start the ordinary Chat runtime flow | Duplicate records, copy messages after the anchor, expose the thread in Messenger, or run automatic title generation | Service, route, and E2E tests |
+| First Send | Owner and organization match; anchor is completed; annotations, if any, resolve to that lineage; mutation id is new or an identical retry | Create exactly one hidden active Side Chat with the bounded direct-source title snapshot, exact quoted context/files, and ordinary Chat runtime flow | Duplicate records, mutate the parent draft, copy messages after the anchor, expose the thread in Messenger, or run automatic title generation | Service, route, and E2E tests |
 | Active follow-up | Owner matches and expiry is in the future | Persist the message and refresh expiry to two hours | Let another user send or silently retain the old expiry | Service and route tests |
 | Close provisional | No persisted conversation id | Discard the client draft and close the tab | Create or retain a server record | UI and E2E tests |
 | Close persisted | Hidden Side Chat belongs to operator | Cancel any live generation, delete the temporary conversation, and close the tab | Leave a hidden recoverable thread or delete a kept Messenger Chat | Service, route, and E2E tests |
@@ -1317,6 +1713,8 @@ before the exploration proves useful.
   source-title snapshot.
 - Copied source messages and attachments preserve the bounded context through
   the anchor. The `side_chat_started` system event records the source boundary.
+  The first user message owns any response-annotation snapshots and remapped
+  annotation attachment rows.
 - Normal `chat_messages`, `chat_generations`, Agent Runs, transcripts, and cost
   evidence record executed follow-ups.
 - Activity entries record `chat.side_chat_created`,
@@ -1358,6 +1756,9 @@ before the exploration proves useful.
 
 - A Side Chat never mutates the parent Chat's draft, transcript, scroll,
   selected branch, or active generation.
+- Merely selecting `Ask in side chat` never persists a conversation or uploads a
+  client-claimable staged asset. Annotation text/comments/files remain
+  provisional until first Send succeeds.
 - A hidden Side Chat never appears in ordinary Chat or Messenger discovery,
   unread counts, recent results, search, or custom groups.
 - Expiry is terminal and read-only. An expired temporary Side Chat can only be
@@ -1407,6 +1808,7 @@ Related tests:
 - `ui/src/lib/side-panel-targets.test.ts`
 - `ui/src/pages/Chat.messages.test.tsx`
 - `tests/e2e/chat-side-chat.spec.ts`
+- `tests/e2e/chat-response-annotations.spec.ts`
 
 Known gaps:
 
@@ -1602,6 +2004,10 @@ them through `CONTEXT.RESOURCES.001`.
 - Chat conversation: organization-scoped thread and optional Project context.
 - Chat message: active, non-superseded user or assistant visible body, optional
   Run id, replying Agent id, and attachments.
+- Response annotation: message-owned quoted context under
+  `CHAT.RESPONSE.ANNOTATION.001`. Its selected text, comment, source link, and
+  annotation-owned files remain inspectable in the message but are excluded
+  from Work manifest candidate extraction.
 - Manifest item: category, target type/key, title, URL or internal locator,
   status, source role, message/Run/Agent/user provenance, Project id, metadata,
   and timestamps.
@@ -1623,6 +2029,8 @@ them through `CONTEXT.RESOURCES.001`.
 - `library-entry://` and `library-file://` references in visible message bodies.
 - The Chat's explicit Project context and that Project's attached resources.
 - Chat edit, refresh/variant, fork, attachment, and message supersession state.
+- Response-annotation payload and attachment ownership, used only to exclude
+  those private quote-supporting files from manifest classification.
 
 ## Product Logic Flow
 
@@ -1630,8 +2038,9 @@ them through `CONTEXT.RESOURCES.001`.
 2. Rudder verifies Chat access through the same organization boundary as normal
    Chat reads.
 3. Reconciliation reads active, non-superseded user and assistant messages and
-   their attachments. Transcript entries, reasoning, tool results, stdout, and
-   stderr are excluded.
+   their attachments. Transcript entries, reasoning, tool results, stdout,
+   stderr, response-annotation text/comments, and annotation-owned attachments
+   are excluded.
 4. User attachments, user Library references, and user HTTP(S) links become
    Source candidates. Agent-created ordinary attachments become Output
    candidates. Before classification, Rudder validates and excludes only
@@ -1688,6 +2097,7 @@ them through `CONTEXT.RESOURCES.001`.
 | Agent links a produced Library artifact | Assistant message has a Run id and `artifacts/...` Library target | One Output that opens through Library Side Panel | A normal external link must not satisfy this rule | Extraction/service tests |
 | Agent recommends a website | Visible assistant HTTP(S) link with no production evidence | One Reference | Rudder must not claim the website was created by the Run | Extraction/service tests |
 | Link appears in tool history only | URL exists only in transcript, reasoning, stdout, or stderr | No manifest item | Tool exploration must not pollute the visible manifest | Service tests |
+| Link or file supports an annotation | URL exists only inside selected text/comment, or attachment id is owned by a response annotation | No manifest item | Quoted context or its supporting file must not become a Source, Reference, or Output | Annotation/manifest regression tests |
 | Answer is refreshed or edited | Prior message becomes superseded | Stale derived References disappear; durable Outputs remain inspectable | Refresh must not erase a real artifact | Service tests |
 | Chat is forked | Copied historical assistant rows have no producing Run id | Sources can be re-derived; copied rows do not gain Output ownership | Fork must not claim the source thread's Outputs as newly produced | Fork/service tests |
 | Chat has a linked Project | Other Project conversations contain manifest rows | Current rows stay unchanged; other-conversation rows are omitted from Chat | Project membership must not import other conversations into the current Chat manifest | API and E2E |
@@ -1780,6 +2190,9 @@ to reconcile the projection.
 - Outputs require structured production evidence and persist across answer
   refreshes unless explicitly hidden/archived by a future governed flow.
 - Manifest References are not automatically attached to Project Context.
+- Response annotations and their files are message evidence, not Work manifest
+  Sources, References, or Outputs. They are also excluded from automatic
+  learning and artifact discovery under `CHAT.RESPONSE.ANNOTATION.001`.
 - Image attachment inspection is an application overlay, not Browser
   navigation. Closing it preserves the Chat route, manifest shelf, and Side Panel
   state.
@@ -1825,6 +2238,7 @@ Related tests:
 - `ui/src/lib/image-actions.test.ts`
 - `tests/e2e/chat-work-manifest.spec.ts`
 - `tests/e2e/chat-work-manifest-image-preview.spec.ts`
+- `tests/e2e/chat-response-annotations.spec.ts`
 
 Known gaps:
 
