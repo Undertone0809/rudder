@@ -345,7 +345,7 @@ function createApp(actor: Record<string, unknown> = {
   source: "session",
   isInstanceAdmin: false,
   runId: null,
-}) {
+}, backgroundRuntime?: Parameters<typeof chatRoutes>[2]) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -354,7 +354,7 @@ function createApp(actor: Record<string, unknown> = {
   });
   app.use(
     "/api",
-    chatRoutes({} as any, mockStorage as any),
+    chatRoutes({} as any, mockStorage as any, backgroundRuntime),
   );
   app.use(errorHandler);
   return app;
@@ -867,6 +867,119 @@ describe("chat routes", () => {
       });
       expect(mockChatService.releaseServerQueuedMessageClaim).not.toHaveBeenCalled();
       expect(mockChatService.completeServerQueuedMessageDelivery).not.toHaveBeenCalled();
+    } finally {
+      if (previousWorkerFlag === undefined) delete process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
+      else process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = previousWorkerFlag;
+    }
+  });
+
+  it("does not abort an acknowledged queued continuation when an in-flight lease renewal rejects", async () => {
+    const previousWorkerFlag = process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
+    process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = "true";
+    const intervalTasks: Array<() => void | Promise<void>> = [];
+    const backgroundRuntime = {
+      acceptingWork: true,
+      setTimeout: (task: () => void | Promise<void>) => {
+        void Promise.resolve().then(task);
+        return {} as ReturnType<typeof setTimeout>;
+      },
+      setInterval: (task: () => void | Promise<void>) => {
+        intervalTasks.push(task);
+        return {} as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: vi.fn(),
+      createCoalescingTask: (task: () => Promise<void>, onError: (error: unknown) => void) => ({
+        wake: () => void Promise.resolve().then(task).catch(onError),
+      }),
+      track: <T,>(work: Promise<T>) => work,
+      manageAbortController: () => ({ controller: new AbortController(), release: vi.fn() }),
+      close: async () => undefined,
+    };
+    const conversation = createConversation();
+    const queuedUserMessage = createMessage("queued-user-message", "user", "message", "Keep the runtime alive after acknowledgement");
+    const claim = {
+      item: {
+        id: "queued-1",
+        conversationId: conversation.id,
+        orgId: conversation.orgId,
+        requestActor: {
+          type: "board",
+          source: "session",
+          userId: "user-1",
+          orgIds: [conversation.orgId],
+          isInstanceAdmin: false,
+        },
+      },
+      generationId: "queued-generation-1",
+      userMessageId: queuedUserMessage.id,
+      leaseToken: "queued-delivery-lease",
+      leaseEpoch: 1,
+    };
+    let beginAttempt!: () => void;
+    const attemptStarted = new Promise<void>((resolve) => { beginAttempt = resolve; });
+    let allowRegistration!: () => void;
+    const registrationAllowed = new Promise<void>((resolve) => { allowRegistration = resolve; });
+    let rejectRenewal!: (error: Error) => void;
+    const renewal = new Promise<boolean>((_resolve, reject) => { rejectRenewal = reject; });
+    let capturedAbortSignal: AbortSignal | null = null;
+    try {
+      mockChatService.getById.mockResolvedValue(conversation);
+      mockChatService.getMessage.mockResolvedValue(queuedUserMessage);
+      mockChatService.listMessages.mockResolvedValue([queuedUserMessage]);
+      mockChatService.claimNextServerQueuedMessage
+        .mockResolvedValueOnce(claim)
+        .mockResolvedValue(null);
+      mockChatService.acknowledgeServerQueuedMessageDelivery.mockResolvedValue({
+        id: claim.item.id,
+        status: "completed",
+      });
+      mockChatService.getLatestGeneration.mockResolvedValue({
+        id: claim.generationId,
+        attemptEpoch: 1,
+        controlOwnerToken: claim.leaseToken,
+      });
+      mockChatService.renewServerQueuedMessageClaim.mockImplementation(() => renewal);
+      mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+        capturedAbortSignal = input.abortSignal ?? null;
+        const attempt = await input.controlCoordinator.beginAttempt({
+          attemptIndex: 0,
+          runtimeType: "codex_local",
+          model: null,
+          isFallback: false,
+        });
+        beginAttempt();
+        await registrationAllowed;
+        await attempt.register({
+          runtimeType: "codex_local",
+          capabilities: { steer: "native", interrupt: "process" },
+          steer: async () => ({ disposition: "closing" }),
+          interrupt: async () => ({ disposition: "interrupted" }),
+          dispose: async () => undefined,
+        });
+        await attempt.complete();
+        throw new Error("finish after renewal race assertion");
+      });
+
+      const res = await request(createApp(undefined as any, backgroundRuntime)).post(`/api/chats/${conversation.id}/queue`).send({
+        clientMutationId: "queue-acknowledgement-renewal-race",
+        payload: { body: queuedUserMessage.body },
+      });
+
+      expect(res.status).toBe(201);
+      await attemptStarted;
+      void intervalTasks.at(-1)!();
+      await waitUntil(() => {
+        expect(mockChatService.renewServerQueuedMessageClaim).toHaveBeenCalledOnce();
+      });
+      allowRegistration();
+      await waitUntil(() => {
+        expect(mockChatService.acknowledgeServerQueuedMessageDelivery).toHaveBeenCalledOnce();
+      });
+      rejectRenewal(new Error("lease renewal failed after acknowledgement"));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(capturedAbortSignal?.aborted).toBe(false);
     } finally {
       if (previousWorkerFlag === undefined) delete process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
       else process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = previousWorkerFlag;

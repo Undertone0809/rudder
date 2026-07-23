@@ -1257,6 +1257,7 @@ export function chatRoutes(
     };
     const leaseTimer = backgroundRuntime.setInterval(() => {
       return renewLease().catch((error) => {
+        if (deliveryAcknowledged || deliveryAcknowledging) return;
         leaseLost = true;
         abortController.abort(error);
       });
