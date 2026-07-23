@@ -4160,6 +4160,104 @@ describe("Chat Side Panel link handling", () => {
     expect(tabs.at(-1)?.textContent).toContain("New tab");
   });
 
+  it("keeps each Browser webview DOM node across tab switches and Side Panel hide/show", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "browser-webview-identity", body: "Keep both Browser guests alive." })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]')?.click();
+      await Promise.resolve();
+    });
+    const browserOption = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-testid='chat-side-panel'] button"),
+    ).find((candidate) => candidate.textContent?.includes("Browser"));
+    await act(async () => {
+      browserOption?.click();
+      await Promise.resolve();
+    });
+
+    const firstAddress = container.querySelector<HTMLInputElement>(
+      "[data-testid='chat-side-panel-browser-view'] input[aria-label='Browser URL']",
+    );
+    await act(async () => {
+      firstAddress!.value = "localhost:4173/browser-one";
+      firstAddress!.dispatchEvent(new Event("input", { bubbles: true }));
+      firstAddress!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    const firstWebview = container.querySelector<HTMLElement>(
+      "[data-testid='chat-side-panel-browser-webview']",
+    );
+    const firstTabId = firstWebview?.dataset.browserTabId;
+    expect(firstWebview).not.toBeNull();
+    expect(firstTabId).toBeTruthy();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open new browser tab"]')?.click();
+      await Promise.resolve();
+    });
+    const secondAddress = container.querySelector<HTMLInputElement>(
+      "[data-testid='chat-side-panel-browser-view'] input[aria-label='Browser URL']",
+    );
+    await act(async () => {
+      secondAddress!.value = "example.org/browser-two";
+      secondAddress!.dispatchEvent(new Event("input", { bubbles: true }));
+      secondAddress!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    const secondWebview = container.querySelector<HTMLElement>(
+      "[data-testid='chat-side-panel-browser-webview']",
+    );
+    const secondTabId = secondWebview?.dataset.browserTabId;
+    expect(secondWebview).not.toBeNull();
+    expect(secondWebview).not.toBe(firstWebview);
+    expect(secondTabId).toBeTruthy();
+    expect(secondTabId).not.toBe(firstTabId);
+    expect(container.querySelector(`webview[data-browser-tab-id="${firstTabId}"]`)).toBe(firstWebview);
+
+    let browserTabs = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-testid='chat-side-panel-tab']"),
+    );
+    await act(async () => {
+      browserTabs[0]?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(firstWebview);
+    expect(container.querySelector(`webview[data-browser-tab-id="${secondTabId}"]`)).toBe(secondWebview);
+
+    browserTabs = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-testid='chat-side-panel-tab']"),
+    );
+    await act(async () => {
+      browserTabs[1]?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(secondWebview);
+    expect(container.querySelector(`webview[data-browser-tab-id="${firstTabId}"]`)).toBe(firstWebview);
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-testid='chat-side-panel-collapse']")?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-trigger']")).not.toBeNull();
+    expect(container.querySelector(`webview[data-browser-tab-id="${firstTabId}"]`)).toBe(firstWebview);
+    expect(container.querySelector(`webview[data-browser-tab-id="${secondTabId}"]`)).toBe(secondWebview);
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-testid='chat-side-panel-trigger']")?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(secondWebview);
+    expect(container.querySelector(`webview[data-browser-tab-id="${firstTabId}"]`)).toBe(firstWebview);
+    expect(container.querySelector(`webview[data-browser-tab-id="${secondTabId}"]`)).toBe(secondWebview);
+  });
+
   it("does not call Electron webview APIs before dom-ready in the browser target", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "browser-side-panel-message", body: "Open the browser panel." })],

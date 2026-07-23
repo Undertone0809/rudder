@@ -1,5 +1,12 @@
 const CHAT_SIDE_PANEL_MARKDOWN_DRAFT_STORAGE_PREFIX = "rudder.chat-side-panel.markdown-draft.v1";
 
+export {
+  browserSidePanelErrorContent as chatSidePanelBrowserErrorContent,
+  isBrowserSidePanelCloseShortcutInput as isChatSidePanelCloseShortcutInput,
+  type BrowserLoadError,
+  type BrowserWebviewInputEvent
+} from "@/lib/browser-side-panel";
+
 type ChatSidePanelMarkdownDraft = {
   baseContent: string;
   content: string;
@@ -98,48 +105,4 @@ export function joinChatSidePanelYamlFrontmatter(frontmatter: string | null, sep
 
 export function countChatSidePanelMarkdownWords(content: string) {
   return content.match(/[\p{L}\p{N}]+(?:[-'][\p{L}\p{N}]+)*/gu)?.length ?? 0;
-}
-
-export type BrowserWebviewInputEvent = Event & {
-  input?: {
-    type?: string;
-    key?: string;
-    code?: string;
-    meta?: boolean;
-    control?: boolean;
-    alt?: boolean;
-    shift?: boolean;
-  };
-};
-
-export type BrowserLoadError = { code: string; url: string };
-
-function browserErrorHost(url: string) {
-  try {
-    return new URL(url).hostname || url;
-  } catch {
-    return url;
-  }
-}
-
-export function chatSidePanelBrowserErrorContent(error: BrowserLoadError) {
-  const host = browserErrorHost(error.url);
-  if (error.code === "ERR_CONNECTION_REFUSED") {
-    return { summary: `${host} refused to connect.`, suggestions: ["Checking the connection", "Checking the proxy and firewall"] };
-  }
-  if (error.code === "ERR_NAME_NOT_RESOLVED") {
-    return { summary: `${host}'s server IP address could not be found.`, suggestions: ["Checking the address", "Checking the connection"] };
-  }
-  if (error.code === "ERR_TIMED_OUT") {
-    return { summary: `${host} took too long to respond.`, suggestions: ["Checking the connection", "Trying again later"] };
-  }
-  return { summary: `The page at ${host} could not be loaded.`, suggestions: ["Checking the address", "Trying again later"] };
-}
-
-export function isChatSidePanelCloseShortcutInput(input: BrowserWebviewInputEvent["input"]) {
-  if (!input || input.type === "keyUp") return false;
-  const isCloseKey = input.key?.toLowerCase() === "w" || input.code === "KeyW";
-  if (!isCloseKey || input.alt || input.shift) return false;
-  const isMac = navigator.platform.toLowerCase().includes("mac");
-  return isMac ? Boolean(input.meta) && !input.control : Boolean(input.control) && !input.meta;
 }
