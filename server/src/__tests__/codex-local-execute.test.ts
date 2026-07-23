@@ -263,6 +263,10 @@ async function writeBenignStderrCodexCommand(commandPath: string): Promise<void>
 process.stdin.resume();
 process.stdin.on("end", () => {
   process.stderr.write("2026-04-13T09:25:56.430513Z  WARN codex_core::shell_snapshot: Failed to delete shell snapshot at \\"/Users/test/.codex/shell_snapshots/019d8629-6e4c-7381-8538-7f93b18408cc.tmp-1776072355418943000\\": Os { code: 2, kind: NotFound, message: \\"No such file or directory\\" }\\n");
+  process.stderr.write("real stderr before\\n");
+  process.stderr.write("  in-process app-server event stream lag");
+  process.stderr.write("ged; dropped 42 events\\n");
+  process.stderr.write("real stderr after");
   console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
   console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
   console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
@@ -3294,10 +3298,12 @@ describe("codex execute", { timeout: 20_000 }, () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
-      expect(result.resultJson).toMatchObject({
-        stderr: "",
-      });
-      expect(logs.some((entry) => entry.stream === "stderr")).toBe(false);
+      expect(result.resultJson?.stderr).toContain("real stderr before");
+      expect(result.resultJson?.stderr).toContain("real stderr after");
+      expect(result.resultJson?.stderr).not.toContain("app-server event stream lagged");
+      expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("real stderr before"))).toBe(true);
+      expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("real stderr after"))).toBe(true);
+      expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("app-server event stream lagged"))).toBe(false);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

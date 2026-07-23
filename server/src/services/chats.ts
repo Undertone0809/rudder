@@ -3007,7 +3007,10 @@ export function chatService(db: Db) {
           })
           .from(chatGenerationEvents)
           .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
-          .where(inArray(chatGenerationEvents.assistantMessageId, assistantMessageIds))
+          .where(and(
+            inArray(chatGenerationEvents.assistantMessageId, assistantMessageIds),
+            inArray(chatGenerationEvents.orgId, [...new Set(rows.map((row) => row.orgId))]),
+          ))
           .orderBy(
             desc(chatGenerations.createdAt),
             desc(chatGenerationEvents.recordedAt),
@@ -3030,14 +3033,32 @@ export function chatService(db: Db) {
           ))
         : Promise.resolve([]),
     ]);
+    const generationIds = [...new Set(generationMessageRows.map((row) => row.generationId))];
+    const generationsById = generationIds.length === 0
+      ? new Map<string, { orgId: string; conversationId: string; terminalReason: string | null }>()
+      : new Map((await db
+        .select({
+          id: chatGenerations.id,
+          orgId: chatGenerations.orgId,
+          conversationId: chatGenerations.conversationId,
+          terminalReason: chatGenerations.terminalReason,
+        })
+        .from(chatGenerations)
+        .where(and(
+          inArray(chatGenerations.id, generationIds),
+          inArray(chatGenerations.orgId, [...new Set(rows.map((row) => row.orgId))]),
+        )))
+        .map((generation) => [generation.id, generation]));
+    const messageById = new Map(rows.map((row) => [row.id, row]));
     const generationIdByAssistantMessageId = new Map<string, string>();
     for (const generationMessageRow of generationMessageRows) {
-      if (!generationMessageRow.assistantMessageId) continue;
-      if (generationIdByAssistantMessageId.has(generationMessageRow.assistantMessageId)) continue;
-      generationIdByAssistantMessageId.set(
-        generationMessageRow.assistantMessageId,
-        generationMessageRow.generationId,
-      );
+      const assistantMessageId = generationMessageRow.assistantMessageId;
+      if (!assistantMessageId || generationIdByAssistantMessageId.has(assistantMessageId)) continue;
+      const message = messageById.get(assistantMessageId);
+      const generation = generationsById.get(generationMessageRow.generationId);
+      if (!message || !generation) continue;
+      if (generation.orgId !== message.orgId || generation.conversationId !== message.conversationId) continue;
+      generationIdByAssistantMessageId.set(assistantMessageId, generationMessageRow.generationId);
     }
     const steerDispositionByMessageId = new Map<string, string>();
     for (const queueRow of linkedSteerQueueRows) {
@@ -3204,6 +3225,7 @@ export function chatService(db: Db) {
       return {
         ...row,
         generationId,
+        generationTerminalReason: generationId ? (generationsById.get(generationId)?.terminalReason ?? null) : null,
         structuredPayload: stripChatMetadataFromPayload(structuredPayload),
         transcript: includeRowTranscript ? transcript : undefined,
         transcriptSummary,

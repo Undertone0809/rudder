@@ -741,3 +741,54 @@ describe("failed chat transcript rendering", () => {
     expect(container.textContent).toContain("Retry");
   });
 });
+
+describe("steer fallback chat rendering", () => {
+  it("keeps partial output without a stopped or failure label", () => {
+    const container = renderChatMessageItem(message({
+      status: "failed",
+      body: "Useful partial answer.",
+      generationTerminalReason: "steer_fallback",
+    }));
+
+    expect(container.textContent).toContain("Useful partial answer.");
+    expect(container.textContent).not.toContain("Stopped");
+    expect(container.textContent).not.toContain("Response failed");
+    expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+  });
+
+  it("suppresses a stopped placeholder assistant bubble", () => {
+    const container = renderChatMessageItem(message({
+      status: "stopped",
+      body: "Chat run stopped before a final reply. Continue the conversation to resume from the preserved context.",
+      generationTerminalReason: "steer_fallback_runtime_owner_missing",
+    }));
+
+    expect(container.querySelector('[data-testid="chat-assistant-message"]')).toBeNull();
+    expect(container.textContent).not.toContain("Chat run stopped before a final reply");
+  });
+
+  it("keeps fallback process history without a stopped-with-errors label", () => {
+    const container = render(
+      <StreamTranscriptItem
+        entries={[{ kind: "stderr", ts: "2026-06-15T10:00:00.000Z", text: "partial tool output" }]}
+        state="failed"
+        generationTerminalReason="steer_fallback_runtime_owner_missing"
+        streamStartedAt={new Date("2026-06-15T10:00:00.000Z")}
+        defaultOpen
+      />,
+    );
+
+    expect(container.querySelector('[data-testid="chat-transcript-item"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("Stopped with errors");
+  });
+
+  it("keeps an operator-stopped assistant message visibly stopped", () => {
+    const container = renderChatMessageItem(message({
+      status: "stopped",
+      body: "The operator stopped this run.",
+      generationTerminalReason: "operator_stop",
+    }));
+
+    expect(container.textContent).toContain("Stopped");
+  });
+});

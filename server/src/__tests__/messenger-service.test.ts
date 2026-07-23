@@ -5101,6 +5101,9 @@ describe("messengerService and issue follows", () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();
     const generationId = randomUUID();
+    const unrelatedConversationId = randomUUID();
+    const unrelatedGenerationId = randomUUID();
+    const operatorStopGenerationId = randomUUID();
 
     await db.insert(organizations).values({
       id: orgId,
@@ -5116,6 +5119,13 @@ describe("messengerService and issue follows", () => {
       issueCreationMode: "manual_approval",
       planMode: false,
     });
+    await db.insert(chatConversations).values({
+      id: unrelatedConversationId,
+      orgId,
+      title: "Unrelated generation projection",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
     await db.insert(chatGenerations).values({
       id: generationId,
       orgId,
@@ -5123,6 +5133,20 @@ describe("messengerService and issue follows", () => {
       status: "stop_requested",
       terminalReason: "steer_fallback",
       acceptedThroughSeq: 1,
+    });
+    await db.insert(chatGenerations).values({
+      id: operatorStopGenerationId,
+      orgId,
+      conversationId,
+      status: "stopped",
+      terminalReason: "operator_stop",
+    });
+    await db.insert(chatGenerations).values({
+      id: unrelatedGenerationId,
+      orgId,
+      conversationId: unrelatedConversationId,
+      status: "stopped",
+      terminalReason: "operator_stop",
     });
     const assistantMessage = await chatSvc.addMessage(conversationId, {
       orgId,
@@ -5172,6 +5196,31 @@ describe("messengerService and issue follows", () => {
         assistantMessageId: assistantMessage.id,
       },
     ]);
+    const operatorStoppedMessage = await chatSvc.addMessage(conversationId, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      status: "stopped",
+      body: "Operator stopped this response.",
+    });
+    await db.insert(chatGenerationEvents).values({
+      orgId,
+      generationId: operatorStopGenerationId,
+      generationSeq: 1,
+      attemptEpoch: 1,
+      eventKind: "runtime_output",
+      payload: { body: "Operator stopped this response." },
+      assistantMessageId: operatorStoppedMessage.id,
+    });
+    await db.insert(chatGenerationEvents).values({
+      orgId,
+      generationId: unrelatedGenerationId,
+      generationSeq: 99,
+      attemptEpoch: 1,
+      eventKind: "runtime_output",
+      payload: { body: "Wrong conversation" },
+      assistantMessageId: assistantMessage.id,
+    });
     await chatSvc.addMessage(conversationId, {
       orgId,
       role: "user",
@@ -5189,10 +5238,13 @@ describe("messengerService and issue follows", () => {
 
     const messages = await chatSvc.listMessages(conversationId, { includeTranscript: false });
     const hydratedAssistant = messages.find((message) => message.id === assistantMessage.id) as
-      | (typeof assistantMessage & { generationId?: string | null })
+      | (typeof assistantMessage & { generationId?: string | null; generationTerminalReason?: string | null })
       | undefined;
 
     expect(hydratedAssistant?.generationId).toBe(generationId);
+    expect(hydratedAssistant?.generationTerminalReason).toBe("steer_fallback");
+    expect(messages.find((message) => message.id === operatorStoppedMessage.id))
+      .toMatchObject({ generationTerminalReason: "operator_stop", status: "stopped" });
     expect(hydratedAssistant?.transcript).toEqual([
       expect.objectContaining({ kind: "thinking", text: "Reasoning around native Steer" }),
     ]);

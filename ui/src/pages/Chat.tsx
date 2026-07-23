@@ -2879,6 +2879,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     entries={persistedTranscript}
                                     steerMessages={messageSteerMessages}
                                     state={message.status}
+                                    generationTerminalReason={message.generationTerminalReason}
                                     streamStartedAt={persistedProcessStartedAt!}
                                     streamEndedAt={persistedProcessEndedAt}
                                     assistantMessageBody={message.body}
@@ -2889,6 +2890,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   <LazyStreamTranscriptItem
                                     summary={message.transcriptSummary}
                                     state={message.status}
+                                    generationTerminalReason={message.generationTerminalReason}
                                     loading={Boolean(loadingTranscriptMessageIds[message.id])}
                                     onLoad={() => void loadMessageTranscript(message.conversationId, message.id)}
                                   /> ) : null}

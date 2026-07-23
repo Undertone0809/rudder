@@ -12,12 +12,14 @@ import {
   type CodexAppServerNotification,
   type CodexAppServerServerRequestHandler,
 } from "./app-server-client.js";
+import { createCodexStderrLineFilter, splitCompleteLines } from "./stderr-filter.js";
 
 const APP_SERVER_INTERRUPT_TIMEOUT_MS = 1_000;
 const APP_SERVER_PROCESS_HARD_DEADLINE_MS = 2_000;
 const APP_SERVER_CAPTURE_LIMIT = 8 * 1024 * 1024;
 const APP_SERVER_SUBAGENT_ITEM_LIMIT = 256;
 const APP_SERVER_SUBAGENT_READ_TIMEOUT_MS = 1_500;
+const APP_SERVER_STDERR_LINE_BUFFER_LIMIT = 64 * 1024;
 
 type PackageJson = { version?: string };
 
@@ -250,11 +252,29 @@ export async function executeCodexAppServerChat(
   if (child.pid) await options.onSpawn?.({ pid: child.pid, startedAt });
 
   let stderr = "";
+  let stderrBuffer = "";
+  const shouldSuppressStderr = createCodexStderrLineFilter();
+  const flushStderr = (force: boolean) => {
+    const { lines, remainder } = splitCompleteLines(stderrBuffer);
+    stderrBuffer = force ? "" : remainder;
+    const completeLines = force ? [...lines, ...(remainder ? [remainder] : [])] : lines;
+    for (const line of completeLines) {
+      if (!shouldSuppressStderr(line)) void options.onLog("stderr", line);
+    }
+  };
   child.stderr?.on("data", (chunk: Buffer | string) => {
     const text = String(chunk);
     stderr = appendBounded(stderr, text);
-    void options.onLog("stderr", text);
+    stderrBuffer += text;
+    if (stderrBuffer.length > APP_SERVER_STDERR_LINE_BUFFER_LIMIT) {
+      const overflow = stderrBuffer.slice(0, stderrBuffer.length - APP_SERVER_STDERR_LINE_BUFFER_LIMIT);
+      stderrBuffer = stderrBuffer.slice(-APP_SERVER_STDERR_LINE_BUFFER_LIMIT);
+      if (!shouldSuppressStderr(overflow)) void options.onLog("stderr", overflow);
+    }
+    flushStderr(false);
   });
+  child.stderr?.once("end", () => flushStderr(true));
+  child.once("close", () => flushStderr(true));
 
   let stdout = "";
   let latestUsage: UsageSummary = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };

@@ -64,6 +64,17 @@ const finish = (status = "completed") => {
   } });
 };
 
+if (process.env.RUDDER_TEST_APP_SERVER_STDERR) {
+  process.stderr.write("real stderr before\\n");
+  process.stderr.write("  in-process app-server event stream lag");
+  process.stderr.write("ged; dropped 42 events\\n");
+  process.stderr.write("real stderr after\\n");
+}
+if (process.env.RUDDER_TEST_APP_SERVER_TRAILING_STDERR) {
+  process.stderr.write("trailing real stderr");
+  process.stderr.write("\\n in-process app-server event stream lagged; dropped 7 events");
+}
+
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   const message = JSON.parse(line);
@@ -356,6 +367,65 @@ describe("executeCodexAppServerChat", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toContain('\"type\":\"userMessage\"');
     expect(result.stdout).toContain('\"type\":\"command_execution\"');
+  });
+
+  it("hides split app-server lag diagnostics while preserving adjacent stderr", async () => {
+    const stderrLines: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_APP_SERVER_STDERR: "1",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+      } as Record<string, string>,
+      prompt: "Initial request",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stderr") stderrLines.push(chunk);
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(stderrLines.join("")).toContain("real stderr before");
+    expect(stderrLines.join("")).toContain("real stderr after");
+    expect(stderrLines.join("")).not.toContain("app-server event stream lagged");
+    expect(result.stderr).toContain("app-server event stream lagged");
+  });
+
+  it("flushes trailing real stderr and suppresses an unterminated lag diagnostic", async () => {
+    const stderrLines: string[] = [];
+    await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_APP_SERVER_TRAILING_STDERR: "1",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+      } as Record<string, string>,
+      prompt: "Initial request",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stderr") stderrLines.push(chunk);
+      }),
+    });
+
+    expect(stderrLines.join("")).toContain("trailing real stderr");
+    expect(stderrLines.join("")).not.toContain("app-server event stream lagged");
   });
 
   it("attaches the trusted runtime cwd to command transcript entries", async () => {
