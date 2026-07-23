@@ -20,6 +20,8 @@ import { ToastViewport } from "./components/ToastViewport";
 import { BreadcrumbProvider } from "./context/BreadcrumbContext";
 import { useDialog } from "./context/DialogContext";
 import { useI18n } from "./context/I18nContext";
+import { LiveSurfaceRuntimeLayer, LiveSurfaceRuntimeProvider } from "./context/LiveSurfaceRuntimeContext";
+import { MainWorkbenchProvider } from "./context/MainWorkbenchContext";
 import { useOrganization } from "./context/OrganizationContext";
 import { SidePanelProvider } from "./context/SidePanelContext";
 import { useViewedOrganization } from "./hooks/useViewedOrganization";
@@ -553,9 +555,11 @@ export function App() {
 
   return (
     <>
+      <LiveSurfaceRuntimeProvider>
+      <MainWorkbenchProvider>
       <SidePanelProvider>
-      <DesktopBrowserLinkBridge />
-      <Routes location={showDesktopSettingsOverlay ? settingsOverlayBackgroundPath! : location}>
+        <DesktopBrowserLinkBridge />
+        <Routes location={showDesktopSettingsOverlay ? settingsOverlayBackgroundPath! : location}>
         <Route path="auth" element={<AuthPage />} />
         <Route path="board-claim/:token" element={<BoardClaimPage />} />
         <Route path="cli-auth/:id" element={<CliAuthPage />} />
@@ -630,8 +634,11 @@ export function App() {
           </Route>
           <Route path="*" element={<NotFoundPage scope="global" />} />
         </Route>
-      </Routes>
+        </Routes>
       </SidePanelProvider>
+      <LiveSurfaceRuntimeLayer />
+      </MainWorkbenchProvider>
+      </LiveSurfaceRuntimeProvider>
       {showDesktopSettingsOverlay ? (
         <Routes>
           <Route element={<CloudAccessGate />}>

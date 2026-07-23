@@ -20,6 +20,7 @@ import { failedRunOrigin, MessengerRunOrigin } from "@/components/messenger/Mess
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { MessengerMainWorkbench } from "@/components/workbench/MessengerMainWorkbench";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useToast } from "@/context/ToastContext";
 import {
@@ -1126,6 +1127,10 @@ export function Messenger() {
       setBreadcrumbs([{ label: "Saved view" }]);
       return;
     }
+    if (route.kind === "workbench") {
+      setBreadcrumbs([{ label: "Workbench" }]);
+      return;
+    }
     setBreadcrumbs([{ label: "Messenger" }]);
   }, [route.kind, route.kind === "system" ? route.threadKind : null, setBreadcrumbs]);
 
@@ -1142,6 +1147,9 @@ export function Messenger() {
   if (route.kind === "issues") return <MessengerIssuesView />;
   if (route.kind === "approvals") return <MessengerApprovalsView />;
   if (route.kind === "system") return <MessengerSystemView threadKind={route.threadKind} />;
+  if (route.kind === "workbench" && selectedOrganizationId) {
+    return <MessengerMainWorkbench organizationId={selectedOrganizationId} />;
+  }
   if (route.kind === "saved_view" && selectedOrganizationId) {
     return <MessengerSavedViewWorkspace organizationId={selectedOrganizationId} savedViewId={route.savedViewId} />;
   }
