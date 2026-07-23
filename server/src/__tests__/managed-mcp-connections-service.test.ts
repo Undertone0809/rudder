@@ -329,7 +329,7 @@ describe("managedMcpConnectionService", () => {
       name: "host-environment",
       safeConfig: {
         url: "https://mcp.example.test/mcp",
-        headersFromEnv: { "X-Custom-Token": "HOST_TOKEN" },
+        headersFromEnv: { Authorization: "HOST_TOKEN" },
       },
     }, { userId: "owner-1" });
 
@@ -354,7 +354,7 @@ describe("managedMcpConnectionService", () => {
       credentials: { headers: { Authorization: "Bearer encrypted-bearer-value" } },
     });
     expect(options[3]).toMatchObject({
-      credentials: { headers: { "X-Custom-Token": "host-env-token" } },
+      credentials: { headers: { Authorization: "host-env-token" } },
     });
     expect(JSON.stringify(await svc.list(orgId))).not.toContain("encrypted-header-value");
     expect(JSON.stringify(await svc.list(orgId))).not.toContain("encrypted-bearer-value");
@@ -373,7 +373,7 @@ describe("managedMcpConnectionService", () => {
       provider: "custom",
       transport: "streamable_http",
       safeConfig: { url: "https://internal.example.test/mcp" },
-    }, { userId: "owner-1" })).rejects.toThrow(/blocked network address/i);
+    }, { userId: "owner-1" })).rejects.toThrow(/policy rejected/i);
     expect(await svc.list(orgId)).toEqual([]);
   });
 
@@ -416,7 +416,54 @@ describe("managedMcpConnectionService", () => {
         cwd,
         forwardedEnv: ["UNLISTED_HOST_SECRET"],
       },
-    }, { userId: "owner-1" })).rejects.toThrow(/environment.*not allowed/i);
+    }, { userId: "owner-1" })).rejects.toThrow(/policy rejected/i);
+  });
+
+  it("rejects unsafe or obviously sensitive static env/header names at persistence", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+    const unsafeHttpConfigs = [
+      { staticHeaders: { Host: "attacker.test" } },
+      { staticHeaders: { Connection: "keep-alive" } },
+      { staticHeaders: { Forwarded: "for=127.0.0.1" } },
+      { staticHeaders: { "X-MCP-Token": "plaintext-token" } },
+      { headersFromEnv: { Host: "SAFE_ENV" } },
+    ];
+    for (const [index, config] of unsafeHttpConfigs.entries()) {
+      await expect(svc.create(orgId, {
+        name: `unsafe-http-${index}`,
+        displayName: `Unsafe HTTP ${index}`,
+        provider: "custom",
+        transport: "streamable_http",
+        safeConfig: {
+          url: "https://mcp.example.test/mcp",
+          ...config,
+        },
+      }, { userId: "owner-1" })).rejects.toThrow(/policy|sensitive|controlled/i);
+    }
+    await expect(svc.create(orgId, {
+      name: "unsafe-secret-header",
+      displayName: "Unsafe secret header",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: {
+        url: "https://mcp.example.test/mcp",
+        secretHeaderNames: ["Host"],
+      },
+      secrets: { headers: { Host: "encrypted-but-controlled" } },
+    }, { userId: "owner-1" })).rejects.toThrow(/policy|controlled/i);
+    await expect(svc.create(orgId, {
+      name: "plaintext-stdio-secret",
+      displayName: "Plaintext STDIO secret",
+      provider: "custom",
+      transport: "stdio",
+      safeConfig: {
+        command: process.execPath,
+        args: ["--version"],
+        staticEnv: { MCP_TOKEN: "plaintext-token" },
+      },
+    }, { userId: "owner-1" })).rejects.toThrow(/sensitive/i);
+    expect(await svc.list(orgId)).toEqual([]);
   });
 
   it("discovers real client tools, reconciles drift, never expands existing bindings, and always closes", async () => {
@@ -478,7 +525,9 @@ describe("managedMcpConnectionService", () => {
   it("closes the client, stores a redacted error state, and never returns upstream secrets when discovery fails", async () => {
     const orgId = await seedOrg(db);
     const failingClient = clientWithTools([]);
-    failingClient.discoverTools.mockRejectedValue(new Error("Authorization Bearer leaked-token rejected"));
+    failingClient.discoverTools.mockRejectedValue(
+      new Error("OAuth authorization failed for Bearer leaked-token"),
+    );
     createClient.mockResolvedValue(failingClient);
     const svc = service();
     const connection = await svc.create(orgId, {
@@ -495,6 +544,108 @@ describe("managedMcpConnectionService", () => {
     expect(failingClient.close).toHaveBeenCalledOnce();
     expect((await svc.get(orgId, connection.id)).status).toBe("error");
     expect(JSON.stringify(await svc.get(orgId, connection.id))).not.toContain("leaked-token");
+  });
+
+  it("requires reconnect before a disabled or reauthorization/error connection can discover again", async () => {
+    const orgId = await seedOrg(db);
+    const client = clientWithTools([]);
+    createClient.mockResolvedValue(client);
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "strict-lifecycle",
+      displayName: "Strict lifecycle",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: { url: "https://mcp.example.test/mcp" },
+    }, { userId: "owner-1" });
+
+    await svc.disconnect(orgId, connection.id);
+    await expect(svc.update(
+      orgId,
+      connection.id,
+      { enabled: true },
+      { userId: "owner-1" },
+    )).rejects.toThrow(/reconnect/i);
+    await expect(svc.refreshTools(orgId, connection.id)).rejects.toThrow(/reconnect/i);
+    expect(createClient).not.toHaveBeenCalled();
+
+    for (const status of ["needs_reauth", "revoked", "error"] as const) {
+      await db.update(mcpConnections)
+        .set({ status, enabled: true })
+        .where(eq(mcpConnections.id, connection.id));
+      await expect(svc.refreshTools(orgId, connection.id)).rejects.toThrow(/reconnect/i);
+      expect(createClient).not.toHaveBeenCalled();
+    }
+
+    await svc.reconnect(orgId, connection.id);
+    expect(await svc.get(orgId, connection.id)).toMatchObject({
+      status: "draft",
+      enabled: true,
+    });
+    await svc.refreshTools(orgId, connection.id);
+    expect(createClient).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the old credential/config consistent when a clear or declaration rotation DB update fails", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "atomic-secret-change",
+      displayName: "Atomic secret change",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: {
+        url: "https://mcp.example.test/mcp",
+        secretHeaderNames: ["Authorization"],
+      },
+      secrets: { headers: { Authorization: "Bearer original-secret" } },
+    }, { userId: "owner-1" });
+    const [before] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    expect(before?.credentialSecretId).toBeTruthy();
+
+    await db.$client.unsafe(`
+      create function reject_managed_mcp_safe_config_change() returns trigger as $$
+      begin
+        if new.safe_config is distinct from old.safe_config then
+          raise exception 'forced safe config failure';
+        end if;
+        return new;
+      end;
+      $$ language plpgsql;
+      create trigger reject_managed_mcp_safe_config_change
+      before update on mcp_connections
+      for each row execute function reject_managed_mcp_safe_config_change();
+    `);
+    try {
+      await expect(svc.update(orgId, connection.id, {
+        safeConfig: { url: "https://mcp.example.test/mcp" },
+      }, { userId: "owner-1" })).rejects.toThrow();
+      let [after] = await db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, connection.id));
+      expect(after?.credentialSecretId).toBe(before?.credentialSecretId);
+      expect(after?.safeConfig).toEqual(before?.safeConfig);
+      expect(await db.select().from(organizationSecrets)).toHaveLength(1);
+
+      await expect(svc.update(orgId, connection.id, {
+        safeConfig: {
+          url: "https://mcp.example.test/mcp",
+          secretHeaderNames: ["X-API-Key"],
+        },
+        secrets: { headers: { "X-API-Key": "rotated-secret" } },
+      }, { userId: "owner-1" })).rejects.toThrow();
+      [after] = await db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, connection.id));
+      expect(after?.credentialSecretId).toBe(before?.credentialSecretId);
+      expect(after?.safeConfig).toEqual(before?.safeConfig);
+      expect((await db.select().from(organizationSecrets))[0]?.latestVersion).toBe(1);
+      expect(await db.select().from(organizationSecretVersions)).toHaveLength(1);
+    } finally {
+      await db.$client.unsafe(`
+        drop trigger if exists reject_managed_mcp_safe_config_change on mcp_connections;
+        drop function if exists reject_managed_mcp_safe_config_change();
+      `);
+    }
   });
 
   it("keeps legacy_manual records read-only and non-executable", async () => {

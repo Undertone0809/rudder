@@ -5,8 +5,8 @@ import {
   mcpOAuthGrants,
 } from "@rudderhq/db";
 import {
-  MCP_PROVIDER_CATALOG,
   createMcpConnectionSchema,
+  MCP_PROVIDER_CATALOG,
   mcpConnectionMergedConfigSchema,
   mcpConnectionMutationConfigSchema,
   updateMcpConnectionSchema,
@@ -19,7 +19,7 @@ import {
 } from "@rudderhq/shared";
 import { and, asc, eq, ne } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { conflict, notFound, unprocessable } from "../../errors.js";
+import { conflict, HttpError, notFound, unprocessable } from "../../errors.js";
 import { secretService } from "../secrets.js";
 import {
   createManagedMcpClient,
@@ -32,6 +32,8 @@ import {
   resolveCuratedMcpEndpoint,
 } from "./provider-registry.js";
 import {
+  assertSafeMcpCredentialHeaders,
+  assertSafeMcpHeaders,
   resolveMcpHttpTarget,
   validateMcpStdioPolicy,
   type McpDeploymentAllowlists,
@@ -70,6 +72,24 @@ const EMPTY_ALLOWLISTS: McpDeploymentAllowlists = {
   stdioWorkingDirectories: [],
   stdioEnvironmentNames: [],
 };
+
+const SENSITIVE_STATIC_NAME_RE =
+  /(api[-_]?key|access[-_]?token|auth(?:[-_]?token)?|authorization|bearer|secret|passwd|password|credential|cookie|jwt|private[-_]?key|connectionstring|(?:^|[-_])token(?:$|[-_]))/iu;
+const RECONNECT_REQUIRED_STATUSES = new Set([
+  "disabled",
+  "revoked",
+  "needs_reauth",
+  "error",
+]);
+
+export class ManagedMcpConnectionPolicyError extends HttpError {
+  readonly code = "managed_mcp_policy_rejected";
+
+  constructor(message = "Managed MCP connection policy rejected the configuration") {
+    super(422, message);
+    this.name = "ManagedMcpConnectionPolicyError";
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -135,6 +155,49 @@ function equalSecretShape(
 
 function hasDeclaredSecrets(shape: ReturnType<typeof declaredSecretShape>): boolean {
   return shape.env.length > 0 || shape.headers.length > 0 || shape.bearerToken;
+}
+
+function assertNoSensitiveStaticNames(
+  values: Record<string, string> | undefined,
+  kind: "environment variable" | "header",
+): void {
+  const sensitiveName = Object.keys(values ?? {}).find((name) => (
+    SENSITIVE_STATIC_NAME_RE.test(name)
+  ));
+  if (sensitiveName) {
+    throw new ManagedMcpConnectionPolicyError(
+      `Managed MCP static ${kind} names that look sensitive must use encrypted credentials`,
+    );
+  }
+}
+
+function assertCustomHttpHeaderPolicy(
+  config: ReturnType<typeof asHttpConfig>,
+  credentials?: ManagedMcpCredentialPayload,
+): void {
+  try {
+    assertSafeMcpHeaders(config.staticHeaders ?? {});
+    assertSafeMcpCredentialHeaders(Object.fromEntries(
+      Object.keys(config.headersFromEnv ?? {}).map((name) => [name, "environment-reference"]),
+    ));
+    assertSafeMcpCredentialHeaders(Object.fromEntries(
+      (config.secretHeaderNames ?? []).map((name) => [name, "encrypted-reference"]),
+    ));
+    if (credentials?.headers) {
+      assertSafeMcpCredentialHeaders(credentials.headers);
+    }
+  } catch {
+    throw new ManagedMcpConnectionPolicyError(
+      "Managed MCP header configuration is rejected by deployment policy",
+    );
+  }
+  assertNoSensitiveStaticNames(config.staticHeaders, "header");
+}
+
+function reconnectRequiredError(): ReturnType<typeof unprocessable> {
+  return unprocessable(
+    "Reconnect the managed MCP connection before enabling or discovering tools",
+  );
 }
 
 function publicSummary(row: McpConnectionRow): McpConnectionSummary {
@@ -259,55 +322,65 @@ export function managedMcpConnectionService(
     accessMode: string;
     externalScope: string | null;
     safeConfig: Record<string, unknown>;
+    credentials?: ManagedMcpCredentialPayload;
   }): Promise<void> {
-    if (input.transport === "legacy_manual") return;
-    if (input.transport === "stdio") {
-      const config = asStdioConfig(input.safeConfig);
-      await validateMcpStdioPolicy({
-        command: config.command,
-        args: config.args,
-        cwd: config.cwd,
-        environmentNames: [
-          ...Object.keys(config.staticEnv ?? {}),
-          ...(config.forwardedEnv ?? []),
-          ...(config.secretEnvNames ?? []),
-        ],
-      }, {
-        deploymentMode: options.deploymentMode,
-        stdioCommands: allowlists.stdioCommands,
-        stdioWorkingDirectories: allowlists.stdioWorkingDirectories,
-        stdioEnvironmentNames: allowlists.stdioEnvironmentNames,
-      });
-      return;
-    }
-
-    let url: string;
-    let curatedOrigin: string | undefined;
-    if (input.provider === "custom") {
-      const config = asHttpConfig(input.safeConfig);
-      if (!config.url) throw unprocessable("Custom Streamable HTTP connection requires a URL");
-      assertHttpEnvironmentPolicy(config);
-      url = config.url;
-    } else {
-      // Supabase is allowed to remain draft before project selection.
-      if (input.provider === "supabase" && !input.externalScope) {
+    try {
+      if (input.transport === "legacy_manual") return;
+      if (input.transport === "stdio") {
+        const config = asStdioConfig(input.safeConfig);
+        assertNoSensitiveStaticNames(config.staticEnv, "environment variable");
+        await validateMcpStdioPolicy({
+          command: config.command,
+          args: config.args,
+          cwd: config.cwd,
+          environmentNames: [
+            ...Object.keys(config.staticEnv ?? {}),
+            ...(config.forwardedEnv ?? []),
+            ...(config.secretEnvNames ?? []),
+          ],
+        }, {
+          deploymentMode: options.deploymentMode,
+          stdioCommands: allowlists.stdioCommands,
+          stdioWorkingDirectories: allowlists.stdioWorkingDirectories,
+          stdioEnvironmentNames: allowlists.stdioEnvironmentNames,
+        });
         return;
       }
-      const endpoint = resolveCuratedMcpEndpoint({
-        provider: input.provider as "supabase" | "linear" | "notion",
-        accessMode: input.accessMode as "provider_default" | "read_only" | "read_write",
-        externalScope: input.externalScope,
+
+      let url: string;
+      let curatedOrigin: string | undefined;
+      if (input.provider === "custom") {
+        const config = asHttpConfig(input.safeConfig);
+        if (!config.url) throw unprocessable("Custom Streamable HTTP connection requires a URL");
+        assertCustomHttpHeaderPolicy(config, input.credentials);
+        assertHttpEnvironmentPolicy(config);
+        url = config.url;
+      } else {
+        // Supabase is allowed to remain draft before project selection.
+        if (input.provider === "supabase" && !input.externalScope) {
+          return;
+        }
+        const endpoint = resolveCuratedMcpEndpoint({
+          provider: input.provider as "supabase" | "linear" | "notion",
+          accessMode: input.accessMode as "provider_default" | "read_only" | "read_write",
+          externalScope: input.externalScope,
+        });
+        url = endpoint.href;
+        curatedOrigin = new URL(MCP_PROVIDER_REGISTRY[
+          input.provider as "supabase" | "linear" | "notion"
+        ].endpoint).origin;
+      }
+      await resolveMcpHttpTarget(url, {
+        allowedOrigins: allowlists.httpOrigins,
+        curatedOrigin,
+        lookup: options.dnsLookup,
       });
-      url = endpoint.href;
-      curatedOrigin = new URL(MCP_PROVIDER_REGISTRY[
-        input.provider as "supabase" | "linear" | "notion"
-      ].endpoint).origin;
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
+      throw new ManagedMcpConnectionPolicyError();
     }
-    await resolveMcpHttpTarget(url, {
-      allowedOrigins: allowlists.httpOrigins,
-      curatedOrigin,
-      lookup: options.dnsLookup,
-    });
   }
 
   async function createCredential(
@@ -381,6 +454,7 @@ export function managedMcpConnectionService(
       if (config.bearerTokenEnvVar) {
         credential.bearerToken = hostEnv[config.bearerTokenEnvVar];
       }
+      assertCustomHttpHeaderPolicy(config, credential);
     } else {
       const endpoint = resolveCuratedMcpEndpoint({
         provider: row.provider as "supabase" | "linear" | "notion",
@@ -480,6 +554,7 @@ export function managedMcpConnectionService(
         accessMode: input.accessMode,
         externalScope: input.externalScope ?? null,
         safeConfig: input.safeConfig,
+        credentials: input.secrets ? customSecretPayload(input.secrets) : undefined,
       });
 
       let credentialSecretId: string | null = null;
@@ -526,6 +601,12 @@ export function managedMcpConnectionService(
       const existing = await findRow(orgId, connectionId);
       assertLegacyMutable(existing);
       const patch = updateMcpConnectionSchema.parse(rawPatch);
+      if (
+        patch.enabled === true
+        && RECONNECT_REQUIRED_STATUSES.has(existing.status)
+      ) {
+        throw reconnectRequiredError();
+      }
       const merged = {
         provider: existing.provider,
         transport: existing.transport,
@@ -554,48 +635,69 @@ export function managedMcpConnectionService(
         externalScope: patch.externalScope === undefined
           ? existing.externalScope
           : patch.externalScope ?? null,
+        credentials: patch.secrets ? customSecretPayload(patch.secrets) : undefined,
       });
 
       let credentialSecretId = existing.credentialSecretId;
+      let replacementSecretId: string | null = null;
+      let oldSecretIdToDelete: string | null = null;
       if (patch.secrets) {
         const serialized = JSON.stringify(customSecretPayload(patch.secrets));
-        if (credentialSecretId) {
+        if (credentialSecretId && declarationChanged) {
+          oldSecretIdToDelete = credentialSecretId;
+          const replacement = await createCredential(orgId, existing.name, patch.secrets, actor);
+          credentialSecretId = replacement.id;
+          replacementSecretId = replacement.id;
+        } else if (credentialSecretId) {
           await secrets.rotate(credentialSecretId, { value: serialized }, actor);
         } else {
-          credentialSecretId = (await createCredential(orgId, existing.name, patch.secrets, actor)).id;
+          const replacement = await createCredential(orgId, existing.name, patch.secrets, actor);
+          credentialSecretId = replacement.id;
+          replacementSecretId = replacement.id;
         }
       } else if (declarationChanged && !hasDeclaredSecrets(nextShape) && credentialSecretId) {
-        const oldSecretId = credentialSecretId;
+        oldSecretIdToDelete = credentialSecretId;
         credentialSecretId = null;
-        await db
-          .update(mcpConnections)
-          .set({ credentialSecretId: null, updatedAt: new Date() })
-          .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)));
-        await secrets.remove(oldSecretId);
       }
 
-      const row = await db
-        .update(mcpConnections)
-        .set({
-          credentialSecretId,
-          ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
-          ...(patch.externalScope !== undefined ? { externalScope: patch.externalScope ?? null } : {}),
-          ...(patch.accessMode !== undefined ? { accessMode: patch.accessMode } : {}),
-          ...(patch.safeConfig !== undefined ? { safeConfig: patch.safeConfig } : {}),
-          ...(patch.startupTimeoutMs !== undefined ? { startupTimeoutMs: patch.startupTimeoutMs } : {}),
-          ...(patch.toolTimeoutMs !== undefined ? { toolTimeoutMs: patch.toolTimeoutMs } : {}),
-          ...(patch.enabled !== undefined ? {
-            enabled: patch.enabled,
-            disabledAt: patch.enabled ? null : new Date(),
-            status: patch.enabled ? existing.status : "disabled",
-          } : {}),
-          ...(patch.required !== undefined ? { required: patch.required } : {}),
-          updatedAt: new Date(),
-        })
-        .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
-        .returning()
-        .then((rows) => rows[0] ?? null);
-      if (!row) throw notFound("MCP connection not found");
+      let row: McpConnectionRow | null;
+      try {
+        row = await db
+          .update(mcpConnections)
+          .set({
+            credentialSecretId,
+            ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
+            ...(patch.externalScope !== undefined ? { externalScope: patch.externalScope ?? null } : {}),
+            ...(patch.accessMode !== undefined ? { accessMode: patch.accessMode } : {}),
+            ...(patch.safeConfig !== undefined ? { safeConfig: patch.safeConfig } : {}),
+            ...(patch.startupTimeoutMs !== undefined ? { startupTimeoutMs: patch.startupTimeoutMs } : {}),
+            ...(patch.toolTimeoutMs !== undefined ? { toolTimeoutMs: patch.toolTimeoutMs } : {}),
+            ...(patch.enabled !== undefined ? {
+              enabled: patch.enabled,
+              disabledAt: patch.enabled ? null : new Date(),
+              status: patch.enabled ? existing.status : "disabled",
+            } : {}),
+            ...(patch.required !== undefined ? { required: patch.required } : {}),
+            updatedAt: new Date(),
+          })
+          .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+      } catch (error) {
+        if (replacementSecretId) {
+          await secrets.remove(replacementSecretId).catch(() => undefined);
+        }
+        throw error;
+      }
+      if (!row) {
+        if (replacementSecretId) {
+          await secrets.remove(replacementSecretId).catch(() => undefined);
+        }
+        throw notFound("MCP connection not found");
+      }
+      if (oldSecretIdToDelete) {
+        await secrets.remove(oldSecretIdToDelete).catch(() => undefined);
+      }
       return publicSummary(row);
     },
 
@@ -640,6 +742,12 @@ export function managedMcpConnectionService(
     refreshTools: async (orgId: string, connectionId: string) => {
       const existing = await findRow(orgId, connectionId);
       assertLegacyMutable(existing);
+      if (
+        !existing.enabled
+        || RECONNECT_REQUIRED_STATUSES.has(existing.status)
+      ) {
+        throw reconnectRequiredError();
+      }
       if (existing.provider === "supabase" && !existing.externalScope) {
         throw unprocessable("Supabase MCP connections require a selected project before discovery");
       }
@@ -724,15 +832,7 @@ export function managedMcpConnectionService(
             eq(mcpConnections.id, connectionId),
             ne(mcpConnections.status, "revoked"),
           ));
-        if (
-          error instanceof Error
-          && (
-            error.message.includes("selected project")
-            || error.message.includes("OAuth authorization")
-            || error.message.includes("deployment policy")
-            || error.message.includes("not allowed")
-          )
-        ) {
+        if (error instanceof HttpError) {
           throw error;
         }
         throw redactedDiscoveryError();

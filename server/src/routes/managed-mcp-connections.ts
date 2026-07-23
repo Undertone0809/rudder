@@ -7,6 +7,7 @@ import {
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { forbidden } from "../errors.js";
+import { markHttpRequestBodySensitive } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
   accessService,
@@ -74,6 +75,11 @@ export function managedMcpConnectionRoutes(
       details: input.details ?? null,
     });
   }
+
+  router.use("/orgs/:orgId/mcp/connections", (req, _res, next) => {
+    markHttpRequestBodySensitive(req);
+    next();
+  });
 
   router.get("/orgs/:orgId/mcp/providers", (req, res) => {
     const orgId = req.params.orgId as string;

@@ -2,6 +2,7 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
+import { requestBodyForLogs } from "../middleware/logger.js";
 import { managedMcpConnectionRoutes } from "../routes/managed-mcp-connections.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -21,6 +22,7 @@ const mockService = vi.hoisted(() => ({
   disconnect: vi.fn(),
   listTools: vi.fn(),
 }));
+let capturedErrorBody: unknown;
 
 vi.mock("../services/index.js", () => ({
   accessService: () => ({ getMembership: mockMembership }),
@@ -74,6 +76,10 @@ function createApp(actor: Record<string, unknown>) {
     },
     hostEnv: {},
   }));
+  app.use((error: unknown, req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    capturedErrorBody = requestBodyForLogs(req, req.body);
+    next(error);
+  });
   app.use(errorHandler);
   return app;
 }
@@ -81,6 +87,7 @@ function createApp(actor: Record<string, unknown>) {
 describe("managed MCP connection organization routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    capturedErrorBody = undefined;
     mockMembership.mockResolvedValue({
       status: "active",
       membershipRole: "owner",
@@ -151,12 +158,47 @@ describe("managed MCP connection organization routes", () => {
         displayName: "Custom HTTP",
         provider: "custom",
         transport: "streamable_http",
-        safeConfig: { url: "https://mcp.example.test/mcp" },
+        safeConfig: {
+          url: "https://mcp.example.test/mcp",
+          secretHeaderNames: ["Authorization"],
+        },
+        secrets: { headers: { Authorization: "Bearer forbidden-owner-secret" } },
       });
 
     expect(response.status).toBe(403);
+    expect(capturedErrorBody).toBe("[REDACTED]");
+    expect(JSON.stringify(capturedErrorBody)).not.toContain("forbidden-owner-secret");
     expect(mockService.create).not.toHaveBeenCalled();
     expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("marks secret-bearing create and patch bodies sensitive before validation fails", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const createResponse = await request(app)
+      .post(`/api/orgs/${orgId}/mcp/connections`)
+      .send({
+        name: "INVALID NAME",
+        secrets: { bearerToken: "validation-create-secret" },
+      });
+    expect(createResponse.status).toBe(400);
+    expect(capturedErrorBody).toBe("[REDACTED]");
+
+    capturedErrorBody = undefined;
+    const patchResponse = await request(app)
+      .patch(`/api/orgs/${orgId}/mcp/connections/${connectionId}`)
+      .send({
+        unexpected: "validation-patch-secret",
+        secrets: { bearerToken: "validation-patch-secret" },
+      });
+    expect(patchResponse.status).toBe(400);
+    expect(capturedErrorBody).toBe("[REDACTED]");
   });
 
   it("allows active owners, instance administrators, and local implicit board users to mutate", async () => {

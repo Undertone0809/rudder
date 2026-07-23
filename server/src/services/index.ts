@@ -34,6 +34,7 @@ export {
   type ManagedMcpClientOptions
 } from "./mcp/managed-client.js";
 export {
+  ManagedMcpConnectionPolicyError,
   managedMcpConnectionService,
   type ManagedMcpConnectionServiceOptions,
   type ManagedMcpMutationActor
