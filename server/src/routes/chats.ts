@@ -1012,7 +1012,7 @@ export function chatRoutes(
       ? "Chat run stopped before a final reply. Continue the conversation to resume from the preserved context."
       : CHAT_ASSISTANT_USER_ERROR_MESSAGE;
     const durableBody = trimmed || (transcript.length > 0 ? fallbackBody : "");
-    if (!durableBody) return null;
+    if (!durableBody && status !== "stopped") return null;
     const chatTurnId = turnContext?.chatTurnId ?? randomUUID();
     const turnVariant = turnContext?.turnVariant ?? 0;
     if (existingMessageId) {
@@ -2009,8 +2009,15 @@ export function chatRoutes(
       throw conflict("Cannot dequeue the next message while a reply is in progress");
     }
     const latestGeneration = await svc.getLatestGeneration(conversation.id);
-    if (latestGeneration && latestGeneration.status !== "completed") {
-      throw conflict("Queue remains parked after a stopped or failed reply");
+    if (
+      latestGeneration
+      && latestGeneration.status !== "completed"
+      && !(
+        latestGeneration.status === "stopped"
+        && latestGeneration.terminalReason === "operator_stop"
+      )
+    ) {
+      throw conflict("Queue remains parked after a failed or unverified reply");
     }
     const item = await svc.claimNextQueuedMessage(conversation.id);
     if (item) {

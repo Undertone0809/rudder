@@ -724,6 +724,258 @@ describe("messengerService and issue follows", () => {
     expect(stored).toMatchObject({ status: "completed", deliveredMessageId: claim!.userMessageId });
   });
 
+  it("claims an ordinary queued follow-up after an operator-stopped generation", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const stoppedGenerationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger stopped queue advancement org",
+      urlKey: deriveOrganizationUrlKey("Messenger stopped queue advancement org"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Stopped queue advancement chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: stoppedGenerationId,
+      orgId,
+      conversationId,
+      status: "stopped",
+      terminalReason: "operator_stop",
+      completedAt: new Date(),
+    });
+    const queued = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "advance-after-operator-stop",
+      payload: { body: "Start this as the next turn after Stop" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+
+    const claim = await chatSvc.claimNextServerQueuedMessage({
+      workerId: "stopped-generation-worker",
+      leaseMs: 30_000,
+    });
+
+    expect(claim).toMatchObject({
+      item: {
+        id: queued.id,
+        status: "dequeue_claimed",
+      },
+    });
+    expect(claim?.generationId).not.toBe(stoppedGenerationId);
+    const generations = await db
+      .select()
+      .from(chatGenerations)
+      .where(eq(chatGenerations.conversationId, conversationId));
+    expect(generations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: stoppedGenerationId,
+        status: "stopped",
+        terminalReason: "operator_stop",
+      }),
+      expect.objectContaining({
+        id: claim?.generationId,
+        status: "active",
+      }),
+    ]));
+  });
+
+  it("claims only the head Queue item when workers race after an operator Stop", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger stopped queue ordering org",
+      urlKey: deriveOrganizationUrlKey("Messenger stopped queue ordering org"),
+      issuePrefix: `O${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Stopped queue ordering chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: randomUUID(),
+      orgId,
+      conversationId,
+      status: "stopped",
+      terminalReason: "operator_stop",
+      completedAt: new Date(),
+    });
+    const queuedItems = [];
+    for (const [index, body] of [
+      "First queued turn",
+      "Second queued turn",
+      "Third queued turn",
+    ].entries()) {
+      queuedItems.push(await chatSvc.createQueuedMessage({
+        orgId,
+        conversationId,
+        clientMutationId: `ordered-after-stop-${index + 1}`,
+        payload: { body },
+        requestActor: boardQueueRequestActor(orgId),
+      }));
+    }
+
+    const claims = await Promise.all(
+      Array.from({ length: 4 }, (_, index) => chatSvc.claimNextServerQueuedMessage({
+        workerId: `ordering-worker-${index + 1}`,
+        leaseMs: 30_000,
+      })),
+    );
+    const successfulClaims = claims.filter((claim) => claim !== null);
+
+    expect(successfulClaims).toHaveLength(1);
+    expect(successfulClaims[0]?.item.id).toBe(queuedItems[0]?.id);
+    expect(await chatSvc.listQueuedMessages(conversationId)).toMatchObject([
+      { id: queuedItems[0]?.id, status: "dequeue_claimed" },
+      { id: queuedItems[1]?.id, status: "queued" },
+      { id: queuedItems[2]?.id, status: "queued" },
+    ]);
+  });
+
+  it("does not leapfrog a locked head Queue item after an operator Stop", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger locked queue head org",
+      urlKey: deriveOrganizationUrlKey("Messenger locked queue head org"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Locked queue head chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: randomUUID(),
+      orgId,
+      conversationId,
+      status: "stopped",
+      terminalReason: "operator_stop",
+      completedAt: new Date(),
+    });
+    const first = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "locked-head-first",
+      payload: { body: "First queued turn" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const second = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "locked-head-second",
+      payload: { body: "Second queued turn" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+
+    let releaseHeadLock!: () => void;
+    const headLockBarrier = new Promise<void>((resolve) => {
+      releaseHeadLock = resolve;
+    });
+    let signalHeadLocked!: () => void;
+    const headLocked = new Promise<void>((resolve) => {
+      signalHeadLocked = resolve;
+    });
+    const lockedHeadTransaction = db.transaction(async (tx) => {
+      await tx
+        .select({ id: chatQueuedMessages.id })
+        .from(chatQueuedMessages)
+        .where(eq(chatQueuedMessages.id, first.id))
+        .for("update");
+      signalHeadLocked();
+      await headLockBarrier;
+    });
+    await headLocked;
+
+    const claimWhileHeadLocked = await chatSvc.claimNextServerQueuedMessage({
+      workerId: "locked-head-worker",
+      leaseMs: 30_000,
+    });
+    releaseHeadLock();
+    await lockedHeadTransaction;
+
+    expect(claimWhileHeadLocked).toBeNull();
+    const claimAfterHeadUnlocked = await chatSvc.claimNextServerQueuedMessage({
+      workerId: "unlocked-head-worker",
+      leaseMs: 30_000,
+    });
+    expect(claimAfterHeadUnlocked?.item.id).toBe(first.id);
+    expect(await chatSvc.listQueuedMessages(conversationId)).toMatchObject([
+      { id: first.id, status: "dequeue_claimed" },
+      { id: second.id, status: "queued" },
+    ]);
+  });
+
+  it.each([
+    { status: "failed", terminalReason: "runtime_failed" },
+    { status: "aborted", terminalReason: "runtime_aborted" },
+    { status: "interrupted_unverified", terminalReason: "runtime_interrupted" },
+    { status: "control_lost", terminalReason: "runtime_control_lost" },
+    { status: "stopped", terminalReason: "steer_fallback" },
+  ] as const)("keeps an ordinary queued follow-up parked after a $status generation", async ({
+    status,
+    terminalReason,
+  }) => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: `Messenger ${status} queue fence org`,
+      urlKey: deriveOrganizationUrlKey(`Messenger ${status} queue fence org`),
+      issuePrefix: `F${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: `${status} queue fence chat`,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: randomUUID(),
+      orgId,
+      conversationId,
+      status,
+      terminalReason,
+      completedAt: new Date(),
+    });
+    const queued = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: `park-after-${status}-generation`,
+      payload: { body: `Keep this parked after ${status}` },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+
+    expect(await chatSvc.claimNextServerQueuedMessage({
+      workerId: `${status}-generation-worker`,
+      leaseMs: 30_000,
+    })).toBeNull();
+    expect(await chatSvc.listQueuedMessages(conversationId)).toMatchObject([
+      {
+        id: queued.id,
+        status: "queued",
+      },
+    ]);
+  });
+
   it("does not reconcile a live server delivery claim before its runtime control handle accepts it", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();

@@ -2131,205 +2131,228 @@ export function chatService(db: Db) {
     return db.transaction(async (tx) => {
       const batchSize = 25;
       let scanOffset = 0;
+      const claimableQueuePredicate = and(
+        inArray(chatQueuedMessages.status, ["continuation_pending", "steer_pending", "queued"]),
+        isNull(chatQueuedMessages.cancelledAt),
+        sql`jsonb_typeof(${chatQueuedMessages.requestActor}) = 'object'`,
+        or(
+          isNull(chatQueuedMessages.deliveryLeaseExpiresAt),
+          lt(chatQueuedMessages.deliveryLeaseExpiresAt, now),
+        ),
+        sql`(${chatQueuedMessages.status} <> 'steer_pending' or coalesce((
+          select steer_action.provider_disposition
+          from ${chatControlActions} as steer_action
+          where steer_action.id = ${chatQueuedMessages.controlActionId}
+          limit 1
+        ), 'not_sent') in ('not_sent', 'rejected'))`,
+      );
+      const claimableQueuePriority = sql<number>`case
+        when ${chatQueuedMessages.status} = 'continuation_pending' then 0
+        when ${chatQueuedMessages.status} = 'steer_pending' then 1
+        else 2
+      end`;
       while (true) {
         const candidates = await tx
-        .select()
-        .from(chatQueuedMessages)
-        .where(and(
-          inArray(chatQueuedMessages.status, ["continuation_pending", "steer_pending", "queued"]),
-          isNull(chatQueuedMessages.cancelledAt),
-          sql`jsonb_typeof(${chatQueuedMessages.requestActor}) = 'object'`,
-          or(
-            isNull(chatQueuedMessages.deliveryLeaseExpiresAt),
-            lt(chatQueuedMessages.deliveryLeaseExpiresAt, now),
-          ),
-          sql`(${chatQueuedMessages.status} <> 'steer_pending' or coalesce((
-            select steer_action.provider_disposition
-            from ${chatControlActions} as steer_action
-            where steer_action.id = ${chatQueuedMessages.controlActionId}
-            limit 1
-          ), 'not_sent') in ('not_sent', 'rejected'))`,
-        ))
-        .orderBy(
-          sql`case
-            when ${chatQueuedMessages.status} = 'continuation_pending' then 0
-            when ${chatQueuedMessages.status} = 'steer_pending' then 1
-            else 2
-          end`,
-          asc(chatQueuedMessages.position),
-          asc(chatQueuedMessages.createdAt),
-        )
-        .limit(batchSize)
-        .offset(scanOffset)
-        .for("update", { skipLocked: true });
-
-      for (const candidate of candidates) {
-        if (!candidate.requestActor || typeof candidate.requestActor !== "object" || Array.isArray(candidate.requestActor)) {
-          continue;
-        }
-        const latestGeneration = await tx
           .select()
-          .from(chatGenerations)
-          .where(and(
-            eq(chatGenerations.orgId, candidate.orgId),
-            eq(chatGenerations.conversationId, candidate.conversationId),
-          ))
-          .orderBy(desc(chatGenerations.startedAt), desc(chatGenerations.createdAt))
-          .limit(1)
-          .then((rows) => rows[0] ?? null);
-        const isSteer = candidate.deliveryIntent === "steer"
-          || candidate.status === "steer_pending"
-          || candidate.status === "continuation_pending";
-        if (
-          latestGeneration
-          && ACTIVE_CHAT_GENERATION_STATUSES.some((status) => status === latestGeneration.status)
-        ) {
-          continue;
-        }
-        if (
-          candidate.status === "queued"
-          && latestGeneration
-          && latestGeneration.status !== "completed"
-        ) {
-          continue;
-        }
-        if (
-          isSteer
-          && latestGeneration
-          && ["failed", "control_lost", "interrupted_unverified"].includes(latestGeneration.status)
-        ) {
-          await tx
+          .from(chatQueuedMessages)
+          .where(claimableQueuePredicate)
+          .orderBy(
+            claimableQueuePriority,
+            asc(chatQueuedMessages.position),
+            asc(chatQueuedMessages.createdAt),
+          )
+          .limit(batchSize)
+          .offset(scanOffset)
+          .for("update", { skipLocked: true });
+
+        for (const candidate of candidates) {
+          if (!candidate.requestActor || typeof candidate.requestActor !== "object" || Array.isArray(candidate.requestActor)) {
+            continue;
+          }
+          const [conversationHead] = await tx
+            .select({ id: chatQueuedMessages.id })
+            .from(chatQueuedMessages)
+            .where(and(
+              claimableQueuePredicate,
+              eq(chatQueuedMessages.orgId, candidate.orgId),
+              eq(chatQueuedMessages.conversationId, candidate.conversationId),
+            ))
+            .orderBy(
+              claimableQueuePriority,
+              asc(chatQueuedMessages.position),
+              asc(chatQueuedMessages.createdAt),
+            )
+            .limit(1);
+          if (!conversationHead || conversationHead.id !== candidate.id) {
+            continue;
+          }
+          const latestGeneration = await tx
+            .select()
+            .from(chatGenerations)
+            .where(and(
+              eq(chatGenerations.orgId, candidate.orgId),
+              eq(chatGenerations.conversationId, candidate.conversationId),
+            ))
+            .orderBy(desc(chatGenerations.startedAt), desc(chatGenerations.createdAt))
+            .limit(1)
+            .then((rows) => rows[0] ?? null);
+          const isSteer = candidate.deliveryIntent === "steer"
+            || candidate.status === "steer_pending"
+            || candidate.status === "continuation_pending";
+          if (
+            latestGeneration
+            && ACTIVE_CHAT_GENERATION_STATUSES.some((status) => status === latestGeneration.status)
+          ) {
+            continue;
+          }
+          if (
+            candidate.status === "queued"
+            && latestGeneration
+            && latestGeneration.status !== "completed"
+            && !(
+              latestGeneration.status === "stopped"
+              && latestGeneration.terminalReason === "operator_stop"
+            )
+          ) {
+            continue;
+          }
+          if (
+            isSteer
+            && latestGeneration
+            && ["failed", "control_lost", "interrupted_unverified"].includes(latestGeneration.status)
+          ) {
+            await tx
+              .update(chatQueuedMessages)
+              .set({
+                status: "failed_actionable",
+                deliveryDisposition: "failed_actionable",
+                reconciliationReason: `prior_generation_${latestGeneration.status}`,
+                lastDeliveryReason: `prior_generation_${latestGeneration.status}`,
+                updatedAt: now,
+                version: sql`${chatQueuedMessages.version} + 1`,
+              })
+              .where(eq(chatQueuedMessages.id, candidate.id));
+            if (candidate.controlActionId) {
+              await tx
+                .update(chatControlActions)
+                .set({
+                  localDisposition: "failed_actionable",
+                  lastError: `prior_generation_${latestGeneration.status}`,
+                  resolvedAt: now,
+                  updatedAt: now,
+                })
+                .where(eq(chatControlActions.id, candidate.controlActionId));
+            }
+            continue;
+          }
+
+          const generationId = randomUUID();
+          const leaseToken = randomUUID();
+          const leaseEpoch = candidate.deliveryLeaseEpoch + 1;
+          await tx.insert(chatGenerations).values({
+            id: generationId,
+            orgId: candidate.orgId,
+            conversationId: candidate.conversationId,
+            status: "active",
+            attemptEpoch: 0,
+            controlVersion: 0,
+            controlState: "unregistered",
+            controlOwnerToken: leaseToken,
+            controlLeaseExpiresAt: new Date(now.getTime() + CHAT_GENERATION_CONTROL_LEASE_MS),
+            startedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          let userMessageId = candidate.continuationMessageId;
+          if (userMessageId) {
+            const existingMessage = await tx
+              .select({ id: chatMessages.id })
+              .from(chatMessages)
+              .where(and(
+                eq(chatMessages.id, userMessageId),
+                eq(chatMessages.orgId, candidate.orgId),
+                eq(chatMessages.conversationId, candidate.conversationId),
+                eq(chatMessages.role, "user"),
+              ))
+              .limit(1)
+              .then((rows) => rows[0] ?? null);
+            if (!existingMessage) userMessageId = null;
+          }
+          if (!userMessageId) {
+            userMessageId = randomUUID();
+            await tx.insert(chatMessages).values({
+              id: userMessageId,
+              orgId: candidate.orgId,
+              conversationId: candidate.conversationId,
+              role: "user",
+              kind: "message",
+              status: "completed",
+              body: normalizeQueuedPayload(candidate.payload).body,
+              structuredPayload: null,
+              chatTurnId: randomUUID(),
+              turnVariant: 0,
+              createdAt: now,
+              updatedAt: now,
+            });
+            await tx
+              .update(chatConversations)
+              .set({ lastMessageAt: now, updatedAt: now })
+              .where(and(
+                eq(chatConversations.id, candidate.conversationId),
+                eq(chatConversations.orgId, candidate.orgId),
+              ));
+          }
+
+          const [claimed] = await tx
             .update(chatQueuedMessages)
             .set({
-              status: "failed_actionable",
-              deliveryDisposition: "failed_actionable",
-              reconciliationReason: `prior_generation_${latestGeneration.status}`,
-              lastDeliveryReason: `prior_generation_${latestGeneration.status}`,
-              updatedAt: now,
+              status: isSteer ? "running_next" : "dequeue_claimed",
+              deliveryDisposition: isSteer ? "running_next" : null,
+              continuationGenerationId: generationId,
+              continuationMessageId: userMessageId,
+              sourceMessageId: userMessageId,
+              deliveredMessageId: userMessageId,
+              deliveryLeaseToken: leaseToken,
+              deliveryLeaseEpoch: leaseEpoch,
+              deliveryLeaseOwner: input.workerId,
+              deliveryLeaseExpiresAt: leaseExpiresAt,
+              dequeuedAt: now,
+              deliveryAttempts: sql`${chatQueuedMessages.deliveryAttempts} + 1`,
+              lastAttemptAt: now,
+              lastDeliveryReason: null,
+              reconciliationReason: "server_claimed",
               version: sql`${chatQueuedMessages.version} + 1`,
+              updatedAt: now,
             })
-            .where(eq(chatQueuedMessages.id, candidate.id));
+            .where(and(
+              eq(chatQueuedMessages.id, candidate.id),
+              eq(chatQueuedMessages.version, candidate.version),
+              isNull(chatQueuedMessages.cancelledAt),
+            ))
+            .returning();
+          if (!claimed) throw conflict("Queued continuation changed while being claimed");
           if (candidate.controlActionId) {
             await tx
               .update(chatControlActions)
               .set({
-                localDisposition: "failed_actionable",
-                lastError: `prior_generation_${latestGeneration.status}`,
-                resolvedAt: now,
+                localDisposition: "running_next",
+                resolvedAt: null,
                 updatedAt: now,
               })
-              .where(eq(chatControlActions.id, candidate.controlActionId));
+              .where(and(
+                eq(chatControlActions.id, candidate.controlActionId),
+                eq(chatControlActions.orgId, candidate.orgId),
+              ));
           }
-          continue;
+          return {
+            item: hydrateQueuedMessage(claimed),
+            generationId,
+            userMessageId,
+            leaseToken,
+            leaseEpoch,
+          };
         }
-
-        const generationId = randomUUID();
-        const leaseToken = randomUUID();
-        const leaseEpoch = candidate.deliveryLeaseEpoch + 1;
-        await tx.insert(chatGenerations).values({
-          id: generationId,
-          orgId: candidate.orgId,
-          conversationId: candidate.conversationId,
-          status: "active",
-          attemptEpoch: 0,
-          controlVersion: 0,
-          controlState: "unregistered",
-          controlOwnerToken: leaseToken,
-          controlLeaseExpiresAt: new Date(now.getTime() + CHAT_GENERATION_CONTROL_LEASE_MS),
-          startedAt: now,
-          createdAt: now,
-          updatedAt: now,
-        });
-
-        let userMessageId = candidate.continuationMessageId;
-        if (userMessageId) {
-          const existingMessage = await tx
-            .select({ id: chatMessages.id })
-            .from(chatMessages)
-            .where(and(
-              eq(chatMessages.id, userMessageId),
-              eq(chatMessages.orgId, candidate.orgId),
-              eq(chatMessages.conversationId, candidate.conversationId),
-              eq(chatMessages.role, "user"),
-            ))
-            .limit(1)
-            .then((rows) => rows[0] ?? null);
-          if (!existingMessage) userMessageId = null;
-        }
-        if (!userMessageId) {
-          userMessageId = randomUUID();
-          await tx.insert(chatMessages).values({
-            id: userMessageId,
-            orgId: candidate.orgId,
-            conversationId: candidate.conversationId,
-            role: "user",
-            kind: "message",
-            status: "completed",
-            body: normalizeQueuedPayload(candidate.payload).body,
-            structuredPayload: null,
-            chatTurnId: randomUUID(),
-            turnVariant: 0,
-            createdAt: now,
-            updatedAt: now,
-          });
-          await tx
-            .update(chatConversations)
-            .set({ lastMessageAt: now, updatedAt: now })
-            .where(and(
-              eq(chatConversations.id, candidate.conversationId),
-              eq(chatConversations.orgId, candidate.orgId),
-            ));
-        }
-
-        const [claimed] = await tx
-          .update(chatQueuedMessages)
-          .set({
-            status: isSteer ? "running_next" : "dequeue_claimed",
-            deliveryDisposition: isSteer ? "running_next" : null,
-            continuationGenerationId: generationId,
-            continuationMessageId: userMessageId,
-            sourceMessageId: userMessageId,
-            deliveredMessageId: userMessageId,
-            deliveryLeaseToken: leaseToken,
-            deliveryLeaseEpoch: leaseEpoch,
-            deliveryLeaseOwner: input.workerId,
-            deliveryLeaseExpiresAt: leaseExpiresAt,
-            dequeuedAt: now,
-            deliveryAttempts: sql`${chatQueuedMessages.deliveryAttempts} + 1`,
-            lastAttemptAt: now,
-            lastDeliveryReason: null,
-            reconciliationReason: "server_claimed",
-            version: sql`${chatQueuedMessages.version} + 1`,
-            updatedAt: now,
-          })
-          .where(and(
-            eq(chatQueuedMessages.id, candidate.id),
-            eq(chatQueuedMessages.version, candidate.version),
-            isNull(chatQueuedMessages.cancelledAt),
-          ))
-          .returning();
-        if (!claimed) throw conflict("Queued continuation changed while being claimed");
-        if (candidate.controlActionId) {
-          await tx
-            .update(chatControlActions)
-            .set({
-              localDisposition: "running_next",
-              resolvedAt: null,
-              updatedAt: now,
-            })
-            .where(and(
-              eq(chatControlActions.id, candidate.controlActionId),
-              eq(chatControlActions.orgId, candidate.orgId),
-            ));
-        }
-        return {
-          item: hydrateQueuedMessage(claimed),
-          generationId,
-          userMessageId,
-          leaseToken,
-          leaseEpoch,
-        };
-      }
         if (candidates.length < batchSize) return null;
         scanOffset += candidates.length;
       }
