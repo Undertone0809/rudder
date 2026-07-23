@@ -47,7 +47,7 @@ type SidePanelContextValue = {
   detachTargetForContext: (
     contextKey: string | null,
     exactKey: string,
-    expectedRevision?: number,
+    expectedRevision: number,
   ) => SidePanelDetachResult;
   getTargetRevisionForContext: (contextKey: string | null, exactKey: string) => number | null;
   hidePanel: () => void;
@@ -416,7 +416,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   const detachTargetForContext = useCallback((
     nextContextKey: string | null,
     exactKey: string,
-    expectedRevision?: number,
+    expectedRevision: number,
   ): SidePanelDetachResult => {
     const normalizedKey = normalizeContextKey(nextContextKey);
     const current = contextStatesRef.current[normalizedKey] ?? emptyContextState();
@@ -425,7 +425,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
       return { detached: false, reason: "not_found", revision: null };
     }
     const revision = targetRevisionsRef.current[normalizedKey]?.[exactKey] ?? 0;
-    if (expectedRevision !== undefined && expectedRevision !== revision) {
+    if (expectedRevision !== revision) {
       return { detached: false, reason: "revision_mismatch", revision };
     }
     const target = current.tabs[detachingIndex]!;
