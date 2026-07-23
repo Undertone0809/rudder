@@ -3,8 +3,9 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { unprocessable } from "../errors.js";
+import { conflict, unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
+import { createChatBackgroundRuntime, type ChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
 import { chatRoutes } from "../routes/chats.js";
 import { claimChatGeneration, clearActiveChatGenerationsForTest, createChatRuntimeControlCoordinator, getActiveChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
 import { CHAT_TITLE_PROMPT_TOKEN_LIMIT, countChatTitlePromptTokens } from "../services/title-generation.js";
@@ -337,14 +338,17 @@ function createMessage(id: string, role: "user" | "assistant" | "system", kind: 
   };
 }
 
-function createApp(actor: Record<string, unknown> = {
-  type: "board",
-  userId: "user-1",
-  orgIds: ["organization-1"],
-  source: "session",
-  isInstanceAdmin: false,
-  runId: null,
-}) {
+function createApp(
+  actor: Record<string, unknown> = {
+    type: "board",
+    userId: "user-1",
+    orgIds: ["organization-1"],
+    source: "session",
+    isInstanceAdmin: false,
+    runId: null,
+  },
+  backgroundRuntime?: ChatBackgroundRuntime,
+) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -353,7 +357,7 @@ function createApp(actor: Record<string, unknown> = {
   });
   app.use(
     "/api",
-    chatRoutes({} as any, mockStorage as any),
+    chatRoutes({} as any, mockStorage as any, backgroundRuntime),
   );
   app.use(errorHandler);
   return app;
@@ -2095,6 +2099,158 @@ describe("chat routes", () => {
     expect(res.status).toBe(200);
     expect(mockChatService.getMessageTranscript).toHaveBeenCalledWith("chat-1", "message-1");
     expect(res.body.transcript).toHaveLength(1);
+  });
+
+  it("persists server-owned queued continuation transcripts incrementally in the generation ledger", async () => {
+    const priorQueueWorkerFlag = process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
+    process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = "true";
+    const backgroundRuntime = createChatBackgroundRuntime();
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user-queued", "user", "message", "Continue in background");
+    const transcriptEntries = [
+      {
+        kind: "thinking" as const,
+        ts: "2026-07-23T08:00:00.000Z",
+        text: "Inspecting the queued continuation",
+      },
+      {
+        kind: "tool_call" as const,
+        ts: "2026-07-23T08:00:01.000Z",
+        name: "read_file",
+        input: { path: "/tmp/queued" },
+      },
+    ];
+    const queuedItem = {
+      id: "queued-1",
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      position: 1,
+      status: "dequeue_claimed",
+      version: 2,
+      clientMutationId: "queued-client-1",
+      payload: { body: "Continue in background" },
+      deliveryIntent: "queue",
+      deliveryDisposition: null,
+      controlActionId: null,
+      expectedGenerationId: null,
+      activeGenerationId: "generation-1",
+      attemptEpoch: 1,
+      providerClientMessageId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      providerEvidence: null,
+      continuationGenerationId: "generation-1",
+      continuationMessageId: userMessage.id,
+      deliveryLeaseToken: "lease-1",
+      deliveryLeaseEpoch: 1,
+      deliveryLeaseOwner: "worker-1",
+      deliveryLeaseExpiresAt: new Date("2026-07-23T08:02:00.000Z"),
+      reconciliationReason: "server_claimed",
+      deliveryAttempts: 1,
+      lastAttemptAt: new Date("2026-07-23T08:00:00.000Z"),
+      lastDeliveryReason: null,
+      requestActor: {
+        type: "board",
+        source: "session",
+        userId: "user-1",
+        orgIds: [conversation.orgId],
+        isInstanceAdmin: false,
+      },
+      sourceMessageId: userMessage.id,
+      deliveredMessageId: userMessage.id,
+      cancelledAt: null,
+      steeredAt: null,
+      dequeuedAt: new Date("2026-07-23T08:00:00.000Z"),
+      createdAt: new Date("2026-07-23T08:00:00.000Z"),
+      updatedAt: new Date("2026-07-23T08:00:00.000Z"),
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.claimNextServerQueuedMessage
+      .mockResolvedValueOnce({
+        item: queuedItem,
+        generationId: "generation-1",
+        userMessageId: userMessage.id,
+        leaseToken: "lease-1",
+        leaseEpoch: 1,
+      })
+      .mockResolvedValue(null);
+    mockChatService.getLatestGeneration.mockResolvedValue({
+      id: "generation-1",
+      attemptEpoch: 1,
+      controlOwnerToken: "lease-1",
+    });
+    mockChatService.completeServerQueuedMessageDelivery.mockResolvedValue(queuedItem);
+    let transcriptAdmissionCount = 0;
+    mockChatService.generationProtocol.appendVisibleEventAndProject.mockImplementation(async (input) => {
+      if (input.eventKind === "transcript") {
+        transcriptAdmissionCount += 1;
+        if (transcriptAdmissionCount === 2) {
+          throw conflict("Chat-visible output admission is closed for this generation");
+        }
+      }
+      if (input.eventKind === "runtime_output") {
+        throw conflict("Chat-visible output admission is closed for this generation");
+      }
+      return {
+        event: {
+          id: `generation-event-${transcriptAdmissionCount}`,
+          generationSeq: transcriptAdmissionCount,
+          payload: { ...(input.payload ?? {}), bodyHash: input.bodyHash },
+        },
+        generation: { id: input.generationId },
+        message: { id: input.messageId ?? "message-assistant" },
+      };
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      const attempt = await input.controlCoordinator?.beginAttempt({
+        attemptIndex: 0,
+        runtimeType: "codex_local",
+        model: "gpt-primary",
+        isFallback: false,
+      });
+      await input.onTranscriptEntry?.(transcriptEntries[0]);
+      await input.onTranscriptEntry?.(transcriptEntries[1]);
+      await attempt?.complete();
+      return {
+        outcome: "completed",
+        partialBody: "Queued reply",
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "message",
+          body: "Queued reply",
+          structuredPayload: null,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
+
+    try {
+      createApp(undefined, backgroundRuntime);
+      await waitUntil(() => {
+        expect(mockChatService.completeServerQueuedMessageDelivery).toHaveBeenCalled();
+      }, 3_000);
+
+      const visibleProjectionCalls =
+        mockChatService.generationProtocol.appendVisibleEventAndProject.mock.calls;
+      const transcriptCalls = visibleProjectionCalls.filter(([input]) => input.eventKind === "transcript");
+      expect(transcriptCalls).toHaveLength(2);
+      expect(transcriptCalls.map(([input]) => input.payload.entry)).toEqual(transcriptEntries);
+      expect(transcriptCalls.every(([input]) => !Object.hasOwn(input, "transcript"))).toBe(true);
+      expect(visibleProjectionCalls.find(([input]) => input.eventKind === "runtime_output")?.[0])
+        .toMatchObject({ messageId: "message-assistant" });
+      expect(mockChatService.completeServerQueuedMessageDelivery).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "stopped" }),
+      );
+      expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).toMatchObject({ status: "stopped" });
+      expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).not.toHaveProperty("transcript");
+    } finally {
+      if (priorQueueWorkerFlag === undefined) delete process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
+      else process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = priorQueueWorkerFlag;
+      await backgroundRuntime.close();
+    }
   });
 
   it("does not return a lazy chat transcript without conversation access", async () => {
@@ -4175,9 +4331,11 @@ describe("chat routes", () => {
         body: "",
         replyingAgentId: "agent-1",
         runId: "chat-run-stream-1",
-        transcript: expect.any(Array),
       }),
     );
+    const transcriptProjectionCall = mockChatService.generationProtocol.appendVisibleEventAndProject.mock.calls
+      .find(([input]) => input.eventKind === "transcript");
+    expect(transcriptProjectionCall?.[0]).not.toHaveProperty("transcript");
     expect(mockChatService.updateMessage).toHaveBeenLastCalledWith(
       "chat-1",
       "message-assistant",
@@ -4187,12 +4345,9 @@ describe("chat routes", () => {
         body: "Streaming reply",
         replyingAgentId: "agent-1",
         runId: "chat-run-stream-1",
-        transcript: [
-          expect.objectContaining({ kind: "thinking", text: "Inspecting current request" }),
-          expect.objectContaining({ kind: "tool_call", name: "read_file" }),
-        ],
       }),
     );
+    expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).not.toHaveProperty("transcript");
     expect(mockChatAgentRuns.linkAssistantMessage).toHaveBeenCalledWith("chat-run-stream-1", "chat-1", "message-assistant");
   });
 
@@ -4258,9 +4413,9 @@ describe("chat routes", () => {
             runId: null,
           },
         },
-        transcript: [expect.objectContaining({ kind: "assistant", text: "I will inspect the issue first." })],
       }),
     );
+    expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).not.toHaveProperty("transcript");
   });
 
   it("does not publish inline-visual backing HTML from a failed stream", async () => {
@@ -4695,7 +4850,6 @@ describe("chat routes", () => {
         kind: "message",
         status: "stopped",
         replyingAgentId: "agent-1",
-        transcript: [],
       }),
     );
   });
@@ -4886,9 +5040,9 @@ describe("chat routes", () => {
       expect.objectContaining({
         status: "stopped",
         body: "Before stop",
-        transcript: [beforeStopTranscript],
       }),
     );
+    expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).not.toHaveProperty("transcript");
   });
 
   it("never persists output when Stop closes ledger admission first", async () => {
@@ -4999,9 +5153,9 @@ describe("chat routes", () => {
       expect.objectContaining({
         body: "Visible prefix",
         status: "stopped",
-        transcript: [visibleTranscript],
       }),
     );
+    expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).not.toHaveProperty("transcript");
   });
 
   it("converges Stop after final output admission without interrupting the completed turn", async () => {
