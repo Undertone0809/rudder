@@ -1659,7 +1659,8 @@ export function Layout() {
                           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
                           "workspace-main-card",
                           useFramelessWorkspaceMain && "workspace-main-card--frameless",
-                          desktopSidePanelContentInactive && "pointer-events-none",
+                          desktopSidePanelContentInactive
+                            && "pointer-events-none border-0 [box-shadow:none]",
                         )}
                       >
                         {!useFramelessWorkspaceMain ? (
