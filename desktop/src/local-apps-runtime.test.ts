@@ -82,6 +82,10 @@ function killFixtureProcess(pid: number | undefined): void {
   }
 }
 
+async function acceptFixtureListenerOwnership(): Promise<boolean> {
+  return true;
+}
+
 function watchdogEmitting(message: unknown) {
   const helper = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter;
@@ -194,6 +198,7 @@ describe("Desktop Local App runtime", () => {
       registry,
       platform: "darwin",
       hostExecutablePath: path.join(root, "Rudder.app", "Contents", "MacOS", "Rudder"),
+      verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
     try {
       const running = await manager.start(definition.id);
@@ -218,7 +223,11 @@ describe("Desktop Local App runtime", () => {
     const previousPath = process.env.PATH;
     process.env.PATH = attackerRoot;
     const { registry, definition } = await approvedFixture({ inheritedEnvNames: ["PATH"] });
-    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      verifyListenerOwnership: acceptFixtureListenerOwnership,
+    });
     try {
       const running = await manager.start(definition.id);
       const probe = await fetch(`${running.origin}/path-probe`).then((response) => response.text());
@@ -240,51 +249,61 @@ describe("Desktop Local App runtime", () => {
     }
   });
 
-  it("spawns shell-free on an automatic loopback port, deduplicates start, bounds logs, and attests origin/partition", async () => {
-    const { registry, definition } = await approvedFixture();
-    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin", maxLogBytes: 256 });
-    const [first, second] = await Promise.all([manager.start(definition.id), manager.start(definition.id)]);
-    expect(first.generation).toBe(second.generation);
-    expect(first.status).toBe("running");
-    expect(first.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-    expect(first.openPath).toBe("/app");
-    expect(first.partition).toBe(localAppPartitionId("install-a", definition.id));
-    expect(manager.isAttestedBootstrap(`${first.origin}/app`, first.partition!)).toBe(true);
-    expect(manager.isAttestedBootstrap(`${first.origin}/other`, first.partition!)).toBe(false);
-    expect(manager.isAttestedBootstrap(`${first.origin}/app`, "persist:rudder-local-app-wrong")).toBe(false);
-    expect(manager.isAttestedNavigation(`${first.origin}/asset.js`, first.partition!)).toBe(true);
-    expect(manager.isAttestedNavigation(first.origin.replace("127.0.0.1", "localhost"), first.partition!)).toBe(false);
-    expect((await fetch(`${first.origin}/health`)).status).toBe(200);
-    const childEnvironment = await fetch(`${first.origin}/env`).then((response) => response.json()) as { path?: string };
-    expect(childEnvironment.path?.split(path.delimiter)).toContain(path.dirname(process.execPath));
-    expect((await manager.logs(definition.id)).join("\n").length).toBeLessThanOrEqual(256);
-    await manager.stop(definition.id);
-    expect((await manager.status(definition.id)).status).toBe("stopped");
-  });
+  it.runIf(process.platform === "darwin")(
+    "spawns shell-free on an automatic loopback port, deduplicates start, bounds logs, and attests origin/partition",
+    async () => {
+      const { registry, definition } = await approvedFixture();
+      const manager = new LocalAppRuntimeManager({ registry, platform: "darwin", maxLogBytes: 256 });
+      const [first, second] = await Promise.all([manager.start(definition.id), manager.start(definition.id)]);
+      expect(first.generation).toBe(second.generation);
+      expect(first.status).toBe("running");
+      expect(first.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      expect(first.openPath).toBe("/app");
+      expect(first.partition).toBe(localAppPartitionId("install-a", definition.id));
+      expect(manager.isAttestedBootstrap(`${first.origin}/app`, first.partition!)).toBe(true);
+      expect(manager.isAttestedBootstrap(`${first.origin}/other`, first.partition!)).toBe(false);
+      expect(manager.isAttestedBootstrap(`${first.origin}/app`, "persist:rudder-local-app-wrong")).toBe(false);
+      expect(manager.isAttestedNavigation(`${first.origin}/asset.js`, first.partition!)).toBe(true);
+      expect(manager.isAttestedNavigation(first.origin.replace("127.0.0.1", "localhost"), first.partition!)).toBe(false);
+      expect((await fetch(`${first.origin}/health`)).status).toBe(200);
+      const childEnvironment = await fetch(`${first.origin}/env`).then((response) => response.json()) as { path?: string };
+      expect(childEnvironment.path?.split(path.delimiter)).toContain(path.dirname(process.execPath));
+      expect((await manager.logs(definition.id)).join("\n").length).toBeLessThanOrEqual(256);
+      await manager.stop(definition.id);
+      expect((await manager.status(definition.id)).status).toBe("stopped");
+    },
+  );
 
-  it("rejects and fully cleans an approved fixture that exposes its allocated port on every interface", async () => {
-    const { root, registry, definition } = await approvedFixture({ serverFixturePath: wildcardFixturePath });
-    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
-    const markerPath = path.join(root, "wildcard-listener.json");
-    try {
-      await expect(manager.start(definition.id)).rejects.toThrow("listener ownership could not be proven");
-      const marker = JSON.parse(await readFile(markerPath, "utf8")) as { pid: number; port: number };
-      await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
-        status: "failed",
-        pid: null,
-        pgid: null,
-      });
-      expect((await manager.status(definition.id)).status).toBe("failed");
-      expect(() => process.kill(marker.pid, 0)).toThrow();
-      await expect(assertWildcardPortCanBeRebound(marker.port)).resolves.toBeUndefined();
-    } finally {
-      await manager.shutdown().catch(() => undefined);
-    }
-  });
+  it.runIf(process.platform === "darwin")(
+    "rejects and fully cleans an approved fixture that exposes its allocated port on every interface",
+    async () => {
+      const { root, registry, definition } = await approvedFixture({ serverFixturePath: wildcardFixturePath });
+      const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+      const markerPath = path.join(root, "wildcard-listener.json");
+      try {
+        await expect(manager.start(definition.id)).rejects.toThrow("listener ownership could not be proven");
+        const marker = JSON.parse(await readFile(markerPath, "utf8")) as { pid: number; port: number };
+        await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+          status: "failed",
+          pid: null,
+          pgid: null,
+        });
+        expect((await manager.status(definition.id)).status).toBe("failed");
+        expect(() => process.kill(marker.pid, 0)).toThrow();
+        await expect(assertWildcardPortCanBeRebound(marker.port)).resolves.toBeUndefined();
+      } finally {
+        await manager.shutdown().catch(() => undefined);
+      }
+    },
+  );
 
   it("serializes a real start followed immediately by stop for one binding", async () => {
     const { registry, definition } = await approvedFixture();
-    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      verifyListenerOwnership: acceptFixtureListenerOwnership,
+    });
     try {
       const starting = manager.start(definition.id);
       const stopping = manager.stop(definition.id);
@@ -301,7 +320,11 @@ describe("Desktop Local App runtime", () => {
 
   it("waits for an in-flight start and then stops it during shutdown", async () => {
     const { registry, definition } = await approvedFixture();
-    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      verifyListenerOwnership: acceptFixtureListenerOwnership,
+    });
     const starting = manager.start(definition.id);
     const shuttingDown = manager.shutdown();
 
@@ -313,7 +336,11 @@ describe("Desktop Local App runtime", () => {
 
   it("serializes a real stop followed immediately by a new start generation", async () => {
     const { registry, definition } = await approvedFixture();
-    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      verifyListenerOwnership: acceptFixtureListenerOwnership,
+    });
     try {
       const first = await manager.start(definition.id);
       const stopping = manager.stop(definition.id);
@@ -351,7 +378,12 @@ describe("Desktop Local App runtime", () => {
       }
       process.kill(-pgid, signal);
     });
-    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin", killGroup });
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      killGroup,
+      verifyListenerOwnership: acceptFixtureListenerOwnership,
+    });
     try {
       const first = await manager.start(definition.id);
       const stopping = manager.stop(definition.id);
@@ -387,6 +419,7 @@ describe("Desktop Local App runtime", () => {
       registry,
       platform: "darwin",
       killGroup: vi.fn(),
+      verifyListenerOwnership: acceptFixtureListenerOwnership,
       terminationOptions: {
         isGroupAlive: () => true,
         delay: async () => undefined,
@@ -418,6 +451,7 @@ describe("Desktop Local App runtime", () => {
       registry,
       platform: "darwin",
       killGroup: vi.fn(),
+      verifyListenerOwnership: acceptFixtureListenerOwnership,
       terminationOptions: {
         isGroupAlive: () => true,
         delay: async () => undefined,
@@ -461,7 +495,12 @@ describe("Desktop Local App runtime", () => {
       }
       process.kill(-pgid, signal);
     });
-    const manager = new LocalAppRuntimeManager({ registry, platform: "darwin", killGroup });
+    const manager = new LocalAppRuntimeManager({
+      registry,
+      platform: "darwin",
+      killGroup,
+      verifyListenerOwnership: acceptFixtureListenerOwnership,
+    });
     const first = await manager.start(definition.id);
     const ownedPid = (await registry.getRuntimeDescriptor(definition.id))?.pid;
     try {
@@ -503,6 +542,7 @@ describe("Desktop Local App runtime", () => {
       registry,
       platform: "darwin",
       probePersistedRuntimeLiveness,
+      verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
     try {
       const firstStatus = manager.status(definition.id);
@@ -642,6 +682,7 @@ describe("Desktop Local App runtime", () => {
       platform: "darwin",
       spawnWatchdog,
       cleanupTimeoutMs: 100,
+      verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
     await manager.start(definition.id);
     const ownership = await registry.getRuntimeDescriptor(definition.id);
