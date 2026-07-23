@@ -5,6 +5,7 @@ import {
   applyRudderBrowserCapabilityEnv,
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
+  resolveManagedExternalMcpBindings,
   rudderBrowserMcpRuntimeMetadata,
   rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
@@ -254,6 +255,7 @@ export async function resolveRudderOpenCodeMcpConfigs(
   managedEnv: RudderMcpManagedEnv = {},
   verifiedCommand?: RudderMcpCliCommand,
   verifiedBrowserCommand?: RudderMcpCliCommand,
+  runtimeConfig: unknown = {},
 ): Promise<Record<string, Record<string, unknown>>> {
   const configs: Record<string, Record<string, unknown>> = {
     [RUDDER_MCP_SERVER_NAME]: await resolveRudderOpenCodeMcpConfig(managedEnv, verifiedCommand),
@@ -268,7 +270,32 @@ export async function resolveRudderOpenCodeMcpConfigs(
       ...(Object.keys(env).length > 0 ? { environment: env } : {}),
     };
   }
+  Object.assign(
+    configs,
+    resolveManagedExternalOpenCodeMcpConfigs(runtimeConfig, managedEnv),
+  );
   return configs;
+}
+
+export function resolveManagedExternalOpenCodeMcpConfigs(
+  runtimeConfig: unknown,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): Record<string, Record<string, unknown>> {
+  return Object.fromEntries(
+    resolveManagedExternalMcpBindings(runtimeConfig, env).map((binding) => [
+      binding.serverName,
+      {
+        type: "remote",
+        url: binding.proxyUrl,
+        enabled: true,
+        oauth: false,
+        headers: {
+          Authorization: `Bearer {env:${binding.bearerTokenEnvVar}}`,
+        },
+        timeout: binding.toolTimeoutMs,
+      },
+    ]),
+  );
 }
 
 async function ensureManagedOpenCodeConfig(input: {
@@ -278,6 +305,7 @@ async function ensureManagedOpenCodeConfig(input: {
   managedEnv?: RudderMcpManagedEnv;
   verifiedCommand?: RudderMcpCliCommand;
   verifiedBrowserCommand?: RudderMcpCliCommand;
+  runtimeConfig?: unknown;
   onLog: AgentRuntimeExecutionContext["onLog"];
 }) {
   const configDir = input.configPath
@@ -296,6 +324,7 @@ async function ensureManagedOpenCodeConfig(input: {
     input.managedEnv ?? {},
     input.verifiedCommand,
     input.verifiedBrowserCommand,
+    input.runtimeConfig,
   );
   const configPath = input.configPath ?? path.join(configDir, MANAGED_OPENCODE_CONFIG_FILE);
   const tempPath = `${configPath}.${randomUUID()}.tmp`;
@@ -626,6 +655,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     managedEnv: pickRudderMcpManagedEnv(env),
     verifiedCommand: rudderMcpCommand,
     verifiedBrowserCommand: browserMcpCommand ?? undefined,
+    runtimeConfig: config,
     onLog,
   });
   await ensureCommandResolvable(command, cwd, runtimeEnv);
