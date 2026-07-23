@@ -54,6 +54,7 @@ test.describe("Run transcript detail", () => {
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
 
     await page.goto("/tests/ux/runs");
@@ -96,10 +97,13 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByText("Effective next run", { exact: false })).toBeVisible();
     await expect(page.getByText("/workspaces/agents/gabriel--fixture/instructions/MEMORY.md", { exact: false })).toHaveCount(0);
     await page.getByRole("button", { name: "Expand memory update details" }).first().click();
-    await expect(page.getByText("/workspaces/agents/gabriel--fixture/instructions/MEMORY.md", { exact: false })).toHaveCount(2);
-    await expect(page.getByRole("button", { name: /Memory update failed, Failed/ })).toBeVisible();
+    await expect(page.getByText("/workspaces/agents/gabriel--fixture/instructions/MEMORY.md", { exact: false })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: /Memory update failed, Gabriel, Knowledge graph, expanded/ })).toBeVisible();
     await expect(page.getByText("Knowledge graph", { exact: false })).toBeVisible();
     await expect(page.getByText("permission denied", { exact: false }).first()).toBeVisible();
+    await expect(page.getByText("/workspaces/agents/gabriel--fixture/life/preferences.yml", { exact: false })).toHaveCount(1);
+    await expect(page.getByText("Raw event", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("memory update failed:", { exact: false })).toHaveCount(0);
 
     await page.screenshot({
       path: "/tmp/rudder-run-transcript-detail-expanded.png",
@@ -108,6 +112,7 @@ test.describe("Run transcript detail", () => {
   });
 
   test("merges transcript and invocation into one card with tabs on the real run detail page", async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 1440, height: 1050 });
     const organization = await createOrganization(page, `Run-Detail-Agent-${Date.now()}`);
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -140,6 +145,14 @@ test.describe("Run transcript detail", () => {
       { kind: "assistant", text: ".md and added E", delta: true },
       { kind: "assistant", text: "2E coverage.", delta: true },
       { kind: "system", text: "reasoning completed" },
+      {
+        kind: "system",
+        text: "file changes: update /Users/zeeland/.rudder/instances/e2e/organizations/org/workspaces/agents/transcript-tester--e2e/instructions/MEMORY.md",
+      },
+      {
+        kind: "system",
+        text: "memory update failed: update /Users/zeeland/.rudder/instances/e2e/organizations/org/workspaces/agents/transcript-tester--e2e/life/preferences.yml permission denied",
+      },
     ];
     await e2eDb.insert(heartbeatRunEvents).values(transcriptEntries.map((entry, index) => ({
       orgId: organization.id,
@@ -166,6 +179,7 @@ test.describe("Run transcript detail", () => {
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
 
     await page.goto(`/agents/${agent.id}/runs/${run.id}`);
@@ -199,6 +213,26 @@ test.describe("Run transcript detail", () => {
     await expect(detailPane.getByText(/Progress update\.\s+I read AGENTS\.md and added E2E coverage\./)).toBeVisible();
     await expect(detailPane.getByText(/reasoning started/i)).toHaveCount(0);
     await expect(detailPane.getByText(/reasoning completed/i)).toHaveCount(0);
+    await expect(detailPane.getByText("Agent memory updated", { exact: false })).toBeVisible();
+    await detailPane.getByRole("button", { name: "Expand memory update details" }).click();
+    await expect(
+      detailPane.getByText("/workspaces/agents/transcript-tester--e2e/instructions/MEMORY.md", {
+        exact: false,
+      }),
+    ).toHaveCount(1);
+    await expect(
+      detailPane.getByText("/workspaces/agents/transcript-tester--e2e/life/preferences.yml", {
+        exact: false,
+      }),
+    ).toHaveCount(1);
+    await expect(detailPane.getByText("Failure", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText("permission denied", { exact: true }).first()).toBeVisible();
+    await expect(detailPane.getByText("Raw event", { exact: true })).toHaveCount(0);
+    await expect(detailPane.getByText("memory update failed:", { exact: false })).toHaveCount(0);
+    await page.screenshot({
+      path: "/tmp/rudder-run-transcript-detail-real-dark.png",
+      fullPage: true,
+    });
 
     await page.getByRole("button", { name: "raw" }).click();
     await expect(detailPane.getByText(/reasoning started/i).first()).toBeVisible();

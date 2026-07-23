@@ -893,14 +893,6 @@ export function TranscriptMemoryUpdateRow({
               {paths.join("\n")}
             </pre>
           </div>
-          <div>
-            <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
-              Raw event
-            </div>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
-              {block.rawText}
-            </pre>
-          </div>
         </div>
       ) : null}
     </div>
