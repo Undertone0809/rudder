@@ -90,6 +90,7 @@ type BrowserTabRecord = {
   snapshotId: string | null;
   refs: Set<string>;
   operationQueue: Promise<void>;
+  releaseCapacity: () => void;
 };
 
 type BrowserRunState = {
@@ -190,6 +191,38 @@ function requiredIdentity(value: unknown): BrowserRuntimeIdentity {
 
 function ownerKey(identity: BrowserRuntimeIdentity): string {
   return JSON.stringify([identity.orgId, identity.agentId, identity.runId]);
+}
+
+export function createBrowserAgentTabCapacity(options: {
+  maxTabsPerRun?: number;
+  maxTabsTotal?: number;
+} = {}) {
+  const maxTabsPerRun = options.maxTabsPerRun ?? 8;
+  const maxTabsTotal = options.maxTabsTotal ?? 32;
+  const reservedByOwner = new Map<string, number>();
+  let reservedTotal = 0;
+
+  return {
+    reserve(identity: BrowserRuntimeIdentity): (() => void) | null {
+      const key = ownerKey(identity);
+      const reservedForOwner = reservedByOwner.get(key) ?? 0;
+      if (reservedForOwner >= maxTabsPerRun || reservedTotal >= maxTabsTotal) return null;
+      reservedByOwner.set(key, reservedForOwner + 1);
+      reservedTotal += 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        const nextForOwner = (reservedByOwner.get(key) ?? 1) - 1;
+        if (nextForOwner > 0) reservedByOwner.set(key, nextForOwner);
+        else reservedByOwner.delete(key);
+        reservedTotal = Math.max(0, reservedTotal - 1);
+      };
+    },
+    count(): number {
+      return reservedTotal;
+    },
+  };
 }
 
 function safeWebUrl(url: string, rudderAppOrigins: string[]): string {
@@ -485,6 +518,7 @@ export function createBrowserAgentTabController(options: {
   maxScreenshotBytes?: number;
   maxAssetBundleBytesPerRun?: number;
   maxRunStatusFailures?: number;
+  capacity?: ReturnType<typeof createBrowserAgentTabCapacity>;
 }) {
   const records = new Map<string, BrowserTabRecord>();
   const pendingOpensByOwner = new Map<string, number>();
@@ -540,6 +574,7 @@ export function createBrowserAgentTabController(options: {
     try {
       if (!record.tab.isDestroyed()) await record.tab.close();
     } finally {
+      if (record.tab.isDestroyed()) record.releaseCapacity();
       cleanupOwnerState(record.ownerKey);
     }
   };
@@ -621,6 +656,7 @@ export function createBrowserAgentTabController(options: {
     }
     if (record.tab.isDestroyed()) {
       records.delete(tabId);
+      record.releaseCapacity();
       throw new BrowserAgentError("browser_tab_not_found", "Browser tab was not found.");
     }
     return record;
@@ -638,17 +674,36 @@ export function createBrowserAgentTabController(options: {
     const expectedOwnerGeneration = ownerGenerations.get(key) ?? 0;
     const ownedCount = Array.from(records.values()).filter((record) => record.ownerKey === key).length;
     const pendingOwned = pendingOpensByOwner.get(key) ?? 0;
-    if (ownedCount + pendingOwned >= maxTabsPerRun || records.size + pendingOpensTotal >= maxTabsTotal) {
+    const releaseCapacity = options.capacity?.reserve(identity) ?? null;
+    if ((options.capacity && !releaseCapacity)
+      || (!options.capacity && (ownedCount + pendingOwned >= maxTabsPerRun
+        || records.size + pendingOpensTotal >= maxTabsTotal))) {
       throw new BrowserAgentError("browser_tab_limit", "Rudder Browser tab limit reached for this run.");
     }
     pendingOpensByOwner.set(key, pendingOwned + 1);
     pendingOpensTotal += 1;
     const tabId = createId();
+    let capacityTransferred = false;
     try {
       const tab = await options.createTab({
         tabId,
         identity,
       });
+      // Once a native tab exists, its real destruction owns the shared slot.
+      // A failed cancellation/close must stay fail-closed across controller replacement.
+      capacityTransferred = true;
+      try {
+        tab.onDestroyed(() => releaseCapacity?.());
+      } catch (error) {
+        try {
+          if (!tab.isDestroyed()) await tab.close();
+        } catch {
+          // Without a destruction signal, retain the slot rather than exceed the process limit.
+        }
+        if (tab.isDestroyed()) releaseCapacity?.();
+        throw error;
+      }
+      if (tab.isDestroyed()) releaseCapacity?.();
       if (globalGeneration !== expectedGlobalGeneration
         || (ownerGenerations.get(key) ?? 0) !== expectedOwnerGeneration) {
         if (!tab.isDestroyed()) await tab.close();
@@ -663,13 +718,29 @@ export function createBrowserAgentTabController(options: {
         snapshotId: null,
         refs: new Set(),
         operationQueue: Promise.resolve(),
+        releaseCapacity: releaseCapacity ?? (() => undefined),
       };
       const state = runState(identity);
-      if (state.viewport) tab.setViewport(state.viewport.width, state.viewport.height);
       records.set(tabId, record);
-      state.selectedTabId = tabId;
-      tab.setVisible(state.visible);
-      tab.onDestroyed(() => records.delete(tabId));
+      try {
+        if (state.viewport) tab.setViewport(state.viewport.width, state.viewport.height);
+        state.selectedTabId = tabId;
+        tab.setVisible(state.visible);
+        tab.onDestroyed(() => {
+          if (records.get(tabId) === record) records.delete(tabId);
+          record.releaseCapacity();
+          cleanupOwnerState(record.ownerKey);
+        });
+      } catch (error) {
+        records.delete(tabId);
+        try {
+          if (!tab.isDestroyed()) await tab.close();
+        } catch {
+          // A still-live native tab retains its shared capacity reservation.
+        }
+        if (tab.isDestroyed()) record.releaseCapacity();
+        throw error;
+      }
       try {
         await withDeadline(record, deadlineAt, signal, () => tab.loadURL(url));
       } catch (error) {
@@ -679,6 +750,7 @@ export function createBrowserAgentTabController(options: {
       }
       return tabSummary(record);
     } finally {
+      if (!capacityTransferred) releaseCapacity?.();
       const remaining = (pendingOpensByOwner.get(key) ?? 1) - 1;
       if (remaining > 0) pendingOpensByOwner.set(key, remaining);
       else pendingOpensByOwner.delete(key);

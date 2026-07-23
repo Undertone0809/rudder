@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createDesktopSmokeShutdownRegistry } from "./desktop-smoke-shutdown.mjs";
 import {
   assertExactLocalAppSavedViewTarget,
   assertNoLocalAppRuntimeDetails,
@@ -81,6 +82,7 @@ const expectedBrowserToolNames = [
   "rudder_browser_screenshot",
   "rudder_browser_close",
 ];
+const desktopShutdownRegistry = createDesktopSmokeShutdownRegistry();
 const windowsToUnixEpochMicroseconds = 11_644_473_600_000_000n;
 const REQUIRED_BUNDLED_SKILLS = [
   "browser",
@@ -663,6 +665,8 @@ function resolveInstancePaths(userDataDir) {
     electronUserDataDir: path.join(userDataDir, "electron-user-data"),
     instanceRoot,
     logsDir: path.join(instanceRoot, "logs"),
+    postmasterPidPath: path.join(instanceRoot, "db", "postmaster.pid"),
+    runtimeDescriptorPath: path.join(instanceRoot, "runtime", "server.json"),
   };
 }
 
@@ -1808,6 +1812,12 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
       ...extraEnv,
     },
   });
+  desktopShutdownRegistry.register(electronApp, {
+    appPort: ports.appPort,
+    dbPort: ports.dbPort,
+    postmasterPidPath: paths.postmasterPidPath,
+    runtimeDescriptorPath: paths.runtimeDescriptorPath,
+  });
   const page = await electronApp.firstWindow();
   return { electronApp, page };
 }
@@ -2106,10 +2116,7 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
 }
 
 async function closeDesktop(electronApp) {
-  await electronApp.evaluate(({ app }) => {
-    app.exit(0);
-  });
-  await electronApp.close();
+  await desktopShutdownRegistry.close(electronApp);
 }
 
 async function dismissReleaseNotesDialogIfVisible(page) {
@@ -3030,6 +3037,7 @@ async function runStartupRecoveryScenario(mode) {
     RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_DELAY_SEQUENCE: "80,80,700,1500,80",
   });
 
+  let scenarioError = null;
   try {
     await page.waitForFunction(
       () => document.body.dataset.bootView === "failed",
@@ -3197,9 +3205,20 @@ async function runStartupRecoveryScenario(mode) {
       "startup retry should remain in one Desktop window",
     );
     console.log("[desktop-smoke] startup recovery kept diagnostics hidden, used fixed support intents, and coalesced retry");
-  } finally {
-    await closeDesktop(electronApp).catch(() => {});
+  } catch (error) {
+    scenarioError = error;
   }
+  let shutdownError = null;
+  try {
+    await closeDesktop(electronApp);
+  } catch (error) {
+    shutdownError = error;
+  }
+  if (scenarioError && shutdownError) {
+    throw new AggregateError([scenarioError, shutdownError], "Startup recovery scenario and shutdown cleanup failed");
+  }
+  if (scenarioError) throw scenarioError;
+  if (shutdownError) throw shutdownError;
 }
 
 async function runCleanScenario(mode) {
@@ -4171,9 +4190,12 @@ function resolveScenarioList(mode, scenario) {
   throw new Error(`Unknown smoke scenario: ${scenario}`);
 }
 
+let smokeBodyPassed = false;
+let smokeError = null;
+let executedScenarios = [];
 try {
-  const scenarios = resolveScenarioList(smokeMode, smokeScenario);
-  for (const scenario of scenarios) {
+  executedScenarios = resolveScenarioList(smokeMode, smokeScenario);
+  for (const scenario of executedScenarios) {
     console.log(`[desktop-smoke] running ${scenario} scenario`);
     if (scenario === "startup-recovery") {
       await runStartupRecoveryScenario(smokeMode);
@@ -4189,11 +4211,33 @@ try {
       await runUpgradeScenario(smokeMode);
     }
   }
-  console.log(`Desktop smoke test passed (${smokeMode}; ${scenarios.join(", ")}).`);
+  smokeBodyPassed = true;
+} catch (error) {
+  smokeError = error;
 } finally {
-  try {
-    await rm(tmpRoot, { recursive: true, force: true });
-  } catch (error) {
-    console.warn("[desktop-smoke] temp cleanup failed", error);
+  const pendingLaunchCount = desktopShutdownRegistry.size;
+  const shutdownErrors = await desktopShutdownRegistry.drain();
+  if (smokeBodyPassed && pendingLaunchCount > 0) {
+    shutdownErrors.unshift(new Error(
+      `Desktop smoke completed with ${pendingLaunchCount} launch(es) still active before final cleanup`,
+    ));
+  }
+  if (shutdownErrors.length > 0) {
+    smokeError = smokeError
+      ? new AggregateError([smokeError, ...shutdownErrors], "Desktop smoke and shutdown cleanup failed")
+      : shutdownErrors.length === 1
+        ? shutdownErrors[0]
+        : new AggregateError(shutdownErrors, "Desktop smoke shutdown cleanup failed");
+  }
+  if (smokeError) {
+    console.error(`[desktop-smoke] preserving failed smoke root for cleanup diagnostics: ${tmpRoot}`);
+  } else {
+    console.log(`Desktop smoke test passed (${smokeMode}; ${executedScenarios.join(", ")}).`);
+    try {
+      await rm(tmpRoot, { recursive: true, force: true });
+    } catch (error) {
+      console.warn("[desktop-smoke] temp cleanup failed", error);
+    }
   }
 }
+if (smokeError) throw smokeError;

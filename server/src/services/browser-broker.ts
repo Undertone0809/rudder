@@ -43,6 +43,8 @@ export type BrowserBrokerCommand = {
 type BrowserBrokerRegistration = {
   endpoint: string;
   token: string;
+  ownerId?: string;
+  generation?: number;
 };
 
 type BrowserBrokerEnvelope = {
@@ -160,10 +162,38 @@ export function createBrowserBrokerRegistry(options: {
 
   return {
     register(input: BrowserBrokerRegistration): void {
+      const endpoint = normalizeLoopbackBrokerEndpoint(input.endpoint);
+      const token = normalizeBrokerCredential(input.token);
+      const hasVersion = input.ownerId !== undefined || input.generation !== undefined;
+      if (hasVersion && (typeof input.ownerId !== "string"
+        || !input.ownerId.trim()
+        || !Number.isSafeInteger(input.generation)
+        || Number(input.generation) < 1)) {
+        throw new BrowserBrokerError(
+          "browser_broker_invalid_registration",
+          "Browser Broker owner generation is invalid.",
+        );
+      }
+      if (registration?.ownerId
+        && registration.ownerId === input.ownerId
+        && registration.generation !== undefined
+        && input.generation !== undefined) {
+        if (input.generation < registration.generation
+          || (input.generation === registration.generation && token !== registration.token)) {
+          throw new BrowserBrokerError(
+            "browser_broker_stale_registration",
+            "Browser Broker registration was superseded by a newer Desktop lifecycle.",
+          );
+        }
+        if (input.generation === registration.generation && token === registration.token) return;
+      }
       revoke();
       registration = {
-        endpoint: normalizeLoopbackBrokerEndpoint(input.endpoint),
-        token: normalizeBrokerCredential(input.token),
+        endpoint,
+        token,
+        ...(input.ownerId !== undefined && input.generation !== undefined
+          ? { ownerId: input.ownerId.trim(), generation: input.generation }
+          : {}),
       };
     },
 

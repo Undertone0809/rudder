@@ -19,7 +19,12 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
   setProfileEnabled(enabled: boolean): Promise<void>;
   execute(command: BrowserAgentCommand): Promise<unknown>;
   startBroker(input: { execute(command: BrowserAgentCommand): Promise<unknown> }): Promise<BrowserBrokerHandle>;
-  registerBroker(apiUrl: string, broker: { endpoint: string; token: string }): Promise<void>;
+  allocateRegistrationGeneration?: () => number;
+  registerBroker(
+    apiUrl: string,
+    broker: { endpoint: string; token: string },
+    registrationGeneration?: number,
+  ): Promise<void>;
   unregisterBroker(apiUrl: string, token: string): Promise<void>;
   readSettings(apiUrl: string): Promise<DesktopBrowserSettings>;
   isRunActive(apiUrl: string, identity: BrowserRuntimeIdentity): Promise<boolean>;
@@ -123,6 +128,7 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
 
   const connect = (apiUrl: string): Promise<void> => {
     acceptingCommands = false;
+    const registrationGeneration = options.allocateRegistrationGeneration?.();
     const expectedEpoch = ++lifecycleEpoch;
     return enqueue(async () => {
     await disconnectCurrent();
@@ -141,8 +147,15 @@ export function createDesktopBrowserRuntimeLifecycle(options: {
         return options.execute(command);
       },
     });
+    if (expectedEpoch !== lifecycleEpoch) {
+      registeredApiUrl = null;
+      await nextBroker.stop().catch((error) => {
+        warn("Rudder Browser stale Broker shutdown failed.", error);
+      });
+      return;
+    }
     try {
-      await options.registerBroker(apiUrl, nextBroker);
+      await options.registerBroker(apiUrl, nextBroker, registrationGeneration);
     } catch (error) {
       registeredApiUrl = null;
       await options.unregisterBroker(apiUrl, nextBroker.token).catch((unregisterError) => {

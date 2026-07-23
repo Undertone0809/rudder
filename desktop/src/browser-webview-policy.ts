@@ -160,7 +160,8 @@ export function installLocalAppSessionPolicy(browserSession: BrowserSessionPolic
 export function createBrowserGuestRegistry(): {
   register(guest: BrowserGuest, source?: "agent" | "user"): void;
   listUserTabs(): Array<{ id: string; title?: string; url?: string }>;
-  closeAll(): Promise<void>;
+  count(source?: "agent" | "user"): number;
+  closeAll(source?: "agent" | "user"): Promise<void>;
 } {
   const guests = new Map<BrowserGuest, { id: string; source: "agent" | "user" }>();
 
@@ -184,16 +185,29 @@ export function createBrowserGuestRegistry(): {
     }
   });
 
-  const closeAll = async (): Promise<void> => {
-    for (const guest of Array.from(guests.keys())) {
-      guests.delete(guest);
-      if (!guest.isDestroyed()) {
-        guest.close({ waitForBeforeUnload: false });
+  const count = (source?: "agent" | "user"): number => Array.from(guests.values())
+    .filter((record) => source === undefined || record.source === source)
+    .length;
+
+  const closeAll = async (source?: "agent" | "user"): Promise<void> => {
+    let firstError: unknown = null;
+    for (const [guest, record] of Array.from(guests.entries())) {
+      if (source !== undefined && record.source !== source) continue;
+      try {
+        if (guest.isDestroyed()) {
+          guests.delete(guest);
+        } else {
+          guest.close({ waitForBeforeUnload: false });
+          guests.delete(guest);
+        }
+      } catch (error) {
+        firstError ??= error;
       }
     }
+    if (firstError) throw firstError;
   };
 
-  return { register, listUserTabs, closeAll };
+  return { register, listUserTabs, count, closeAll };
 }
 
 export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, options: {

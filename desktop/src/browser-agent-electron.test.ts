@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createElectronBrowserAgentTabFactory } from "./browser-agent-electron.js";
 
-function createHarness() {
+function createHarness(options: { driverDisposeGraceMs?: number } = {}) {
   const handlers = new Map<string, (...args: any[]) => void>();
   let openHandler: ((details: { url: string }) => { action: "deny" }) | null = null;
   const image = { toPNG: vi.fn(() => Buffer.from("png")) };
@@ -17,12 +17,13 @@ function createHarness() {
       if (debuggerHandlers.get(event) === handler) debuggerHandlers.delete(event);
     }),
   };
+  let destroyed = false;
   const webContents = {
     debugger: browserDebugger,
     session: { fetch: vi.fn(), cookies: { set: vi.fn(async () => undefined) } },
     getURL: vi.fn(() => "https://example.com"),
     getTitle: vi.fn(() => "Example"),
-    isDestroyed: vi.fn(() => false),
+    isDestroyed: vi.fn(() => destroyed),
     stop: vi.fn(),
     close: vi.fn(),
     on: vi.fn((event: string, handler: (...args: any[]) => void) => {
@@ -51,17 +52,22 @@ function createHarness() {
   };
   let contentSize: [number, number] = [1280, 720];
   let visible = false;
+  const triggerDestroyed = () => {
+    if (destroyed) return;
+    destroyed = true;
+    handlers.get("destroyed")?.();
+  };
   const browserWindow = {
     webContents,
     loadURL: vi.fn(async () => undefined),
-    isDestroyed: vi.fn(() => false),
+    isDestroyed: vi.fn(() => destroyed),
     getContentSize: vi.fn(() => contentSize),
     setContentSize: vi.fn((width: number, height: number) => { contentSize = [width, height]; }),
     isVisible: vi.fn(() => visible),
     showInactive: vi.fn(() => { visible = true; }),
     hide: vi.fn(() => { visible = false; }),
     capturePage: vi.fn(async () => image),
-    destroy: vi.fn(),
+    destroy: vi.fn(triggerDestroyed),
   };
   const createWindow = vi.fn(() => browserWindow);
   const registerGuest = vi.fn();
@@ -70,15 +76,18 @@ function createHarness() {
     createWindow,
     registerGuest,
     getRudderAppOrigins: () => ["http://127.0.0.1:3100"],
+    driverDisposeGraceMs: options.driverDisposeGraceMs,
   });
   return {
     browserWindow,
+    browserDebugger,
     createWindow,
     factory,
     getOpenHandler: () => openHandler,
     handlers,
     image,
     registerGuest,
+    triggerDestroyed,
     webContents,
   };
 }
@@ -199,5 +208,71 @@ describe("Electron Browser Agent tab adapter", () => {
 
     expect(webContents.debugger.detach).toHaveBeenCalledOnce();
     expect(browserWindow.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("settles native tab cleanup after external destruction even when driver startup is stuck", async () => {
+    const { browserDebugger, browserWindow, factory, triggerDestroyed } = createHarness();
+    browserDebugger.sendCommand.mockImplementation(() => new Promise(() => undefined));
+    const tab = await factory({
+      tabId: "tab-1",
+      identity: { orgId: "org-1", agentId: "agent-1", runId: "run-1" },
+    });
+    const destroyed = vi.fn();
+    tab.onDestroyed(destroyed);
+    void tab.advanced("logs", {}).catch(() => undefined);
+    await vi.waitFor(() => expect(browserDebugger.sendCommand).toHaveBeenCalled());
+
+    const closing = tab.close();
+    triggerDestroyed();
+
+    await expect(Promise.race([
+      closing.then(() => "closed"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("timed-out"), 25)),
+    ])).resolves.toBe("closed");
+    expect(destroyed).toHaveBeenCalledOnce();
+    expect(browserWindow.destroy).not.toHaveBeenCalled();
+  });
+
+  it("lets quit reach owned runtime stop when guest close throws and driver cleanup is stuck", async () => {
+    const { browserDebugger, factory } = createHarness({ driverDisposeGraceMs: 5 });
+    browserDebugger.sendCommand.mockImplementation(() => new Promise(() => undefined));
+    const tab = await factory({
+      tabId: "tab-1",
+      identity: { orgId: "org-1", agentId: "agent-1", runId: "run-1" },
+    });
+    tab.onDestroyed(vi.fn());
+    void tab.advanced("logs", {}).catch(() => undefined);
+    await vi.waitFor(() => expect(browserDebugger.sendCommand).toHaveBeenCalled());
+
+    let releaseProfileCleanup!: () => void;
+    const profileCleanup = new Promise<void>((resolve) => { releaseProfileCleanup = resolve; });
+    const runtimeStop = vi.fn(async () => undefined);
+    const appQuit = vi.fn();
+    const guestCloseError = new Error("native guest close failed");
+    const guestClose = vi.fn(async () => { throw guestCloseError; });
+    const quitting = (async () => {
+      await Promise.all([
+        profileCleanup,
+        Promise.allSettled([
+          guestClose(),
+          tab.close(),
+        ]),
+      ]);
+      await runtimeStop();
+      appQuit();
+    })();
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(runtimeStop).not.toHaveBeenCalled();
+    expect(appQuit).not.toHaveBeenCalled();
+
+    releaseProfileCleanup();
+    await expect(Promise.race([
+      quitting.then(() => "quit"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("timed-out"), 25)),
+    ])).resolves.toBe("quit");
+    expect(guestClose).toHaveBeenCalledOnce();
+    expect(runtimeStop).toHaveBeenCalledOnce();
+    expect(appQuit).toHaveBeenCalledOnce();
   });
 });

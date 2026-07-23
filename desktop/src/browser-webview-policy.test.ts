@@ -389,4 +389,48 @@ describe("Rudder Browser guest policy", () => {
     expect(JSON.stringify(registry.listUserTabs())).not.toContain("secret");
     expect(JSON.stringify(registry.listUserTabs())).not.toContain("Private document title");
   });
+
+  it("closes every retired Agent guest without closing user Browser tabs", async () => {
+    const registry = createBrowserGuestRegistry();
+    const userGuest = { isDestroyed: () => false, close: vi.fn(), on: vi.fn() };
+    const firstAgentGuest = { isDestroyed: () => false, close: vi.fn(), on: vi.fn() };
+    const retiredAgentGuest = { isDestroyed: () => false, close: vi.fn(), on: vi.fn() };
+    registry.register(userGuest, "user");
+    registry.register(firstAgentGuest, "agent");
+    registry.register(retiredAgentGuest, "agent");
+
+    expect(registry.count("agent")).toBe(2);
+    await registry.closeAll("agent");
+
+    expect(firstAgentGuest.close).toHaveBeenCalledWith({ waitForBeforeUnload: false });
+    expect(retiredAgentGuest.close).toHaveBeenCalledWith({ waitForBeforeUnload: false });
+    expect(userGuest.close).not.toHaveBeenCalled();
+    expect(registry.count("agent")).toBe(0);
+    expect(registry.count("user")).toBe(1);
+  });
+
+  it("continues closing retired Agent guests after one native close throws", async () => {
+    const registry = createBrowserGuestRegistry();
+    const closeError = new Error("native close failed");
+    let failingGuestDestroyed = false;
+    const failingGuest = {
+      isDestroyed: () => failingGuestDestroyed,
+      close: vi.fn()
+        .mockImplementationOnce(() => { throw closeError; })
+        .mockImplementationOnce(() => { failingGuestDestroyed = true; }),
+      on: vi.fn(),
+    };
+    const remainingGuest = { isDestroyed: () => false, close: vi.fn(), on: vi.fn() };
+    registry.register(failingGuest, "agent");
+    registry.register(remainingGuest, "agent");
+
+    await expect(registry.closeAll("agent")).rejects.toBe(closeError);
+
+    expect(remainingGuest.close).toHaveBeenCalledWith({ waitForBeforeUnload: false });
+    expect(registry.count("agent")).toBe(1);
+
+    await registry.closeAll("agent");
+    expect(failingGuest.close).toHaveBeenCalledTimes(2);
+    expect(registry.count("agent")).toBe(0);
+  });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserAdvancedAction } from "./browser-agent-advanced.js";
 import {
   BrowserAgentError,
+  createBrowserAgentTabCapacity,
   createBrowserAgentTabController,
   type BrowserAgentTab,
   type BrowserRuntimeIdentity,
@@ -23,6 +24,7 @@ class FakeTab implements BrowserAgentTab {
   stopCalls = 0;
   executionGate: Promise<void> | null = null;
   closeGate: Promise<void> | null = null;
+  closeError: Error | null = null;
   assetBundleGate: Promise<void> | null = null;
   png = Buffer.from("png-data");
   advancedError: Error | null = null;
@@ -105,6 +107,11 @@ class FakeTab implements BrowserAgentTab {
 
   async close() {
     await this.closeGate;
+    if (this.closeError) throw this.closeError;
+    this.destroy();
+  }
+
+  destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
     for (const listener of this.destroyedListeners) listener();
@@ -145,6 +152,7 @@ function createHarness(options: {
   createTabGate?: Promise<void>;
   clock?: () => number;
   listUserTabs?: () => Array<{ id: string; title?: string; url?: string }>;
+  capacity?: ReturnType<typeof createBrowserAgentTabCapacity>;
 } = {}) {
   const tabs: FakeTab[] = [];
   let nextId = 1;
@@ -580,6 +588,105 @@ describe("Browser Agent tab controller", () => {
       action: "open",
       args: { url: "https://example.org" },
     })).rejects.toMatchObject({ code: "browser_tab_limit" });
+  });
+
+  it("keeps one process-wide capacity reservation across controller replacement", async () => {
+    const capacity = createBrowserAgentTabCapacity({ maxTabsPerRun: 2, maxTabsTotal: 1 });
+    const retired = createHarness({ capacity });
+    await retired.controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+    let releaseClose!: () => void;
+    retired.tabs[0]!.closeGate = new Promise<void>((resolve) => { releaseClose = resolve; });
+    const retiredCleanup = retired.controller.closeAll();
+    await Promise.resolve();
+
+    const replacement = createHarness({ capacity });
+    await expect(replacement.controller.execute({
+      identity: { ...owner, runId: "run-2" },
+      action: "open",
+      args: { url: "https://example.org" },
+    })).rejects.toMatchObject({ code: "browser_tab_limit" });
+    expect(replacement.tabs).toHaveLength(0);
+    expect(capacity.count()).toBe(1);
+
+    releaseClose();
+    await retiredCleanup;
+    await expect(replacement.controller.execute({
+      identity: { ...owner, runId: "run-2" },
+      action: "open",
+      args: { url: "https://example.org" },
+    })).resolves.toMatchObject({ tabId: "tab-1" });
+    expect(capacity.count()).toBe(1);
+    await replacement.controller.closeAll();
+    expect(capacity.count()).toBe(0);
+  });
+
+  it("retains shared capacity when cancellation cannot close an in-flight native tab", async () => {
+    const capacity = createBrowserAgentTabCapacity({ maxTabsPerRun: 2, maxTabsTotal: 1 });
+    let releaseCreateTab!: () => void;
+    const createTabGate = new Promise<void>((resolve) => { releaseCreateTab = resolve; });
+    const retired = createHarness({ capacity, createTabGate });
+    const oldOpen = retired.controller.execute({
+      identity: owner,
+      action: "open",
+      args: { url: "https://example.com" },
+    });
+    await vi.waitFor(() => expect(retired.tabs).toHaveLength(1));
+    const oldTab = retired.tabs[0]!;
+    oldTab.closeError = new Error("native close failed");
+
+    await retired.controller.closeAll();
+    releaseCreateTab();
+    await expect(oldOpen).rejects.toThrow("native close failed");
+    expect(oldTab.isDestroyed()).toBe(false);
+    expect(capacity.count()).toBe(1);
+
+    const replacement = createHarness({ capacity });
+    await expect(replacement.controller.execute({
+      identity: { ...owner, runId: "run-2" },
+      action: "open",
+      args: { url: "https://example.org" },
+    })).rejects.toMatchObject({ code: "browser_tab_limit" });
+    expect(replacement.tabs).toHaveLength(0);
+
+    oldTab.destroy();
+    expect(capacity.count()).toBe(0);
+    await expect(replacement.controller.execute({
+      identity: { ...owner, runId: "run-2" },
+      action: "open",
+      args: { url: "https://example.org" },
+    })).resolves.toMatchObject({ tabId: "tab-1" });
+    await replacement.controller.closeAll();
+    expect(capacity.count()).toBe(0);
+  });
+
+  it("retains shared capacity after native close rejects until the old tab is destroyed", async () => {
+    const capacity = createBrowserAgentTabCapacity({ maxTabsPerRun: 2, maxTabsTotal: 1 });
+    const retired = createHarness({ capacity });
+    await retired.controller.execute({ identity: owner, action: "open", args: { url: "https://example.com" } });
+    const oldTab = retired.tabs[0]!;
+    oldTab.closeError = new Error("native close failed");
+
+    await expect(retired.controller.closeAll()).rejects.toThrow("native close failed");
+    expect(oldTab.isDestroyed()).toBe(false);
+    expect(capacity.count()).toBe(1);
+
+    const replacement = createHarness({ capacity });
+    await expect(replacement.controller.execute({
+      identity: { ...owner, runId: "run-2" },
+      action: "open",
+      args: { url: "https://example.org" },
+    })).rejects.toMatchObject({ code: "browser_tab_limit" });
+    expect(replacement.tabs).toHaveLength(0);
+
+    oldTab.destroy();
+    expect(capacity.count()).toBe(0);
+    await expect(replacement.controller.execute({
+      identity: { ...owner, runId: "run-2" },
+      action: "open",
+      args: { url: "https://example.org" },
+    })).resolves.toMatchObject({ tabId: "tab-1" });
+    await replacement.controller.closeAll();
+    expect(capacity.count()).toBe(0);
   });
 
   it("serializes commands for one tab so navigation cannot race a snapshot", async () => {

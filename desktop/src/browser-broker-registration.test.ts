@@ -34,6 +34,19 @@ describe("Desktop Browser Broker server registration", () => {
     });
   });
 
+  it("sends the Desktop lifecycle owner generation without exposing it elsewhere", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const versionedBroker = {
+      ...broker,
+      ownerId: "02ad71bd-dcc1-4c93-9642-b16c8c1d2e08",
+      generation: 7,
+    };
+
+    await registerDesktopBrowserBroker("http://127.0.0.1:3100/api", versionedBroker, fetchImpl);
+
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual(versionedBroker);
+  });
+
   it("loads Browser settings and checks exact active run ownership", async () => {
     const fetchImpl = vi.fn(async (url: string) => {
       if (url.endsWith("/instance/settings/browser")) {

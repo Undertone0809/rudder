@@ -7,7 +7,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml, type BootScreenState } from "./boot-screen.js";
 import { createElectronBrowserAgentTabFactory } from "./browser-agent-electron.js";
-import { BrowserAgentError, createBrowserAgentTabController } from "./browser-agent-tabs.js";
+import {
+  BrowserAgentError,
+  createBrowserAgentTabCapacity,
+  createBrowserAgentTabController,
+} from "./browser-agent-tabs.js";
 import {
   isDesktopBrowserRunActive,
   readDesktopBrowserSettings,
@@ -101,6 +105,7 @@ import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopIm
 import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
 import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
 import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
+import { stopDesktopRuntime } from "./desktop-runtime-shutdown.js";
 import {
   createDesktopRecoveryDiagnostic,
   createDesktopStartupFailureView,
@@ -438,6 +443,9 @@ const sidePanelCloseShortcutWebContents = new WeakSet<WebContents>();
 const operatorBrowserShortcutWebContents = new WeakSet<WebContents>();
 const browserGuestRegistry = createBrowserGuestRegistry();
 const localAppGuestRegistry = createBrowserGuestRegistry();
+const browserAgentTabCapacity = createBrowserAgentTabCapacity();
+const desktopBrowserBrokerOwnerId = randomUUID();
+let desktopBrowserBrokerGeneration = 0;
 const localAppSessions = new Map<string, Session>();
 const acceptBrowserPopup = createBrowserPopupRateLimiter();
 let browserProfileController: BrowserProfileController | null = null;
@@ -851,12 +859,73 @@ function routeDesktopWebLink(url: string, source: "link" | "browser_popup"): voi
 }
 
 async function closeAllBrowserGuests(): Promise<void> {
-  await browserAgentTabController?.closeAll();
-  await browserGuestRegistry.closeAll();
+  const results = await Promise.allSettled([
+    browserGuestRegistry.closeAll(),
+    browserAgentTabController?.closeAll() ?? Promise.resolve(),
+  ]);
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failure) throw failure.reason;
 }
 
 async function closeAgentBrowserGuests(): Promise<void> {
-  await browserAgentTabController?.closeAll();
+  const results = await Promise.allSettled([
+    browserGuestRegistry.closeAll("agent"),
+    browserAgentTabController?.closeAll() ?? Promise.resolve(),
+  ]);
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failure) throw failure.reason;
+}
+
+function replaceBrowserRuntimeLifecycle(): void {
+  const controller = requireBrowserProfileController();
+  const partition = controller.getPartition();
+  const agentTabs = createBrowserAgentTabController({
+    createTab: createElectronBrowserAgentTabFactory({
+      partition,
+      createWindow: (windowOptions) => new BrowserWindow(windowOptions),
+      registerGuest: (guest) => browserGuestRegistry.register(guest, "agent"),
+      getRudderAppOrigins: collectRudderAppOrigins,
+    }),
+    getRudderAppOrigins: collectRudderAppOrigins,
+    listUserTabs: browserGuestRegistry.listUserTabs,
+    capacity: browserAgentTabCapacity,
+  });
+  browserAgentTabController = agentTabs;
+  browserRuntimeLifecycle = createDesktopBrowserRuntimeLifecycle({
+    tabs: agentTabs,
+    getProfileEnabled: () => controller.getState().enabled,
+    setProfileEnabled: (enabled) => controller.setEnabled(enabled),
+    execute: async (command) => {
+      if (typeof command.deadlineAt === "number" && command.deadlineAt <= Date.now()) {
+        throw new BrowserAgentError("browser_timeout", "Browser action expired before execution.");
+      }
+      const state = controller.getState();
+      if (!state.enabled) {
+        throw new BrowserAgentError("browser_disabled", "Rudder Browser is disabled in Settings.");
+      }
+      if (!state.available) {
+        throw new BrowserAgentError("browser_unavailable", "Rudder Browser is temporarily unavailable.");
+      }
+      return agentTabs.execute(command);
+    },
+    startBroker: startBrowserBrokerServer,
+    allocateRegistrationGeneration: () => ++desktopBrowserBrokerGeneration,
+    registerBroker: (apiUrl, broker, generation) => {
+      if (generation === undefined) {
+        throw new Error("Rudder Browser Broker registration generation is missing.");
+      }
+      return registerDesktopBrowserBroker(apiUrl, {
+        ...broker,
+        ownerId: desktopBrowserBrokerOwnerId,
+        generation,
+      });
+    },
+    unregisterBroker: unregisterDesktopBrowserBroker,
+    readSettings: readDesktopBrowserSettings,
+    isRunActive: isDesktopBrowserRunActive,
+    sweepIntervalMs: 5_000,
+    onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
+  });
 }
 
 function initializeBrowserProfile(instanceRoot: string): void {
@@ -884,43 +953,7 @@ function initializeBrowserProfile(instanceRoot: string): void {
     },
   });
   browserProfileController = controller;
-  const agentTabs = createBrowserAgentTabController({
-    createTab: createElectronBrowserAgentTabFactory({
-      partition,
-      createWindow: (windowOptions) => new BrowserWindow(windowOptions),
-      registerGuest: (guest) => browserGuestRegistry.register(guest, "agent"),
-      getRudderAppOrigins: collectRudderAppOrigins,
-    }),
-    getRudderAppOrigins: collectRudderAppOrigins,
-    listUserTabs: browserGuestRegistry.listUserTabs,
-
-  });
-  browserAgentTabController = agentTabs;
-  browserRuntimeLifecycle = createDesktopBrowserRuntimeLifecycle({
-    tabs: agentTabs,
-    getProfileEnabled: () => controller.getState().enabled,
-    setProfileEnabled: (enabled) => controller.setEnabled(enabled),
-    execute: async (command) => {
-      if (typeof command.deadlineAt === "number" && command.deadlineAt <= Date.now()) {
-        throw new BrowserAgentError("browser_timeout", "Browser action expired before execution.");
-      }
-      const state = controller.getState();
-      if (!state.enabled) {
-        throw new BrowserAgentError("browser_disabled", "Rudder Browser is disabled in Settings.");
-      }
-      if (!state.available) {
-        throw new BrowserAgentError("browser_unavailable", "Rudder Browser is temporarily unavailable.");
-      }
-      return agentTabs.execute(command);
-    },
-    startBroker: startBrowserBrokerServer,
-    registerBroker: registerDesktopBrowserBroker,
-    unregisterBroker: unregisterDesktopBrowserBroker,
-    readSettings: readDesktopBrowserSettings,
-    isRunActive: isDesktopBrowserRunActive,
-    sweepIntervalMs: 5_000,
-    onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
-  });
+  replaceBrowserRuntimeLifecycle();
   const sourceRegistry = createBrowserImportSourceRegistry();
   browserCookieImporter = createBrowserCookieImporter({
     sourceRegistry,
@@ -1800,11 +1833,27 @@ async function importCliModule(): Promise<CliModule> {
 }
 
 async function stopLocalRudder(): Promise<void> {
-  await browserRuntimeLifecycle?.disconnect();
-  if (!serverHandle) return;
+  const browserLifecycle = browserRuntimeLifecycle;
   const handle = serverHandle;
   serverHandle = null;
-  await handle.stop();
+  await stopDesktopRuntime({
+    browserDisconnect: browserLifecycle
+      ? () => browserLifecycle.disconnect()
+      : undefined,
+    runtimeHandle: handle,
+    onBrowserDisconnectTimeout: () => {
+      if (!isQuitting() && browserRuntimeLifecycle === browserLifecycle) {
+        replaceBrowserRuntimeLifecycle();
+      }
+    },
+    onWarning: (message, error) => {
+      if (error === undefined) {
+        console.warn(`[rudder-desktop] ${message}`);
+        return;
+      }
+      console.warn(`[rudder-desktop] ${message}`, error);
+    },
+  });
 }
 
 function desktopWorkspaceFileAllowedRoots() {
@@ -2343,6 +2392,7 @@ if (desktopCliArgv) {
     });
 
     app.on("window-all-closed", () => {
+      if (isQuitting()) return;
       if (shouldHideToResidentShell()) return;
       app.quit();
     });

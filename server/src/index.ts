@@ -62,6 +62,7 @@ import {
 import { logger } from "./middleware/logger.js";
 import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
+import { createHttpServerShutdown } from "./runtime/http-server-shutdown.js";
 import { RuntimeSupervisor, supervisedStart } from "./runtime/runtime-supervisor.js";
 import {
   automationService,
@@ -1015,23 +1016,14 @@ async function startServerRuntime(
   });
   supervisor.own("app", () => appHandle.close());
   const server = createServer(appHandle.app as unknown as Parameters<typeof createServer>[0]);
-  let httpCloseInFlight: Promise<void> | null = null;
-  const beginHttpClose = () => {
-    if (httpCloseInFlight) return httpCloseInFlight;
-    httpCloseInFlight = new Promise<void>((resolveClose) => {
-      if (!server.listening) {
-        resolveClose();
-        return;
-      }
-      server.close((err) => {
-        if (err) {
-          logger.warn({ err }, "HTTP server close reported an error during shutdown");
-        }
-        resolveClose();
-      });
-    });
-    return httpCloseInFlight;
-  };
+  const beginHttpClose = createHttpServerShutdown(server, {
+    onCloseError: (err) => {
+      logger.warn({ err }, "HTTP server close reported an error during shutdown");
+    },
+    onForceClose: () => {
+      logger.warn("HTTP server graceful shutdown timed out; closing active connections");
+    },
+  });
   supervisor.own("http-server-drain", beginHttpClose);
   
   if (listenPort !== config.port) {

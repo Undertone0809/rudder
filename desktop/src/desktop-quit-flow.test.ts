@@ -71,6 +71,43 @@ describe("desktop quit flow update handoff", () => {
     expect(appQuitMock).toHaveBeenCalledTimes(1);
   });
 
+  it("stops renderer requests before shutting down the owned runtime", async () => {
+    const lifecycle: string[] = [];
+    let destroyed = false;
+    const mainWindow = {
+      isDestroyed: vi.fn(() => destroyed),
+      destroy: vi.fn(() => {
+        lifecycle.push("window:destroy");
+        destroyed = true;
+      }),
+    };
+    const setMainWindow = vi.fn(() => lifecycle.push("window:clear"));
+    const stopLocalRudder = vi.fn(async () => {
+      lifecycle.push("runtime:stop");
+    });
+    const quitFlow = createDesktopQuitFlow({
+      appName: "Rudder",
+      getMainWindow: () => mainWindow as never,
+      setMainWindow,
+      getServerHandle: () => null,
+      prepareForQuit: vi.fn(async () => lifecycle.push("browser:cleanup")),
+      prepareLocalAppsForQuit: vi.fn(async () => lifecycle.push("local-apps:cleanup")),
+      stopLocalRudder,
+      destroyResidentTray: vi.fn(),
+    });
+
+    await quitFlow.beginQuitFlow();
+
+    expect(lifecycle).toEqual([
+      "browser:cleanup",
+      "local-apps:cleanup",
+      "window:destroy",
+      "window:clear",
+      "runtime:stop",
+    ]);
+    expect(appQuitMock).toHaveBeenCalledOnce();
+  });
+
   it("logs Local App cleanup failures distinctly and continues the watchdog-backed quit fallback", async () => {
     const cleanupError = new AggregateError([new Error("binding-a: still alive")], "Local App cleanup failed");
     const prepareForQuit = vi.fn(async () => undefined);
