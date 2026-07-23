@@ -523,20 +523,43 @@ export function ChatInlineVisualContent({ message, markdownProps }: {
 
   if (!renderModel) return <MarkdownBody {...markdownProps}>{message.body}</MarkdownBody>;
 
-  const pieces: Array<{ kind: "markdown"; body: string } | { kind: "visual"; directiveKey: string }> = [];
+  const pieces: Array<
+    | { kind: "markdown"; body: string; sourceOffset: number }
+    | { kind: "visual"; directiveKey: string }
+  > = [];
   let cursor = 0;
   for (const directive of renderModel.directives) {
-    if (directive.start > cursor) pieces.push({ kind: "markdown", body: message.body.slice(cursor, directive.start) });
+    if (directive.start > cursor) {
+      pieces.push({
+        kind: "markdown",
+        body: message.body.slice(cursor, directive.start),
+        sourceOffset: cursor,
+      });
+    }
     pieces.push({ kind: "visual", directiveKey: directive.key });
     cursor = directive.end;
   }
-  if (cursor < message.body.length) pieces.push({ kind: "markdown", body: message.body.slice(cursor) });
+  if (cursor < message.body.length) {
+    pieces.push({
+      kind: "markdown",
+      body: message.body.slice(cursor),
+      sourceOffset: cursor,
+    });
+  }
 
   return (
     <div className="min-w-0">
       {pieces.map((piece, pieceIndex) => {
         if (piece.kind === "markdown") {
-          return piece.body.trim() ? <MarkdownBody key={`markdown-${pieceIndex}`} {...markdownProps}>{piece.body}</MarkdownBody> : null;
+          return piece.body.trim() ? (
+            <MarkdownBody
+              key={`markdown-${pieceIndex}`}
+              {...markdownProps}
+              sourceOffsetBase={piece.sourceOffset}
+            >
+              {piece.body}
+            </MarkdownBody>
+          ) : null;
         }
         const directive = renderModel.directives.find((entry) => entry.key === piece.directiveKey)!;
         if (!renderModel.completed) {

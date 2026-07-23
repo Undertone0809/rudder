@@ -34,6 +34,8 @@ interface MarkdownBodyProps {
   enableImagePreview?: boolean;
   copyMarkdownOnCopy?: boolean;
   enableCodeBlockCopy?: boolean;
+  /** Raw-source offset when this body is a slice of a larger persisted message. */
+  sourceOffsetBase?: number;
 }
 
 export interface MarkdownAgentMentionPreview {
@@ -648,6 +650,7 @@ async function writeClipboardText(text: string) {
 function markdownSourceAttributes(
   node: unknown,
   sourceMap?: MarkdownSourceBoundaryMap,
+  sourceOffsetBase = 0,
 ) {
   const position = (node as {
     position?: {
@@ -658,8 +661,8 @@ function markdownSourceAttributes(
   const start = position?.start?.offset;
   const end = position?.end?.offset;
   if (typeof start !== "number" || typeof end !== "number") return {};
-  const rawStart = sourceMap?.renderedBoundaryToRaw[start] ?? start;
-  const rawEnd = sourceMap?.renderedBoundaryToRaw[end] ?? end;
+  const rawStart = sourceOffsetBase + (sourceMap?.renderedBoundaryToRaw[start] ?? start);
+  const rawEnd = sourceOffsetBase + (sourceMap?.renderedBoundaryToRaw[end] ?? end);
   return {
     "data-markdown-source-start": String(rawStart),
     "data-markdown-source-end": String(rawEnd),
@@ -841,6 +844,7 @@ export function MarkdownBody({
   enableImagePreview = true,
   copyMarkdownOnCopy = false,
   enableCodeBlockCopy = false,
+  sourceOffsetBase = 0,
 }: MarkdownBodyProps) {
   const { resolvedTheme } = useTheme();
   const { mentions } = useMarkdownMentions();
@@ -912,8 +916,8 @@ export function MarkdownBody({
     };
   }, [agentMentions, children]);
   const sourceAttributesForNode = useCallback(
-    (node: unknown) => markdownSourceAttributes(node, sourceMap),
-    [sourceMap],
+    (node: unknown) => markdownSourceAttributes(node, sourceMap, sourceOffsetBase),
+    [sourceMap, sourceOffsetBase],
   );
   const renderListItem = useCallback(
     ({ node, children: itemChildren, ...itemProps }: ComponentProps<"li"> & ExtraProps) => (

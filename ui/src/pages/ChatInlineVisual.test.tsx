@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
 import { ThemeProvider } from "@/context/ThemeContext";
+import {
+  CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
+  CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+  resolveChatAnnotationRange,
+  restoreChatAnnotationRange,
+} from "@/lib/chat-response-annotation-selection";
 import type { ChatMessage } from "@rudderhq/shared";
 import fs from "node:fs";
 import path from "node:path";
@@ -121,6 +127,83 @@ afterEach(() => {
 });
 
 describe("ChatInlineVisualContent", () => {
+  it("keeps full-message raw offsets before and after a visual while rejecting a crossing range", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      '<div id="widget"><p>Chart</p></div>',
+      { status: 200 },
+    )));
+    const body = [
+      "Before **alpha**.",
+      '::codex-inline-vis{file="chart.html"}',
+      "After [beta](https://example.com).",
+    ].join("\n\n");
+    const view = renderVisual(message({ body }));
+    await waitFor(() => expect(view.querySelector("iframe")).not.toBeNull());
+    const sourceRoot = view.firstElementChild as HTMLElement;
+    sourceRoot.setAttribute(CHAT_ANNOTATION_SOURCE_ATTRIBUTE, "assistant:message-1");
+    sourceRoot.setAttribute(CHAT_ANNOTATION_BLOCK_ATTRIBUTE, "message-1");
+    const alpha = sourceRoot.querySelector("strong")!.firstChild!;
+    const beta = sourceRoot.querySelector<HTMLAnchorElement>(
+      'a[href="https://example.com"]',
+    )!.querySelector(".rudder-website-link-label")!.firstChild!;
+
+    const beforeRange = document.createRange();
+    beforeRange.setStart(alpha, 0);
+    beforeRange.setEnd(alpha, "alpha".length);
+    expect(resolveChatAnnotationRange({
+      range: beforeRange,
+      sourceRoot,
+      source: body,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    })).toMatchObject({
+      selectedText: "alpha",
+      start: body.indexOf("alpha"),
+      end: body.indexOf("alpha") + "alpha".length,
+    });
+
+    const afterRange = document.createRange();
+    afterRange.setStart(beta, 0);
+    afterRange.setEnd(beta, "beta".length);
+    expect(resolveChatAnnotationRange({
+      range: afterRange,
+      sourceRoot,
+      source: body,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    })).toMatchObject({
+      selectedText: "beta",
+      start: body.indexOf("beta"),
+      end: body.indexOf("beta") + "beta".length,
+    });
+
+    const restored = restoreChatAnnotationRange({
+      sourceRoot,
+      source: body,
+      start: body.indexOf("beta"),
+      end: body.indexOf("beta") + "beta".length,
+    });
+    expect(restored?.startContainer).toBe(beta);
+    expect(restored?.endContainer).toBe(beta);
+
+    const crossingRange = document.createRange();
+    crossingRange.setStart(alpha, 0);
+    crossingRange.setEnd(beta, "beta".length);
+    expect(resolveChatAnnotationRange({
+      range: crossingRange,
+      sourceRoot,
+      source: body,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    })).toBeNull();
+  });
+
   it("renders the bundled Rudder visualize example through the production sanitizer", () => {
     const example = fs.readFileSync(
       path.join(process.cwd(), "server/resources/bundled-skills/visualize/assets/example-chart.html"),
