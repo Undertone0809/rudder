@@ -88,8 +88,8 @@ export function resolveCuratedMcpEndpoint(input: {
     }
     return {
       href: input.accessMode === "read_only"
-        ? definition.readOnlyEndpoint
-        : definition.endpoint,
+        ? MCP_PROVIDER_REGISTRY.linear.readOnlyEndpoint
+        : MCP_PROVIDER_REGISTRY.linear.endpoint,
       transport: "streamable_http",
     };
   }

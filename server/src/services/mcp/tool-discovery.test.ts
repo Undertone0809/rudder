@@ -9,7 +9,7 @@ import {
 describe("managed MCP tool discovery normalization", () => {
   it("keeps raw schemas, exposes sanitized schemas, and gives tools a stable connection prefix", () => {
     const [tool] = normalizeMcpDiscoveredTools("finance-team", [{
-      name: "search/invoices",
+      name: "search_invoices",
       description: " Search invoices ",
       inputSchema: {
         type: "object",
@@ -27,8 +27,8 @@ describe("managed MCP tool discovery normalization", () => {
     }]);
 
     expect(tool).toMatchObject({
-      externalToolName: "search/invoices",
-      rudderToolName: "external.finance-team.search-invoices",
+      externalToolName: "search_invoices",
+      rudderToolName: "external.finance-team.search_invoices",
       description: "Search invoices",
       inputSchema: {
         type: "object",
@@ -99,19 +99,45 @@ describe("managed MCP tool discovery normalization", () => {
     }])).toThrow(/JSON Schema/i);
   });
 
-  it("gives slug collisions deterministic distinct names", () => {
+  it("rejects non-ASCII protocol names and enforces the 128-character boundary", () => {
+    expect(() => normalizeMcpDiscoveredTools("team", [{
+      name: "x".repeat(128),
+      inputSchema: { type: "object" },
+    }])).not.toThrow();
+    for (const name of ["read tool", "read/tool", "工具", "x".repeat(129)]) {
+      expect(() => normalizeMcpDiscoveredTools("team", [{
+        name,
+        inputSchema: { type: "object" },
+      }])).toThrow(/tool name/i);
+    }
+  });
+
+  it("gives case-fold collisions deterministic distinct names", () => {
     const tools = normalizeMcpDiscoveredTools("team", [
-      { name: "read/a", inputSchema: { type: "object" } },
-      { name: "read a", inputSchema: { type: "object" } },
+      { name: "Read", inputSchema: { type: "object" } },
+      { name: "read", inputSchema: { type: "object" } },
     ]);
 
     expect(new Set(tools.map((tool) => tool.rudderToolName)).size).toBe(2);
     expect(tools.map((tool) => tool.rudderToolName)).toEqual(
       normalizeMcpDiscoveredTools("team", [
-        { name: "read/a", inputSchema: { type: "object" } },
-        { name: "read a", inputSchema: { type: "object" } },
+        { name: "Read", inputSchema: { type: "object" } },
+        { name: "read", inputSchema: { type: "object" } },
       ]).map((tool) => tool.rudderToolName),
     );
+  });
+
+  it("truncates and hashes namespaced tool names to a stable 128 characters", () => {
+    const input = [{
+      name: "x".repeat(128),
+      inputSchema: { type: "object" },
+    }];
+    const [first] = normalizeMcpDiscoveredTools("c".repeat(80), input);
+    const [second] = normalizeMcpDiscoveredTools("c".repeat(80), input);
+
+    expect(first?.rudderToolName).toBe(second?.rudderToolName);
+    expect(first?.rudderToolName.length).toBeLessThanOrEqual(128);
+    expect(first?.rudderToolName).toMatch(/^external\.[a-z0-9_-]+\.[a-z0-9_-]+-[a-f0-9]{8}$/u);
   });
 });
 

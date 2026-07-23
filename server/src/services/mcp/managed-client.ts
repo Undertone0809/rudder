@@ -14,13 +14,13 @@ import {
   StdioClientTransport,
 } from "@modelcontextprotocol/client/stdio";
 import type { DeploymentMode } from "@rudderhq/shared";
+import { createSecureMcpFetch } from "./pinned-fetch.js";
 import {
   assertSafeMcpCredentialHeaders,
   assertSafeMcpHeaders,
-  type McpDnsLookup,
   validateMcpStdioPolicy,
+  type McpDnsLookup,
 } from "./security-policy.js";
-import { createSecureMcpFetch } from "./pinned-fetch.js";
 
 export class ManagedMcpClientError extends Error {
   readonly code: string;
@@ -107,7 +107,7 @@ export interface ManagedMcpStdioClientOptions extends ManagedMcpClientCommonOpti
   hostEnv: Record<string, string | undefined>;
   deploymentPolicy: {
     deploymentMode: DeploymentMode;
-    stdioExecutables: string[];
+    stdioCommands: string[][];
     stdioWorkingDirectories: string[];
     stdioEnvironmentNames: string[];
   };
@@ -172,14 +172,15 @@ function boundedResult(result: CallToolResult, maxOutputBytes: number): CallTool
   return result;
 }
 
-function buildStdioEnvironment(options: ManagedMcpStdioClientOptions): Record<string, string> {
+async function buildStdioEnvironment(options: ManagedMcpStdioClientOptions): Promise<Record<string, string>> {
   const environmentNames = new Set([
     ...Object.keys(options.staticEnv),
     ...Object.keys(options.secretEnv),
     ...options.forwardedEnv,
   ]);
-  validateMcpStdioPolicy({
+  await validateMcpStdioPolicy({
     command: options.command,
+    args: options.args,
     cwd: options.cwd,
     environmentNames: [...environmentNames],
   }, options.deploymentPolicy);
@@ -214,6 +215,15 @@ export async function createManagedMcpClient(
 
   if (options.transport === "streamable_http") {
     assertSafeMcpHeaders(options.staticHeaders ?? {});
+    assertSafeMcpCredentialHeaders(options.credentials.headers);
+    const credentialAuthorization = Object.keys(options.credentials.headers)
+      .some((name) => name.toLowerCase() === "authorization");
+    if (credentialAuthorization && options.credentials.authProvider) {
+      throw new ManagedMcpClientError(
+        "mcp_conflicting_authorization",
+        "Configure exactly one managed MCP Authorization source",
+      );
+    }
     transport = new StreamableHTTPClientTransport(new URL(options.url), {
       authProvider: options.credentials.authProvider,
       requestInit: {
@@ -233,7 +243,7 @@ export async function createManagedMcpClient(
       command: options.command,
       args: options.args,
       cwd: options.cwd,
-      env: buildStdioEnvironment(options),
+      env: await buildStdioEnvironment(options),
       stderr: "pipe",
       maxBufferSize: maxOutputBytes,
     });

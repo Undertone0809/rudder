@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 
 export const MCP_TOOL_DISCOVERY_LIMITS = {
   maxTools: 500,
-  maxToolNameCharacters: 240,
+  maxToolNameCharacters: 128,
   maxDescriptionCharacters: 4_000,
   maxSchemaBytes: 256 * 1024,
   maxSchemaDepth: 32,
@@ -26,7 +26,8 @@ export interface NormalizedMcpDiscoveredTool {
   outputSchema: Record<string, unknown> | null;
 }
 
-const ajv = new Ajv({
+const AjvCtor = (Ajv as any).default ?? Ajv;
+const ajv = new AjvCtor({
   allErrors: false,
   strict: false,
   validateSchema: true,
@@ -112,13 +113,37 @@ function toolSlug(value: string): string {
   return value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9_-]+/gu, "-")
+    .replace(/[^a-z0-9_.-]+/gu, "-")
     .replace(/^-+|-+$/gu, "")
-    .slice(0, 180) || "tool";
+    || "tool";
 }
 
 function collisionSuffix(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 8);
+}
+
+function boundedSegment(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  const suffix = collisionSuffix(value);
+  return `${value.slice(0, maxLength - suffix.length - 1)}-${suffix}`;
+}
+
+function boundedNamespacedToolName(
+  prefix: string,
+  toolName: string,
+  forceHash: boolean,
+  hashKey = toolName,
+): string {
+  const maxLength = 128;
+  const needsHash = forceHash || `${prefix}.${toolName}`.length > maxLength;
+  if (!needsHash) return `${prefix}.${toolName}`;
+
+  const suffix = collisionSuffix(hashKey);
+  const available = maxLength - prefix.length - 1 - suffix.length - 1;
+  if (available < 1) {
+    throw new Error("Managed MCP connection name leaves no room for a namespaced tool");
+  }
+  return `${prefix}.${toolName.slice(0, available)}-${suffix}`;
 }
 
 export function normalizeMcpDiscoveredTools(
@@ -134,7 +159,7 @@ export function normalizeMcpDiscoveredTools(
     if (
       !tool.name
       || tool.name.length > MCP_TOOL_DISCOVERY_LIMITS.maxToolNameCharacters
-      || /[\u0000-\u001f\u007f]/u.test(tool.name)
+      || !/^[A-Za-z0-9_.-]+$/u.test(tool.name)
     ) {
       throw new Error("Managed MCP tool name is invalid or exceeds the limit");
     }
@@ -144,7 +169,7 @@ export function normalizeMcpDiscoveredTools(
     names.add(tool.name);
   }
 
-  const connectionPrefix = `external.${toolSlug(connectionName)}`;
+  const connectionPrefix = `external.${boundedSegment(toolSlug(connectionName), 56)}`;
   const slugCounts = new Map<string, number>();
   for (const tool of tools) {
     const slug = toolSlug(tool.name);
@@ -157,13 +182,12 @@ export function normalizeMcpDiscoveredTools(
       ? normalizeSchema(tool.outputSchema, "output")
       : null;
     const slug = toolSlug(tool.name);
-    const uniqueSlug = slugCounts.get(slug) === 1
-      ? slug
-      : `${slug}-${collisionSuffix(tool.name)}`;
-    const rudderToolName = `${connectionPrefix}.${uniqueSlug}`;
-    if (rudderToolName.length > 320) {
-      throw new Error("Managed MCP namespaced tool name exceeds the limit");
-    }
+    const rudderToolName = boundedNamespacedToolName(
+      connectionPrefix,
+      slug,
+      slugCounts.get(slug) !== 1,
+      tool.name,
+    );
 
     const description = tool.description?.trim() || null;
     return {

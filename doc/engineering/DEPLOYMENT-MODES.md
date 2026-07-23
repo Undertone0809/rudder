@@ -54,8 +54,11 @@ for exceptions to the default network and process boundary:
   HTTPS needs no entry; HTTP, loopback, private, link-local, and reserved
   targets require an exact origin entry. Every DNS answer and redirect target
   is still validated and the request is connected to a pinned address.
-- `RUDDER_MCP_STDIO_EXECUTABLE_ALLOWLIST`: comma-separated exact executable
-  names or paths accepted in `authenticated` mode.
+- `RUDDER_MCP_STDIO_COMMAND_ALLOWLIST`: JSON array of exact argv arrays accepted
+  in `authenticated` mode, for example
+  `[["/opt/mcp/acme","--stdio"],["/usr/local/bin/node","/opt/mcp/server.mjs"]]`.
+  The executable must be absolute, and its real path plus every argument must
+  match one configured entry.
 - `RUDDER_MCP_STDIO_CWD_ALLOWLIST`: comma-separated exact working directories
   accepted in `authenticated` mode.
 - `RUDDER_MCP_STDIO_ENV_ALLOWLIST`: comma-separated environment variable names

@@ -1,5 +1,6 @@
 import type { DeploymentMode } from "@rudderhq/shared";
 import { lookup as dnsLookup } from "node:dns/promises";
+import { realpath as fsRealpath } from "node:fs/promises";
 import { BlockList, isIP } from "node:net";
 import path from "node:path";
 
@@ -7,14 +8,14 @@ const DNS_LOOKUP_TIMEOUT_MS = 5_000;
 
 export interface McpDeploymentAllowlists {
   httpOrigins: string[];
-  stdioExecutables: string[];
+  stdioCommands: string[][];
   stdioWorkingDirectories: string[];
   stdioEnvironmentNames: string[];
 }
 
 export interface McpStdioDeploymentPolicy {
   deploymentMode: DeploymentMode;
-  stdioExecutables: string[];
+  stdioCommands: string[][];
   stdioWorkingDirectories: string[];
   stdioEnvironmentNames: string[];
 }
@@ -39,6 +40,29 @@ function parseCsv(value: string | undefined): string[] {
   return Array.from(new Set(
     value.split(",").map((item) => item.trim()).filter(Boolean),
   ));
+}
+
+function parseStdioCommandAllowlist(value: string | undefined): string[][] {
+  if (!value?.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("RUDDER_MCP_STDIO_COMMAND_ALLOWLIST must be a JSON array of argv arrays");
+  }
+  if (
+    !Array.isArray(parsed)
+    || parsed.some((argv) => (
+      !Array.isArray(argv)
+      || argv.length === 0
+      || argv.some((part) => typeof part !== "string" || part.length === 0)
+    ))
+  ) {
+    throw new Error("RUDDER_MCP_STDIO_COMMAND_ALLOWLIST must be a JSON array of non-empty argv arrays");
+  }
+  return Array.from(
+    new Map((parsed as string[][]).map((argv) => [JSON.stringify(argv), argv])).values(),
+  );
 }
 
 function normalizeAllowlistedOrigin(value: string): string {
@@ -66,31 +90,78 @@ export function parseMcpDeploymentPolicyEnv(
 ): McpDeploymentAllowlists {
   return {
     httpOrigins: parseCsv(env.RUDDER_MCP_HTTP_ALLOWLIST).map(normalizeAllowlistedOrigin),
-    stdioExecutables: parseCsv(env.RUDDER_MCP_STDIO_EXECUTABLE_ALLOWLIST),
+    stdioCommands: parseStdioCommandAllowlist(env.RUDDER_MCP_STDIO_COMMAND_ALLOWLIST),
     stdioWorkingDirectories: parseCsv(env.RUDDER_MCP_STDIO_CWD_ALLOWLIST),
     stdioEnvironmentNames: parseCsv(env.RUDDER_MCP_STDIO_ENV_ALLOWLIST),
   };
 }
 
-function exactPathMatch(value: string, allowlist: string[]): boolean {
-  const normalized = path.resolve(value);
-  return allowlist.some((allowed) => path.resolve(allowed) === normalized);
-}
-
-export function validateMcpStdioPolicy(
+export async function validateMcpStdioPolicy(
   input: {
     command: string;
+    args?: string[];
     cwd?: string;
     environmentNames: string[];
   },
   policy: McpStdioDeploymentPolicy,
-): void {
+  dependencies: {
+    realpath?: (value: string) => Promise<string>;
+  } = {},
+): Promise<void> {
   if (policy.deploymentMode === "local_trusted") return;
 
-  if (!policy.stdioExecutables.includes(input.command)) {
-    throw new Error("MCP STDIO executable is not allowed by deployment policy");
+  if (!path.isAbsolute(input.command)) {
+    throw new Error("Authenticated MCP STDIO executable must use an absolute path");
   }
-  if (!input.cwd || !exactPathMatch(input.cwd, policy.stdioWorkingDirectories)) {
+  if (!input.cwd || !path.isAbsolute(input.cwd)) {
+    throw new Error("Authenticated MCP STDIO working directory must use an absolute path");
+  }
+
+  const resolveRealpath = dependencies.realpath ?? fsRealpath;
+  let executableRealpath: string;
+  let cwdRealpath: string;
+  try {
+    [executableRealpath, cwdRealpath] = await Promise.all([
+      resolveRealpath(input.command),
+      resolveRealpath(input.cwd),
+    ]);
+  } catch {
+    throw new Error("MCP STDIO executable or working directory could not be resolved");
+  }
+
+  const requestedArgs = input.args ?? [];
+  let commandAllowed = false;
+  for (const allowedArgv of policy.stdioCommands) {
+    const [allowedExecutable, ...allowedArgs] = allowedArgv;
+    if (!allowedExecutable || !path.isAbsolute(allowedExecutable)) continue;
+    let allowedExecutableRealpath: string;
+    try {
+      allowedExecutableRealpath = await resolveRealpath(allowedExecutable);
+    } catch {
+      continue;
+    }
+    if (
+      allowedExecutableRealpath === executableRealpath
+      && allowedArgs.length === requestedArgs.length
+      && allowedArgs.every((value, index) => requestedArgs[index] === value)
+    ) {
+      commandAllowed = true;
+      break;
+    }
+  }
+  if (!commandAllowed) {
+    throw new Error("MCP STDIO command argv is not allowed by deployment policy");
+  }
+
+  const allowedCwdRealpaths = await Promise.all(policy.stdioWorkingDirectories.map(async (allowed) => {
+    if (!path.isAbsolute(allowed)) return null;
+    try {
+      return await resolveRealpath(allowed);
+    } catch {
+      return null;
+    }
+  }));
+  if (!allowedCwdRealpaths.includes(cwdRealpath)) {
     throw new Error("MCP STDIO working directory is not allowed by deployment policy");
   }
   const allowedEnvironmentNames = new Set(policy.stdioEnvironmentNames);
@@ -122,10 +193,14 @@ for (const [network, prefix] of [
 for (const [network, prefix] of [
   ["::", 128],
   ["::1", 128],
+  ["::", 96],
+  ["64:ff9b::", 96],
   ["64:ff9b:1::", 48],
   ["100::", 64],
+  ["2001::", 32],
   ["2001:2::", 48],
   ["2001:db8::", 32],
+  ["2002::", 16],
   ["fc00::", 7],
   ["fe80::", 10],
   ["ff00::", 8],
@@ -168,10 +243,15 @@ function parseMcpTargetUrl(value: string): URL {
 
 const defaultLookup: McpDnsLookup = async (hostname) => {
   const results = await dnsLookup(hostname, { all: true, verbatim: true });
-  return results.map((result) => ({
-    address: result.address,
-    family: result.family,
-  }));
+  return results.map((result) => {
+    if (result.family !== 4 && result.family !== 6) {
+      throw new Error("Managed MCP DNS resolution returned an invalid address family");
+    }
+    return {
+      address: result.address,
+      family: result.family,
+    };
+  });
 };
 
 async function lookupWithTimeout(
@@ -228,6 +308,9 @@ export async function resolveMcpHttpTarget(
   );
   if (addresses.length === 0) {
     throw new Error("Managed MCP DNS resolution returned no addresses");
+  }
+  if (addresses.some((answer) => isIP(answer.address) !== answer.family)) {
+    throw new Error("Managed MCP DNS answer is not a valid address for its family");
   }
   if (!explicitlyAllowed && addresses.some((answer) => isBlockedMcpNetworkAddress(answer.address))) {
     throw new Error("Managed MCP target resolved to a blocked network address");

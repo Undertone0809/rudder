@@ -1,5 +1,5 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtemp, realpath, stat } from "node:fs/promises";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createManagedMcpClient,
   resolveMcpHttpCredentials,
+  type ResolvedMcpHttpCredentials,
 } from "./managed-client.js";
 
 interface MockMcpServer {
@@ -244,7 +245,7 @@ describe("managed MCP STDIO client", () => {
       hostEnv: { UNSELECTED_SECRET: "must-not-leak" },
       deploymentPolicy: {
         deploymentMode: "local_trusted",
-        stdioExecutables: [],
+        stdioCommands: [],
         stdioWorkingDirectories: [],
         stdioEnvironmentNames: [],
       },
@@ -282,7 +283,7 @@ describe("managed MCP STDIO client", () => {
       hostEnv: {},
       deploymentPolicy: {
         deploymentMode: "local_trusted",
-        stdioExecutables: [],
+        stdioCommands: [],
         stdioWorkingDirectories: [],
         stdioEnvironmentNames: [],
       },
@@ -298,5 +299,33 @@ describe("managed MCP STDIO client", () => {
     await expect(client.callTool("large", { bytes: 8_192 })).rejects.toSatisfy(
       (error: unknown) => JSON.stringify(error).includes("server-secret") === false,
     );
+  });
+
+  it("rejects forged resolved credentials at the true client boundary", async () => {
+    const server = await startMockMcpServer();
+    servers.push(server);
+    const forgedCredentials: ResolvedMcpHttpCredentials[] = [
+      {
+        headers: { Authorization: "Bearer manual-secret" },
+        authProvider: { token: async () => "oauth-secret" },
+      },
+      { headers: { Cookie: "cookie-secret" } },
+      { headers: { Host: "host-secret" } },
+      { headers: { "Proxy-Authorization": "proxy-secret" } },
+    ];
+    for (const forged of forgedCredentials) {
+      await expect(createManagedMcpClient({
+        transport: "streamable_http",
+        url: `${server.origin}/mcp`,
+        network: { allowedOrigins: [server.origin] },
+        credentials: forged,
+        startupTimeoutMs: 1_000,
+        toolTimeoutMs: 1_000,
+      })).rejects.toSatisfy((error: unknown) => (
+        !/manual-secret|oauth-secret|cookie-secret|host-secret|proxy-secret/u
+          .test(JSON.stringify(error))
+      ));
+    }
+    expect(server.requests).toHaveLength(0);
   });
 });

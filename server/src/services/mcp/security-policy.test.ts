@@ -10,50 +10,95 @@ describe("managed MCP deployment policy", () => {
   it("parses instance-admin allowlists from dedicated environment fields", () => {
     expect(parseMcpDeploymentPolicyEnv({
       RUDDER_MCP_HTTP_ALLOWLIST: "http://127.0.0.1:7788, https://internal.example",
-      RUDDER_MCP_STDIO_EXECUTABLE_ALLOWLIST: "/usr/local/bin/acme-mcp,node",
+      RUDDER_MCP_STDIO_COMMAND_ALLOWLIST:
+        ' [["/usr/local/bin/acme-mcp","--stdio"],["/usr/local/bin/node","/opt/mcp/server.mjs"]] ',
       RUDDER_MCP_STDIO_CWD_ALLOWLIST: "/srv/mcp,/opt/mcp",
       RUDDER_MCP_STDIO_ENV_ALLOWLIST: "SAFE_TOKEN,READ_ONLY_FLAG",
     })).toEqual({
       httpOrigins: ["http://127.0.0.1:7788", "https://internal.example"],
-      stdioExecutables: ["/usr/local/bin/acme-mcp", "node"],
+      stdioCommands: [
+        ["/usr/local/bin/acme-mcp", "--stdio"],
+        ["/usr/local/bin/node", "/opt/mcp/server.mjs"],
+      ],
       stdioWorkingDirectories: ["/srv/mcp", "/opt/mcp"],
       stdioEnvironmentNames: ["SAFE_TOKEN", "READ_ONLY_FLAG"],
     });
   });
 
-  it("allows arbitrary STDIO only for local trusted deployments", () => {
-    expect(() => validateMcpStdioPolicy({
+  it("allows arbitrary STDIO only for local trusted deployments", async () => {
+    await expect(validateMcpStdioPolicy({
       command: "arbitrary-command",
+      args: ["-e", "arbitrary-code"],
       cwd: "/anywhere",
       environmentNames: ["ANY_SECRET"],
     }, {
       deploymentMode: "local_trusted",
-      stdioExecutables: [],
+      stdioCommands: [],
       stdioWorkingDirectories: [],
       stdioEnvironmentNames: [],
-    })).not.toThrow();
+    })).resolves.toBeUndefined();
 
-    expect(() => validateMcpStdioPolicy({
+    await expect(validateMcpStdioPolicy({
       command: "/usr/local/bin/acme-mcp",
+      args: ["--stdio"],
       cwd: "/srv/mcp",
       environmentNames: ["SAFE_TOKEN"],
     }, {
       deploymentMode: "authenticated",
-      stdioExecutables: ["/usr/local/bin/acme-mcp"],
+      stdioCommands: [["/usr/local/bin/acme-mcp", "--stdio"]],
       stdioWorkingDirectories: ["/srv/mcp"],
       stdioEnvironmentNames: ["SAFE_TOKEN"],
-    })).not.toThrow();
+    }, {
+      realpath: async (value) => value,
+    })).resolves.toBeUndefined();
 
-    expect(() => validateMcpStdioPolicy({
-      command: "/bin/sh",
+    await expect(validateMcpStdioPolicy({
+      command: "/usr/local/bin/acme-mcp",
+      args: ["--stdio", "--exec", "arbitrary-code"],
       cwd: "/srv/mcp",
       environmentNames: ["SAFE_TOKEN"],
     }, {
       deploymentMode: "authenticated",
-      stdioExecutables: ["/usr/local/bin/acme-mcp"],
+      stdioCommands: [["/usr/local/bin/acme-mcp", "--stdio"]],
       stdioWorkingDirectories: ["/srv/mcp"],
       stdioEnvironmentNames: ["SAFE_TOKEN"],
-    })).toThrow(/executable/i);
+    }, {
+      realpath: async (value) => value,
+    })).rejects.toThrow(/command/i);
+  });
+
+  it("requires authenticated commands to use absolute real paths for executable and cwd", async () => {
+    const aliases = new Map([
+      ["/allowed/acme", "/opt/bin/acme"],
+      ["/requested/acme", "/opt/bin/acme"],
+      ["/allowed/workspace", "/srv/real-workspace"],
+      ["/requested/workspace", "/srv/real-workspace"],
+    ]);
+    const realpath = async (value: string) => aliases.get(value) ?? value;
+
+    await expect(validateMcpStdioPolicy({
+      command: "/requested/acme",
+      args: ["--stdio"],
+      cwd: "/requested/workspace",
+      environmentNames: [],
+    }, {
+      deploymentMode: "authenticated",
+      stdioCommands: [["/allowed/acme", "--stdio"]],
+      stdioWorkingDirectories: ["/allowed/workspace"],
+      stdioEnvironmentNames: [],
+    }, { realpath })).resolves.toBeUndefined();
+
+    await expect(validateMcpStdioPolicy({
+      command: "node",
+      args: ["/opt/mcp/server.mjs"],
+      cwd: "/requested/workspace",
+      environmentNames: [],
+    }, {
+      deploymentMode: "authenticated",
+      stdioCommands: [["/usr/local/bin/node", "/opt/mcp/server.mjs"]],
+      stdioWorkingDirectories: ["/allowed/workspace"],
+      stdioEnvironmentNames: [],
+    }, { realpath })).rejects.toThrow(/absolute/i);
   });
 });
 
@@ -84,6 +129,32 @@ describe("managed MCP outbound target policy", () => {
       lookup,
       allowedOrigins: [],
     })).rejects.toThrow(/blocked network address/i);
+  });
+
+  it("rejects non-IP and address-family-mismatched DNS answers even for allowlisted origins", async () => {
+    for (const answer of [
+      { address: "localhost", family: 4 as const },
+      { address: "127.0.0.1", family: 6 as const },
+    ]) {
+      await expect(resolveMcpHttpTarget("http://internal.example/mcp", {
+        lookup: async () => [answer],
+        allowedOrigins: ["http://internal.example"],
+      })).rejects.toThrow(/DNS answer/i);
+    }
+  });
+
+  it("blocks NAT64 and IPv4-compatible address encodings of private targets", async () => {
+    for (const address of [
+      "64:ff9b::7f00:1",
+      "64:ff9b:1::7f00:1",
+      "::7f00:1",
+      "2002:7f00:1::",
+    ]) {
+      await expect(resolveMcpHttpTarget("https://encoded.example/mcp", {
+        lookup: async () => [{ address, family: 6 }],
+        allowedOrigins: [],
+      })).rejects.toThrow(/blocked network address/i);
+    }
   });
 
   it("rejects HTTP, localhost, private targets, userinfo, and fragments without an exact origin allowlist", async () => {
