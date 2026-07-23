@@ -182,6 +182,8 @@ export async function validateMcpStdioPolicy(
 }
 
 const blockedAddresses = new BlockList();
+const globallyRoutableIpv6 = new BlockList();
+globallyRoutableIpv6.addSubnet("2000::", 3, "ipv6");
 for (const [network, prefix] of [
   ["0.0.0.0", 8],
   ["10.0.0.0", 8],
@@ -208,10 +210,15 @@ for (const [network, prefix] of [
   ["64:ff9b::", 96],
   ["64:ff9b:1::", 48],
   ["100::", 64],
-  ["2001::", 32],
+  // Conservative snapshot of the IANA IPv6 Special-Purpose Address Registry
+  // (last updated 2025-10-09). Only 2000::/3 is eligible above, and these
+  // special-purpose subranges remain denied until a deliberate registry review.
+  ["2001::", 23],
   ["2001:2::", 48],
   ["2001:db8::", 32],
   ["2002::", 16],
+  ["2620:4f:8000::", 48],
+  ["3fff::", 20],
   ["fc00::", 7],
   ["fe80::", 10],
   ["ff00::", 8],
@@ -274,7 +281,11 @@ export function isBlockedMcpNetworkAddress(address: string): boolean {
   const family = isIP(address);
   if (family === 4) return blockedAddresses.check(address, "ipv4");
   if (family === 6) {
-    return isIpv4TranslatedAddress(address) || blockedAddresses.check(address, "ipv6");
+    return (
+      !globallyRoutableIpv6.check(address, "ipv6")
+      || isIpv4TranslatedAddress(address)
+      || blockedAddresses.check(address, "ipv6")
+    );
   }
   return true;
 }

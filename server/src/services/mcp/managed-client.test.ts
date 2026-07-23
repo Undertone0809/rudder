@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, stat, symlink } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +28,7 @@ function json(res: ServerResponse, status: number, body: unknown) {
 }
 
 async function startMockMcpServer(options: {
+  alwaysUnauthorized?: boolean;
   requiredBearer?: string;
   refreshBearer?: string;
   redirectOnce?: boolean;
@@ -55,7 +56,10 @@ async function startMockMcpServer(options: {
     const authorization = req.headers.authorization;
     requests.push({ method: message.method, authorization });
     const acceptedBearer = options.refreshBearer ?? options.requiredBearer;
-    if (acceptedBearer && authorization !== `Bearer ${acceptedBearer}`) {
+    if (
+      options.alwaysUnauthorized
+      || (acceptedBearer && authorization !== `Bearer ${acceptedBearer}`)
+    ) {
       res.writeHead(401, { "www-authenticate": "Bearer" });
       res.end();
       return;
@@ -190,6 +194,44 @@ describe("managed MCP Streamable HTTP client", () => {
     expect(server.requests.at(-1)?.authorization).toBe("Bearer fresh-token");
   });
 
+  it("preserves the receiver for stateful OAuth credentials", async () => {
+    const oauth = {
+      currentToken: "stateful-token",
+      async token() {
+        return this.currentToken;
+      },
+      async refresh() {},
+    };
+
+    const credentials = resolveMcpHttpCredentials({ oauth });
+    await expect(credentials.authProvider?.token()).resolves.toBe("stateful-token");
+  });
+
+  it("refreshes only once and surfaces persistent upstream 401 responses", async () => {
+    const server = await startMockMcpServer({ alwaysUnauthorized: true });
+    servers.push(server);
+    let refreshes = 0;
+
+    await expect(createManagedMcpClient({
+      transport: "streamable_http",
+      url: `${server.origin}/mcp`,
+      network: { allowedOrigins: [server.origin] },
+      credentials: resolveMcpHttpCredentials({
+        oauth: {
+          token: async () => "always-rejected",
+          refresh: async () => {
+            refreshes += 1;
+          },
+        },
+      }),
+      startupTimeoutMs: 1_000,
+      toolTimeoutMs: 1_000,
+    })).rejects.toMatchObject({ code: "mcp_upstream_unauthorized" });
+
+    expect(refreshes).toBe(1);
+    expect(server.requests.filter((request) => request.method === "initialize")).toHaveLength(2);
+  });
+
   it("follows only policy-validated redirects and surfaces rate limits safely", async () => {
     const redirecting = await startMockMcpServer({ redirectOnce: true });
     servers.push(redirecting);
@@ -229,25 +271,42 @@ describe("managed MCP Streamable HTTP client", () => {
 });
 
 describe("managed MCP STDIO client", () => {
-  it("passes argv without a shell, selects environment, and reaps the child on close", async () => {
-    const cwd = await mkdtemp(path.join(os.tmpdir(), "rudder-mcp-stdio-"));
-    const touchedPath = path.join(cwd, "must-not-exist");
+  it("uses canonical authenticated paths, selects environment, and force-reaps a stubborn child", async () => {
+    const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "rudder-mcp-stdio-"));
+    const canonicalCwd = path.join(fixtureRoot, "canonical-cwd");
+    const cwdAlias = path.join(fixtureRoot, "cwd-alias");
+    const commandAlias = path.join(fixtureRoot, "node-alias");
+    await mkdir(canonicalCwd);
+    await symlink(canonicalCwd, cwdAlias, "dir");
+    await symlink(process.execPath, commandAlias, "file");
+    const touchedPath = path.join(canonicalCwd, "must-not-exist");
     const shellText = `$(touch ${touchedPath})`;
     const fixturePath = fileURLToPath(new URL("./__fixtures__/stdio-server.mjs", import.meta.url));
     const client = await createManagedMcpClient({
       transport: "stdio",
-      command: process.execPath,
+      command: commandAlias,
       args: [fixturePath, shellText],
-      cwd,
-      staticEnv: { SELECTED_ENV: "selected-value" },
-      forwardedEnv: [],
-      secretEnv: {},
-      hostEnv: { UNSELECTED_SECRET: "must-not-leak" },
+      cwd: cwdAlias,
+      staticEnv: {
+        STATIC_ENV: "static-value",
+        STUBBORN_MODE: "1",
+      },
+      forwardedEnv: ["FORWARDED_ENV"],
+      secretEnv: { SECRET_ENV: "secret-value" },
+      hostEnv: {
+        FORWARDED_ENV: "forwarded-value",
+        UNSELECTED_SECRET: "must-not-leak",
+      },
       deploymentPolicy: {
-        deploymentMode: "local_trusted",
-        stdioCommands: [],
-        stdioWorkingDirectories: [],
-        stdioEnvironmentNames: [],
+        deploymentMode: "authenticated",
+        stdioCommands: [[commandAlias, fixturePath, shellText]],
+        stdioWorkingDirectories: [cwdAlias],
+        stdioEnvironmentNames: [
+          "STATIC_ENV",
+          "STUBBORN_MODE",
+          "FORWARDED_ENV",
+          "SECRET_ENV",
+        ],
       },
       startupTimeoutMs: 1_000,
       toolTimeoutMs: 1_000,
@@ -258,20 +317,26 @@ describe("managed MCP STDIO client", () => {
     const result = await client.callTool("inspect", {});
     const details = result.structuredContent as Record<string, unknown>;
     expect(details).toMatchObject({
-      cwd: await realpath(cwd),
+      argv0: await realpath(process.execPath),
+      cwd: await realpath(canonicalCwd),
       extraArg: shellText,
-      selectedEnv: "selected-value",
+      staticEnv: "static-value",
+      forwardedEnv: "forwarded-value",
+      secretEnv: "secret-value",
       unselectedEnv: null,
+      inheritedHome: null,
     });
     await expect(stat(touchedPath)).rejects.toMatchObject({ code: "ENOENT" });
 
     const pid = details.pid as number;
+    const closeStartedAt = Date.now();
     await client.close();
     clients.splice(clients.indexOf(client), 1);
+    expect(Date.now() - closeStartedAt).toBeLessThan(1_500);
     expect(() => process.kill(pid, 0)).toThrow();
   });
 
-  it("enforces tool timeout and output limits with redacted errors", async () => {
+  it("enforces tool timeout with redacted errors", async () => {
     const fixturePath = fileURLToPath(new URL("./__fixtures__/stdio-server.mjs", import.meta.url));
     const client = await createManagedMcpClient({
       transport: "stdio",
@@ -296,9 +361,42 @@ describe("managed MCP STDIO client", () => {
     await expect(client.callTool("sleep", { delayMs: 100 })).rejects.toMatchObject({
       code: "mcp_tool_timeout",
     });
-    await expect(client.callTool("large", { bytes: 8_192 })).rejects.toSatisfy(
-      (error: unknown) => JSON.stringify(error).includes("server-secret") === false,
+  });
+
+  it("returns a specific output-boundary error and reaps the child", async () => {
+    const fixturePath = fileURLToPath(new URL("./__fixtures__/stdio-server.mjs", import.meta.url));
+    const client = await createManagedMcpClient({
+      transport: "stdio",
+      command: process.execPath,
+      args: [fixturePath],
+      staticEnv: {},
+      forwardedEnv: [],
+      secretEnv: { SECRET_ENV: "server-secret" },
+      hostEnv: {},
+      deploymentPolicy: {
+        deploymentMode: "local_trusted",
+        stdioCommands: [],
+        stdioWorkingDirectories: [],
+        stdioEnvironmentNames: [],
+      },
+      startupTimeoutMs: 1_000,
+      toolTimeoutMs: 1_000,
+      maxOutputBytes: 2_048,
+    });
+    clients.push(client);
+
+    const inspected = await client.callTool("inspect", {});
+    const pid = (inspected.structuredContent as Record<string, unknown>).pid as number;
+    const largeError = await client.callTool("large", { bytes: 8_192 }).then(
+      () => null,
+      (error: unknown) => error,
     );
+    await client.close();
+    clients.splice(clients.indexOf(client), 1);
+
+    expect(largeError).toMatchObject({ code: "mcp_result_too_large" });
+    expect(JSON.stringify(largeError)).not.toContain("server-secret");
+    expect(() => process.kill(pid, 0)).toThrow();
   });
 
   it("rejects forged resolved credentials at the true client boundary", async () => {

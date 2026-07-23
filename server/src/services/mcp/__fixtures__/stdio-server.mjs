@@ -1,6 +1,10 @@
 import readline from "node:readline";
 
 const extraArg = process.argv[2] ?? null;
+if (process.env.STUBBORN_MODE === "1") {
+  process.on("SIGTERM", () => {});
+  setInterval(() => {}, 60_000);
+}
 const lines = readline.createInterface({
   input: process.stdin,
   crlfDelay: Infinity,
@@ -70,10 +74,14 @@ lines.on("line", (line) => {
     content: [{ type: "text", text: "ok" }],
     structuredContent: {
       pid: process.pid,
+      argv0: process.argv0,
       cwd: process.cwd(),
       extraArg,
-      selectedEnv: process.env.SELECTED_ENV ?? null,
+      staticEnv: process.env.STATIC_ENV ?? null,
+      forwardedEnv: process.env.FORWARDED_ENV ?? null,
+      secretEnv: process.env.SECRET_ENV ?? null,
       unselectedEnv: process.env.UNSELECTED_SECRET ?? null,
+      inheritedHome: process.env.HOME || null,
     },
   });
 });

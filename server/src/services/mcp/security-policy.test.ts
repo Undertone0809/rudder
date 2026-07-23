@@ -140,6 +140,31 @@ describe("managed MCP outbound target policy", () => {
     })).rejects.toThrow(/blocked network address/i);
   });
 
+  it("allows only globally routable IPv6 outside IANA special-purpose ranges", async () => {
+    await expect(resolveMcpHttpTarget("https://public-v6.example/mcp", {
+      lookup: async () => [{ address: "2606:4700:4700::1111", family: 6 }],
+      allowedOrigins: [],
+    })).resolves.toMatchObject({ resolvedAddress: "2606:4700:4700::1111" });
+
+    for (const address of [
+      "4000::1",
+      "fec0::1",
+      "2001:20::1",
+      "3fff::1",
+      "5f00::1",
+    ]) {
+      await expect(resolveMcpHttpTarget("https://reserved-v6.example/mcp", {
+        lookup: async () => [{ address, family: 6 }],
+        allowedOrigins: [],
+      })).rejects.toThrow(/blocked network address/i);
+    }
+
+    await expect(resolveMcpHttpTarget("https://reserved-v6.example/mcp", {
+      lookup: async () => [{ address: "4000::1", family: 6 }],
+      allowedOrigins: ["https://reserved-v6.example"],
+    })).resolves.toMatchObject({ resolvedAddress: "4000::1" });
+  });
+
   it("rejects non-IP and address-family-mismatched DNS answers even for allowlisted origins", async () => {
     for (const answer of [
       { address: "localhost", family: 4 as const },
