@@ -127,6 +127,57 @@ function clientWithTools(
   } satisfies ManagedMcpClient;
 }
 
+async function holdConnectionRowLock(
+  db: ReturnType<typeof createDb>,
+  connectionId: string,
+) {
+  let signalAcquired!: () => void;
+  let signalRelease!: () => void;
+  const acquired = new Promise<void>((resolve) => {
+    signalAcquired = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    signalRelease = resolve;
+  });
+  const transaction = db.transaction(async (tx) => {
+    await tx
+      .select({ id: mcpConnections.id })
+      .from(mcpConnections)
+      .where(eq(mcpConnections.id, connectionId))
+      .for("update");
+    signalAcquired();
+    await released;
+  });
+  await acquired;
+  let didRelease = false;
+  return {
+    release: () => {
+      if (didRelease) return;
+      didRelease = true;
+      signalRelease();
+    },
+    transaction,
+  };
+}
+
+async function waitForDatabaseLockWaiters(
+  db: ReturnType<typeof createDb>,
+  minimum: number,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const rows = await db.$client.unsafe(
+      `select count(*)::int as count
+       from pg_stat_activity
+       where datname = current_database()
+         and wait_event_type = 'Lock'`,
+    ) as Array<{ count: number }>;
+    if ((rows[0]?.count ?? 0) >= minimum) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${minimum} PostgreSQL lock waiters`);
+}
+
 describe("managedMcpConnectionService", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: LocalPostgresInstance | null = null;
@@ -740,6 +791,113 @@ describe("managedMcpConnectionService", () => {
         drop trigger if exists reject_old_managed_mcp_credential_delete on organization_secrets;
         drop function if exists reject_old_managed_mcp_credential_delete();
       `);
+    }
+  });
+
+  it("serializes concurrent same-shape replacements without orphan credentials", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+    const secrets = secretService(db);
+    const connection = await svc.create(orgId, {
+      name: "concurrent-replacements",
+      displayName: "Concurrent replacements",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: {
+        url: "https://mcp.example.test/mcp",
+        secretHeaderNames: ["Authorization"],
+      },
+      secrets: { headers: { Authorization: "Bearer original-concurrent-secret" } },
+    }, { userId: "owner-1" });
+    const lock = await holdConnectionRowLock(db, connection.id);
+    let settled: PromiseSettledResult<unknown>[];
+    try {
+      const replacements = [
+        svc.update(orgId, connection.id, {
+          secrets: { headers: { Authorization: "Bearer concurrent-replacement-a" } },
+        }, { userId: "owner-a" }),
+        svc.update(orgId, connection.id, {
+          secrets: { headers: { Authorization: "Bearer concurrent-replacement-b" } },
+        }, { userId: "owner-b" }),
+      ];
+      await waitForDatabaseLockWaiters(db, 2);
+      lock.release();
+      settled = await Promise.allSettled(replacements);
+      await lock.transaction;
+    } finally {
+      lock.release();
+      await lock.transaction;
+    }
+
+    expect(settled.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const [after] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    const storedSecrets = await db.select().from(organizationSecrets);
+    const storedVersions = await db.select().from(organizationSecretVersions);
+    expect(storedSecrets).toHaveLength(1);
+    expect(storedVersions).toHaveLength(1);
+    expect(after?.credentialSecretId).toBe(storedSecrets[0]?.id);
+    expect(storedVersions[0]?.secretId).toBe(after?.credentialSecretId);
+    expect([
+      JSON.stringify({ headers: { Authorization: "Bearer concurrent-replacement-a" } }),
+      JSON.stringify({ headers: { Authorization: "Bearer concurrent-replacement-b" } }),
+    ]).toContain(await secrets.resolveSecretValue(
+      orgId,
+      after!.credentialSecretId!,
+      "latest",
+    ));
+  });
+
+  it("serializes concurrent replacement and clear with a winner-consistent final state", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "concurrent-replace-clear",
+      displayName: "Concurrent replace clear",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: {
+        url: "https://mcp.example.test/mcp",
+        secretHeaderNames: ["Authorization"],
+      },
+      secrets: { headers: { Authorization: "Bearer original-replace-clear" } },
+    }, { userId: "owner-1" });
+    const lock = await holdConnectionRowLock(db, connection.id);
+    let settled: PromiseSettledResult<unknown>[];
+    try {
+      const replacement = svc.update(orgId, connection.id, {
+        secrets: { headers: { Authorization: "Bearer replacement-winner" } },
+      }, { userId: "owner-replace" });
+      const clear = svc.update(orgId, connection.id, {
+        safeConfig: { url: "https://mcp.example.test/mcp" },
+      }, { userId: "owner-clear" });
+      await waitForDatabaseLockWaiters(db, 2);
+      lock.release();
+      settled = await Promise.allSettled([replacement, clear]);
+      await lock.transaction;
+    } finally {
+      lock.release();
+      await lock.transaction;
+    }
+
+    expect(settled.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const replacementWon = settled[0]?.status === "fulfilled";
+    const [after] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    const storedSecrets = await db.select().from(organizationSecrets);
+    const storedVersions = await db.select().from(organizationSecretVersions);
+    expect(after?.credentialSecretId !== null).toBe(replacementWon);
+    expect(after?.safeConfig).toEqual(replacementWon
+      ? {
+          url: "https://mcp.example.test/mcp",
+          secretHeaderNames: ["Authorization"],
+        }
+      : { url: "https://mcp.example.test/mcp" });
+    expect(storedSecrets).toHaveLength(replacementWon ? 1 : 0);
+    expect(storedVersions).toHaveLength(replacementWon ? 1 : 0);
+    if (replacementWon) {
+      expect(storedSecrets[0]?.id).toBe(after?.credentialSecretId);
+      expect(storedVersions[0]?.secretId).toBe(after?.credentialSecretId);
     }
   });
 

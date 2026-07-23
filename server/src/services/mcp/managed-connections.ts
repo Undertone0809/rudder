@@ -4,6 +4,7 @@ import {
   mcpConnections,
   mcpOAuthGrants,
   organizationSecrets,
+  organizationSecretVersions,
 } from "@rudderhq/db";
 import {
   createMcpConnectionSchema,
@@ -21,6 +22,7 @@ import {
 import { and, asc, eq, ne } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, HttpError, notFound, unprocessable } from "../../errors.js";
+import { getSecretProvider } from "../../secrets/provider-registry.js";
 import { secretService } from "../secrets.js";
 import {
   createManagedMcpClient,
@@ -52,6 +54,14 @@ interface ManagedMcpCredentialPayload {
   env?: Record<string, string>;
   headers?: Record<string, string>;
   bearerToken?: string;
+}
+
+interface PreparedManagedMcpCredential {
+  id: string;
+  name: string;
+  externalRef: string | null;
+  material: Record<string, unknown>;
+  valueSha256: string;
 }
 
 export interface ManagedMcpConnectionServiceOptions {
@@ -412,6 +422,24 @@ export function managedMcpConnectionService(
     }, actor);
   }
 
+  async function prepareCredentialReplacement(
+    connectionName: string,
+    value: McpConnectionSecretsMutation,
+  ): Promise<PreparedManagedMcpCredential> {
+    const id = randomUUID();
+    const prepared = await getSecretProvider("local_encrypted").createVersion({
+      value: JSON.stringify(customSecretPayload(value)),
+      externalRef: null,
+    });
+    return {
+      id,
+      name: `Managed MCP credentials - ${connectionName} - ${id}`,
+      externalRef: prepared.externalRef,
+      material: prepared.material,
+      valueSha256: prepared.valueSha256,
+    };
+  }
+
   async function resolveCredentialPayload(row: McpConnectionRow): Promise<ManagedMcpCredentialPayload> {
     if (!row.credentialSecretId) return {};
     return parseCredentialPayload(
@@ -654,56 +682,79 @@ export function managedMcpConnectionService(
       });
 
       let credentialSecretId = existing.credentialSecretId;
-      let replacementSecretId: string | null = null;
       let oldSecretIdToDelete: string | null = null;
-      if (patch.secrets) {
+      const replacement = patch.secrets
+        ? await prepareCredentialReplacement(existing.name, patch.secrets)
+        : null;
+      if (replacement) {
         oldSecretIdToDelete = credentialSecretId;
-        const replacement = await createCredential(orgId, existing.name, patch.secrets, actor);
         credentialSecretId = replacement.id;
-        replacementSecretId = replacement.id;
       } else if (declarationChanged && !hasDeclaredSecrets(nextShape) && credentialSecretId) {
         oldSecretIdToDelete = credentialSecretId;
         credentialSecretId = null;
       }
 
-      let row: McpConnectionRow;
-      try {
-        row = await db.transaction(async (tx) => {
-          const updated = await tx
-            .update(mcpConnections)
-            .set({
-              credentialSecretId,
-              ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
-              ...(patch.externalScope !== undefined ? { externalScope: patch.externalScope ?? null } : {}),
-              ...(patch.accessMode !== undefined ? { accessMode: patch.accessMode } : {}),
-              ...(patch.safeConfig !== undefined ? { safeConfig: patch.safeConfig } : {}),
-              ...(patch.startupTimeoutMs !== undefined ? { startupTimeoutMs: patch.startupTimeoutMs } : {}),
-              ...(patch.toolTimeoutMs !== undefined ? { toolTimeoutMs: patch.toolTimeoutMs } : {}),
-              ...(patch.enabled !== undefined ? {
-                enabled: patch.enabled,
-                disabledAt: patch.enabled ? null : new Date(),
-                status: patch.enabled ? existing.status : "disabled",
-              } : {}),
-              ...(patch.required !== undefined ? { required: patch.required } : {}),
-              updatedAt: new Date(),
-            })
-            .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
-            .returning()
-            .then((rows) => rows[0] ?? null);
-          if (!updated) throw notFound("MCP connection not found");
-          if (oldSecretIdToDelete) {
-            await tx
-              .delete(organizationSecrets)
-              .where(eq(organizationSecrets.id, oldSecretIdToDelete));
-          }
-          return updated;
-        });
-      } catch (error) {
-        if (replacementSecretId) {
-          await secrets.remove(replacementSecretId);
+      const row = await db.transaction(async (tx) => {
+        const locked = await tx
+          .select()
+          .from(mcpConnections)
+          .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!locked) throw notFound("MCP connection not found");
+        if (locked.credentialSecretId !== existing.credentialSecretId) {
+          throw conflict("Managed MCP credentials changed; retry the connection update");
         }
-        throw error;
-      }
+        if (replacement) {
+          await tx.insert(organizationSecrets).values({
+            id: replacement.id,
+            orgId,
+            name: replacement.name,
+            provider: "local_encrypted",
+            externalRef: replacement.externalRef,
+            latestVersion: 1,
+            description: "Encrypted managed MCP credentials",
+            createdByAgentId: actor.agentId ?? null,
+            createdByUserId: actor.userId ?? null,
+          });
+          await tx.insert(organizationSecretVersions).values({
+            secretId: replacement.id,
+            version: 1,
+            material: replacement.material,
+            valueSha256: replacement.valueSha256,
+            createdByAgentId: actor.agentId ?? null,
+            createdByUserId: actor.userId ?? null,
+          });
+        }
+        const updated = await tx
+          .update(mcpConnections)
+          .set({
+            credentialSecretId,
+            ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
+            ...(patch.externalScope !== undefined ? { externalScope: patch.externalScope ?? null } : {}),
+            ...(patch.accessMode !== undefined ? { accessMode: patch.accessMode } : {}),
+            ...(patch.safeConfig !== undefined ? { safeConfig: patch.safeConfig } : {}),
+            ...(patch.startupTimeoutMs !== undefined ? { startupTimeoutMs: patch.startupTimeoutMs } : {}),
+            ...(patch.toolTimeoutMs !== undefined ? { toolTimeoutMs: patch.toolTimeoutMs } : {}),
+            ...(patch.enabled !== undefined ? {
+              enabled: patch.enabled,
+              disabledAt: patch.enabled ? null : new Date(),
+              status: patch.enabled ? existing.status : "disabled",
+            } : {}),
+            ...(patch.required !== undefined ? { required: patch.required } : {}),
+            updatedAt: new Date(),
+          })
+          .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        if (!updated) throw notFound("MCP connection not found");
+        if (oldSecretIdToDelete) {
+          await tx
+            .delete(organizationSecrets)
+            .where(eq(organizationSecrets.id, oldSecretIdToDelete));
+        }
+        return updated;
+      });
       return publicSummary(row);
     },
 
