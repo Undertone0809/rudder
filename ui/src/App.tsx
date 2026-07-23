@@ -23,6 +23,7 @@ import { useI18n } from "./context/I18nContext";
 import { LiveSurfaceRuntimeLayer, LiveSurfaceRuntimeProvider } from "./context/LiveSurfaceRuntimeContext";
 import { MainWorkbenchProvider } from "./context/MainWorkbenchContext";
 import { useOrganization } from "./context/OrganizationContext";
+import { SavedViewPromotionProvider } from "./context/SavedViewPromotionContext";
 import { SidePanelProvider } from "./context/SidePanelContext";
 import { useViewedOrganization } from "./hooks/useViewedOrganization";
 import {
@@ -558,6 +559,7 @@ export function App() {
       <LiveSurfaceRuntimeProvider>
       <MainWorkbenchProvider>
       <SidePanelProvider>
+      <SavedViewPromotionProvider>
         <DesktopBrowserLinkBridge />
         <Routes location={showDesktopSettingsOverlay ? settingsOverlayBackgroundPath! : location}>
         <Route path="auth" element={<AuthPage />} />
@@ -635,6 +637,7 @@ export function App() {
           <Route path="*" element={<NotFoundPage scope="global" />} />
         </Route>
         </Routes>
+      </SavedViewPromotionProvider>
       </SidePanelProvider>
       <LiveSurfaceRuntimeLayer />
       </MainWorkbenchProvider>

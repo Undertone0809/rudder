@@ -112,6 +112,9 @@ const mockState = vi.hoisted(() => ({
   browserShortcutListener: null as ((action: BrowserShortcutAction) => void) | null,
   openPath: vi.fn(),
   previewLocalFile: vi.fn(),
+  savedViewPromotionDiscard: vi.fn(),
+  savedViewPromotionEnabled: false,
+  savedViewPromotionIsMoving: false,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -423,6 +426,26 @@ vi.mock("@/context/BreadcrumbContext", () => ({
 vi.mock("@/context/ToastContext", () => ({
   useOptionalToast: () => null,
   useToast: () => ({ pushToast: mockState.pushToast }),
+}));
+
+vi.mock("@/context/SavedViewPromotionContext", () => ({
+  useOptionalSavedViewPromotion: () => (
+    mockState.savedViewPromotionEnabled
+      ? {
+          discard: mockState.savedViewPromotionDiscard,
+          getMoveState: () => ({
+            clientMutationId: null,
+            error: null,
+            promotionId: null,
+            retryable: false,
+            status: "idle",
+          }),
+          isMoving: () => mockState.savedViewPromotionIsMoving,
+          promote: vi.fn(),
+          retry: vi.fn(),
+        }
+      : null
+  ),
 }));
 
 vi.mock("@/context/DialogContext", () => ({
@@ -1374,6 +1397,9 @@ beforeEach(() => {
   });
   resetChatPendingAttachmentsForTests();
   mockState.conversationId = "chat-1";
+  mockState.savedViewPromotionDiscard.mockReset();
+  mockState.savedViewPromotionEnabled = false;
+  mockState.savedViewPromotionIsMoving = false;
   mockState.openPath.mockReset();
   mockState.previewLocalFile.mockReset();
   mockState.failAgents = false;
@@ -1750,6 +1776,54 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(0);
+  });
+
+  it("abandons a terminal Saved View promotion before closing its retained Side source", async () => {
+    mockState.savedViewPromotionEnabled = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+    mockState.savedViewPromotionDiscard.mockImplementation(() => {
+      expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']"))
+        .toHaveLength(1);
+      return true;
+    });
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "browser",
+                tabId: "retained-tab",
+                viewInstanceId: "retained-view",
+                url: "https://example.com/retained",
+                label: "Retained view",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='chat-side-panel-tab-close']",
+      )?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.savedViewPromotionDiscard).toHaveBeenCalledWith(
+      "org-1",
+      expect.any(String),
+      expect.objectContaining({ viewInstanceId: "retained-view" }),
+    );
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']"))
+      .toHaveLength(0);
   });
 
   it("explains why a draft Side Chat cannot move to Messenger", async () => {
