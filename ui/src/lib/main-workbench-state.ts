@@ -284,6 +284,12 @@ export type MainWorkbenchAction =
       promotionId: string;
       expectedSourceRevision: number;
       nextSourceRevision: number;
+    }
+  | {
+      type: "promotion/discard";
+      organizationId: string;
+      promotionId: string;
+      expectedSourceRevision: number;
     };
 
 function emptyOrganizationState(): MainWorkbenchOrganizationState {
@@ -1097,6 +1103,26 @@ function clearPromotion(
   };
 }
 
+function discardPromotion(
+  organization: MainWorkbenchOrganizationState,
+  promotionId: string,
+  expectedSourceRevision: number,
+): MainWorkbenchOrganizationState {
+  const promotion = organization.promotionsById[promotionId];
+  if (
+    !promotion
+    || (
+      promotion.status !== "server_failed"
+      && promotion.status !== "commit_unknown"
+      && promotion.status !== "claim_failed"
+    )
+    || promotion.source.sourceRevision !== expectedSourceRevision
+  ) {
+    return organization;
+  }
+  return clearPromotion(organization, promotionId);
+}
+
 function promotionClaimConflict(
   organization: MainWorkbenchOrganizationState,
   organizationId: string,
@@ -1672,6 +1698,14 @@ export function mainWorkbenchReducer(
           action.promotionId,
           action.expectedSourceRevision,
           action.nextSourceRevision,
+        )
+      ));
+    case "promotion/discard":
+      return updateOrganization(state, action.organizationId, (organization) => (
+        discardPromotion(
+          organization,
+          action.promotionId,
+          action.expectedSourceRevision,
         )
       ));
   }

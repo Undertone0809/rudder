@@ -41,6 +41,7 @@ import {
   type LiveSurfaceTarget,
 } from "@/context/LiveSurfaceRuntimeContext";
 import { useOrganization } from "@/context/OrganizationContext";
+import { useOptionalSavedViewPromotion } from "@/context/SavedViewPromotionContext";
 import { MAX_BROWSER_TABS_PER_CONTEXT, useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { useBrowserSavedViewMetadataPersister } from "@/hooks/useBrowserSavedViewMetadataPersister";
@@ -1376,6 +1377,7 @@ export function ChatSidePanel({
 }) {
   const sidePanel = useSidePanel();
   const liveSurfaceRuntime = useOptionalLiveSurfaceRuntime();
+  const savedViewPromotion = useOptionalSavedViewPromotion();
   const { pushToast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
@@ -1691,6 +1693,21 @@ export function ChatSidePanel({
   }, [liveSurfaceRuntime, selectedOrganizationId]);
 
   const closeSidePanelTab = async (tab: SidePanelTarget) => {
+    if (
+      selectedOrganizationId
+      && savedViewPromotion?.isMoving(
+        selectedOrganizationId,
+        sidePanel.contextKey,
+        tab,
+      )
+    ) return;
+    if (selectedOrganizationId) {
+      savedViewPromotion?.discard(
+        selectedOrganizationId,
+        sidePanel.contextKey,
+        tab,
+      );
+    }
     const tabKey = sidePanelTargetKey(tab);
     if (tab.kind === "browser") {
       await browserSavedViewMetadata.flushTarget(tab);
@@ -1841,14 +1858,28 @@ export function ChatSidePanel({
               const selected = tabKey === activeTargetKey;
               const dragging = draggedTabKey === tabKey;
               const sideChatClosing = closingSideChatKeys.has(tabKey);
-              const closeDisabled = tab.kind === "side_chat"
-                && (movingSideChatKey === tabKey || sideChatClosing);
+              const promotionMoving = Boolean(
+                selectedOrganizationId
+                && savedViewPromotion?.isMoving(
+                  selectedOrganizationId,
+                  sidePanel.contextKey,
+                  tab,
+                ),
+              );
+              const closeDisabled = promotionMoving || (
+                tab.kind === "side_chat"
+                && (movingSideChatKey === tabKey || sideChatClosing)
+              );
               return (
                 <ChatSidePanelTabContextMenu
                   key={tabKey}
                   closeDisabled={closeDisabled}
                   isMobile={isMobile}
-                  moveInProgress={movingSideChatKey !== null || sideChatClosing}
+                  moveInProgress={
+                    promotionMoving
+                    || movingSideChatKey !== null
+                    || sideChatClosing
+                  }
                   organizationId={selectedOrganizationId}
                   tab={tab}
                   onClose={(target) => void closeSidePanelTab(target)}
@@ -1907,7 +1938,7 @@ export function ChatSidePanel({
                     <button
                       type="button"
                       role="tab"
-                      draggable={!isMobile && visibleTabs.length > 1}
+                      draggable={!promotionMoving && !isMobile && visibleTabs.length > 1}
                       aria-selected={selected}
                       data-testid="chat-side-panel-tab"
                       data-view-instance-id={sidePanelTargetSupportsSavedView(tab)
@@ -1917,9 +1948,11 @@ export function ChatSidePanel({
                         : undefined}
                       data-browser-favicon={tab.kind === "browser" ? tab.favicon : undefined}
                       className="min-w-0 flex-1 cursor-grab truncate rounded-l-full px-2.5 py-1 text-left text-xs active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                      onClick={() => sidePanel.setActiveKey(tabKey)}
+                      onClick={() => {
+                        if (!promotionMoving) sidePanel.setActiveKey(tabKey);
+                      }}
                     >
-                      {tab.label}
+                      {promotionMoving ? `${tab.label} · Moving…` : tab.label}
                     </button>
                     <button
                       type="button"
