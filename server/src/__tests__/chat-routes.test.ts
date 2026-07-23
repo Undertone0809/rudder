@@ -2589,7 +2589,7 @@ describe("chat routes", () => {
       attemptEpoch: 1,
       controlOwnerToken: "lease-1",
     });
-    mockChatService.completeServerQueuedMessageDelivery.mockResolvedValue(queuedItem);
+    mockChatService.acknowledgeServerQueuedMessageDelivery.mockResolvedValue(queuedItem);
     let transcriptAdmissionCount = 0;
     mockChatService.generationProtocol.appendVisibleEventAndProject.mockImplementation(async (input) => {
       if (input.eventKind === "transcript") {
@@ -2618,6 +2618,13 @@ describe("chat routes", () => {
         model: "gpt-primary",
         isFallback: false,
       });
+      await attempt?.register({
+        runtimeType: "codex_local",
+        capabilities: { steer: "native", interrupt: "process" },
+        steer: async () => ({ disposition: "closing" }),
+        interrupt: async () => ({ disposition: "interrupted" }),
+        dispose: async () => undefined,
+      });
       await input.onTranscriptEntry?.(transcriptEntries[0]);
       await input.onTranscriptEntry?.(transcriptEntries[1]);
       await attempt?.complete();
@@ -2637,7 +2644,7 @@ describe("chat routes", () => {
     try {
       createApp(undefined, backgroundRuntime);
       await waitUntil(() => {
-        expect(mockChatService.completeServerQueuedMessageDelivery).toHaveBeenCalled();
+        expect(mockChatService.generationProtocol.recordRuntimeTerminal).toHaveBeenCalled();
       }, 3_000);
 
       const visibleProjectionCalls =
@@ -2648,9 +2655,14 @@ describe("chat routes", () => {
       expect(transcriptCalls.every(([input]) => !Object.hasOwn(input, "transcript"))).toBe(true);
       expect(visibleProjectionCalls.find(([input]) => input.eventKind === "runtime_output")?.[0])
         .toMatchObject({ messageId: "message-assistant" });
-      expect(mockChatService.completeServerQueuedMessageDelivery).toHaveBeenCalledWith(
-        expect.objectContaining({ status: "stopped" }),
-      );
+      expect(mockChatService.acknowledgeServerQueuedMessageDelivery).toHaveBeenCalledWith({
+        itemId: queuedItem.id,
+        generationId: "generation-1",
+        leaseToken: "lease-1",
+        leaseEpoch: 1,
+      });
+      expect(mockChatService.completeServerQueuedMessageDelivery).not.toHaveBeenCalled();
+      expect(mockChatService.releaseServerQueuedMessageClaim).not.toHaveBeenCalled();
       expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).toMatchObject({ status: "stopped" });
       expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).not.toHaveProperty("transcript");
     } finally {
@@ -5310,9 +5322,9 @@ describe("chat routes", () => {
         status: "stopped",
         body: "",
         replyingAgentId: "agent-1",
-        transcript: [],
       }),
     );
+    expect(mockChatService.addMessage.mock.calls.at(-1)?.[1]).not.toHaveProperty("transcript");
   });
 
   it("keeps generating and persists the final reply when the stream client disconnects", async () => {

@@ -78,7 +78,7 @@ type ApprovalRow = typeof approvals.$inferSelect;
 
 const CHAT_TITLE_MAX_LENGTH = 200;
 
-class InvalidQueueDeliveryReconciliationActionLinkError extends Error {}
+class InvalidQueueDeliveryActionLinkError extends Error {}
 
 export type { ChatServerQueueClaim } from "./chats.types.js";
 
@@ -2443,7 +2443,7 @@ export function chatService(db: Db) {
         .returning();
       if (!updated) return null;
       if (item.controlActionId) {
-        await tx
+        const [updatedAction] = await tx
           .update(chatControlActions)
           .set({
             localDisposition: "delivered",
@@ -2451,7 +2451,14 @@ export function chatService(db: Db) {
             resolvedAt: now,
             updatedAt: now,
           })
-          .where(eq(chatControlActions.id, item.controlActionId));
+          .where(and(
+            eq(chatControlActions.id, item.controlActionId),
+            eq(chatControlActions.orgId, item.orgId),
+          ))
+          .returning({ id: chatControlActions.id });
+        if (!updatedAction) {
+          throw new InvalidQueueDeliveryActionLinkError();
+        }
       }
       return hydrateQueuedMessage(updated);
     });
@@ -2969,13 +2976,13 @@ export function chatService(db: Db) {
               ))
               .returning({ id: chatControlActions.id });
             if (!updatedAction) {
-              throw new InvalidQueueDeliveryReconciliationActionLinkError();
+              throw new InvalidQueueDeliveryActionLinkError();
             }
           }
           return true;
         });
       } catch (error) {
-        if (error instanceof InvalidQueueDeliveryReconciliationActionLinkError) continue;
+        if (error instanceof InvalidQueueDeliveryActionLinkError) continue;
         throw error;
       }
       if (reconciledItem) reconciled += 1;

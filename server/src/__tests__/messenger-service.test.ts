@@ -724,6 +724,87 @@ describe("messengerService and issue follows", () => {
     expect(stored).toMatchObject({ status: "completed", deliveredMessageId: claim!.userMessageId });
   });
 
+  it("rolls back server queue acknowledgement when its linked control action belongs to another organization", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const conversationId = randomUUID();
+    const foreignActionId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Messenger server acknowledgement scope org",
+        urlKey: deriveOrganizationUrlKey("Messenger server acknowledgement scope org"),
+        issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Messenger server acknowledgement scope other org",
+        urlKey: deriveOrganizationUrlKey("Messenger server acknowledgement scope other org"),
+        issuePrefix: `B${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Server acknowledgement scope chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatControlActions).values({
+      id: foreignActionId,
+      orgId: otherOrgId,
+      actionKind: "steer",
+      localDisposition: "pending",
+    });
+    const queued = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "server-delivery-ack-cross-org-action",
+      payload: { body: "Do not acknowledge a poisoned control action link" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const claim = await chatSvc.claimNextServerQueuedMessage({
+      workerId: "delivery-ack-scope-worker",
+      leaseMs: 30_000,
+    });
+    await db
+      .update(chatQueuedMessages)
+      .set({
+        deliveryIntent: "steer",
+        controlActionId: foreignActionId,
+      })
+      .where(eq(chatQueuedMessages.id, queued.id));
+
+    await expect(chatSvc.acknowledgeServerQueuedMessageDelivery({
+      itemId: claim!.item.id,
+      generationId: claim!.generationId,
+      leaseToken: claim!.leaseToken,
+      leaseEpoch: claim!.leaseEpoch,
+    })).rejects.toThrow();
+
+    const [storedItem] = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(eq(chatQueuedMessages.id, queued.id));
+    const [storedAction] = await db
+      .select()
+      .from(chatControlActions)
+      .where(eq(chatControlActions.id, foreignActionId));
+    expect(storedItem).toMatchObject({
+      status: "dequeue_claimed",
+      deliveryDisposition: null,
+      deliveryLeaseToken: claim!.leaseToken,
+      controlActionId: foreignActionId,
+    });
+    expect(storedAction).toMatchObject({
+      orgId: otherOrgId,
+      localDisposition: "pending",
+      resolvedAt: null,
+    });
+  });
+
   it("claims an ordinary queued follow-up after an operator-stopped generation", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();
@@ -5386,14 +5467,6 @@ describe("messengerService and issue follows", () => {
       terminalReason: "steer_fallback",
       acceptedThroughSeq: 1,
     });
-    await chatSvc.generationProtocol.recordRuntimeTerminal({
-      orgId,
-      conversationId,
-      generationId,
-      expectedAttemptEpoch: 1,
-      finalStatus: "interrupted_unverified",
-      terminalReason: "runtime_interrupted",
-    });
     await db.insert(chatGenerations).values({
       id: operatorStopGenerationId,
       orgId,
@@ -5456,6 +5529,14 @@ describe("messengerService and issue follows", () => {
         assistantMessageId: assistantMessage.id,
       },
     ]);
+    await chatSvc.generationProtocol.recordRuntimeTerminal({
+      orgId,
+      conversationId,
+      generationId,
+      expectedAttemptEpoch: 1,
+      finalStatus: "interrupted_unverified",
+      terminalReason: "runtime_interrupted",
+    });
     const operatorStoppedMessage = await chatSvc.addMessage(conversationId, {
       orgId,
       role: "assistant",
