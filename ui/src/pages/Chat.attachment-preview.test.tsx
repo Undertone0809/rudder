@@ -5751,7 +5751,8 @@ describe("Chat streaming controls", () => {
     const { container } = renderChat();
     const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
 
-    expect(queueItem?.textContent).toContain("Running");
+    expect(queueItem?.textContent).toContain("Sending…");
+    expect(queueItem?.textContent).not.toContain("Running");
     expect(queueItem?.textContent).toContain("Already delivering");
     expect(queueItem?.querySelector("button[aria-label='Edit queued message']")).toBeNull();
     expect(queueItem?.querySelector("button[aria-label='Delete queued message']")).toBeNull();
@@ -5795,10 +5796,7 @@ describe("Chat streaming controls", () => {
     expect(container.textContent).toContain("Continue with the next step.");
   });
 
-  it.each([
-    ["queued", "Still queued"],
-    ["failed_actionable", "Needs attention"],
-  ] as const)("keeps a linked Queue message visible when delivery returns to %s", (status, label) => {
+  it("projects Queue delivery states without exposing internal delivery detail", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-2", body: "Delivery needs operator attention." })],
     };
@@ -5806,9 +5804,8 @@ describe("Chat streaming controls", () => {
       activeGenerationId: null,
       items: [
         queuedMessage({
-          status,
-          sourceMessageId: "user-message-2",
-          deliveredMessageId: "user-message-2",
+          id: "queued-row",
+          status: "queued",
           lastDeliveryReason: "queued_continuation_failed",
           payload: {
             body: "Delivery needs operator attention.",
@@ -5821,14 +5818,47 @@ describe("Chat streaming controls", () => {
             metadata: null,
           },
         }),
+        queuedMessage({
+          id: "sending-row",
+          status: "acceptance_unknown",
+          deliveryIntent: "steer",
+          deliveryDisposition: "acceptance_unknown",
+          payload: { body: "Wait for confirmation", attachmentIds: [], projectId: null, skillRefs: [], accessMode: null, model: null, effort: null, metadata: null },
+        }),
+        queuedMessage({
+          id: "failed-row",
+          status: "failed_actionable",
+          deliveryIntent: "steer",
+          deliveryDisposition: "failed_actionable",
+          payload: { body: "Try delivery again", attachmentIds: [], projectId: null, skillRefs: [], accessMode: null, model: null, effort: null, metadata: null },
+        }),
+        queuedMessage({
+          id: "stale-delivered-row",
+          status: "failed_actionable",
+          deliveryIntent: "steer",
+          deliveryDisposition: "failed_actionable",
+          deliveredMessageId: "user-message-2",
+          payload: { body: "Already delivered despite stale state", attachmentIds: [], projectId: null, skillRefs: [], accessMode: null, model: null, effort: null, metadata: null },
+        }),
       ],
     });
 
     const { container } = renderChat();
-    const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
+    const queueItems = [...container.querySelectorAll("[data-testid='chat-running-queue-item']")];
+    const queuedRow = queueItems.find((item) => item.textContent?.includes("Delivery needs operator attention."));
+    const sendingRow = queueItems.find((item) => item.textContent?.includes("Wait for confirmation"));
+    const failedRow = queueItems.find((item) => item.textContent?.includes("Try delivery again"));
 
-    expect(queueItem?.textContent).toContain("Delivery needs operator attention.");
-    expect(queueItem?.textContent).toContain(label);
+    expect(queuedRow?.textContent).toContain("Queued");
+    expect(queuedRow?.textContent).not.toContain("Still queued");
+    expect(queuedRow?.textContent).toContain("Steer");
+    expect(queuedRow?.querySelector("button[aria-label='Edit queued message']")).not.toBeNull();
+    expect(queuedRow?.querySelector("button[aria-label='Delete queued message']")).not.toBeNull();
+    expect(sendingRow?.textContent).toContain("Sending…");
+    expect(sendingRow?.textContent).not.toMatch(/Delivery unconfirmed|Needs attention|Need attention/);
+    expect(failedRow?.textContent).toContain("Couldn't send");
+    expect(failedRow?.textContent).toContain("Retry");
+    expect(container.textContent).not.toContain("Already delivered despite stale state");
   });
 
   it("hides linked fallback Steer feedback while its continuation is running", () => {
@@ -5949,7 +5979,7 @@ describe("Chat streaming controls", () => {
     });
   });
 
-  it("sends durable Steer identity and reports same-run delivery without an unsupported warning", async () => {
+  it("sends durable Steer identity without a delivery toast", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
@@ -6026,13 +6056,7 @@ describe("Chat streaming controls", () => {
         renderedBodyHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       },
     );
-    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Delivered to current run",
-      tone: "success",
-    }));
-    expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({
-      body: expect.stringContaining("cannot accept mid-run steering"),
-    }));
+    expect(mockState.pushToast).not.toHaveBeenCalled();
   });
 
   it("keeps accepted Steer feedback at its Work Transcript timestamp when the response completes", () => {
@@ -6346,9 +6370,7 @@ describe("Chat streaming controls", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Feedback confirmation pending",
-    }));
+    expect(mockState.pushToast).not.toHaveBeenCalled();
 
     expect(container.textContent).not.toContain("Steer");
     await act(async () => {
@@ -6370,10 +6392,11 @@ describe("Chat streaming controls", () => {
     });
   });
 
-  it("reports actionable Steer failure instead of an in-progress success", async () => {
+  it("offers Retry for a confirmed pre-delivery Steer failure without an active generation", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
+    const failedControlActionId = "20000000-0000-4000-8000-000000000001";
     const item = queuedMessage({ id: "queue-steer-failed" });
     mockState.queueSnapshot = queueSnapshot({ items: [item] });
     mockState.steerQueuedMessage.mockResolvedValueOnce({
@@ -6381,21 +6404,39 @@ describe("Chat streaming controls", () => {
       disposition: "failed_actionable",
       controlActionId: "20000000-0000-4000-8000-000000000002",
       activeGenerationId: null,
-      item: queuedMessage({ ...item, status: "failed_actionable", deliveryIntent: "steer", deliveryDisposition: "failed_actionable" }),
+      item: queuedMessage({ ...item, status: "failed_actionable", controlActionId: failedControlActionId, deliveryIntent: "steer", deliveryDisposition: "failed_actionable" }),
       queueVersion: 2,
       transcriptEventId: null,
     });
+    mockState.steerQueuedMessage.mockResolvedValueOnce({
+      result: "scheduled_next",
+      disposition: "continuation_pending",
+      controlActionId: "20000000-0000-4000-8000-000000000003",
+      activeGenerationId: null,
+      item: queuedMessage({ ...item, status: "continuation_pending", deliveryIntent: "steer", deliveryDisposition: "continuation_pending" }),
+      queueVersion: 3,
+      transcriptEventId: null,
+    });
 
-    const { container } = renderChat();
+    const { container, rerender } = renderChat();
     await clickEnabledButton(container, "Steer");
 
-    await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Feedback needs attention",
-      tone: "error",
-    })));
+    await vi.waitFor(() => expect(mockState.setQueryData).toHaveBeenCalledTimes(2));
+    const failedItemUpdater = mockState.setQueryData.mock.calls.at(-1)?.[1] as (
+      current: ChatQueueSnapshot,
+    ) => ChatQueueSnapshot;
+    mockState.queueSnapshot = failedItemUpdater(mockState.queueSnapshot);
+    rerender();
+    await vi.waitFor(() => expect(container.textContent).toContain("Couldn't send"));
+    expect(container.textContent).toContain("Retry");
+    expect(mockState.pushToast).not.toHaveBeenCalled();
+    await clickEnabledButton(container, "Retry");
+    expect(mockState.steerQueuedMessage).toHaveBeenCalledTimes(2);
+    expect(mockState.steerQueuedMessage.mock.calls[1]?.[2]).not.toHaveProperty("expectedActiveGenerationId");
+    expect(mockState.steerQueuedMessage.mock.calls[1]?.[2]?.controlActionId).not.toBe(failedControlActionId);
   });
 
-  it("renders accepted Steer feedback as delivered instead of still queued", () => {
+  it("hides accepted Steer feedback from Queue", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
@@ -6413,10 +6454,7 @@ describe("Chat streaming controls", () => {
     });
 
     const { container } = renderChat();
-    const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
-
-    expect(queueItem?.textContent).toContain("Delivered to current run");
-    expect(queueItem?.textContent).not.toContain("Still queued");
+    expect(container.querySelector("[data-testid='chat-running-queue']")).toBeNull();
   });
 
   it("offers Steer for retained Queue messages after Stop so feedback resumes server-side", () => {
@@ -6449,7 +6487,7 @@ describe("Chat streaming controls", () => {
     const queue = container.querySelector("[data-testid='chat-running-queue']");
     expect(queue?.textContent).toContain("Queue");
     expect(queue?.textContent?.toLowerCase()).not.toContain("follow-up");
-    expect(queueItem?.textContent).toContain("Still queued");
+    expect(queueItem?.textContent).toContain("Queued");
     expect(queueItem?.textContent).toContain("Continue from the interrupted chat run.");
     expect(queueItem?.textContent).toContain("Steer");
     expect(queueItem?.querySelector("button[aria-label='Edit queued message']")).not.toBeNull();

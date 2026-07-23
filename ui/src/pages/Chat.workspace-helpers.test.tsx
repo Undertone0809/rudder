@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
 import { chatsApi } from "@/api/chats";
+import type { ChatQueuedMessage } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useChatDraftQueries } from "./Chat.workspace-helpers";
+import { projectChatQueueDelivery, useChatDraftQueries } from "./Chat.workspace-helpers";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -123,5 +124,16 @@ describe("useChatDraftQueries", () => {
 
     unmountProbe(second.root, second.container);
     queryClient.clear();
+  });
+});
+
+describe("projectChatQueueDelivery", () => {
+  it("prioritizes durable delivery and the active Steer request over a stale queued status", () => {
+    const queued = { status: "queued", deliveredMessageId: null, continuationMessageId: null, deliveryDisposition: null } as ChatQueuedMessage;
+
+    expect(projectChatQueueDelivery(queued, true)).toEqual({ state: "sending", label: "Sending…" });
+    expect(projectChatQueueDelivery({ ...queued, deliveredMessageId: "message-1" })).toEqual({ state: "hidden" });
+    expect(projectChatQueueDelivery({ ...queued, status: "failed_actionable", sourceMessageId: "message-1" })).toEqual({ state: "hidden" });
+    expect(projectChatQueueDelivery({ ...queued, status: "failed_actionable", deliveryDisposition: "reconciled_current" })).toEqual({ state: "hidden" });
   });
 });
