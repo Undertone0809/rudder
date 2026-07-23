@@ -1,8 +1,22 @@
+import {
+  chatInlineAnnotationsInputSchema,
+  type ChatInlineAnnotationInput,
+} from "@rudderhq/shared";
+
 const CHAT_DRAFT_STORAGE_KEY = "rudder:chat-drafts";
 const CHAT_ASK_USER_DRAFT_STORAGE_KEY = "rudder:chat-ask-user-drafts";
 export const NEW_CHAT_SCOPE_KEY = "__new__";
 
-type ChatDraftsByOrganization = Record<string, Record<string, string>>;
+export const CHAT_COMPOSER_DRAFT_VERSION = 1 as const;
+
+export type ChatComposerDraft = {
+  version: typeof CHAT_COMPOSER_DRAFT_VERSION;
+  body: string;
+  inlineAnnotations: ChatInlineAnnotationInput[];
+};
+
+type StoredChatDraft = string | ChatComposerDraft;
+type ChatDraftsByOrganization = Record<string, Record<string, StoredChatDraft>>;
 
 export type ChatAskUserDraft = {
   selectedByQuestionId: Record<string, string[]>;
@@ -39,6 +53,52 @@ function readAllChatDrafts(): ChatDraftsByOrganization {
 
 function writeAllChatDrafts(drafts: ChatDraftsByOrganization) {
   chatDraftStorage()?.setItem(CHAT_DRAFT_STORAGE_KEY, JSON.stringify(drafts));
+}
+
+function emptyChatComposerDraft(body = ""): ChatComposerDraft {
+  return {
+    version: CHAT_COMPOSER_DRAFT_VERSION,
+    body,
+    inlineAnnotations: [],
+  };
+}
+
+function normalizeStoredChatDraft(value: unknown): ChatComposerDraft {
+  if (typeof value === "string") return emptyChatComposerDraft(value);
+  if (!value || typeof value !== "object") return emptyChatComposerDraft();
+  const draft = value as Partial<ChatComposerDraft>;
+  if (draft.version !== CHAT_COMPOSER_DRAFT_VERSION || typeof draft.body !== "string") {
+    return emptyChatComposerDraft();
+  }
+  const parsedAnnotations = chatInlineAnnotationsInputSchema.safeParse(draft.inlineAnnotations);
+  const inlineAnnotations = parsedAnnotations.success
+    ? parsedAnnotations.data.map(({ attachmentFileIndexes: _attachmentFileIndexes, ...annotation }) => annotation)
+    : [];
+  return {
+    version: CHAT_COMPOSER_DRAFT_VERSION,
+    body: draft.body,
+    inlineAnnotations,
+  };
+}
+
+function hasMeaningfulChatComposerDraft(draft: ChatComposerDraft) {
+  return draft.body.length > 0 || draft.inlineAnnotations.length > 0;
+}
+
+function deleteChatDraftScope(
+  drafts: ChatDraftsByOrganization,
+  orgId: string,
+  scopeKey: string,
+) {
+  const nextOrgDrafts = { ...(drafts[orgId] ?? {}) };
+  if (!(scopeKey in nextOrgDrafts)) return false;
+  delete nextOrgDrafts[scopeKey];
+  if (Object.keys(nextOrgDrafts).length === 0) {
+    delete drafts[orgId];
+  } else {
+    drafts[orgId] = nextOrgDrafts;
+  }
+  return true;
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -110,11 +170,37 @@ function hasMeaningfulChatAskUserDraft(draft: ChatAskUserDraft) {
 }
 
 export function readChatDraft(orgId: string, conversationId: string | null | undefined): string {
-  const orgDrafts = readAllChatDrafts()[orgId];
-  if (!orgDrafts || typeof orgDrafts !== "object") return "";
+  return readChatComposerDraft(orgId, conversationId).body;
+}
 
-  const draft = orgDrafts[resolveChatDraftScopeKey(conversationId)];
-  return typeof draft === "string" ? draft : "";
+export function readChatComposerDraft(
+  orgId: string,
+  conversationId: string | null | undefined,
+): ChatComposerDraft {
+  const orgDrafts = readAllChatDrafts()[orgId];
+  if (!orgDrafts || typeof orgDrafts !== "object") return emptyChatComposerDraft();
+  return normalizeStoredChatDraft(orgDrafts[resolveChatDraftScopeKey(conversationId)]);
+}
+
+export function saveChatComposerDraft(
+  orgId: string,
+  conversationId: string | null | undefined,
+  draft: ChatComposerDraft,
+) {
+  const drafts = readAllChatDrafts();
+  const scopeKey = resolveChatDraftScopeKey(conversationId);
+  const normalized = normalizeStoredChatDraft(draft);
+
+  if (hasMeaningfulChatComposerDraft(normalized)) {
+    drafts[orgId] = {
+      ...(drafts[orgId] ?? {}),
+      [scopeKey]: normalized,
+    };
+    writeAllChatDrafts(drafts);
+    return;
+  }
+
+  if (deleteChatDraftScope(drafts, orgId, scopeKey)) writeAllChatDrafts(drafts);
 }
 
 export function saveChatDraft(
@@ -122,29 +208,15 @@ export function saveChatDraft(
   conversationId: string | null | undefined,
   body: string,
 ) {
-  const drafts = readAllChatDrafts();
-  const scopeKey = resolveChatDraftScopeKey(conversationId);
-  const nextOrgDrafts = { ...(drafts[orgId] ?? {}) };
-
-  if (body.length > 0) {
-    nextOrgDrafts[scopeKey] = body;
-    drafts[orgId] = nextOrgDrafts;
-    writeAllChatDrafts(drafts);
-    return;
-  }
-
-  if (!(scopeKey in nextOrgDrafts)) return;
-  delete nextOrgDrafts[scopeKey];
-  if (Object.keys(nextOrgDrafts).length === 0) {
-    delete drafts[orgId];
-  } else {
-    drafts[orgId] = nextOrgDrafts;
-  }
-  writeAllChatDrafts(drafts);
+  const current = readChatComposerDraft(orgId, conversationId);
+  saveChatComposerDraft(orgId, conversationId, { ...current, body });
 }
 
 export function clearChatDraft(orgId: string, conversationId: string | null | undefined) {
-  saveChatDraft(orgId, conversationId, "");
+  const drafts = readAllChatDrafts();
+  if (deleteChatDraftScope(drafts, orgId, resolveChatDraftScopeKey(conversationId))) {
+    writeAllChatDrafts(drafts);
+  }
 }
 
 export function readChatAskUserDraft(orgId: string, messageId: string): ChatAskUserDraft | null {

@@ -1,5 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearChatDraft, readChatDraft, resolveChatDraftScopeKey, saveChatDraft } from "./chat-draft-storage";
+import {
+  CHAT_COMPOSER_DRAFT_VERSION,
+  clearChatDraft,
+  readChatComposerDraft,
+  readChatDraft,
+  resolveChatDraftScopeKey,
+  saveChatComposerDraft,
+  saveChatDraft,
+} from "./chat-draft-storage";
+
+const assistantAnnotation = {
+  id: "10000000-0000-4000-8000-000000000001",
+  selectedText: "Rudder",
+  comment: "Explain this",
+  sourceConversationId: "20000000-0000-4000-8000-000000000001",
+  sourceMessageId: "30000000-0000-4000-8000-000000000001",
+  surface: "assistant_body" as const,
+  sourceHash: "a".repeat(64),
+  start: 0,
+  end: 6,
+  prefix: "",
+  suffix: " ships",
+  attachmentIds: [],
+};
 
 function createLocalStorageMock() {
   const store = new Map<string, string>();
@@ -67,5 +90,88 @@ describe("chat draft storage", () => {
     saveChatDraft("org-1", "chat-1", "");
 
     expect(readChatDraft("org-1", "chat-1")).toBe("");
+  });
+
+  it("migrates legacy string-only drafts into the versioned composer shape", () => {
+    localStorage.setItem("rudder:chat-drafts", JSON.stringify({
+      "org-1": {
+        "chat-1": "Legacy body",
+      },
+    }));
+
+    expect(readChatComposerDraft("org-1", "chat-1")).toEqual({
+      version: CHAT_COMPOSER_DRAFT_VERSION,
+      body: "Legacy body",
+      inlineAnnotations: [],
+    });
+  });
+
+  it("stores annotations with a versioned organization and conversation draft", () => {
+    saveChatComposerDraft("org-1", "chat-1", {
+      version: CHAT_COMPOSER_DRAFT_VERSION,
+      body: "",
+      inlineAnnotations: [{
+        ...assistantAnnotation,
+        attachmentFileIndexes: [0],
+      }],
+    });
+
+    expect(readChatComposerDraft("org-1", "chat-1")).toEqual({
+      version: CHAT_COMPOSER_DRAFT_VERSION,
+      body: "",
+      inlineAnnotations: [assistantAnnotation],
+    });
+    expect(JSON.parse(localStorage.getItem("rudder:chat-drafts") ?? "{}")).toEqual({
+      "org-1": {
+        "chat-1": {
+          version: CHAT_COMPOSER_DRAFT_VERSION,
+          body: "",
+          inlineAnnotations: [assistantAnnotation],
+        },
+      },
+    });
+  });
+
+  it("keeps annotation-only drafts when legacy body updates clear the text", () => {
+    saveChatComposerDraft("org-1", "chat-1", {
+      version: CHAT_COMPOSER_DRAFT_VERSION,
+      body: "Question",
+      inlineAnnotations: [assistantAnnotation],
+    });
+
+    saveChatDraft("org-1", "chat-1", "");
+
+    expect(readChatComposerDraft("org-1", "chat-1")).toEqual({
+      version: CHAT_COMPOSER_DRAFT_VERSION,
+      body: "",
+      inlineAnnotations: [assistantAnnotation],
+    });
+  });
+
+  it("drops dangling pending-file indexes and invalid persisted annotations", () => {
+    localStorage.setItem("rudder:chat-drafts", JSON.stringify({
+      "org-1": {
+        "chat-1": {
+          version: CHAT_COMPOSER_DRAFT_VERSION,
+          body: "Question",
+          inlineAnnotations: [{
+            ...assistantAnnotation,
+            attachmentFileIndexes: [0, 1],
+          }],
+        },
+        "chat-2": {
+          version: CHAT_COMPOSER_DRAFT_VERSION,
+          body: "Still readable",
+          inlineAnnotations: [{ nope: true }],
+        },
+      },
+    }));
+
+    expect(readChatComposerDraft("org-1", "chat-1").inlineAnnotations).toEqual([assistantAnnotation]);
+    expect(readChatComposerDraft("org-1", "chat-2")).toEqual({
+      version: CHAT_COMPOSER_DRAFT_VERSION,
+      body: "Still readable",
+      inlineAnnotations: [],
+    });
   });
 });
