@@ -1847,10 +1847,13 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
       const stackBox = stack.getBoundingClientRect();
       const panelBox = panel.getBoundingClientRect();
       const mainBox = main.getBoundingClientRect();
+      const mainStyle = getComputedStyle(main);
       return Math.abs(panelBox.x - stackBox.x) <= 2
         && Math.abs(panelBox.right - stackBox.right) <= 2
-        && mainBox.width <= 2
-        && main.hasAttribute("inert");
+        && mainBox.width <= 0.5
+        && main.hasAttribute("inert")
+        && mainStyle.borderLeftWidth === "0px"
+        && mainStyle.borderRightWidth === "0px";
     }, null, { timeout: 5_000 });
     assert.equal(
       await waitForActiveWebview(),

@@ -2169,8 +2169,13 @@ Invariants:
   expanding, restoring, or closing. Its left edge, the divider, and the current
   work-surface width must move monotonically in the requested direction. The
   main work surface must remain visually present until the expanded panel has
-  covered or displaced it; reduced-motion mode may move directly to the same
-  final geometry.
+  covered or displaced it. Once expanded, the main work surface remains mounted
+  to preserve the current route and render identity, while the stable panel host
+  preserves Browser guest identity. The main work surface is inert,
+  accessibility-hidden, fully visually hidden, and contributes no painted
+  border or layout remnant beside the panel. Restoring or closing the Side Panel
+  makes the main work surface visible and interactive again. Reduced-motion mode
+  may move directly to the same final geometry.
 - While a desktop Side Panel is closing, its mounted content remains clipped by
   the shrinking host instead of disappearing before the host reaches zero. The
   host becomes inert as soon as closing begins, and keyboard focus returns to

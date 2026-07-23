@@ -1801,7 +1801,7 @@ test.describe("Chat Side Panel", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
   });
 
-  test("keeps the main workspace mounted but inert while the Side Panel is expanded", async ({ page }) => {
+  test("keeps the main workspace mounted but fully hidden and inert while the Side Panel is expanded", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Global-Side-Panel-Expanded-${Date.now()}`,
@@ -1837,7 +1837,10 @@ test.describe("Chat Side Panel", () => {
     await expect(mainWorkspace).toBeAttached();
     await expect(mainWorkspace).toHaveAttribute("aria-hidden", "true");
     await expect(mainWorkspace).toHaveAttribute("inert", "");
-    expect((await mainWorkspace.boundingBox())?.width ?? 0).toBeLessThanOrEqual(2);
+    await expect(mainWorkspace).toHaveCSS("border-left-width", "0px");
+    await expect(mainWorkspace).toHaveCSS("border-right-width", "0px");
+    await expect(mainWorkspace).toHaveCSS("box-shadow", "none");
+    expect((await mainWorkspace.boundingBox())?.width ?? 0).toBeLessThanOrEqual(0.5);
 
     const workspaceStackBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
     const expandedSidePanelBox = await sidePanel.boundingBox();
@@ -1856,6 +1859,8 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("aria-hidden", "true");
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-left-width", "1px");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-right-width", "1px");
 
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
@@ -1879,6 +1884,8 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("aria-hidden", "true");
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-left-width", "1px");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-right-width", "1px");
   });
 
   test("keeps resize continuous through the 2:1 auto-expand boundary", async ({ page }) => {
@@ -2009,17 +2016,19 @@ test.describe("Chat Side Panel", () => {
         await expect(page.getByTestId("side-panel-resize-shield")).toHaveCount(0);
         await expect(main).toHaveAttribute("aria-hidden", "true");
         await expect(main).toHaveAttribute("inert", "");
+        await expect(main).toHaveCSS("border-left-width", "0px");
+        await expect(main).toHaveCSS("border-right-width", "0px");
+        await expect.poll(async () => (await main.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
+          .toBeLessThanOrEqual(0.5);
         await expect.poll(async () => {
-          const [stackBox, panelBox, mainBox] = await Promise.all([
+          const [stackBox, panelBox] = await Promise.all([
             page.getByTestId("workspace-main-panel-stack").boundingBox(),
             sidePanel.boundingBox(),
-            main.boundingBox(),
           ]);
-          if (!stackBox || !panelBox || !mainBox) return Number.POSITIVE_INFINITY;
+          if (!stackBox || !panelBox) return Number.POSITIVE_INFINITY;
           return Math.max(
             Math.abs(panelBox.x - stackBox.x),
             Math.abs((panelBox.x + panelBox.width) - (stackBox.x + stackBox.width)),
-            mainBox.width,
           );
         }).toBeLessThanOrEqual(2);
 
