@@ -1987,6 +1987,32 @@ describe("chat routes", () => {
     });
   });
 
+  it("allows a queued message claim after a verified operator Stop", async () => {
+    const conversation = createConversation();
+    const queuedItem = {
+      id: "queued-after-stop",
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      position: 1,
+      status: "dequeue_claimed",
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestGeneration.mockResolvedValue({
+      id: "generation-stopped",
+      status: "stopped",
+      terminalReason: "operator_stop",
+    });
+    mockChatService.claimNextQueuedMessage.mockResolvedValue(queuedItem);
+
+    const res = await request(createApp())
+      .post(`/api/chats/${conversation.id}/queue/next/claim`)
+      .send();
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ item: queuedItem });
+    expect(mockChatService.claimNextQueuedMessage).toHaveBeenCalledWith(conversation.id);
+  });
+
   it("rejects local queue mutations for Feishu-bound chat conversations", async () => {
     const conversation = createFeishuBackedConversation();
     mockChatService.getById.mockResolvedValue(conversation);
@@ -5231,6 +5257,60 @@ describe("chat routes", () => {
         kind: "message",
         status: "stopped",
         replyingAgentId: "agent-1",
+      }),
+    );
+  });
+
+  it("persists a visible stopped assistant status before the first runtime output", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Stop immediately");
+    const stoppedMessage = {
+      ...createMessage("message-stopped-empty", "assistant", "message", ""),
+      status: "stopped",
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(stoppedMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "stopped",
+      partialBody: "",
+      replyingAgentId: "agent-1",
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Stop immediately" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(events.at(-1)).toEqual({
+      type: "final",
+      messages: [expect.objectContaining({ id: "message-stopped-empty", status: "stopped", body: "" })],
+    });
+    expect(mockChatService.addMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.objectContaining({
+        role: "assistant",
+        kind: "message",
+        status: "stopped",
+        body: "",
+        replyingAgentId: "agent-1",
+        transcript: [],
       }),
     );
   });

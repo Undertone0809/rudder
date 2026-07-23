@@ -255,6 +255,7 @@ test(`auto-delivers a queued message in Plan mode ${planMode ? "ON" : "OFF"} wit
 
 for (const planMode of [false, true]) {
 test(`delivers native Codex Steer into the active App Server turn in Plan mode ${planMode ? "ON" : "OFF"}`, async ({ page }) => {
+  test.setTimeout(120_000);
   const orgRes = await page.request.post("/api/orgs", {
     data: { name: `Native-Steer-${Date.now()}` },
   });
@@ -285,8 +286,7 @@ test(`delivers native Codex Steer into the active App Server turn in Plan mode $
     const response = await page.request.get(`/api/chats/${chatId}/queue`);
     expect(response.ok()).toBe(true);
     return (await response.json()).activeGenerationStatus;
-  }, { timeout: 15_000 }).toMatch(/starting|running/);
-  await page.waitForTimeout(750);
+  }, { timeout: 30_000 }).toBe("running");
 
   await composer.fill("Use the revised direction");
   await composer.press("Enter");
@@ -296,6 +296,24 @@ test(`delivers native Codex Steer into the active App Server turn in Plan mode $
 
   const steerMessage = page.getByTestId("chat-transcript-steer-message").filter({ hasText: "Use the revised direction" });
   await expect(steerMessage).toHaveCount(1, { timeout: 20_000 });
+  const originalMessageBubble = page.getByTestId("chat-user-message-bubble").filter({
+    hasText: "Keep Steer message position stable",
+  });
+  const steerMessageBubble = steerMessage.getByTestId("chat-user-message-bubble");
+  const [originalBox, steerBox] = await Promise.all([
+    originalMessageBubble.boundingBox(),
+    steerMessageBubble.boundingBox(),
+  ]);
+  expect(originalBox).not.toBeNull();
+  expect(steerBox).not.toBeNull();
+  expect(Math.abs(
+    (originalBox?.x ?? 0) + (originalBox?.width ?? 0)
+      - ((steerBox?.x ?? 0) + (steerBox?.width ?? 0)),
+  )).toBeLessThanOrEqual(2);
+  const alignmentScreenshot = process.env.RUDDER_E2E_ALIGNMENT_SCREENSHOT?.trim();
+  if (alignmentScreenshot) {
+    await page.screenshot({ path: alignmentScreenshot, fullPage: true });
+  }
 
   const finalAssistant = page.getByTestId("chat-assistant-message").last();
   await expect(finalAssistant).toContainText(
@@ -372,8 +390,7 @@ test("keeps accepted Steer visible and ordered while an edited response is activ
     const response = await page.request.get(`/api/chats/${chatId}/queue`);
     expect(response.ok()).toBe(true);
     return (await response.json()).activeGenerationStatus;
-  }, { timeout: 15_000 }).toMatch(/starting|running/);
-  await page.waitForTimeout(750);
+  }, { timeout: 15_000 }).toBe("running");
 
   await composer.fill("Steer must stay visible after edit");
   await composer.press("Enter");
@@ -436,7 +453,7 @@ test("renders one readable reasoning stream when App Server emits summary and ra
   await expect(transcriptItem).not.toContainText("visualize once.visualize once.");
 });
 
-test("runs Stop-then-Steer feedback as a server-owned continuation", async ({ page }) => {
+test("automatically runs queued messages after an operator Stop", async ({ page }) => {
   const organization = await createStreamingOrg(page, `Running-Queue-Stop-${Date.now()}`);
 
   await page.goto("/");
@@ -455,9 +472,9 @@ test("runs Stop-then-Steer feedback as a server-owned continuation", async ({ pa
   const chatId = currentChatId(page.url());
   await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
 
-  await createQueuedMessage(page, chatId, "This should stay parked after stop", 1);
-  await createQueuedMessage(page, chatId, "Second parked Queue message", 2);
-  await createQueuedMessage(page, chatId, "Third parked Queue message", 3);
+  await createQueuedMessage(page, chatId, "This should run automatically after stop", 1);
+  await createQueuedMessage(page, chatId, "Second automatic Queue message", 2);
+  await createQueuedMessage(page, chatId, "Third automatic Queue message", 3);
   await createQueuedMessage(page, chatId, "Cancelled Queue message must never run", 4);
   await expect(page.getByTestId("chat-running-queue")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("chat-running-queue-item")).toHaveCount(4, { timeout: 15_000 });
@@ -471,25 +488,18 @@ test("runs Stop-then-Steer feedback as a server-owned continuation", async ({ pa
   await expect(page.getByTestId("chat-running-queue-item").nth(0)).toContainText("Queued");
   await expect(page.getByTestId("chat-running-queue-item").nth(1)).toContainText("#2");
   await expect(page.getByTestId("chat-running-queue-item").nth(2)).toContainText("#3");
-  await expect(page.getByTestId("chat-running-queue-item").nth(2)).toContainText("Third parked Queue message");
+  await expect(page.getByTestId("chat-running-queue-item").nth(2)).toContainText("Third automatic Queue message");
 
   await page.getByRole("button", { name: "Stop streaming" }).click();
   await expect(page.getByRole("button", { name: "Stop streaming" })).toHaveCount(0, { timeout: 15_000 });
-  await expect(page.getByTestId("chat-running-queue")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("chat-running-queue")).toContainText("Queue");
-  await expect(page.getByTestId("chat-running-queue")).not.toContainText("follow-up");
-  await expect(page.getByTestId("chat-running-queue-item").first()).toContainText("This should stay parked after stop");
-  await expect(page.getByTestId("chat-running-queue").getByRole("button", { name: "Steer" })).toHaveCount(3);
-  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "This should stay parked after stop" })).toHaveCount(0);
-
-  await page.getByTestId("chat-running-queue-item").first().getByRole("button", { name: "Steer" }).click();
-  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "This should stay parked after stop" })).toBeVisible({
+  await expect(page.getByText("Stopped", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "This should run automatically after stop" })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Second parked Queue message" })).toBeVisible({
+  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Second automatic Queue message" })).toBeVisible({
     timeout: 45_000,
   });
-  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Third parked Queue message" })).toBeVisible({
+  await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Third automatic Queue message" })).toBeVisible({
     timeout: 45_000,
   });
   await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Cancelled Queue message must never run" })).toHaveCount(0);

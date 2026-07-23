@@ -2717,45 +2717,47 @@ export function StreamTranscriptItem({
 
   return (
     <div data-testid="chat-transcript-item" className="flex justify-start transition-all duration-200">
-      <div className="w-full max-w-3xl px-1 py-1">
-        <div className="flex items-center gap-3">
-          <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
-          <button
-            type="button"
-            className={cn(
-              "flex max-w-[min(100%,90%)] shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground transition-colors",
-              streamingActive ? "cursor-default" : "hover:text-foreground",
-            )}
-            disabled={streamingActive}
-            onClick={() => {
-              if (!streamingActive) {
-                setProcessOpen((open) => {
-                  const next = !open;
-                  onOpenChange?.(next);
-                  return next;
-                });
-              }
-            }}
-            aria-expanded={showBody}
-          >
-            {streamingActive ? (
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-            ) : null}
-            <span className="whitespace-nowrap">
-              {streamingActive ? "Working" : "Worked"} for {formatChatProcessDuration(durationMs)}
-            </span>
-            {statusHint ? (
-              <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
-            ) : null}
-            {streamingActive ? (
-              <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-            ) : showBody ? (
-              <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-            ) : (
-              <ChevronRight className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-            )}
-          </button>
-          <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
+      <div className="w-full py-1">
+        <div className="max-w-3xl px-1">
+          <div className="flex items-center gap-3">
+            <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
+            <button
+              type="button"
+              className={cn(
+                "flex max-w-[min(100%,90%)] shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground transition-colors",
+                streamingActive ? "cursor-default" : "hover:text-foreground",
+              )}
+              disabled={streamingActive}
+              onClick={() => {
+                if (!streamingActive) {
+                  setProcessOpen((open) => {
+                    const next = !open;
+                    onOpenChange?.(next);
+                    return next;
+                  });
+                }
+              }}
+              aria-expanded={showBody}
+            >
+              {streamingActive ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+              ) : null}
+              <span className="whitespace-nowrap">
+                {streamingActive ? "Working" : "Worked"} for {formatChatProcessDuration(durationMs)}
+              </span>
+              {statusHint ? (
+                <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
+              ) : null}
+              {streamingActive ? (
+                <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+              ) : showBody ? (
+                <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+              )}
+            </button>
+            <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
+          </div>
         </div>
         {showBody ? (
           <div className="mt-3">

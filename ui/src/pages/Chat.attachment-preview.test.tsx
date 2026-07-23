@@ -6135,6 +6135,8 @@ describe("Chat streaming controls", () => {
       const embeddedSteer = container.querySelector<HTMLElement>("[data-testid='chat-transcript-steer-message']");
       expect(embeddedSteer).not.toBeNull();
       expect(embeddedSteer!.textContent).toContain(steerUserMessage.body);
+      expect(embeddedSteer!.closest("[data-testid='chat-transcript-item']")?.firstElementChild?.classList)
+        .not.toContain("max-w-3xl");
       expect([...container.querySelectorAll("[data-testid='chat-user-message-bubble']")]
         .filter((bubble) => bubble.textContent?.includes(steerUserMessage.body))).toHaveLength(1);
       expect(text.indexOf(transcriptBeforeSteer.text)).toBeLessThan(text.indexOf(steerUserMessage.body));

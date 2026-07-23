@@ -264,8 +264,11 @@ Product model:
   the owning generation's Work Transcript, at the durable generation-event
   boundary where the operator sent it. Runtime evidence emitted before Steer
   stays before it, later reasoning and tools stay after it, and the final
-  assistant response follows the Work Transcript. The live, completed, and
-  reloaded projections must preserve that same ordering and message identity.
+  assistant response follows the Work Transcript. Even inside the collapsible
+  Work Transcript, the Steer interjection uses the same right-aligned user
+  bubble edge as an ordinary sent message. The live, completed, and reloaded
+  projections must preserve that same ordering, alignment, and message
+  identity.
 - Steer that is scheduled as a fallback continuation did not enter the old
   provider turn. It remains the same durable message but is presented between
   the old run and the new continuation, never inside the old Work Transcript.
@@ -357,11 +360,16 @@ Flow:
    the composer as soon as that user message is visible, even while the new
    assistant reply is still running. Delivery does not depend on the
    originating page remaining open.
-16. If the current reply is stopped, fails, or is otherwise not completed,
-   ordinary queued follow-ups stay parked and are not silently flushed. The
-   operator may explicitly Steer retained feedback; Rudder then persists a
-   continuation, waits for the prior owner to terminate, and starts that
-   continuation without requiring the feedback to be resent.
+16. If the operator Stops the current reply, the stopped generation remains
+   visibly `Stopped`, including when it was stopped before producing body or
+   transcript output, and the server-owned queue worker automatically delivers
+   the next ordinary queued follow-up as a distinct subsequent turn after the
+   Stop reaches its verified terminal boundary. If the current reply fails,
+   loses control, or ends without verified Stop/completion evidence, ordinary
+   queued follow-ups stay parked. The operator may explicitly Steer retained
+   feedback; Rudder then persists a continuation, waits for the prior owner to
+   terminate, and starts that continuation without requiring the feedback to
+   be resent.
 
 Invariants:
 
@@ -429,9 +437,11 @@ Invariants:
   Queue creation, editing, cancellation, claiming, release, and steering
   endpoints must enforce the same conversation access and local mutation rules
   as normal chat sends.
-- Queue ordering must be deterministic by stored position and creation time.
-  Idempotency keys must not allow the same queued item id to be reused with a
-  different payload.
+- Queue ordering must be deterministic by stored position and creation time. A
+  locked or concurrently inspected head item blocks later eligible items in the
+  same conversation; worker concurrency must never let a later Queue message
+  leapfrog it. Idempotency keys must not allow the same queued item id to be
+  reused with a different payload.
 - An ordinary queued follow-up must not become a visible user message until it
   is claimed and delivered through the normal chat send path. Explicit Steer is
   the exception: accepting its durable control action must materialize exactly
@@ -452,9 +462,13 @@ Invariants:
   details, or reloading must not move, hide, duplicate, or reorder that Steer.
   Ordering is anchored by generation sequence / transcript-entry count, not by
   client or message wall-clock timestamps.
-- Stopped or failed replies leave ordinary queued follow-ups parked. Rudder
-  must not silently flush old queued work after an interrupted run. A retained
-  row changes this rule only when the operator explicitly chooses Steer.
+- A verified operator Stop advances the next ordinary queued follow-up through
+  the server-owned worker as a distinct turn without changing the stopped
+  generation's visible `Stopped` result. Failed, control-lost, aborted, or
+  unverified replies leave ordinary queued follow-ups parked; Rudder must not
+  silently flush queued work without completion or verified operator-Stop
+  evidence. A retained row changes this rule only when the operator explicitly
+  chooses Steer.
 - Steering is fenced to the expected generation, runtime attempt, and control
   version. A stale request resolves through its durable action identity; it
   must not steer a newer attempt, lose feedback, or create a duplicate
@@ -525,16 +539,17 @@ Evidence:
   without manufacturing terminal evidence.
 - Chat concurrent-streaming E2E covers queueing a follow-up during an active
   stream, editing the queued body, native same-turn Codex Steer, fallback
-  continuation, immediate Stop, server-owned Stop-then-Steer delivery, retained
-  ordinary follow-ups after a stopped reply, removal of the linked Queue row
-  while its delivered turn is still running, and one durable native-Steer
-  interjection that survives reload without duplication. Focused UI tests
-  distinguish linked in-flight rows from linked rows recovered to `queued` or
-  `failed_actionable`. The focused UI tests and native-Steer E2E also verify the
-  production-shaped ordering `reasoning A -> Steer -> reasoning/tool B -> final
-  response` while streaming, after final persistence, during historical message
-  edit replacement, and after reload; fallback continuation remains outside the
-  old run.
+  continuation, immediate Stop, automatic ordered Queue advancement after a
+  verified operator Stop, removal of the linked Queue row while its delivered
+  turn is still running, and one durable native-Steer interjection that survives
+  reload without duplication. Service tests cover locked-head ordering and
+  parked ordinary follow-ups after failed, aborted, control-lost, or unverified
+  replies. Focused UI tests distinguish linked in-flight rows from linked rows
+  recovered to `queued` or `failed_actionable`. The focused UI tests and
+  native-Steer E2E also verify the production-shaped ordering `reasoning A ->
+  Steer -> reasoning/tool B -> final response` while streaming, after final
+  persistence, during historical message edit replacement, and after reload;
+  fallback continuation remains outside the old run.
 - Chat route and UI tests cover queue snapshots, active-generation reporting,
   queued follow-up editing/cancellation/claiming, hidden delivered rows,
   retained parked rows, and Feishu-bound queue mutation rejection.

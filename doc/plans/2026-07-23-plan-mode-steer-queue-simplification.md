@@ -2,7 +2,7 @@
 title: Plan Mode Steer And Queue Simplification
 date: 2026-07-23
 kind: fix-plan
-status: in_progress
+status: implemented
 area: chat
 entities:
   - messenger_chat
@@ -83,14 +83,8 @@ and diagnostic filtering changes restore the existing behavior in
 `CHAT.LIFECYCLE.001`, `RUN.CHAT.AGENT.001`, and
 `AGENT.RUNTIME.ADAPTERS.001`.
 
-One requested behavior remains gated by the guarded Product Logic Registry:
-automatically advancing an ordinary queued message after an explicit operator
-Stop. `CHAT.LIFECYCLE.001` currently requires ordinary queued input to remain
-parked after Stop until the user explicitly chooses `Steer`. The implementation
-therefore preserves that behavior pending explicit authorization to update
-`doc/product/**`.
-
-The proposed contract delta is: after an operator Stop reaches its terminal
-state, the server queue worker may automatically deliver the next ordinary
-queued message; the stopped generation remains visibly `Stopped`, while the
-queued message starts a distinct subsequent turn.
+The approved `CHAT.LIFECYCLE.001` delta makes a verified operator Stop eligible
+to advance the next ordinary queued message through the server-owned worker.
+The stopped generation remains visibly `Stopped`, while the queued message
+starts a distinct subsequent turn. Failed, control-lost, aborted, and
+unverified terminal states continue to leave ordinary queued work parked.
