@@ -442,6 +442,15 @@ same force-stop escalation without restarting the update. Settings > About can
 show the same update session as a denser phase-by-phase diagnostic panel for
 debugging or validation.
 
+Desktop-selected `RUDDER_POSTGRES_BIN_DIR` values are internal runtime wiring,
+not operator configuration. Paths inside either the app resources or Rudder's
+versioned runtime cache are treated as managed, including values inherited from
+older shells that predate the managed marker. The updater preserves a complete
+managed payload so it can stage the target runtime cache, clears an incomplete
+managed value, and the restarted shell selects the matching target payload.
+Explicit operator-provided PostgreSQL paths outside Desktop-managed resources
+remain unchanged.
+
 This is a layered asset replacement path, not a binary-delta patcher. Fresh
 installs still download the server runtime and a Desktop app, but routine
 macOS/Windows Desktop updates avoid redownloading the server runtime when the
