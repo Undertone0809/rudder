@@ -383,7 +383,7 @@ describe("messengerService and issue follows", () => {
     expect(JSON.stringify(activities[0]?.details)).not.toContain(fixture.annotation.comment);
   });
 
-  it("rejects stale annotations during claim without leaking a message or generation", async () => {
+  it("quarantines a stale annotated row and continues to the next valid Queue item", async () => {
     const fixture = await createQueuedAnnotationFixture();
     await db
       .update(chatMessages)
@@ -394,12 +394,31 @@ describe("messengerService and issue follows", () => {
         eq(chatMessages.conversationId, fixture.conversationId),
       ));
 
-    await expect(chatSvc.claimNextServerQueuedMessage({
+    const valid = await chatSvc.createQueuedMessage({
+      orgId: fixture.orgId,
+      conversationId: fixture.conversationId,
+      clientMutationId: randomUUID(),
+      payload: { body: "Continue with this valid queued request." },
+      requestActor: boardQueueRequestActor(fixture.orgId),
+    });
+    const claim = await chatSvc.claimNextServerQueuedMessage({
       workerId: "stale-annotation-worker",
       leaseMs: 30_000,
-    })).rejects.toMatchObject({ status: 422 });
+    });
+    const [stale] = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(eq(chatQueuedMessages.id, fixture.queued.id));
+
+    expect(claim?.item.id).toBe(valid.id);
+    expect(stale).toMatchObject({
+      status: "failed_actionable",
+      deliveryDisposition: "failed_actionable",
+      reconciliationReason: "queued_message_validation_failed",
+      lastDeliveryReason: "queued_message_validation_failed",
+    });
     expect(await db.select().from(chatGenerations).where(eq(chatGenerations.orgId, fixture.orgId)))
-      .toEqual([]);
+      .toHaveLength(1);
     expect(await db
       .select()
       .from(chatMessages)
@@ -407,10 +426,15 @@ describe("messengerService and issue follows", () => {
         eq(chatMessages.orgId, fixture.orgId),
         eq(chatMessages.conversationId, fixture.conversationId),
         eq(chatMessages.role, "user"),
-      ))).toEqual([]);
+      ))).toEqual([
+        expect.objectContaining({
+          id: claim?.userMessageId,
+          body: "Continue with this valid queued request.",
+        }),
+      ]);
   });
 
-  it("rejects a cross-organization annotation during materialization", async () => {
+  it("quarantines a cross-organization annotation during materialization", async () => {
     const targetOrgId = randomUUID();
     const targetConversationId = randomUUID();
     const sourceOrgId = randomUUID();
@@ -480,7 +504,19 @@ describe("messengerService and issue follows", () => {
     await expect(chatSvc.claimNextServerQueuedMessage({
       workerId: "cross-org-annotation-worker",
       leaseMs: 30_000,
-    })).rejects.toMatchObject({ status: 422 });
+    })).resolves.toBeNull();
+    const [quarantined] = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(and(
+        eq(chatQueuedMessages.orgId, targetOrgId),
+        eq(chatQueuedMessages.conversationId, targetConversationId),
+      ));
+    expect(quarantined).toMatchObject({
+      status: "failed_actionable",
+      deliveryDisposition: "failed_actionable",
+      reconciliationReason: "queued_message_validation_failed",
+    });
     expect(await db.select().from(chatGenerations).where(eq(chatGenerations.orgId, targetOrgId)))
       .toEqual([]);
     expect(await db
@@ -663,6 +699,39 @@ describe("messengerService and issue follows", () => {
       reason: "retry_before_provider_start",
     });
     expect(released?.status).toBe("queued");
+    const edited = await (chatSvc as any).updateQueuedMessageWithStagedAttachments({
+      orgId: fixture.orgId,
+      conversationId: fixture.conversationId,
+      itemId: released!.id,
+      version: released!.version,
+      payload: { body: "Edited after materialization and safe release" },
+      stagedAttachments: [],
+      attachmentFileIndexesByAnnotationId: new Map(),
+    });
+    expect(edited.item.payload).toMatchObject({
+      body: "Edited after materialization and safe release",
+      inlineAnnotations: [
+        expect.objectContaining({
+          id: fixture.annotation.id,
+          attachmentIds: [expect.any(String)],
+        }),
+      ],
+    });
+    await expect((chatSvc as any).updateQueuedMessageWithStagedAttachments({
+      orgId: fixture.orgId,
+      conversationId: fixture.conversationId,
+      itemId: edited.item.id,
+      version: edited.item.version,
+      payload: {
+        body: "Attempt to replace a sent snapshot",
+        inlineAnnotations: edited.item.payload.inlineAnnotations,
+      },
+      stagedAttachments: [],
+      attachmentFileIndexesByAnnotationId: new Map(),
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("immutable"),
+    });
     const retriedClaim = await chatSvc.claimNextServerQueuedMessage({
       workerId: "annotation-file-worker-retry",
       leaseMs: 30_000,
@@ -691,6 +760,8 @@ describe("messengerService and issue follows", () => {
       ));
 
     expect(retriedClaim?.userMessageId).toBe(claim?.userMessageId);
+    expect(retriedClaim?.item.payload.body).toBe("Edited after materialization and safe release");
+    expect(message?.body).toBe("Edited after materialization and safe release");
     expect(messageAttachments).toHaveLength(1);
     expect(canonicalAnnotations[0]?.attachmentIds).toEqual([messageAttachments[0]?.id]);
     expect(materializedQueue?.payload).not.toHaveProperty("__rudderQueueAnnotationAssets");

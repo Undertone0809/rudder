@@ -2035,6 +2035,17 @@ export function chatRoutes(
     const requestBody = multipart
       ? parseQueuedMultipartBody(req.body as Record<string, unknown> | undefined, "create")
       : req.body;
+    const inlineAnnotationsProvided = Boolean(
+      requestBody
+      && typeof requestBody === "object"
+      && "payload" in requestBody
+      && requestBody.payload
+      && typeof requestBody.payload === "object"
+      && Object.hasOwn(requestBody.payload, "inlineAnnotations"),
+    );
+    if ((inlineAnnotationsProvided || files.length > 0) && req.actor.type !== "board") {
+      assertBoard(req);
+    }
     const parsed = createChatQueuedMessageSchema.safeParse(requestBody);
     if (!parsed.success) {
       res.status(400).json({
@@ -2192,6 +2203,9 @@ export function chatRoutes(
       && typeof requestBody.payload === "object"
       && Object.hasOwn(requestBody.payload, "inlineAnnotations"),
     );
+    if ((inlineAnnotationsProvided || files.length > 0) && req.actor.type !== "board") {
+      assertBoard(req);
+    }
     const parsed = updateChatQueuedMessageSchema.safeParse(requestBody);
     if (!parsed.success) {
       res.status(400).json({

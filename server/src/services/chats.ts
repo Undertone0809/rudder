@@ -19,7 +19,7 @@ import {
 import { sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { conflict, notFound, unprocessable } from "../errors.js";
+import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
@@ -1997,6 +1997,9 @@ export function chatService(db: Db) {
         throw unprocessable("Queued message body or at least one inline annotation is required");
       }
       const replacingAnnotations = input.payload.inlineAnnotations !== undefined;
+      if (replacingAnnotations && current.sourceMessageId) {
+        throw unprocessable("Sent annotation snapshots are immutable across queued message edits");
+      }
       const currentPrivateState = queuedAnnotationAssetState(current.payload);
       const currentAttachmentFileIndexesByAnnotationId = new Map<string, number[]>();
       for (const attachment of currentPrivateState?.attachments ?? []) {
@@ -2014,6 +2017,7 @@ export function chatService(db: Db) {
         attachmentFileIndexesByAnnotationId: replacingAnnotations
           ? input.attachmentFileIndexesByAnnotationId
           : currentAttachmentFileIndexesByAnnotationId,
+        editUserMessageId: replacingAnnotations ? null : current.sourceMessageId,
       });
       const cleanupAttachments = replacingAnnotations
         ? await queuedAssetCleanupRows(tx, input.orgId, current.payload)
@@ -2063,7 +2067,9 @@ export function chatService(db: Db) {
         .set({
           payload: persistedPayload,
           version: input.version + 1,
-          lastDeliveryReason: null,
+          lastDeliveryReason: current.sourceMessageId
+            ? current.lastDeliveryReason
+            : null,
           updatedAt: now,
         })
         .where(and(
@@ -2076,6 +2082,22 @@ export function chatService(db: Db) {
         ))
         .returning();
       if (!row) throw conflict("Queued message was changed or is no longer editable");
+      if (current.sourceMessageId) {
+        const [updatedMessage] = await tx
+          .update(chatMessages)
+          .set({ body: payload.body, updatedAt: now })
+          .where(and(
+            eq(chatMessages.id, current.sourceMessageId),
+            eq(chatMessages.orgId, input.orgId),
+            eq(chatMessages.conversationId, input.conversationId),
+            eq(chatMessages.role, "user"),
+            isNull(chatMessages.supersededAt),
+          ))
+          .returning({ id: chatMessages.id });
+        if (!updatedMessage) {
+          throw conflict("Materialized queued message changed while its prose was edited");
+        }
+      }
       return { item: hydrateQueuedMessage(row), cleanupAttachments };
     });
   }
@@ -2386,8 +2408,10 @@ export function chatService(db: Db) {
         .offset(scanOffset)
         .for("update", { skipLocked: true });
 
+      let retainedCandidateCount = 0;
       for (const candidate of candidates) {
         if (!candidate.requestActor || typeof candidate.requestActor !== "object" || Array.isArray(candidate.requestActor)) {
+          retainedCandidateCount += 1;
           continue;
         }
         const latestGeneration = await tx
@@ -2407,6 +2431,7 @@ export function chatService(db: Db) {
           latestGeneration
           && ACTIVE_CHAT_GENERATION_STATUSES.some((status) => status === latestGeneration.status)
         ) {
+          retainedCandidateCount += 1;
           continue;
         }
         if (
@@ -2419,6 +2444,7 @@ export function chatService(db: Db) {
             && latestGeneration.terminalReason === candidate.lastDeliveryReason
           )
         ) {
+          retainedCandidateCount += 1;
           continue;
         }
         if (
@@ -2451,22 +2477,61 @@ export function chatService(db: Db) {
           continue;
         }
 
-        const materialized = await materializeQueuedUserMessage(tx, {
-          orgId: candidate.orgId,
-          conversationId: candidate.conversationId,
-          item: candidate,
-          now,
-          expectedStatuses: [candidate.status],
-          structuredPayload: isSteer
-            ? {
-              source: "steer",
-              targetGenerationId: candidate.activeGenerationId ?? candidate.expectedGenerationId,
-              queueItemId: candidate.id,
-              controlActionId: candidate.controlActionId,
-              deliveryDisposition: candidate.deliveryDisposition,
-            }
-            : { source: "queue", queueItemId: candidate.id },
-        });
+        let materialized;
+        try {
+          materialized = await materializeQueuedUserMessage(tx, {
+            orgId: candidate.orgId,
+            conversationId: candidate.conversationId,
+            item: candidate,
+            now,
+            expectedStatuses: [candidate.status],
+            structuredPayload: isSteer
+              ? {
+                source: "steer",
+                targetGenerationId: candidate.activeGenerationId ?? candidate.expectedGenerationId,
+                queueItemId: candidate.id,
+                controlActionId: candidate.controlActionId,
+                deliveryDisposition: candidate.deliveryDisposition,
+              }
+              : { source: "queue", queueItemId: candidate.id },
+          });
+        } catch (error) {
+          if (!(error instanceof HttpError) || error.status !== 422) throw error;
+          const validationFailureReason = "queued_message_validation_failed";
+          await tx
+            .update(chatQueuedMessages)
+            .set({
+              status: "failed_actionable",
+              deliveryDisposition: "failed_actionable",
+              reconciliationReason: validationFailureReason,
+              lastDeliveryReason: validationFailureReason,
+              updatedAt: now,
+              version: sql`${chatQueuedMessages.version} + 1`,
+            })
+            .where(and(
+              eq(chatQueuedMessages.id, candidate.id),
+              eq(chatQueuedMessages.orgId, candidate.orgId),
+              eq(chatQueuedMessages.conversationId, candidate.conversationId),
+              eq(chatQueuedMessages.status, candidate.status),
+              eq(chatQueuedMessages.version, candidate.version),
+              isNull(chatQueuedMessages.cancelledAt),
+            ));
+          if (candidate.controlActionId) {
+            await tx
+              .update(chatControlActions)
+              .set({
+                localDisposition: "failed_actionable",
+                lastError: validationFailureReason,
+                resolvedAt: now,
+                updatedAt: now,
+              })
+              .where(and(
+                eq(chatControlActions.id, candidate.controlActionId),
+                eq(chatControlActions.orgId, candidate.orgId),
+              ));
+          }
+          continue;
+        }
         const materializedItem = materialized.item;
         const userMessageId = materialized.message.id;
         const generationId = randomUUID();
@@ -2540,7 +2605,7 @@ export function chatService(db: Db) {
         };
       }
         if (candidates.length < batchSize) return null;
-        scanOffset += candidates.length;
+        scanOffset += retainedCandidateCount;
       }
     });
   }

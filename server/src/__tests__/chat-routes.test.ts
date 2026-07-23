@@ -1930,6 +1930,52 @@ describe("chat routes", () => {
     }
   });
 
+  it("rejects legacy client delivery of a queued message before an annotation snapshot can be omitted", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    mockChatService.getById.mockResolvedValue(conversation);
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages/stream`)
+      .send({
+        body: "Client-supplied replacement prose",
+        queuedMessageId: "10000000-0000-4000-8000-000000000071",
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("server-owned Queue worker");
+    expect(mockChatService.assertQueuedMessageClaimedForDelivery).not.toHaveBeenCalled();
+    expect(mockChatInlineAnnotations.prepare).not.toHaveBeenCalled();
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("rejects legacy client delivery before an annotation snapshot or owned file can be replaced", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    mockChatService.getById.mockResolvedValue(conversation);
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages/stream`)
+      .field("body", "Client-supplied replacement prose")
+      .field("queuedMessageId", "10000000-0000-4000-8000-000000000072")
+      .field("inlineAnnotations", JSON.stringify([
+        createInlineAnnotation({ attachmentFileIndexes: [0] }),
+      ]))
+      .attach("files", Buffer.from("replacement"), {
+        filename: "replacement.txt",
+        contentType: "text/plain",
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("server-owned Queue worker");
+    expect(mockChatService.assertQueuedMessageClaimedForDelivery).not.toHaveBeenCalled();
+    expect(mockChatInlineAnnotations.prepare).not.toHaveBeenCalled();
+    expect(mockStorage.putFile).not.toHaveBeenCalled();
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
   it("rejects a multipart annotation file index before storing files or creating a generation", async () => {
     const conversation = createConversation({ id: annotationConversationId });
     mockChatService.getById.mockResolvedValue(conversation);
@@ -2048,6 +2094,78 @@ describe("chat routes", () => {
     } finally {
       release?.();
     }
+  });
+
+  it("requires a board actor to create or replace Queue annotations", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    mockChatService.getById.mockResolvedValue(conversation);
+    const agentActor = {
+      type: "agent",
+      agentId: "agent-1",
+      orgId: conversation.orgId,
+      runId: "run-1",
+    };
+
+    const create = await request(createApp(agentActor))
+      .post(`/api/chats/${annotationConversationId}/queue`)
+      .send({
+        clientMutationId: "agent-annotation-create",
+        payload: {
+          body: "Agent prose",
+          inlineAnnotations: [],
+        },
+      });
+    const update = await request(createApp(agentActor))
+      .patch(`/api/chats/${annotationConversationId}/queue/queued-1`)
+      .send({
+        version: 1,
+        payload: {
+          body: "Agent edit",
+          inlineAnnotations: [],
+        },
+      });
+
+    expect(create.status).toBe(403);
+    expect(update.status).toBe(403);
+    expect(mockChatInlineAnnotations.prepare).not.toHaveBeenCalled();
+    expect(mockStorage.putFile).not.toHaveBeenCalled();
+    expect(mockChatService.createQueuedMessageWithStagedAttachments).not.toHaveBeenCalled();
+    expect(mockChatService.updateQueuedMessageWithStagedAttachments).not.toHaveBeenCalled();
+  });
+
+  it("rejects agent Queue create and update uploads before annotation preparation or object storage", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    mockChatService.getById.mockResolvedValue(conversation);
+    const agentActor = {
+      type: "agent",
+      agentId: "agent-1",
+      orgId: conversation.orgId,
+      runId: "run-1",
+    };
+
+    const create = await request(createApp(agentActor))
+      .post(`/api/chats/${annotationConversationId}/queue`)
+      .field("clientMutationId", "agent-annotation-upload")
+      .field("body", "Agent prose")
+      .attach("files", Buffer.from("not allowed"), {
+        filename: "agent.txt",
+        contentType: "text/plain",
+      });
+    const update = await request(createApp(agentActor))
+      .patch(`/api/chats/${annotationConversationId}/queue/queued-1`)
+      .field("version", "1")
+      .field("body", "Agent edit")
+      .attach("files", Buffer.from("not allowed either"), {
+        filename: "agent-update.txt",
+        contentType: "text/plain",
+      });
+
+    expect(create.status).toBe(403);
+    expect(update.status).toBe(403);
+    expect(mockChatInlineAnnotations.prepare).not.toHaveBeenCalled();
+    expect(mockStorage.putFile).not.toHaveBeenCalled();
+    expect(mockChatService.createQueuedMessageWithStagedAttachments).not.toHaveBeenCalled();
+    expect(mockChatService.updateQueuedMessageWithStagedAttachments).not.toHaveBeenCalled();
   });
 
   it("stages multipart Queue annotation files without leaking private storage references", async () => {

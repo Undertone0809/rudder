@@ -164,6 +164,13 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
 
+    const queuedMessageId = parsedBody.data.queuedMessageId ?? null;
+    if (queuedMessageId) {
+      res.status(409).json({
+        error: "Queued messages are delivered only by Rudder's server-owned Queue worker",
+      });
+      return;
+    }
     const preparedAnnotations = !atomicFirstTurn && inlineAnnotationsProvided
       ? await inlineAnnotations.prepare({
         orgId: conversation.orgId,
@@ -173,7 +180,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         editUserMessageId: parsedBody.data.editUserMessageId ?? null,
       })
       : null;
-    const queuedMessageId = parsedBody.data.queuedMessageId ?? null;
     if (!atomicFirstTurn) {
       const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
       if (!assistantAvailability.available) {
