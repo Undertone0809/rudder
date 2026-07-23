@@ -1569,7 +1569,10 @@ Messenger Chat exposes a compact, conversation-scoped manifest that keeps the
 current thread's inspectable Outputs, Sources, and References visible without
 requiring the operator to search the transcript. Work from other
 conversations linked to the same Project is intentionally omitted from this
-surface and remains available from Project-level surfaces.
+surface and remains available from Project-level surfaces. When the current
+Chat has successfully created or converted to a primary issue, that issue is a
+conversation Reference regardless of whether its creation receipt is a visible
+message.
 
 ## Intent / User Job
 
@@ -1611,8 +1614,10 @@ them through `CONTEXT.RESOURCES.001`.
   is presentation state and is excluded.
 - Source: user attachment, user-provided URL or Library reference, or a Project
   Context Resource eligible for a project-scoped Chat Run.
-- Reference: deduplicated external HTTP(S) website in a visible user or assistant
-  message that is not promoted by the category precedence rules.
+- Reference: deduplicated external HTTP(S) website in a visible user or
+  assistant message that is not promoted by the category precedence rules, or
+  the current conversation's same-organization primary issue after successful
+  creation/conversion.
 
 ## Entry Points / Inputs
 
@@ -1622,6 +1627,7 @@ them through `CONTEXT.RESOURCES.001`.
   and Agent-created Chat attachments.
 - `library-entry://` and `library-file://` references in visible message bodies.
 - The Chat's explicit Project context and that Project's attached resources.
+- The Chat's `primaryIssueId` and its matching issue context-link metadata.
 - Chat edit, refresh/variant, fork, attachment, and message supersession state.
 
 ## Product Logic Flow
@@ -1644,18 +1650,28 @@ them through `CONTEXT.RESOURCES.001`.
 6. When the Chat has explicit Project context and a project-scoped assistant Run,
    attached Project Context Resources become Source candidates because they were
    eligible for that run.
-7. Rudder canonicalizes target keys, removes URL fragments/default ports,
+7. When the current Chat has a `primaryIssueId`, Rudder resolves that issue only
+   inside the same organization and adds it as a Reference with target key
+   `issue:<issue-id>`, readable identifier/title, and issue identity metadata.
+   A matching issue context link may supply proposal provenance only when its
+   `sourceMessageId` still belongs to the active visible message set. Pending,
+   rejected, or revision-requested proposals have no primary issue and add
+   nothing.
+8. Rudder canonicalizes target keys, removes URL fragments/default ports,
    deduplicates candidates, and applies `output > source > reference` so one
-   target appears once in its strongest supported category.
-8. Reconciliation removes stale derived Sources/References from superseded or
+   target appears once in its strongest supported category. The canonical
+   primary-issue target key also deduplicates an explicit visible link to the
+   same issue.
+9. Reconciliation removes stale derived Sources/References from superseded or
    edited visible messages, but it does not silently delete a durable Output
    merely because the message that announced it was refreshed. A historical row
-   now proven to be trusted inline visual presentation is removed because it was
-   never production evidence.
-9. The API returns the current Chat sections. It may continue returning a
+   now proven to be trusted inline visual presentation is removed because it
+   was never production evidence. A primary-issue Reference is also removed
+   when the association is cleared or the issue is deleted.
+10. The API returns the current Chat sections. It may continue returning a
    Project id/count as compatibility metadata, but Chat does not render it or
    include it in the visible category count.
-10. When at least one current-thread item exists, wide Chat renders the compact
+11. When at least one current-thread item exists, wide Chat renders the compact
     shelf. Its fixed top row renders the first non-empty category in
     `Outputs > Sources > References` order as a normal category header, with
     the same icon, label, count, height, background, and typography used by
@@ -1670,7 +1686,7 @@ them through `CONTEXT.RESOURCES.001`.
     `32rem` (512 CSS pixels) on normal viewports, shrink to the available
     viewport allowance when necessary, and keep longer lists internally
     scrollable.
-11. Opening an image attachment uses the application-level image preview shared
+12. Opening an image attachment uses the application-level image preview shared
     with Chat message and Markdown images. The overlay exposes an explicit close
     control plus copy/download actions, closes on `Escape`, and does not create a
     Browser Side Panel tab. Non-image attachments keep their normal file-open
@@ -1687,6 +1703,9 @@ them through `CONTEXT.RESOURCES.001`.
 | Agent creates ordinary HTML | No valid trusted same-message inline visual mapping | One normal Output | HTML extension alone must not hide the artifact | Manifest regression tests |
 | Agent links a produced Library artifact | Assistant message has a Run id and `artifacts/...` Library target | One Output that opens through Library Side Panel | A normal external link must not satisfy this rule | Extraction/service tests |
 | Agent recommends a website | Visible assistant HTTP(S) link with no production evidence | One Reference | Rudder must not claim the website was created by the Run | Extraction/service tests |
+| Chat issue proposal is pending, rejected, or revision requested | Conversation has no successfully created primary issue | No issue Reference from the proposal | A proposed issue must not appear as if it already exists | Service tests and proposal-review E2E |
+| Chat creates or converts to an issue | Current conversation has a same-organization `primaryIssueId` | One issue Reference with identifier/title and valid proposal provenance when available | The issue must not be labeled Output or duplicated by an explicit visible issue link | Service tests and proposal-review E2E |
+| Primary issue association becomes stale | Association is cleared, issue is deleted, or id does not resolve in the conversation organization | Derived primary-issue Reference is removed | A foreign, deleted, or detached issue must not remain in the current Chat manifest | Service tests |
 | Link appears in tool history only | URL exists only in transcript, reasoning, stdout, or stderr | No manifest item | Tool exploration must not pollute the visible manifest | Service tests |
 | Answer is refreshed or edited | Prior message becomes superseded | Stale derived References disappear; durable Outputs remain inspectable | Refresh must not erase a real artifact | Service tests |
 | Chat is forked | Copied historical assistant rows have no producing Run id | Sources can be re-derived; copied rows do not gain Output ownership | Fork must not claim the source thread's Outputs as newly produced | Fork/service tests |
@@ -1702,7 +1721,8 @@ The operator sees the selected Chat, its normal transcript/composer, and a
 category-led files-and-links shelf containing only the current thread's
 Outputs, Sources, and References. Each row exposes a readable title and type
 icon. Website rows expose the normalized URL and website icon instead of a
-generic link icon or redundant `From Agent` origin label.
+generic link icon or redundant `From Agent` origin label. A successfully
+created primary issue appears in References with its identifier and title.
 
 ## Operator-Visible Output
 
@@ -1730,6 +1750,8 @@ generic link icon or redundant `From Agent` origin label.
 - External websites: normalized URL text and website icon/fallback behavior from
   `CHAT.WEBSITE.LINK.ICON.001`, with safe link routing under
   `CHAT.SIDE.PANEL.001`.
+- Primary issue References: the existing issue Side Panel target under
+  `CHAT.SIDE.PANEL.001`, without replacing the current Chat route.
 - Provenance action: jump to the source message when a message id exists.
 - Side Panel open: the compact shelf yields to the workbench and returns when
   the panel is hidden.
@@ -1740,7 +1762,9 @@ generic link icon or redundant `From Agent` origin label.
 category, target identity, title/URL, status, source role, message id, Run id,
 Agent/user provenance, metadata, and timestamps. Chat messages, attachments,
 context links, and Project resource attachments remain the source evidence used
-to reconcile the projection.
+to reconcile the projection. `chat_conversations.primary_issue_id` is the
+authoritative current-thread association for the created issue; the matching
+issue context link is optional provenance, not authority.
 
 ## Canonical Scenarios
 
@@ -1769,12 +1793,27 @@ to reconcile the projection.
    - Expected state/action: no manifest item is created.
    - Visible output: no change to the manifest shelf.
    - Evidence: exclusion test.
+5. Approved Chat issue proposal:
+   - Trigger: manual approval, auto-create, or direct Chat-to-Issue conversion
+     sets the conversation's primary issue.
+   - Expected state/action: one issue Reference appears using
+     `issue:<issue-id>` and any valid visible proposal provenance; an explicit
+     link to the same issue is deduplicated.
+   - Visible output: identifier plus title in References; opening it uses the
+     current Chat's issue Side Panel and closing the panel restores the shelf.
+   - Evidence: conversation primary issue id, issue context link, manifest row,
+     service tests, and proposal-review E2E.
 
 ## Invariants / Non-Goals
 
 - Organization access is enforced before reconciliation or listing.
 - Project membership does not import work from other conversations into the
   current Chat manifest.
+- Only the current conversation's same-organization primary issue may be
+  projected from durable Chat association state; Project peers and other Chats'
+  issues are excluded.
+- A primary issue is a Reference, never an Output, and unresolved proposals do
+  not create an issue row.
 - One target appears once per conversation under its strongest supported
   category.
 - Outputs require structured production evidence and persist across answer
@@ -1802,6 +1841,7 @@ remain intact.
 Related plans:
 
 - `doc/plans/2026-07-12-chat-work-manifest.md`
+- `doc/plans/2026-07-23-chat-created-issue-work-manifest.md`
 
 Related code:
 
@@ -1825,6 +1865,7 @@ Related tests:
 - `ui/src/lib/image-actions.test.ts`
 - `tests/e2e/chat-work-manifest.spec.ts`
 - `tests/e2e/chat-work-manifest-image-preview.spec.ts`
+- `tests/e2e/chat-proposal-review.spec.ts`
 
 Known gaps:
 

@@ -10,6 +10,7 @@ import {
   createDb,
   ensurePostgresDatabase,
   heartbeatRuns,
+  issues,
   organizationResources,
   organizations,
   projectResourceAttachments,
@@ -105,6 +106,7 @@ describe("chatWorkManifestService", () => {
     await db.delete(heartbeatRuns);
     await db.delete(chatContextLinks);
     await db.delete(chatConversations);
+    await db.delete(issues);
     await db.delete(projectResourceAttachments);
     await db.delete(organizationResources);
     await db.delete(projects);
@@ -342,6 +344,176 @@ describe("chatWorkManifestService", () => {
       { automationId: "automation-1" },
       { conversationId: "chat-1", messageId: "message-1" },
     ]);
+  });
+
+  it("does not project an issue before the conversation has a created primary issue", async () => {
+    const { orgId, agentId, conversationId } = await seedBase("PendingIssue");
+    await db.insert(chatMessages).values({
+      orgId,
+      conversationId,
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Propose an issue, but wait for operator approval.",
+      replyingAgentId: agentId,
+    });
+
+    await svc.reconcileConversation(conversationId);
+
+    expect((await svc.getConversationManifest(conversationId)).references).toEqual([]);
+  });
+
+  it("projects the same-organization primary issue once with readable identity and valid proposal provenance", async () => {
+    const { orgId, agentId, conversationId } = await seedBase("PrimaryIssue");
+    const issueId = randomUUID();
+    const messageId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Expose the created issue",
+      identifier: "PRI-42",
+      status: "todo",
+      createdByAgentId: agentId,
+    });
+    await db.insert(chatMessages).values({
+      id: messageId,
+      orgId,
+      conversationId,
+      role: "assistant",
+      kind: "issue_proposal",
+      body: [
+        `[PRI-42](issue://${issueId}?r=PRI-42)`,
+        "[PRI-42 route](/issues/pri-42)",
+      ].join(" "),
+      replyingAgentId: agentId,
+    });
+    await db.insert(chatContextLinks).values({
+      orgId,
+      conversationId,
+      entityType: "issue",
+      entityId: issueId,
+      metadata: { sourceMessageId: messageId },
+    });
+    await db.update(chatConversations)
+      .set({ primaryIssueId: issueId })
+      .where(eq(chatConversations.id, conversationId));
+
+    await svc.reconcileConversation(conversationId);
+    const manifest = await svc.getConversationManifest(conversationId);
+
+    expect(manifest.references).toHaveLength(1);
+    expect(manifest.references[0]).toMatchObject({
+      targetType: "issue",
+      targetKey: `issue:${issueId}`,
+      title: "PRI-42 · Expose the created issue",
+      messageId,
+      sourceRole: "assistant",
+      createdByAgentId: agentId,
+      metadata: {
+        issueId,
+        ref: "PRI-42",
+      },
+    });
+  });
+
+  it("omits stale primary-issue provenance and rejects cross-organization primary issues", async () => {
+    const first = await seedBase("PrimaryBoundary");
+    const second = await seedBase("ForeignPrimary");
+    const issueId = randomUUID();
+    const foreignIssueId = randomUUID();
+    const sourceMessageId = randomUUID();
+    await db.insert(issues).values([
+      {
+        id: issueId,
+        orgId: first.orgId,
+        title: "Scoped primary issue",
+        identifier: "SCOPED-1",
+        status: "todo",
+      },
+      {
+        id: foreignIssueId,
+        orgId: second.orgId,
+        title: "Foreign primary issue",
+        identifier: "FOREIGN-1",
+        status: "todo",
+      },
+    ]);
+    await db.insert(chatMessages).values({
+      id: sourceMessageId,
+      orgId: first.orgId,
+      conversationId: first.conversationId,
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Superseded issue proposal",
+      supersededAt: new Date(),
+    });
+    await db.insert(chatContextLinks).values({
+      orgId: first.orgId,
+      conversationId: first.conversationId,
+      entityType: "issue",
+      entityId: issueId,
+      metadata: { sourceMessageId },
+    });
+    await db.update(chatConversations)
+      .set({ primaryIssueId: issueId })
+      .where(eq(chatConversations.id, first.conversationId));
+
+    await svc.reconcileConversation(first.conversationId);
+    expect((await svc.getConversationManifest(first.conversationId)).references[0]).toMatchObject({
+      targetKey: `issue:${issueId}`,
+      messageId: null,
+    });
+
+    await db.update(chatConversations)
+      .set({ primaryIssueId: foreignIssueId })
+      .where(eq(chatConversations.id, first.conversationId));
+    await svc.reconcileConversation(first.conversationId);
+
+    expect((await svc.getConversationManifest(first.conversationId)).references).toEqual([]);
+  });
+
+  it("removes the derived primary-issue row when the association is cleared or the issue is deleted", async () => {
+    const { orgId, conversationId } = await seedBase("StalePrimary");
+    const firstIssueId = randomUUID();
+    const deletedIssueId = randomUUID();
+    await db.insert(issues).values([
+      {
+        id: firstIssueId,
+        orgId,
+        title: "Detached primary issue",
+        identifier: "STALE-1",
+        status: "todo",
+      },
+      {
+        id: deletedIssueId,
+        orgId,
+        title: "Deleted primary issue",
+        identifier: "STALE-2",
+        status: "todo",
+      },
+    ]);
+    await db.update(chatConversations)
+      .set({ primaryIssueId: firstIssueId })
+      .where(eq(chatConversations.id, conversationId));
+    await svc.reconcileConversation(conversationId);
+    expect((await svc.getConversationManifest(conversationId)).references).toHaveLength(1);
+
+    await db.update(chatConversations)
+      .set({ primaryIssueId: null })
+      .where(eq(chatConversations.id, conversationId));
+    await svc.reconcileConversation(conversationId);
+    expect((await svc.getConversationManifest(conversationId)).references).toEqual([]);
+
+    await db.update(chatConversations)
+      .set({ primaryIssueId: deletedIssueId })
+      .where(eq(chatConversations.id, conversationId));
+    await svc.reconcileConversation(conversationId);
+    expect((await svc.getConversationManifest(conversationId)).references).toHaveLength(1);
+
+    await db.delete(issues).where(eq(issues.id, deletedIssueId));
+    await svc.reconcileConversation(conversationId);
+
+    expect((await svc.getConversationManifest(conversationId)).references).toEqual([]);
+    expect(await db.select().from(chatWorkManifestItems)).toEqual([]);
   });
 
   it("keeps project resources in the project roll-up and enforces organization boundaries", async () => {
