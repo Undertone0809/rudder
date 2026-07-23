@@ -1089,16 +1089,25 @@ contracts:
       - packages/shared/src/validators/chat.ts
       - packages/shared/src/chat-transcript-provenance.ts
       - server/src/services/chat-inline-annotations.ts
+      - server/src/services/chat-assistant.annotations.ts
       - server/src/services/chat-assistant.helpers.ts
+      - server/src/services/chat-generation-provenance.ts
       - server/src/services/chat-generation-protocol.ts
       - server/src/services/chat-steer-messages.ts
+      - server/src/services/chats.annotation-persistence.ts
       - server/src/services/chats.ts
       - server/src/services/side-chats.ts
       - server/src/services/chat-work-manifest.ts
+      - server/src/routes/chats.annotation-routes.ts
       - server/src/routes/chats.ts
       - server/src/routes/chats.stream-routes.ts
       - ui/src/api/chats.ts
       - ui/src/lib/chat-pending-attachments.ts
+      - ui/src/lib/chat-draft-storage.ts
+      - ui/src/lib/chat-response-annotation-selection.ts
+      - ui/src/lib/chat-response-annotations.ts
+      - ui/src/components/chat/ResponseAnnotations.tsx
+      - ui/src/components/chat/SelectionAnnotationToolbar.tsx
       - ui/src/components/MarkdownBody.tsx
       - ui/src/components/transcript/RunTranscriptView.chat.tsx
       - ui/src/pages/Chat.messages.tsx
@@ -1113,8 +1122,13 @@ contracts:
       - server/src/__tests__/chat-routes.test.ts
       - server/src/__tests__/messenger-service.test.ts
       - server/src/__tests__/chat-work-manifest.test.ts
+      - ui/src/components/chat/ResponseAnnotations.test.tsx
+      - ui/src/components/chat/SelectionAnnotationToolbar.test.tsx
       - ui/src/components/MarkdownBody.test.tsx
       - ui/src/components/transcript/RunTranscriptView.test.tsx
+      - ui/src/lib/chat-draft-storage.test.ts
+      - ui/src/lib/chat-response-annotation-selection.test.ts
+      - ui/src/lib/chat-response-annotations.test.ts
       - ui/src/pages/Chat.messages.test.tsx
     related_plans:
       - doc/plans/2026-07-23-chat-response-annotations.md

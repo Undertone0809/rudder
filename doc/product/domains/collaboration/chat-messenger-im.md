@@ -637,7 +637,9 @@ copying context into the composer or losing the relationship to its source.
 
 - A mouse, touch, or keyboard text selection contained within one eligible
   assistant body or one eligible visible Process transcript block.
-- `Add to chat`, `More details`, and `Ask in side chat` on the selection toolbar.
+- `Add to chat` and `More details` on every eligible selection. `Ask in side
+  chat` is additionally available when the owning assistant message satisfies
+  the completed-message anchor required by `CHAT.SIDE.CHAT.001`.
 - The annotation editor's optional comment field plus image/file add and remove
   actions.
 - Existing Chat JSON, stream, multipart, Queue, and Steer message admission
@@ -650,13 +652,19 @@ copying context into the composer or losing the relationship to its source.
 1. The operator completes a non-empty selection in one eligible source. Rudder
    maps the rendered range to one canonical source anchor and rejects a range
    that crosses messages, transcript blocks, user/system messages, hidden
-   content, raw tool output, stdout/stderr, or an iframe.
+   content, raw tool output, stdout/stderr, an inline visual, or an iframe.
+   Markdown rendering preserves raw-source position metadata through
+   normalization, mention-label resolution, and visual-piece splitting; the
+   selected snapshot preserves visible paragraph/list/line-break boundaries
+   while offsets and hashes continue to address the persisted raw source.
 2. Rudder shows a portal-based selection toolbar positioned with flip/shift
    collision handling. `Add to chat` adds only the annotation. `More details`
    adds it and inserts the localized equivalent of “Please explain this in more
    detail” at the current main-composer cursor without sending.
-3. `Ask in side chat` places the same annotation in a provisional Side Chat
-   draft and leaves the main Chat draft unchanged. Opening the draft creates no
+3. For a completed assistant anchor, `Ask in side chat` places the same
+   annotation in a provisional Side Chat draft and leaves the main Chat draft
+   unchanged. The action is unavailable for a stopped or failed source because
+   those messages are not valid Side Chat anchors. Opening the draft creates no
    conversation; first Send follows `CHAT.SIDE.CHAT.001`.
 4. Adding the same source surface and canonical range to the same draft is
    idempotent. New distinct annotations append in order and immediately render
@@ -664,7 +672,8 @@ copying context into the composer or losing the relationship to its source.
    markers.
 5. The composer renders an `N annotations` chip. Expanding it shows an ordered
    list of Selected text, optional User comment, and annotation-owned files.
-   Draft rows expose edit and delete actions. Closing the chip clears all
+   Draft rows expose edit and delete actions. Collapsing the details keeps the
+   draft unchanged. Activating the chip's explicit Clear/X control clears all
    annotations and their draft-only files but preserves the message body and
    unrelated composer attachments.
 6. Marker or edit activation opens an anchored editor with the selection
@@ -726,7 +735,7 @@ copying context into the composer or losing the relationship to its source.
 
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
-| Stable final-answer selection | One completed/stopped/failed assistant body; one valid range | Add one ordered annotation and source marker | Select a user/system message, cross-message range, or streaming content | UI, service, and E2E tests |
+| Stable final-answer selection | One completed/stopped/failed assistant body; one valid range | Add one ordered annotation and source marker; expose Side Chat only for a completed owning assistant message | Select a user/system message, cross-message range, streaming content, or create a Side Chat from a stopped/failed anchor | UI, service, and E2E tests |
 | Visible Process selection | Loaded visible assistant/thinking prose; terminal generation; one provenance range | Add one process annotation with generation sequence identity | Use transcript index/timestamp, hidden reasoning, tool payload, stdout/stderr, or lifecycle events | Provenance, service, UI, and E2E tests |
 | Comment and files | Draft annotation is editable and uploads satisfy Chat file policy | Save optional comment and annotation-owned images/files | Attach a foreign asset, duplicate the file as a generic message tile, or log its contents | Multipart, ownership, UI, and E2E tests |
 | More details | Eligible selection; main composer available | Add the annotation and insert localized detail request at the cursor | Send automatically or replace existing draft text | UI and E2E tests |
@@ -892,15 +901,24 @@ Related code:
 - `packages/shared/src/validators/chat.ts`
 - `packages/shared/src/chat-transcript-provenance.ts`
 - `server/src/services/chat-inline-annotations.ts`
+- `server/src/services/chat-assistant.annotations.ts`
 - `server/src/services/chat-assistant.helpers.ts`
+- `server/src/services/chat-generation-provenance.ts`
 - `server/src/services/chat-generation-protocol.ts`
+- `server/src/services/chats.annotation-persistence.ts`
 - `server/src/services/chats.ts`
+- `server/src/routes/chats.annotation-routes.ts`
 - `server/src/routes/chats.ts`
 - `server/src/routes/chats.stream-routes.ts`
 - `server/src/services/side-chats.ts`
 - `ui/src/api/chats.ts`
+- `ui/src/components/chat/ResponseAnnotations.tsx`
+- `ui/src/components/chat/SelectionAnnotationToolbar.tsx`
 - `ui/src/components/MarkdownBody.tsx`
 - `ui/src/components/transcript/RunTranscriptView.chat.tsx`
+- `ui/src/lib/chat-draft-storage.ts`
+- `ui/src/lib/chat-response-annotation-selection.ts`
+- `ui/src/lib/chat-response-annotations.ts`
 - `ui/src/pages/Chat.messages.tsx`
 - `ui/src/pages/Chat.tsx`
 
@@ -913,8 +931,13 @@ Related tests:
 - `server/src/services/chat-generation-protocol.test.ts`
 - `server/src/__tests__/chat-routes.test.ts`
 - `server/src/__tests__/messenger-service.test.ts`
+- `ui/src/components/chat/ResponseAnnotations.test.tsx`
+- `ui/src/components/chat/SelectionAnnotationToolbar.test.tsx`
 - `ui/src/components/MarkdownBody.test.tsx`
 - `ui/src/components/transcript/RunTranscriptView.test.tsx`
+- `ui/src/lib/chat-draft-storage.test.ts`
+- `ui/src/lib/chat-response-annotation-selection.test.ts`
+- `ui/src/lib/chat-response-annotations.test.ts`
 - `ui/src/pages/Chat.messages.test.tsx`
 - `tests/e2e/chat-response-annotations.spec.ts`
 
