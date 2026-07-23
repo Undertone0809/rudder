@@ -330,9 +330,20 @@ describe("managed MCP STDIO client", () => {
 
     const pid = details.pid as number;
     const closeStartedAt = Date.now();
-    await client.close();
+    const firstClose = client.close();
+    let secondCloseObservedLiveChild = false;
+    const secondClose = client.close().then(() => {
+      try {
+        process.kill(pid, 0);
+        secondCloseObservedLiveChild = true;
+      } catch {
+        secondCloseObservedLiveChild = false;
+      }
+    });
+    await Promise.all([firstClose, secondClose]);
     clients.splice(clients.indexOf(client), 1);
-    expect(Date.now() - closeStartedAt).toBeLessThan(1_500);
+    expect(secondCloseObservedLiveChild).toBe(false);
+    expect(Date.now() - closeStartedAt).toBeLessThan(5_500);
     expect(() => process.kill(pid, 0)).toThrow();
   });
 

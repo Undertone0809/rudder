@@ -123,62 +123,6 @@ export interface ManagedMcpClient {
   close(): Promise<void>;
 }
 
-const STDIO_CLOSE_GRACE_MS = 200;
-const STDIO_KILL_WAIT_MS = 750;
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function signalProcess(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(pid, signal);
-  } catch {
-    // The child already exited.
-  }
-}
-
-async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (isProcessAlive(pid) && Date.now() < deadline) {
-    await delay(10);
-  }
-  return !isProcessAlive(pid);
-}
-
-async function closeManagedStdioTransport(
-  transport: StdioClientTransport,
-  trackedPid: number | null,
-): Promise<void> {
-  const pid = transport.pid ?? trackedPid;
-  const closePromise = transport.close().catch(() => undefined);
-  if (pid === null || !isProcessAlive(pid)) {
-    await closePromise;
-    return;
-  }
-
-  await Promise.race([closePromise, delay(STDIO_CLOSE_GRACE_MS)]);
-  if (isProcessAlive(pid)) signalProcess(pid, "SIGTERM");
-  await Promise.race([closePromise, delay(STDIO_CLOSE_GRACE_MS)]);
-  if (isProcessAlive(pid)) signalProcess(pid, "SIGKILL");
-
-  if (!(await waitForProcessExit(pid, STDIO_KILL_WAIT_MS))) {
-    throw new ManagedMcpClientError(
-      "mcp_process_cleanup_failed",
-      "Managed MCP STDIO process could not be terminated",
-    );
-  }
-}
-
 function isStdioOutputBoundaryError(error: unknown): boolean {
   return error instanceof Error && /ReadBuffer exceeded maximum size/u.test(error.message);
 }
@@ -277,8 +221,22 @@ export async function createManagedMcpClient(
   let stderrBytes = 0;
   let transport: StreamableHTTPClientTransport | StdioClientTransport;
   let stdioTransport: StdioClientTransport | null = null;
-  let stdioProcessId: number | null = null;
   let stdioOutputBoundaryExceeded = false;
+  let stdioClosedPromise: Promise<void> | null = null;
+  let closePromise: Promise<void> | null = null;
+  const closeSdkClient = (): Promise<void> => {
+    if (closePromise) return closePromise;
+    closePromise = (async () => {
+      try {
+        await sdkClient.close();
+        await stdioClosedPromise;
+      } catch (error) {
+        closePromise = null;
+        throw error;
+      }
+    })();
+    return closePromise;
+  };
 
   if (options.transport === "streamable_http") {
     assertSafeMcpHeaders(options.staticHeaders ?? {});
@@ -320,8 +278,7 @@ export async function createManagedMcpClient(
       stderrBytes += Buffer.byteLength(chunk);
       if (stderrBytes > maxOutputBytes) {
         stdioOutputBoundaryExceeded = true;
-        const pid = stdioTransport?.pid;
-        if (pid !== null && pid !== undefined) signalProcess(pid, "SIGKILL");
+        void closeSdkClient().catch(() => undefined);
       }
     });
   }
@@ -329,27 +286,32 @@ export async function createManagedMcpClient(
   try {
     await sdkClient.connect(transport, { timeout: options.startupTimeoutMs });
   } catch (error) {
-    if (stdioTransport) {
-      await closeManagedStdioTransport(stdioTransport, stdioTransport.pid);
-    } else {
-      await transport.close().catch(() => undefined);
-    }
+    await closeSdkClient().catch(() => undefined);
     throw safeClientError(error, "connect");
   }
   if (stdioTransport) {
-    stdioProcessId = stdioTransport.pid;
+    let resolveStdioClosed: (() => void) | null = null;
+    stdioClosedPromise = new Promise((resolve) => {
+      resolveStdioClosed = resolve;
+    });
+    const clientCloseHandler = stdioTransport.onclose;
+    stdioTransport.onclose = () => {
+      try {
+        clientCloseHandler?.();
+      } finally {
+        resolveStdioClosed?.();
+      }
+    };
     const clientErrorHandler = stdioTransport.onerror;
     stdioTransport.onerror = (error) => {
       if (isStdioOutputBoundaryError(error)) {
         stdioOutputBoundaryExceeded = true;
-        const pid = stdioTransport?.pid ?? stdioProcessId;
-        if (pid !== null) signalProcess(pid, "SIGKILL");
+        void closeSdkClient().catch(() => undefined);
       }
       clientErrorHandler?.(error);
     };
   }
 
-  let closed = false;
   return {
     async discoverTools() {
       try {
@@ -380,13 +342,7 @@ export async function createManagedMcpClient(
       }
     },
     async close() {
-      if (closed) return;
-      closed = true;
-      if (stdioTransport) {
-        await closeManagedStdioTransport(stdioTransport, stdioProcessId);
-      } else {
-        await sdkClient.close();
-      }
+      await closeSdkClient();
     },
   };
 }
