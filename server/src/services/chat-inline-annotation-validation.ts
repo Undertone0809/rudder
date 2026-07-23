@@ -1,15 +1,17 @@
 import type { Db } from "@rudderhq/db";
 import {
   chatAttachments,
+  chatConversations,
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
 } from "@rudderhq/db";
-import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
 import {
+  chatInlineAnnotationsFromStructuredPayload,
   type ChatInlineAnnotation,
   type ChatStreamTranscriptTextEntry,
 } from "@rudderhq/shared";
+import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
 import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { unprocessable } from "../errors.js";
@@ -93,37 +95,123 @@ function isExplicitlyHiddenTranscriptEvidence(
     || visibility === "private";
 }
 
-function rawSelectionContainsMarkdownSyntax(value: string) {
-  return /(?:`|\[[^\]]*\]\([^)]*\)|[*_~]|^#{1,6}\s|^\s*(?:[-+>]|\d+\.)\s)/m.test(value);
+const HTML_CHARACTER_REFERENCES: Readonly<Record<string, string>> = {
+  amp: "&",
+  apos: "'",
+  copy: "©",
+  gt: ">",
+  hellip: "…",
+  laquo: "«",
+  ldquo: "“",
+  lsquo: "‘",
+  lt: "<",
+  mdash: "—",
+  nbsp: " ",
+  ndash: "–",
+  quot: "\"",
+  raquo: "»",
+  rdquo: "”",
+  reg: "®",
+  rsquo: "’",
+  trade: "™",
+};
+
+function decodeHtmlCharacterReferences(value: string) {
+  return value.replace(
+    /&(?:#([0-9]+)|#x([0-9a-f]+)|([a-z][a-z0-9]+));/gi,
+    (match, decimal: string | undefined, hexadecimal: string | undefined, named: string | undefined) => {
+      if (named) return HTML_CHARACTER_REFERENCES[named.toLowerCase()] ?? match;
+      const codePoint = Number.parseInt(decimal ?? hexadecimal ?? "", hexadecimal ? 16 : 10);
+      if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return match;
+      return String.fromCodePoint(codePoint);
+    },
+  );
 }
 
-function assertPlainProcessSelectionMatchesRange(
-  annotation: Extract<ChatInlineAnnotation, { surface: "process_transcript" }>,
+function comparableRenderedCharacters(value: string, decodeEntities: boolean) {
+  const decoded = decodeEntities ? decodeHtmlCharacterReferences(value) : value;
+  const withoutLinkDestinations = decoded.replace(
+    /]\((?:\\.|[^)])*\)/g,
+    "]",
+  );
+  return Array.from(withoutLinkDestinations.normalize("NFKC"))
+    .filter((character) => !/[\p{White_Space}\u200b\ufeff]/u.test(character));
+}
+
+function assertSelectedTextPlausiblyMatchesRange(
+  annotation: ChatInlineAnnotation,
   source: string,
 ) {
   const rawSelection = source.slice(annotation.start, annotation.end);
-  if (
-    !rawSelectionContainsMarkdownSyntax(rawSelection)
-    && annotation.selectedText !== rawSelection
-  ) {
-    throw unprocessable("Process annotation selected text does not match its declared source range");
+  const selectedCharacters = comparableRenderedCharacters(annotation.selectedText, false);
+  const sourceCharacters = comparableRenderedCharacters(rawSelection, true);
+  let sourceIndex = 0;
+  for (const selectedCharacter of selectedCharacters) {
+    while (
+      sourceIndex < sourceCharacters.length
+      && sourceCharacters[sourceIndex] !== selectedCharacter
+    ) {
+      sourceIndex += 1;
+    }
+    if (sourceIndex >= sourceCharacters.length) {
+      throw unprocessable(
+        "Annotation selected text is not plausible for its declared Markdown source range",
+      );
+    }
+    sourceIndex += 1;
   }
 }
 
-async function validateExistingAttachmentOwnership(
+function annotationSnapshotsAreSemanticallyIdentical(
+  incoming: readonly ChatInlineAnnotation[],
+  persisted: readonly ChatInlineAnnotation[],
+) {
+  if (incoming.length !== persisted.length) return false;
+  return incoming.every((annotation, index) => {
+    const expected = persisted[index];
+    if (!expected) return false;
+    if (
+      annotation.id !== expected.id
+      || annotation.surface !== expected.surface
+      || annotation.selectedText !== expected.selectedText
+      || (annotation.comment ?? null) !== (expected.comment ?? null)
+      || annotation.sourceConversationId !== expected.sourceConversationId
+      || annotation.sourceMessageId !== expected.sourceMessageId
+      || annotation.sourceHash !== expected.sourceHash
+      || annotation.start !== expected.start
+      || annotation.end !== expected.end
+      || annotation.prefix !== expected.prefix
+      || annotation.suffix !== expected.suffix
+      || annotation.attachmentIds.length !== expected.attachmentIds.length
+      || annotation.attachmentIds.some(
+        (attachmentId, attachmentIndex) =>
+          attachmentId !== expected.attachmentIds[attachmentIndex],
+      )
+    ) {
+      return false;
+    }
+    if (annotation.surface === "assistant_body") {
+      return expected.surface === "assistant_body";
+    }
+    return expected.surface === "process_transcript"
+      && annotation.transcriptKind === expected.transcriptKind
+      && annotation.generationId === expected.generationId
+      && annotation.generationSeqStart === expected.generationSeqStart
+      && annotation.generationSeqEnd === expected.generationSeqEnd;
+  });
+}
+
+async function validateHistoricalAnnotationSnapshot(
   query: ValidationQuery,
   input: {
     orgId: string;
     conversationId: string;
     editUserMessageId?: string | null;
     annotations: readonly ChatInlineAnnotation[];
+    attachmentFileIndexesByAnnotationId?: ReadonlyMap<string, readonly number[]>;
   },
 ) {
-  const attachmentIds = input.annotations.flatMap((annotation) => annotation.attachmentIds);
-  if (attachmentIds.length === 0) return;
-  if (!input.editUserMessageId) {
-    throw unprocessable("Existing annotation attachments require an edited user message");
-  }
+  if (!input.editUserMessageId) return null;
   const target = await query
     .select()
     .from(chatMessages)
@@ -140,6 +228,32 @@ async function validateExistingAttachmentOwnership(
     || target.supersededAt
   ) {
     throw unprocessable("Edited annotation message must be a visible user message in this conversation");
+  }
+  const targetAnnotations = chatInlineAnnotationsFromStructuredPayload(target.structuredPayload);
+  if (!annotationSnapshotsAreSemanticallyIdentical(input.annotations, targetAnnotations)) {
+    throw unprocessable("Sent annotation snapshots are immutable across historical edits and retries");
+  }
+  const addsAnnotationFiles = [...(input.attachmentFileIndexesByAnnotationId?.values() ?? [])]
+    .some((indexes) => indexes.length > 0);
+  if (addsAnnotationFiles) {
+    throw unprocessable("Sent annotation snapshots are immutable and cannot accept new annotation files");
+  }
+  return target;
+}
+
+async function validateExistingAttachmentOwnership(
+  query: ValidationQuery,
+  input: {
+    orgId: string;
+    conversationId: string;
+    annotations: readonly ChatInlineAnnotation[];
+  },
+  target: typeof chatMessages.$inferSelect | null,
+) {
+  const attachmentIds = input.annotations.flatMap((annotation) => annotation.attachmentIds);
+  if (attachmentIds.length === 0) return;
+  if (!target) {
+    throw unprocessable("Existing annotation attachments require an edited user message");
   }
   const ownedIds = await query
     .select({ id: chatAttachments.id })
@@ -161,11 +275,19 @@ async function validateSourceMessage(
   input: {
     orgId: string;
     conversationId: string;
+    targetConversation: typeof chatConversations.$inferSelect;
     annotation: ChatInlineAnnotation;
   },
 ) {
-  if (input.annotation.sourceConversationId !== input.conversationId) {
-    throw unprocessable("Annotation source conversation must match the target conversation");
+  const sameConversation = input.annotation.sourceConversationId === input.conversationId;
+  const exactSideChatParentAnchor = input.targetConversation.conversationKind === "side_chat"
+    && input.targetConversation.forkedFromConversationId
+      === input.annotation.sourceConversationId
+    && input.targetConversation.forkedFromMessageId === input.annotation.sourceMessageId;
+  if (!sameConversation && !exactSideChatParentAnchor) {
+    throw unprocessable(
+      "Annotation source must match the target conversation or its exact Side Chat parent anchor",
+    );
   }
   const source = await query
     .select()
@@ -184,7 +306,14 @@ async function validateSourceMessage(
   if (source.role !== "assistant" || source.kind !== "message") {
     throw unprocessable("Annotation source must be an assistant response");
   }
-  if (!STABLE_ANNOTATION_MESSAGE_STATUSES.has(source.status)) {
+  if (
+    exactSideChatParentAnchor
+      ? source.status !== "completed"
+      : !STABLE_ANNOTATION_MESSAGE_STATUSES.has(source.status)
+  ) {
+    if (exactSideChatParentAnchor) {
+      throw unprocessable("Side Chat annotation source must be its completed parent assistant anchor");
+    }
     throw unprocessable("Annotation source must have a stable completed, stopped, or failed status");
   }
   if (source.supersededAt) {
@@ -285,7 +414,6 @@ async function validateProcessAnnotation(
   if (!projectedEntry) {
     throw unprocessable("Process annotation evidence is not present in the visible message projection");
   }
-  assertPlainProcessSelectionMatchesRange(input.annotation, source);
   return source;
 }
 
@@ -300,6 +428,19 @@ export async function validateCanonicalChatInlineAnnotations(
     editUserMessageId?: string | null;
   },
 ) {
+  const targetConversation = await query
+    .select()
+    .from(chatConversations)
+    .where(and(
+      eq(chatConversations.id, input.conversationId),
+      eq(chatConversations.orgId, input.orgId),
+    ))
+    .limit(1)
+    .for("share")
+    .then((rows) => rows[0] ?? null);
+  if (!targetConversation) {
+    throw unprocessable("Annotation target conversation must belong to the organization");
+  }
   for (const annotation of input.annotations) {
     const indexes = input.attachmentFileIndexesByAnnotationId?.get(annotation.id) ?? [];
     for (const fileIndex of indexes) {
@@ -308,22 +449,26 @@ export async function validateCanonicalChatInlineAnnotations(
       }
     }
   }
-  await validateExistingAttachmentOwnership(query, input);
+  const editTarget = await validateHistoricalAnnotationSnapshot(query, input);
+  await validateExistingAttachmentOwnership(query, input, editTarget);
+  if (editTarget) return;
   for (const annotation of input.annotations) {
     const source = await validateSourceMessage(query, {
       orgId: input.orgId,
       conversationId: input.conversationId,
+      targetConversation,
       annotation,
     });
     const anchorSource = annotation.surface === "assistant_body"
       ? source.body
       : await validateProcessAnnotation(query, {
         orgId: input.orgId,
-        conversationId: input.conversationId,
+        conversationId: annotation.sourceConversationId,
         annotation,
         sourceMessage: source,
-      });
+    });
     assertSourceAnchor(annotation, anchorSource);
+    assertSelectedTextPlausiblyMatchesRange(annotation, anchorSource);
   }
 }
 

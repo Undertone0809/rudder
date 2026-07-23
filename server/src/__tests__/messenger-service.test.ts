@@ -43,7 +43,7 @@ import {
   MESSENGER_FORK_GROUP_DEFAULT_ICON,
   type MessengerSavedViewTarget,
 } from "@rudderhq/shared";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -4146,7 +4146,7 @@ describe("messengerService and issue follows", () => {
     expect(editedAfterEdit?.attachments[0]?.contentPath).toBe(originalAfterEdit?.attachments[0]?.contentPath);
   });
 
-  it("carries or replaces inline annotations on edit and rebinds copied attachment ids", async () => {
+  it("carries an immutable annotation snapshot across historical edits and rebinds attachment ids", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();
     const userId = "board-user-edit-annotations";
@@ -4239,42 +4239,123 @@ describe("messengerService and issue follows", () => {
     expect(carriedAnnotation.attachmentIds).toEqual([carried.attachments[0]!.id]);
     expect(carriedAnnotation.attachmentIds).not.toEqual([originalAttachment.id]);
 
-    const replacementId = randomUUID();
-    const replaced = await chatSvc.addUserChatMessage(
+    const carriedSnapshot = chatInlineAnnotationsFromStructuredPayload(
+      carried.structuredPayload,
+    );
+    const retried = await chatSvc.addUserChatMessage(
       conversationId,
       orgId,
-      "Replacement annotation",
+      "",
       carried.id,
       {
         structuredPayloadProvided: true,
         structuredPayload: {
-          inlineAnnotations: [{
-            id: replacementId,
-            surface: "assistant_body",
-            selectedText: "Replacement quote",
-            comment: null,
-            sourceConversationId: conversationId,
-            sourceMessageId: source.id,
-            sourceHash: hashChatAnnotationSource(sourceBody),
-            start: "Original quote ".length,
-            end: sourceBody.length,
-            prefix: "",
-            suffix: "",
-            attachmentIds: [carried.attachments[0]!.id],
-          }],
+          inlineAnnotations: carriedSnapshot,
         },
       },
     );
-    const replacement = chatInlineAnnotationsFromStructuredPayload(
-      replaced.structuredPayload,
+    const retriedSnapshot = chatInlineAnnotationsFromStructuredPayload(
+      retried.structuredPayload,
     );
-    expect(replacement).toHaveLength(1);
-    expect(replacement[0]).toMatchObject({
-      id: replacementId,
-      selectedText: "Replacement quote",
+    expect(retried.body).toBe("");
+    expect(retriedSnapshot).toEqual([
+      expect.objectContaining({
+        id: annotationId,
+        selectedText: "Original quote",
+        comment: "Original comment",
+        attachmentIds: [retried.attachments[0]!.id],
+      }),
+    ]);
+    expect(retriedSnapshot[0]!.attachmentIds).not.toContain(carried.attachments[0]!.id);
+    await db
+      .update(chatMessages)
+      .set({ supersededAt: new Date() })
+      .where(eq(chatMessages.id, source.id));
+    const unlocatableSourceRetry = await chatSvc.addUserChatMessage(
+      conversationId,
+      orgId,
+      "Carry the immutable snapshot even when its source is unavailable",
+      retried.id,
+    );
+    const unlocatableSnapshot = chatInlineAnnotationsFromStructuredPayload(
+      unlocatableSourceRetry.structuredPayload,
+    );
+    expect(unlocatableSnapshot).toEqual([
+      expect.objectContaining({
+        id: annotationId,
+        selectedText: "Original quote",
+        attachmentIds: [unlocatableSourceRetry.attachments[0]!.id],
+      }),
+    ]);
+
+    await expect(chatSvc.addUserChatMessage(
+      conversationId,
+      orgId,
+      "Mutated annotation",
+      unlocatableSourceRetry.id,
+      {
+        structuredPayloadProvided: true,
+        structuredPayload: {
+          inlineAnnotations: [{
+            ...unlocatableSnapshot[0]!,
+            comment: "Changed after send",
+          }],
+        },
+      },
+    )).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("immutable"),
     });
-    expect(replacement[0]!.attachmentIds).toEqual([replaced.attachments[0]!.id]);
-    expect(replacement[0]!.attachmentIds).not.toContain(carried.attachments[0]!.id);
+    await expect(chatSvc.addUserChatMessage(
+      conversationId,
+      orgId,
+      "Dropped annotation",
+      unlocatableSourceRetry.id,
+      {
+        structuredPayloadProvided: true,
+        structuredPayload: { inlineAnnotations: [] },
+      },
+    )).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("immutable"),
+    });
+    await expect(chatSvc.addUserChatMessage(
+      conversationId,
+      orgId,
+      "Added file",
+      unlocatableSourceRetry.id,
+      {
+        structuredPayloadProvided: true,
+        structuredPayload: {
+          inlineAnnotations: unlocatableSnapshot,
+        },
+        attachments: [{
+          provider: "local_disk",
+          objectKey: `orgs/${orgId}/chats/${conversationId}/${randomUUID()}/extra.txt`,
+          contentType: "text/plain",
+          byteSize: 5,
+          sha256: "extra-sha256",
+          originalFilename: "extra.txt",
+          createdByAgentId: null,
+          createdByUserId: userId,
+        }],
+        attachmentFileIndexesByAnnotationId: new Map([[annotationId, [0]]]),
+      },
+    )).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("immutable"),
+    });
+
+    const activeRows = await db
+      .select()
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.conversationId, conversationId),
+        eq(chatMessages.role, "user"),
+        isNull(chatMessages.supersededAt),
+      ));
+    expect(activeRows).toHaveLength(1);
+    expect(activeRows[0]?.id).toBe(unlocatableSourceRetry.id);
   });
 
   it("rolls back an edit variant when an annotation attachment cannot be rebound", async () => {
@@ -4349,6 +4430,244 @@ describe("messengerService and issue follows", () => {
       supersededAt: null,
       body: "Original",
     });
+  });
+
+  it("accepts the exact completed parent anchor in a Side Chat and binds its files to the child user message", async () => {
+    const orgId = randomUUID();
+    const parentConversationId = randomUUID();
+    const sideConversationId = randomUUID();
+    const annotationId = randomUUID();
+    const sourceBody = "Parent response with selected guidance.";
+    const selectedText = "selected guidance";
+    const start = sourceBody.indexOf(selectedText);
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Side Chat Annotation Org",
+      urlKey: deriveOrganizationUrlKey("Side Chat Annotation Org"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: parentConversationId,
+      orgId,
+      title: "Parent annotation chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: "board-user-side-annotation",
+    });
+    const source = await insertChatAnnotationSource(
+      orgId,
+      parentConversationId,
+      sourceBody,
+    );
+    await db.insert(chatConversations).values({
+      id: sideConversationId,
+      orgId,
+      title: "Side annotation chat",
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      forkedFromConversationId: parentConversationId,
+      forkedFromMessageId: source.id,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: "board-user-side-annotation",
+    });
+    const annotation = {
+      id: annotationId,
+      surface: "assistant_body" as const,
+      selectedText,
+      comment: "Use this parent context",
+      sourceConversationId: parentConversationId,
+      sourceMessageId: source.id,
+      sourceHash: hashChatAnnotationSource(sourceBody),
+      start,
+      end: start + selectedText.length,
+      prefix: sourceBody.slice(0, start),
+      suffix: sourceBody.slice(start + selectedText.length),
+      attachmentIds: [],
+    };
+
+    const childMessage = await chatSvc.addUserChatMessage(
+      sideConversationId,
+      orgId,
+      "",
+      null,
+      {
+        structuredPayloadProvided: true,
+        structuredPayload: { inlineAnnotations: [annotation] },
+        attachments: [{
+          provider: "local_disk",
+          objectKey: `side-chat-annotations/${sideConversationId}/context.txt`,
+          contentType: "text/plain",
+          byteSize: 7,
+          sha256: "side-chat-annotation-sha256",
+          originalFilename: "context.txt",
+          createdByAgentId: null,
+          createdByUserId: "board-user-side-annotation",
+        }],
+        attachmentFileIndexesByAnnotationId: new Map([[annotationId, [0]]]),
+      },
+    );
+
+    expect(childMessage.body).toBe("");
+    expect(childMessage.attachments).toHaveLength(1);
+    expect(childMessage.attachments[0]).toMatchObject({
+      conversationId: sideConversationId,
+      messageId: childMessage.id,
+    });
+    expect(chatInlineAnnotationsFromStructuredPayload(childMessage.structuredPayload)).toEqual([
+      expect.objectContaining({
+        id: annotationId,
+        sourceConversationId: parentConversationId,
+        sourceMessageId: source.id,
+        attachmentIds: [childMessage.attachments[0]!.id],
+      }),
+    ]);
+  });
+
+  it("rejects Side Chat annotation sources outside the exact completed owning parent anchor", async () => {
+    const orgId = randomUUID();
+    const foreignOrgId = randomUUID();
+    const parentConversationId = randomUUID();
+    const siblingConversationId = randomUUID();
+    const foreignConversationId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Side Chat Lineage Org",
+        urlKey: deriveOrganizationUrlKey("Side Chat Lineage Org"),
+        issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: foreignOrgId,
+        name: "Foreign Side Chat Lineage Org",
+        urlKey: deriveOrganizationUrlKey("Foreign Side Chat Lineage Org"),
+        issuePrefix: `F${foreignOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(chatConversations).values([
+      {
+        id: parentConversationId,
+        orgId,
+        title: "Parent lineage",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+      {
+        id: siblingConversationId,
+        orgId,
+        title: "Sibling lineage",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+      {
+        id: foreignConversationId,
+        orgId: foreignOrgId,
+        title: "Foreign lineage",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    ]);
+    const sourceBody = "Stable lineage source";
+    const parentAnchor = await insertChatAnnotationSource(
+      orgId,
+      parentConversationId,
+      sourceBody,
+    );
+    const arbitraryParentMessage = await insertChatAnnotationSource(
+      orgId,
+      parentConversationId,
+      sourceBody,
+    );
+    const siblingSource = await insertChatAnnotationSource(
+      orgId,
+      siblingConversationId,
+      sourceBody,
+    );
+    const foreignSource = await insertChatAnnotationSource(
+      foreignOrgId,
+      foreignConversationId,
+      sourceBody,
+    );
+    const [stoppedSource, failedSource] = await db
+      .insert(chatMessages)
+      .values(["stopped", "failed"].map((status) => ({
+        orgId,
+        conversationId: parentConversationId,
+        role: "assistant",
+        kind: "message",
+        status,
+        body: sourceBody,
+      })))
+      .returning();
+
+    const cases = [
+      {
+        label: "sibling",
+        owningSource: parentAnchor,
+        sourceConversationId: siblingConversationId,
+        sourceMessage: siblingSource,
+      },
+      {
+        label: "arbitrary",
+        owningSource: parentAnchor,
+        sourceConversationId: parentConversationId,
+        sourceMessage: arbitraryParentMessage,
+      },
+      {
+        label: "foreign",
+        owningSource: parentAnchor,
+        sourceConversationId: foreignConversationId,
+        sourceMessage: foreignSource,
+      },
+      {
+        label: "stopped",
+        owningSource: stoppedSource!,
+        sourceConversationId: parentConversationId,
+        sourceMessage: stoppedSource!,
+      },
+      {
+        label: "failed",
+        owningSource: failedSource!,
+        sourceConversationId: parentConversationId,
+        sourceMessage: failedSource!,
+      },
+    ];
+    for (const testCase of cases) {
+      const sideConversationId = randomUUID();
+      await db.insert(chatConversations).values({
+        id: sideConversationId,
+        orgId,
+        title: `Rejected ${testCase.label} lineage`,
+        conversationKind: "side_chat",
+        sideChatState: "active",
+        forkedFromConversationId: parentConversationId,
+        forkedFromMessageId: testCase.owningSource.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      });
+      await expect(chatInlineAnnotationService(db).prepare({
+        orgId,
+        conversationId: sideConversationId,
+        uploadedFileCount: 0,
+        annotations: [{
+          id: randomUUID(),
+          surface: "assistant_body",
+          selectedText: sourceBody,
+          comment: testCase.label,
+          sourceConversationId: testCase.sourceConversationId,
+          sourceMessageId: testCase.sourceMessage.id,
+          sourceHash: hashChatAnnotationSource(sourceBody),
+          start: 0,
+          end: sourceBody.length,
+          prefix: "",
+          suffix: "",
+          attachmentIds: [],
+        }],
+      })).rejects.toMatchObject({ status: 422 });
+    }
   });
 
   it("revalidates a prepared annotation inside the message transaction before writing", async () => {
@@ -7860,6 +8179,314 @@ describe("messengerService and issue follows", () => {
     expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toHaveLength(1);
     expect(await chatSvc.removeAttachment(sourceAttachment!.id)).toMatchObject({ assetDeleted: true });
     expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toHaveLength(0);
+  });
+
+  it("two-pass forks preserve safe structured payload and re-own annotation sources and files", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-chat-annotation-fork";
+    const annotationId = randomUUID();
+    const processAnnotationId = randomUUID();
+    const processGenerationId = randomUUID();
+    const sourceBody = "Fork this selected answer safely.";
+    const processSource = "检查 fork process evidence";
+    const processTs = "2026-07-23T01:00:00.500Z";
+    const selectedText = "selected answer";
+    const selectedStart = sourceBody.indexOf(selectedText);
+    const sourceAt = new Date("2026-07-23T01:00:00.000Z");
+    const userAt = new Date("2026-07-23T01:00:01.000Z");
+    const forkAt = new Date("2026-07-23T01:00:02.000Z");
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Annotation Fork Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Annotation Fork Org"),
+      issuePrefix: `F${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    const sourceConversation = await chatSvc.create(orgId, {
+      title: "Annotation fork",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+    const [sourceAssistant] = await db
+      .insert(chatMessages)
+      .values({
+        orgId,
+        conversationId: sourceConversation.id,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: sourceBody,
+        structuredPayload: {
+          durableContext: { kind: "safe", version: 1 },
+          __chatTranscript: [{
+            kind: "thinking",
+            ts: processTs,
+            text: processSource,
+            generationId: processGenerationId,
+            generationSeqStart: 1,
+            generationSeqEnd: 1,
+          }],
+        },
+        createdAt: sourceAt,
+        updatedAt: sourceAt,
+      })
+      .returning();
+    await db.insert(chatGenerations).values({
+      id: processGenerationId,
+      orgId,
+      conversationId: sourceConversation.id,
+      status: "completed",
+      completedAt: userAt,
+    });
+    await db.insert(chatGenerationEvents).values({
+      orgId,
+      generationId: processGenerationId,
+      generationSeq: 1,
+      attemptEpoch: 1,
+      eventKind: "transcript",
+      payload: {
+        entry: {
+          kind: "thinking",
+          ts: processTs,
+          text: processSource,
+        },
+      },
+      assistantMessageId: sourceAssistant!.id,
+    });
+    const annotatedUser = await chatSvc.addUserChatMessage(
+      sourceConversation.id,
+      orgId,
+      "Keep the exact quote",
+      null,
+      {
+        structuredPayloadProvided: true,
+        structuredPayload: {
+          durableContext: { preserved: true },
+          inlineAnnotations: [
+            {
+              id: annotationId,
+              surface: "assistant_body",
+              selectedText,
+              comment: "Fork with this evidence",
+              sourceConversationId: sourceConversation.id,
+              sourceMessageId: sourceAssistant!.id,
+              sourceHash: hashChatAnnotationSource(sourceBody),
+              start: selectedStart,
+              end: selectedStart + selectedText.length,
+              prefix: sourceBody.slice(0, selectedStart),
+              suffix: sourceBody.slice(selectedStart + selectedText.length),
+              attachmentIds: [],
+            },
+            {
+              id: processAnnotationId,
+              surface: "process_transcript",
+              transcriptKind: "thinking",
+              selectedText: processSource,
+              comment: "Keep process evidence",
+              sourceConversationId: sourceConversation.id,
+              sourceMessageId: sourceAssistant!.id,
+              sourceHash: hashChatAnnotationSource(processSource),
+              generationId: processGenerationId,
+              generationSeqStart: 1,
+              generationSeqEnd: 1,
+              start: 0,
+              end: processSource.length,
+              prefix: "",
+              suffix: "",
+              attachmentIds: [],
+            },
+          ],
+        },
+        attachments: [{
+          provider: "local_disk",
+          objectKey: `fork-annotations/${sourceConversation.id}/evidence.txt`,
+          contentType: "text/plain",
+          byteSize: 8,
+          sha256: "fork-annotation-sha256",
+          originalFilename: "evidence.txt",
+          createdByAgentId: null,
+          createdByUserId: userId,
+        }],
+        attachmentFileIndexesByAnnotationId: new Map([[annotationId, [0]]]),
+      },
+    );
+    await db
+      .update(chatMessages)
+      .set({ createdAt: userAt, updatedAt: userAt })
+      .where(eq(chatMessages.id, annotatedUser.id));
+    const [forkPoint] = await db
+      .insert(chatMessages)
+      .values({
+        orgId,
+        conversationId: sourceConversation.id,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: "Fork point response",
+        createdAt: forkAt,
+        updatedAt: forkAt,
+      })
+      .returning();
+
+    const child = await chatSvc.forkConversation({
+      sourceConversationId: sourceConversation.id,
+      orgId,
+      userId,
+      sourceMessageId: forkPoint!.id,
+      createdByUserId: userId,
+    });
+    const childMessages = await chatSvc.listMessages(child.id, { includeTranscript: false });
+    const copiedSource = childMessages.find((message) => message.body === sourceBody)!;
+    const copiedUser = childMessages.find((message) => message.body === "Keep the exact quote")!;
+    const copiedAnnotations = chatInlineAnnotationsFromStructuredPayload(
+      copiedUser.structuredPayload,
+    );
+
+    expect(copiedSource.id).not.toBe(sourceAssistant!.id);
+    expect(copiedSource.structuredPayload).toMatchObject({
+      durableContext: { kind: "safe", version: 1 },
+    });
+    expect(copiedUser.structuredPayload).toMatchObject({
+      durableContext: { preserved: true },
+    });
+    expect(copiedAnnotations).toEqual([
+      expect.objectContaining({
+        id: annotationId,
+        sourceConversationId: child.id,
+        sourceMessageId: copiedSource.id,
+        attachmentIds: [copiedUser.attachments[0]!.id],
+      }),
+      expect.objectContaining({
+        id: processAnnotationId,
+        sourceConversationId: child.id,
+        sourceMessageId: copiedSource.id,
+        generationId: processGenerationId,
+        attachmentIds: [],
+      }),
+    ]);
+    expect(copiedSource).toMatchObject({ generationId: null });
+    const copiedSourceRow = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, copiedSource.id))
+      .then((rows) => rows[0]!);
+    expect(copiedSourceRow.structuredPayload).toMatchObject({
+      __chatTranscript: [expect.objectContaining({
+        generationId: processGenerationId,
+        text: processSource,
+      })],
+    });
+    expect(copiedUser.attachments[0]).toMatchObject({
+      conversationId: child.id,
+      messageId: copiedUser.id,
+      assetId: annotatedUser.attachments[0]!.assetId,
+    });
+    expect(copiedUser.attachments[0]!.id).not.toBe(annotatedUser.attachments[0]!.id);
+  });
+
+  it("rejects a fork when a copied annotation points outside the copied message range", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-chat-annotation-fork-range";
+    const sourceConversationId = randomUUID();
+    const earlierAssistantId = randomUUID();
+    const corruptedUserId = randomUUID();
+    const forkPointId = randomUUID();
+    const laterAssistantId = randomUUID();
+    const sourceBody = "Later answer outside the fork range";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Annotation Fork Range Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Annotation Fork Range Org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: sourceConversationId,
+      orgId,
+      title: "Annotation fork range",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+    await db.insert(chatMessages).values([
+      {
+        id: earlierAssistantId,
+        orgId,
+        conversationId: sourceConversationId,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: "Earlier source",
+        createdAt: new Date("2026-07-23T02:00:00.000Z"),
+        updatedAt: new Date("2026-07-23T02:00:00.000Z"),
+      },
+      {
+        id: corruptedUserId,
+        orgId,
+        conversationId: sourceConversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Corrupted future annotation",
+        structuredPayload: {
+          inlineAnnotations: [{
+            id: randomUUID(),
+            surface: "assistant_body",
+            selectedText: sourceBody,
+            comment: null,
+            sourceConversationId,
+            sourceMessageId: laterAssistantId,
+            sourceHash: hashChatAnnotationSource(sourceBody),
+            start: 0,
+            end: sourceBody.length,
+            prefix: "",
+            suffix: "",
+            attachmentIds: [],
+          }],
+        },
+        createdAt: new Date("2026-07-23T02:00:01.000Z"),
+        updatedAt: new Date("2026-07-23T02:00:01.000Z"),
+      },
+      {
+        id: forkPointId,
+        orgId,
+        conversationId: sourceConversationId,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: "Fork here",
+        createdAt: new Date("2026-07-23T02:00:02.000Z"),
+        updatedAt: new Date("2026-07-23T02:00:02.000Z"),
+      },
+      {
+        id: laterAssistantId,
+        orgId,
+        conversationId: sourceConversationId,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: sourceBody,
+        createdAt: new Date("2026-07-23T02:00:03.000Z"),
+        updatedAt: new Date("2026-07-23T02:00:03.000Z"),
+      },
+    ]);
+
+    await expect(chatSvc.forkConversation({
+      sourceConversationId,
+      orgId,
+      userId,
+      sourceMessageId: forkPointId,
+      createdByUserId: userId,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("outside"),
+    });
+    expect(await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.forkedFromConversationId, sourceConversationId)))
+      .toEqual([]);
   });
 
   it("rejects message-level forks from user messages", async () => {

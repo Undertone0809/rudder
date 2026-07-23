@@ -255,6 +255,61 @@ describe("chatInlineAnnotationService", () => {
     expect(canonical[0]).not.toHaveProperty("attachmentFileIndexes");
   });
 
+  it("accepts rendered assistant selections across links, inline code, CJK, entities, whitespace, and blocks", async () => {
+    const body = [
+      "## 说明",
+      "",
+      "阅读 [中文文档](https://example.test/docs) 与 `npm test` &amp; verify.",
+      "",
+      "Second block.",
+    ].join("\n");
+    const source = await seedSource({ body });
+    const start = body.indexOf("[中文文档]");
+    const end = body.indexOf("Second block.") + "Second block.".length;
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "assistant_body",
+        selectedText: "中文文档 与 npm test & verify. Second block.",
+        comment: null,
+        sourceConversationId: source.conversationId,
+        sourceMessageId: source.sourceMessageId,
+        sourceHash: sha256(body),
+        start,
+        end,
+        prefix: body.slice(Math.max(0, start - 12), start),
+        suffix: body.slice(end, end + 12),
+        attachmentIds: [],
+      }],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({
+        selectedText: "中文文档 与 npm test & verify. Second block.",
+      })],
+    });
+  });
+
+  it("rejects fabricated assistant selected text even when the raw range contains Markdown", async () => {
+    const body = "Read [the docs](https://example.test) and `run tests` before shipping.";
+    const source = await seedSource({ body });
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      annotations: [assistantAnnotation(source, body, {
+        selectedText: "fabricated anchor",
+        attachmentFileIndexes: [],
+      })],
+      uploadedFileCount: 0,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("selected text"),
+    });
+  });
+
   it.each([
     ["wrong source hash", { sourceHash: "0".repeat(64) }, "source hash"],
     ["out-of-bounds source range", { end: 10_000 }, "source range"],
@@ -391,20 +446,29 @@ describe("chatInlineAnnotationService", () => {
         messageId: ownerMessageId,
         assetId: asset!.id,
       }).returning();
+      const annotation = assistantAnnotation(source, body, {
+        selectedText: "Stable",
+        start: 0,
+        end: 6,
+        prefix: "",
+        suffix: " answer",
+        attachmentIds: [borrowedAttachment!.id],
+        attachmentFileIndexes: [],
+      });
+      const {
+        attachmentFileIndexes: _attachmentFileIndexes,
+        ...persistedAnnotation
+      } = annotation;
+      await db
+        .update(chatMessages)
+        .set({ structuredPayload: { inlineAnnotations: [persistedAnnotation] } })
+        .where(eq(chatMessages.id, editMessageId));
 
       await expect(service.prepare({
         orgId: source.orgId,
         conversationId: source.conversationId,
         editUserMessageId: editMessageId,
-        annotations: [assistantAnnotation(source, body, {
-          selectedText: "Stable",
-          start: 0,
-          end: 6,
-          prefix: "",
-          suffix: " answer",
-          attachmentIds: [borrowedAttachment!.id],
-          attachmentFileIndexes: [],
-        })],
+        annotations: [annotation],
         uploadedFileCount: 0,
       })).rejects.toMatchObject({
         status: 422,
@@ -622,6 +686,77 @@ describe("chatInlineAnnotationService", () => {
       conversationId: source.conversationId,
       annotations: [annotation],
       uploadedFileCount: 0,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("selected text"),
+    });
+  });
+
+  it("accepts rendered Process selections across Markdown, CJK, entities, whitespace, and blocks", async () => {
+    const source = await seedSource({ body: "Final answer" });
+    const processSource = [
+      "检查 [中文文档](https://example.test/docs) 与 `npm test` &amp; verify.",
+      "",
+      "Second block.",
+    ].join("\n");
+    const evidence = await seedProcessEvidence({ source, text: processSource });
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "process_transcript",
+        transcriptKind: "thinking",
+        selectedText: "中文文档 与 npm test & verify. Second block.",
+        comment: null,
+        sourceConversationId: source.conversationId,
+        sourceMessageId: source.sourceMessageId,
+        sourceHash: sha256(processSource),
+        generationId: evidence.generationId,
+        generationSeqStart: 1,
+        generationSeqEnd: 1,
+        start: processSource.indexOf("[中文文档]"),
+        end: processSource.length,
+        prefix: processSource.slice(0, processSource.indexOf("[中文文档]")),
+        suffix: "",
+        attachmentIds: [],
+      }],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({
+        selectedText: "中文文档 与 npm test & verify. Second block.",
+      })],
+    });
+  });
+
+  it("rejects fabricated Process selected text when the raw range contains Markdown", async () => {
+    const source = await seedSource({ body: "Final answer" });
+    const processSource = "Inspect [the docs](https://example.test) before editing.";
+    const evidence = await seedProcessEvidence({ source, text: processSource });
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "process_transcript",
+        transcriptKind: "thinking",
+        selectedText: "fabricated process anchor",
+        comment: null,
+        sourceConversationId: source.conversationId,
+        sourceMessageId: source.sourceMessageId,
+        sourceHash: sha256(processSource),
+        generationId: evidence.generationId,
+        generationSeqStart: 1,
+        generationSeqEnd: 1,
+        start: 0,
+        end: processSource.length,
+        prefix: "",
+        suffix: "",
+        attachmentIds: [],
+      }],
     })).rejects.toMatchObject({
       status: 422,
       message: expect.stringContaining("selected text"),

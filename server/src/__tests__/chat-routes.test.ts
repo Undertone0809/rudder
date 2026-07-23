@@ -1119,6 +1119,29 @@ describe("chat routes", () => {
     }));
   });
 
+  it("does not log a fork when annotation lineage falls outside the copied range", async () => {
+    const sourceMessageId = "10000000-0000-4000-8000-000000000010";
+    const sourceConversation = createConversation({
+      id: "chat-source",
+      title: "Corrupted annotation fork",
+    });
+    mockChatService.getById.mockResolvedValue(sourceConversation);
+    mockChatService.forkConversation.mockRejectedValue(
+      unprocessable("Fork annotation source message falls outside the copied range"),
+    );
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-source/fork")
+      .send({ sourceMessageId });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("outside the copied range");
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "chat.forked" }),
+    );
+  });
+
   it("requires board access to fork a chat conversation", async () => {
     const res = await request(createApp({
       type: "agent",
@@ -1674,6 +1697,89 @@ describe("chat routes", () => {
     });
     expect(JSON.stringify(userActivity?.details)).not.toContain(annotation.selectedText);
     expect(JSON.stringify(userActivity?.details)).not.toContain(annotation.comment);
+  });
+
+  it("routes an annotation-only historical retry with the exact supplied snapshot", async () => {
+    const editUserMessageId = "10000000-0000-4000-8000-000000000099";
+    const conversation = createConversation({ id: annotationConversationId });
+    const annotation = createInlineAnnotation();
+    const editedUserMessage = {
+      ...createMessage("10000000-0000-4000-8000-000000000098", "user", "message", ""),
+      conversationId: annotationConversationId,
+      structuredPayload: { inlineAnnotations: [annotation] },
+      turnVariant: 1,
+    };
+    const assistantMessage = {
+      ...createMessage("message-assistant", "assistant", "message", "Retried."),
+      conversationId: annotationConversationId,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(editedUserMessage);
+    mockChatService.listMessages.mockResolvedValue([editedUserMessage]);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValueOnce({
+      outcome: "completed",
+      partialBody: "Retried.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Retried.",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages`)
+      .send({
+        body: "",
+        editUserMessageId,
+        inlineAnnotations: [annotation],
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockChatInlineAnnotations.prepare).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      conversationId: annotationConversationId,
+      annotations: [annotation],
+      uploadedFileCount: 0,
+      editUserMessageId,
+    });
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledWith(
+      annotationConversationId,
+      "organization-1",
+      "",
+      editUserMessageId,
+      {
+        structuredPayload: { inlineAnnotations: [annotation] },
+        structuredPayloadProvided: true,
+      },
+    );
+  });
+
+  it("returns the immutable-snapshot rejection before a JSON historical edit can run", async () => {
+    const editUserMessageId = "10000000-0000-4000-8000-000000000099";
+    const conversation = createConversation({ id: annotationConversationId });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatInlineAnnotations.prepare.mockRejectedValue(
+      unprocessable("Sent annotation snapshots are immutable across historical edits and retries"),
+    );
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages`)
+      .send({
+        body: "Mutate the old annotation",
+        editUserMessageId,
+        inlineAnnotations: [{
+          ...createInlineAnnotation(),
+          comment: "Changed after send",
+        }],
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("immutable");
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
   });
 
   it("rejects agent-authenticated streaming chat sends before assistant generation", async () => {
@@ -5204,6 +5310,142 @@ describe("chat routes", () => {
     expect(JSON.stringify(events[0])).not.toContain("attachmentFileIndexes");
   });
 
+  it("routes a Side Chat parent-anchor annotation file into a child-owned user message", async () => {
+    const parentConversationId = "10000000-0000-4000-8000-000000000010";
+    const attachmentId = "10000000-0000-4000-8000-000000000011";
+    const assetId = "10000000-0000-4000-8000-000000000012";
+    const conversation = createConversation({
+      id: annotationConversationId,
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      forkedFromConversationId: parentConversationId,
+      forkedFromMessageId: annotationSourceMessageId,
+      forkRootConversationId: parentConversationId,
+    });
+    const annotationInput = createInlineAnnotation({
+      sourceConversationId: parentConversationId,
+      attachmentFileIndexes: [0],
+    });
+    const canonicalAnnotation = createInlineAnnotation({
+      sourceConversationId: parentConversationId,
+      attachmentIds: [attachmentId],
+    });
+    const userMessage = {
+      ...createMessage("10000000-0000-4000-8000-000000000013", "user", "message", ""),
+      conversationId: annotationConversationId,
+      structuredPayload: { inlineAnnotations: [canonicalAnnotation] },
+      attachments: [{
+        id: attachmentId,
+        orgId: "organization-1",
+        conversationId: annotationConversationId,
+        messageId: "10000000-0000-4000-8000-000000000013",
+        assetId,
+        provider: "local_disk",
+        objectKey: "chats/side-chat/context.txt",
+        contentType: "text/plain",
+        byteSize: 4,
+        sha256: "sha256",
+        originalFilename: "context.txt",
+        createdByAgentId: null,
+        createdByUserId: "user-1",
+        contentPath: `/api/assets/${assetId}/content`,
+        createdAt: new Date("2026-03-26T08:01:00.000Z"),
+        updatedAt: new Date("2026-03-26T08:01:00.000Z"),
+      }],
+    };
+    const assistantMessage = {
+      ...createMessage("message-assistant", "assistant", "message", "Side response"),
+      conversationId: annotationConversationId,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValueOnce({
+      outcome: "completed",
+      partialBody: "Side response",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Side response",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages/stream`)
+      .field("body", "")
+      .field("inlineAnnotations", JSON.stringify([annotationInput]))
+      .attach("files", Buffer.from("file"), {
+        filename: "context.txt",
+        contentType: "text/plain",
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockSideChatService.assertMutable).toHaveBeenCalledWith(
+      conversation,
+      "user-1",
+    );
+    expect(mockChatInlineAnnotations.prepare).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      conversationId: annotationConversationId,
+      annotations: [annotationInput],
+      uploadedFileCount: 1,
+      editUserMessageId: null,
+    });
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledWith(
+      annotationConversationId,
+      "organization-1",
+      "",
+      null,
+      expect.objectContaining({
+        structuredPayload: {
+          inlineAnnotations: [createInlineAnnotation({
+            sourceConversationId: parentConversationId,
+          })],
+        },
+        structuredPayloadProvided: true,
+        attachments: [expect.objectContaining({
+          originalFilename: "image.png",
+          createdByUserId: "user-1",
+        })],
+      }),
+    );
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events[0]).toMatchObject({
+      type: "ack",
+      userMessage: {
+        conversationId: annotationConversationId,
+        structuredPayload: {
+          inlineAnnotations: [{
+            sourceConversationId: parentConversationId,
+            sourceMessageId: annotationSourceMessageId,
+            attachmentIds: [attachmentId],
+          }],
+        },
+        attachments: [{
+          id: attachmentId,
+          conversationId: annotationConversationId,
+          messageId: userMessage.id,
+        }],
+      },
+    });
+  });
+
   it("removes staged objects and emits no assistant message when atomic multipart persistence fails", async () => {
     const conversation = createConversation({ id: annotationConversationId });
     mockChatService.getById.mockResolvedValue(conversation);
@@ -5254,6 +5496,9 @@ describe("chat routes", () => {
   it("keeps copied edit attachments in the stream ack when no new files are uploaded", async () => {
     const conversation = createConversation();
     const editUserMessageId = "10000000-0000-4000-8000-000000000099";
+    const carriedAnnotation = createInlineAnnotation({
+      attachmentIds: ["attachment-copied"],
+    });
     const attachment = {
       id: "attachment-copied",
       orgId: "organization-1",
@@ -5275,6 +5520,7 @@ describe("chat routes", () => {
     const editedUserMessage = {
       ...createMessage("message-edited", "user", "message", "Edited with copied attachment"),
       attachments: [attachment],
+      structuredPayload: { inlineAnnotations: [carriedAnnotation] },
       turnVariant: 1,
     };
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "Done.");
@@ -5319,6 +5565,7 @@ describe("chat routes", () => {
       userMessage: expect.objectContaining({
         id: "message-edited",
         attachments: [expect.objectContaining({ id: "attachment-copied", contentPath: "/api/assets/asset-copied/content" })],
+        structuredPayload: { inlineAnnotations: [carriedAnnotation] },
       }),
     }));
     expect(mockChatService.addUserChatMessage).toHaveBeenCalledWith(
@@ -5333,6 +5580,111 @@ describe("chat routes", () => {
         attachments: [expect.objectContaining({ id: "attachment-copied" })],
       })],
     }));
+  });
+
+  it("routes a multipart historical edit with an identical annotation snapshot and a generic new file", async () => {
+    const editUserMessageId = "10000000-0000-4000-8000-000000000099";
+    const priorAttachmentId = "10000000-0000-4000-8000-000000000091";
+    const reboundAttachmentId = "10000000-0000-4000-8000-000000000092";
+    const newAttachmentId = "10000000-0000-4000-8000-000000000093";
+    const conversation = createConversation({ id: annotationConversationId });
+    const suppliedAnnotation = createInlineAnnotation({
+      attachmentIds: [priorAttachmentId],
+    });
+    const persistedAnnotation = createInlineAnnotation({
+      attachmentIds: [reboundAttachmentId],
+    });
+    const editedUserMessage = {
+      ...createMessage("10000000-0000-4000-8000-000000000094", "user", "message", "Edited"),
+      conversationId: annotationConversationId,
+      structuredPayload: { inlineAnnotations: [persistedAnnotation] },
+      attachments: [
+        {
+          id: reboundAttachmentId,
+          messageId: "10000000-0000-4000-8000-000000000094",
+          conversationId: annotationConversationId,
+        },
+        {
+          id: newAttachmentId,
+          messageId: "10000000-0000-4000-8000-000000000094",
+          conversationId: annotationConversationId,
+        },
+      ],
+      turnVariant: 1,
+    };
+    const assistantMessage = {
+      ...createMessage("message-assistant", "assistant", "message", "Done."),
+      conversationId: annotationConversationId,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(editedUserMessage);
+    mockChatService.listMessages.mockResolvedValue([editedUserMessage]);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Done.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Done.",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages/stream`)
+      .field("body", "Edited")
+      .field("editUserMessageId", editUserMessageId)
+      .field("inlineAnnotations", JSON.stringify([suppliedAnnotation]))
+      .attach("files", Buffer.from("notes"), {
+        filename: "notes.txt",
+        contentType: "text/plain",
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockChatInlineAnnotations.prepare).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      conversationId: annotationConversationId,
+      annotations: [suppliedAnnotation],
+      uploadedFileCount: 1,
+      editUserMessageId,
+    });
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledWith(
+      annotationConversationId,
+      "organization-1",
+      "Edited",
+      editUserMessageId,
+      expect.objectContaining({
+        structuredPayload: { inlineAnnotations: [suppliedAnnotation] },
+        structuredPayloadProvided: true,
+        attachments: [expect.objectContaining({
+          originalFilename: "image.png",
+          createdByUserId: "user-1",
+        })],
+        attachmentFileIndexesByAnnotationId: expect.any(Map),
+      }),
+    );
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events[0]).toMatchObject({
+      type: "ack",
+      userMessage: {
+        structuredPayload: { inlineAnnotations: [persistedAnnotation] },
+        attachments: [{ id: reboundAttachmentId }, { id: newAttachmentId }],
+      },
+    });
   });
 
   it("persists a stopped partial assistant message when streaming is interrupted", async () => {

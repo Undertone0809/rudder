@@ -69,7 +69,7 @@ import {
   withPersistedTranscript,
 } from "./chats.helpers.js";
 import {
-  copyForkInlineVisualMessages,
+  copyForkChatMessages,
   listRecentUserChatMessages,
   updateTrustedInlineVisualMappings,
 } from "./chats.inline-visual-persistence.js";
@@ -3449,7 +3449,7 @@ export function chatService(db: Db) {
       const forkMessages = input.sourceMessageId
         ? messagesToCopy.slice(0, messagesToCopy.findIndex((message) => message.id === input.sourceMessageId) + 1)
         : messagesToCopy;
-      await copyForkInlineVisualMessages({
+      await copyForkChatMessages({
         tx,
         messages: forkMessages,
         sourceConversationId: source.id,
