@@ -3,6 +3,7 @@ import {
   customIntegrationTools,
   mcpConnections,
   mcpOAuthGrants,
+  organizationSecrets,
 } from "@rudderhq/db";
 import {
   createMcpConnectionSchema,
@@ -198,6 +199,20 @@ function reconnectRequiredError(): ReturnType<typeof unprocessable> {
   return unprocessable(
     "Reconnect the managed MCP connection before enabling or discovering tools",
   );
+}
+
+function discoveryNotReadyError(): ReturnType<typeof unprocessable> {
+  return unprocessable(
+    "Managed MCP connection is not ready for tool discovery; reconnect or complete authorization first",
+  );
+}
+
+function canDiscoverTools(row: McpConnectionRow): boolean {
+  if (!row.enabled) return false;
+  if (row.provider === "custom") {
+    return row.status === "draft" || row.status === "active";
+  }
+  return row.status === "active";
 }
 
 function publicSummary(row: McpConnectionRow): McpConnectionSummary {
@@ -642,61 +657,52 @@ export function managedMcpConnectionService(
       let replacementSecretId: string | null = null;
       let oldSecretIdToDelete: string | null = null;
       if (patch.secrets) {
-        const serialized = JSON.stringify(customSecretPayload(patch.secrets));
-        if (credentialSecretId && declarationChanged) {
-          oldSecretIdToDelete = credentialSecretId;
-          const replacement = await createCredential(orgId, existing.name, patch.secrets, actor);
-          credentialSecretId = replacement.id;
-          replacementSecretId = replacement.id;
-        } else if (credentialSecretId) {
-          await secrets.rotate(credentialSecretId, { value: serialized }, actor);
-        } else {
-          const replacement = await createCredential(orgId, existing.name, patch.secrets, actor);
-          credentialSecretId = replacement.id;
-          replacementSecretId = replacement.id;
-        }
+        oldSecretIdToDelete = credentialSecretId;
+        const replacement = await createCredential(orgId, existing.name, patch.secrets, actor);
+        credentialSecretId = replacement.id;
+        replacementSecretId = replacement.id;
       } else if (declarationChanged && !hasDeclaredSecrets(nextShape) && credentialSecretId) {
         oldSecretIdToDelete = credentialSecretId;
         credentialSecretId = null;
       }
 
-      let row: McpConnectionRow | null;
+      let row: McpConnectionRow;
       try {
-        row = await db
-          .update(mcpConnections)
-          .set({
-            credentialSecretId,
-            ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
-            ...(patch.externalScope !== undefined ? { externalScope: patch.externalScope ?? null } : {}),
-            ...(patch.accessMode !== undefined ? { accessMode: patch.accessMode } : {}),
-            ...(patch.safeConfig !== undefined ? { safeConfig: patch.safeConfig } : {}),
-            ...(patch.startupTimeoutMs !== undefined ? { startupTimeoutMs: patch.startupTimeoutMs } : {}),
-            ...(patch.toolTimeoutMs !== undefined ? { toolTimeoutMs: patch.toolTimeoutMs } : {}),
-            ...(patch.enabled !== undefined ? {
-              enabled: patch.enabled,
-              disabledAt: patch.enabled ? null : new Date(),
-              status: patch.enabled ? existing.status : "disabled",
-            } : {}),
-            ...(patch.required !== undefined ? { required: patch.required } : {}),
-            updatedAt: new Date(),
-          })
-          .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
-          .returning()
-          .then((rows) => rows[0] ?? null);
+        row = await db.transaction(async (tx) => {
+          const updated = await tx
+            .update(mcpConnections)
+            .set({
+              credentialSecretId,
+              ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
+              ...(patch.externalScope !== undefined ? { externalScope: patch.externalScope ?? null } : {}),
+              ...(patch.accessMode !== undefined ? { accessMode: patch.accessMode } : {}),
+              ...(patch.safeConfig !== undefined ? { safeConfig: patch.safeConfig } : {}),
+              ...(patch.startupTimeoutMs !== undefined ? { startupTimeoutMs: patch.startupTimeoutMs } : {}),
+              ...(patch.toolTimeoutMs !== undefined ? { toolTimeoutMs: patch.toolTimeoutMs } : {}),
+              ...(patch.enabled !== undefined ? {
+                enabled: patch.enabled,
+                disabledAt: patch.enabled ? null : new Date(),
+                status: patch.enabled ? existing.status : "disabled",
+              } : {}),
+              ...(patch.required !== undefined ? { required: patch.required } : {}),
+              updatedAt: new Date(),
+            })
+            .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+            .returning()
+            .then((rows) => rows[0] ?? null);
+          if (!updated) throw notFound("MCP connection not found");
+          if (oldSecretIdToDelete) {
+            await tx
+              .delete(organizationSecrets)
+              .where(eq(organizationSecrets.id, oldSecretIdToDelete));
+          }
+          return updated;
+        });
       } catch (error) {
         if (replacementSecretId) {
-          await secrets.remove(replacementSecretId).catch(() => undefined);
+          await secrets.remove(replacementSecretId);
         }
         throw error;
-      }
-      if (!row) {
-        if (replacementSecretId) {
-          await secrets.remove(replacementSecretId).catch(() => undefined);
-        }
-        throw notFound("MCP connection not found");
-      }
-      if (oldSecretIdToDelete) {
-        await secrets.remove(oldSecretIdToDelete).catch(() => undefined);
       }
       return publicSummary(row);
     },
@@ -704,18 +710,37 @@ export function managedMcpConnectionService(
     reconnect: async (orgId: string, connectionId: string) => {
       const existing = await findRow(orgId, connectionId);
       assertLegacyMutable(existing);
-      const row = await db
-        .update(mcpConnections)
-        .set({
-          status: existing.provider === "custom" ? "draft" : "authorizing",
-          enabled: true,
-          disabledAt: null,
-          revokedAt: null,
-          updatedAt: new Date(),
-        })
-        .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
-        .returning()
-        .then((rows) => rows[0]!);
+      const now = new Date();
+      const row = await db.transaction(async (tx) => {
+        const updated = await tx
+          .update(mcpConnections)
+          .set({
+            status: existing.provider === "custom" ? "draft" : "authorizing",
+            enabled: true,
+            disabledAt: null,
+            revokedAt: null,
+            updatedAt: now,
+          })
+          .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        if (!updated) throw notFound("MCP connection not found");
+        if (existing.provider !== "custom") {
+          await tx
+            .update(mcpOAuthGrants)
+            .set({
+              status: "needs_reauth",
+              statusMetadata: { reason: "connection_reconnect" },
+              updatedAt: now,
+            })
+            .where(and(
+              eq(mcpOAuthGrants.orgId, orgId),
+              eq(mcpOAuthGrants.connectionId, connectionId),
+              eq(mcpOAuthGrants.status, "active"),
+            ));
+        }
+        return updated;
+      });
       return publicSummary(row);
     },
 
@@ -742,14 +767,11 @@ export function managedMcpConnectionService(
     refreshTools: async (orgId: string, connectionId: string) => {
       const existing = await findRow(orgId, connectionId);
       assertLegacyMutable(existing);
-      if (
-        !existing.enabled
-        || RECONNECT_REQUIRED_STATUSES.has(existing.status)
-      ) {
-        throw reconnectRequiredError();
-      }
       if (existing.provider === "supabase" && !existing.externalScope) {
         throw unprocessable("Supabase MCP connections require a selected project before discovery");
+      }
+      if (!canDiscoverTools(existing)) {
+        throw discoveryNotReadyError();
       }
       let client: ManagedMcpClient | null = null;
       try {

@@ -7,6 +7,7 @@ import {
   customIntegrationTools,
   ensurePostgresDatabase,
   mcpConnections,
+  mcpOAuthGrants,
   organizationSecretVersions,
   organizationSecrets,
   organizations,
@@ -23,6 +24,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ManagedMcpClient, ManagedMcpClientOptions } from "../services/mcp/managed-client.js";
 import { managedMcpConnectionService } from "../services/mcp/managed-connections.js";
+import { secretService } from "../services/secrets.js";
 
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -219,7 +221,7 @@ describe("managedMcpConnectionService", () => {
     }, { userId: "owner-1" })).rejects.toThrow();
   });
 
-  it("encrypts custom HTTP credential material, redacts summaries, preserves it on ordinary updates, rotates it, and clears it", async () => {
+  it("encrypts custom HTTP credential material, redacts summaries, preserves it, replaces it, and clears it", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
     const created = await svc.create(orgId, {
@@ -248,6 +250,7 @@ describe("managedMcpConnectionService", () => {
     await svc.update(orgId, created.id, { displayName: "Renamed" }, { userId: "owner-1" });
     expect((await svc.get(orgId, created.id)).hasCredentials).toBe(true);
 
+    const originalSecretId = connection!.credentialSecretId;
     await svc.update(orgId, created.id, {
       safeConfig: {
         url: "https://mcp.example.test/mcp",
@@ -257,13 +260,25 @@ describe("managedMcpConnectionService", () => {
         headers: { Authorization: "Bearer rotated-secret-value" },
       },
     }, { userId: "owner-1" });
-    expect((await db.select().from(organizationSecrets))[0]?.latestVersion).toBe(2);
+    const [replacedConnection] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, created.id));
+    const replacementSecrets = await db.select().from(organizationSecrets);
+    const replacementVersions = await db.select().from(organizationSecretVersions);
+    expect(replacedConnection?.credentialSecretId).not.toBe(originalSecretId);
+    expect(replacementSecrets).toHaveLength(1);
+    expect(replacementSecrets[0]).toMatchObject({
+      id: replacedConnection?.credentialSecretId,
+      latestVersion: 1,
+    });
+    expect(replacementVersions).toHaveLength(1);
+    expect(replacementVersions[0]?.secretId).toBe(replacedConnection?.credentialSecretId);
 
     await svc.update(orgId, created.id, {
       safeConfig: { url: "https://mcp.example.test/mcp" },
     }, { userId: "owner-1" });
     expect((await svc.get(orgId, created.id)).hasCredentials).toBe(false);
     expect((await db.select().from(organizationSecrets))).toHaveLength(0);
+    expect((await db.select().from(organizationSecretVersions))).toHaveLength(0);
   });
 
   it("does not read arbitrary host environment names for authenticated HTTP connections", async () => {
@@ -569,7 +584,13 @@ describe("managedMcpConnectionService", () => {
     await expect(svc.refreshTools(orgId, connection.id)).rejects.toThrow(/reconnect/i);
     expect(createClient).not.toHaveBeenCalled();
 
-    for (const status of ["needs_reauth", "revoked", "error"] as const) {
+    for (const status of [
+      "authorizing",
+      "selecting_scope",
+      "needs_reauth",
+      "revoked",
+      "error",
+    ] as const) {
       await db.update(mcpConnections)
         .set({ status, enabled: true })
         .where(eq(mcpConnections.id, connection.id));
@@ -586,9 +607,10 @@ describe("managedMcpConnectionService", () => {
     expect(createClient).toHaveBeenCalledOnce();
   });
 
-  it("keeps the old credential/config consistent when a clear or declaration rotation DB update fails", async () => {
+  it("keeps the old credential/config consistent when clear or any replacement DB update fails", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
+    const secrets = secretService(db);
     const connection = await svc.create(orgId, {
       name: "atomic-secret-change",
       displayName: "Atomic secret change",
@@ -603,19 +625,21 @@ describe("managedMcpConnectionService", () => {
     const [before] = await db.select().from(mcpConnections)
       .where(eq(mcpConnections.id, connection.id));
     expect(before?.credentialSecretId).toBeTruthy();
+    const originalValue = await secrets.resolveSecretValue(
+      orgId,
+      before!.credentialSecretId!,
+      "latest",
+    );
 
     await db.$client.unsafe(`
-      create function reject_managed_mcp_safe_config_change() returns trigger as $$
+      create function reject_managed_mcp_connection_update() returns trigger as $$
       begin
-        if new.safe_config is distinct from old.safe_config then
-          raise exception 'forced safe config failure';
-        end if;
-        return new;
+        raise exception 'forced managed MCP connection update failure';
       end;
       $$ language plpgsql;
-      create trigger reject_managed_mcp_safe_config_change
+      create trigger reject_managed_mcp_connection_update
       before update on mcp_connections
-      for each row execute function reject_managed_mcp_safe_config_change();
+      for each row execute function reject_managed_mcp_connection_update();
     `);
     try {
       await expect(svc.update(orgId, connection.id, {
@@ -626,6 +650,21 @@ describe("managedMcpConnectionService", () => {
       expect(after?.credentialSecretId).toBe(before?.credentialSecretId);
       expect(after?.safeConfig).toEqual(before?.safeConfig);
       expect(await db.select().from(organizationSecrets)).toHaveLength(1);
+
+      await expect(svc.update(orgId, connection.id, {
+        secrets: { headers: { Authorization: "Bearer same-shape-rotated-secret" } },
+      }, { userId: "owner-1" })).rejects.toThrow();
+      [after] = await db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, connection.id));
+      expect(after?.credentialSecretId).toBe(before?.credentialSecretId);
+      expect(after?.safeConfig).toEqual(before?.safeConfig);
+      expect(await secrets.resolveSecretValue(
+        orgId,
+        before!.credentialSecretId!,
+        "latest",
+      )).toBe(originalValue);
+      expect((await db.select().from(organizationSecrets))[0]?.latestVersion).toBe(1);
+      expect(await db.select().from(organizationSecretVersions)).toHaveLength(1);
 
       await expect(svc.update(orgId, connection.id, {
         safeConfig: {
@@ -642,10 +681,107 @@ describe("managedMcpConnectionService", () => {
       expect(await db.select().from(organizationSecretVersions)).toHaveLength(1);
     } finally {
       await db.$client.unsafe(`
-        drop trigger if exists reject_managed_mcp_safe_config_change on mcp_connections;
-        drop function if exists reject_managed_mcp_safe_config_change();
+        drop trigger if exists reject_managed_mcp_connection_update on mcp_connections;
+        drop function if exists reject_managed_mcp_connection_update();
       `);
     }
+  });
+
+  it("rolls back replacement and clear when deleting the old managed credential fails", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+    const secrets = secretService(db);
+    const connection = await svc.create(orgId, {
+      name: "atomic-secret-delete",
+      displayName: "Atomic secret delete",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: {
+        url: "https://mcp.example.test/mcp",
+        secretHeaderNames: ["Authorization"],
+      },
+      secrets: { headers: { Authorization: "Bearer original-delete-secret" } },
+    }, { userId: "owner-1" });
+    const [before] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    const oldSecretId = before!.credentialSecretId!;
+    const originalValue = await secrets.resolveSecretValue(orgId, oldSecretId, "latest");
+
+    await db.$client.unsafe(`
+      create function reject_old_managed_mcp_credential_delete() returns trigger as $$
+      begin
+        if old.id = '${oldSecretId}'::uuid then
+          raise exception 'forced old managed MCP credential delete failure';
+        end if;
+        return old;
+      end;
+      $$ language plpgsql;
+      create trigger reject_old_managed_mcp_credential_delete
+      before delete on organization_secrets
+      for each row execute function reject_old_managed_mcp_credential_delete();
+    `);
+    try {
+      await expect(svc.update(orgId, connection.id, {
+        secrets: { headers: { Authorization: "Bearer replacement-delete-secret" } },
+      }, { userId: "owner-1" })).rejects.toThrow();
+      await expect(svc.update(orgId, connection.id, {
+        safeConfig: { url: "https://mcp.example.test/mcp" },
+      }, { userId: "owner-1" })).rejects.toThrow();
+
+      const [after] = await db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, connection.id));
+      expect(after?.credentialSecretId).toBe(oldSecretId);
+      expect(after?.safeConfig).toEqual(before?.safeConfig);
+      expect(await secrets.resolveSecretValue(orgId, oldSecretId, "latest")).toBe(originalValue);
+      expect(await db.select().from(organizationSecrets)).toHaveLength(1);
+      expect(await db.select().from(organizationSecretVersions)).toHaveLength(1);
+    } finally {
+      await db.$client.unsafe(`
+        drop trigger if exists reject_old_managed_mcp_credential_delete on organization_secrets;
+        drop function if exists reject_old_managed_mcp_credential_delete();
+      `);
+    }
+  });
+
+  it("invalidates an active curated grant transactionally when reconnect begins", async () => {
+    const orgId = await seedOrg(db);
+    const grantCredential = await secretService(db).create(orgId, {
+      name: "Linear OAuth credential",
+      provider: "local_encrypted",
+      value: JSON.stringify({ accessToken: "old-linear-token" }),
+    });
+    const client = clientWithTools([]);
+    createClient.mockResolvedValue(client);
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "linear-reconnect",
+      displayName: "Linear reconnect",
+      provider: "linear",
+      transport: "streamable_http",
+      safeConfig: {},
+    }, { userId: "owner-1" });
+    await db.insert(mcpOAuthGrants).values({
+      orgId,
+      connectionId: connection.id,
+      credentialSecretId: grantCredential.id,
+      status: "active",
+    });
+    await db.update(mcpConnections)
+      .set({ status: "active", enabled: true })
+      .where(eq(mcpConnections.id, connection.id));
+
+    expect(await svc.reconnect(orgId, connection.id)).toMatchObject({
+      status: "authorizing",
+      enabled: true,
+    });
+    const [grant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, connection.id));
+    expect(grant).toMatchObject({
+      status: "needs_reauth",
+      statusMetadata: { reason: "connection_reconnect" },
+    });
+    await expect(svc.refreshTools(orgId, connection.id)).rejects.toThrow(/not ready/i);
+    expect(createClient).not.toHaveBeenCalled();
   });
 
   it("keeps legacy_manual records read-only and non-executable", async () => {
