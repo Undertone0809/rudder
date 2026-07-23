@@ -765,6 +765,33 @@ describe("managedMcpConnectionService", () => {
     expect(await svc.listTools(orgId, connection.id)).toEqual([]);
   });
 
+  it("opens runtime clients with the persisted startup and tool timeouts", async () => {
+    const orgId = await seedOrg(db);
+    const discoveryClient = clientWithTools([]);
+    const runtimeClient = clientWithTools([]);
+    createClient
+      .mockResolvedValueOnce(discoveryClient)
+      .mockResolvedValueOnce(runtimeClient);
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "runtime-timeouts",
+      displayName: "Runtime timeouts",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: { url: "https://mcp.example.test/mcp" },
+      startupTimeoutMs: 3_500,
+      toolTimeoutMs: 12_345,
+    }, { userId: "owner-1" });
+    await svc.refreshTools(orgId, connection.id);
+
+    await expect(svc.openRuntimeClient(orgId, connection.id))
+      .resolves.toBe(runtimeClient);
+    expect(createClient).toHaveBeenLastCalledWith(expect.objectContaining({
+      startupTimeoutMs: 3_500,
+      toolTimeoutMs: 12_345,
+    }));
+  });
+
   it("allows only one concurrent refresh from the same lifecycle snapshot", async () => {
     const orgId = await seedOrg(db);
     const discovery = deferred<Array<{

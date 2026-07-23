@@ -19,6 +19,7 @@ import { healthRoutes } from "../routes/health.js";
 import { instanceSettingsRoutes } from "../routes/instance-settings.js";
 import { integrationRoutes } from "../routes/integrations.js";
 import { issueRoutes } from "../routes/issues.js";
+import { managedMcpAgentBindingRoutes } from "../routes/managed-mcp-agent-bindings.js";
 import { managedMcpConnectionRoutes } from "../routes/managed-mcp-connections.js";
 import { messengerRoutes } from "../routes/messenger.js";
 import { onboardingRoutes } from "../routes/onboarding.js";
@@ -59,6 +60,7 @@ export function registerApiRoutes(
   api.use("/orgs", organizationRoutes(db, opts.storageService, workspacePreview));
   api.use(organizationSkillRoutes(db));
   api.use(agentRoutes(db, opts.storageService));
+  api.use(managedMcpAgentBindingRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
   api.use(onboardingRoutes(db));

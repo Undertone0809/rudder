@@ -111,6 +111,7 @@ export type {
   ManagedExternalMcpBindings,
   ManagedExternalMcpToolPolicy,
   McpAgentBinding,
+  McpAgentConnectionSummary,
   McpConnectionSafeConfig,
   McpConnectionSecretsMutation,
   McpConnectionSummary,
@@ -146,10 +147,8 @@ export {
 export {
   createMcpConnectionSchema,
   managedExternalMcpBindingSchema,
-  managedExternalMcpBindingsSchema,
-  mcpAgentBindingSchema,
-  mcpAgentBindingStatusSchema,
-  mcpConnectionAccessModeSchema,
+  managedExternalMcpBindingsSchema, mcpAgentBindingSchema,
+  mcpAgentBindingStatusSchema, mcpAgentConnectionSummarySchema, mcpConnectionAccessModeSchema,
   mcpConnectionMergedConfigSchema,
   mcpConnectionMutationConfigSchema,
   mcpConnectionProviderSchema,
@@ -172,14 +171,11 @@ export {
   mcpScopeSelectionSchema,
   mcpStdioSafeConfigSchema,
   mcpStreamableHttpSafeConfigSchema,
-  updateMcpAgentBindingSchema,
-  updateMcpConnectionSchema,
-  type CreateMcpConnection,
+  updateMcpAgentBindingSchema, updateMcpConnectionSchema, upsertMcpAgentBindingSchema, type CreateMcpConnection,
   type McpOAuthCallback,
   type McpOAuthStart,
-  type McpScopeSelection,
-  type UpdateMcpAgentBinding,
-  type UpdateMcpConnection
+  type McpScopeSelection, type UpdateMcpAgentBinding,
+  type UpdateMcpConnection, type UpsertMcpAgentBinding
 } from "./validators/mcp.js";
 
 export {

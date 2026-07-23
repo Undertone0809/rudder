@@ -642,6 +642,18 @@ export function managedMcpConnectionService(
     get: async (orgId: string, connectionId: string) =>
       publicSummary(await findRow(orgId, connectionId)),
 
+    openRuntimeClient: async (orgId: string, connectionId: string) => {
+      const connection = await findRow(orgId, connectionId);
+      if (
+        connection.status !== "active"
+        || !connection.enabled
+        || connection.transport === "legacy_manual"
+      ) {
+        throw unprocessable("Managed MCP connection is unavailable");
+      }
+      return createClient(await buildClientOptions(connection));
+    },
+
     create: async (
       orgId: string,
       rawInput: CreateMcpConnection,

@@ -102,6 +102,7 @@ export type {
   ManagedExternalMcpBindings,
   ManagedExternalMcpToolPolicy,
   McpAgentBinding,
+  McpAgentConnectionSummary,
   McpConnectionSafeConfig,
   McpConnectionSecretsMutation,
   McpConnectionSummary,

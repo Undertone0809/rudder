@@ -29,6 +29,11 @@ export { issueApprovalService } from "./issue-approvals.js";
 export { issueService, type IssueFilters } from "./issues.js";
 export { publishLiveEvent, subscribeCompanyLiveEvents } from "./live-events.js";
 export {
+  RequiredManagedMcpConnectionUnavailableError,
+  managedMcpBindingService,
+  type ManagedMcpBindingActor
+} from "./mcp/managed-bindings.js";
+export {
   ManagedMcpClientError, createManagedMcpClient, resolveMcpHttpCredentials,
   type ManagedMcpClient,
   type ManagedMcpClientOptions
@@ -40,6 +45,13 @@ export {
   type ManagedMcpConnectionServiceOptions,
   type ManagedMcpMutationActor
 } from "./mcp/managed-connections.js";
+export {
+  boundedRedactedMcpAuditRecord,
+  managedMcpRuntimeService,
+  type ManagedMcpRuntimeIdentity,
+  type ManagedMcpRuntimeServiceOptions,
+  type ManagedMcpRuntimeTool
+} from "./mcp/managed-runtime.js";
 export {
   managedMcpOAuthService,
   type ManagedMcpOAuthActor,

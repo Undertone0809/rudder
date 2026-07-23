@@ -139,6 +139,12 @@ export interface McpAgentBinding {
   enabledToolIds: string[];
 }
 
+export interface McpAgentConnectionSummary {
+  connection: McpConnectionSummary;
+  binding: McpAgentBinding | null;
+  tools: McpDiscoveredTool[];
+}
+
 /**
  * Provider-neutral, run-scoped proxy descriptor consumed by runtime adapters.
  *

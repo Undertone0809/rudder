@@ -522,6 +522,17 @@ export const mcpAgentBindingSchema = z.object({
   enabledToolIds: z.array(uuidSchema).max(500),
 }).strict();
 
+export const mcpAgentConnectionSummarySchema = z.object({
+  connection: mcpConnectionSummarySchema,
+  binding: mcpAgentBindingSchema.nullable(),
+  tools: z.array(mcpDiscoveredToolSchema).max(500),
+}).strict();
+
+export const upsertMcpAgentBindingSchema = z.object({
+  status: mcpAgentBindingStatusSchema.optional(),
+  enabledToolIds: z.array(uuidSchema).max(500).optional(),
+}).strict();
+
 export const updateMcpAgentBindingSchema = z.object({
   status: mcpAgentBindingStatusSchema.optional(),
   enabledToolIds: z.array(uuidSchema).max(500).optional(),
@@ -534,7 +545,7 @@ export const managedExternalMcpBindingSchema = z.object({
   serverName: connectionNameSchema,
   toolPolicy: z.object({
     mode: z.literal("allowlist"),
-    allowedToolNames: z.array(z.string().min(1).max(240)).max(500),
+    allowedToolNames: z.array(z.string().min(1).max(320)).max(500),
   }).strict(),
   required: z.boolean(),
   startupTimeoutMs: z.number().int().positive(),
@@ -548,4 +559,5 @@ export type UpdateMcpConnection = z.infer<typeof updateMcpConnectionSchema>;
 export type McpOAuthStart = z.infer<typeof mcpOAuthStartSchema>;
 export type McpOAuthCallback = z.infer<typeof mcpOAuthCallbackSchema>;
 export type McpScopeSelection = z.infer<typeof mcpScopeSelectionSchema>;
+export type UpsertMcpAgentBinding = z.infer<typeof upsertMcpAgentBindingSchema>;
 export type UpdateMcpAgentBinding = z.infer<typeof updateMcpAgentBindingSchema>;

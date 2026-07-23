@@ -17,7 +17,9 @@ import {
   managedMcpOAuthService,
 } from "../services/index.js";
 import type { ManagedMcpConnectionServiceOptions } from "../services/mcp/managed-connections.js";
+import { managedMcpRuntimeService } from "../services/mcp/managed-runtime.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
+import { managedMcpRuntimeRoutes } from "./managed-mcp-runtime.js";
 
 const updateAccessModeSchema = z.object({
   accessMode: mcpConnectionAccessModeSchema,
@@ -53,7 +55,14 @@ export function managedMcpConnectionRoutes(
     createOAuthCredential: (orgId, connectionId) =>
       oauth.createCredential(orgId, connectionId),
   });
+  const runtime = managedMcpRuntimeService(db, {
+    openClient: (orgId, connectionId) =>
+      svc.openRuntimeClient(orgId, connectionId),
+    requireUsableGrant: (orgId, connectionId) =>
+      oauth.requireUsableGrant(orgId, connectionId),
+  });
   const access = accessService(db);
+  router.use(managedMcpRuntimeRoutes(runtime));
 
   function assertCanRead(req: Request, orgId: string) {
     assertBoard(req);
