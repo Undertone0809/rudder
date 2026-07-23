@@ -151,7 +151,7 @@ import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-contr
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
 import { ChatWorkManifest, ChatWorkManifestToggle, hasChatWorkManifestContent } from "./Chat.work-manifest";
-import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, chatMessageJumpTargetFromHref, chatReferenceMarkdown, clipboardAttachmentPayloadKey, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry, type SendButtonMode } from "./Chat.workspace-helpers";
+import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, chatMessageJumpTargetFromHref, chatReferenceMarkdown, clipboardAttachmentPayloadKey, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, projectChatQueueDelivery, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry, type SendButtonMode } from "./Chat.workspace-helpers";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
@@ -1341,7 +1341,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           releaseChatSendLock(activeChatId); } }
       if (newConversationLockAcquired) { releaseNewConversationSendLock(); } } }; const conversations = useMemo(() => { const items = conversationsQuery.data ?? [];
     return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]); const rawMessages = messagesQuery.data ?? []; const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
-    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined); const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => !(item.deliveredMessageId && ["dequeue_claimed", "running_next"].includes(item.status)) && !["delivered", "completed", "cancelled", "steered", "running"].includes(item.status)); const agentSelectionLocked = isChatAgentSelectionLocked({
+    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined); const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => projectChatQueueDelivery(item).state !== "hidden"); const agentSelectionLocked = isChatAgentSelectionLocked({
     hasConversation: Boolean(selectedConversation),
     preferredAgentId: selectedConversation?.preferredAgentId,
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
@@ -1955,7 +1955,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       && queueQuery.data?.activeControlVersion !== null
       && queueQuery.data?.activeControlVersion !== undefined
     )
-    || activeQueueItems.some((item) => item.status === "queued"),
+    || activeQueueItems.some((item) => item.status === "queued" || item.status === "failed_actionable"),
   );
   const canStopSelectedConversationReply = Boolean(selectedConversation && !selectedStopRequestPending && !activeStreamStopState && (activeSendInFlight || serverActiveGenerationId));
   const composerStreaming = Boolean(activeStream) || activeSendInFlight || newConversationSendInFlight;
@@ -2170,61 +2170,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           }),
         );
         refreshQueue(chatId);
-        const feedback = result.result === "delivered_current"
-          ? {
-              title: "Delivered to current run",
-              body: "The running agent received the feedback.",
-              tone: "success" as const,
-            }
-          : result.result === "scheduled_next"
-            ? {
-                title: "Restarting with feedback",
-                body: "Rudder will continue with this feedback after the current runtime stops.",
-                tone: "info" as const,
-              }
-            : result.result === "acceptance_unknown"
-              ? {
-                  title: "Delivery needs confirmation",
-                  body: "Rudder will not resend until provider receipt can be reconciled.",
-                  tone: "warn" as const,
-                }
-              : result.result === "failed_actionable"
-                ? {
-                    title: "Feedback needs attention",
-                    body: "Rudder could not safely deliver or replay this feedback.",
-                    tone: "error" as const,
-                  }
-                : {
-                    title: "Applying feedback",
-                    body: "Rudder saved the feedback and is waiting for runtime control.",
-                    tone: "info" as const,
-                  };
-        if (pending.lastFeedbackResult !== result.result) {
-          pending.lastFeedbackResult = result.result;
-          pushToast(feedback);
-        }
       })
       .catch((error) => {
         refreshQueue(chatId);
         if (!(error instanceof ApiError)) {
           retryScheduled = true;
           scheduleSteerRetry(pending);
-          if (!pending.transportToastShown) {
-            pending.transportToastShown = true;
-            pushToast({
-              title: "Feedback confirmation pending",
-              body: "Rudder will retry the same feedback action automatically.",
-              tone: "warn",
-            });
-          }
           return;
         }
         clearSteerRetry(pending);
-        pushToast({
-          title: "Failed to steer queued message",
-          body: error.message,
-          tone: "error",
-        });
       })
       .finally(() => {
         steeringQueuedItemIdsRef.current.delete(itemId);
@@ -2246,7 +2200,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     const chatId = selectedConversation.id;
     const item = activeQueueItems.find((candidate) => candidate.id === itemId);
     const request: ChatSteerQueuedMessageRequest = {
-      controlActionId: item?.controlActionId ?? globalThis.crypto.randomUUID(),
+      controlActionId: item?.status === "failed_actionable"
+        ? globalThis.crypto.randomUUID()
+        : item?.controlActionId ?? globalThis.crypto.randomUUID(),
       ...(activeGenerationId ? { expectedActiveGenerationId: activeGenerationId } : {}),
       ...(expectedAttemptEpoch !== null && expectedAttemptEpoch !== undefined
         ? { expectedAttemptEpoch }
@@ -2267,8 +2223,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       request,
       retryCount: 0,
       timer: null,
-      lastFeedbackResult: null,
-      transportToastShown: false,
     };
     steerRetryStatesRef.current.set(pending.key, pending);
     submitSteerRetry(pending);
@@ -2352,28 +2306,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           <div className="space-y-1.5">
             {visibleQueueItems.map((item, index) => {
               const itemSteering = steeringQueuedItemIds.has(item.id);
-              const itemEditable = item.status === "queued" && !itemSteering;
-              const itemRunning = item.status === "dequeue_claimed" || item.status === "running" || item.status === "running_next";
-              const deliveryLabel = itemSteering || item.status === "steer_pending"
-                ? "Applying feedback"
-                : item.status === "accepted_current" || item.status === "reconciled_current"
-                  ? "Delivered to current run"
-                  : item.status === "acceptance_unknown"
-                    ? "Delivery unconfirmed"
-                    : item.status === "continuation_pending"
-                      ? "Restarting with feedback"
-                      : item.status === "running_next"
-                        ? "Running feedback"
-                        : item.status === "delivered" || item.status === "completed"
-                          ? "Delivered"
-                          : item.status === "failed_actionable"
-                            ? "Needs attention"
-                            : item.lastDeliveryReason
-                              ? "Still queued"
-                              : null;
+              const delivery = projectChatQueueDelivery(item, itemSteering);
+              const itemEditable = delivery.state === "queued" && !itemSteering;
+              const itemRetryable = delivery.state === "failed" && !itemSteering;
               return (
                 <div key={item.id} data-testid="chat-running-queue-item" className="flex min-w-0 items-center gap-2 rounded-[var(--radius-md)] border border-border/60 bg-background/70 px-2.5 py-2 text-sm">
-                  <span className="shrink-0 text-xs font-semibold text-muted-foreground">{index === 0 ? (itemRunning ? "Running" : "Up next") : `#${index + 1}`}</span>
+                  <span className="shrink-0 text-xs font-semibold text-muted-foreground">#{index + 1}</span>
                   {editingQueuedItem?.itemId === item.id && itemEditable ? (
                     <>
                       <Textarea aria-label="Edit queued message text" data-testid="chat-running-queue-edit" className="min-h-9 flex-1 resize-none rounded-[var(--radius-sm)] border-border/70 bg-background px-2 py-1.5 text-sm" value={editingQueuedItem.value} onChange={(event) => setEditingQueuedItem((current) => current?.itemId === item.id ? { ...current, value: event.target.value } : current)} />
@@ -2383,13 +2321,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   ) : (
                     <>
                       <span className="min-w-0 flex-1 truncate text-foreground">{item.payload.body}</span>
-                      {itemRunning || deliveryLabel ? (
+                      {delivery.state !== "hidden" ? (
                         <span className={cn(
                           "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium",
-                          item.status === "acceptance_unknown" || item.status === "failed_actionable" || item.lastDeliveryReason
+                          delivery.state === "failed"
                             ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
                             : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-                        )}>{itemRunning ? "Running" : deliveryLabel}</span>
+                        )}>{delivery.label}</span>
                       ) : null}
                       {itemEditable ? (
                         <>
@@ -2399,6 +2337,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                           <button type="button" aria-label="Edit queued message" className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={() => editQueuedMessage(item.id, item.payload.body)}><Pencil className="h-3.5 w-3.5" /></button>
                           <button type="button" aria-label="Delete queued message" className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={() => deleteQueuedMessage(item.id)}><Trash2 className="h-3.5 w-3.5" /></button>
                         </>
+                      ) : itemRetryable ? (
+                        <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => steerQueuedMessage(item.id)}>Retry</button>
                       ) : null}
                     </>
                   )}

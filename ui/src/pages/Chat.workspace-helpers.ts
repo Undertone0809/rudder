@@ -3,7 +3,7 @@ import { chatsApi, type ChatSteerQueuedMessageRequest } from "@/api/chats";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { displayChatTitle } from "@/lib/chat-title";
 import { queryKeys } from "@/lib/queryKeys";
-import { buildChatMentionHref, type ChatConversation, type ChatGenerationStatus, type ChatMessage, type ChatStreamEvent } from "@rudderhq/shared";
+import { buildChatMentionHref, type ChatConversation, type ChatGenerationStatus, type ChatMessage, type ChatQueuedMessage, type ChatStreamEvent } from "@rudderhq/shared";
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 
 export type SendButtonMode = "send" | "stop" | "sending" | "stopping" | "queue";
@@ -15,8 +15,6 @@ export type PendingChatSteerRetry = {
   request: ChatSteerQueuedMessageRequest;
   retryCount: number;
   timer: ReturnType<typeof setTimeout> | null;
-  lastFeedbackResult: string | null;
-  transportToastShown: boolean;
 };
 type ChatStreamProgressEvent = Extract<
   ChatStreamEvent,
@@ -33,6 +31,46 @@ export const CHAT_ISSUE_MENTION_LIMIT = 50;
 export const CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD = 5;
 export const CHAT_DRAFT_PREFLIGHT_STALE_TIME_MS = 5 * 60_000;
 export const CHAT_DRAFT_PREFLIGHT_GC_TIME_MS = 30 * 60_000;
+
+export type ChatQueueDeliveryProjection =
+  | { state: "hidden" }
+  | { state: "queued"; label: "Queued" }
+  | { state: "sending"; label: "Sending…" }
+  | { state: "failed"; label: "Couldn't send" };
+
+const DURABLE_QUEUE_DELIVERY_STATUSES = new Set<ChatQueuedMessage["status"]>([
+  "accepted_current",
+  "reconciled_current",
+  "continuation_pending",
+  "running_next",
+  "delivered",
+  "completed",
+  "steered",
+]);
+
+const DURABLE_QUEUE_DELIVERY_DISPOSITIONS = new Set<NonNullable<ChatQueuedMessage["deliveryDisposition"]>>([
+  "accepted_current",
+  "reconciled_current",
+  "continuation_pending",
+  "running_next",
+  "delivered",
+]);
+
+export function projectChatQueueDelivery(
+  item: ChatQueuedMessage,
+  isSteering = false,
+): ChatQueueDeliveryProjection {
+  const hasDurableDeliveryEvidence = Boolean(
+    item.sourceMessageId || item.deliveredMessageId || item.continuationMessageId,
+  )
+    || DURABLE_QUEUE_DELIVERY_STATUSES.has(item.status)
+    || (item.deliveryDisposition !== null && DURABLE_QUEUE_DELIVERY_DISPOSITIONS.has(item.deliveryDisposition));
+  if (hasDurableDeliveryEvidence || item.status === "cancelled") return { state: "hidden" };
+  if (isSteering) return { state: "sending", label: "Sending…" };
+  if (item.status === "queued") return { state: "queued", label: "Queued" };
+  if (item.status === "failed_actionable") return { state: "failed", label: "Couldn't send" };
+  return { state: "sending", label: "Sending…" };
+}
 
 const ACTIVE_CHAT_GENERATION_STATUSES = new Set<ChatGenerationStatus>([
   "starting",
