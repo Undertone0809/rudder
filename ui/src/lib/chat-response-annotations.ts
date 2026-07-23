@@ -16,6 +16,12 @@ export type ChatResponseAnnotationState = {
   pendingFilesByAnnotationId: Record<string, File[]>;
 };
 
+export type ChatResponseAnnotationEditorChanges = {
+  comment: string | null;
+  attachmentIds: string[];
+  files: File[];
+};
+
 export type ChatResponseAnnotationAction =
   | {
     type: "reset";
@@ -80,10 +86,10 @@ function annotationTextLength(annotation: ChatInlineAnnotationInput) {
   return annotation.selectedText.length + (annotation.comment?.length ?? 0);
 }
 
-function validateChatResponseAnnotationState(
+export function validateChatResponseAnnotationState(
   annotations: readonly ChatInlineAnnotationInput[],
   pendingFileCount = 0,
-) {
+): string | null {
   if (annotations.length > MAX_CHAT_INLINE_ANNOTATIONS) {
     return `A message can include at most ${MAX_CHAT_INLINE_ANNOTATIONS} annotations.`;
   }
@@ -119,7 +125,7 @@ function validateChatResponseAnnotationState(
 export function validateChatResponseAnnotationAdd(
   state: ChatResponseAnnotationState,
   annotation: ChatInlineAnnotationInput,
-) {
+): string | null {
   return validateChatResponseAnnotationState(
     [...state.annotations, annotation],
     Object.values(state.pendingFilesByAnnotationId).reduce(
@@ -127,6 +133,37 @@ export function validateChatResponseAnnotationAdd(
       0,
     ),
   );
+}
+
+export function validateChatResponseAnnotationReplacement(
+  state: ChatResponseAnnotationState,
+  annotationId: string,
+  changes: ChatResponseAnnotationEditorChanges,
+): string | null {
+  if (!state.annotations.some((annotation) => annotation.id === annotationId)) {
+    return "This annotation is no longer available.";
+  }
+  const nextAnnotations = state.annotations.map((annotation) => (
+    annotation.id === annotationId
+      ? {
+          ...annotation,
+          comment: changes.comment,
+          attachmentIds: [...changes.attachmentIds],
+        }
+      : annotation
+  ));
+  const pendingFileCount = Object.entries(state.pendingFilesByAnnotationId).reduce(
+    (total, [id, files]) => total + (id === annotationId ? changes.files.length : files.length),
+    0,
+  );
+  const hasExistingPendingFiles = Object.prototype.hasOwnProperty.call(
+    state.pendingFilesByAnnotationId,
+    annotationId,
+  );
+  const prospectivePendingFileCount = hasExistingPendingFiles
+    ? pendingFileCount
+    : pendingFileCount + changes.files.length;
+  return validateChatResponseAnnotationState(nextAnnotations, prospectivePendingFileCount);
 }
 
 export function responseAnnotationReducer(

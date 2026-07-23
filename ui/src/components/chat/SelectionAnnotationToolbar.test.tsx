@@ -38,6 +38,31 @@ describe("selection annotation toolbar", () => {
     });
   });
 
+  it("flips and shifts inside an optional container boundary", () => {
+    expect(placeSelectionAnnotationToolbar(
+      { left: 490, right: 510, top: 44, bottom: 64, width: 20, height: 20 },
+      { width: 180, height: 36 },
+      {
+        width: 1_000,
+        height: 820,
+        padding: 8,
+        gap: 8,
+        boundaryRect: {
+          left: 200,
+          right: 520,
+          top: 36,
+          bottom: 500,
+          width: 320,
+          height: 464,
+        },
+      },
+    )).toEqual({
+      left: 332,
+      top: 72,
+      placement: "bottom",
+    });
+  });
+
   it("renders in a portal and supports arrow keys, activation, Escape, and focus return", () => {
     const onAddToChat = vi.fn();
     const onMoreDetails = vi.fn();

@@ -7,6 +7,7 @@ import {
   responseAnnotationReducer,
   serializeChatResponseAnnotations,
   validateChatResponseAnnotationAdd,
+  validateChatResponseAnnotationReplacement,
 } from "./chat-response-annotations";
 
 type AssistantAnnotationInput = Extract<
@@ -196,6 +197,48 @@ describe("chat response annotation state", () => {
     });
     expect(validateChatResponseAnnotationAdd(state, tooLong)).toMatch(/4,000/);
     expect(responseAnnotationReducer(state, { type: "add", annotation: tooLong })).toBe(state);
+  });
+
+  it("reports aggregate comment and file limits before replacing an editor draft", () => {
+    const first = annotation("30000000-0000-4000-8000-000000000001", {
+      selectedText: "a".repeat(4_000),
+      end: 4_000,
+      attachmentIds: Array.from({ length: 5 }, (_, index) => `attachment-a-${index}`),
+    });
+    const state = createChatResponseAnnotationState([
+      first,
+      annotation("30000000-0000-4000-8000-000000000002", {
+        selectedText: "b".repeat(4_000),
+        start: 4_001,
+        end: 8_001,
+        attachmentIds: Array.from({ length: 4 }, (_, index) => `attachment-b-${index}`),
+      }),
+      annotation("30000000-0000-4000-8000-000000000003", {
+        selectedText: "c".repeat(4_000),
+        start: 8_002,
+        end: 12_002,
+      }),
+      annotation("30000000-0000-4000-8000-000000000004", {
+        selectedText: "d".repeat(4_000),
+        start: 12_003,
+        end: 16_003,
+      }),
+    ]);
+
+    expect(validateChatResponseAnnotationReplacement(state, first.id, {
+      comment: "One character too many",
+      attachmentIds: first.attachmentIds ?? [],
+      files: [],
+    })).toMatch(/16,000/);
+
+    expect(validateChatResponseAnnotationReplacement(state, first.id, {
+      comment: null,
+      attachmentIds: first.attachmentIds ?? [],
+      files: [
+        new File(["one"], "one.png", { type: "image/png" }),
+        new File(["two"], "two.pdf", { type: "application/pdf" }),
+      ],
+    })).toMatch(/10 files/);
   });
 
   it("allows annotation-only submission but rejects a completely empty composer", () => {

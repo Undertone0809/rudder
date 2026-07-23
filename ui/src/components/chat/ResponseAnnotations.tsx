@@ -10,6 +10,11 @@ import type {
   ChatInlineAnnotationInput,
 } from "@rudderhq/shared";
 import {
+  MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS,
+  MAX_CHAT_INLINE_ANNOTATION_COMMENT_LENGTH,
+  MAX_CHAT_INLINE_ANNOTATION_TOTAL_TEXT_LENGTH,
+} from "@rudderhq/shared";
+import {
   ChevronDown,
   ChevronUp,
   MessageSquareText,
@@ -19,6 +24,8 @@ import {
   X,
 } from "lucide-react";
 import {
+  useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -33,6 +40,71 @@ import {
   ChatImageAttachmentTile,
   PendingAttachmentPreview,
 } from "../../pages/Chat.attachments";
+
+export type ResponseAnnotationAnchorRect = Pick<
+  DOMRect,
+  "left" | "right" | "top" | "bottom" | "width" | "height"
+>;
+
+export type ResponseAnnotationEditorChanges = {
+  comment: string | null;
+  pendingFiles: File[];
+  attachmentIds: string[];
+};
+
+export function placeResponseAnnotationEditor(
+  anchorRect: ResponseAnnotationAnchorRect,
+  editorSize: { width: number; height: number },
+  viewport: {
+    width: number;
+    height: number;
+    padding: number;
+    gap: number;
+    boundaryRect?: ResponseAnnotationAnchorRect | null;
+  },
+): { left: number; top: number; placement: "top" | "bottom" } {
+  const boundary = viewport.boundaryRect;
+  const minLeft = Math.max(
+    viewport.padding,
+    boundary ? boundary.left + viewport.padding : viewport.padding,
+  );
+  const maxRight = Math.min(
+    viewport.width - viewport.padding,
+    boundary ? boundary.right - viewport.padding : viewport.width - viewport.padding,
+  );
+  const minTop = Math.max(
+    viewport.padding,
+    boundary ? boundary.top + viewport.padding : viewport.padding,
+  );
+  const maxBottom = Math.min(
+    viewport.height - viewport.padding,
+    boundary ? boundary.bottom - viewport.padding : viewport.height - viewport.padding,
+  );
+  const preferredLeft = anchorRect.left + (anchorRect.width - editorSize.width) / 2;
+  const maxLeft = Math.max(minLeft, maxRight - editorSize.width);
+  const left = Math.min(Math.max(preferredLeft, minLeft), maxLeft);
+  const topPosition = anchorRect.top - viewport.gap - editorSize.height;
+  const placement = topPosition >= minTop ? "top" : "bottom";
+  const preferredTop = placement === "top"
+    ? topPosition
+    : anchorRect.bottom + viewport.gap;
+  const maxTop = Math.max(minTop, maxBottom - editorSize.height);
+  return {
+    left,
+    top: Math.min(Math.max(preferredTop, minTop), maxTop),
+    placement,
+  };
+}
+
+export function placeResponseAnnotationMarker(
+  finalLineRect: ResponseAnnotationAnchorRect,
+  sourceRootRect: ResponseAnnotationAnchorRect,
+): { left: number; top: number } {
+  return {
+    left: Math.max(0, finalLineRect.right - sourceRootRect.left + 6),
+    top: Math.max(0, finalLineRect.top - sourceRootRect.top),
+  };
+}
 
 export type ResponseAnnotationLabels = {
   annotation: string;
@@ -126,15 +198,17 @@ export function ResponseAnnotationCountChip({
 }
 
 export function ResponseAnnotationMarker({
+  annotationId,
   ordinal,
   excerpt,
   onActivate,
   className,
   style,
 }: {
+  annotationId?: string;
   ordinal: number;
   excerpt: string;
-  onActivate: () => void;
+  onActivate: (anchor: HTMLButtonElement) => void;
   className?: string;
   style?: CSSProperties;
 }) {
@@ -143,13 +217,14 @@ export function ResponseAnnotationMarker({
     <button
       type="button"
       data-testid="chat-response-annotation-marker"
+      data-annotation-id={annotationId}
       {...{ [CHAT_ANNOTATION_IGNORE_ATTRIBUTE]: "" }}
       className={cn(
         "inline-flex h-7 w-7 select-none items-center justify-center rounded-full text-[11px] font-semibold text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11",
         className,
       )}
       aria-label={`Annotation ${ordinal}: ${boundedExcerpt}`}
-      onClick={onActivate}
+      onClick={(event) => onActivate(event.currentTarget)}
       style={style}
     >
       <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-primary px-1 shadow-[var(--shadow-sm)]">
@@ -168,7 +243,7 @@ export function AnchoredResponseAnnotationMarkers({
   sourceRootRef: RefObject<HTMLElement | null>;
   source: string;
   annotations: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
-  onActivate?: (annotationId: string) => void;
+  onActivate?: (annotationId: string, anchor: HTMLButtonElement) => void;
 }) {
   const [positions, setPositions] = useState<Record<string, { left: number; top: number }>>({});
 
@@ -197,10 +272,7 @@ export function AnchoredResponseAnnotationMarkers({
             ? Array.from(range.getClientRects())
             : [];
           const anchorRect = rects.at(-1) ?? range.getBoundingClientRect();
-          next[annotation.id] = {
-            left: Math.max(0, anchorRect.right - rootRect.left + 6),
-            top: Math.max(0, anchorRect.top - rootRect.top - 24),
-          };
+          next[annotation.id] = placeResponseAnnotationMarker(anchorRect, rootRect);
         }
         setPositions(next);
       });
@@ -226,9 +298,10 @@ export function AnchoredResponseAnnotationMarkers({
     return (
       <ResponseAnnotationMarker
         key={annotation.id}
+        annotationId={annotation.id}
         ordinal={annotation.ordinal ?? index + 1}
         excerpt={annotation.selectedText}
-        onActivate={() => onActivate?.(annotation.id)}
+        onActivate={(anchor) => onActivate?.(annotation.id, anchor)}
         className="absolute z-20 -translate-y-0.5"
         style={position}
       />
@@ -318,6 +391,13 @@ export function ResponseAnnotationEditor({
   ordinal,
   pendingFiles,
   attachments = [],
+  anchorRect,
+  getAnchorRect,
+  boundaryRect,
+  getBoundaryRect,
+  returnFocusRef,
+  validateSave,
+  autoFocus,
   onSave,
   onCancel,
   onDelete,
@@ -328,11 +408,14 @@ export function ResponseAnnotationEditor({
   ordinal: number;
   pendingFiles: File[];
   attachments?: ChatAttachment[];
-  onSave: (changes: {
-    comment: string | null;
-    pendingFiles: File[];
-    attachmentIds: string[];
-  }) => void;
+  anchorRect?: ResponseAnnotationAnchorRect | null;
+  getAnchorRect?: () => ResponseAnnotationAnchorRect | null;
+  boundaryRect?: ResponseAnnotationAnchorRect | null;
+  getBoundaryRect?: () => ResponseAnnotationAnchorRect | null;
+  returnFocusRef?: RefObject<HTMLElement | null>;
+  validateSave?: (changes: ResponseAnnotationEditorChanges) => string | null;
+  autoFocus?: boolean;
+  onSave: (changes: ResponseAnnotationEditorChanges) => void;
   onCancel: () => void;
   onDelete: () => void;
   labels?: ResponseAnnotationLabels;
@@ -343,24 +426,173 @@ export function ResponseAnnotationEditor({
   const [draftAttachmentIds, setDraftAttachmentIds] = useState(() => (
     [...(annotation.attachmentIds ?? attachments.map((attachment) => attachment.id))]
   ));
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [liveAnchorRect, setLiveAnchorRect] = useState(anchorRect ?? null);
+  const [liveBoundaryRect, setLiveBoundaryRect] = useState(boundaryRect ?? null);
+  const [editorSize, setEditorSize] = useState({ width: 352, height: 320 });
   const inputId = useId();
+  const editorRef = useRef<HTMLElement>(null);
+  const commentRef = useRef<HTMLTextAreaElement>(null);
   const visibleAttachments = attachments.filter((attachment) => draftAttachmentIds.includes(attachment.id));
+  const anchored = Boolean(anchorRect);
+  const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
+  const viewportHeight = typeof window === "undefined" ? 768 : window.innerHeight;
+  const boundaryMaxWidth = liveBoundaryRect
+    ? Math.max(
+        0,
+        Math.min(viewportWidth - 8, liveBoundaryRect.right - 8)
+          - Math.max(8, liveBoundaryRect.left + 8),
+      )
+    : undefined;
+  const boundaryMaxHeight = liveBoundaryRect
+    ? Math.max(
+        0,
+        Math.min(viewportHeight - 8, liveBoundaryRect.bottom - 8)
+          - Math.max(8, liveBoundaryRect.top + 8),
+      )
+    : undefined;
+  const placement = liveAnchorRect
+    ? placeResponseAnnotationEditor(
+        liveAnchorRect,
+        editorSize,
+        {
+          width: viewportWidth,
+          height: viewportHeight,
+          padding: 8,
+          gap: 8,
+          boundaryRect: liveBoundaryRect,
+        },
+      )
+    : null;
+
+  const restoreFocus = useCallback(() => {
+    returnFocusRef?.current?.focus();
+  }, [returnFocusRef]);
+
+  const dismiss = useCallback(() => {
+    onCancel();
+    restoreFocus();
+  }, [onCancel, restoreFocus]);
+
+  useEffect(() => {
+    setLiveAnchorRect(anchorRect ?? null);
+  }, [anchorRect]);
+
+  useEffect(() => {
+    setLiveBoundaryRect(boundaryRect ?? null);
+  }, [boundaryRect]);
+
+  useLayoutEffect(() => {
+    if (!anchored) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+    const measure = () => {
+      const rect = editor.getBoundingClientRect();
+      const width = rect.width || editor.scrollWidth;
+      const height = rect.height || editor.scrollHeight;
+      if (width <= 0 || height <= 0) return;
+      setEditorSize((current) => (
+        current.width === width && current.height === height
+          ? current
+          : { width, height }
+      ));
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(editor);
+    return () => observer?.disconnect();
+  }, [anchored]);
+
+  useEffect(() => {
+    if (!anchored) return;
+    const updatePosition = () => {
+      if (getAnchorRect) setLiveAnchorRect(getAnchorRect());
+      if (getBoundaryRect) setLiveBoundaryRect(getBoundaryRect());
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    document.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      document.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchored, getAnchorRect, getBoundaryRect]);
+
+  useEffect(() => {
+    if (!anchored) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (editorRef.current?.contains(event.target as Node)) return;
+      dismiss();
+    };
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      dismiss();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [anchored, dismiss]);
+
+  useEffect(() => {
+    if (!(autoFocus ?? anchored)) return;
+    commentRef.current?.focus();
+  }, [anchored, autoFocus]);
 
   function handleFiles(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     if (files.length > 0) {
       setDraftPendingFiles((current) => [...current, ...files]);
+      setValidationError(null);
     }
     event.target.value = "";
   }
 
-  return (
+  function handleSave() {
+    const changes: ResponseAnnotationEditorChanges = {
+      comment: comment.trim() || null,
+      pendingFiles: draftPendingFiles,
+      attachmentIds: draftAttachmentIds,
+    };
+    const localError = comment.length > MAX_CHAT_INLINE_ANNOTATION_COMMENT_LENGTH
+      ? `An annotation comment cannot exceed ${MAX_CHAT_INLINE_ANNOTATION_COMMENT_LENGTH.toLocaleString()} characters.`
+      : annotation.selectedText.length + comment.length > MAX_CHAT_INLINE_ANNOTATION_TOTAL_TEXT_LENGTH
+        ? `Annotation text cannot exceed ${MAX_CHAT_INLINE_ANNOTATION_TOTAL_TEXT_LENGTH.toLocaleString()} characters in total.`
+        : draftAttachmentIds.length + draftPendingFiles.length > MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS
+          ? `Annotations can include at most ${MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS} files.`
+          : null;
+    const error = localError ?? validateSave?.(changes) ?? null;
+    if (error) {
+      setValidationError(error);
+      return;
+    }
+    setValidationError(null);
+    onSave(changes);
+    restoreFocus();
+  }
+
+  const editor = (
     <section
+      ref={editorRef}
       data-testid="chat-response-annotation-editor"
+      data-placement={placement?.placement}
       className={cn(
         "w-[min(22rem,calc(100vw-1rem))] rounded-[var(--radius-xl)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] p-4 shadow-[var(--shadow-lg)]",
+        anchored && "fixed z-[90] max-h-[min(36rem,calc(100vh-1rem))] overflow-y-auto overscroll-contain",
         className,
       )}
+      style={anchored
+        ? {
+            left: placement?.left ?? 8,
+            top: placement?.top ?? 8,
+            maxWidth: boundaryMaxWidth,
+            maxHeight: boundaryMaxHeight,
+            visibility: placement ? "visible" : "hidden",
+          }
+        : undefined}
       aria-label="Edit annotation"
     >
       <AnnotationContent
@@ -375,9 +607,12 @@ export function ResponseAnnotationEditor({
             <EditableAnnotationAttachment
               key={attachment.id}
               attachment={attachment}
-              onRemove={() => setDraftAttachmentIds((current) => (
-                current.filter((attachmentId) => attachmentId !== attachment.id)
-              ))}
+              onRemove={() => {
+                setDraftAttachmentIds((current) => (
+                  current.filter((attachmentId) => attachmentId !== attachment.id)
+                ));
+                setValidationError(null);
+              }}
             />
           ))}
         </div>
@@ -387,8 +622,12 @@ export function ResponseAnnotationEditor({
       </label>
       <textarea
         id={`${inputId}-comment`}
+        ref={commentRef}
         value={comment}
-        onChange={(event) => setComment(event.target.value)}
+        onChange={(event) => {
+          setComment(event.target.value);
+          setValidationError(null);
+        }}
         placeholder={labels.optionalComment}
         maxLength={2_000}
         className="mt-1 min-h-20 w-full resize-y rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-transparent px-3 py-2 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20"
@@ -404,13 +643,21 @@ export function ResponseAnnotationEditor({
               <span className="sr-only">{file.name}</span>
               <PendingAttachmentPreview
                 file={file}
-                onRemove={() => setDraftPendingFiles((current) => (
-                  current.filter((_, fileIndex) => fileIndex !== index)
-                ))}
+                onRemove={() => {
+                  setDraftPendingFiles((current) => (
+                    current.filter((_, fileIndex) => fileIndex !== index)
+                  ));
+                  setValidationError(null);
+                }}
               />
             </div>
           ))}
         </div>
+      ) : null}
+      {validationError ? (
+        <p role="alert" className="mt-3 text-sm text-destructive">
+          {validationError}
+        </p>
       ) : null}
       <div className="mt-4 flex items-center gap-2">
         <label
@@ -430,31 +677,33 @@ export function ResponseAnnotationEditor({
           type="button"
           className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 motion-reduce:transition-none"
           aria-label="Delete annotation"
-          onClick={onDelete}
+          onClick={() => {
+            onDelete();
+            restoreFocus();
+          }}
         >
           <Trash2 className="h-4 w-4" />
         </button>
         <button
           type="button"
           className="inline-flex h-9 items-center rounded-[var(--radius-md)] px-3 text-sm font-medium text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(pointer:coarse)]:h-11 motion-reduce:transition-none"
-          onClick={onCancel}
+          onClick={dismiss}
         >
           {labels.cancel}
         </button>
         <button
           type="button"
           className="inline-flex h-9 items-center rounded-[var(--radius-md)] bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(pointer:coarse)]:h-11 motion-reduce:transition-none"
-          onClick={() => onSave({
-            comment: comment.trim() || null,
-            pendingFiles: draftPendingFiles,
-            attachmentIds: draftAttachmentIds,
-          })}
+          onClick={handleSave}
         >
           {labels.save}
         </button>
       </div>
     </section>
   );
+  return anchored && typeof document !== "undefined"
+    ? createPortal(editor, document.body)
+    : editor;
 }
 
 export function EditableResponseAnnotationsCard({
@@ -468,7 +717,7 @@ export function EditableResponseAnnotationsCard({
   annotations: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
   pendingFilesByAnnotationId: Record<string, File[]>;
   attachments?: ChatAttachment[];
-  onEdit: (annotation: ChatInlineAnnotationInput) => void;
+  onEdit: (annotation: ChatInlineAnnotationInput, anchor: HTMLButtonElement) => void;
   onDelete: (annotationId: string) => void;
   labels?: ResponseAnnotationLabels;
 }) {
@@ -500,9 +749,10 @@ export function EditableResponseAnnotationsCard({
             <div className="absolute right-2 top-2 flex opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none">
               <button
                 type="button"
+                data-annotation-id={annotation.id}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
                 aria-label={`Edit annotation ${index + 1}`}
-                onClick={() => onEdit(annotation)}
+                onClick={(event) => onEdit(annotation, event.currentTarget)}
               >
                 <Pencil className="h-3.5 w-3.5" />
               </button>

@@ -10,7 +10,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-type RectLike = Pick<DOMRect, "left" | "right" | "top" | "bottom" | "width" | "height">;
+export type SelectionAnnotationRect = Pick<
+  DOMRect,
+  "left" | "right" | "top" | "bottom" | "width" | "height"
+>;
 
 export type SelectionAnnotationToolbarLabels = {
   addToChat: string;
@@ -27,22 +30,45 @@ const DEFAULT_LABELS: SelectionAnnotationToolbarLabels = {
 };
 
 export function placeSelectionAnnotationToolbar(
-  anchorRect: RectLike,
+  anchorRect: SelectionAnnotationRect,
   toolbarSize: { width: number; height: number },
-  viewport: { width: number; height: number; padding: number; gap: number },
+  viewport: {
+    width: number;
+    height: number;
+    padding: number;
+    gap: number;
+    boundaryRect?: SelectionAnnotationRect | null;
+  },
 ): { left: number; top: number; placement: "top" | "bottom" } {
+  const boundary = viewport.boundaryRect;
+  const minLeft = Math.max(
+    viewport.padding,
+    boundary ? boundary.left + viewport.padding : viewport.padding,
+  );
+  const maxRight = Math.min(
+    viewport.width - viewport.padding,
+    boundary ? boundary.right - viewport.padding : viewport.width - viewport.padding,
+  );
+  const minTop = Math.max(
+    viewport.padding,
+    boundary ? boundary.top + viewport.padding : viewport.padding,
+  );
+  const maxBottom = Math.min(
+    viewport.height - viewport.padding,
+    boundary ? boundary.bottom - viewport.padding : viewport.height - viewport.padding,
+  );
   const preferredLeft = anchorRect.left + (anchorRect.width - toolbarSize.width) / 2;
-  const maxLeft = Math.max(viewport.padding, viewport.width - viewport.padding - toolbarSize.width);
-  const left = Math.min(Math.max(preferredLeft, viewport.padding), maxLeft);
+  const maxLeft = Math.max(minLeft, maxRight - toolbarSize.width);
+  const left = Math.min(Math.max(preferredLeft, minLeft), maxLeft);
   const topPosition = anchorRect.top - viewport.gap - toolbarSize.height;
-  const placement = topPosition >= viewport.padding ? "top" : "bottom";
+  const placement = topPosition >= minTop ? "top" : "bottom";
   const preferredTop = placement === "top"
     ? topPosition
     : anchorRect.bottom + viewport.gap;
-  const maxTop = Math.max(viewport.padding, viewport.height - viewport.padding - toolbarSize.height);
+  const maxTop = Math.max(minTop, maxBottom - toolbarSize.height);
   return {
     left,
-    top: Math.min(Math.max(preferredTop, viewport.padding), maxTop),
+    top: Math.min(Math.max(preferredTop, minTop), maxTop),
     placement,
   };
 }
@@ -51,6 +77,8 @@ export function SelectionAnnotationToolbar({
   open,
   anchorRect,
   getAnchorRect,
+  boundaryRect,
+  getBoundaryRect,
   onAddToChat,
   onMoreDetails,
   onAskInSideChat,
@@ -62,8 +90,10 @@ export function SelectionAnnotationToolbar({
   className,
 }: {
   open: boolean;
-  anchorRect: RectLike;
-  getAnchorRect?: () => RectLike | null;
+  anchorRect: SelectionAnnotationRect;
+  getAnchorRect?: () => SelectionAnnotationRect | null;
+  boundaryRect?: SelectionAnnotationRect | null;
+  getBoundaryRect?: () => SelectionAnnotationRect | null;
   onAddToChat: () => void;
   onMoreDetails: () => void;
   onAskInSideChat: () => void;
@@ -76,6 +106,7 @@ export function SelectionAnnotationToolbar({
 }) {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [liveAnchorRect, setLiveAnchorRect] = useState(anchorRect);
+  const [liveBoundaryRect, setLiveBoundaryRect] = useState(boundaryRect ?? null);
   const [toolbarSize, setToolbarSize] = useState(() => ({
     width: Math.min(360, Math.max(0, (typeof window === "undefined" ? 1024 : window.innerWidth) - 16)),
     height: 40,
@@ -93,6 +124,7 @@ export function SelectionAnnotationToolbar({
       height: typeof window === "undefined" ? 768 : window.innerHeight,
       padding: 8,
       gap: 8,
+      boundaryRect: liveBoundaryRect,
     },
   );
 
@@ -104,6 +136,10 @@ export function SelectionAnnotationToolbar({
   useEffect(() => {
     setLiveAnchorRect(anchorRect);
   }, [anchorRect]);
+
+  useEffect(() => {
+    setLiveBoundaryRect(boundaryRect ?? null);
+  }, [boundaryRect]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -131,6 +167,7 @@ export function SelectionAnnotationToolbar({
     const updateAnchor = () => {
       const next = getAnchorRect?.();
       if (next) setLiveAnchorRect(next);
+      if (getBoundaryRect) setLiveBoundaryRect(getBoundaryRect());
     };
     updateAnchor();
     window.addEventListener("resize", updateAnchor);
@@ -141,7 +178,7 @@ export function SelectionAnnotationToolbar({
       window.removeEventListener("scroll", updateAnchor, true);
       document.removeEventListener("selectionchange", updateAnchor);
     };
-  }, [getAnchorRect, open]);
+  }, [getAnchorRect, getBoundaryRect, open]);
 
   useEffect(() => {
     if (!open) return;

@@ -5,10 +5,12 @@ import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  EditableResponseAnnotationsCard,
   ResponseAnnotationCountChip,
   ResponseAnnotationEditor,
   ResponseAnnotationMarker,
   SentResponseAnnotationsCard,
+  placeResponseAnnotationMarker,
 } from "./ResponseAnnotations";
 
 vi.mock("../../pages/Chat.attachments", () => ({
@@ -118,6 +120,7 @@ describe("response annotation components", () => {
     const onActivate = vi.fn();
     render(
       <ResponseAnnotationMarker
+        annotationId={annotation.id}
         ordinal={2}
         excerpt="Only real send failures show Retry."
         onActivate={onActivate}
@@ -131,7 +134,18 @@ describe("response annotation components", () => {
     );
     expect(marker.hasAttribute("data-chat-annotation-ignore")).toBe(true);
     click(marker);
-    expect(onActivate).toHaveBeenCalledOnce();
+    expect(onActivate).toHaveBeenCalledWith(marker);
+    expect(marker.getAttribute("data-annotation-id")).toBe(annotation.id);
+  });
+
+  it("places a multi-line selection marker beside its final line", () => {
+    expect(placeResponseAnnotationMarker(
+      { left: 220, right: 300, top: 160, bottom: 180, width: 80, height: 20 },
+      { left: 50, right: 650, top: 100, bottom: 500, width: 600, height: 400 },
+    )).toEqual({
+      left: 256,
+      top: 60,
+    });
   });
 
   it("edits a comment and accepts annotation-owned images and files", () => {
@@ -179,6 +193,23 @@ describe("response annotation components", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
+  it("provides the pencil button as the editor anchor", () => {
+    const onEdit = vi.fn();
+    render(
+      <EditableResponseAnnotationsCard
+        annotations={[annotation]}
+        pendingFilesByAnnotationId={{}}
+        onEdit={onEdit}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    const pencil = host.querySelector<HTMLButtonElement>("[aria-label='Edit annotation 1']")!;
+    click(pencil);
+    expect(onEdit).toHaveBeenCalledWith(annotation, pencil);
+    expect(pencil.dataset.annotationId).toBe(annotation.id);
+  });
+
   it("keeps file and comment edits local when the editor is cancelled", () => {
     const onSave = vi.fn();
     const onCancel = vi.fn();
@@ -201,6 +232,93 @@ describe("response annotation components", () => {
 
     expect(onSave).not.toHaveBeenCalled();
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the anchored portal editor open and announces aggregate validation errors", () => {
+    const onSave = vi.fn();
+    const onCancel = vi.fn();
+    const focusReturn = document.createElement("button");
+    document.body.appendChild(focusReturn);
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = vi.fn(() => ({
+      left: 0,
+      right: 300,
+      top: 0,
+      bottom: 200,
+      width: 300,
+      height: 200,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }));
+
+    render(
+      <ResponseAnnotationEditor
+        annotation={annotation}
+        ordinal={1}
+        pendingFiles={[]}
+        anchorRect={{ left: 190, right: 210, top: 60, bottom: 70, width: 20, height: 10 }}
+        boundaryRect={{ left: 200, right: 520, top: 40, bottom: 500, width: 320, height: 460 }}
+        returnFocusRef={{ current: focusReturn }}
+        validateSave={() => "Annotations can include at most 10 files."}
+        onSave={onSave}
+        onCancel={onCancel}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(host.children).toHaveLength(0);
+    const editor = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-editor']",
+    )!;
+    expect(editor.dataset.placement).toBe("bottom");
+    expect(editor.style.left).toBe("208px");
+    expect(editor.style.top).toBe("78px");
+    expect(editor.style.maxWidth).toBe("304px");
+
+    click(Array.from(editor.querySelectorAll("button")).find(
+      (button) => button.textContent === "Save",
+    )!);
+    expect(onSave).not.toHaveBeenCalled();
+    expect(document.body.querySelector("[role='alert']")?.textContent)
+      .toBe("Annotations can include at most 10 files.");
+    expect(document.body.contains(editor)).toBe(true);
+
+    act(() => {
+      document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    });
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(focusReturn);
+
+    HTMLElement.prototype.getBoundingClientRect = originalRect;
+    focusReturn.remove();
+  });
+
+  it("dismisses an anchored editor with Escape and restores focus", () => {
+    const onCancel = vi.fn();
+    const focusReturn = document.createElement("button");
+    document.body.appendChild(focusReturn);
+
+    render(
+      <ResponseAnnotationEditor
+        annotation={annotation}
+        ordinal={1}
+        pendingFiles={[]}
+        anchorRect={{ left: 40, right: 60, top: 100, bottom: 110, width: 20, height: 10 }}
+        returnFocusRef={{ current: focusReturn }}
+        onSave={vi.fn()}
+        onCancel={onCancel}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(focusReturn);
+
+    focusReturn.remove();
   });
 
   it("renders sent annotations as an immutable ordered card with their own attachments", () => {
