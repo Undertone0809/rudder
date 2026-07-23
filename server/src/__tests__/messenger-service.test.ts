@@ -962,6 +962,226 @@ describe("messengerService and issue follows", () => {
     expect(rows.find((row) => row.id === unsafeItemId)).toMatchObject({ status: "running" });
   });
 
+  it("normalizes mixed-scope delivery evidence to the validated same-conversation user message", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const conversationId = randomUUID();
+    const otherConversationId = randomUUID();
+    const itemId = randomUUID();
+    const validEvidenceId = randomUUID();
+    const invalidEvidenceId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Messenger mixed evidence reconciliation org",
+        urlKey: deriveOrganizationUrlKey("Messenger mixed evidence reconciliation org"),
+        issuePrefix: `M${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Messenger mixed evidence reconciliation other org",
+        urlKey: deriveOrganizationUrlKey("Messenger mixed evidence reconciliation other org"),
+        issuePrefix: `X${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(chatConversations).values([
+      { id: conversationId, orgId, title: "Mixed evidence reconciliation chat", issueCreationMode: "manual_approval", planMode: false },
+      { id: otherConversationId, orgId: otherOrgId, title: "Other mixed evidence reconciliation chat", issueCreationMode: "manual_approval", planMode: false },
+    ]);
+    await db.insert(chatMessages).values([
+      {
+        id: validEvidenceId,
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Durably delivered in the correct chat",
+      },
+      {
+        id: invalidEvidenceId,
+        orgId: otherOrgId,
+        conversationId: otherConversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Wrong chat evidence",
+      },
+    ]);
+    await db.insert(chatQueuedMessages).values({
+      id: itemId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "failed_actionable",
+      clientMutationId: "mixed-scope-delivery-evidence",
+      payload: { body: "Durably delivered in the correct chat" },
+      sourceMessageId: validEvidenceId,
+      deliveredMessageId: invalidEvidenceId,
+      continuationMessageId: invalidEvidenceId,
+    });
+
+    await chatSvc.listQueuedMessages(conversationId);
+
+    const [stored] = await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.id, itemId));
+    expect(stored).toMatchObject({
+      status: "completed",
+      sourceMessageId: validEvidenceId,
+      deliveredMessageId: validEvidenceId,
+      continuationMessageId: validEvidenceId,
+    });
+  });
+
+  it("rolls back legacy delivery repair when its linked control action cannot be updated", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const actionId = randomUUID();
+    const itemId = randomUUID();
+    const evidenceId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger reconciliation transaction org",
+      urlKey: deriveOrganizationUrlKey("Messenger reconciliation transaction org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Reconciliation transaction chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({ id: generationId, orgId, conversationId, status: "stopped" });
+    await db.insert(chatControlActions).values({
+      id: actionId,
+      orgId,
+      expectedGenerationId: generationId,
+      actionKind: "steer",
+      localDisposition: "failed_actionable",
+      providerDisposition: "rejected",
+    });
+    await db.insert(chatMessages).values({
+      id: evidenceId,
+      orgId,
+      conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Durable delivery that needs atomic reconciliation",
+    });
+    await db.insert(chatQueuedMessages).values({
+      id: itemId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "failed_actionable",
+      deliveryIntent: "steer",
+      deliveryDisposition: "failed_actionable",
+      controlActionId: actionId,
+      clientMutationId: "reconciliation-must-be-atomic",
+      payload: { body: "Durable delivery that needs atomic reconciliation" },
+      sourceMessageId: evidenceId,
+    });
+    await db.execute(sql`
+      create function reject_reconciled_control_action_update() returns trigger language plpgsql as $$
+      begin
+        raise exception 'control action update rejected for reconciliation test';
+      end;
+      $$
+    `);
+    await db.execute(sql`
+      create trigger reject_reconciled_control_action_update
+      before update on chat_control_actions
+      for each row execute function reject_reconciled_control_action_update()
+    `);
+
+    try {
+      await expect(chatSvc.listQueuedMessages(conversationId)).rejects.toThrow("Failed query");
+    } finally {
+      await db.execute(sql`drop trigger if exists reject_reconciled_control_action_update on chat_control_actions`);
+      await db.execute(sql`drop function if exists reject_reconciled_control_action_update()`);
+    }
+
+    const [storedItem] = await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.id, itemId));
+    const [storedAction] = await db.select().from(chatControlActions).where(eq(chatControlActions.id, actionId));
+    expect(storedItem).toMatchObject({ status: "failed_actionable", deliveryDisposition: "failed_actionable" });
+    expect(storedAction).toMatchObject({ localDisposition: "failed_actionable", providerDisposition: "rejected" });
+  });
+
+  it("rolls back legacy delivery repair when its linked control action belongs to another organization", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const conversationId = randomUUID();
+    const actionId = randomUUID();
+    const itemId = randomUUID();
+    const evidenceId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Messenger action scope reconciliation org",
+        urlKey: deriveOrganizationUrlKey("Messenger action scope reconciliation org"),
+        issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Messenger action scope reconciliation other org",
+        urlKey: deriveOrganizationUrlKey("Messenger action scope reconciliation other org"),
+        issuePrefix: `Y${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Action scope reconciliation chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatControlActions).values({
+      id: actionId,
+      orgId: otherOrgId,
+      actionKind: "steer",
+      localDisposition: "failed_actionable",
+      providerDisposition: "rejected",
+    });
+    await db.insert(chatMessages).values({
+      id: evidenceId,
+      orgId,
+      conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Durable evidence must not repair across control action scopes",
+    });
+    await db.insert(chatQueuedMessages).values({
+      id: itemId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "failed_actionable",
+      deliveryIntent: "steer",
+      deliveryDisposition: "failed_actionable",
+      controlActionId: actionId,
+      clientMutationId: "reconciliation-action-scope-mismatch",
+      payload: { body: "Durable evidence must not repair across control action scopes" },
+      sourceMessageId: evidenceId,
+    });
+
+    await expect(chatSvc.listQueuedMessages(conversationId)).rejects.toThrow(
+      "Linked chat control action was not updated during delivery reconciliation",
+    );
+
+    const [storedItem] = await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.id, itemId));
+    const [storedAction] = await db.select().from(chatControlActions).where(eq(chatControlActions.id, actionId));
+    expect(storedItem).toMatchObject({ status: "failed_actionable", deliveryDisposition: "failed_actionable" });
+    expect(storedAction).toMatchObject({ localDisposition: "failed_actionable", providerDisposition: "rejected" });
+  });
+
   it("retries a confirmed pre-delivery Steer failure without resending durable delivered evidence", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();
