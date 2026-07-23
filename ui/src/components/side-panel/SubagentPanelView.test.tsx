@@ -1,9 +1,9 @@
 // @vitest-environment node
 
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
 import { ThemeProvider } from "@/context/ThemeContext";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
 import { SubagentPanelView } from "./SubagentPanelView";
 
 describe("SubagentPanelView", () => {

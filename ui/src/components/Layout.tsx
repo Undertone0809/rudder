@@ -767,13 +767,13 @@ function DesktopSidePanelSlot({
   return (
     <>
       <span ref={workspaceAnchorRef} className="hidden" aria-hidden="true" />
-      {!panelVisible ? <div key="trigger" className="group absolute inset-y-1 right-0 z-20 w-7" data-testid="side-panel-hover-edge">
+      {!panelVisible ? <div key="trigger" className="group absolute inset-y-1 right-0 z-20 w-1" data-testid="side-panel-hover-edge">
         <Button
           type="button"
           variant="outline"
           size="icon"
           data-testid="global-side-panel-trigger"
-          className="absolute right-[3px] top-1/2 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+          className="pointer-events-none absolute right-[3px] top-1/2 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground"
           onClick={sidePanel.showPanel}
           aria-label="Open Side Panel"
           title="Open Side Panel"

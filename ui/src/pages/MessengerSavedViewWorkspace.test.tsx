@@ -166,6 +166,27 @@ describe("MessengerSavedViewWorkspace", () => {
     expect(localApps.start).not.toHaveBeenCalled();
   });
 
+  it("does not reopen a Saved View after the user closes its Main tab", async () => {
+    await renderWorkspace();
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).not.toBeNull());
+
+    await act(async () => {
+      host
+        ?.querySelector<HTMLButtonElement>(
+          '[aria-label="Close MKT dashboard tab"]',
+        )
+        ?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).toBeNull());
+    expect(navigate).toHaveBeenLastCalledWith("/messenger", { replace: true });
+  });
+
   it("keeps a binding from another installation as an isolated Main tab", async () => {
     getSavedView.mockResolvedValue({
       ...savedView,

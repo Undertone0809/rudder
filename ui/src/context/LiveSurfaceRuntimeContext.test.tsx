@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { MainWorkbenchTarget } from "@/lib/main-workbench-state";
+import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -50,6 +51,20 @@ let runtime: ReturnType<typeof useLiveSurfaceRuntime> | null = null;
 function RuntimeProbe() {
   runtime = useLiveSurfaceRuntime();
   return null;
+}
+
+function RecreatedTargetAnchor() {
+  useLiveSurfaceRuntime();
+  const target = { ...browser };
+  return (
+    <LiveSurfaceAnchor
+      active
+      hostId="side-host"
+      ownerId="side:chat-a:view-a"
+      runtimeId={createLiveSurfaceRuntimeId("org-a", target)}
+      target={target}
+    />
+  );
 }
 
 const browser: Extract<MainWorkbenchTarget, { kind: "browser" }> = {
@@ -108,11 +123,19 @@ describe("LiveSurfaceRuntimeProvider", () => {
 
   function render({
     main = false,
+    mainCloseTarget,
+    mainOpenTarget,
     renderSurface,
+    sideCloseTarget,
+    sideOpenTarget,
     target = browser,
   }: {
     main?: boolean;
+    mainCloseTarget?: (target: SidePanelTarget) => void;
+    mainOpenTarget?: (target: SidePanelTarget) => void;
     renderSurface?: (context: LiveSurfaceRenderContext) => React.ReactNode;
+    sideCloseTarget?: (target: SidePanelTarget) => void;
+    sideOpenTarget?: (target: SidePanelTarget) => void;
     target?: MainWorkbenchTarget;
   } = {}) {
     const runtimeId = createLiveSurfaceRuntimeId("org-a", target);
@@ -125,6 +148,10 @@ describe("LiveSurfaceRuntimeProvider", () => {
           <RuntimeProbe />
           <LiveSurfaceAnchor
             active
+            callbacks={{
+              onCloseTarget: sideCloseTarget,
+              onOpenTarget: sideOpenTarget,
+            }}
             hostId="side-host"
             ownerId="side:chat-a:view-a"
             runtimeId={runtimeId}
@@ -135,6 +162,10 @@ describe("LiveSurfaceRuntimeProvider", () => {
             <LiveSurfaceAnchor
               active
               autoClaim={false}
+              callbacks={{
+                onCloseTarget: mainCloseTarget,
+                onOpenTarget: mainOpenTarget,
+              }}
               hostId="main:org-a:view-a"
               ownerId="main:org-a:view-a"
               runtimeId={runtimeId}
@@ -214,5 +245,145 @@ describe("LiveSurfaceRuntimeProvider", () => {
     });
     expect(host?.style.pointerEvents).toBe("auto");
     expect(host?.hasAttribute("inert")).toBe(false);
+  });
+
+  it("opens popup targets in the exact owner that currently leases the guest", () => {
+    const sideOpenTarget = vi.fn();
+    const mainOpenTarget = vi.fn();
+    const runtimeId = render({
+      main: true,
+      mainOpenTarget,
+      sideOpenTarget,
+    });
+    const popupTarget = {
+      ...browser,
+      tabId: "browser-popup",
+      viewInstanceId: "view-popup",
+    };
+
+    act(() => {
+      runtime?.registerWebContentsId(runtimeId, 42);
+      (runtime as unknown as {
+        openTargetForGuest(
+          webContentsId: number,
+          target: MainWorkbenchTarget,
+        ): boolean;
+      }).openTargetForGuest(42, popupTarget);
+    });
+    expect(sideOpenTarget).toHaveBeenCalledWith(popupTarget);
+    expect(mainOpenTarget).not.toHaveBeenCalled();
+
+    act(() => {
+      runtime?.claimSurface(runtimeId, "main:org-a:view-a");
+      (runtime as unknown as {
+        openTargetForGuest(
+          webContentsId: number,
+          target: MainWorkbenchTarget,
+        ): boolean;
+      }).openTargetForGuest(42, popupTarget);
+    });
+    expect(mainOpenTarget).toHaveBeenCalledWith(popupTarget);
+  });
+
+  it("dispatches a Browser shortcut only to the exact source guest controller", () => {
+    const runtimeId = render();
+    const controller = vi.fn();
+
+    act(() => {
+      runtime?.registerWebContentsId(runtimeId, 42);
+      (runtime as unknown as {
+        registerBrowserShortcutController(
+          runtimeId: string,
+          controller: ((action: string) => void) | null,
+        ): void;
+      }).registerBrowserShortcutController(runtimeId, controller);
+      (runtime as unknown as {
+        dispatchBrowserShortcutForGuest(
+          webContentsId: number,
+          action: string,
+        ): boolean;
+      }).dispatchBrowserShortcutForGuest(42, "new_tab");
+    });
+
+    expect(controller).toHaveBeenCalledOnce();
+    expect(controller).toHaveBeenCalledWith("new_tab");
+  });
+
+  it("closes only the exact owner that currently leases the source guest", () => {
+    const sideCloseTarget = vi.fn();
+    const mainCloseTarget = vi.fn();
+    const runtimeId = render({
+      main: true,
+      mainCloseTarget,
+      sideCloseTarget,
+    });
+
+    act(() => {
+      runtime?.registerWebContentsId(runtimeId, 42);
+      (runtime as unknown as {
+        closeTargetForGuest(webContentsId: number): boolean;
+      }).closeTargetForGuest(42);
+    });
+    expect(sideCloseTarget).toHaveBeenCalledWith(browser);
+    expect(mainCloseTarget).not.toHaveBeenCalled();
+
+    act(() => {
+      runtime?.claimSurface(runtimeId, "main:org-a:view-a");
+      (runtime as unknown as {
+        closeTargetForGuest(webContentsId: number): boolean;
+      }).closeTargetForGuest(42);
+    });
+    expect(mainCloseTarget).toHaveBeenCalledWith(browser);
+  });
+
+  it("does not resubscribe ResizeObserver after a geometry-only update", async () => {
+    let observerCount = 0;
+    let notifyResize: ResizeObserverCallback | null = null;
+    class NotifyingResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        observerCount += 1;
+        notifyResize = callback;
+      }
+
+      observe() {}
+
+      unobserve() {}
+
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", NotifyingResizeObserver);
+
+    render();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const settledObserverCount = observerCount;
+    await act(async () => {
+      notifyResize?.([], {} as ResizeObserver);
+      await Promise.resolve();
+    });
+
+    expect(observerCount).toBe(settledObserverCount);
+  });
+
+  it("treats recreated but semantically identical targets as one owner update", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        <LiveSurfaceRuntimeProvider>
+          <RecreatedTargetAnchor />
+          <LiveSurfaceRuntimeLayer />
+        </LiveSurfaceRuntimeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.querySelectorAll(
+      '[data-testid="live-surface-runtime-host"]',
+    )).toHaveLength(1);
   });
 });

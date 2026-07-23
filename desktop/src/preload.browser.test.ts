@@ -23,6 +23,7 @@ await import("./preload.js");
 type ExposedDesktopShell = {
   openExternal(target: string): Promise<void>;
   forceOpenExternal(target: string): Promise<void>;
+  onBrowserShortcut(listener: (request: unknown) => void): () => void;
   onOpenWebLink(listener: (request: unknown) => void): () => void;
   listBrowserImportSources(): Promise<unknown[]>;
   importBrowserData(input: { sourceId: string; importCookies: true }): Promise<unknown>;
@@ -123,14 +124,64 @@ describe("Rudder Browser preload bridge", () => {
     await shell.forceOpenExternal("https://example.com/explicit");
     const remove = shell.onOpenWebLink(listener);
     const registration = electronMocks.on.mock.calls.find(([channel]) => channel === "desktop:open-web-link");
-    const request = { url: "https://example.com/popup", source: "browser_popup" };
+    const request = {
+      url: "https://example.com/popup",
+      source: "browser_popup",
+      sourceWebContentsId: 42,
+    };
     registration?.[1]({}, request);
+    registration?.[1]({}, {
+      ...request,
+      sourceWebContentsId: -1,
+    });
+    registration?.[1]({}, undefined);
+    registration?.[1]({}, {
+      source: "unknown",
+      url: "https://example.com/ignored",
+    });
 
     expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "desktop:open-external", "https://example.com/normal");
     expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "desktop:force-open-external", "https://example.com/explicit");
+    expect(listener).toHaveBeenCalledOnce();
     expect(listener).toHaveBeenCalledWith(request);
     remove();
     expect(electronMocks.removeListener).toHaveBeenCalledWith("desktop:open-web-link", registration?.[1]);
+  });
+
+  it("delivers Browser shortcuts with the exact positive source guest id", () => {
+    const shell = desktopShell();
+    const listener = vi.fn();
+    const remove = shell.onBrowserShortcut(listener);
+    const registration = electronMocks.on.mock.calls.find(
+      ([channel]) => channel === "desktop:browser-shortcut",
+    );
+    const request = { action: "new_tab", sourceWebContentsId: 42 };
+
+    registration?.[1]({}, request);
+    registration?.[1]({}, { ...request, sourceWebContentsId: 0 });
+    registration?.[1]({}, { action: "unknown", sourceWebContentsId: 42 });
+
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith(request);
+    remove();
+    expect(electronMocks.removeListener).toHaveBeenCalledWith(
+      "desktop:browser-shortcut",
+      registration?.[1],
+    );
+  });
+
+  it("delivers exact-owner Browser close requests", () => {
+    const listener = vi.fn();
+    const remove = desktopShell().onBrowserShortcut(listener);
+    const registration = electronMocks.on.mock.calls.find(
+      ([channel]) => channel === "desktop:browser-shortcut",
+    );
+    const request = { action: "close_tab", sourceWebContentsId: 42 };
+
+    registration?.[1]({}, request);
+
+    expect(listener).toHaveBeenCalledWith(request);
+    remove();
   });
 
   it("exposes only narrow Local App DTO and opaque-id IPC calls", async () => {

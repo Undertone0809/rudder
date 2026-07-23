@@ -835,11 +835,19 @@ function collectRudderAppOrigins(...additionalOrigins: Array<string | null | und
   );
 }
 
-function routeDesktopWebLink(url: string, source: "link" | "browser_popup"): void {
+function routeDesktopWebLink(
+  url: string,
+  source: "link" | "browser_popup",
+  sourceWebContentsId?: number,
+): void {
   if (source === "browser_popup" && !acceptBrowserPopup()) return;
   const renderer = getCurrentMainRenderer();
   if (renderer?.getURL().startsWith("http")) {
-    renderer.send("desktop:open-web-link", { url, source });
+    renderer.send("desktop:open-web-link", {
+      url,
+      source,
+      ...(sourceWebContentsId ? { sourceWebContentsId } : {}),
+    });
     return;
   }
   shell.openExternal(url).catch((error) => {
@@ -1193,14 +1201,24 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
 }
 
 function handleSidePanelCloseShortcutInput(webContents: WebContents, event: Electron.Event, input: Electron.Input): void {
+  const operatorBrowserGuest = operatorBrowserShortcutWebContents.has(webContents);
   const route = resolveProtectedDesktopShortcutRoute(input, {
     sidePanelCloseActive: sidePanelCloseShortcutActive,
     browserSurfaceActive: browserSurfaceShortcutActive
       && Boolean(mainWindow && !mainWindow.isDestroyed() && webContents === mainWindow.webContents),
-    operatorBrowserGuest: operatorBrowserShortcutWebContents.has(webContents),
+    operatorBrowserGuest,
   });
   if (!route) return;
   event.preventDefault();
+  if (route.kind === "close_browser_owner_tab") {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("desktop:browser-shortcut", {
+        action: "close_tab",
+        sourceWebContentsId: webContents.id,
+      });
+    }
+    return;
+  }
   if (route.kind === "close_side_panel_tab") {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("desktop:close-side-panel-active-tab");
@@ -1210,7 +1228,12 @@ function handleSidePanelCloseShortcutInput(webContents: WebContents, event: Elec
     return;
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("desktop:browser-shortcut", route.action);
+    mainWindow.webContents.send("desktop:browser-shortcut", {
+      action: route.action,
+      ...(operatorBrowserGuest
+        ? { sourceWebContentsId: webContents.id }
+        : {}),
+    });
   }
 }
 
@@ -1267,7 +1290,9 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
         browserGuestRegistry.register(guest);
         operatorBrowserShortcutWebContents.add(guest as WebContents);
       },
-      openBrowserPopup: (url) => routeDesktopWebLink(url, "browser_popup"),
+      openBrowserPopup: (url, sourceWebContentsId) => (
+        routeDesktopWebLink(url, "browser_popup", sourceWebContentsId)
+      ),
       resolveLocalAppBootstrap: (url, partition) =>
         localAppsRuntime?.isAttestedBootstrap(url, partition) ?? false,
       prepareLocalAppPartition,

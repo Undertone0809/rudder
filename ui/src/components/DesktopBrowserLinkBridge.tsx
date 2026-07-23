@@ -1,4 +1,5 @@
 import { instanceSettingsApi } from "@/api/instanceSettings";
+import { useOptionalLiveSurfaceRuntime } from "@/context/LiveSurfaceRuntimeContext";
 import { useSidePanel } from "@/context/SidePanelContext";
 import { routeDesktopWebLink } from "@/lib/desktop-browser-link-router";
 import { readDesktopShell } from "@/lib/desktop-shell";
@@ -8,6 +9,7 @@ import { useEffect } from "react";
 
 export function DesktopBrowserLinkBridge() {
   const queryClient = useQueryClient();
+  const liveSurfaceRuntime = useOptionalLiveSurfaceRuntime();
   const { openTarget } = useSidePanel();
 
   useEffect(() => {
@@ -22,7 +24,24 @@ export function DesktopBrowserLinkBridge() {
           queryFn: () => instanceSettingsApi.getBrowser(),
           staleTime: 0,
         }),
-        openBuiltIn: openTarget,
+        openBuiltIn: (target) => {
+          if (
+            request.sourceWebContentsId
+          ) {
+            const openedForGuest = liveSurfaceRuntime?.openTargetForGuest(
+              request.sourceWebContentsId,
+              target,
+            ) ?? false;
+            if (!openedForGuest) {
+              console.warn(
+                "[rudder-ui] ignored Browser popup without a live guest owner",
+                request.sourceWebContentsId,
+              );
+            }
+            return;
+          }
+          openTarget(target);
+        },
         forceOpenExternal: (url) => (
           desktopShell.forceOpenExternal?.(url) ?? desktopShell.openExternal(url)
         ),
@@ -30,7 +49,39 @@ export function DesktopBrowserLinkBridge() {
         console.warn("[rudder-ui] failed to route Desktop web link", error);
       });
     });
-  }, [openTarget, queryClient]);
+  }, [liveSurfaceRuntime, openTarget, queryClient]);
+
+  useEffect(() => {
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.onBrowserShortcut) return undefined;
+    return desktopShell.onBrowserShortcut((request) => {
+      if (!liveSurfaceRuntime) return;
+      const activeRuntimeId = request.sourceWebContentsId
+        ? null
+        : document.activeElement
+          ?.closest<HTMLElement>("[data-runtime-id]")
+          ?.dataset.runtimeId ?? null;
+      if (request.action === "close_tab") {
+        if (request.sourceWebContentsId) {
+          liveSurfaceRuntime.closeTargetForGuest(request.sourceWebContentsId);
+        } else if (activeRuntimeId) {
+          liveSurfaceRuntime.closeTargetForRuntime(activeRuntimeId);
+        }
+        return;
+      }
+      if (request.sourceWebContentsId) {
+        liveSurfaceRuntime.dispatchBrowserShortcutForGuest(
+          request.sourceWebContentsId,
+          request.action,
+        );
+      } else if (activeRuntimeId) {
+        liveSurfaceRuntime.dispatchBrowserShortcutForRuntime(
+          activeRuntimeId,
+          request.action,
+        );
+      }
+    });
+  }, [liveSurfaceRuntime]);
 
   return null;
 }

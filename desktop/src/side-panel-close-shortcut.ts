@@ -26,6 +26,7 @@ export function isSidePanelCloseShortcutInput(
 }
 
 export type ProtectedDesktopShortcutRoute =
+  | { kind: "close_browser_owner_tab" }
   | { kind: "close_side_panel_tab" }
   | { kind: "browser"; action: DesktopBrowserShortcutAction };
 
@@ -38,8 +39,13 @@ export function resolveProtectedDesktopShortcutRoute(
   },
   platform: NodeJS.Platform = process.platform,
 ): ProtectedDesktopShortcutRoute | null {
-  if (context.sidePanelCloseActive && isSidePanelCloseShortcutInput(input, platform)) {
-    return { kind: "close_side_panel_tab" };
+  if (isSidePanelCloseShortcutInput(input, platform)) {
+    if (context.operatorBrowserGuest) {
+      return { kind: "close_browser_owner_tab" };
+    }
+    if (context.sidePanelCloseActive) {
+      return { kind: "close_side_panel_tab" };
+    }
   }
   const action = resolveDesktopBrowserShortcutInput(input, platform);
   if (!action || (!context.browserSurfaceActive && !context.operatorBrowserGuest)) return null;

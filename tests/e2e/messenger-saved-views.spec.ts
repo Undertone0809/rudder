@@ -84,97 +84,107 @@ async function openGlobalLibraryFileInSidePanel(page: Page, fileName: string) {
   const sidePanel = page.getByTestId("chat-side-panel");
   await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible({ timeout: 15_000 });
   await sidePanel.getByTestId("chat-side-panel-empty-library-target").click();
-  const directoryView = sidePanel.getByTestId("chat-side-panel-library-directory-view");
-  await expect(directoryView).toBeVisible();
-  await directoryView.getByRole("button", { name: fileName, exact: true }).click();
-  await expect(sidePanel.getByTestId("chat-side-panel-library-file-view")).toBeVisible();
+  await expect(page.locator(
+    '[data-testid="library-live-surface"][data-surface="side_panel"][data-active="true"]',
+  )).toBeVisible();
+  await page.getByRole("button", { name: fileName, exact: true }).click();
+  await expect(page.locator(
+    '[data-testid="library-live-surface"][data-surface="side_panel"][data-active="true"]',
+  )).toBeVisible();
   return sidePanel;
 }
 
 test.describe("Messenger Saved Views", () => {
-  test("keeps exact Side Panel instances in normal groups and supports move, remove, and guarded group actions", async ({ page }, testInfo) => {
+  test("moves only the exact Side Panel instance into Main and keeps remove separate from close", async ({ page }, testInfo) => {
     const organization = await createOrganization(page.request, "Messenger-Saved-View-Workflow");
     const filePath = `docs/saved-view-${randomUUID()}.md`;
     const chat = await createHostChatWithFile(page, organization, {
       chatTitle: "Saved view host chat",
       filePath,
     });
-    await selectOrganization(page, organization);
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
-
-    const fileName = filePath.split("/").at(-1)!;
-    await page.getByRole("link", { name: fileName }).click();
-    await expect(page.getByTestId("chat-side-panel-library-file-view")).toBeVisible({ timeout: 15_000 });
-    const originalUrl = page.url();
-
-    const keepButton = page.getByTestId("chat-side-panel-keep-in-messenger");
-    await expect(keepButton).toBeVisible();
-    await keepButton.click();
-    await expect(page.getByText("Kept in Messenger")).toBeVisible();
-    await expect(page).toHaveURL(originalUrl);
-
-    let directory = await listGroups(page, organization.id);
-    expect(directory.groups).toHaveLength(1);
-    expect(directory.groups[0]!.entries.filter((entry) => entry.item.type === "saved_view")).toHaveLength(1);
-    expect(directory.groups[0]!.entries.some((entry) => entry.itemKey === `chat:${chat.id}`)).toBe(true);
-
-    await keepButton.click();
-    await expect.poll(async () => {
-      const next = await listGroups(page, organization.id);
-      return next.groups[0]?.entries.filter((entry) => entry.item.type === "saved_view").length;
-    }).toBe(1);
-
-    await page.getByTestId("chat-side-panel-tab").filter({ hasText: fileName }).click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Open in new tab" }).click();
-    await expect(page.getByTestId("chat-side-panel-tab").filter({ hasText: fileName })).toHaveCount(2);
-    await page.getByTestId("chat-side-panel-keep-in-messenger").click();
-
-    await expect.poll(async () => {
-      const next = await listGroups(page, organization.id);
-      return next.groups[0]?.entries.filter((entry) => entry.item.type === "saved_view").length;
-    }).toBe(2);
-    directory = await listGroups(page, organization.id);
-    const firstGroup = directory.groups[0]!;
-    const savedEntries = firstGroup.entries.filter((entry) => entry.item.type === "saved_view");
-    expect(savedEntries).toHaveLength(2);
-    expect(new Set(savedEntries.map((entry) => (
-      entry.item.type === "saved_view" ? entry.item.savedView.targetPayload.viewInstanceId : ""
-    ))).size).toBe(2);
-
     const secondGroupResponse = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
       data: { name: "Review later", icon: "folder::slate" },
     });
     expect(secondGroupResponse.ok(), await secondGroupResponse.text()).toBe(true);
     const secondGroup = await secondGroupResponse.json() as { id: string };
+    await selectOrganization(page, organization);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
 
-    const firstSavedView = savedEntries[0]!.item.type === "saved_view" ? savedEntries[0]!.item.savedView : null;
-    expect(firstSavedView).toBeTruthy();
-    await page.goto(`/${organization.issuePrefix}/messenger/saved/${firstSavedView!.id}`);
-    await expect(page.getByTestId("messenger-saved-view-workspace")).toContainText(fileName);
-    await expect(page.getByTestId("chat-side-panel-library-file-view")).toBeVisible();
-    const exactViewInstanceId = firstSavedView!.targetPayload.viewInstanceId;
-    const exactActiveTab = () => page.locator(
-      `[data-testid="chat-side-panel-tab"][data-view-instance-id="${exactViewInstanceId}"][aria-selected="true"]`,
+    const fileName = filePath.split("/").at(-1)!;
+    await page.getByRole("link", { name: fileName }).click();
+    await expect(page.getByTestId("library-live-surface")).toHaveAttribute(
+      "data-surface",
+      "side_panel",
+      { timeout: 15_000 },
     );
-    await expect(exactActiveTab()).toContainText(fileName);
+    const sideTabs = page.getByTestId("chat-side-panel-tab").filter({
+      hasText: fileName,
+    });
+    for (let index = 0; index < 2; index += 1) {
+      await sideTabs.last().click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Open in new tab" }).click();
+    }
+    await expect(sideTabs).toHaveCount(3);
+    const [leftInstanceId, movedInstanceId, rightInstanceId] =
+      await sideTabs.evaluateAll((tabs) => tabs.map(
+        (tab) => tab.getAttribute("data-view-instance-id") ?? "",
+      ));
+    expect(leftInstanceId).toBeTruthy();
+    expect(movedInstanceId).toBeTruthy();
+    expect(rightInstanceId).toBeTruthy();
+
+    await sideTabs.nth(1).click();
+    await page.getByTestId("chat-side-panel-keep-in-messenger").click();
+    await expect(page.getByText("Moved to Messenger")).toBeVisible();
+    await expect(page).toHaveURL(/\/messenger\/saved\/[^/]+$/);
+
+    const mainWorkbench = page.getByTestId("messenger-main-workbench");
+    await expect(mainWorkbench).toBeVisible();
+    await expect(mainWorkbench.locator(
+      `[role="tab"][data-view-instance-id="${movedInstanceId}"][aria-selected="true"]`,
+    )).toBeVisible();
+    await expect(page.locator(
+      `[data-testid="library-live-surface"][data-surface="workbench"][data-active="true"]`,
+    )).toBeVisible();
+
+    await expect(sideTabs).toHaveCount(2);
+    await expect(sideTabs.nth(0)).toHaveAttribute(
+      "data-view-instance-id",
+      leftInstanceId,
+    );
+    await expect(sideTabs.nth(1)).toHaveAttribute(
+      "data-view-instance-id",
+      rightInstanceId,
+    );
+    await expect(sideTabs.nth(1)).toHaveAttribute("aria-selected", "true");
+
+    let directory = await listGroups(page, organization.id);
+    expect(directory.groups).toHaveLength(2);
+    const firstGroup = directory.groups.find(
+      (group) => group.entries.some((entry) => entry.itemKey === `chat:${chat.id}`),
+    );
+    if (!firstGroup) {
+      throw new Error("Expected the auto-created host group");
+    }
+    expect(firstGroup.entries.some((entry) => entry.itemKey === `chat:${chat.id}`)).toBe(true);
+    const savedEntry = firstGroup.entries.find(
+      (entry) => entry.item.type === "saved_view",
+    )?.item;
+    if (!savedEntry || savedEntry.type !== "saved_view") {
+      throw new Error("Expected the moved Saved View");
+    }
+    expect(savedEntry.savedView.targetPayload.viewInstanceId).toBe(
+      movedInstanceId,
+    );
+
     await page.screenshot({
-      path: testInfo.outputPath("messenger-saved-view-restored.png"),
+      path: testInfo.outputPath("messenger-main-exact-library-move.png"),
       fullPage: true,
     });
-    await page.reload();
-    await expect(page.getByTestId("messenger-saved-view-workspace")).toContainText(fileName);
-    await expect(page.getByTestId("chat-side-panel-library-file-view")).toBeVisible();
-    await expect(exactActiveTab()).toContainText(fileName);
-
-    await page.getByTestId("chat-side-panel-keep-in-messenger").click();
-    await expect(page.getByText(
-      `Already kept in ${firstGroup.name}. Use the Saved View row menu to move or remove it.`,
-    )).toBeVisible();
-    await page.keyboard.press("Escape");
 
     const firstGroupSection = page.getByTestId(`messenger-thread-section-custom-group-${firstGroup.id}`);
     const savedViewRowIn = (section: Locator) => (
-      section.locator(`a[href$="/messenger/saved/${firstSavedView!.id}"]`).locator("..")
+      section.locator(`a[href$="/messenger/saved/${savedEntry.savedView.id}"]`).locator("..")
     );
     const firstGroupSavedRow = savedViewRowIn(firstGroupSection);
     await firstGroupSavedRow.hover();
@@ -184,41 +194,56 @@ test.describe("Messenger Saved Views", () => {
     await expect.poll(async () => {
       const next = await listGroups(page, organization.id);
       return next.groups.find((group) => group.id === secondGroup.id)?.entries.some(
-        (entry) => entry.item.type === "saved_view" && entry.item.savedView.id === firstSavedView!.id,
+        (entry) => entry.item.type === "saved_view" && entry.item.savedView.id === savedEntry.savedView.id,
       );
     }).toBe(true);
 
     const reviewGroup = page.getByTestId(`messenger-thread-section-custom-group-${secondGroup.id}`);
     const movedRow = savedViewRowIn(reviewGroup);
     await expect(movedRow).toBeVisible();
-    await movedRow.hover();
-    await reviewGroup.getByRole("button", { name: `Saved View actions for ${fileName}` }).click();
-    await page.getByRole("menuitem", { name: "Move to group" }).hover();
-    await page.getByRole("menuitem", { name: firstGroup.name }).click();
-    await expect.poll(async () => {
-      const next = await listGroups(page, organization.id);
-      return next.groups.find((group) => group.id === firstGroup.id)?.entries.some(
-        (entry) => entry.item.type === "saved_view" && entry.item.savedView.id === firstSavedView!.id,
-      );
-    }).toBe(true);
 
-    await firstGroupSection.getByRole("button", { name: "Group actions" }).click();
-    await expect(page.getByRole("menuitem", { name: "Separate items" })).toHaveAttribute("data-disabled", "");
-    await page.keyboard.press("Escape");
-    const deleteBlocked = await page.request.delete(`/api/orgs/${organization.id}/messenger/groups/${firstGroup.id}`);
-    expect(deleteBlocked.status()).toBe(409);
+    await mainWorkbench.getByRole("button", {
+      name: `Close ${fileName} tab`,
+    }).click();
+    await expect(mainWorkbench.getByRole("tab")).toHaveCount(0);
+    await expect(movedRow).toBeVisible();
+    await movedRow.getByRole("link").click();
+    await expect(page).toHaveURL(
+      new RegExp(`/messenger/saved/${savedEntry.savedView.id}$`),
+    );
+    await expect(mainWorkbench.locator(
+      `[role="tab"][data-view-instance-id="${movedInstanceId}"][aria-selected="true"]`,
+    )).toBeVisible();
+    await page.reload();
+    await expect(mainWorkbench.locator(
+      `[role="tab"][data-view-instance-id="${movedInstanceId}"][aria-selected="true"]`,
+    )).toBeVisible();
 
-    const savedRow = savedViewRowIn(firstGroupSection);
-    await savedRow.hover();
-    await savedRow.getByRole("button", { name: `Saved View actions for ${fileName}` }).click();
+    const refreshedMovedRow = savedViewRowIn(reviewGroup);
+    await refreshedMovedRow.hover();
+    await refreshedMovedRow.getByRole("button", {
+      name: `Saved View actions for ${fileName}`,
+    }).click();
     await page.getByRole("menuitem", { name: "Remove from Messenger" }).click();
     await expect.poll(async () => {
       const next = await listGroups(page, organization.id);
-      return next.groups.find((group) => group.id === firstGroup.id)?.entries.some(
-        (entry) => entry.item.type === "saved_view" && entry.item.savedView.id === firstSavedView!.id,
+      return next.groups.find((group) => group.id === secondGroup.id)?.entries.some(
+        (entry) => entry.item.type === "saved_view" && entry.item.savedView.id === savedEntry.savedView.id,
       );
     }).toBe(false);
-    expect((await listGroups(page, organization.id)).groups.some((group) => group.id === firstGroup.id)).toBe(true);
+    await expect(page).toHaveURL(/\/messenger\/workbench$/);
+    await expect(mainWorkbench.locator(
+      `[role="tab"][data-view-instance-id="${movedInstanceId}"][aria-selected="true"]`,
+    )).toBeVisible();
+    await mainWorkbench.getByRole("button", {
+      name: `Close ${fileName} tab`,
+    }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/messenger/chat/${chat.id}$`),
+    );
+    expect((await listGroups(page, organization.id)).groups.some(
+      (group) => group.id === firstGroup.id,
+    )).toBe(true);
   });
 
   test("uses an existing host group instead of creating another one", async ({ page }) => {
@@ -241,7 +266,16 @@ test.describe("Messenger Saved Views", () => {
     await selectOrganization(page, organization);
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
     await page.getByRole("link", { name: filePath.split("/").at(-1)! }).click();
+    const movedInstanceId = await page.locator(
+      '[data-testid="chat-side-panel-tab"][aria-selected="true"]',
+    ).getAttribute("data-view-instance-id");
+    expect(movedInstanceId).toBeTruthy();
     await page.getByTestId("chat-side-panel-keep-in-messenger").click();
+    await expect(page.getByText("Moved to Messenger")).toBeVisible();
+    await expect(page).toHaveURL(/\/messenger\/saved\/[^/]+$/);
+    await expect(page.locator(
+      `[data-testid="messenger-main-workbench"] [role="tab"][data-view-instance-id="${movedInstanceId}"]`,
+    )).toBeVisible();
 
     await expect.poll(async () => {
       const next = await listGroups(page, organization.id);
@@ -282,9 +316,16 @@ test.describe("Messenger Saved Views", () => {
       name: "Anchor a Side Panel view by issue identifier",
     })).toBeVisible({ timeout: 15_000 });
     await openGlobalLibraryFileInSidePanel(page, fileName);
+    const movedInstanceId = await page.locator(
+      '[data-testid="chat-side-panel-tab"][aria-selected="true"]',
+    ).getAttribute("data-view-instance-id");
+    expect(movedInstanceId).toBeTruthy();
     await page.getByTestId("chat-side-panel-keep-in-messenger").click();
-    await expect(page.getByText("Kept in Messenger")).toBeVisible();
-    await expect(page).toHaveURL(new RegExp(`/messenger/issues/${issue.identifier}$`));
+    await expect(page.getByText("Moved to Messenger")).toBeVisible();
+    await expect(page).toHaveURL(/\/messenger\/saved\/[^/]+$/);
+    await expect(page.locator(
+      `[data-testid="messenger-main-workbench"] [role="tab"][data-view-instance-id="${movedInstanceId}"]`,
+    )).toBeVisible();
 
     await expect.poll(async () => {
       const directory = await listGroups(page, organization.id);
@@ -315,9 +356,20 @@ test.describe("Messenger Saved Views", () => {
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     const sidePanel = await openGlobalLibraryFileInSidePanel(page, fileName);
     const keepButton = sidePanel.getByTestId("chat-side-panel-keep-in-messenger");
+    const movedInstanceId = await page.locator(
+      '[data-testid="chat-side-panel-tab"][aria-selected="true"]',
+    ).getAttribute("data-view-instance-id");
+    expect(movedInstanceId).toBeTruthy();
     await keepButton.click();
     await page.getByRole("menuitem", { name: "Global research" }).click();
-    await expect(page.getByText("Kept in Messenger")).toBeVisible();
+    await expect(page.getByText("Moved to Messenger")).toBeVisible();
+    await expect(page).toHaveURL(/\/messenger\/saved\/[^/]+$/);
+    await expect(page.locator(
+      `[data-testid="messenger-main-workbench"] [role="tab"][data-view-instance-id="${movedInstanceId}"]`,
+    )).toBeVisible();
+    await expect(page.locator(
+      `[data-testid="chat-side-panel-tab"][data-view-instance-id="${movedInstanceId}"]`,
+    )).toHaveCount(0);
 
     await expect.poll(async () => {
       const directory = await listGroups(page, organization.id);
@@ -326,44 +378,26 @@ test.describe("Messenger Saved Views", () => {
       return {
         groupCount: directory.groups.length,
         savedCount: savedEntries.length,
-        filePath: savedEntries[0]?.item.type === "saved_view"
-          ? savedEntries[0].item.savedView.targetPayload.filePath
+        viewInstanceId: savedEntries[0]?.item.type === "saved_view"
+          ? savedEntries[0].item.savedView.targetPayload.viewInstanceId
           : null,
       };
-    }).toEqual({ groupCount: 1, savedCount: 1, filePath });
+    }).toEqual({
+      groupCount: 1,
+      savedCount: 1,
+      viewInstanceId: movedInstanceId,
+    });
 
-    const beforeDelete = await listGroups(page, organization.id);
-    const removedSavedView = beforeDelete.groups[0]?.entries.find(
+    const savedView = (await listGroups(page, organization.id)).groups[0]?.entries.find(
       (entry) => entry.item.type === "saved_view",
     )?.item;
-    expect(removedSavedView?.type).toBe("saved_view");
-    if (!removedSavedView || removedSavedView.type !== "saved_view") {
-      throw new Error("Expected a Saved View before exercising remove and re-Keep");
+    if (!savedView || savedView.type !== "saved_view") {
+      throw new Error("Expected the chosen Saved View");
     }
-    const removedInstanceId = removedSavedView.savedView.targetPayload.viewInstanceId;
-    const deleteResponse = await page.request.delete(
-      `/api/orgs/${organization.id}/messenger/saved-views/${removedSavedView.savedView.id}`,
-    );
-    expect(deleteResponse.ok(), await deleteResponse.text()).toBe(true);
-
-    await keepButton.click();
-    await page.getByRole("menuitem", { name: "Global research" }).click();
-    await expect.poll(async () => {
-      const directory = await listGroups(page, organization.id);
-      const replacement = directory.groups[0]?.entries.find(
-        (entry) => entry.item.type === "saved_view",
-      )?.item;
-      return replacement?.type === "saved_view"
-        ? {
-          idChanged: replacement.savedView.id !== removedSavedView.savedView.id,
-          instanceId: replacement.savedView.targetPayload.viewInstanceId,
-        }
-        : null;
-    }).toEqual({ idChanged: true, instanceId: removedInstanceId });
-
-    await page.goto(`/${organization.issuePrefix}/messenger`);
     const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);
-    const savedRow = groupSection.locator('[data-testid^="messenger-saved-view-"]').filter({ hasText: fileName });
+    const savedRow = groupSection.locator(
+      `a[href$="/messenger/saved/${savedView.savedView.id}"]`,
+    ).locator("..");
     await expect(savedRow).toBeVisible();
     await expect(page.getByTestId("messenger-saved-views-section")).toHaveCount(0);
     await expect(savedRow.locator('[data-testid$="-unread-badge"]')).toHaveCount(0);
