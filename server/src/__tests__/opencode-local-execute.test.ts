@@ -15,6 +15,7 @@ import {
   installCanonicalDesktopMcp,
   installVersionMismatchedDesktopMcp,
   readMcpToolNames,
+  readRepositoryCliVersion,
 } from "./local-runtime-browser-mismatch-helpers";
 import {
   clearInheritedGitIdentityEnv,
@@ -1168,7 +1169,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         provenance: "repo",
         serverName: "rudder-tools",
         toolCount: 69,
-        version: "0.5.1",
+        version: await readRepositoryCliVersion(),
         fallbackReason: null,
       });
     } finally {

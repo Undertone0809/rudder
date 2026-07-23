@@ -73,6 +73,15 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
+function killFixtureProcess(pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
 function watchdogEmitting(message: unknown) {
   const helper = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter;
@@ -399,13 +408,7 @@ describe("Desktop Local App runtime", () => {
       expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
       await expect(manager.start(definition.id)).rejects.toThrow("unverified");
     } finally {
-      if (ownership?.pgid) {
-        try {
-          process.kill(-ownership.pgid, "SIGKILL");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        }
-      }
+      killFixtureProcess(ownership?.pid);
     }
   });
 
@@ -436,13 +439,7 @@ describe("Desktop Local App runtime", () => {
         port: ownership?.port,
       });
     } finally {
-      if (ownership?.pgid) {
-        try {
-          process.kill(-ownership.pgid, "SIGKILL");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        }
-      }
+      killFixtureProcess(ownership?.pid);
     }
   });
 
@@ -662,13 +659,7 @@ describe("Desktop Local App runtime", () => {
       expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
       await expect(manager.start(definition.id)).rejects.toThrow("unverified");
     } finally {
-      if (ownership?.pgid) {
-        try {
-          process.kill(-ownership.pgid, "SIGKILL");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        }
-      }
+      killFixtureProcess(ownership?.pid);
     }
   });
 
