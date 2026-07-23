@@ -479,10 +479,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const showConversationLoading = Boolean(
     conversationId && (!organizationRouteMatchesSelection || (!selectedConversation && conversationQuery.isPending && conversationQuery.data === undefined)),
   );
-  useEffect(() => { if (!selectedOrganizationId || !organizationRouteMatchesSelection) return; if (!relativePath.startsWith("/messenger/chat")) return; rememberMessengerPath(selectedOrganizationId, relativePath); }, [organizationRouteMatchesSelection, relativePath, selectedOrganizationId]); const refreshChat = async (chatId?: string | null) => { if (!selectedOrganizationId) return;
-    const workManifestRefresh = chatId
-      ? queryClient.invalidateQueries({ queryKey: queryKeys.chats.workManifest(selectedOrganizationId, chatId) })
-      : Promise.resolve();
+  useEffect(() => { if (!selectedOrganizationId || !organizationRouteMatchesSelection) return; if (!relativePath.startsWith("/messenger/chat")) return; rememberMessengerPath(selectedOrganizationId, relativePath); }, [organizationRouteMatchesSelection, relativePath, selectedOrganizationId]); const refreshChat = async (chatId?: string | null) => { if (!selectedOrganizationId) return; const workManifestRefresh = chatId ? queryClient.invalidateQueries({ queryKey: queryKeys.chats.workManifest(selectedOrganizationId, chatId) }) : Promise.resolve();
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(selectedOrganizationId, "active") }),
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(selectedOrganizationId, "all") }), invalidateMessengerThreadSummaryQueries(queryClient, selectedOrganizationId), ]);

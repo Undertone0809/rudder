@@ -2107,12 +2107,7 @@ export function ChatSidePanel({
     onSuccess: (updatedIssue) => {
       queryClient.setQueryData(queryKeys.issues.detail(updatedIssue.id), updatedIssue);
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
-      void queryClient.invalidateQueries({ queryKey: ["messenger"] });
-      if (selectedOrganizationId) {
-        void queryClient.invalidateQueries({
-          queryKey: queryKeys.chats.workManifests(selectedOrganizationId),
-        });
-      }
+      void queryClient.invalidateQueries({ queryKey: ["messenger"] }); if (selectedOrganizationId) void queryClient.invalidateQueries({ queryKey: queryKeys.chats.workManifests(selectedOrganizationId) });
     },
   });
   const addIssueCommentMutation = useMutation({
