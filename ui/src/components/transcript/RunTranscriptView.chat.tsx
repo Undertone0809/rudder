@@ -6,6 +6,7 @@ import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, Transcr
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
+import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
 
 export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTranscriptAction[] {
   const actions: ChatTranscriptAction[] = [];
@@ -81,11 +82,26 @@ function TranscriptChatActionIconCell({
   category,
   status,
   compact,
+  toolName,
+  input,
 }: {
   category: TranscriptActionIconCategory;
   status: TranscriptActionIconStatus;
   compact: boolean;
+  toolName?: string;
+  input?: unknown;
 }) {
+  const agentAvatarInfo = toolName ? getTranscriptAgentAvatarInfo(toolName, input) : null;
+  if (agentAvatarInfo) {
+    return compact ? (
+      <TranscriptAgentAvatarIcon info={agentAvatarInfo} status={status} />
+    ) : (
+      <span className="inline-flex h-5 w-8 shrink-0" data-transcript-action-icon-slot="true">
+        <TranscriptAgentAvatarIcon info={agentAvatarInfo} status={status} />
+      </span>
+    );
+  }
+
   if (!compact) {
     return <TranscriptActionIconSlot category={category} status={status} />;
   }
@@ -104,10 +120,12 @@ export function TranscriptChatStdoutActionRow({
   block,
   density,
   inline = false,
+  quiet = true,
 }: {
   block: Extract<TranscriptBlock, { type: "stdout" }>;
   density: TranscriptDensity;
   inline?: boolean;
+  quiet?: boolean;
 }) {
   const [open, setOpen] = useState(inline);
   const preview = truncate(compactWhitespace(block.text), density === "compact" ? 80 : 120) || "Output";
@@ -137,7 +155,7 @@ export function TranscriptChatStdoutActionRow({
     <div className={rowPaddingClass} title={getTranscriptTimestampTitle(block.ts)}>
       <button
         type="button"
-        className={cn("flex w-full text-left", rowAlignmentClass, rowGapClass)}
+        className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         aria-label={open ? "Collapse output details" : "Expand output details"}
@@ -146,7 +164,14 @@ export function TranscriptChatStdoutActionRow({
         <span className={cn("min-w-0 flex-1 break-words text-foreground/82", compact ? "text-xs leading-5" : "text-sm leading-6")}>
           {preview}
         </span>
-        <span className={cn("inline-flex h-5 w-5 items-center justify-center text-muted-foreground", chevronOffsetClass)}>
+        <span
+          className={cn(
+            "inline-flex h-5 w-5 items-center justify-center text-muted-foreground",
+            chevronOffsetClass,
+            quiet && !open && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
+          )}
+          data-transcript-action-row-disclosure="true"
+        >
           <DisclosureChevron open={open} className="h-4 w-4" />
         </span>
       </button>
@@ -170,6 +195,7 @@ export function TranscriptChatToolActionRow({
   defaultOpenOnError = false,
   highlightError = true,
   onOpenFile,
+  quiet = true,
 }: {
   block: TranscriptToolCardEntry;
   density: TranscriptDensity;
@@ -177,6 +203,7 @@ export function TranscriptChatToolActionRow({
   defaultOpenOnError?: boolean;
   highlightError?: boolean;
   onOpenFile?: (targetPath: string, label: string) => void;
+  quiet?: boolean;
 }) {
   const semantic = describeToolSemanticInfo(block.name, block.input);
   const displaySummary = formatChatToolActionSummary(block, semantic, density);
@@ -195,7 +222,7 @@ export function TranscriptChatToolActionRow({
           : null;
   const canExpand = Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
   const [open, setOpen] = useState(inline || (defaultOpenOnError && block.status === "error"));
-  const duration = formatTranscriptDuration(block.ts, block.endTs);
+  const duration = quiet ? null : formatTranscriptDuration(block.ts, block.endTs);
   const statusText =
     block.status === "error"
       ? "Failed"
@@ -207,7 +234,7 @@ export function TranscriptChatToolActionRow({
     : block.status === "running"
       ? "text-cyan-700 dark:text-cyan-300"
       : "text-muted-foreground";
-  const iconStatus = block.status === "error" ? "error" : block.status === "running" ? "running" : "completed";
+  const iconStatus = block.status === "error" ? "error" : block.status === "running" ? "running" : quiet ? "neutral" : "completed";
   const rowPaddingClass = compact ? "py-0.5" : "py-1.5";
   const rowAlignmentClass = compact ? "items-center" : "items-start";
   const rowGapClass = compact ? "gap-1.5" : "gap-2";
@@ -229,8 +256,8 @@ export function TranscriptChatToolActionRow({
       title={getTranscriptTimestampTitle(block.ts)}
     >
       {hasOpenableFileTargets ? (
-        <div className={cn("flex w-full text-left", rowAlignmentClass, rowGapClass)}>
-          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} />
+        <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
+          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
           <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
             {semantic.category === "edit" ? "Edited " : "Read "}
             {fileTargets.map((target, index) => (
@@ -265,10 +292,15 @@ export function TranscriptChatToolActionRow({
           {canExpand && !inline ? (
             <button
               type="button"
-              className={cn("inline-flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40", chevronOffsetClass)}
+              className={cn(
+                "inline-flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                chevronOffsetClass,
+                quiet && !open && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
+              )}
               onClick={toggleDetails}
               aria-expanded={open}
               aria-label={detailLabel}
+              data-transcript-action-row-disclosure="true"
             >
               <DisclosureChevron open={open} className="h-4 w-4" />
             </button>
@@ -277,12 +309,12 @@ export function TranscriptChatToolActionRow({
       ) : (
         <button
           type="button"
-          className={cn("flex w-full text-left", rowAlignmentClass, rowGapClass)}
+          className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}
           onClick={toggleDetails}
           aria-expanded={canExpand && !inline ? open : undefined}
           aria-label={canExpand && !inline ? detailLabel : undefined}
         >
-          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} />
+          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
           <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
             {displaySummary}
           </span>
@@ -297,7 +329,14 @@ export function TranscriptChatToolActionRow({
             </span>
           ) : null}
           {canExpand && !inline ? (
-            <span className={cn("inline-flex h-5 w-5 items-center justify-center text-muted-foreground", chevronOffsetClass)}>
+            <span
+              className={cn(
+                "inline-flex h-5 w-5 items-center justify-center text-muted-foreground",
+                chevronOffsetClass,
+                quiet && !open && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
+              )}
+              data-transcript-action-row-disclosure="true"
+            >
               <DisclosureChevron open={open} className="h-4 w-4" />
             </span>
           ) : null}
@@ -348,6 +387,7 @@ export function TranscriptChatActionRow({
   defaultOpenOnError = false,
   highlightError = true,
   onOpenFile,
+  quiet = true,
 }: {
   action: ChatTranscriptAction;
   density: TranscriptDensity;
@@ -355,9 +395,10 @@ export function TranscriptChatActionRow({
   defaultOpenOnError?: boolean;
   highlightError?: boolean;
   onOpenFile?: (targetPath: string, label: string) => void;
+  quiet?: boolean;
 }) {
   if (action.type === "stdout") {
-    return <TranscriptChatStdoutActionRow block={action.entry} density={density} inline={inline} />;
+    return <TranscriptChatStdoutActionRow block={action.entry} density={density} inline={inline} quiet={quiet} />;
   }
 
   return (
@@ -368,6 +409,7 @@ export function TranscriptChatActionRow({
       defaultOpenOnError={defaultOpenOnError}
       highlightError={highlightError}
       onOpenFile={onOpenFile}
+      quiet={quiet}
     />
   );
 }
@@ -473,6 +515,9 @@ export function TranscriptChatActionGroup({
   const highlightGroupError = allToolsErrored && !detailVariant;
   const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : allToolsErrored));
   const summaryIcon = getChatActionIconInfo(actions[0]!);
+  const summaryAgentAvatar = actions[0]?.type === "tool"
+    ? getTranscriptAgentAvatarInfo(actions[0].entry.name, actions[0].entry.input)
+    : null;
 
   useEffect(() => {
     if (!detailVariant && allToolsErrored) {
@@ -501,6 +546,7 @@ export function TranscriptChatActionGroup({
           defaultOpenOnError={false}
           highlightError={!detailVariant}
           onOpenFile={onOpenFile}
+          quiet={!detailVariant}
         />
       </div>
     );
@@ -516,7 +562,7 @@ export function TranscriptChatActionGroup({
       <button
         type="button"
         className={cn(
-          "group/activity -mx-2 flex w-[calc(100%+1rem)] items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
+          "group/activity -mx-2 inline-flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left transition-colors",
           highlightGroupError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
         )}
         onClick={() => setDetailsOpen((value) => !value)}
@@ -527,9 +573,16 @@ export function TranscriptChatActionGroup({
           className={cn("mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center", highlightGroupError && "rounded-full bg-red-500/[0.08]")}
           data-transcript-action-summary-icon="true"
         >
-          <TranscriptActionIcon category={summaryIcon.category} status={highlightGroupError ? "error" : "neutral"} />
+          {summaryAgentAvatar ? (
+            <TranscriptAgentAvatarIcon
+              info={summaryAgentAvatar}
+              status={highlightGroupError ? "error" : summaryIcon.status}
+            />
+          ) : (
+            <TranscriptActionIcon category={summaryIcon.category} status={highlightGroupError ? "error" : "neutral"} />
+          )}
         </span>
-        <span className="min-w-0 flex-1">
+        <span className="min-w-0">
           <span className={cn(
             "block break-words text-foreground/82",
             compact ? "text-xs" : "text-sm",
@@ -538,7 +591,10 @@ export function TranscriptChatActionGroup({
           </span>
         </span>
         <span
-          className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity:opacity-100 group-focus-visible/activity:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100"
+          className={cn(
+            "inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground transition-opacity",
+            detailsOpen ? "opacity-100" : "opacity-0 group-hover/activity:opacity-100 group-focus-visible/activity:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
+          )}
           data-testid="transcript-action-group-disclosure"
           data-transcript-disclosure-chevron="true"
         >
@@ -547,13 +603,14 @@ export function TranscriptChatActionGroup({
       </button>
 
       {detailsOpen ? (
-        <div className="motion-disclosure-enter mt-2 pl-3">
+        <div className="motion-disclosure-enter mt-0.5">
           {actions.map((action) => (
             <TranscriptChatActionRow
               key={action.key}
               action={action}
               density={density}
               onOpenFile={onOpenFile}
+              quiet={!detailVariant}
             />
           ))}
         </div>

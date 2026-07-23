@@ -149,6 +149,7 @@ test("shows concrete Codex spawn-agent details in Messenger process activity", a
           name: "spawn_agent",
           toolUseId: "collab-agent-1",
           input: {
+            id: "collab-agent-1",
             message: "Review the transcript renderer for collaboration events.",
             receiver_thread_ids: [],
           },
@@ -190,6 +191,7 @@ test("shows concrete Codex spawn-agent details in Messenger process activity", a
   );
   await expect(transcript).toContainText("gpt-5.6-sol");
   await expect(transcript).toContainText("high reasoning");
+  await expect(transcript.locator('[data-transcript-agent-avatar="collab-agent-1"]')).toBeVisible();
   await expect(transcript).not.toContainText("Collab Tool Call");
   await page.screenshot({ path: "/tmp/rudder-spawn-agent-transcript-details.png", fullPage: true });
 });

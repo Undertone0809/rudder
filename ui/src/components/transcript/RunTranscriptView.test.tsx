@@ -8,6 +8,7 @@ import { normalizeTranscript, resolveTranscriptFileTarget, resolveTranscriptLoca
 import { filterChatAssistantTranscriptEntries, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo } from "./RunTranscriptView.semantic";
+import { getTranscriptAgentAvatarImageSrc } from "./TranscriptAgentAvatarIcon";
 
 function countOccurrences(value: string, needle: string) {
   return value.split(needle).length - 1;
@@ -2541,6 +2542,7 @@ describe("RunTranscriptView", () => {
               name: "spawn_agent",
               toolUseId: "agent-1",
               input: {
+                id: "collab-1",
                 message: "Inspect the transcript renderer for Codex collaboration rows.",
                 receiver_thread_ids: [],
               },
@@ -2565,7 +2567,18 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Spawned agent thread-child-1: Inspect the transcript renderer for Codex collaboration rows.");
     expect(html).toContain("gpt-5.6-sol");
     expect(html).toContain("high reasoning");
+    expect(html).toContain('data-transcript-agent-avatar="collab-1"');
+    expect(html).toContain('src="data:image/svg+xml');
+    expect(html).not.toContain('data-transcript-action-icon="tool"');
     expect(html).not.toContain("Collab Tool Call");
+  });
+
+  it("keeps generated spawn-agent avatars stable per collaboration call", () => {
+    const first = getTranscriptAgentAvatarImageSrc("collab-1");
+
+    expect(first).toMatch(/^data:image\/svg\+xml/);
+    expect(getTranscriptAgentAvatarImageSrc("collab-1")).toBe(first);
+    expect(getTranscriptAgentAvatarImageSrc("collab-2")).not.toBe(first);
   });
 
   it("renders every Codex App Server collaboration action with its completed targets", () => {
