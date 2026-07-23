@@ -94,6 +94,79 @@ describe("Main Workbench state", () => {
     expect(organization.runtimesById).not.toHaveProperty("replacement-runtime");
   });
 
+  it("focuses an exact tab without replacing a different non-null Saved View binding", () => {
+    const state = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "saved-tab/open",
+        organizationId: ORGANIZATION_A,
+        savedViewId: "saved-original",
+        tab: tabDraft("view-a"),
+      },
+      {
+        type: "session-tab/create",
+        organizationId: ORGANIZATION_A,
+        tab: tabDraft("view-b"),
+      },
+      {
+        type: "saved-tab/open",
+        organizationId: ORGANIZATION_A,
+        savedViewId: "saved-conflict",
+        tab: tabDraft("view-a", browserTarget("view-a"), "conflicting-runtime"),
+      },
+    );
+
+    const organization = state.organizations[ORGANIZATION_A]!;
+    expect(organization.activeViewInstanceId).toBe("view-a");
+    expect(organization.tabsByViewInstanceId["view-a"]?.savedViewId).toBe("saved-original");
+    expect(organization.runtimesById).not.toHaveProperty("conflicting-runtime");
+
+    const rebound = mainWorkbenchReducer(state, {
+      type: "tab/bind-saved-view",
+      organizationId: ORGANIZATION_A,
+      viewInstanceId: "view-a",
+      savedViewId: "saved-conflict",
+    });
+    expect(rebound).toBe(state);
+  });
+
+  it("keeps each Saved View id bound to at most one tab in an organization", () => {
+    const state = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "saved-tab/open",
+        organizationId: ORGANIZATION_A,
+        savedViewId: "saved-unique",
+        tab: tabDraft("view-a"),
+      },
+      {
+        type: "session-tab/create",
+        organizationId: ORGANIZATION_A,
+        tab: tabDraft("view-b"),
+      },
+      {
+        type: "saved-tab/open",
+        organizationId: ORGANIZATION_A,
+        savedViewId: "saved-unique",
+        tab: tabDraft("view-c"),
+      },
+    );
+
+    const organization = state.organizations[ORGANIZATION_A]!;
+    expect(organization.activeViewInstanceId).toBe("view-a");
+    expect(organization.tabOrder).toEqual(["view-a", "view-b"]);
+    expect(organization.tabsByViewInstanceId).not.toHaveProperty("view-c");
+    expect(organization.runtimesById).not.toHaveProperty("runtime-view-c");
+
+    const duplicateBinding = mainWorkbenchReducer(state, {
+      type: "tab/bind-saved-view",
+      organizationId: ORGANIZATION_A,
+      viewInstanceId: "view-b",
+      savedViewId: "saved-unique",
+    });
+    expect(duplicateBinding).toBe(state);
+  });
+
   it("keeps Browser tabs with the same URL distinct when their view instances differ", () => {
     const sharedUrl = "https://example.com/dashboard";
     const state = reduce(
@@ -268,6 +341,7 @@ describe("Main Workbench state", () => {
   });
 
   it("models side, parked, crashed, and disposed runtime hosts without changing tab identity", () => {
+    const sourceHost = { kind: "side" as const, contextKey: "chat:source" };
     let state = mainWorkbenchReducer(createMainWorkbenchState(), {
       type: "runtime/admit",
       organizationId: ORGANIZATION_A,
@@ -275,9 +349,10 @@ describe("Main Workbench state", () => {
         id: "runtime-a",
         viewInstanceId: "view-a",
         targetKind: "browser",
-        host: { kind: "side", contextKey: "chat:source" },
+        host: sourceHost,
       },
     });
+    sourceHost.contextKey = "chat:mutated-after-dispatch";
     expect(state.organizations[ORGANIZATION_A]?.runtimesById["runtime-a"]?.host).toEqual({
       kind: "side",
       contextKey: "chat:source",
@@ -302,6 +377,54 @@ describe("Main Workbench state", () => {
     }
   });
 
+  it("admits at most one live runtime for an organization and view instance", () => {
+    const firstLive = mainWorkbenchReducer(createMainWorkbenchState(), {
+      type: "runtime/admit",
+      organizationId: ORGANIZATION_A,
+      runtime: {
+        id: "runtime-first",
+        viewInstanceId: "view-shared",
+        targetKind: "browser",
+        host: { kind: "side", contextKey: "chat:first" },
+      },
+    });
+    const rejectedSecondLive = mainWorkbenchReducer(firstLive, {
+      type: "runtime/admit",
+      organizationId: ORGANIZATION_A,
+      runtime: {
+        id: "runtime-second",
+        viewInstanceId: "view-shared",
+        targetKind: "browser",
+        host: { kind: "parked" },
+      },
+    });
+    expect(rejectedSecondLive).toBe(firstLive);
+    expect(rejectedSecondLive.organizations[ORGANIZATION_A]?.runtimesById).not.toHaveProperty(
+      "runtime-second",
+    );
+
+    const withDisposedAlternative = mainWorkbenchReducer(firstLive, {
+      type: "runtime/admit",
+      organizationId: ORGANIZATION_A,
+      runtime: {
+        id: "runtime-second",
+        viewInstanceId: "view-shared",
+        targetKind: "browser",
+        host: { kind: "disposed" },
+      },
+    });
+    const rejectedActivation = mainWorkbenchReducer(withDisposedAlternative, {
+      type: "runtime/set-host",
+      organizationId: ORGANIZATION_A,
+      runtimeId: "runtime-second",
+      host: { kind: "main", organizationId: ORGANIZATION_A },
+    });
+    expect(rejectedActivation).toBe(withDisposedAlternative);
+    expect(
+      rejectedActivation.organizations[ORGANIZATION_A]?.runtimesById["runtime-second"]?.host,
+    ).toEqual({ kind: "disposed" });
+  });
+
   it("promotes the exact source snapshot through transferring to the organization Main host", () => {
     const sourceTarget = browserTarget("view-source", "https://example.com/exact-source");
     let state = mainWorkbenchReducer(createMainWorkbenchState(), {
@@ -321,10 +444,12 @@ describe("Main Workbench state", () => {
       source: {
         viewInstanceId: "view-source",
         savedViewId: null,
+        sourceRevision: 1,
         runtimeId: "runtime-source",
         target: sourceTarget,
         originContextKey: "chat:source",
       },
+      clientMutationId: "mutation-source",
     });
 
     expect(state.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host).toEqual({
@@ -339,6 +464,7 @@ describe("Main Workbench state", () => {
       organizationId: ORGANIZATION_A,
       promotionId: "promotion-a",
       savedViewId: "saved-source",
+      expectedSourceRevision: 1,
     });
 
     expect(state.organizations[ORGANIZATION_A]?.promotionsById).not.toHaveProperty("promotion-a");
@@ -361,6 +487,7 @@ describe("Main Workbench state", () => {
     const source = {
       viewInstanceId: "view-source",
       savedViewId: null,
+      sourceRevision: 1,
       runtimeId: "runtime-source",
       target: libraryFileTarget("view-source"),
       originContextKey: "issue:RUD-42",
@@ -382,11 +509,13 @@ describe("Main Workbench state", () => {
         organizationId: ORGANIZATION_A,
         promotionId: "promotion-a",
         source,
+        clientMutationId: "mutation-source",
       },
       {
-        type: "promotion/fail",
+        type: "promotion/server-fail",
         organizationId: ORGANIZATION_A,
         promotionId: "promotion-a",
+        expectedSourceRevision: 1,
         error: "Keep request failed",
       },
     );
@@ -396,31 +525,260 @@ describe("Main Workbench state", () => {
       contextKey: "issue:RUD-42",
     });
     expect(state.organizations[ORGANIZATION_A]?.promotionsById["promotion-a"]).toMatchObject({
-      status: "failed",
+      status: "server_failed",
+      clientMutationId: "mutation-source",
       error: "Keep request failed",
       source: {
         viewInstanceId: "view-source",
         originContextKey: "issue:RUD-42",
+        sourceRevision: 1,
       },
     });
     expect(state.organizations[ORGANIZATION_A]?.tabOrder).toEqual([]);
 
     state = mainWorkbenchReducer(state, {
-      type: "promotion/start",
+      type: "promotion/retry",
       organizationId: ORGANIZATION_A,
       promotionId: "promotion-a",
-      source,
+      expectedSourceRevision: 1,
+      nextSourceRevision: 2,
     });
     expect(state.organizations[ORGANIZATION_A]?.promotionsById["promotion-a"]?.status).toBe("pending");
+    expect(state.organizations[ORGANIZATION_A]?.promotionsById["promotion-a"]).toMatchObject({
+      clientMutationId: "mutation-source",
+      source: { sourceRevision: 2 },
+    });
     expect(state.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host).toEqual({
       kind: "transferring",
     });
+  });
+
+  it("separates timeout uncertainty from definitive failure and reconciles with the same mutation id", () => {
+    const source = {
+      viewInstanceId: "view-source",
+      savedViewId: null,
+      sourceRevision: 1,
+      runtimeId: "runtime-source",
+      target: browserTarget("view-source"),
+      originContextKey: "chat:source",
+    };
+    let state = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "runtime/admit",
+        organizationId: ORGANIZATION_A,
+        runtime: {
+          id: "runtime-source",
+          viewInstanceId: "view-source",
+          targetKind: "browser",
+          host: { kind: "side", contextKey: "chat:source" },
+        },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        source,
+        clientMutationId: "mutation-stable",
+      },
+      {
+        type: "promotion/timeout",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        expectedSourceRevision: 1,
+        error: "Keep response timed out",
+      },
+    );
+
+    expect(state.organizations[ORGANIZATION_A]?.promotionsById["promotion-a"]).toMatchObject({
+      status: "commit_unknown",
+      clientMutationId: "mutation-stable",
+      source: { sourceRevision: 1 },
+    });
+    expect(state.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host).toEqual({
+      kind: "side",
+      contextKey: "chat:source",
+    });
+
+    state = mainWorkbenchReducer(state, {
+      type: "promotion/reconcile",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      expectedSourceRevision: 1,
+      nextSourceRevision: 2,
+    });
+    expect(state.organizations[ORGANIZATION_A]?.promotionsById["promotion-a"]).toMatchObject({
+      status: "reconciling",
+      clientMutationId: "mutation-stable",
+      source: { sourceRevision: 2 },
+    });
+    expect(state.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host).toEqual({
+      kind: "transferring",
+    });
+
+    const staleCompletion = mainWorkbenchReducer(state, {
+      type: "promotion/succeed",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      savedViewId: "saved-source",
+      expectedSourceRevision: 1,
+    });
+    expect(staleCompletion).toBe(state);
+
+    state = mainWorkbenchReducer(state, {
+      type: "promotion/succeed",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      savedViewId: "saved-source",
+      expectedSourceRevision: 2,
+    });
+    expect(state.organizations[ORGANIZATION_A]?.promotionsById).not.toHaveProperty("promotion-a");
+    expect(state.organizations[ORGANIZATION_A]?.tabsByViewInstanceId).toHaveProperty("view-source");
+  });
+
+  it("ignores every stale terminal transition by source revision", () => {
+    const source = {
+      viewInstanceId: "view-source",
+      savedViewId: null,
+      sourceRevision: 7,
+      runtimeId: "runtime-source",
+      target: browserTarget("view-source"),
+      originContextKey: "chat:source",
+    };
+    const started = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "runtime/admit",
+        organizationId: ORGANIZATION_A,
+        runtime: {
+          id: "runtime-source",
+          viewInstanceId: "view-source",
+          targetKind: "browser",
+          host: { kind: "side", contextKey: "chat:source" },
+        },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        source,
+        clientMutationId: "mutation-source",
+      },
+    );
+
+    const staleTerminalActions = [
+      {
+        type: "promotion/succeed" as const,
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-source",
+        expectedSourceRevision: 6,
+      },
+      {
+        type: "promotion/server-fail" as const,
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        error: "definitive failure",
+        expectedSourceRevision: 6,
+      },
+      {
+        type: "promotion/timeout" as const,
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        error: "timeout",
+        expectedSourceRevision: 6,
+      },
+      {
+        type: "promotion/claim-fail" as const,
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-source",
+        error: "claim failed",
+        expectedSourceRevision: 6,
+      },
+    ];
+    for (const action of staleTerminalActions) {
+      expect(mainWorkbenchReducer(started, action)).toBe(started);
+    }
+  });
+
+  it("ignores every terminal transition unless the source runtime is still transferring", () => {
+    const terminalActions = [
+      {
+        type: "promotion/succeed" as const,
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-source",
+        expectedSourceRevision: 1,
+      },
+      {
+        type: "promotion/server-fail" as const,
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        error: "definitive failure",
+        expectedSourceRevision: 1,
+      },
+      {
+        type: "promotion/timeout" as const,
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        error: "timeout",
+        expectedSourceRevision: 1,
+      },
+      {
+        type: "promotion/claim-fail" as const,
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-source",
+        error: "claim failed",
+        expectedSourceRevision: 1,
+      },
+    ];
+
+    for (const terminalAction of terminalActions) {
+      const started = reduce(
+        createMainWorkbenchState(),
+        {
+          type: "runtime/admit",
+          organizationId: ORGANIZATION_A,
+          runtime: {
+            id: "runtime-source",
+            viewInstanceId: "view-source",
+            targetKind: "browser",
+            host: { kind: "side", contextKey: "chat:source" },
+          },
+        },
+        {
+          type: "promotion/start",
+          organizationId: ORGANIZATION_A,
+          promotionId: "promotion-a",
+          clientMutationId: "mutation-source",
+          source: {
+            viewInstanceId: "view-source",
+            savedViewId: null,
+            sourceRevision: 1,
+            runtimeId: "runtime-source",
+            target: browserTarget("view-source"),
+            originContextKey: "chat:source",
+          },
+        },
+        {
+          type: "runtime/set-host",
+          organizationId: ORGANIZATION_A,
+          runtimeId: "runtime-source",
+          host: { kind: "crashed" },
+        },
+      );
+
+      expect(mainWorkbenchReducer(started, terminalAction)).toBe(started);
+    }
   });
 
   it("retains a committed Saved View binding for retry when the Main host claim fails", () => {
     const source = {
       viewInstanceId: "view-source",
       savedViewId: null,
+      sourceRevision: 1,
       runtimeId: "runtime-source",
       target: browserTarget("view-source"),
       originContextKey: "chat:source",
@@ -442,18 +800,21 @@ describe("Main Workbench state", () => {
         organizationId: ORGANIZATION_A,
         promotionId: "promotion-a",
         source,
+        clientMutationId: "mutation-source",
       },
       {
         type: "promotion/claim-fail",
         organizationId: ORGANIZATION_A,
         promotionId: "promotion-a",
         savedViewId: "saved-committed",
+        expectedSourceRevision: 1,
         error: "Main anchor timed out",
       },
     );
 
     expect(state.organizations[ORGANIZATION_A]?.promotionsById["promotion-a"]).toMatchObject({
       status: "claim_failed",
+      clientMutationId: "mutation-source",
       savedViewId: "saved-committed",
       error: "Main anchor timed out",
     });
@@ -462,6 +823,212 @@ describe("Main Workbench state", () => {
       contextKey: "chat:source",
     });
     expect(state.organizations[ORGANIZATION_A]?.tabsByViewInstanceId).not.toHaveProperty("view-source");
+
+    const retryingClaim = mainWorkbenchReducer(state, {
+      type: "promotion/claim-retry",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      expectedSourceRevision: 1,
+      nextSourceRevision: 2,
+    });
+    expect(retryingClaim.organizations[ORGANIZATION_A]?.promotionsById["promotion-a"]).toMatchObject({
+      status: "claiming",
+      clientMutationId: "mutation-source",
+      savedViewId: "saved-committed",
+      source: { sourceRevision: 2 },
+    });
+    expect(
+      retryingClaim.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host,
+    ).toEqual({ kind: "transferring" });
+
+    const completed = mainWorkbenchReducer(retryingClaim, {
+      type: "promotion/succeed",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      savedViewId: "saved-committed",
+      expectedSourceRevision: 2,
+    });
+    expect(completed.organizations[ORGANIZATION_A]?.promotionsById).not.toHaveProperty(
+      "promotion-a",
+    );
+    expect(completed.organizations[ORGANIZATION_A]?.tabsByViewInstanceId["view-source"]).toMatchObject({
+      savedViewId: "saved-committed",
+      runtimeId: "runtime-source",
+    });
+  });
+
+  it("focuses and binds an existing exact Main tab while disposing a distinct promotion source", () => {
+    let state = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "session-tab/create",
+        organizationId: ORGANIZATION_A,
+        tab: tabDraft("view-source", browserTarget("view-source"), "runtime-main"),
+      },
+      {
+        type: "runtime/set-host",
+        organizationId: ORGANIZATION_A,
+        runtimeId: "runtime-main",
+        host: { kind: "disposed" },
+      },
+      {
+        type: "runtime/admit",
+        organizationId: ORGANIZATION_A,
+        runtime: {
+          id: "runtime-source",
+          viewInstanceId: "view-source",
+          targetKind: "browser",
+          host: { kind: "side", contextKey: "chat:source" },
+        },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        clientMutationId: "mutation-source",
+        source: {
+          viewInstanceId: "view-source",
+          savedViewId: null,
+          sourceRevision: 1,
+          runtimeId: "runtime-source",
+          target: browserTarget("view-source"),
+          originContextKey: "chat:source",
+        },
+      },
+      {
+        type: "promotion/succeed",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-source",
+        expectedSourceRevision: 1,
+      },
+    );
+
+    const organization = state.organizations[ORGANIZATION_A]!;
+    expect(organization.promotionsById).not.toHaveProperty("promotion-a");
+    expect(organization.tabOrder).toEqual(["view-source"]);
+    expect(organization.activeViewInstanceId).toBe("view-source");
+    expect(organization.tabsByViewInstanceId["view-source"]).toMatchObject({
+      savedViewId: "saved-source",
+      runtimeId: "runtime-main",
+    });
+    expect(organization.runtimesById["runtime-main"]?.host).toEqual({
+      kind: "main",
+      organizationId: ORGANIZATION_A,
+    });
+    expect(organization.runtimesById["runtime-source"]?.host).toEqual({ kind: "disposed" });
+    expect(mainWorkbenchLiveBrowserCount(state, ORGANIZATION_A)).toBe(1);
+  });
+
+  it("clears a successful promotion that is already satisfied by the exact tab and binding", () => {
+    const state = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "saved-tab/open",
+        organizationId: ORGANIZATION_A,
+        savedViewId: "saved-source",
+        tab: tabDraft("view-source", browserTarget("view-source"), "runtime-source"),
+      },
+      {
+        type: "runtime/set-host",
+        organizationId: ORGANIZATION_A,
+        runtimeId: "runtime-source",
+        host: { kind: "side", contextKey: "chat:source" },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        clientMutationId: "mutation-source",
+        source: {
+          viewInstanceId: "view-source",
+          savedViewId: "saved-source",
+          sourceRevision: 1,
+          runtimeId: "runtime-source",
+          target: browserTarget("view-source"),
+          originContextKey: "chat:source",
+        },
+      },
+      {
+        type: "promotion/succeed",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-source",
+        expectedSourceRevision: 1,
+      },
+    );
+
+    const organization = state.organizations[ORGANIZATION_A]!;
+    expect(organization.promotionsById).not.toHaveProperty("promotion-a");
+    expect(organization.tabOrder).toEqual(["view-source"]);
+    expect(organization.activeViewInstanceId).toBe("view-source");
+    expect(organization.tabsByViewInstanceId["view-source"]?.savedViewId).toBe("saved-source");
+    expect(organization.runtimesById["runtime-source"]?.host).toEqual({
+      kind: "main",
+      organizationId: ORGANIZATION_A,
+    });
+  });
+
+  it("resolves a conflicting Saved binding without replacing it or leaving promotion pending", () => {
+    let state = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "saved-tab/open",
+        organizationId: ORGANIZATION_A,
+        savedViewId: "saved-original",
+        tab: tabDraft("view-source", browserTarget("view-source"), "runtime-main"),
+      },
+      {
+        type: "runtime/set-host",
+        organizationId: ORGANIZATION_A,
+        runtimeId: "runtime-main",
+        host: { kind: "disposed" },
+      },
+      {
+        type: "runtime/admit",
+        organizationId: ORGANIZATION_A,
+        runtime: {
+          id: "runtime-source",
+          viewInstanceId: "view-source",
+          targetKind: "browser",
+          host: { kind: "side", contextKey: "chat:source" },
+        },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        clientMutationId: "mutation-source",
+        source: {
+          viewInstanceId: "view-source",
+          savedViewId: null,
+          sourceRevision: 1,
+          runtimeId: "runtime-source",
+          target: browserTarget("view-source"),
+          originContextKey: "chat:source",
+        },
+      },
+      {
+        type: "promotion/succeed",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-conflict",
+        expectedSourceRevision: 1,
+      },
+    );
+
+    const organization = state.organizations[ORGANIZATION_A]!;
+    expect(organization.activeViewInstanceId).toBe("view-source");
+    expect(organization.tabsByViewInstanceId["view-source"]?.savedViewId).toBe("saved-original");
+    expect(organization.promotionsById["promotion-a"]).toMatchObject({
+      status: "claim_failed",
+      savedViewId: "saved-conflict",
+      error: "saved_view_binding_conflict",
+    });
+    expect(organization.runtimesById["runtime-source"]?.host).toEqual({
+      kind: "side",
+      contextKey: "chat:source",
+    });
   });
 
   it("shares eight live Browser slots per organization while transfers neither increment nor evict", () => {
@@ -491,10 +1058,12 @@ describe("Main Workbench state", () => {
       source: {
         viewInstanceId: "view-0",
         savedViewId: null,
+        sourceRevision: 1,
         runtimeId: "runtime-0",
         target: browserTarget("view-0"),
         originContextKey: "chat:0",
       },
+      clientMutationId: "mutation-zero",
     });
     expect(mainWorkbenchLiveBrowserCount(state, ORGANIZATION_A)).toBe(
       MAIN_WORKBENCH_BROWSER_CAPACITY,
@@ -527,6 +1096,7 @@ describe("Main Workbench state", () => {
       organizationId: ORGANIZATION_A,
       promotionId: "promotion-zero",
       savedViewId: "saved-zero",
+      expectedSourceRevision: 1,
     });
     expect(mainWorkbenchLiveBrowserCount(state, ORGANIZATION_A)).toBe(
       MAIN_WORKBENCH_BROWSER_CAPACITY,
