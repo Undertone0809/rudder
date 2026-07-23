@@ -34,6 +34,12 @@ import {
   type WorkspaceFilePreviewMode,
 } from "@/components/WorkspaceFilePreview";
 import { WorkspaceLaunchTargetIcon } from "@/components/workspaces/WorkspaceLaunchControls";
+import {
+  createLiveSurfaceRuntimeId,
+  LiveSurfaceAnchor,
+  useOptionalLiveSurfaceRuntime,
+  type LiveSurfaceTarget,
+} from "@/context/LiveSurfaceRuntimeContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { MAX_BROWSER_TABS_PER_CONTEXT, useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
@@ -1369,6 +1375,7 @@ export function ChatSidePanel({
   selectedOrganizationId: string | null | undefined;
 }) {
   const sidePanel = useSidePanel();
+  const liveSurfaceRuntime = useOptionalLiveSurfaceRuntime();
   const { pushToast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
@@ -1412,6 +1419,18 @@ export function ChatSidePanel({
     () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "local_app" }> => candidate.kind === "local_app"),
     [visibleTabs],
   );
+  const liveSurfaceTargets = useMemo(() => {
+    if (!liveSurfaceRuntime || !selectedOrganizationId) return [];
+    return visibleTabs.flatMap((candidate) => {
+      if (!sidePanelTargetSupportsSavedView(candidate)) return [];
+      const viewInstanceId = candidate.kind === "browser"
+        ? candidate.viewInstanceId ?? candidate.tabId
+        : candidate.viewInstanceId;
+      return viewInstanceId
+        ? [{ ...candidate, viewInstanceId } as LiveSurfaceTarget]
+        : [];
+    });
+  }, [liveSurfaceRuntime, selectedOrganizationId, visibleTabs]);
   const browserSavedViewMetadata = useBrowserSavedViewMetadataPersister({
     browserTargets,
     organizationId: selectedOrganizationId,
@@ -1480,6 +1499,12 @@ export function ChatSidePanel({
   const browserTarget = activeTarget?.kind === "browser" ? activeTarget : null;
   const localAppsTarget = activeTarget?.kind === "local_apps" ? activeTarget : null;
   const localAppTarget = activeTarget?.kind === "local_app" ? activeTarget : null;
+  const activeLiveSurfaceTarget = activeTarget
+    && liveSurfaceRuntime
+    && sidePanelTargetSupportsSavedView(activeTarget)
+    && (activeTarget.kind === "browser" || Boolean(activeTarget.viewInstanceId))
+    ? activeTarget as LiveSurfaceTarget
+    : null;
   const activeBrowserTargetKey = browserTarget ? sidePanelTargetKey(browserTarget) : null;
   const placeholderTarget = activeTarget?.kind === "placeholder" ? activeTarget : null;
   const targetQueriesEnabled = sidePanel.open || exiting;
@@ -1639,16 +1664,43 @@ export function ChatSidePanel({
     sidePanel.openTarget(nextTarget);
   };
   const replaceSidePanelTarget = (key: string, nextTarget: SidePanelTarget) => sidePanel.replaceTarget(key, nextTarget);
+  const cycleSidePanelTab = useCallback((direction: -1 | 1) => {
+    if (visibleTabs.length < 2) return;
+    const activeIndex = activeTarget
+      ? visibleTabs.findIndex((candidate) => (
+        sidePanelTargetKey(candidate) === sidePanelTargetKey(activeTarget)
+      ))
+      : -1;
+    const nextIndex = (
+      (activeIndex < 0 ? 0 : activeIndex) + direction + visibleTabs.length
+    ) % visibleTabs.length;
+    const nextTarget = visibleTabs[nextIndex];
+    if (nextTarget) sidePanel.setActiveKey(sidePanelTargetKey(nextTarget));
+  }, [activeTarget, sidePanel, visibleTabs]);
+
+  const disposeLiveSurfaceTarget = useCallback((tab: SidePanelTarget) => {
+    if (!liveSurfaceRuntime || !selectedOrganizationId || !sidePanelTargetSupportsSavedView(tab)) return;
+    const viewInstanceId = tab.kind === "browser"
+      ? tab.viewInstanceId ?? tab.tabId
+      : tab.viewInstanceId;
+    if (!viewInstanceId) return;
+    liveSurfaceRuntime.disposeSurface(createLiveSurfaceRuntimeId(
+      selectedOrganizationId,
+      { ...tab, viewInstanceId } as LiveSurfaceTarget,
+    ));
+  }, [liveSurfaceRuntime, selectedOrganizationId]);
 
   const closeSidePanelTab = async (tab: SidePanelTarget) => {
     const tabKey = sidePanelTargetKey(tab);
     if (tab.kind === "browser") {
       await browserSavedViewMetadata.flushTarget(tab);
       sidePanel.closeTarget(tabKey);
+      disposeLiveSurfaceTarget(tab);
       return;
     }
     if (tab.kind !== "side_chat") {
       sidePanel.closeTarget(tabKey);
+      disposeLiveSurfaceTarget(tab);
       return;
     }
     if (movingSideChatKeyRef.current === tabKey) return;
@@ -1935,10 +1987,43 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
-          browserTarget || localAppsTarget || localAppTarget || issueTarget || automationTarget || libraryFilePreviewPath || localFileTarget || sideChatTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          activeLiveSurfaceTarget || localAppsTarget || issueTarget || localFileTarget || sideChatTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
-          {browserTargets.map((target) => {
+          {liveSurfaceTargets.map((target) => {
+            const targetKey = sidePanelTargetKey(target);
+            const active = targetKey === activeTargetKey;
+            const runtimeId = createLiveSurfaceRuntimeId(
+              selectedOrganizationId!,
+              target,
+            );
+            const ownerId = `side:${sidePanel.contextKey}:${runtimeId}`;
+            return (
+              <LiveSurfaceAnchor
+                key={runtimeId}
+                active={active}
+                callbacks={{
+                  canOpenNewTab: browserTargets.length < MAX_BROWSER_TABS_PER_CONTEXT,
+                  onCloseTarget: (nextTarget) => {
+                    void closeSidePanelTab(nextTarget);
+                  },
+                  onCycleTab: cycleSidePanelTab,
+                  onOpenTarget: openSidePanelTarget,
+                  onRegisterShortcutController: registerBrowserShortcutController,
+                  onReplaceTarget: (nextTarget) => (
+                    replaceSidePanelTarget(targetKey, nextTarget)
+                  ),
+                }}
+                className={cn("h-full min-h-0", active ? "block" : "hidden")}
+                hostId={ownerId}
+                ownerId={ownerId}
+                runtimeId={runtimeId}
+                target={target}
+                aria-hidden={!active}
+              />
+            );
+          })}
+          {!liveSurfaceRuntime ? browserTargets.map((target) => {
             const targetKey = sidePanelTargetKey(target);
             const active = targetKey === activeTargetKey;
             return (
@@ -1951,12 +2036,13 @@ export function ChatSidePanel({
                   onOpenTarget={openSidePanelTarget}
                   onReplaceTarget={replaceSidePanelTarget}
                   onCloseTarget={closeSidePanelTab}
+                  onCycleTab={cycleSidePanelTab}
                   onRegisterShortcutController={registerBrowserShortcutController}
                 />
               </div>
             );
-          })}
-          {localAppTargets.map((target) => {
+          }) : null}
+          {!liveSurfaceRuntime ? localAppTargets.map((target) => {
             const targetKey = sidePanelTargetKey(target);
             const active = targetKey === activeTargetKey;
             return (
@@ -1964,8 +2050,8 @@ export function ChatSidePanel({
                 <LocalAppPanelView active={active} target={target} />
               </div>
             );
-          })}
-          {browserTarget || localAppTarget ? null : !activeTarget ? (
+          }) : null}
+          {activeLiveSurfaceTarget ? null : !activeTarget ? (
             <SidePanelEmptyState
               browserAvailable={browserAvailable}
               localAppsAvailable={localAppsAvailable}
@@ -2091,6 +2177,11 @@ export function ChatSidePanel({
     lastOpenDesktopPanelRef.current = panel;
     return panel;
   }
-  if (!desktopExitComplete || browserTargets.length > 0 || localAppTargets.length > 0) return lastOpenDesktopPanelRef.current;
+  if (
+    !desktopExitComplete
+    || liveSurfaceTargets.length > 0
+    || browserTargets.length > 0
+    || localAppTargets.length > 0
+  ) return lastOpenDesktopPanelRef.current;
   return null;
 }
