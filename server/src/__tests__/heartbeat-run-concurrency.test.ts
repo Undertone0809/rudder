@@ -2025,4 +2025,142 @@ describe("heartbeat run concurrency", () => {
       reason: "issue_comment_mentioned",
     });
   });
+
+  it.each([
+    { relationship: "assignee", status: "in_review" },
+    { relationship: "assignee", status: "done" },
+    { relationship: "reviewer", status: "in_review" },
+    { relationship: "reviewer", status: "done" },
+  ] as const)(
+    "leases explicit $relationship work without changing $status",
+    async ({ relationship, status }) => {
+      const { orgId, agentId } = await seedAgentFixture(1);
+      const issueId = await seedIssueFixture({
+        orgId,
+        agentId: relationship === "assignee" ? agentId : undefined,
+        reviewerAgentId: relationship === "reviewer" ? agentId : null,
+        status,
+      });
+      const wakeCommentId = randomUUID();
+      const heartbeat = heartbeatService(db);
+
+      const run = await heartbeat.wakeup(agentId, {
+        source: "automation",
+        triggerDetail: "system",
+        reason: "issue_comment_mentioned",
+        startImmediately: false,
+        payload: { issueId, commentId: wakeCommentId },
+        contextSnapshot: {
+          issueId,
+          taskId: issueId,
+          wakeReason: "issue_comment_mentioned",
+          wakeSource: "comment.mention",
+          wakeCommentId,
+          relationship,
+        },
+      });
+
+      expect(run).toBeTruthy();
+      const persistedIssue = await db
+        .select({
+          status: issues.status,
+          executionRunId: issues.executionRunId,
+          checkoutRunId: issues.checkoutRunId,
+        })
+        .from(issues)
+        .where(eq(issues.id, issueId))
+        .then((rows) => rows[0]);
+      expect(persistedIssue).toMatchObject({
+        status,
+        executionRunId: run!.id,
+        checkoutRunId: null,
+      });
+    },
+  );
+
+  it("recomputes mention relationship from the current issue instead of trusting wake context", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, status: "done" });
+    const wakeCommentId = randomUUID();
+    const heartbeat = heartbeatService(db);
+
+    const run = await heartbeat.wakeup(agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_comment_mentioned",
+      startImmediately: false,
+      payload: { issueId, commentId: wakeCommentId },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        wakeReason: "issue_comment_mentioned",
+        wakeSource: "comment.mention",
+        wakeCommentId,
+        relationship: "assignee",
+      },
+    });
+
+    expect(run).toBeTruthy();
+    expect(run?.contextSnapshot).toMatchObject({ relationship: "collaborator" });
+    const persistedIssue = await db
+      .select({ executionRunId: issues.executionRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]);
+    expect(persistedIssue?.executionRunId).toBeNull();
+  });
+
+  it("revalidates mention relationship under the issue lock before granting the execution lease", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "done" });
+    const wakeCommentId = randomUUID();
+    let releaseRelationshipChange!: () => void;
+    let relationshipLockAcquired!: () => void;
+    const mayChangeRelationship = new Promise<void>((resolve) => {
+      releaseRelationshipChange = resolve;
+    });
+    const relationshipLocked = new Promise<void>((resolve) => {
+      relationshipLockAcquired = resolve;
+    });
+    const relationshipChange = db.transaction(async (tx) => {
+      await tx.execute(sql`select id from issues where id = ${issueId} for update`);
+      relationshipLockAcquired();
+      await mayChangeRelationship;
+      await tx
+        .update(issues)
+        .set({ assigneeAgentId: null })
+        .where(eq(issues.id, issueId));
+    });
+    await relationshipLocked;
+
+    const heartbeat = heartbeatService(db);
+    const wakePromise = heartbeat.wakeup(agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_comment_mentioned",
+      startImmediately: false,
+      payload: { issueId, commentId: wakeCommentId },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        wakeReason: "issue_comment_mentioned",
+        wakeSource: "comment.mention",
+        wakeCommentId,
+        relationship: "assignee",
+      },
+    });
+    await waitForPostgresLockWaiters(1);
+    releaseRelationshipChange();
+    await relationshipChange;
+
+    const run = await wakePromise;
+    expect(run).toBeTruthy();
+    expect(run?.contextSnapshot).toMatchObject({ relationship: "collaborator" });
+    const persistedIssue = await db
+      .select({ executionRunId: issues.executionRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]);
+    expect(persistedIssue?.executionRunId).toBeNull();
+  });
 });

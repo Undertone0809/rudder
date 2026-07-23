@@ -34,6 +34,7 @@ related_tests:
   - server/src/__tests__/pi-local-execute.test.ts
 related_plans:
   - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
+  - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
 edit_policy: user_confirmed_only
 ---
 
@@ -96,9 +97,10 @@ autonomous heartbeat loop.
 The universal operating contract does not tell every run to consult product
 documentation. The always-enabled `rudder-docs` skill advertises a self-gating
 description to supported runtimes, and the heartbeat instruction mentions it
-only as an optional source when exact Rudder details are needed. Assignee-capable
-issue wake templates own the checkout/409 safety rail because that rule applies
-at the issue execution boundary, not to generic chat, review, or heartbeat work.
+only as an optional source when exact Rudder details are needed.
+Checkout-eligible assignee wake templates own the checkout/409 safety rail
+because that rule applies at the assignment handoff boundary, not to generic
+chat, review, heartbeat, or relationship-authorized explicit work.
 
 ## Actors / Objects / State
 
@@ -147,6 +149,10 @@ at the issue execution boundary, not to generic chat, review, or heartbeat work.
   rail. Custom prompt bodies still win, but Rudder appends the platform-owned
   rail for assignee-capable issue scenes. Reviewer and reviewer-recovery,
   generic chat, generic recovery, and default templates do not receive it.
+- An explicit comment mention of the current assignee or reviewer receives a
+  relationship-work rail instead. It states that the run already owns the issue
+  execution lease, must not checkout or change ownership, and must preserve the
+  current status unless the user explicitly requests a lifecycle change.
 - Saved task session parameters and execution workspace settings affect the cwd
   and session handoff context that the adapter sees.
 
@@ -204,15 +210,17 @@ at the issue execution boundary, not to generic chat, review, or heartbeat work.
    entry file named `HEARTBEAT.md` is treated as legacy heartbeat instructions,
    ignored as an entry file, and recorded as ignored.
 
-8. Rudder selects the scene prompt. Assignment, assignee comment/follow-up,
+8. Rudder selects the scene prompt. Assignment, assignee follow-up,
    changes-requested, and assignee issue recovery tell an assignee to check out
    the issue before execution and to stop and report an ownership conflict when
-   checkout returns `409`. Every mention prompt carries the same conditional
-   rail, but it becomes actionable only when an explicit handoff makes the agent
-   the assignee. Reviewer and reviewer-recovery, default, generic recovery, chat,
-   and automation prompts do not receive that rail. A configured custom prompt
-   keeps its body, with the platform rail appended only for those assignee-
-   capable issue scenes.
+   checkout returns `409`. An explicit mention of the current assignee or
+   reviewer instead states that the run already holds the issue execution
+   lease, forbids checkout or implicit ownership/status changes, and remains
+   executable regardless of current issue status. Other mention targets remain
+   attention-scoped; checkout becomes relevant only after an explicit ownership
+   handoff. Reviewer and reviewer-recovery, default, generic recovery, chat, and
+   automation prompts do not receive the assignee checkout rail. A configured
+   custom prompt keeps its body, with the matching platform rail appended.
    Reviewer context has precedence over stale or mixed assignee wake reasons, so
    it cannot acquire the assignee rail through `issue_passive_followup`,
    `issue_changes_requested`, assignment, or comment branches.
@@ -234,7 +242,7 @@ at the issue execution boundary, not to generic chat, review, or heartbeat work.
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
 | Heartbeat Run | `rudderScene = heartbeat`; timer/self-check or operator `Run heartbeat` manual trigger | Runtime operating contract, agent files, resources/startup context, current time, runtime heartbeat instruction, then heartbeat prompt are available to the agent; the instruction may point to `rudder-docs` only when exact product details are needed | Heartbeat instruction must not appear before current time or before durable agent files, force `rudder-docs` loading, or carry the issue checkout rail | Prompt order and prompt contract tests, command notes, `runtimePromptMetrics.runtimeHeartbeatChars > 0`, adapter invocation event |
-| Issue Run | `rudderScene = issue`; assignment, assignee follow-up, changes-requested, assignee recovery, or comment wake | Agent gets operating contract, agent files, resources/startup context, current time, and issue/comment wake prompt; default or custom assignee-capable execution receives the checkout/409 rail and runtime heartbeat instruction is excluded | Task work must not omit the ownership-conflict stop; a conditional mention rail must not authorize checkout without explicit handoff | `server-utils.prompts.test.ts`, `shouldIncludeRuntimeHeartbeatInstructions` tests, `runtimeHeartbeatChars = 0`, assignment, custom-template, recovery, and comment wake tests |
+| Issue Run | `rudderScene = issue`; assignment, assignee follow-up, changes-requested, assignee recovery, or comment wake | Agent gets operating contract, agent files, resources/startup context, current time, and issue/comment wake prompt; checkout-eligible assignee execution receives the checkout/409 rail, while explicit current-assignee/current-reviewer mention work receives the preserve-status execution-lease rail; runtime heartbeat instruction is excluded | Assignment work must not omit the ownership-conflict stop; explicit relationship work must not checkout, reassign, or silently transition status; collaborator mention must not gain ownership | `server-utils.prompts.test.ts`, `shouldIncludeRuntimeHeartbeatInstructions` tests, `runtimeHeartbeatChars = 0`, assignment, custom-template, recovery, and comment wake tests |
 | Review Run | `rudderScene = review`; reviewer routing, reviewer recovery, or review follow-up after missing decision while issue remains `in_review` | Agent gets operating contract, agent files, resources/startup context, current time, and review-scene prompt; reviewer recovery preserves review wording; runtime heartbeat instruction and assignee checkout rail are excluded | Review or reviewer recovery must stay reviewer-scoped and must not become assignee implementation | Prompt contract tests, scene derivation tests, and prompt metrics show reviewer recovery plus no assignee rail or runtime heartbeat section |
 | Chat Run | `rudderScene = chat` | Agent gets the same operating contract and configured agent files plus chat-scene context; runtime heartbeat instruction is excluded and there is no global instruction to consult `rudder-docs` | Chat prompts must not be framed as autonomous heartbeat work or force documentation lookup | Adapter metadata and prompt metrics show no runtime heartbeat section; prompt contract tests show no global docs pointer |
 | Automation Run | `rudderScene = automation` | Agent gets operating contract, agent files, resources/startup context, current time, and automation context; runtime heartbeat instruction is excluded | Automation dispatch must not inherit heartbeat/self-check close-out instructions unless it explicitly creates a heartbeat scene run | Scene derivation tests and prompt metrics show no runtime heartbeat section |
@@ -265,8 +273,9 @@ stack must preserve this semantic order:
    Rudder's desired selection.
 10. Adapter-specific bootstrap prompt, session handoff markdown, and wake/chat
     prompt after the instruction prefix or system prompt when the adapter uses
-    stdin-style prompt assembly. Assignee-capable issue prompts include the
-    checkout/409 rail at this scene-specific layer.
+    stdin-style prompt assembly. Checkout-eligible assignee prompts include the
+    checkout/409 rail; explicit current-assignee/current-reviewer mentions
+    include the relationship execution-lease rail at this scene-specific layer.
 
 The agent does not see duplicated resource aliases after the selected resource
 prompt is moved into the instruction prefix. The agent does not see sibling
@@ -362,9 +371,11 @@ The contract is evidenced by:
    - Trigger: an operator mentions an agent in an issue comment, producing
      `issue_comment_mentioned`.
    - Expected state/action: the agent receives the issue/comment prompt and
-     normal instruction stack, but not runtime heartbeat instructions. A plain
-     mention stays attention-scoped; only an explicit handoff can make the
-     checkout/409 assignee rail actionable.
+   normal instruction stack, but not runtime heartbeat instructions. If the
+   target is the current assignee or reviewer, the prompt recognizes that
+   relationship, forbids checkout and implicit status changes, and permits the
+   explicit request in every issue status. Other mentions stay
+   attention-scoped; only an explicit handoff can make checkout relevant.
    - Visible output: run command notes omit the heartbeat instruction note;
      prompt metrics record `runtimeHeartbeatChars = 0`.
    - Evidence: `shouldIncludeRuntimeHeartbeatInstructions` and adapter tests
@@ -414,10 +425,12 @@ The contract is evidenced by:
   `rudder-docs` loading merely because the run is a heartbeat.
 - Issue, review, chat, and automation runs do not receive runtime heartbeat
   instruction.
-- Assignee-capable issue prompts carry the checkout/409 ownership-conflict rail.
-  Custom prompt bodies cannot suppress it. Mention prompts carry it conditionally
-  and do not authorize ownership transfer. Reviewer, reviewer-recovery, generic
-  recovery, default, chat, and automation prompts do not receive it.
+- Checkout-eligible assignee prompts carry the checkout/409
+  ownership-conflict rail. Custom prompt bodies cannot suppress the applicable
+  platform rail. Explicit current-assignee/current-reviewer mentions carry the
+  preserve-status execution-lease rail; collaborator mentions do not authorize
+  ownership transfer. Reviewer, reviewer-recovery, generic recovery, default,
+  chat, and automation prompts do not receive the assignee checkout rail.
 - Missing optional sibling files do not fail the run.
 - This contract does not specify the full natural-language body of every
   prompt template. Prompt wording can change when the semantic layers, order,

@@ -52,15 +52,19 @@ more explicit and easier to scan across a team.
 | `done` | The result and evidence have been accepted |
 
 Use `todo` only when the launch brief contains enough context to begin. If the
-audience is still undecided, keep it in `backlog`. Status communicates who can
-act next; it is not a progress decoration.
+audience is still undecided, keep it in `backlog`. Status communicates the
+normal lifecycle and automatic routing; it is not a progress decoration or a
+permission gate for an explicit request to the current assignee or reviewer.
 
 ## Ownership and checkout
 
-An Issue has one assignee. Agents check out an Issue before implementation so
-Rudder can prevent duplicate active work and keep ownership clear. When two
-Agents need independent responsibilities, split the work into separate Issues
-or sub-Issues.
+An Issue has one assignee. Agents check out an Issue when accepting
+checkout-eligible assignment work so Rudder can prevent duplicate active work
+and keep ownership clear. A direct comment request to the current assignee or
+reviewer instead uses the Issue execution lease, works in any Issue status, and
+preserves status and ownership unless the request explicitly changes them.
+When two Agents need independent responsibilities, split the work into
+separate Issues or sub-Issues.
 
 An ordinary comment records context but does not wake the assignee. Use an
 explicit Agent mention with wake intent when the comment is a directed request.
