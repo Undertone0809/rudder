@@ -169,18 +169,26 @@ export function chatSteerMessageService(db: Db) {
     action: typeof chatControlActions.$inferSelect | null,
   ) {
     if (item.status !== "failed_actionable") return;
+    const providerEvidenceConfirmsAcceptance = (evidence: Record<string, unknown> | null) => (
+      evidence?.receipt === "same_turn"
+      || evidence?.receipt === "late_same_turn_ack"
+    );
     const confirmedPreDeliveryFailure = Boolean(
       action
       && action.actionKind === "steer"
       && action.localDisposition === "failed_actionable"
       && (
         action.providerDisposition === "rejected"
-        || (action.providerDisposition === "not_sent" && !action.providerSentAt)
+        || (action.providerDisposition === "not_sent" && action.providerSentAt === null)
       )
-      && !action.providerAcknowledgedAt
-      && !item.sourceMessageId
-      && !item.deliveredMessageId
-      && !item.continuationMessageId,
+      && action.providerAcknowledgedAt === null
+      && item.deliveryDisposition === "failed_actionable"
+      && item.steeredAt === null
+      && item.sourceMessageId === null
+      && item.deliveredMessageId === null
+      && item.continuationMessageId === null
+      && !providerEvidenceConfirmsAcceptance(action.providerEvidence)
+      && !providerEvidenceConfirmsAcceptance(item.providerEvidence),
     );
     if (!confirmedPreDeliveryFailure) {
       throw conflict("Queued feedback delivery is not safely retryable");
