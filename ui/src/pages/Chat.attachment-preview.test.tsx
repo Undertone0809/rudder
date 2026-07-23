@@ -5715,11 +5715,7 @@ describe("Chat streaming controls", () => {
       }),
     }));
     expect(mockState.sendMessageStream).not.toHaveBeenCalled();
-    expect(mockState.pushToast).toHaveBeenCalledWith({
-      title: "Queued",
-      body: "Added to Queue.",
-      tone: "info",
-    });
+    expect(mockState.pushToast).not.toHaveBeenCalled();
   });
 
   it("edits the original turn directly when a stale generation id is already terminal", async () => {

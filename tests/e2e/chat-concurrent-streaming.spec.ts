@@ -78,6 +78,7 @@ function assertForbiddenQueueCopy(page: Page) {
     expect(page.getByText("Restarting with feedback", { exact: true })).toHaveCount(0),
     expect(page.getByText("Running feedback", { exact: true })).toHaveCount(0),
     expect(page.getByText("Delivery unconfirmed", { exact: true })).toHaveCount(0),
+    expect(page.getByText("Added to Queue.", { exact: true })).toHaveCount(0),
   ]);
 }
 
