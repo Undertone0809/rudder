@@ -1095,6 +1095,7 @@ test.describe("Chat response annotations", () => {
       return (await response.json() as { activeGenerationStatus: string | null })
         .activeGenerationStatus;
     }, { timeout: 15_000 }).toMatch(/starting|running/);
+    await page.getByRole("button", { name: /Worked for/ }).last().click();
     await expect(page.getByText("Reasoning before Steer", { exact: true }))
       .toBeVisible({ timeout: 15_000 });
 
