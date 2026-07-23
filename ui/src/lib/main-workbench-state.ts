@@ -35,6 +35,7 @@ export type MainWorkbenchRuntimeRecord = {
   organizationId: string;
   viewInstanceId: string;
   targetKind: MainWorkbenchTargetKind;
+  target: MainWorkbenchTarget;
   host: MainWorkbenchRuntimeHost;
 };
 
@@ -106,6 +107,15 @@ type MainWorkbenchClaimingPromotion = MainWorkbenchPromotionBase & {
   savedViewId: string;
 };
 
+type MainWorkbenchDetachingPromotion = MainWorkbenchPromotionBase & {
+  status: "detaching";
+  savedViewId: string;
+  rollback: {
+    activeViewInstanceId: string | null;
+    tab: MainWorkbenchTab | null;
+  };
+};
+
 /**
  * Successful promotion has no residual attempt record: the resulting tab and
  * its `main` runtime host are the success state. Failures stay here for retry.
@@ -116,7 +126,8 @@ export type MainWorkbenchPromotion =
   | MainWorkbenchServerFailedPromotion
   | MainWorkbenchCommitUnknownPromotion
   | MainWorkbenchClaimFailedPromotion
-  | MainWorkbenchClaimingPromotion;
+  | MainWorkbenchClaimingPromotion
+  | MainWorkbenchDetachingPromotion;
 
 export type MainWorkbenchOrganizationState = {
   activeViewInstanceId: string | null;
@@ -171,6 +182,13 @@ export type MainWorkbenchAction =
       viewInstanceId: string;
     }
   | {
+      type: "tab/update-target";
+      organizationId: string;
+      runtimeId: string;
+      viewInstanceId: string;
+      target: MainWorkbenchTarget;
+    }
+  | {
       type: "runtime/admit";
       organizationId: string;
       runtime: MainWorkbenchRuntimeDraft;
@@ -182,6 +200,13 @@ export type MainWorkbenchAction =
       host: MainWorkbenchRuntimeHost;
     }
   | {
+      type: "runtime/update-target";
+      organizationId: string;
+      runtimeId: string;
+      viewInstanceId: string;
+      target: MainWorkbenchTarget;
+    }
+  | {
       type: "promotion/start";
       organizationId: string;
       promotionId: string;
@@ -189,11 +214,33 @@ export type MainWorkbenchAction =
       clientMutationId: string;
     }
   | {
-      type: "promotion/succeed";
+      type: "promotion/server-commit";
       organizationId: string;
       promotionId: string;
       savedViewId: string;
       expectedSourceRevision: number;
+    }
+  | {
+      type: "promotion/claim";
+      organizationId: string;
+      promotionId: string;
+      savedViewId: string;
+      expectedSourceRevision: number;
+    }
+  | {
+      type: "promotion/detach-succeed";
+      organizationId: string;
+      promotionId: string;
+      savedViewId: string;
+      expectedSourceRevision: number;
+    }
+  | {
+      type: "promotion/detach-fail";
+      organizationId: string;
+      promotionId: string;
+      savedViewId: string;
+      expectedSourceRevision: number;
+      error: string;
     }
   | {
       type: "promotion/server-fail";
@@ -307,6 +354,8 @@ function runtimeCanUseHost(
   if (
     !runtime.id
     || !runtime.viewInstanceId
+    || runtime.target.viewInstanceId !== runtime.viewInstanceId
+    || runtime.target.kind !== runtime.targetKind
     || (runtime.host.kind === "main" && runtime.host.organizationId !== organizationId)
   ) {
     return false;
@@ -358,6 +407,7 @@ function withRuntime(
       [runtime.id]: {
         ...runtime,
         organizationId,
+        target: existing?.target ?? cloneTarget(runtime.target),
         host: cloneRuntimeHost(runtime.host),
       },
     },
@@ -470,6 +520,7 @@ function openTab(
     id: tab.runtimeId,
     viewInstanceId: tab.viewInstanceId,
     targetKind: tab.target.kind,
+    target: tab.target,
     host: { kind: "main", organizationId },
   };
   if (!runtimeCanUseHost(organization, organizationId, runtime)) {
@@ -577,6 +628,7 @@ function closeTab(
     id: tab.runtimeId,
     viewInstanceId: tab.viewInstanceId,
     targetKind: tab.target.kind,
+    target: organization.runtimesById[tab.runtimeId]?.target ?? tab.target,
     host: { kind: "disposed" },
   });
   const activeViewInstanceId = organization.activeViewInstanceId === viewInstanceId
@@ -625,10 +677,12 @@ function promotionIsInFlight(
   promotion: MainWorkbenchPromotion,
 ): promotion is MainWorkbenchPendingPromotion
   | MainWorkbenchReconcilingPromotion
-  | MainWorkbenchClaimingPromotion {
+  | MainWorkbenchClaimingPromotion
+  | MainWorkbenchDetachingPromotion {
   return promotion.status === "pending"
     || promotion.status === "reconciling"
-    || promotion.status === "claiming";
+    || promotion.status === "claiming"
+    || promotion.status === "detaching";
 }
 
 function startPromotion(
@@ -669,6 +723,7 @@ function startPromotion(
     id: runtime.id,
     viewInstanceId: runtime.viewInstanceId,
     targetKind: runtime.targetKind,
+    target: runtime.target,
     host: { kind: "transferring" },
   });
   return {
@@ -697,6 +752,7 @@ function restorePromotionSourceHost(
     id: runtime.id,
     viewInstanceId: runtime.viewInstanceId,
     targetKind: runtime.targetKind,
+    target: runtime.target,
     host: { kind: "side", contextKey: source.originContextKey },
   });
 }
@@ -712,7 +768,11 @@ function terminalPromotion(
   const promotion = organization.promotionsById[promotionId];
   if (
     !promotion
-    || !promotionIsInFlight(promotion)
+    || (
+      promotion.status !== "pending"
+      && promotion.status !== "reconciling"
+      && promotion.status !== "claiming"
+    )
     || promotion.source.sourceRevision !== expectedSourceRevision
   ) {
     return null;
@@ -758,6 +818,7 @@ function retryPromotion(
     id: runtime.id,
     viewInstanceId: runtime.viewInstanceId,
     targetKind: runtime.targetKind,
+    target: runtime.target,
     host: { kind: "transferring" },
   });
   return {
@@ -807,6 +868,7 @@ function reconcilePromotion(
     id: runtime.id,
     viewInstanceId: runtime.viewInstanceId,
     targetKind: runtime.targetKind,
+    target: runtime.target,
     host: { kind: "transferring" },
   });
   return {
@@ -856,6 +918,7 @@ function retryPromotionClaim(
     id: runtime.id,
     viewInstanceId: runtime.viewInstanceId,
     targetKind: runtime.targetKind,
+    target: runtime.target,
     host: { kind: "transferring" },
   });
   return {
@@ -872,6 +935,41 @@ function retryPromotionClaim(
           ...promotion.source,
           sourceRevision: nextSourceRevision,
         },
+      },
+    },
+  };
+}
+
+function serverCommitPromotion(
+  organization: MainWorkbenchOrganizationState,
+  organizationId: string,
+  promotionId: string,
+  savedViewId: string,
+  expectedSourceRevision: number,
+): MainWorkbenchOrganizationState {
+  const promotion = terminalPromotion(
+    organization,
+    promotionId,
+    expectedSourceRevision,
+  );
+  if (
+    !promotion
+    || promotion.status === "claiming"
+    || !savedViewId
+  ) {
+    return organization;
+  }
+  return {
+    ...organization,
+    promotionsById: {
+      ...organization.promotionsById,
+      [promotionId]: {
+        id: promotion.id,
+        organizationId,
+        clientMutationId: promotion.clientMutationId,
+        source: promotion.source,
+        status: "claiming",
+        savedViewId,
       },
     },
   };
@@ -960,8 +1058,9 @@ function claimFailPromotion(
   );
   if (
     !promotion
+    || promotion.status !== "claiming"
     || !savedViewId
-    || (promotion.status === "claiming" && promotion.savedViewId !== savedViewId)
+    || promotion.savedViewId !== savedViewId
   ) {
     return organization;
   }
@@ -1001,9 +1100,7 @@ function clearPromotion(
 function promotionClaimConflict(
   organization: MainWorkbenchOrganizationState,
   organizationId: string,
-  promotion: MainWorkbenchPendingPromotion
-    | MainWorkbenchReconcilingPromotion
-    | MainWorkbenchClaimingPromotion,
+  promotion: MainWorkbenchClaimingPromotion,
   savedViewId: string,
   error: string,
 ): MainWorkbenchOrganizationState {
@@ -1029,7 +1126,34 @@ function promotionClaimConflict(
   };
 }
 
-function succeedPromotion(
+function cloneTab(tab: MainWorkbenchTab): MainWorkbenchTab {
+  return {
+    ...tab,
+    target: cloneTarget(tab.target),
+  };
+}
+
+function withDetachingPromotion(
+  organization: MainWorkbenchOrganizationState,
+  organizationId: string,
+  promotion: MainWorkbenchClaimingPromotion,
+  rollback: MainWorkbenchDetachingPromotion["rollback"],
+): MainWorkbenchOrganizationState {
+  return {
+    ...organization,
+    promotionsById: {
+      ...organization.promotionsById,
+      [promotion.id]: {
+        ...promotion,
+        organizationId,
+        status: "detaching",
+        rollback,
+      },
+    },
+  };
+}
+
+function claimPromotion(
   organization: MainWorkbenchOrganizationState,
   organizationId: string,
   promotionId: string,
@@ -1043,12 +1167,19 @@ function succeedPromotion(
   );
   if (
     !promotion
+    || promotion.status !== "claiming"
     || !savedViewId
-    || (promotion.status === "claiming" && promotion.savedViewId !== savedViewId)
+    || promotion.savedViewId !== savedViewId
   ) {
     return organization;
   }
 
+  const rollback: MainWorkbenchDetachingPromotion["rollback"] = {
+    activeViewInstanceId: organization.activeViewInstanceId,
+    tab: organization.tabsByViewInstanceId[promotion.source.viewInstanceId]
+      ? cloneTab(organization.tabsByViewInstanceId[promotion.source.viewInstanceId]!)
+      : null,
+  };
   const exactTab = organization.tabsByViewInstanceId[promotion.source.viewInstanceId];
   const savedBinding = tabBoundToSavedView(organization, savedViewId);
   if (savedBinding && savedBinding.viewInstanceId !== promotion.source.viewInstanceId) {
@@ -1094,6 +1225,7 @@ function succeedPromotion(
         id: sourceRuntime.id,
         viewInstanceId: sourceRuntime.viewInstanceId,
         targetKind: sourceRuntime.targetKind,
+        target: sourceRuntime.target,
         host: { kind: "main", organizationId },
       });
     } else {
@@ -1117,6 +1249,7 @@ function succeedPromotion(
         id: sourceRuntime.id,
         viewInstanceId: sourceRuntime.viewInstanceId,
         targetKind: sourceRuntime.targetKind,
+        target: sourceRuntime.target,
         host: { kind: "main", organizationId },
       });
       if (claimed.runtimesById[sourceRuntime.id]?.host.kind !== "main") {
@@ -1142,10 +1275,17 @@ function succeedPromotion(
               ...exactTab,
               savedViewId,
               runtimeId: claimedRuntimeId,
+              target: cloneTarget(promotion.source.target),
+              originContextKey: promotion.source.originContextKey,
             },
           },
     };
-    return clearPromotion(claimed, promotionId);
+    return withDetachingPromotion(
+      claimed,
+      organizationId,
+      promotion,
+      rollback,
+    );
   }
 
   const opened = openTab(
@@ -1170,7 +1310,171 @@ function succeedPromotion(
         : "main_host_claim_rejected",
     );
   }
-  return clearPromotion(opened.organization, promotionId);
+  return withDetachingPromotion(
+    opened.organization,
+    organizationId,
+    promotion,
+    rollback,
+  );
+}
+
+function detachingPromotion(
+  organization: MainWorkbenchOrganizationState,
+  promotionId: string,
+  savedViewId: string,
+  expectedSourceRevision: number,
+): MainWorkbenchDetachingPromotion | null {
+  const promotion = organization.promotionsById[promotionId];
+  if (
+    !promotion
+    || promotion.status !== "detaching"
+    || promotion.savedViewId !== savedViewId
+    || promotion.source.sourceRevision !== expectedSourceRevision
+  ) {
+    return null;
+  }
+  const runtime = organization.runtimesById[promotion.source.runtimeId];
+  const tab = organization.tabsByViewInstanceId[promotion.source.viewInstanceId];
+  if (
+    !runtime
+    || runtime.viewInstanceId !== promotion.source.viewInstanceId
+    || runtime.host.kind !== "main"
+    || runtime.host.organizationId !== promotion.organizationId
+    || !tab
+    || tab.runtimeId !== runtime.id
+    || tab.savedViewId !== savedViewId
+  ) {
+    return null;
+  }
+  return promotion;
+}
+
+function detachSucceedPromotion(
+  organization: MainWorkbenchOrganizationState,
+  promotionId: string,
+  savedViewId: string,
+  expectedSourceRevision: number,
+): MainWorkbenchOrganizationState {
+  const promotion = detachingPromotion(
+    organization,
+    promotionId,
+    savedViewId,
+    expectedSourceRevision,
+  );
+  return promotion ? clearPromotion(organization, promotion.id) : organization;
+}
+
+function detachFailPromotion(
+  organization: MainWorkbenchOrganizationState,
+  organizationId: string,
+  promotionId: string,
+  savedViewId: string,
+  expectedSourceRevision: number,
+  error: string,
+): MainWorkbenchOrganizationState {
+  const promotion = detachingPromotion(
+    organization,
+    promotionId,
+    savedViewId,
+    expectedSourceRevision,
+  );
+  if (!promotion) return organization;
+
+  const restoredHost = restorePromotionSourceHost(
+    organization,
+    organizationId,
+    promotion.source,
+  );
+  const tabsByViewInstanceId = {
+    ...restoredHost.tabsByViewInstanceId,
+  };
+  let tabOrder = restoredHost.tabOrder;
+  if (promotion.rollback.tab) {
+    tabsByViewInstanceId[promotion.source.viewInstanceId] = cloneTab(
+      promotion.rollback.tab,
+    );
+  } else {
+    delete tabsByViewInstanceId[promotion.source.viewInstanceId];
+    tabOrder = tabOrder.filter(
+      (viewInstanceId) => viewInstanceId !== promotion.source.viewInstanceId,
+    );
+  }
+  return {
+    ...restoredHost,
+    activeViewInstanceId: promotion.rollback.activeViewInstanceId,
+    tabOrder,
+    tabsByViewInstanceId,
+    promotionsById: {
+      ...restoredHost.promotionsById,
+      [promotionId]: {
+        id: promotion.id,
+        organizationId,
+        clientMutationId: promotion.clientMutationId,
+        source: promotion.source,
+        status: "claim_failed",
+        savedViewId,
+        error,
+      },
+    },
+  };
+}
+
+function updateRuntimeTarget(
+  organization: MainWorkbenchOrganizationState,
+  runtimeId: string,
+  viewInstanceId: string,
+  target: MainWorkbenchTarget,
+): MainWorkbenchOrganizationState {
+  const runtime = organization.runtimesById[runtimeId];
+  if (
+    !runtime
+    || runtime.viewInstanceId !== viewInstanceId
+    || target.viewInstanceId !== viewInstanceId
+    || runtime.targetKind !== target.kind
+  ) {
+    return organization;
+  }
+  return {
+    ...organization,
+    runtimesById: {
+      ...organization.runtimesById,
+      [runtimeId]: {
+        ...runtime,
+        target: cloneTarget(target),
+      },
+    },
+  };
+}
+
+function updateTabTarget(
+  organization: MainWorkbenchOrganizationState,
+  runtimeId: string,
+  viewInstanceId: string,
+  target: MainWorkbenchTarget,
+): MainWorkbenchOrganizationState {
+  const tab = organization.tabsByViewInstanceId[viewInstanceId];
+  const runtime = organization.runtimesById[runtimeId];
+  if (
+    !tab
+    || tab.runtimeId !== runtimeId
+    || tab.target.kind !== target.kind
+    || target.viewInstanceId !== viewInstanceId
+    || !runtime
+    || runtime.viewInstanceId !== viewInstanceId
+    || runtime.targetKind !== target.kind
+  ) {
+    return organization;
+  }
+  return {
+    ...organization,
+    tabsByViewInstanceId: {
+      ...organization.tabsByViewInstanceId,
+      [viewInstanceId]: {
+        ...tab,
+        target: cloneTarget(target),
+      },
+    },
+  };
 }
 
 export function mainWorkbenchReducer(
@@ -1225,6 +1529,15 @@ export function mainWorkbenchReducer(
       return updateOrganization(state, action.organizationId, (organization) => (
         closeTab(organization, action.organizationId, action.viewInstanceId)
       ));
+    case "tab/update-target":
+      return updateOrganization(state, action.organizationId, (organization) => (
+        updateTabTarget(
+          organization,
+          action.runtimeId,
+          action.viewInstanceId,
+          action.target,
+        )
+      ));
     case "runtime/admit":
       return updateOrganization(state, action.organizationId, (organization) => (
         withRuntime(organization, action.organizationId, action.runtime)
@@ -1237,9 +1550,19 @@ export function mainWorkbenchReducer(
           id: runtime.id,
           viewInstanceId: runtime.viewInstanceId,
           targetKind: runtime.targetKind,
+          target: runtime.target,
           host: action.host,
         });
       });
+    case "runtime/update-target":
+      return updateOrganization(state, action.organizationId, (organization) => (
+        updateRuntimeTarget(
+          organization,
+          action.runtimeId,
+          action.viewInstanceId,
+          action.target,
+        )
+      ));
     case "promotion/start":
       return updateOrganization(state, action.organizationId, (organization) => (
         startPromotion(
@@ -1250,14 +1573,44 @@ export function mainWorkbenchReducer(
           action.clientMutationId,
         )
       ));
-    case "promotion/succeed":
+    case "promotion/server-commit":
       return updateOrganization(state, action.organizationId, (organization) => (
-        succeedPromotion(
+        serverCommitPromotion(
           organization,
           action.organizationId,
           action.promotionId,
           action.savedViewId,
           action.expectedSourceRevision,
+        )
+      ));
+    case "promotion/claim":
+      return updateOrganization(state, action.organizationId, (organization) => (
+        claimPromotion(
+          organization,
+          action.organizationId,
+          action.promotionId,
+          action.savedViewId,
+          action.expectedSourceRevision,
+        )
+      ));
+    case "promotion/detach-succeed":
+      return updateOrganization(state, action.organizationId, (organization) => (
+        detachSucceedPromotion(
+          organization,
+          action.promotionId,
+          action.savedViewId,
+          action.expectedSourceRevision,
+        )
+      ));
+    case "promotion/detach-fail":
+      return updateOrganization(state, action.organizationId, (organization) => (
+        detachFailPromotion(
+          organization,
+          action.organizationId,
+          action.promotionId,
+          action.savedViewId,
+          action.expectedSourceRevision,
+          action.error,
         )
       ));
     case "promotion/server-fail":
