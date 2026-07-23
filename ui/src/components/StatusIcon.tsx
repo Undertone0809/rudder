@@ -31,7 +31,7 @@ function IssueStatusGlyph({ status, className }: { status: string; className?: s
       className={cn("inline-flex h-4 w-4 shrink-0 items-center justify-center", colorClass, className)}
       aria-hidden="true"
     >
-      <svg viewBox="0 0 16 16" className="h-full w-full overflow-visible" fill="none">
+      <svg viewBox="0 0 16 16" className="h-full w-full overflow-visible text-current" fill="none">
         {normalizedStatus === "backlog" && (
           <circle
             data-slot="status-backlog-ring"
