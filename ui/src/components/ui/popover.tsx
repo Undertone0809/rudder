@@ -1,6 +1,7 @@
 import { Popover as PopoverPrimitive } from "radix-ui";
 import * as React from "react";
 
+import { LiquidGlassSurface } from "@/components/ui/liquid-glass-surface";
 import { cn } from "@/lib/utils";
 
 function Popover({
@@ -17,6 +18,7 @@ function PopoverTrigger({
 
 function PopoverContent({
   className,
+  children,
   align = "center",
   sideOffset = 4,
   disablePortal = false,
@@ -28,11 +30,14 @@ function PopoverContent({
       align={align}
       sideOffset={sideOffset}
       className={cn(
-        "motion-surface-pop bg-popover text-popover-foreground z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-md border p-4 shadow-md outline-hidden",
+        "liquid-glass-host motion-surface-pop bg-popover text-popover-foreground z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-md border p-4 shadow-md outline-hidden",
         className
       )}
       {...props}
-    />
+    >
+      <LiquidGlassSurface variant="menu" />
+      {children}
+    </PopoverPrimitive.Content>
   )
   if (disablePortal) return content
   return <PopoverPrimitive.Portal>{content}</PopoverPrimitive.Portal>

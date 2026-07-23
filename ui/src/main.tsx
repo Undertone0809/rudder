@@ -25,6 +25,7 @@ import "./index.css";
 import "./motion.css";
 import { initPluginBridge } from "./plugins/bridge-init";
 import { PluginLauncherProvider } from "./plugins/launchers";
+import "./z-liquid-glass.css";
 
 const E2E_CHILDREN_ONLY_ERROR_MESSAGE = "React.Children.only expected to receive a single React element child.";
 
