@@ -34,6 +34,7 @@ import {
   COMPANY_LOGO_FILE_NAME,
   exportPortableProjectExecutionWorkspacePolicy,
   isPlainRecord,
+  materializePortableRuntimeConfig,
   normalizeSkillKey,
   normalizeSkillSlug,
   RUNTIME_DEFAULT_RULES,
@@ -460,7 +461,7 @@ export function createOrganizationPortabilityExportHandlers(context: ExportConte
           },
         ) as Record<string, unknown>;
         const portableRuntimeConfig = pruneDefaultLikeValue(
-          normalizePortableConfig(agent.runtimeConfig),
+          normalizePortableConfig(materializePortableRuntimeConfig(agent.runtimeConfig)),
           {
             dropFalseBooleans: true,
             defaultRules: RUNTIME_DEFAULT_RULES,

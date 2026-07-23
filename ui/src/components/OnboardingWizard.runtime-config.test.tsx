@@ -307,6 +307,11 @@ describe("OnboardingWizard runtime config", () => {
             dangerouslySkipPermissions: false,
             permissionMode: "auto",
           }),
+          runtimeConfig: {
+            heartbeat: expect.objectContaining({
+              maxConcurrentRuns: 8,
+            }),
+          },
         }));
       });
     });
