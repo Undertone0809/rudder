@@ -113,12 +113,28 @@ export function chatMessageJumpTargetFromHref(href: string) {
   }
 }
 
-export function sideChatTargetFromMessage(conversation: ChatConversation, message: ChatMessage) {
+export function sideChatTargetFromMessage(
+  conversation: ChatConversation,
+  message: ChatMessage,
+  annotation?: ChatInlineAnnotationInput,
+) {
+  const ownedAnnotation = annotation
+    ? {
+        ...annotation,
+        ...(annotation.attachmentIds
+          ? { attachmentIds: [...annotation.attachmentIds] }
+          : {}),
+        ...(annotation.attachmentFileIndexes
+          ? { attachmentFileIndexes: [...annotation.attachmentFileIndexes] }
+          : {}),
+      }
+    : null;
   return {
     kind: "side_chat" as const,
     sourceConversationId: conversation.id,
     sourceMessageId: message.id,
-    sourcePreview: message.body,
+    sourcePreview: ownedAnnotation?.selectedText ?? message.body,
+    ...(ownedAnnotation ? { inlineAnnotations: [ownedAnnotation] } : {}),
     conversationId: null,
     clientMutationId: crypto.randomUUID(),
     label: "Side Chat",

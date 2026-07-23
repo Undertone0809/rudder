@@ -2191,6 +2191,7 @@ export function ChatMessageItem({
   skillReferences: MarkdownSkillReferencePreview[];
   inlineEdit?: {
     draft: string;
+    canSubmitWithoutBody?: boolean;
     disabled: boolean;
     mentions: MentionOption[];
     surfaceRef: RefObject<HTMLDivElement | null>;
@@ -2515,7 +2516,13 @@ export function ChatMessageItem({
               <Button
                 type="button"
                 size="sm"
-                disabled={inlineEdit.disabled || inlineEdit.draft.trim().length === 0}
+                disabled={
+                  inlineEdit.disabled
+                  || (
+                    inlineEdit.draft.trim().length === 0
+                    && !inlineEdit.canSubmitWithoutBody
+                  )
+                }
                 onClick={inlineEdit.onSubmit}
               >
                 Send

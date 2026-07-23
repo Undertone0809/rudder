@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import { chatsApi } from "@/api/chats";
+import type { ChatConversation, ChatInlineAnnotationInput, ChatMessage } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ChatConversation, ChatInlineAnnotationInput } from "@rudderhq/shared";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,6 +10,7 @@ import {
   canQueueComposerDraft,
   createQueuedComposerMessage,
   queuedMessagePayloadForBodyEdit,
+  sideChatTargetFromMessage,
   useChatDraftQueries,
 } from "./Chat.workspace-helpers";
 
@@ -209,6 +210,38 @@ describe("canQueueComposerDraft", () => {
       pendingRegularFileCount: 1,
       newConversationSendInFlight: false,
     })).toBe(false);
+  });
+});
+
+describe("sideChatTargetFromMessage", () => {
+  it("owns an exact provisional annotation without mutating the source message", () => {
+    const conversation = {
+      id: "10000000-0000-4000-8000-000000000001",
+    } as ChatConversation;
+    const sourceMessage = {
+      id: "20000000-0000-4000-8000-000000000001",
+      body: "The full assistant response.",
+    } as unknown as ChatMessage;
+    const annotation: ChatInlineAnnotationInput = {
+      id: "30000000-0000-4000-8000-000000000001",
+      selectedText: "assistant response",
+      comment: null,
+      sourceConversationId: conversation.id,
+      sourceMessageId: sourceMessage.id,
+      surface: "assistant_body",
+      sourceHash: "a".repeat(64),
+      start: 9,
+      end: 27,
+      prefix: "The full ",
+      suffix: ".",
+    };
+
+    const target = sideChatTargetFromMessage(conversation, sourceMessage, annotation);
+
+    expect(target.sourcePreview).toBe(annotation.selectedText);
+    expect(target.inlineAnnotations).toEqual([annotation]);
+    expect(target.inlineAnnotations?.[0]).not.toBe(annotation);
+    expect(sourceMessage.body).toBe("The full assistant response.");
   });
 });
 

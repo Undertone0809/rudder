@@ -11,16 +11,16 @@ import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
 import { AgentIcon } from "@/components/AgentIconPicker";
-import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
-import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
-import { ProjectIcon } from "@/components/ProjectIdentity";
-import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import {
   EditableResponseAnnotationsCard,
   ResponseAnnotationCountChip,
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
 import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
+import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
+import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
+import { ProjectIcon } from "@/components/ProjectIdentity";
+import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import type { TranscriptAgentInspection } from "@/components/transcript/RunTranscriptView";
 import { Button } from "@/components/ui/button";
 import {
@@ -133,6 +133,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/li
 import { latestSideChatAnchor } from "@/lib/side-chat";
 import { cn } from "@/lib/utils";
 import {
+  chatInlineAnnotationsFromStructuredPayload,
   type ChatConversation,
   type ChatInlineAnnotation,
   type ChatInlineAnnotationInput,
@@ -1170,13 +1171,20 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   ) => {
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
       return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined && options?.inlineAnnotationsOverride === undefined; const body = (options?.bodyOverride ?? readComposerDraft()).trim();
+    const editUserMessageId = options?.editUserMessageIdOverride ?? null;
+    const editTargetMessage = editUserMessageId
+      ? rawMessages.find((message) => message.id === editUserMessageId) ?? null
+      : null;
+    const persistedEditAnnotations = editTargetMessage
+      ? chatInlineAnnotationsFromStructuredPayload(editTargetMessage.structuredPayload)
+      : [];
     const regularFilesToUpload = [...(options?.filesOverride ?? pendingFiles)];
     const serializedAnnotations = usesComposerState
       ? serializeChatResponseAnnotations(responseAnnotationState, {
         fileIndexOffset: regularFilesToUpload.length,
       })
       : {
-        inlineAnnotations: options?.inlineAnnotationsOverride ?? [],
+        inlineAnnotations: options?.inlineAnnotationsOverride ?? persistedEditAnnotations,
         files: [] as File[],
       };
     if (!canSubmitChatResponseAnnotations(
@@ -1187,7 +1195,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           body,
           files: regularFilesToUpload,
           inlineAnnotations: chatResponseAnnotationsForDraft(responseAnnotationState),
-          orgId: draftStorageOrgId, conversationId: draftStorageConversationId, } : null; const editUserMessageId = options?.editUserMessageIdOverride ?? null; const editTargetMessage = editUserMessageId ? rawMessages.find((message) => message.id === editUserMessageId) ?? null : null; let conversation = options?.conversationOverride ?? selectedConversation; let activeChatId: string | null = null; let activeStreamKey: string | null = null; let newConversationLockAcquired = false; let chatSendLockAcquired = false; let userMessageAcknowledged = false;
+          orgId: draftStorageOrgId, conversationId: draftStorageConversationId, } : null; let conversation = options?.conversationOverride ?? selectedConversation; let activeChatId: string | null = null; let activeStreamKey: string | null = null; let newConversationLockAcquired = false; let chatSendLockAcquired = false; let userMessageAcknowledged = false;
     try {
       if (!conversation && conversationId) { conversation = await chatsApi.get(conversationId); upsertConversation(conversation);
         upsertMessengerThreadSummary(conversation); }
@@ -1740,10 +1748,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!sourceMessage) return;
     openSidePanelTargetForContext(
       resolveCurrentSidePanelChatContextKey(),
-      {
-        ...sideChatTargetFromMessage(selectedConversation, sourceMessage),
-        sourcePreview: pending.anchor.selectedText,
-      },
+      sideChatTargetFromMessage(
+        selectedConversation,
+        sourceMessage,
+        pending.anchor as ChatInlineAnnotationInput,
+      ),
     );
     setPendingResponseAnnotationSelection(null);
     window.getSelection()?.removeAllRanges();
@@ -2161,11 +2170,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       } catch {
         pushToast({ title: "Could not copy", tone: "error" }); } }, [pushToast], ); const beginEditUserMessage = useCallback((message: ChatMessage) => { setInlineEditUserMessageId(message.id); setInlineEditDraft(message.body); closeComposerContextMenus();
     requestAnimationFrame(() => { inlineEditEditorRef.current?.focus(); }); }, [closeComposerContextMenus]); const cancelInlineEditUserMessage = useCallback(() => { setInlineEditUserMessageId(null); setInlineEditDraft(""); }, []); const submitInlineEditUserMessage = useCallback((message: ChatMessage) => { if (!selectedConversation) return; const body = inlineEditDraft.trim();
-    if (!body) { pushToast({ title: "Message cannot be empty", tone: "error" });
+    const persistedAnnotations = chatInlineAnnotationsFromStructuredPayload(message.structuredPayload);
+    if (!body && persistedAnnotations.length === 0) { pushToast({ title: "Message cannot be empty", tone: "error" });
       return; } setInlineEditUserMessageId(null); setInlineEditDraft(""); setBranchPreview(null);
     void sendMessage({
       bodyOverride: body,
       filesOverride: [],
+      inlineAnnotationsOverride: persistedAnnotations,
       conversationOverride: selectedConversation,
       editUserMessageIdOverride: message.id,
     }); }, [inlineEditDraft, pushToast, selectedConversation, sendMessage]); const handleProposalApprovalAction = (
@@ -3634,6 +3645,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   issueCreatedMessage={issueCreatedMessage}
                                   inlineEdit={inlineEditUserMessageId === message.id ? {
                                     draft: inlineEditDraft,
+                                    canSubmitWithoutBody: (
+                                      chatInlineAnnotationsFromStructuredPayload(
+                                        message.structuredPayload,
+                                      ).length > 0
+                                    ),
                                     disabled: controlsDisabled || selectedConversationHasActiveReply || composerUnavailable || selectedConversationExternalBound,
                                     mentions: mentionOptions,
                                     surfaceRef: inlineEditSurfaceRef,

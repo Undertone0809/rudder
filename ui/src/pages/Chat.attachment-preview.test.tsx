@@ -737,6 +737,21 @@ function message(overrides: Partial<ChatMessage>): ChatMessage {
   };
 }
 
+const persistedResponseAnnotation = {
+  id: "30000000-0000-4000-8000-000000000001",
+  selectedText: "Only failed deliveries show Retry.",
+  comment: "Please verify this.",
+  sourceConversationId: "10000000-0000-4000-8000-000000000001",
+  sourceMessageId: "20000000-0000-4000-8000-000000000001",
+  surface: "assistant_body" as const,
+  sourceHash: "a".repeat(64),
+  start: 20,
+  end: 54,
+  prefix: "successful. ",
+  suffix: " Continue.",
+  attachmentIds: [],
+};
+
 function issue(overrides: Partial<Issue> = {}): Issue {
   return {
     id: "issue-1",
@@ -5753,6 +5768,89 @@ describe("Chat streaming controls", () => {
       expect.objectContaining({ editUserMessageId: "user-message-1" }),
     );
     expect(mockState.createQueuedMessage).not.toHaveBeenCalled();
+  });
+
+  it("preserves persisted annotations while editing a non-empty user turn", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "user-message-annotated",
+        body: "Please draft a plan.",
+        chatTurnId: "turn-annotated",
+        structuredPayload: { inlineAnnotations: [persistedResponseAnnotation] },
+      })],
+    };
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Edit message");
+    const inlineEditor = container.querySelector<HTMLElement>(
+      "[data-testid='chat-inline-message-editor']",
+    );
+    expect(inlineEditor).not.toBeNull();
+    await clickEnabledButton(inlineEditor!, "Send");
+
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    expect(mockState.sendMessageStream).toHaveBeenCalledWith(
+      "chat-1",
+      "Please draft a plan.",
+      expect.objectContaining({
+        editUserMessageId: "user-message-annotated",
+        inlineAnnotations: [persistedResponseAnnotation],
+      }),
+    );
+  });
+
+  it("allows editing and retrying an annotation-only user turn", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "user-message-annotation-only",
+          body: "",
+          chatTurnId: "turn-annotation-only",
+          structuredPayload: { inlineAnnotations: [persistedResponseAnnotation] },
+        }),
+        message({
+          id: "assistant-message-annotation-only",
+          role: "assistant",
+          body: "The response failed.",
+          status: "failed",
+          chatTurnId: "turn-annotation-only",
+          createdAt: new Date("2026-05-12T09:01:01.000Z"),
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Edit message");
+    const inlineEditor = container.querySelector<HTMLElement>(
+      "[data-testid='chat-inline-message-editor']",
+    )!;
+    const sendButton = Array.from(inlineEditor.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.trim() === "Send");
+    expect(sendButton?.disabled).toBe(false);
+    await clickEnabledButton(inlineEditor, "Send");
+
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    expect(mockState.sendMessageStream).toHaveBeenLastCalledWith(
+      "chat-1",
+      "",
+      expect.objectContaining({
+        editUserMessageId: "user-message-annotation-only",
+        inlineAnnotations: [persistedResponseAnnotation],
+      }),
+    );
+
+    mockState.sendMessageStream.mockClear();
+    const retried = renderChat();
+    await clickEnabledButton(retried.container, "Retry");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    expect(mockState.sendMessageStream).toHaveBeenLastCalledWith(
+      "chat-1",
+      "",
+      expect.objectContaining({
+        editUserMessageId: "user-message-annotation-only",
+        inlineAnnotations: [persistedResponseAnnotation],
+      }),
+    );
   });
 
   it("keeps an original-turn edit out of Queue while the current response is active", async () => {
