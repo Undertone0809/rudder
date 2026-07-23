@@ -1,4 +1,5 @@
 import {
+  activityLog,
   agentCustomIntegrationBindings,
   agents,
   applyPendingMigrations,
@@ -15,13 +16,17 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
+import express from "express";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../middleware/index.js";
+import { secretRoutes } from "../routes/secrets.js";
 import type { ManagedMcpClient, ManagedMcpClientOptions } from "../services/mcp/managed-client.js";
 import { managedMcpConnectionService } from "../services/mcp/managed-connections.js";
 import { secretService } from "../services/secrets.js";
@@ -127,6 +132,16 @@ function clientWithTools(
   } satisfies ManagedMcpClient;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
 async function holdConnectionRowLock(
   db: ReturnType<typeof createDb>,
   connectionId: string,
@@ -197,6 +212,7 @@ describe("managedMcpConnectionService", () => {
     await db.delete(agentCustomIntegrationBindings);
     await db.delete(customIntegrationTools);
     await db.delete(mcpConnections);
+    await db.delete(activityLog);
     await db.delete(organizationSecretVersions);
     await db.delete(organizationSecrets);
     await db.delete(agents);
@@ -330,6 +346,95 @@ describe("managedMcpConnectionService", () => {
     expect((await svc.get(orgId, created.id)).hasCredentials).toBe(false);
     expect((await db.select().from(organizationSecrets))).toHaveLength(0);
     expect((await db.select().from(organizationSecretVersions))).toHaveLength(0);
+    const audits = await db.select().from(activityLog)
+      .where(eq(activityLog.entityId, created.id));
+    expect(audits.filter((audit) => audit.action === "mcp_connection.created")).toHaveLength(1);
+    expect(audits.filter((audit) => audit.action === "mcp_connection.updated")).toHaveLength(3);
+    expect(audits.find((audit) => audit.action === "mcp_connection.created")).toMatchObject({
+      actorType: "user",
+      actorId: "owner-1",
+      details: {
+        provider: "custom",
+        transport: "streamable_http",
+        status: "draft",
+      },
+    });
+    expect(JSON.stringify(audits)).not.toContain("super-secret-value");
+    expect(JSON.stringify(audits)).not.toContain("rotated-secret-value");
+    expect(JSON.stringify(audits)).not.toContain("safeConfig");
+  });
+
+  it("hides managed MCP credentials from public secret mutations while internal discovery can resolve them", async () => {
+    const orgId = await seedOrg(db);
+    const client = clientWithTools([]);
+    createClient.mockResolvedValue(client);
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "purpose-isolated",
+      displayName: "Purpose isolated",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: {
+        url: "https://mcp.example.test/mcp",
+        secretHeaderNames: ["Authorization"],
+      },
+      secrets: { headers: { Authorization: "Bearer managed-only-secret" } },
+    }, { userId: "owner-1" });
+    const [storedConnection] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    const [storedSecret] = await db.select().from(organizationSecrets)
+      .where(eq(organizationSecrets.id, storedConnection!.credentialSecretId!));
+    expect((storedSecret as { purpose?: string }).purpose).toBe("managed_mcp_connection");
+    expect(connection).not.toHaveProperty("purpose");
+
+    const publicSecrets = secretService(db);
+    expect(await publicSecrets.list(orgId)).toEqual([]);
+    expect(await publicSecrets.getById(storedSecret!.id)).toBeNull();
+    await expect(publicSecrets.rotate(
+      storedSecret!.id,
+      { value: "public-rotation-must-fail" },
+    )).rejects.toThrow(/not found/i);
+    await expect(publicSecrets.update(
+      storedSecret!.id,
+      { description: "public-update-must-fail" },
+    )).rejects.toThrow(/not found/i);
+    expect(await publicSecrets.remove(storedSecret!.id)).toBeNull();
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as any).actor = {
+        type: "board",
+        userId: "member-1",
+        orgIds: [orgId],
+        source: "session",
+        isInstanceAdmin: false,
+      };
+      next();
+    });
+    app.use("/api", secretRoutes(db));
+    app.use(errorHandler);
+    const listResponse = await request(app).get(`/api/orgs/${orgId}/secrets`);
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body).toEqual([]);
+    expect((await request(app)
+      .post(`/api/secrets/${storedSecret!.id}/rotate`)
+      .send({ value: "member-rotation-must-fail" })).status).toBe(404);
+    expect((await request(app)
+      .patch(`/api/secrets/${storedSecret!.id}`)
+      .send({ description: "member-update-must-fail" })).status).toBe(404);
+    expect((await request(app).delete(`/api/secrets/${storedSecret!.id}`)).status).toBe(404);
+    expect((await request(app)
+      .post(`/api/orgs/${orgId}/secrets`)
+      .send({
+        name: "forged-purpose",
+        value: "forged",
+        purpose: "managed_mcp_connection",
+      })).status).toBe(400);
+
+    await svc.refreshTools(orgId, connection.id);
+    expect(createClient).toHaveBeenCalledOnce();
+    expect(client.close).toHaveBeenCalledOnce();
   });
 
   it("does not read arbitrary host environment names for authenticated HTTP connections", async () => {
@@ -588,6 +693,77 @@ describe("managedMcpConnectionService", () => {
     expect((await svc.get(orgId, connection.id)).status).toBe("active");
   });
 
+  it("does not let a slow discovery revive a connection disconnected during network I/O", async () => {
+    const orgId = await seedOrg(db);
+    const discovery = deferred<Array<{
+      name: string;
+      inputSchema: Record<string, unknown>;
+    }>>();
+    const client = clientWithTools([]);
+    client.discoverTools.mockReturnValue(discovery.promise);
+    createClient.mockResolvedValue(client);
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "slow-disconnect",
+      displayName: "Slow disconnect",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: { url: "https://mcp.example.test/mcp" },
+    }, { userId: "owner-1" });
+
+    const refreshing = svc.refreshTools(orgId, connection.id);
+    await vi.waitFor(() => expect(client.discoverTools).toHaveBeenCalledOnce());
+    await svc.disconnect(orgId, connection.id, { userId: "owner-1" });
+    discovery.resolve([{ name: "must_not_survive", inputSchema: { type: "object" } }]);
+
+    await expect(refreshing).rejects.toMatchObject({ status: 409 });
+    expect(await svc.get(orgId, connection.id)).toMatchObject({
+      status: "disabled",
+      enabled: false,
+    });
+    expect(await svc.listTools(orgId, connection.id)).toEqual([]);
+  });
+
+  it("allows only one concurrent refresh from the same lifecycle snapshot", async () => {
+    const orgId = await seedOrg(db);
+    const discovery = deferred<Array<{
+      name: string;
+      inputSchema: Record<string, unknown>;
+    }>>();
+    const firstClient = clientWithTools([]);
+    const secondClient = clientWithTools([]);
+    firstClient.discoverTools.mockReturnValue(discovery.promise);
+    secondClient.discoverTools.mockReturnValue(discovery.promise);
+    createClient.mockResolvedValueOnce(firstClient).mockResolvedValueOnce(secondClient);
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "concurrent-refresh",
+      displayName: "Concurrent refresh",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: { url: "https://mcp.example.test/mcp" },
+    }, { userId: "owner-1" });
+
+    const first = svc.refreshTools(orgId, connection.id);
+    const second = svc.refreshTools(orgId, connection.id);
+    await vi.waitFor(() => {
+      expect(firstClient.discoverTools).toHaveBeenCalledOnce();
+      expect(secondClient.discoverTools).toHaveBeenCalledOnce();
+    });
+    discovery.resolve([{ name: "search", inputSchema: { type: "object" } }]);
+    const settled = await Promise.allSettled([first, second]);
+
+    expect(settled.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const rejection = settled.find((result) => result.status === "rejected");
+    expect(rejection).toMatchObject({ reason: { status: 409 } });
+    expect(await svc.get(orgId, connection.id)).toMatchObject({
+      status: "active",
+      enabled: true,
+    });
+    expect((await svc.listTools(orgId, connection.id)).map((tool) => tool.externalToolName))
+      .toEqual(["search"]);
+  });
+
   it("closes the client, stores a redacted error state, and never returns upstream secrets when discovery fails", async () => {
     const orgId = await seedOrg(db);
     const failingClient = clientWithTools([]);
@@ -610,6 +786,20 @@ describe("managedMcpConnectionService", () => {
     expect(failingClient.close).toHaveBeenCalledOnce();
     expect((await svc.get(orgId, connection.id)).status).toBe("error");
     expect(JSON.stringify(await svc.get(orgId, connection.id))).not.toContain("leaked-token");
+    const [failureAudit] = await db.select().from(activityLog)
+      .where(eq(activityLog.action, "mcp_connection.discovery_failed"));
+    expect(failureAudit).toMatchObject({
+      orgId,
+      actorType: "system",
+      actorId: "system",
+      entityType: "mcp_connection",
+      entityId: connection.id,
+      details: {
+        provider: "custom",
+        reason: "upstream_discovery_failed",
+      },
+    });
+    expect(JSON.stringify(failureAudit)).not.toContain("leaked-token");
   });
 
   it("requires reconnect before a disabled or reauthorization/error connection can discover again", async () => {
@@ -794,6 +984,104 @@ describe("managedMcpConnectionService", () => {
     }
   });
 
+  it("rolls back create, update, disconnect, and refresh when managed audit persistence fails", async () => {
+    const orgId = await seedOrg(db);
+    const refreshClient = clientWithTools([
+      { name: "must_rollback", inputSchema: { type: "object" } },
+    ]);
+    createClient.mockResolvedValue(refreshClient);
+    const svc = service();
+    const updateConnection = await svc.create(orgId, {
+      name: "audit-update",
+      displayName: "Audit update",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: {
+        url: "https://mcp.example.test/mcp",
+        secretHeaderNames: ["Authorization"],
+      },
+      secrets: { headers: { Authorization: "Bearer audit-original" } },
+    }, { userId: "owner-1" });
+    const disconnectConnection = await svc.create(orgId, {
+      name: "audit-disconnect",
+      displayName: "Audit disconnect",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: { url: "https://mcp.example.test/mcp" },
+    }, { userId: "owner-1" });
+    const refreshConnection = await svc.create(orgId, {
+      name: "audit-refresh",
+      displayName: "Audit refresh",
+      provider: "custom",
+      transport: "streamable_http",
+      safeConfig: { url: "https://mcp.example.test/mcp" },
+    }, { userId: "owner-1" });
+    const [updateBefore] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, updateConnection.id));
+    const auditCountBefore = (await db.select().from(activityLog)).length;
+
+    await db.$client.unsafe(`
+      create function reject_managed_mcp_activity_insert() returns trigger as $$
+      begin
+        raise exception 'forced managed MCP activity insert failure';
+      end;
+      $$ language plpgsql;
+      create trigger reject_managed_mcp_activity_insert
+      before insert on activity_log
+      for each row execute function reject_managed_mcp_activity_insert();
+    `);
+    try {
+      await expect(svc.create(orgId, {
+        name: "audit-create-must-rollback",
+        displayName: "Audit create rollback",
+        provider: "custom",
+        transport: "streamable_http",
+        safeConfig: {
+          url: "https://mcp.example.test/mcp",
+          secretHeaderNames: ["Authorization"],
+        },
+        secrets: { headers: { Authorization: "Bearer audit-create-secret" } },
+      }, { userId: "owner-1" })).rejects.toThrow();
+      await expect(svc.update(orgId, updateConnection.id, {
+        secrets: { headers: { Authorization: "Bearer audit-replacement" } },
+      }, { userId: "owner-1" })).rejects.toThrow();
+      await expect(svc.disconnect(
+        orgId,
+        disconnectConnection.id,
+        { userId: "owner-1" },
+      )).rejects.toThrow();
+      await expect(svc.refreshTools(
+        orgId,
+        refreshConnection.id,
+        { userId: "owner-1" },
+      )).rejects.toThrow();
+
+      expect((await svc.list(orgId)).map((connection) => connection.name)).not.toContain(
+        "audit-create-must-rollback",
+      );
+      const [updateAfter] = await db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, updateConnection.id));
+      expect(updateAfter?.credentialSecretId).toBe(updateBefore?.credentialSecretId);
+      expect(await db.select().from(organizationSecrets)).toHaveLength(1);
+      expect(await db.select().from(organizationSecretVersions)).toHaveLength(1);
+      expect(await svc.get(orgId, disconnectConnection.id)).toMatchObject({
+        status: "draft",
+        enabled: true,
+      });
+      expect(await svc.get(orgId, refreshConnection.id)).toMatchObject({
+        status: "draft",
+        enabled: true,
+      });
+      expect(await svc.listTools(orgId, refreshConnection.id)).toEqual([]);
+      expect(await db.select().from(activityLog)).toHaveLength(auditCountBefore);
+    } finally {
+      await db.$client.unsafe(`
+        drop trigger if exists reject_managed_mcp_activity_insert on activity_log;
+        drop function if exists reject_managed_mcp_activity_insert();
+      `);
+    }
+  });
+
   it("serializes concurrent same-shape replacements without orphan credentials", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
@@ -907,6 +1195,9 @@ describe("managedMcpConnectionService", () => {
       name: "Linear OAuth credential",
       provider: "local_encrypted",
       value: JSON.stringify({ accessToken: "old-linear-token" }),
+    }, undefined, {
+      allowManaged: true,
+      purpose: "managed_mcp_oauth",
     });
     const client = clientWithTools([]);
     createClient.mockResolvedValue(client);

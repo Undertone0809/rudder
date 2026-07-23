@@ -1,5 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import {
+  activityLog,
   customIntegrationTools,
   mcpConnections,
   mcpOAuthGrants,
@@ -19,7 +20,7 @@ import {
   type McpDiscoveredTool,
   type UpdateMcpConnection,
 } from "@rudderhq/shared";
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, HttpError, notFound, unprocessable } from "../../errors.js";
 import { getSecretProvider } from "../../secrets/provider-registry.js";
@@ -100,6 +101,74 @@ export class ManagedMcpConnectionPolicyError extends HttpError {
     super(422, message);
     this.name = "ManagedMcpConnectionPolicyError";
   }
+}
+
+export class ManagedMcpDiscoveryStaleError extends HttpError {
+  readonly code = "managed_mcp_discovery_stale";
+
+  constructor() {
+    super(409, "Managed MCP connection changed while tools were being discovered");
+    this.name = "ManagedMcpDiscoveryStaleError";
+  }
+}
+
+interface ManagedMcpDiscoverySnapshot {
+  enabled: boolean;
+  lastDiscoveredAt: number | null;
+  status: string;
+  updatedAt: number;
+}
+
+function discoverySnapshot(row: McpConnectionRow): ManagedMcpDiscoverySnapshot {
+  return {
+    enabled: row.enabled,
+    lastDiscoveredAt: row.lastDiscoveredAt?.getTime() ?? null,
+    status: row.status,
+    updatedAt: row.updatedAt.getTime(),
+  };
+}
+
+function nextConnectionMutationTime(row: McpConnectionRow): Date {
+  return new Date(Math.max(Date.now(), row.updatedAt.getTime() + 1));
+}
+
+function assertDiscoverySnapshot(
+  row: McpConnectionRow,
+  snapshot: ManagedMcpDiscoverySnapshot,
+): void {
+  if (
+    row.enabled !== snapshot.enabled
+    || row.status !== snapshot.status
+    || row.updatedAt.getTime() !== snapshot.updatedAt
+    || (row.lastDiscoveredAt?.getTime() ?? null) !== snapshot.lastDiscoveredAt
+  ) {
+    throw new ManagedMcpDiscoveryStaleError();
+  }
+}
+
+function managedMcpActivityValues(input: {
+  orgId: string;
+  connectionId: string;
+  action: string;
+  actor: ManagedMcpMutationActor;
+  details: Record<string, unknown>;
+}) {
+  const actorType = input.actor.agentId
+    ? "agent" as const
+    : input.actor.userId
+      ? "user" as const
+      : "system" as const;
+  const actorId = input.actor.agentId ?? input.actor.userId ?? "system";
+  return {
+    orgId: input.orgId,
+    actorType,
+    actorId,
+    action: input.action,
+    entityType: "mcp_connection",
+    entityId: input.connectionId,
+    agentId: input.actor.agentId ?? null,
+    details: input.details,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -408,20 +477,6 @@ export function managedMcpConnectionService(
     }
   }
 
-  async function createCredential(
-    orgId: string,
-    connectionName: string,
-    value: McpConnectionSecretsMutation,
-    actor: ManagedMcpMutationActor,
-  ) {
-    return secrets.create(orgId, {
-      name: `Managed MCP credentials - ${connectionName} - ${randomUUID()}`,
-      provider: "local_encrypted",
-      value: JSON.stringify(customSecretPayload(value)),
-      description: "Encrypted managed MCP credentials",
-    }, actor);
-  }
-
   async function prepareCredentialReplacement(
     connectionName: string,
     value: McpConnectionSecretsMutation,
@@ -600,16 +655,36 @@ export function managedMcpConnectionService(
         credentials: input.secrets ? customSecretPayload(input.secrets) : undefined,
       });
 
-      let credentialSecretId: string | null = null;
-      if (input.secrets) {
-        credentialSecretId = (await createCredential(orgId, input.name, input.secrets, actor)).id;
-      }
+      const credential = input.secrets
+        ? await prepareCredentialReplacement(input.name, input.secrets)
+        : null;
       try {
-        const row = await db
-          .insert(mcpConnections)
-          .values({
+        const row = await db.transaction(async (tx) => {
+          if (credential) {
+            await tx.insert(organizationSecrets).values({
+              id: credential.id,
+              orgId,
+              name: credential.name,
+              provider: "local_encrypted",
+              purpose: "managed_mcp_connection",
+              externalRef: credential.externalRef,
+              latestVersion: 1,
+              description: "Encrypted managed MCP credentials",
+              createdByAgentId: actor.agentId ?? null,
+              createdByUserId: actor.userId ?? null,
+            });
+            await tx.insert(organizationSecretVersions).values({
+              secretId: credential.id,
+              version: 1,
+              material: credential.material,
+              valueSha256: credential.valueSha256,
+              createdByAgentId: actor.agentId ?? null,
+              createdByUserId: actor.userId ?? null,
+            });
+          }
+          const created = await tx.insert(mcpConnections).values({
             orgId,
-            credentialSecretId,
+            credentialSecretId: credential?.id ?? null,
             name: input.name,
             displayName: input.displayName,
             provider: input.provider,
@@ -623,11 +698,23 @@ export function managedMcpConnectionService(
             enabled: input.enabled,
             required: input.required,
           })
-          .returning()
-          .then((rows) => rows[0]!);
+            .returning()
+            .then((rows) => rows[0]!);
+          await tx.insert(activityLog).values(managedMcpActivityValues({
+            orgId,
+            connectionId: created.id,
+            action: "mcp_connection.created",
+            actor,
+            details: {
+              provider: created.provider,
+              transport: created.transport,
+              status: created.status,
+            },
+          }));
+          return created;
+        });
         return publicSummary(row);
       } catch (error) {
-        if (credentialSecretId) await secrets.remove(credentialSecretId).catch(() => undefined);
         if (error instanceof Error && /unique|duplicate/iu.test(error.message)) {
           throw conflict("MCP connection name or provider scope already exists");
         }
@@ -711,6 +798,7 @@ export function managedMcpConnectionService(
             orgId,
             name: replacement.name,
             provider: "local_encrypted",
+            purpose: "managed_mcp_connection",
             externalRef: replacement.externalRef,
             latestVersion: 1,
             description: "Encrypted managed MCP credentials",
@@ -742,7 +830,7 @@ export function managedMcpConnectionService(
               status: patch.enabled ? existing.status : "disabled",
             } : {}),
             ...(patch.required !== undefined ? { required: patch.required } : {}),
-            updatedAt: new Date(),
+            updatedAt: nextConnectionMutationTime(locked),
           })
           .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
           .returning()
@@ -753,15 +841,30 @@ export function managedMcpConnectionService(
             .delete(organizationSecrets)
             .where(eq(organizationSecrets.id, oldSecretIdToDelete));
         }
+        await tx.insert(activityLog).values(managedMcpActivityValues({
+          orgId,
+          connectionId,
+          action: "mcp_connection.updated",
+          actor,
+          details: {
+            provider: updated.provider,
+            status: updated.status,
+            accessMode: updated.accessMode,
+          },
+        }));
         return updated;
       });
       return publicSummary(row);
     },
 
-    reconnect: async (orgId: string, connectionId: string) => {
+    reconnect: async (
+      orgId: string,
+      connectionId: string,
+      actor: ManagedMcpMutationActor = {},
+    ) => {
       const existing = await findRow(orgId, connectionId);
       assertLegacyMutable(existing);
-      const now = new Date();
+      const now = nextConnectionMutationTime(existing);
       const row = await db.transaction(async (tx) => {
         const updated = await tx
           .update(mcpConnections)
@@ -790,32 +893,64 @@ export function managedMcpConnectionService(
               eq(mcpOAuthGrants.status, "active"),
             ));
         }
+        await tx.insert(activityLog).values(managedMcpActivityValues({
+          orgId,
+          connectionId,
+          action: "mcp_connection.reconnect_requested",
+          actor,
+          details: {
+            provider: updated.provider,
+            status: updated.status,
+          },
+        }));
         return updated;
       });
       return publicSummary(row);
     },
 
-    disconnect: async (orgId: string, connectionId: string) => {
+    disconnect: async (
+      orgId: string,
+      connectionId: string,
+      actor: ManagedMcpMutationActor = {},
+    ) => {
       const existing = await findRow(orgId, connectionId);
       assertLegacyMutable(existing);
-      const now = new Date();
-      const row = await db
-        .update(mcpConnections)
-        .set({
-          status: "disabled",
-          enabled: false,
-          disabledAt: now,
-          updatedAt: now,
-        })
-        .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
-        .returning()
-        .then((rows) => rows[0]!);
+      const now = nextConnectionMutationTime(existing);
+      const row = await db.transaction(async (tx) => {
+        const updated = await tx
+          .update(mcpConnections)
+          .set({
+            status: "disabled",
+            enabled: false,
+            disabledAt: now,
+            updatedAt: now,
+          })
+          .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        if (!updated) throw notFound("MCP connection not found");
+        await tx.insert(activityLog).values(managedMcpActivityValues({
+          orgId,
+          connectionId,
+          action: "mcp_connection.disconnected",
+          actor,
+          details: {
+            provider: updated.provider,
+            status: updated.status,
+          },
+        }));
+        return updated;
+      });
       return publicSummary(row);
     },
 
     listTools,
 
-    refreshTools: async (orgId: string, connectionId: string) => {
+    refreshTools: async (
+      orgId: string,
+      connectionId: string,
+      actor: ManagedMcpMutationActor = {},
+    ) => {
       const existing = await findRow(orgId, connectionId);
       assertLegacyMutable(existing);
       if (existing.provider === "supabase" && !existing.externalScope) {
@@ -824,6 +959,7 @@ export function managedMcpConnectionService(
       if (!canDiscoverTools(existing)) {
         throw discoveryNotReadyError();
       }
+      const snapshot = discoverySnapshot(existing);
       let client: ManagedMcpClient | null = null;
       try {
         client = await createClient(await buildClientOptions(existing));
@@ -831,19 +967,28 @@ export function managedMcpConnectionService(
           existing.name,
           await client.discoverTools(),
         );
-        const existingTools = await db
-          .select()
-          .from(customIntegrationTools)
-          .where(and(
-            eq(customIntegrationTools.orgId, orgId),
-            eq(customIntegrationTools.connectionId, connectionId),
-          ));
-        const reconciled = reconcileMcpToolCatalog(existingTools, normalized);
         const normalizedByName = new Map(normalized.map((tool) => [tool.externalToolName, tool]));
-        const existingByName = new Map(existingTools.map((tool) => [tool.externalToolName, tool]));
-        const now = new Date();
-
         await db.transaction(async (tx) => {
+          const locked = await tx
+            .select()
+            .from(mcpConnections)
+            .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+            .for("update")
+            .then((rows) => rows[0] ?? null);
+          if (!locked) throw notFound("MCP connection not found");
+          assertDiscoverySnapshot(locked, snapshot);
+          const now = nextConnectionMutationTime(locked);
+          const existingTools = await tx
+            .select()
+            .from(customIntegrationTools)
+            .where(and(
+              eq(customIntegrationTools.orgId, orgId),
+              eq(customIntegrationTools.connectionId, connectionId),
+            ));
+          const reconciled = reconcileMcpToolCatalog(existingTools, normalized);
+          const existingByName = new Map(
+            existingTools.map((tool) => [tool.externalToolName, tool]),
+          );
           for (const tool of reconciled) {
             const prior = existingByName.get(tool.externalToolName);
             const current = normalizedByName.get(tool.externalToolName);
@@ -888,23 +1033,56 @@ export function managedMcpConnectionService(
             .set({
               status: "active",
               enabled: true,
-              activatedAt: existing.activatedAt ?? now,
+              activatedAt: locked.activatedAt ?? now,
               lastDiscoveredAt: now,
               disabledAt: null,
               updatedAt: now,
             })
             .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)));
+          await tx.insert(activityLog).values(managedMcpActivityValues({
+            orgId,
+            connectionId,
+            action: "mcp_connection.tools_refreshed",
+            actor,
+            details: {
+              provider: locked.provider,
+              toolCount: normalized.length,
+            },
+          }));
         });
         return listTools(orgId, connectionId);
       } catch (error) {
-        await db
-          .update(mcpConnections)
-          .set({ status: "error", updatedAt: new Date() })
-          .where(and(
-            eq(mcpConnections.orgId, orgId),
-            eq(mcpConnections.id, connectionId),
-            ne(mcpConnections.status, "revoked"),
-          ));
+        if (error instanceof ManagedMcpDiscoveryStaleError) {
+          throw error;
+        }
+        await db.transaction(async (tx) => {
+          const locked = await tx
+            .select()
+            .from(mcpConnections)
+            .where(and(eq(mcpConnections.orgId, orgId), eq(mcpConnections.id, connectionId)))
+            .for("update")
+            .then((rows) => rows[0] ?? null);
+          if (!locked) throw notFound("MCP connection not found");
+          assertDiscoverySnapshot(locked, snapshot);
+          const now = nextConnectionMutationTime(locked);
+          await tx
+            .update(mcpConnections)
+            .set({ status: "error", updatedAt: now })
+            .where(and(
+              eq(mcpConnections.orgId, orgId),
+              eq(mcpConnections.id, connectionId),
+            ));
+          await tx.insert(activityLog).values(managedMcpActivityValues({
+            orgId,
+            connectionId,
+            action: "mcp_connection.discovery_failed",
+            actor,
+            details: {
+              provider: locked.provider,
+              reason: "upstream_discovery_failed",
+            },
+          }));
+        });
         if (error instanceof HttpError) {
           throw error;
         }

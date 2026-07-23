@@ -1,3 +1,4 @@
+import type { OrganizationSecretPurpose } from "@rudderhq/shared";
 import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { organizations } from "./organizations.js";
@@ -9,6 +10,7 @@ export const organizationSecrets = pgTable(
     orgId: uuid("org_id").notNull().references(() => organizations.id),
     name: text("name").notNull(),
     provider: text("provider").notNull().default("local_encrypted"),
+    purpose: text("purpose").$type<OrganizationSecretPurpose>().notNull().default("user_managed"),
     externalRef: text("external_ref"),
     latestVersion: integer("latest_version").notNull().default(1),
     description: text("description"),
@@ -20,6 +22,7 @@ export const organizationSecrets = pgTable(
   (table) => ({
     organizationIdx: index("organization_secrets_org_idx").on(table.orgId),
     organizationProviderIdx: index("organization_secrets_org_provider_idx").on(table.orgId, table.provider),
+    organizationPurposeIdx: index("organization_secrets_org_purpose_idx").on(table.orgId, table.purpose),
     organizationNameUq: uniqueIndex("organization_secrets_org_name_uq").on(table.orgId, table.name),
   }),
 );

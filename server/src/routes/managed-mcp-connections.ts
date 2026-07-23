@@ -11,7 +11,6 @@ import { markHttpRequestBodySensitive } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
   accessService,
-  logActivity,
   managedMcpConnectionService,
 } from "../services/index.js";
 import type { ManagedMcpConnectionServiceOptions } from "../services/mcp/managed-connections.js";
@@ -56,26 +55,6 @@ export function managedMcpConnectionRoutes(
     };
   }
 
-  async function logMutation(
-    req: Request,
-    input: {
-      orgId: string;
-      connectionId: string;
-      action: string;
-      details?: Record<string, unknown>;
-    },
-  ) {
-    await logActivity(db, {
-      orgId: input.orgId,
-      actorType: "user",
-      actorId: req.actor.userId ?? "board",
-      action: input.action,
-      entityType: "mcp_connection",
-      entityId: input.connectionId,
-      details: input.details ?? null,
-    });
-  }
-
   router.use("/orgs/:orgId/mcp/connections", (req, _res, next) => {
     markHttpRequestBodySensitive(req);
     next();
@@ -106,16 +85,6 @@ export function managedMcpConnectionRoutes(
       const orgId = req.params.orgId as string;
       await assertCanManage(req, orgId);
       const created = await svc.create(orgId, req.body, mutationActor(req));
-      await logMutation(req, {
-        orgId,
-        connectionId: created.id,
-        action: "mcp_connection.created",
-        details: {
-          provider: created.provider,
-          transport: created.transport,
-          status: created.status,
-        },
-      });
       res.status(201).json(created);
     },
   );
@@ -128,16 +97,6 @@ export function managedMcpConnectionRoutes(
       const connectionId = req.params.connectionId as string;
       await assertCanManage(req, orgId);
       const updated = await svc.update(orgId, connectionId, req.body, mutationActor(req));
-      await logMutation(req, {
-        orgId,
-        connectionId,
-        action: "mcp_connection.updated",
-        details: {
-          provider: updated.provider,
-          status: updated.status,
-          accessMode: updated.accessMode,
-        },
-      });
       res.json(updated);
     },
   );
@@ -155,12 +114,6 @@ export function managedMcpConnectionRoutes(
         { accessMode: req.body.accessMode },
         mutationActor(req),
       );
-      await logMutation(req, {
-        orgId,
-        connectionId,
-        action: "mcp_connection.access_mode_updated",
-        details: { accessMode: updated.accessMode },
-      });
       res.json(updated);
     },
   );
@@ -180,13 +133,7 @@ export function managedMcpConnectionRoutes(
       const orgId = req.params.orgId as string;
       const connectionId = req.params.connectionId as string;
       await assertCanManage(req, orgId);
-      const tools = await svc.refreshTools(orgId, connectionId);
-      await logMutation(req, {
-        orgId,
-        connectionId,
-        action: "mcp_connection.tools_refreshed",
-        details: { toolCount: tools.length },
-      });
+      const tools = await svc.refreshTools(orgId, connectionId, mutationActor(req));
       res.json(tools);
     },
   );
@@ -197,13 +144,7 @@ export function managedMcpConnectionRoutes(
       const orgId = req.params.orgId as string;
       const connectionId = req.params.connectionId as string;
       await assertCanManage(req, orgId);
-      const connection = await svc.reconnect(orgId, connectionId);
-      await logMutation(req, {
-        orgId,
-        connectionId,
-        action: "mcp_connection.reconnect_requested",
-        details: { provider: connection.provider, status: connection.status },
-      });
+      const connection = await svc.reconnect(orgId, connectionId, mutationActor(req));
       res.json(connection);
     },
   );
@@ -214,13 +155,7 @@ export function managedMcpConnectionRoutes(
       const orgId = req.params.orgId as string;
       const connectionId = req.params.connectionId as string;
       await assertCanManage(req, orgId);
-      const connection = await svc.disconnect(orgId, connectionId);
-      await logMutation(req, {
-        orgId,
-        connectionId,
-        action: "mcp_connection.disconnected",
-        details: { provider: connection.provider, status: connection.status },
-      });
+      const connection = await svc.disconnect(orgId, connectionId, mutationActor(req));
       res.json(connection);
     },
   );

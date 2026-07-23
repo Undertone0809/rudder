@@ -235,7 +235,7 @@ describe("managed MCP connection organization routes", () => {
     expect(mockMembership).toHaveBeenCalledTimes(1);
   });
 
-  it("exposes clear create, patch, and access-mode endpoints and writes redacted activities", async () => {
+  it("exposes create, patch, and access-mode endpoints without duplicating service-owned audit", async () => {
     const app = createApp({
       type: "board",
       userId: "owner-1",
@@ -273,8 +273,6 @@ describe("managed MCP connection organization routes", () => {
       { accessMode: "read_only" },
       { userId: "owner-1", agentId: null },
     );
-    expect(JSON.stringify(mockLogActivity.mock.calls)).not.toContain(credential);
-    expect(JSON.stringify(mockLogActivity.mock.calls)).not.toContain("safeConfig");
-    expect(mockLogActivity).toHaveBeenCalledTimes(3);
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 });

@@ -697,6 +697,13 @@ export const SECRET_PROVIDERS = [
 ] as const;
 export type SecretProvider = (typeof SECRET_PROVIDERS)[number];
 
+export const ORGANIZATION_SECRET_PURPOSES = [
+  "user_managed",
+  "managed_mcp_connection",
+  "managed_mcp_oauth",
+] as const;
+export type OrganizationSecretPurpose = (typeof ORGANIZATION_SECRET_PURPOSES)[number];
+
 export const STORAGE_PROVIDERS = ["local_disk", "s3"] as const;
 export type StorageProvider = (typeof STORAGE_PROVIDERS)[number];
 
