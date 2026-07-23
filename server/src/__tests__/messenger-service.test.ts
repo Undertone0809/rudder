@@ -1289,6 +1289,7 @@ describe("messengerService and issue follows", () => {
       actionKind: "steer",
       localDisposition: "failed_actionable",
       providerDisposition: "rejected",
+      providerSentAt: new Date("2026-07-23T08:00:00.000Z"),
       lastError: "provider_rejected_before_delivery",
     });
     await db.insert(chatQueuedMessages).values({
@@ -1333,6 +1334,413 @@ describe("messengerService and issue follows", () => {
       item: { status: "continuation_pending", controlActionId: retryActionId },
     });
     expect(idempotentRetry).toMatchObject({ idempotent: true, action: { id: retryActionId } });
+  });
+
+  it("rebinds a confirmed pre-delivery failure to one fresh continuation action and message", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const oldActionId = randomUUID();
+    const freshActionId = randomUUID();
+    const itemId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger continuation retry org",
+      urlKey: deriveOrganizationUrlKey("Messenger continuation retry org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Continuation retry chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatControlActions).values({
+      id: oldActionId,
+      orgId,
+      actionKind: "steer",
+      localDisposition: "failed_actionable",
+      providerDisposition: "rejected",
+      lastError: "provider_rejected_before_delivery",
+      providerSentAt: new Date("2026-07-23T08:00:00.000Z"),
+    });
+    await db.insert(chatQueuedMessages).values({
+      id: itemId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "failed_actionable",
+      deliveryIntent: "steer",
+      deliveryDisposition: "failed_actionable",
+      controlActionId: oldActionId,
+      clientMutationId: "continuation-retry-failed-actionable",
+      payload: { body: "Retry this in the next generation" },
+      requestActor: boardQueueRequestActor(orgId),
+      lastDeliveryReason: "provider_rejected_before_delivery",
+    });
+    const steerMessages = chatSteerMessageService(db);
+
+    const first = await steerMessages.scheduleContinuation({
+      orgId,
+      conversationId,
+      itemId,
+      controlActionId: freshActionId,
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user", actorId: "board" },
+    });
+    const duplicate = await steerMessages.scheduleContinuation({
+      orgId,
+      conversationId,
+      itemId,
+      controlActionId: freshActionId,
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user", actorId: "board" },
+    });
+
+    expect(first).toMatchObject({
+      idempotent: false,
+      action: { id: freshActionId, localDisposition: "continuation_pending" },
+      item: { id: itemId, status: "continuation_pending", controlActionId: freshActionId },
+    });
+    expect(duplicate).toMatchObject({
+      idempotent: true,
+      action: { id: freshActionId },
+      item: { id: itemId, controlActionId: freshActionId },
+    });
+    const actions = await db.select().from(chatControlActions).where(eq(chatControlActions.orgId, orgId));
+    const messages = await db.select().from(chatMessages).where(eq(chatMessages.conversationId, conversationId));
+    expect(actions).toHaveLength(2);
+    expect(actions.find((action) => action.id === oldActionId)).toMatchObject({
+      localDisposition: "failed_actionable",
+      providerDisposition: "rejected",
+      lastError: "provider_rejected_before_delivery",
+    });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.structuredPayload).toMatchObject({ controlActionId: freshActionId, queueItemId: itemId });
+  });
+
+  it("rebinds a confirmed pre-delivery failure to one fresh active-generation action and message", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const oldActionId = randomUUID();
+    const freshActionId = randomUUID();
+    const itemId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger active retry org",
+      urlKey: deriveOrganizationUrlKey("Messenger active retry org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Active retry chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "running",
+      attemptEpoch: 1,
+      controlVersion: 0,
+      controlState: "ready",
+    });
+    await db.insert(chatControlActions).values({
+      id: oldActionId,
+      orgId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+      actionKind: "steer",
+      localDisposition: "failed_actionable",
+      providerDisposition: "not_sent",
+      lastError: "provider_io_failed_before_send",
+    });
+    await db.insert(chatQueuedMessages).values({
+      id: itemId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "failed_actionable",
+      deliveryIntent: "steer",
+      deliveryDisposition: "failed_actionable",
+      controlActionId: oldActionId,
+      expectedGenerationId: generationId,
+      clientMutationId: "active-retry-failed-actionable",
+      payload: { body: "Retry this on the active generation" },
+      requestActor: boardQueueRequestActor(orgId),
+      lastDeliveryReason: "provider_io_failed_before_send",
+    });
+    const steerMessages = chatSteerMessageService(db);
+    const invoke = () => steerMessages.beginControlAction({
+      orgId,
+      conversationId,
+      itemId,
+      controlActionId: freshActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+      requestActor: boardQueueRequestActor(orgId),
+      actor: { actorType: "user" as const, actorId: "board" },
+    });
+
+    const first = await invoke();
+    const duplicate = await invoke();
+
+    expect(first).toMatchObject({
+      idempotent: false,
+      action: { id: freshActionId, localDisposition: "pending", providerDisposition: "not_sent" },
+      item: { id: itemId, status: "steer_pending", controlActionId: freshActionId },
+      generation: { id: generationId, controlVersion: 1 },
+    });
+    expect(duplicate).toMatchObject({
+      idempotent: true,
+      action: { id: freshActionId },
+      item: { id: itemId, controlActionId: freshActionId },
+    });
+    const actions = await db.select().from(chatControlActions).where(eq(chatControlActions.orgId, orgId));
+    const messages = await db.select().from(chatMessages).where(eq(chatMessages.conversationId, conversationId));
+    expect(actions).toHaveLength(2);
+    expect(actions.find((action) => action.id === oldActionId)).toMatchObject({
+      localDisposition: "failed_actionable",
+      providerDisposition: "not_sent",
+      lastError: "provider_io_failed_before_send",
+    });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.structuredPayload).toMatchObject({ controlActionId: freshActionId, queueItemId: itemId });
+  });
+
+  it("rejects unsafe failed-action retries without creating a fresh action or message", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const evidenceMessageId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Messenger unsafe retry org",
+        urlKey: deriveOrganizationUrlKey("Messenger unsafe retry org"),
+        issuePrefix: `U${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Messenger unsafe retry other org",
+        urlKey: deriveOrganizationUrlKey("Messenger unsafe retry other org"),
+        issuePrefix: `X${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Unsafe retry chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({ id: generationId, orgId, conversationId, status: "stopped" });
+    await db.insert(chatMessages).values({
+      id: evidenceMessageId,
+      orgId,
+      conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Already delivered evidence",
+    });
+    const unsafeCases = [
+      {
+        suffix: "durable-source",
+        actionOrgId: orgId,
+        localDisposition: "failed_actionable",
+        providerDisposition: "rejected",
+        sourceMessageId: evidenceMessageId,
+        deliveredMessageId: null,
+        continuationMessageId: null,
+        providerSentAt: new Date(),
+        providerAcknowledgedAt: null,
+        cancelledAt: null,
+      },
+      {
+        suffix: "durable-delivered",
+        actionOrgId: orgId,
+        localDisposition: "failed_actionable",
+        providerDisposition: "rejected",
+        sourceMessageId: null,
+        deliveredMessageId: evidenceMessageId,
+        continuationMessageId: null,
+        providerSentAt: new Date(),
+        providerAcknowledgedAt: null,
+        cancelledAt: null,
+      },
+      {
+        suffix: "durable-continuation",
+        actionOrgId: orgId,
+        localDisposition: "failed_actionable",
+        providerDisposition: "rejected",
+        sourceMessageId: null,
+        deliveredMessageId: null,
+        continuationMessageId: evidenceMessageId,
+        providerSentAt: new Date(),
+        providerAcknowledgedAt: null,
+        cancelledAt: null,
+      },
+      {
+        suffix: "acceptance-unknown",
+        actionOrgId: orgId,
+        localDisposition: "acceptance_unknown",
+        providerDisposition: "sent",
+        sourceMessageId: null,
+        deliveredMessageId: null,
+        continuationMessageId: null,
+        providerSentAt: new Date(),
+        providerAcknowledgedAt: null,
+        cancelledAt: null,
+      },
+      {
+        suffix: "local-disposition-mismatch",
+        actionOrgId: orgId,
+        localDisposition: "acceptance_unknown",
+        providerDisposition: "rejected",
+        sourceMessageId: null,
+        deliveredMessageId: null,
+        continuationMessageId: null,
+        providerSentAt: new Date(),
+        providerAcknowledgedAt: null,
+        cancelledAt: null,
+      },
+      {
+        suffix: "not-sent-with-send-timestamp",
+        actionOrgId: orgId,
+        localDisposition: "failed_actionable",
+        providerDisposition: "not_sent",
+        sourceMessageId: null,
+        deliveredMessageId: null,
+        continuationMessageId: null,
+        providerSentAt: new Date(),
+        providerAcknowledgedAt: null,
+        cancelledAt: null,
+      },
+      {
+        suffix: "acknowledged",
+        actionOrgId: orgId,
+        localDisposition: "failed_actionable",
+        providerDisposition: "acknowledged",
+        sourceMessageId: null,
+        deliveredMessageId: null,
+        continuationMessageId: null,
+        providerSentAt: new Date(),
+        providerAcknowledgedAt: new Date(),
+        cancelledAt: null,
+      },
+      {
+        suffix: "acknowledgement-timestamp",
+        actionOrgId: orgId,
+        localDisposition: "failed_actionable",
+        providerDisposition: "rejected",
+        sourceMessageId: null,
+        deliveredMessageId: null,
+        continuationMessageId: null,
+        providerSentAt: new Date(),
+        providerAcknowledgedAt: new Date(),
+        cancelledAt: null,
+      },
+      {
+        suffix: "cross-org",
+        actionOrgId: otherOrgId,
+        localDisposition: "failed_actionable",
+        providerDisposition: "rejected",
+        sourceMessageId: null,
+        deliveredMessageId: null,
+        continuationMessageId: null,
+        providerSentAt: new Date(),
+        providerAcknowledgedAt: null,
+        cancelledAt: null,
+      },
+      {
+        suffix: "cancelled",
+        actionOrgId: orgId,
+        localDisposition: "failed_actionable",
+        providerDisposition: "rejected",
+        sourceMessageId: null,
+        deliveredMessageId: null,
+        continuationMessageId: null,
+        providerSentAt: new Date(),
+        providerAcknowledgedAt: null,
+        cancelledAt: new Date(),
+      },
+    ] as const;
+    const itemIds: string[] = [];
+    for (const [index, unsafe] of unsafeCases.entries()) {
+      const actionId = randomUUID();
+      const itemId = randomUUID();
+      itemIds.push(itemId);
+      await db.insert(chatControlActions).values({
+        id: actionId,
+        orgId: unsafe.actionOrgId,
+        expectedGenerationId: generationId,
+        actionKind: "steer",
+        localDisposition: unsafe.localDisposition,
+        providerDisposition: unsafe.providerDisposition,
+        providerSentAt: unsafe.providerSentAt,
+        providerAcknowledgedAt: unsafe.providerAcknowledgedAt,
+      });
+      await db.insert(chatQueuedMessages).values({
+        id: itemId,
+        orgId,
+        conversationId,
+        position: index + 1,
+        status: "failed_actionable",
+        deliveryIntent: "steer",
+        deliveryDisposition: "failed_actionable",
+        controlActionId: actionId,
+        expectedGenerationId: generationId,
+        clientMutationId: `unsafe-retry-${unsafe.suffix}`,
+        payload: { body: `Do not retry ${unsafe.suffix}` },
+        sourceMessageId: unsafe.sourceMessageId,
+        deliveredMessageId: unsafe.deliveredMessageId,
+        continuationMessageId: unsafe.continuationMessageId,
+        cancelledAt: unsafe.cancelledAt,
+      });
+    }
+    const missingActionItemId = randomUUID();
+    itemIds.push(missingActionItemId);
+    await db.insert(chatQueuedMessages).values({
+      id: missingActionItemId,
+      orgId,
+      conversationId,
+      position: unsafeCases.length + 1,
+      status: "failed_actionable",
+      deliveryIntent: "steer",
+      deliveryDisposition: "failed_actionable",
+      controlActionId: null,
+      expectedGenerationId: generationId,
+      clientMutationId: "unsafe-retry-missing-action",
+      payload: { body: "Do not retry missing action" },
+    });
+    const steerMessages = chatSteerMessageService(db);
+
+    for (const itemId of itemIds) {
+      await expect(steerMessages.scheduleContinuation({
+        orgId,
+        conversationId,
+        itemId,
+        controlActionId: randomUUID(),
+        requestActor: boardQueueRequestActor(orgId),
+        actor: { actorType: "user", actorId: "board" },
+      })).rejects.toMatchObject({ status: 409 });
+    }
+
+    const actions = await db.select().from(chatControlActions);
+    const messages = await db.select().from(chatMessages).where(eq(chatMessages.conversationId, conversationId));
+    expect(actions).toHaveLength(unsafeCases.length);
+    expect(messages).toHaveLength(1);
   });
 
   it("keeps cancelled Queue tombstones hidden and rejects every Steer path", async () => {

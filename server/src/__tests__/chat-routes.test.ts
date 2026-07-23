@@ -3,7 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { unprocessable } from "../errors.js";
+import { conflict, unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { chatRoutes } from "../routes/chats.js";
 import { claimChatGeneration, clearActiveChatGenerationsForTest, createChatRuntimeControlCoordinator, getActiveChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
@@ -2075,6 +2075,83 @@ describe("chat routes", () => {
       item: { id: "queued-1", status: "continuation_pending" },
     });
     expect(mockChatService.claimSteerProviderSend).not.toHaveBeenCalled();
+  });
+
+  it("retries failed actionable feedback through the continuation endpoint with a fresh idempotent action", async () => {
+    const conversation = createConversation();
+    const freshActionId = "20000000-0000-4000-8000-000000000002";
+    const item = {
+      id: "queued-1",
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      position: 1,
+      status: "continuation_pending",
+      version: 3,
+      clientMutationId: "retry-failed-actionable",
+      payload: { body: "Retry this confirmed pre-delivery failure" },
+      deliveryIntent: "steer",
+      deliveryDisposition: "continuation_pending",
+      controlActionId: freshActionId,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatSteerMessages.scheduleContinuation
+      .mockResolvedValueOnce({
+        action: {
+          id: freshActionId,
+          expectedGenerationId: null,
+          localDisposition: "continuation_pending",
+        },
+        item,
+        idempotent: false,
+      })
+      .mockResolvedValueOnce({
+        action: {
+          id: freshActionId,
+          expectedGenerationId: null,
+          localDisposition: "continuation_pending",
+        },
+        item,
+        idempotent: true,
+      });
+
+    const first = await request(createApp())
+      .post("/api/chats/chat-1/queue/queued-1/steer")
+      .send({ controlActionId: freshActionId });
+    const duplicate = await request(createApp())
+      .post("/api/chats/chat-1/queue/queued-1/steer")
+      .send({ controlActionId: freshActionId });
+
+    for (const response of [first, duplicate]) {
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        result: "scheduled_next",
+        disposition: "continuation_pending",
+        controlActionId: freshActionId,
+        activeGenerationId: null,
+        item: { id: "queued-1", status: "continuation_pending", controlActionId: freshActionId },
+      });
+    }
+    expect(mockChatSteerMessages.scheduleContinuation).toHaveBeenCalledTimes(2);
+    expect(mockChatSteerMessages.scheduleContinuation).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ itemId: "queued-1", controlActionId: freshActionId }),
+    );
+    expect(mockChatSteerMessages.beginControlAction).not.toHaveBeenCalled();
+  });
+
+  it("rejects retrying failed actionable feedback when durable delivery evidence exists", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatSteerMessages.scheduleContinuation.mockRejectedValue(
+      conflict("Queued feedback delivery is not safely retryable"),
+    );
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/queue/queued-1/steer")
+      .send({ controlActionId: "20000000-0000-4000-8000-000000000002" });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({ error: "Queued feedback delivery is not safely retryable" });
   });
 
   it("delivers queued feedback through the active runtime control handle", async () => {
