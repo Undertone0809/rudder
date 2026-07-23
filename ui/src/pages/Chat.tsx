@@ -1028,7 +1028,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       setBranchPreview(null); setDraft(""); clearPendingFilesForCurrentScope();
     }
     await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, conversation.id) });
-    pushToast({ title: "Queued", body: "Added to Queue.", tone: "info" });
     return true;
   };
   const sendMessage = async (
