@@ -179,6 +179,7 @@ function validateSafeConnectionConfig(
     secrets?: z.infer<typeof mcpConnectionSecretsMutationSchema>;
   },
   ctx: z.RefinementCtx,
+  options: { allowManagedCuratedSafeConfig?: boolean } = {},
 ) {
   const accessMode = value.accessMode ?? defaultAccessMode(value.provider);
   const allowedAccessModes = value.provider
@@ -200,11 +201,15 @@ function validateSafeConnectionConfig(
         message: "Curated providers use Rudder-managed Streamable HTTP",
       });
     }
+    const hasManagedCuratedConfig = (
+      options.allowManagedCuratedSafeConfig === true
+      && mcpCuratedSafeConfigSchema.safeParse(value.safeConfig).success
+    );
     if (
       typeof value.safeConfig !== "object"
       || value.safeConfig === null
       || Array.isArray(value.safeConfig)
-      || Object.keys(value.safeConfig).length > 0
+      || (Object.keys(value.safeConfig).length > 0 && !hasManagedCuratedConfig)
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -392,7 +397,9 @@ const mcpConnectionMergedConfigFields = {
 
 export const mcpConnectionMergedConfigSchema = z.object(
   mcpConnectionMergedConfigFields,
-).strict().superRefine(validateSafeConnectionConfig);
+).strict().superRefine((value, ctx) => {
+  validateSafeConnectionConfig(value, ctx, { allowManagedCuratedSafeConfig: true });
+});
 
 /**
  * Mutation-aware validation target for create, secret rotation, or a safe
@@ -402,7 +409,9 @@ export const mcpConnectionMutationConfigSchema = z.object({
   ...mcpConnectionMergedConfigFields,
   secrets: mcpConnectionSecretsMutationSchema.optional(),
 }).strict()
-  .superRefine(validateSafeConnectionConfig)
+  .superRefine((value, ctx) => {
+    validateSafeConnectionConfig(value, ctx, { allowManagedCuratedSafeConfig: true });
+  })
   .superRefine(validateConnectionSecretMutation);
 
 export const mcpConnectionSummarySchema = z.object({

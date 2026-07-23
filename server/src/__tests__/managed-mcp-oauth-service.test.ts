@@ -31,10 +31,13 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { accessService } from "../services/access.js";
 import {
   managedMcpOAuthService,
+  parseProviderWorkspaceScope,
   type ManagedMcpOAuthServiceOptions,
 } from "../services/mcp/oauth.js";
+import { MCP_PROVIDER_REGISTRY } from "../services/mcp/provider-registry.js";
 import { secretService } from "../services/secrets.js";
 
 async function getAvailablePort(): Promise<number> {
@@ -51,6 +54,71 @@ async function getAvailablePort(): Promise<number> {
       server.close((error) => error ? reject(error) : resolve(address.port));
     });
   });
+}
+
+async function startIdentityMcpServer(input: {
+  toolName: string;
+  result: Record<string, unknown>;
+}) {
+  const calls: Array<{ name: string; arguments: Record<string, unknown> }> = [];
+  const server = createServer(async (req, res) => {
+    if (req.method === "DELETE") {
+      res.writeHead(200).end();
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    const rawBody = Buffer.concat(chunks).toString("utf8");
+    if (!rawBody) {
+      res.writeHead(202).end();
+      return;
+    }
+    const message = JSON.parse(rawBody) as {
+      id?: string | number;
+      method: string;
+      params?: { name?: string; arguments?: Record<string, unknown> };
+    };
+    if (message.method === "notifications/initialized") {
+      res.writeHead(202).end();
+      return;
+    }
+    const response = message.method === "initialize"
+      ? {
+          protocolVersion: "2025-06-18",
+          capabilities: { tools: {} },
+          serverInfo: { name: "identity-fixture", version: "1.0.0" },
+        }
+      : message.method === "tools/list"
+        ? {
+            tools: [{
+              name: input.toolName,
+              inputSchema: { type: "object" },
+            }],
+          }
+        : message.method === "tools/call"
+          ? (() => {
+              calls.push({
+                name: message.params?.name ?? "",
+                arguments: message.params?.arguments ?? {},
+              });
+              return {
+                content: [{ type: "text", text: JSON.stringify(input.result) }],
+              };
+            })()
+          : {};
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: response }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing MCP fixture port");
+  return {
+    origin: `http://identity.test:${address.port}`,
+    calls,
+    close: () => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    }),
+  };
 }
 
 async function startTempDatabase() {
@@ -264,6 +332,31 @@ describe("managedMcpOAuthService", () => {
     delete process.env.RUDDER_SECRETS_MASTER_KEY;
   });
 
+  it("derives official Linear and Notion workspace identity without using user or bot ids", () => {
+    expect(parseProviderWorkspaceScope("linear", {
+      id: "linear-user-id",
+      name: "Linear User",
+      organization: { id: "linear-org-id", name: "Linear Workspace" },
+    })).toMatchObject({ id: "linear-org-id", displayName: "Linear Workspace" });
+    expect(parseProviderWorkspaceScope("notion", {
+      id: "notion-bot-id",
+      name: "Rudder Bot",
+      type: "bot",
+      bot: {
+        workspace_id: "notion-workspace-id",
+        workspace_name: "Notion Workspace",
+      },
+    })).toMatchObject({ id: "notion-workspace-id", displayName: "Notion Workspace" });
+    expect(parseProviderWorkspaceScope("linear", {
+      id: "linear-user-id",
+      name: "Linear User",
+    })).toBeNull();
+    expect(parseProviderWorkspaceScope("notion", {
+      id: "notion-bot-id",
+      name: "Rudder Bot",
+    })).toBeNull();
+  });
+
   it("starts with a canonical callback and stores only a hashed one-time state", async () => {
     const { orgId, userId } = await seedOwner(db);
     const connection = await seedConnection(db, orgId, "supabase", "read_only");
@@ -360,12 +453,26 @@ describe("managedMcpOAuthService", () => {
     const svc = managedMcpOAuthService(db, serviceOptions());
     const started = await svc.start(orgId, connection.id, { userId });
     const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    const [pendingSession] = await db.select().from(mcpOAuthSessions)
+      .where(eq(mcpOAuthSessions.connectionId, connection.id));
     await db.update(mcpOAuthSessions)
       .set({ expiresAt: new Date(Date.now() - 1) })
       .where(eq(mcpOAuthSessions.connectionId, connection.id));
 
     await expect(svc.callback({ state, code: "expired-code" }))
       .rejects.toMatchObject({ status: 422 });
+    const [expiredSession] = await db.select().from(mcpOAuthSessions)
+      .where(eq(mcpOAuthSessions.connectionId, connection.id));
+    const [expiredConnection] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    expect(expiredSession).toMatchObject({
+      status: "expired",
+      credentialSecretId: null,
+    });
+    expect(expiredConnection?.status).not.toBe("authorizing");
+    expect(await db.select().from(organizationSecrets)
+      .where(eq(organizationSecrets.id, pendingSession!.credentialSecretId!)))
+      .toHaveLength(0);
     await expect(svc.callback({
       state: "f".repeat(64),
       error: "access_denied",
@@ -375,6 +482,30 @@ describe("managedMcpOAuthService", () => {
       status: 422,
       message: expect.not.stringContaining("attacker-controlled"),
     });
+  });
+
+  it("cleans expired OAuth sessions and credentials even when no callback arrives", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "linear", "read_write");
+    const svc = managedMcpOAuthService(db, serviceOptions());
+    await svc.start(orgId, connection.id, { userId });
+    const [session] = await db.select().from(mcpOAuthSessions)
+      .where(eq(mcpOAuthSessions.connectionId, connection.id));
+    await db.update(mcpOAuthSessions)
+      .set({ expiresAt: new Date(Date.now() - 1) })
+      .where(eq(mcpOAuthSessions.id, session!.id));
+
+    await svc.cleanupExpiredSessions();
+
+    const [cleaned] = await db.select().from(mcpOAuthSessions)
+      .where(eq(mcpOAuthSessions.id, session!.id));
+    const [updated] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    expect(cleaned).toMatchObject({ status: "expired", credentialSecretId: null });
+    expect(updated?.status).not.toBe("authorizing");
+    expect(await db.select().from(organizationSecrets)
+      .where(eq(organizationSecrets.id, session!.credentialSecretId!)))
+      .toHaveLength(0);
   });
 
   it("consumes a known provider-error callback once without reflecting its description", async () => {
@@ -475,6 +606,60 @@ describe("managedMcpOAuthService", () => {
       .toHaveLength(0);
   });
 
+  it("serializes callback and restart without deadlock or orphaning the consumed session secret", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "linear", "read_write");
+    let exchangeEntered!: () => void;
+    let releaseExchange!: () => void;
+    const exchangeStarted = new Promise<void>((resolve) => {
+      exchangeEntered = resolve;
+    });
+    const exchangeBarrier = new Promise<void>((resolve) => {
+      releaseExchange = resolve;
+    });
+    const baseAuth = oauthAuthStub()!;
+    const oauthAuth = vi.fn(async (
+      provider: OAuthClientProvider,
+      authOptions: AuthOptions,
+    ): Promise<AuthResult> => {
+      if (authOptions.authorizationCode) {
+        exchangeEntered();
+        await exchangeBarrier;
+      }
+      return baseAuth(provider, authOptions);
+    });
+    const svc = managedMcpOAuthService(db, serviceOptions({ oauthAuth }));
+    const first = await svc.start(orgId, connection.id, { userId });
+    const callback = svc.callback({
+      state: new URL(first.authorizationUrl).searchParams.get("state")!,
+      code: "provider-code",
+    });
+    await exchangeStarted;
+
+    const second = await Promise.race([
+      svc.start(orgId, connection.id, { userId }),
+      new Promise<never>((_, reject) => setTimeout(
+        () => reject(new Error("authorization restart deadlocked with callback")),
+        1_000,
+      )),
+    ]);
+    releaseExchange();
+    await expect(callback).rejects.toMatchObject({ status: 422 });
+
+    const sessions = await db.select().from(mcpOAuthSessions)
+      .where(eq(mcpOAuthSessions.connectionId, connection.id));
+    expect(sessions).toHaveLength(2);
+    expect(sessions.find((item) => item.stateHash === createHash("sha256")
+      .update(new URL(second.authorizationUrl).searchParams.get("state")!)
+      .digest("hex"))).toMatchObject({
+        status: "authorizing",
+        credentialSecretId: expect.any(String),
+      });
+    expect(sessions.filter((item) => item.credentialSecretId)).toHaveLength(1);
+    expect(await db.select().from(organizationSecrets)).toHaveLength(1);
+    expect(await db.select().from(mcpOAuthGrants)).toHaveLength(0);
+  });
+
   it("invalidates and deletes an active grant when a fresh authorization starts", async () => {
     const { orgId, userId } = await seedOwner(db);
     const connection = await seedConnection(db, orgId, "linear", "read_write");
@@ -571,6 +756,84 @@ describe("managedMcpOAuthService", () => {
     expect(svc.resolveProviderEndpoint(updated)).toBe(expectedEndpoint);
   });
 
+  it.each([
+    {
+      provider: "linear",
+      accessMode: "read_write",
+      toolName: "get_user",
+      expectedArguments: { query: "me" },
+      actorId: "linear-user-id",
+      workspaceId: "linear-org-id",
+      result: {
+        id: "linear-user-id",
+        name: "Linear User",
+        organization: { id: "linear-org-id", name: "Linear Workspace" },
+      },
+    },
+    {
+      provider: "notion",
+      accessMode: "provider_default",
+      toolName: "notion-get-self",
+      expectedArguments: {},
+      actorId: "notion-bot-id",
+      workspaceId: "notion-workspace-id",
+      result: {
+        id: "notion-bot-id",
+        name: "Rudder Bot",
+        bot: {
+          workspace_id: "notion-workspace-id",
+          workspace_name: "Notion Workspace",
+        },
+      },
+    },
+  ] as const)("uses the real default $provider MCP identity path", async (fixture) => {
+    const mcp = await startIdentityMcpServer({
+      toolName: fixture.toolName,
+      result: fixture.result,
+    });
+    const registry = MCP_PROVIDER_REGISTRY[fixture.provider] as { endpoint: string };
+    const originalEndpoint = registry.endpoint;
+    registry.endpoint = `${mcp.origin}/mcp`;
+    try {
+      const { orgId, userId } = await seedOwner(db);
+      const connection = await seedConnection(
+        db,
+        orgId,
+        fixture.provider,
+        fixture.accessMode,
+      );
+      const svc = managedMcpOAuthService(db, serviceOptions({
+        discoverProviderScope: undefined,
+        allowlists: {
+          httpOrigins: [mcp.origin],
+          stdioCommands: [],
+          stdioWorkingDirectories: [],
+          stdioEnvironmentNames: [],
+        },
+        dnsLookup: async (hostname) => hostname === "identity.test"
+          ? [{ address: "127.0.0.1", family: 4 }]
+          : [{ address: "8.8.8.8", family: 4 }],
+      }));
+      const started = await svc.start(orgId, connection.id, { userId });
+      await svc.callback({
+        state: new URL(started.authorizationUrl).searchParams.get("state")!,
+        code: "provider-code",
+      });
+
+      const [updated] = await db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, connection.id));
+      expect(updated?.externalScope).toBe(fixture.workspaceId);
+      expect(updated?.externalScope).not.toBe(fixture.actorId);
+      expect(mcp.calls).toEqual([{
+        name: fixture.toolName,
+        arguments: fixture.expectedArguments,
+      }]);
+    } finally {
+      registry.endpoint = originalEndpoint;
+      await mcp.close();
+    }
+  });
+
   it("invalidates an active grant as soon as its authorizer is no longer an owner", async () => {
     const { orgId, userId } = await seedOwner(db);
     const connection = await seedConnection(db, orgId, "linear", "read_write");
@@ -603,6 +866,118 @@ describe("managedMcpOAuthService", () => {
     expect(await db.select().from(organizationSecrets)
       .where(eq(organizationSecrets.id, originalGrant.credentialSecretId!)))
       .toHaveLength(0);
+  });
+
+  it("invalidates OAuth grants atomically when organization access is removed", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "linear", "read_write");
+    const oauth = managedMcpOAuthService(db, serviceOptions());
+    const started = await oauth.start(orgId, connection.id, { userId });
+    await oauth.callback({
+      state: new URL(started.authorizationUrl).searchParams.get("state")!,
+      code: "provider-code",
+    });
+
+    await accessService(db).setUserCompanyAccess(userId, []);
+
+    const [grant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, connection.id));
+    const [updated] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    expect(grant).toMatchObject({ status: "needs_reauth", credentialSecretId: null });
+    expect(updated).toMatchObject({ status: "needs_reauth", enabled: false });
+  });
+
+  it("invalidates OAuth grants atomically when an owner is demoted or suspended", async () => {
+    for (const [membershipRole, status] of [
+      ["member", "active"],
+      ["owner", "suspended"],
+    ] as const) {
+      const { orgId, userId } = await seedOwner(db);
+      const connection = await seedConnection(db, orgId, "linear", "read_write");
+      const oauth = managedMcpOAuthService(db, serviceOptions());
+      const started = await oauth.start(orgId, connection.id, { userId });
+      await oauth.callback({
+        state: new URL(started.authorizationUrl).searchParams.get("state")!,
+        code: "provider-code",
+      });
+
+      await accessService(db).ensureMembership(
+        orgId,
+        "user",
+        userId,
+        membershipRole,
+        status,
+      );
+
+      const [grant] = await db.select().from(mcpOAuthGrants)
+        .where(eq(mcpOAuthGrants.connectionId, connection.id));
+      expect(grant).toMatchObject({ status: "needs_reauth", credentialSecretId: null });
+      await db.delete(mcpOAuthSessions);
+      await db.delete(mcpOAuthGrants);
+      await db.delete(mcpConnections);
+      await db.delete(activityLog);
+      await db.delete(organizationSecretVersions);
+      await db.delete(organizationSecrets);
+      await db.delete(organizationMemberships);
+      await db.delete(authUsers);
+      await db.delete(organizations);
+    }
+  });
+
+  it("invalidates only non-owner grants when an instance administrator is demoted", async () => {
+    const first = await seedOwner(db);
+    const secondOrgId = randomUUID();
+    await db.insert(organizations).values({
+      id: secondOrgId,
+      name: "Owner survives admin demotion",
+      urlKey: deriveOrganizationUrlKey(`Owner survives ${secondOrgId}`),
+      issuePrefix: `S${secondOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(organizationMemberships).values({
+      orgId: secondOrgId,
+      principalType: "user",
+      principalId: first.userId,
+      membershipRole: "owner",
+      status: "active",
+    });
+    await db.insert(instanceUserRoles).values({
+      userId: first.userId,
+      role: "instance_admin",
+    });
+    const adminOnlyConnection = await seedConnection(db, first.orgId, "linear", "read_write");
+    const ownerConnection = await seedConnection(db, secondOrgId, "notion", "provider_default");
+    await db.delete(organizationMemberships)
+      .where(and(
+        eq(organizationMemberships.orgId, first.orgId),
+        eq(organizationMemberships.principalId, first.userId),
+      ));
+    const oauth = managedMcpOAuthService(db, serviceOptions({
+      deploymentMode: "authenticated",
+      authPublicBaseUrl: "https://rudder.example.test",
+    }));
+    for (const [orgId, connectionId] of [
+      [first.orgId, adminOnlyConnection.id],
+      [secondOrgId, ownerConnection.id],
+    ]) {
+      const started = await oauth.start(orgId, connectionId, {
+        userId: first.userId,
+        isInstanceAdmin: true,
+      });
+      await oauth.callback({
+        state: new URL(started.authorizationUrl).searchParams.get("state")!,
+        code: "provider-code",
+      });
+    }
+
+    await accessService(db).demoteInstanceAdmin(first.userId);
+
+    const grants = await db.select().from(mcpOAuthGrants);
+    expect(grants.find((grant) => grant.connectionId === adminOnlyConnection.id))
+      .toMatchObject({ status: "needs_reauth", credentialSecretId: null });
+    expect(grants.find((grant) => grant.connectionId === ownerConnection.id))
+      .toMatchObject({ status: "active", credentialSecretId: expect.any(String) });
   });
 
   it("accepts instance-admin and local-implicit authorizers without owner membership", async () => {
@@ -705,6 +1080,126 @@ describe("managedMcpOAuthService", () => {
       .resolveSecretValue(orgId, grant.credentialSecretId!, "latest");
     expect(raw).toContain("refresh-after-rotation");
     expect(raw).not.toContain("refresh-before-rotation");
+  });
+
+  it("keeps refresh network I/O outside locks so revoke wins over a hung authorization server", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "linear", "read_write");
+    await db.update(mcpConnections).set({ toolTimeoutMs: 100 })
+      .where(eq(mcpConnections.id, connection.id));
+    let refreshEntered!: () => void;
+    const refreshStarted = new Promise<void>((resolve) => {
+      refreshEntered = resolve;
+    });
+    const never = new Promise<AuthResult>(() => undefined);
+    const baseAuth = oauthAuthStub()!;
+    const oauthAuth = vi.fn(async (
+      provider: OAuthClientProvider,
+      authOptions: AuthOptions,
+    ): Promise<AuthResult> => {
+      if (!authOptions.authorizationCode && await provider.tokens()) {
+        refreshEntered();
+        return never;
+      }
+      return baseAuth(provider, authOptions);
+    });
+    const svc = managedMcpOAuthService(db, serviceOptions({ oauthAuth }));
+    const started = await svc.start(orgId, connection.id, { userId });
+    await svc.callback({
+      state: new URL(started.authorizationUrl).searchParams.get("state")!,
+      code: "initial-code",
+    });
+
+    const refresh = svc.createCredential(orgId, connection.id).refresh();
+    const refreshOutcome = refresh.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await refreshStarted;
+    await expect(Promise.race([
+      svc.revoke(orgId, connection.id, { userId }),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error("revoke blocked behind refresh network I/O")),
+        500,
+      )),
+    ])).resolves.toMatchObject({ status: "revoked" });
+    expect(await refreshOutcome).toMatchObject({
+      status: 422,
+      message: expect.not.stringContaining("snake-refresh-token"),
+    });
+
+    const [grant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, connection.id));
+    const [updated] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    expect(grant).toMatchObject({ status: "revoked", credentialSecretId: null });
+    expect(updated).toMatchObject({ status: "revoked", enabled: false });
+  });
+
+  it("lets another service take an expired lease and rejects the stale holder by nonce and version CAS", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "linear", "read_write");
+    let firstEntered!: () => void;
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+    const firstBarrier = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let refreshCalls = 0;
+    const baseAuth = oauthAuthStub()!;
+    const oauthAuth = vi.fn(async (
+      provider: OAuthClientProvider,
+      authOptions: AuthOptions,
+    ): Promise<AuthResult> => {
+      if (!authOptions.authorizationCode && await provider.tokens()) {
+        refreshCalls += 1;
+        if (refreshCalls === 1) {
+          firstEntered();
+          await firstBarrier;
+          await provider.saveTokens({
+            access_token: "stale-holder-access",
+            refresh_token: "stale-holder-refresh",
+            token_type: "Bearer",
+          });
+        } else {
+          await provider.saveTokens({
+            access_token: "takeover-access",
+            refresh_token: "takeover-refresh",
+            token_type: "Bearer",
+          });
+        }
+        return "AUTHORIZED";
+      }
+      return baseAuth(provider, authOptions);
+    });
+    const firstService = managedMcpOAuthService(db, serviceOptions({ oauthAuth }));
+    const secondService = managedMcpOAuthService(db, serviceOptions({ oauthAuth }));
+    const started = await firstService.start(orgId, connection.id, { userId });
+    await firstService.callback({
+      state: new URL(started.authorizationUrl).searchParams.get("state")!,
+      code: "provider-code",
+    });
+
+    const staleRefresh = firstService.createCredential(orgId, connection.id).refresh();
+    await firstStarted;
+    await db.update(mcpOAuthGrants).set({
+      refreshLeaseExpiresAt: new Date(Date.now() - 1),
+    }).where(eq(mcpOAuthGrants.connectionId, connection.id));
+    await secondService.createCredential(orgId, connection.id).refresh();
+    releaseFirst();
+    await expect(staleRefresh).rejects.toMatchObject({ status: 422 });
+
+    await expect(firstService.createCredential(orgId, connection.id).token())
+      .resolves.toBe("takeover-access");
+    expect(refreshCalls).toBe(2);
+    const [grant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, connection.id));
+    const stored = await secretService(db)
+      .resolveSecretValue(orgId, grant!.credentialSecretId!, "latest");
+    expect(stored).toContain("takeover-refresh");
+    expect(stored).not.toContain("stale-holder-refresh");
   });
 
   it("commits needs_reauth and deletes credentials on invalid_grant", async () => {
@@ -861,7 +1356,7 @@ describe("managedMcpOAuthService", () => {
     }
   });
 
-  it("waits for an in-flight refresh and revokes the latest rotated token", async () => {
+  it("lets local revoke win without waiting for an in-flight refresh", async () => {
     const port = await getAvailablePort();
     const receivedTokens: string[] = [];
     const revocationServer = createServer((req, res) => {
@@ -945,12 +1440,22 @@ describe("managedMcpOAuthService", () => {
       });
 
       const refresh = svc.createCredential(orgId, connection.id).refresh();
+      const refreshOutcome = refresh.then(
+        () => null,
+        (error: unknown) => error,
+      );
       await refreshStarted;
-      const revoke = svc.revoke(orgId, connection.id, { userId });
+      await expect(Promise.race([
+        svc.revoke(orgId, connection.id, { userId }),
+        new Promise<never>((_, reject) => setTimeout(
+          () => reject(new Error("revoke waited for refresh network I/O")),
+          1_000,
+        )),
+      ])).resolves.toMatchObject({ status: "revoked" });
       releaseRefresh();
-      await Promise.all([refresh, revoke]);
+      expect(await refreshOutcome).toMatchObject({ status: 422 });
 
-      expect(receivedTokens).toEqual(["refresh-after-rotation"]);
+      expect(receivedTokens).toEqual(["refresh-before-rotation"]);
       const [grant] = await db.select().from(mcpOAuthGrants)
         .where(eq(mcpOAuthGrants.connectionId, connection.id));
       const [updated] = await db.select().from(mcpConnections)

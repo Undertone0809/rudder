@@ -440,6 +440,18 @@ describe("managed MCP shared contracts", () => {
     expect(mergedConfigSchema.safeParse({
       provider: "supabase",
       transport: "streamable_http",
+      accessMode: "read_write",
+      safeConfig: {
+        featureGroups: {
+          mode: "provider_default",
+          excluded: ["storage"],
+        },
+      },
+      enabled: true,
+    }).success).toBe(true);
+    expect(mergedConfigSchema.safeParse({
+      provider: "supabase",
+      transport: "streamable_http",
       accessMode: "provider_default",
       safeConfig: {},
       enabled: true,

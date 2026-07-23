@@ -15,6 +15,11 @@ export interface McpProviderDefinition {
     mode: "provider_default";
     excluded: string[];
   };
+  scopeIdentity?: {
+    toolNames: readonly string[];
+    arguments: Record<string, unknown>;
+    containers: readonly ("workspace" | "organization")[];
+  };
 }
 
 /**
@@ -38,12 +43,22 @@ export const MCP_PROVIDER_REGISTRY = {
     requiresOAuth: true,
     scopeSelection: "workspace",
     defaultAccessMode: "read_write",
+    scopeIdentity: {
+      toolNames: ["get_user"],
+      arguments: { query: "me" },
+      containers: ["workspace", "organization"],
+    },
   },
   notion: {
     endpoint: "https://mcp.notion.com/mcp",
     requiresOAuth: true,
     scopeSelection: "workspace",
     defaultAccessMode: "provider_default",
+    scopeIdentity: {
+      toolNames: ["notion-get-self"],
+      arguments: {},
+      containers: ["workspace", "organization"],
+    },
   },
   custom: {
     endpoint: null,

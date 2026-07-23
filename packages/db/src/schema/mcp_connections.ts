@@ -82,6 +82,8 @@ export const mcpOAuthGrants = pgTable(
     statusMetadata: jsonb("status_metadata").$type<Record<string, unknown>>().notNull().default({}),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     lastRefreshedAt: timestamp("last_refreshed_at", { withTimezone: true }),
+    refreshLeaseNonce: text("refresh_lease_nonce"),
+    refreshLeaseExpiresAt: timestamp("refresh_lease_expires_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

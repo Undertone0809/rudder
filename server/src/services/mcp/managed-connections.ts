@@ -894,6 +894,8 @@ export function managedMcpConnectionService(
               status: "needs_reauth",
               statusMetadata: { reason: "connection_reconnect" },
               credentialSecretId: null,
+              refreshLeaseNonce: null,
+              refreshLeaseExpiresAt: null,
               updatedAt: now,
             }).where(eq(mcpOAuthGrants.id, activeGrant.id));
             if (activeGrant.credentialSecretId) {

@@ -23,12 +23,22 @@ describe("managed MCP provider registry", () => {
         requiresOAuth: true,
         scopeSelection: "workspace",
         defaultAccessMode: "read_write",
+        scopeIdentity: {
+          toolNames: ["get_user"],
+          arguments: { query: "me" },
+          containers: ["workspace", "organization"],
+        },
       },
       notion: {
         endpoint: "https://mcp.notion.com/mcp",
         requiresOAuth: true,
         scopeSelection: "workspace",
         defaultAccessMode: "provider_default",
+        scopeIdentity: {
+          toolNames: ["notion-get-self"],
+          arguments: {},
+          containers: ["workspace", "organization"],
+        },
       },
       custom: {
         endpoint: null,

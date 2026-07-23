@@ -296,6 +296,13 @@ describe("managed MCP connection organization routes", () => {
     const patchResponse = await request(app)
       .patch(`/api/orgs/${orgId}/mcp/connections/${connectionId}`)
       .send({ displayName: "Renamed" });
+    mockService.update.mockResolvedValueOnce({
+      ...connectionSummary(),
+      provider: "supabase",
+      externalScope: "project-a",
+      accessMode: "read_only",
+      status: "active",
+    });
     const accessResponse = await request(app)
       .patch(`/api/orgs/${orgId}/mcp/connections/${connectionId}/access-mode`)
       .send({ accessMode: "read_only" });
@@ -307,6 +314,11 @@ describe("managed MCP connection organization routes", () => {
       orgId,
       connectionId,
       { accessMode: "read_only" },
+      { userId: "owner-1", agentId: null },
+    );
+    expect(mockService.refreshTools).toHaveBeenCalledWith(
+      orgId,
+      connectionId,
       { userId: "owner-1", agentId: null },
     );
     expect(mockLogActivity).not.toHaveBeenCalled();

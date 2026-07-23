@@ -16,6 +16,15 @@ const oauthLifecycleMigrationPath = path.join(
   migrationsDirectory,
   oauthLifecycleMigrationFilename,
 );
+const oauthRefreshLeaseMigrationFilename = fs.readdirSync(migrationsDirectory)
+  .find((filename) => /^0115_.*\.sql$/.test(filename));
+if (!oauthRefreshLeaseMigrationFilename) {
+  throw new Error("Expected generated 0115 managed MCP OAuth refresh lease migration");
+}
+const oauthRefreshLeaseMigrationPath = path.join(
+  migrationsDirectory,
+  oauthRefreshLeaseMigrationFilename,
+);
 
 describe("managed MCP connection migration", () => {
   it("backfills legacy MCP definitions as disabled non-executable connections", () => {
@@ -47,5 +56,12 @@ describe("managed MCP connection migration", () => {
     expect(sql).toMatch(/mcp_oauth_sessions_credential_secret_id_organization_secrets_id_fk[\s\S]*ON DELETE set null/);
     expect(sql).toMatch(/mcp_oauth_grants_active_credential_check/);
     expect(sql).toMatch(/mcp_oauth_sessions_authorizing_credential_check/);
+  });
+
+  it("persists a cross-process OAuth refresh lease nonce and expiry", () => {
+    const sql = fs.readFileSync(oauthRefreshLeaseMigrationPath, "utf8");
+
+    expect(sql).toMatch(/ADD COLUMN "refresh_lease_nonce" text/);
+    expect(sql).toMatch(/ADD COLUMN "refresh_lease_expires_at" timestamp with time zone/);
   });
 });

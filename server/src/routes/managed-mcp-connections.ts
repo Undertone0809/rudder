@@ -167,6 +167,13 @@ export function managedMcpConnectionRoutes(
         { accessMode: req.body.accessMode },
         mutationActor(req),
       );
+      if (
+        updated.provider !== "custom"
+        && updated.status === "active"
+        && updated.enabled
+      ) {
+        await svc.refreshTools(orgId, connectionId, mutationActor(req));
+      }
       res.json(updated);
     },
   );
