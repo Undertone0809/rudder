@@ -1338,6 +1338,55 @@ describe("managedMcpConnectionService", () => {
     expect(createClient).not.toHaveBeenCalled();
   });
 
+  it("requires the dedicated access-mode path and reauthorization for Linear write escalation", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+    const linear = await svc.create(orgId, {
+      name: "linear-permissions",
+      displayName: "Linear",
+      provider: "linear",
+      transport: "streamable_http",
+      safeConfig: {},
+    }, { userId: "owner-1" });
+
+    await expect(svc.update(
+      orgId,
+      linear.id,
+      { accessMode: "read_only" },
+      { userId: "owner-1" },
+    )).rejects.toThrow(/dedicated access-mode/i);
+
+    await expect(svc.update(
+      orgId,
+      linear.id,
+      { accessMode: "read_only" },
+      { userId: "owner-1" },
+      { allowCuratedAccessMode: true },
+    )).resolves.toMatchObject({ accessMode: "read_only" });
+    await db.update(mcpConnections).set({ status: "active" })
+      .where(eq(mcpConnections.id, linear.id));
+
+    await expect(svc.update(
+      orgId,
+      linear.id,
+      { accessMode: "read_write" },
+      { userId: "owner-1" },
+      { allowCuratedAccessMode: true },
+    )).rejects.toThrow(/reconnect|reauthoriz/i);
+
+    await db.update(mcpConnections).set({
+      status: "revoked",
+      enabled: false,
+    }).where(eq(mcpConnections.id, linear.id));
+    await expect(svc.update(
+      orgId,
+      linear.id,
+      { accessMode: "read_write" },
+      { userId: "owner-1" },
+      { allowCuratedAccessMode: true },
+    )).resolves.toMatchObject({ accessMode: "read_write" });
+  });
+
   it("scopes reads and mutations to the organization and implements disable/reconnect lifecycle", async () => {
     const orgId = await seedOrg(db);
     const otherOrgId = await seedOrg(db);

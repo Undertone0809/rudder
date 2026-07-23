@@ -33,11 +33,13 @@ import {
 } from "@rudderhq/shared";
 import {
   and,
+  asc,
   eq,
   gt,
   inArray,
   isNull,
   lte,
+  sql,
 } from "drizzle-orm";
 import {
   createHash,
@@ -46,6 +48,7 @@ import {
 } from "node:crypto";
 import { HttpError, notFound, unprocessable } from "../../errors.js";
 import { getSecretProvider } from "../../secrets/provider-registry.js";
+import { lockManagedMcpOAuthAuthorizer } from "./authorizer-lock.js";
 import {
   createManagedMcpClient,
   resolveMcpHttpCredentials,
@@ -713,9 +716,45 @@ export function managedMcpOAuthService(
     });
   }
 
-  async function cleanupExpiredSessions(orgId?: string): Promise<number> {
-    const now = new Date();
+  async function bestEffortRevokeMaterial(
+    material: ManagedMcpOAuthMaterial | null,
+    timeoutMs: number,
+  ): Promise<void> {
+    const revocationEndpoint = oauthRevocationEndpoint(material);
+    const tokens = material?.tokens;
+    const token = tokens?.refresh_token ?? tokens?.access_token;
+    if (!revocationEndpoint || !token) return;
+    const body = new URLSearchParams({
+      token,
+      token_type_hint: tokens?.refresh_token ? "refresh_token" : "access_token",
+    });
+    const clientInformation = material?.clientInformation;
+    if (clientInformation?.client_id) body.set("client_id", clientInformation.client_id);
+    if (clientInformation?.client_secret) body.set("client_secret", clientInformation.client_secret);
+    try {
+      const response = await secureFetch(revocationEndpoint, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      await response.body?.cancel();
+    } catch {
+      // RFC 7009 revocation is best effort. Rudder's local state always wins.
+    }
+  }
+
+  async function cleanupExpiredSessions(
+    orgId?: string,
+    limit = 100,
+  ): Promise<number> {
+    const databaseClock = await db.execute(sql<{ value: string }>`
+      select clock_timestamp()::text as value
+    `) as Array<{ value: string }>;
+    const now = new Date(databaseClock[0]!.value);
+    const boundedLimit = Math.max(1, Math.min(limit, 1_000));
     const candidates = await db.select({
+      id: mcpOAuthSessions.id,
       connectionId: mcpOAuthSessions.connectionId,
       orgId: mcpOAuthSessions.orgId,
     }).from(mcpOAuthSessions).where(and(
@@ -723,16 +762,37 @@ export function managedMcpOAuthService(
       isNull(mcpOAuthSessions.consumedAt),
       lte(mcpOAuthSessions.expiresAt, now),
       ...(orgId ? [eq(mcpOAuthSessions.orgId, orgId)] : []),
-    ));
-    const keys = Array.from(new Map(candidates.map((candidate) => [
-      `${candidate.orgId}:${candidate.connectionId}`,
-      candidate,
-    ])).values()).sort((left, right) => (
+    ))
+      .orderBy(asc(mcpOAuthSessions.expiresAt), asc(mcpOAuthSessions.id))
+      .limit(boundedLimit);
+    const groupedCandidates = new Map<string, {
+      connectionId: string;
+      orgId: string;
+      sessionIds: string[];
+    }>();
+    for (const candidate of candidates) {
+      const key = `${candidate.orgId}:${candidate.connectionId}`;
+      const group = groupedCandidates.get(key);
+      if (group) {
+        group.sessionIds.push(candidate.id);
+      } else {
+        groupedCandidates.set(key, {
+          connectionId: candidate.connectionId,
+          orgId: candidate.orgId,
+          sessionIds: [candidate.id],
+        });
+      }
+    }
+    const keys = Array.from(groupedCandidates.values()).sort((left, right) => (
       left.connectionId.localeCompare(right.connectionId)
     ));
     let cleaned = 0;
     for (const key of keys) {
       cleaned += await db.transaction(async (tx) => {
+        const transactionClock = await tx.execute(sql<{ value: string }>`
+          select clock_timestamp()::text as value
+        `) as Array<{ value: string }>;
+        const transactionNow = new Date(transactionClock[0]!.value);
         const connection = await tx.select().from(mcpConnections)
           .where(and(
             eq(mcpConnections.orgId, key.orgId),
@@ -745,9 +805,10 @@ export function managedMcpOAuthService(
           .where(and(
             eq(mcpOAuthSessions.orgId, key.orgId),
             eq(mcpOAuthSessions.connectionId, key.connectionId),
+            inArray(mcpOAuthSessions.id, key.sessionIds),
             eq(mcpOAuthSessions.status, "authorizing"),
             isNull(mcpOAuthSessions.consumedAt),
-            lte(mcpOAuthSessions.expiresAt, now),
+            lte(mcpOAuthSessions.expiresAt, transactionNow),
           ))
           .for("update");
         if (expired.length === 0) return 0;
@@ -756,7 +817,7 @@ export function managedMcpOAuthService(
           .filter((id): id is string => Boolean(id));
         await tx.update(mcpOAuthSessions).set({
           status: "expired",
-          consumedAt: now,
+          consumedAt: transactionNow,
           credentialSecretId: null,
           statusMetadata: { reason: "ttl_expired" },
         }).where(inArray(mcpOAuthSessions.id, expired.map((session) => session.id)));
@@ -771,14 +832,14 @@ export function managedMcpOAuthService(
             eq(mcpOAuthSessions.connectionId, key.connectionId),
             eq(mcpOAuthSessions.status, "authorizing"),
             isNull(mcpOAuthSessions.consumedAt),
-            gt(mcpOAuthSessions.expiresAt, now),
+            gt(mcpOAuthSessions.expiresAt, transactionNow),
           ))
           .for("share")
           .then((rows) => rows[0] ?? null);
         if (connection.status === "authorizing" && !stillAuthorizing) {
           await tx.update(mcpConnections).set({
             status: "error",
-            updatedAt: now,
+            updatedAt: transactionNow,
           }).where(eq(mcpConnections.id, connection.id));
         }
         await tx.insert(activityLog).values(oauthActivityValues({
@@ -962,6 +1023,7 @@ export function managedMcpOAuthService(
         .then((rows) => rows[0] ?? null);
       if (!connection) return null;
       assertCurated(connection);
+      if (connection.status !== "authorizing") return null;
       const lockedSession = await tx.select().from(mcpOAuthSessions)
         .where(and(
           eq(mcpOAuthSessions.id, session.id),
@@ -1173,6 +1235,10 @@ export function managedMcpOAuthService(
     );
     const outcome = await db.transaction(async (tx) => {
       const now = new Date();
+      await lockManagedMcpOAuthAuthorizer(
+        tx,
+        consumed.session.authorizingUserId,
+      );
       const connection = await tx.select().from(mcpConnections)
         .where(and(
           eq(mcpConnections.orgId, consumed.session.orgId),
@@ -1302,9 +1368,17 @@ export function managedMcpOAuthService(
       };
     });
     if (!outcome) {
+      await bestEffortRevokeMaterial(
+        grantMaterial,
+        Math.min(consumed.connection.toolTimeoutMs, 10_000),
+      );
       throw unprocessable("Managed MCP OAuth connection changed; start authorization again");
     }
     if (outcome.kind === "reauth") {
+      await bestEffortRevokeMaterial(
+        grantMaterial,
+        Math.min(consumed.connection.toolTimeoutMs, 10_000),
+      );
       throw unprocessable("Managed MCP OAuth must be reauthorized by an owner");
     }
     if (outcome.status === "active" && options.refreshConnectionTools) {
@@ -1503,6 +1577,14 @@ export function managedMcpOAuthService(
         .then((rows) => rows[0] ?? null);
       if (!connection) throw notFound("MCP connection not found");
       assertCurated(connection);
+      const pendingSessions = await tx.select().from(mcpOAuthSessions)
+        .where(and(
+          eq(mcpOAuthSessions.orgId, orgId),
+          eq(mcpOAuthSessions.connectionId, connectionId),
+          eq(mcpOAuthSessions.status, "authorizing"),
+          isNull(mcpOAuthSessions.consumedAt),
+        ))
+        .for("update");
       let material: ManagedMcpOAuthMaterial | null = null;
       if (grant?.credentialSecretId) {
         try {
@@ -1528,6 +1610,26 @@ export function managedMcpOAuthService(
         if (grant.credentialSecretId) {
           await tx.delete(organizationSecrets)
             .where(eq(organizationSecrets.id, grant.credentialSecretId));
+        }
+      }
+      if (pendingSessions.length > 0) {
+        await tx.update(mcpOAuthSessions).set({
+          status: "expired",
+          statusMetadata: { reason },
+          credentialSecretId: null,
+          consumedAt: now,
+        }).where(inArray(
+          mcpOAuthSessions.id,
+          pendingSessions.map((session) => session.id),
+        ));
+        const pendingSecretIds = pendingSessions
+          .map((session) => session.credentialSecretId)
+          .filter((id): id is string => Boolean(id));
+        if (pendingSecretIds.length > 0) {
+          await tx.delete(organizationSecrets).where(and(
+            eq(organizationSecrets.orgId, orgId),
+            inArray(organizationSecrets.id, pendingSecretIds),
+          ));
         }
       }
       const updated = await tx.update(mcpConnections).set({
@@ -1557,29 +1659,10 @@ export function managedMcpOAuthService(
       };
     });
 
-    const revocationEndpoint = oauthRevocationEndpoint(outcome.material);
-    const tokens = outcome.material?.tokens;
-    const token = tokens?.refresh_token ?? tokens?.access_token;
-    if (revocationEndpoint && token) {
-      const body = new URLSearchParams({
-        token,
-        token_type_hint: tokens?.refresh_token ? "refresh_token" : "access_token",
-      });
-      const clientInformation = outcome.material?.clientInformation;
-      if (clientInformation?.client_id) body.set("client_id", clientInformation.client_id);
-      if (clientInformation?.client_secret) body.set("client_secret", clientInformation.client_secret);
-      try {
-        const response = await secureFetch(revocationEndpoint, {
-          method: "POST",
-          headers: { "content-type": "application/x-www-form-urlencoded" },
-          body,
-          signal: AbortSignal.timeout(Math.min(existing.toolTimeoutMs, 10_000)),
-        });
-        await response.body?.cancel();
-      } catch {
-        // RFC 7009 revocation is best effort. Rudder's local revoke always wins.
-      }
-    }
+    await bestEffortRevokeMaterial(
+      outcome.material,
+      Math.min(existing.toolTimeoutMs, 10_000),
+    );
     return publicConnection(outcome.connection);
   }
 
@@ -1656,7 +1739,10 @@ export function managedMcpOAuthService(
     } | null = null;
     while (!claimed) {
       const result = await db.transaction(async (tx) => {
-        const now = new Date();
+        const databaseClock = await tx.execute(sql<{ value: string }>`
+          select clock_timestamp()::text as value
+        `) as Array<{ value: string }>;
+        const now = new Date(databaseClock[0]!.value);
         const connection = await tx.select().from(mcpConnections)
           .where(and(
             eq(mcpConnections.orgId, orgId),

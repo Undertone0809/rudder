@@ -166,6 +166,7 @@ export function managedMcpConnectionRoutes(
         connectionId,
         { accessMode: req.body.accessMode },
         mutationActor(req),
+        { allowCuratedAccessMode: true },
       );
       if (
         updated.provider !== "custom"

@@ -315,6 +315,7 @@ describe("managed MCP connection organization routes", () => {
       connectionId,
       { accessMode: "read_only" },
       { userId: "owner-1", agentId: null },
+      { allowCuratedAccessMode: true },
     );
     expect(mockService.refreshTools).toHaveBeenCalledWith(
       orgId,

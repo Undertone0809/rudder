@@ -83,6 +83,10 @@ export interface ManagedMcpMutationActor {
   agentId?: string | null;
 }
 
+export interface ManagedMcpUpdateControl {
+  allowCuratedAccessMode?: boolean;
+}
+
 const EMPTY_ALLOWLISTS: McpDeploymentAllowlists = {
   httpOrigins: [],
   stdioCommands: [],
@@ -728,6 +732,7 @@ export function managedMcpConnectionService(
       connectionId: string,
       rawPatch: UpdateMcpConnection,
       actor: ManagedMcpMutationActor = {},
+      control: ManagedMcpUpdateControl = {},
     ) => {
       const existing = await findRow(orgId, connectionId);
       assertLegacyMutable(existing);
@@ -746,6 +751,25 @@ export function managedMcpConnectionService(
         enabled: patch.enabled ?? existing.enabled,
       };
       mcpConnectionMergedConfigSchema.parse(merged);
+      if (
+        patch.accessMode !== undefined
+        && existing.provider !== "custom"
+        && !control.allowCuratedAccessMode
+      ) {
+        throw unprocessable(
+          "Curated MCP access mode must be changed through the dedicated access-mode operation",
+        );
+      }
+      if (
+        existing.provider === "linear"
+        && existing.accessMode === "read_only"
+        && patch.accessMode === "read_write"
+        && existing.status === "active"
+      ) {
+        throw unprocessable(
+          "Linear write access requires reauthorization: disconnect the read-only grant, select write access, then reconnect OAuth",
+        );
+      }
 
       const previousShape = declaredSecretShape(existing.transport, existing.safeConfig);
       const nextShape = declaredSecretShape(existing.transport, merged.safeConfig);

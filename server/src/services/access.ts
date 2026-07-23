@@ -10,6 +10,7 @@ import {
 } from "@rudderhq/db";
 import type { PermissionKey, PrincipalType } from "@rudderhq/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { lockManagedMcpOAuthAuthorizer } from "./mcp/authorizer-lock.js";
 
 type MembershipRow = typeof organizationMemberships.$inferSelect;
 type GrantInput = {
@@ -248,6 +249,7 @@ export function accessService(db: Db) {
 
   async function demoteInstanceAdmin(userId: string) {
     return db.transaction(async (tx) => {
+      await lockManagedMcpOAuthAuthorizer(tx, userId);
       await invalidateManagedMcpAuthorizations(tx, userId, {
         retainActiveOrganizationOwners: true,
       });
@@ -273,6 +275,7 @@ export function accessService(db: Db) {
     const target = new Set(orgIds);
 
     await db.transaction(async (tx) => {
+      await lockManagedMcpOAuthAuthorizer(tx, userId);
       const toDelete = existing.filter((row) => !target.has(row.orgId)).map((row) => row.id);
       const removedOrgIds = existing
         .filter((row) => !target.has(row.orgId))
@@ -314,6 +317,7 @@ export function accessService(db: Db) {
             && existing.membershipRole === "owner"
             && (status !== "active" || membershipRole !== "owner")
           ) {
+            await lockManagedMcpOAuthAuthorizer(tx, principalId);
             await invalidateManagedMcpAuthorizations(tx, principalId, { orgIds: [orgId] });
           }
           return tx
