@@ -400,9 +400,11 @@ export function isExactRuntimePackageSpec(version: string, packageSpec: string):
 
 export function runtimeSupportsDesktopShellAssets(
   version: string,
-  runtime: Pick<RuntimeInstallResult, "packageSpec" | "postgresPayloadBinDir">,
+  runtime: Pick<RuntimeInstallResult, "packageSpec" | "postgresPayloadBinDir" | "postgresRuntime">,
 ): boolean {
-  return isExactRuntimePackageSpec(version, runtime.packageSpec) && Boolean(runtime.postgresPayloadBinDir);
+  return isExactRuntimePackageSpec(version, runtime.packageSpec)
+    && Boolean(runtime.postgresPayloadBinDir)
+    && runtime.postgresRuntime?.scope === "shared";
 }
 
 export function resolveDesktopAssetTarget(

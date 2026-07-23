@@ -49,11 +49,39 @@ Production local and packaged Desktop builds should use PostgreSQL 18.4 producti
 RUDDER_POSTGRES_BIN_DIR=/path/to/postgresql-18.4/bin pnpm rudder run
 ```
 
-When `RUDDER_POSTGRES_BIN_DIR` is set, Rudder validates `initdb`, `pg_ctl`, `postgres`, and the `initdb` template file `postgres.bki`, requires `postgres --version` to report PostgreSQL 18.4, and then manages the local cluster with those production binaries. If the variable is unset, development shells can still fall back to the legacy `embedded-postgres` wrapper for compatibility.
+When `RUDDER_POSTGRES_BIN_DIR` is set, Rudder validates `initdb`, `pg_ctl`,
+`postgres`, and the initdb templates `postgres.bki` and
+`postgresql.conf.sample`; all three binaries must report PostgreSQL 18.4.
+Rudder then manages the local cluster with those production binaries. If the
+variable is unset, development shells can still fall back to the legacy
+`embedded-postgres` wrapper for compatibility.
 
-Desktop packaging prepares and caches a PostgreSQL 18.4 payload automatically when `RUDDER_POSTGRES_BIN_DIR` is unset, then stages it under `postgres-18.4/<platform>-<arch>/` with `bin/`, `lib/`, and `share/postgresql/postgres.bki`. Set `RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE=1` only when you need packaging to fail instead of downloading the payload, or pair it with `RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1` for a development fallback package.
+Rudder owns one verified PostgreSQL 18.4 payload per platform and architecture at
+`~/.rudder/runtime-payloads/postgres-18.4/<platform>-<arch>/`. The CLI resolves
+an explicit operator `RUDDER_POSTGRES_BIN_DIR` first. Otherwise it reuses the
+shared payload, migrates a valid legacy version-local 18.4 payload, or downloads
+the official 18.4 archive on macOS and Windows. Runtime version directories keep
+only a compatibility symlink (a junction on Windows) to the shared payload, so
+installing another Rudder version does not copy PostgreSQL again.
+Linux keeps system or explicit PostgreSQL precedence; its embedded fallback is
+removed only when a verified shared payload is already available.
 
-The CLI runtime cache can also stage a `postgres-18.4/<platform>-<arch>/` payload when `RUDDER_POSTGRES_BIN_DIR` is available. The Desktop release workflow uses the same payload preparation script before packaging so release assets do not silently fall back to the legacy wrapper.
+The shared payload is prepared under an install lock and published by atomic
+rename only after all three binaries, both templates, and the exact 18.4
+version have been verified. Interrupted temporary or previous generations are
+recovered or removed under that same lock. Runtime startup through descriptor
+publication and post-health cleanup share a separate lifecycle lock, preventing
+cleanup from racing a new runtime start. After a packaged Desktop cold start
+passes the database and application health checks, Rudder replaces unused
+legacy payload copies with compatibility links, records the shared payload in
+`runtime.json`, and removes only the current platform's `@embedded-postgres`
+fallback package. Other optional native dependencies are not removed. Database
+directories and database contents are never migrated by this cleanup.
+
+Desktop release packaging uses the same payload cache. Set
+`RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE=1` only when packaging should fail
+instead of downloading the payload, or pair it with
+`RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1` for a development fallback package.
 
 ## 2. Local PostgreSQL (Docker)
 
