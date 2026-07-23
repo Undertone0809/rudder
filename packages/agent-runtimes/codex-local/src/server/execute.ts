@@ -168,6 +168,31 @@ function hasCliArg(args: string[], flag: string): boolean {
   return args.includes(flag);
 }
 
+function parseCodexAppServerExtraArgs(extraArgs: string[]): {
+  sandboxMode: "read-only" | null;
+  unsupportedArgs: string[];
+} {
+  let sandboxMode: "read-only" | null = null;
+  const unsupportedArgs: string[] = [];
+
+  for (let index = 0; index < extraArgs.length; index += 1) {
+    const arg = extraArgs[index];
+    if (arg === "--skip-git-repo-check") continue;
+    if (arg === "--sandbox=read-only") {
+      sandboxMode = "read-only";
+      continue;
+    }
+    if ((arg === "-s" || arg === "--sandbox") && extraArgs[index + 1] === "read-only") {
+      sandboxMode = "read-only";
+      index += 1;
+      continue;
+    }
+    unsupportedArgs.push(arg);
+  }
+
+  return { sandboxMode, unsupportedArgs };
+}
+
 function runtimeImagePaths(media: AgentRuntimeExecutionContext["media"]): string[] {
   return (media ?? [])
     .filter((item) => item.source === "chat_attachment" && item.contentType.toLowerCase().startsWith("image/"))
@@ -679,13 +704,16 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     heartbeatPromptChars: renderedPrompt.length,
   };
 
-  const appServerUnsupportedArgs = extraArgs.filter((arg) => arg !== "--skip-git-repo-check");
+  // Plan mode's CLI-shaped read-only overlay must preserve App Server's native
+  // turn controls; other custom args still require exec compatibility fallback.
+  // Traceability: doc/plans/2026-07-23-plan-mode-steer-queue-simplification.md
+  const appServerExtraArgs = parseCodexAppServerExtraArgs(extraArgs);
   const useAppServerChat =
     runtimeScene === "chat"
     && context.chatMode === true
     && context.rudderChatResultRepair !== true
     && asBoolean(config.chatAppServerEnabled, command === "codex")
-    && appServerUnsupportedArgs.length === 0;
+    && appServerExtraArgs.unsupportedArgs.length === 0;
 
   if (useAppServerChat) {
     const appServerArgs = ["app-server", "--stdio", "--disable", "plugins"];
@@ -728,6 +756,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         modelReasoningEffort,
         search,
         bypassApprovalsAndSandbox: bypass,
+        sandboxMode: appServerExtraArgs.sandboxMode,
         imagePaths,
         sessionId,
         timeoutSec,

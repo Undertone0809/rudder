@@ -22,10 +22,19 @@ async function waitFor<T>(read: () => T | null, timeoutMs = 2_000): Promise<T> {
   throw new Error("Timed out waiting for fake App Server state");
 }
 
+async function readProtocolRequests(capturePath: string): Promise<Array<Record<string, unknown>>> {
+  const content = await fs.readFile(capturePath, "utf8");
+  return content
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-chat-"));
   fakeCodex = path.join(root, "fake-codex.mjs");
   await fs.writeFile(fakeCodex, `#!/usr/bin/env node
+import fs from "node:fs";
 import readline from "node:readline";
 
 const threadId = "thread-app-1";
@@ -58,6 +67,16 @@ const finish = (status = "completed") => {
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   const message = JSON.parse(line);
+  if (
+    process.env.RUDDER_TEST_PROTOCOL_CAPTURE_PATH
+    && ["thread/start", "thread/resume", "turn/start"].includes(message.method)
+  ) {
+    fs.appendFileSync(
+      process.env.RUDDER_TEST_PROTOCOL_CAPTURE_PATH,
+      JSON.stringify(message) + "\\n",
+      "utf8",
+    );
+  }
   if (message.method === "initialized") return;
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake", platformFamily: "unix", platformOs: "macos" } });
@@ -223,6 +242,96 @@ afterEach(async () => {
 });
 
 describe("executeCodexAppServerChat", () => {
+  it("propagates a read-only sandbox to new and resumed threads and their turns", async () => {
+    const capturePath = path.join(root, "protocol.ndjson");
+    const executeWithSession = (sessionId: string | null) => executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Inspect and plan",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: "read-only",
+      imagePaths: [],
+      sessionId,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    await expect(executeWithSession(null)).resolves.toMatchObject({ exitCode: 0, resumed: false });
+    await expect(executeWithSession("thread-app-1")).resolves.toMatchObject({ exitCode: 0, resumed: true });
+
+    const requests = await readProtocolRequests(capturePath);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        method: "thread/start",
+        params: expect.objectContaining({ sandbox: "read-only" }),
+      }),
+      expect.objectContaining({
+        method: "turn/start",
+        params: expect.objectContaining({ sandboxPolicy: { type: "readOnly" } }),
+      }),
+      expect.objectContaining({
+        method: "thread/resume",
+        params: expect.objectContaining({ sandbox: "read-only" }),
+      }),
+      expect.objectContaining({
+        method: "turn/start",
+        params: expect.objectContaining({ sandboxPolicy: { type: "readOnly" } }),
+      }),
+    ]);
+  });
+
+  it("keeps danger-full-access precedence over a structured read-only sandbox", async () => {
+    const capturePath = path.join(root, "protocol.ndjson");
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Implement the approved change",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      sandboxMode: "read-only",
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const requests = await readProtocolRequests(capturePath);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        method: "thread/start",
+        params: expect.objectContaining({
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+        }),
+      }),
+      expect.objectContaining({
+        method: "turn/start",
+        params: expect.objectContaining({
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "dangerFullAccess" },
+        }),
+      }),
+    ]);
+  });
+
   it("does not emit provider user-message lifecycle items", async () => {
     const result = await executeCodexAppServerChat({
       command: fakeCodex,
