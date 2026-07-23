@@ -35,6 +35,9 @@ test.describe("Agent auto naming", () => {
     await expect(
       newAgentMain.getByRole("button", { name: /Operator Assistant/ })
     ).toBeVisible();
+    await expect(
+      newAgentMain.getByRole("spinbutton", { name: "Agent run concurrency" })
+    ).toHaveValue("8");
     await newAgentMain.getByRole("button", { name: "Create agent" }).click();
 
     await expect(page).toHaveURL(/\/agents\/(?!new(?:\/|$))[^/]+(?:\/dashboard)?$/, { timeout: 15_000 });
@@ -53,11 +56,13 @@ test.describe("Agent auto naming", () => {
         title: string | null;
         role: string;
         icon: string | null;
+        runtimeConfig: { heartbeat?: { maxConcurrentRuns?: number } };
       };
       expect(agent.title).toBe("Operator Assistant");
       expect(agent.role).toBe("ceo");
       expect(agent.name).toBe(suggestedName);
       expect(agent.icon).toMatch(/^oreo:bloom:rose-milk:/);
+      expect(agent.runtimeConfig.heartbeat?.maxConcurrentRuns).toBe(8);
     }).toPass({ timeout: 15_000, intervals: [250, 500, 1_000] });
   });
 

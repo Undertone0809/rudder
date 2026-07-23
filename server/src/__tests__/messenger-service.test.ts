@@ -3563,6 +3563,100 @@ describe("messengerService and issue follows", () => {
     expect(transcript?.transcript).toHaveLength(2);
   });
 
+  it("hydrates generation-ledger transcripts without embedding them in chat messages", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Generation Ledger Transcript Org",
+      urlKey: deriveOrganizationUrlKey("Generation Ledger Transcript Org"),
+      issuePrefix: `E${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Generation ledger transcript",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "stopped",
+      acceptedThroughSeq: 2,
+    });
+    const assistantMessage = await chatSvc.addMessage(conversationId, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Final reply",
+    });
+    const entries = [
+      {
+        kind: "thinking",
+        ts: "2026-07-23T08:00:00.000Z",
+        text: "Inspecting production evidence",
+      },
+      {
+        kind: "tool_call",
+        ts: "2026-07-23T08:00:30.000Z",
+        name: "read_file",
+        input: { path: "/tmp/example" },
+      },
+      {
+        kind: "result",
+        ts: "2026-07-23T08:01:00.000Z",
+        text: "Done",
+        inputTokens: 1,
+        outputTokens: 1,
+        cachedTokens: 0,
+        costUsd: 0,
+        subtype: "success",
+        isError: false,
+        errors: [],
+      },
+    ] satisfies Array<Record<string, unknown>>;
+    await db.insert(chatGenerationEvents).values([
+      ...entries.map((entry, index) => ({
+        orgId,
+        generationId,
+        generationSeq: index + 1,
+        attemptEpoch: 1,
+        eventKind: "transcript" as const,
+        payload: { entry },
+        assistantMessageId: assistantMessage.id,
+      })),
+      {
+        orgId,
+        generationId,
+        generationSeq: entries.length + 1,
+        attemptEpoch: 1,
+        eventKind: "runtime_output" as const,
+        payload: { body: "Final reply" },
+        assistantMessageId: assistantMessage.id,
+      },
+    ]);
+
+    const messages = await chatSvc.listMessages(conversationId);
+    const [lightweight] = await chatSvc.listMessages(conversationId, { includeTranscript: false });
+    const transcript = await chatSvc.getMessageTranscript(conversationId, assistantMessage.id);
+    const hydrated = messages.find((message) => message.id === assistantMessage.id);
+
+    expect(lightweight?.transcript).toBeUndefined();
+    expect(lightweight?.transcriptSummary).toEqual({
+      entryCount: 2,
+      startedAt: "2026-07-23T08:00:00.000Z",
+      endedAt: "2026-07-23T08:00:30.000Z",
+    });
+    expect(hydrated?.transcript).toEqual(entries.slice(0, 2));
+    expect(transcript?.transcript).toEqual(entries.slice(0, 2));
+  });
+
   it("lists only the latest five eligible user messages for title generation", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();
@@ -3691,7 +3785,9 @@ describe("messengerService and issue follows", () => {
       id: generationId,
       orgId,
       conversationId,
-      status: "completed",
+      status: "stop_requested",
+      terminalReason: "steer_fallback",
+      acceptedThroughSeq: 1,
     });
     const assistantMessage = await chatSvc.addMessage(conversationId, {
       orgId,
@@ -3699,23 +3795,48 @@ describe("messengerService and issue follows", () => {
       kind: "message",
       status: "completed",
       body: "Final reply",
-      transcript: [
-        {
-          kind: "thinking",
-          ts: "2026-07-21T08:00:00.000Z",
-          text: "Reasoning around native Steer",
+    });
+    await db.insert(chatGenerationEvents).values([
+      {
+        orgId,
+        generationId,
+        generationSeq: 1,
+        attemptEpoch: 1,
+        eventKind: "transcript",
+        payload: {
+          entry: {
+            kind: "thinking",
+            ts: "2026-07-21T08:00:00.000Z",
+            text: "Reasoning around native Steer",
+          },
         },
-      ],
-    });
-    await db.insert(chatGenerationEvents).values({
-      orgId,
-      generationId,
-      generationSeq: 1,
-      attemptEpoch: 1,
-      eventKind: "runtime_output",
-      payload: { body: "Final reply" },
-      assistantMessageId: assistantMessage.id,
-    });
+        assistantMessageId: assistantMessage.id,
+      },
+      {
+        orgId,
+        generationId,
+        generationSeq: 2,
+        attemptEpoch: 1,
+        eventKind: "transcript",
+        payload: {
+          entry: {
+            kind: "thinking",
+            ts: "2026-07-21T08:00:01.000Z",
+            text: "Reasoning after the Steer cutoff",
+          },
+        },
+        assistantMessageId: assistantMessage.id,
+      },
+      {
+        orgId,
+        generationId,
+        generationSeq: 3,
+        attemptEpoch: 1,
+        eventKind: "runtime_output",
+        payload: { body: "Final reply" },
+        assistantMessageId: assistantMessage.id,
+      },
+    ]);
     await chatSvc.addMessage(conversationId, {
       orgId,
       role: "user",
@@ -3740,6 +3861,7 @@ describe("messengerService and issue follows", () => {
     expect(hydratedAssistant?.transcript).toEqual([
       expect.objectContaining({ kind: "thinking", text: "Reasoning around native Steer" }),
     ]);
+    expect(JSON.stringify(hydratedAssistant?.transcript)).not.toContain("Reasoning after the Steer cutoff");
   });
 
   it("does not mark a chat unread until an incoming message has visible content", async () => {

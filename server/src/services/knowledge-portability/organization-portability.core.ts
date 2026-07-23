@@ -14,6 +14,7 @@ import type {
   OrganizationSkill
 } from "@rudderhq/shared";
 import {
+  AGENT_RUN_CONCURRENCY_DEFAULT,
   AUTOMATION_CATCH_UP_POLICIES,
   AUTOMATION_CONCURRENCY_POLICIES,
   AUTOMATION_TRIGGER_KINDS,
@@ -502,6 +503,7 @@ export const COMPANY_LOGO_CONTENT_TYPE_EXTENSIONS: Record<string, string> = {
 };
 
 export const COMPANY_LOGO_FILE_NAME = "organization-logo";
+const LEGACY_PORTABLE_AGENT_RUN_CONCURRENCY_DEFAULT = 3;
 
 export const RUNTIME_DEFAULT_RULES: Array<{ path: string[]; value: unknown }> = [
   { path: ["heartbeat", "cooldownSec"], value: 10 },
@@ -511,7 +513,6 @@ export const RUNTIME_DEFAULT_RULES: Array<{ path: string[]; value: unknown }> = 
   { path: ["heartbeat", "wakeOnAutomation"], value: true },
   { path: ["heartbeat", "wakeOnDemand"], value: true },
   { path: ["heartbeat", "preflightEnabled"], value: true },
-  { path: ["heartbeat", "maxConcurrentRuns"], value: 3 },
 ];
 
 export const ADAPTER_DEFAULT_RULES_BY_TYPE: Record<string, Array<{ path: string[]; value: unknown }>> = {
@@ -632,6 +633,16 @@ export function clonePortableRecord(value: unknown) {
   return structuredClone(value) as Record<string, unknown>;
 }
 
+export function materializePortableRuntimeConfig(runtimeConfig: unknown) {
+  const next = clonePortableRecord(runtimeConfig) ?? {};
+  const heartbeat = isPlainRecord(next.heartbeat) ? { ...next.heartbeat } : {};
+  if (heartbeat.maxConcurrentRuns === undefined) {
+    heartbeat.maxConcurrentRuns = AGENT_RUN_CONCURRENCY_DEFAULT;
+  }
+  next.heartbeat = heartbeat;
+  return next;
+}
+
 export function isEmptyObject(value: unknown): boolean {
   return isPlainRecord(value) && Object.keys(value).length === 0;
 }
@@ -663,9 +674,17 @@ export function stripEmptyValues(value: unknown, opts?: { preserveEmptyStrings?:
   return value;
 }
 
-export function disableImportedTimerHeartbeat(runtimeConfig: unknown) {
+export function disableImportedTimerHeartbeat(
+  runtimeConfig: unknown,
+  options?: { preserveLegacyMissingConcurrencyDefault?: boolean },
+) {
   const next = clonePortableRecord(runtimeConfig) ?? {};
   const heartbeat = isPlainRecord(next.heartbeat) ? { ...next.heartbeat } : {};
+  if (heartbeat.maxConcurrentRuns === undefined) {
+    heartbeat.maxConcurrentRuns = options?.preserveLegacyMissingConcurrencyDefault
+      ? LEGACY_PORTABLE_AGENT_RUN_CONCURRENCY_DEFAULT
+      : AGENT_RUN_CONCURRENCY_DEFAULT;
+  }
   heartbeat.enabled = false;
   next.heartbeat = heartbeat;
   return next;

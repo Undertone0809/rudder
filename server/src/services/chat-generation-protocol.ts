@@ -25,7 +25,7 @@ import {
   type AppendEventFields,
   type ChatGenerationProtocolTransaction,
 } from "./chat-generation-protocol.helpers.js";
-import { withPersistedTranscript } from "./chats.helpers.js";
+import { stripChatMetadataFromPayload } from "./chats.helpers.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 
 export { hashChatGenerationBody } from "./chat-generation-protocol.helpers.js";
@@ -218,7 +218,7 @@ async function freezeAssistantMessageProjection(
     .set({
       status: "stopped",
       body: durableBody,
-      structuredPayload: withPersistedTranscript(existing.structuredPayload, projection.transcript),
+      structuredPayload: stripChatMetadataFromPayload(existing.structuredPayload),
       ...(projection.runId ? { runId: projection.runId } : {}),
       updatedAt: new Date(),
     })
@@ -341,7 +341,6 @@ export function chatGenerationProtocolService(db: Db) {
     bodyHash: string;
     messageId?: string | null;
     body: string;
-    transcript: ChatStreamTranscriptEntry[];
     replyingAgentId?: string | null;
     chatTurnId: string;
     turnVariant: number;
@@ -383,7 +382,7 @@ export function chatGenerationProtocolService(db: Db) {
       if (input.messageId && !existing) {
         throw conflict("Visible generation message projection no longer exists");
       }
-      const structuredPayload = withPersistedTranscript(existing?.structuredPayload ?? null, input.transcript);
+      const structuredPayload = stripChatMetadataFromPayload(existing?.structuredPayload ?? null);
       const [message] = existing
         ? await tx
           .update(chatMessages)

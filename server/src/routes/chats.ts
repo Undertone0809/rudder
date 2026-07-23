@@ -642,6 +642,7 @@ export function chatRoutes(
     replyingAgentId = assistantReply.replyingAgentId ?? chatReplyingAgentId(conversation),
     existingMessageId?: string | null,
     runId?: string | null,
+    persistTranscript = true,
   ) {
     const createdMessages: ChatMessage[] = [];
     const { chatTurnId, turnVariant } = turnContext;
@@ -667,7 +668,7 @@ export function chatRoutes(
           status: "completed",
           body: input.body,
           structuredPayload: input.structuredPayload ?? null,
-          transcript,
+          ...(persistTranscript ? { transcript } : {}),
           approvalId: input.approvalId ?? null,
           runId: runId ?? undefined,
           replyingAgentId,
@@ -680,7 +681,7 @@ export function chatRoutes(
         kind: input.kind,
         body: input.body,
         structuredPayload: input.structuredPayload ?? null,
-        transcript,
+        ...(persistTranscript ? { transcript } : {}),
         approvalId: input.approvalId ?? null,
         runId: runId ?? null,
         replyingAgentId,
@@ -1006,6 +1007,7 @@ export function chatRoutes(
     existingMessageId?: string | null,
     runId?: string | null,
     structuredPayload?: Record<string, unknown> | null,
+    persistTranscript = true,
   ) {
     const trimmed = body.trim();
     const fallbackBody = status === "stopped"
@@ -1021,7 +1023,7 @@ export function chatRoutes(
         status,
         body: durableBody,
         structuredPayload: structuredPayload ?? null,
-        transcript,
+        ...(persistTranscript ? { transcript } : {}),
         runId: runId ?? undefined,
         replyingAgentId,
       });
@@ -1034,7 +1036,7 @@ export function chatRoutes(
       status,
       body: durableBody,
       structuredPayload: structuredPayload ?? null,
-      transcript,
+      ...(persistTranscript ? { transcript } : {}),
       runId: runId ?? null,
       replyingAgentId,
       chatTurnId,
@@ -1267,12 +1269,39 @@ export function chatRoutes(
     let activeChatRunId: string | null = null;
     const transcript: TranscriptEntry[] = [];
     let partialBody = "";
+    let assistantProjectionMessageId: string | null = null;
+    let activeAttemptEpoch = Math.max(
+      1,
+      getActiveChatGeneration(conversation.id)?.attemptEpoch ?? 1,
+    );
     try {
       const userMessage = await svc.getMessage(conversation.id, claim.userMessageId) as ChatMessage | null;
       if (!userMessage) throw new Error("Queued chat continuation user message is missing");
       const turnContext = turnContextFromUserMessage(userMessage);
       const assistantInput = await loadAssistantInput(conversation, actor);
       assistantConversation = assistantInput.conversation;
+      const persistStoppedQueuedMessage = async (replyingAgentId: string | null) => {
+        const frozen = await svc.generationProtocol.getFrozenVisibleProjection({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          generationId: claim.generationId,
+        }).catch(() => null);
+        const frozenAtCutoff = frozen && frozen.generation.acceptedThroughSeq !== null
+          ? frozen
+          : null;
+        return persistPartialAssistantMessage(
+          assistantConversation,
+          frozenAtCutoff?.projection.body ?? partialBody,
+          "stopped",
+          turnContext,
+          frozenAtCutoff?.projection.transcript ?? transcript,
+          replyingAgentId,
+          assistantProjectionMessageId,
+          activeChatRunId,
+          undefined,
+          false,
+        );
+      };
       const streamed = await assistantSvc.streamChatAssistantReply({
         ...assistantInput,
         userMessageId: userMessage.id,
@@ -1285,6 +1314,7 @@ export function chatRoutes(
           claim.generationId,
           {
             onAttemptStarted: async ({ generationId, attemptEpoch, ownerToken, attempt }) => {
+              activeAttemptEpoch = attemptEpoch;
               await svc.beginGenerationControlAttempt({
                 orgId: conversation.orgId,
                 conversationId: conversation.id,
@@ -1323,23 +1353,35 @@ export function chatRoutes(
           if (!abortController.signal.aborted) partialBody = `${partialBody}${delta}`;
         },
         onTranscriptEntry: async (entry: TranscriptEntry) => {
-          if (!abortController.signal.aborted) transcript.push(entry);
+          if (abortController.signal.aborted) return;
+          transcript.push(entry);
+          try {
+            const projection = await svc.generationProtocol.appendVisibleEventAndProject({
+              orgId: conversation.orgId,
+              conversationId: conversation.id,
+              generationId: claim.generationId,
+              expectedAttemptEpoch: activeAttemptEpoch,
+              eventKind: "transcript",
+              payload: { entry },
+              messageId: assistantProjectionMessageId,
+              runId: activeChatRunId,
+              bodyHash: hashChatGenerationBody(partialBody),
+              body: partialBody,
+              chatTurnId: turnContext.chatTurnId,
+              turnVariant: turnContext.turnVariant,
+            });
+            assistantProjectionMessageId = projection.message.id;
+          } catch (error) {
+            if (chatVisibleOutputAdmissionClosed(error)) return;
+            throw error;
+          }
         },
       });
       partialBody = streamed.partialBody || partialBody;
       if (abortController.signal.aborted || streamed.outcome === "stopped") {
         terminalStatus = "stopped";
         terminalReason = "operator_stop";
-        const stoppedMessage = await persistPartialAssistantMessage(
-          assistantConversation,
-          "",
-          "stopped",
-          turnContext,
-          transcript,
-          streamed.replyingAgentId,
-          null,
-          activeChatRunId,
-        );
+        const stoppedMessage = await persistStoppedQueuedMessage(streamed.replyingAgentId);
         const stoppedMessages = stoppedMessage ? [stoppedMessage] : [];
         await linkChatRunMessages(assistantConversation, activeChatRunId, stoppedMessages);
         if (stoppedMessages.length > 0) {
@@ -1352,15 +1394,11 @@ export function chatRoutes(
       } else {
         let completionMessageId: string | null = null;
         try {
-          const attemptEpoch = Math.max(
-            1,
-            getActiveChatGeneration(conversation.id)?.attemptEpoch ?? 1,
-          );
           const completion = await svc.generationProtocol.appendVisibleEventAndProject({
             orgId: conversation.orgId,
             conversationId: conversation.id,
             generationId: claim.generationId,
-            expectedAttemptEpoch: attemptEpoch,
+            expectedAttemptEpoch: activeAttemptEpoch,
             eventKind: "runtime_output",
             payload: {
               resultKind: streamed.reply.kind,
@@ -1368,10 +1406,10 @@ export function chatRoutes(
             },
             bodyOffset: 0,
             bodyLength: streamed.reply.body.length,
+            messageId: assistantProjectionMessageId,
             runId: activeChatRunId,
             bodyHash: hashChatGenerationBody(streamed.reply.body),
             body: streamed.reply.body,
-            transcript,
             replyingAgentId: streamed.replyingAgentId,
             chatTurnId: turnContext.chatTurnId,
             turnVariant: turnContext.turnVariant,
@@ -1381,16 +1419,7 @@ export function chatRoutes(
           if (!chatVisibleOutputAdmissionClosed(error)) throw error;
           terminalStatus = "stopped";
           terminalReason = "operator_stop";
-          const stoppedMessage = await persistPartialAssistantMessage(
-            assistantConversation,
-            "",
-            "stopped",
-            turnContext,
-            transcript,
-            streamed.replyingAgentId,
-            null,
-            activeChatRunId,
-          );
+          const stoppedMessage = await persistStoppedQueuedMessage(streamed.replyingAgentId);
           const stoppedMessages = stoppedMessage ? [stoppedMessage] : [];
           await linkChatRunMessages(assistantConversation, activeChatRunId, stoppedMessages);
           if (stoppedMessages.length > 0) {
@@ -1412,6 +1441,7 @@ export function chatRoutes(
           streamed.replyingAgentId,
           completionMessageId,
           activeChatRunId,
+          false,
         );
         await linkChatRunMessages(assistantConversation, activeChatRunId, createdMessages);
         await logChatMessagesAdded(assistantConversation, createdMessages, {
@@ -1444,9 +1474,10 @@ export function chatRoutes(
           null,
           transcript,
           chatReplyingAgentId(assistantConversation),
-          null,
+          assistantProjectionMessageId,
           activeChatRunId,
           failurePayload,
+          false,
         ).catch(() => null);
         const failedMessages = failedMessage ? [failedMessage] : [];
         await linkChatRunMessages(assistantConversation, activeChatRunId, failedMessages).catch(() => undefined);

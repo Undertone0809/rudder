@@ -17,7 +17,7 @@ import {
   organizations
 } from "@rudderhq/db";
 import { sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
@@ -2761,10 +2761,17 @@ export function chatService(db: Db) {
           .select({
             assistantMessageId: chatGenerationEvents.assistantMessageId,
             generationId: chatGenerationEvents.generationId,
+            generationCreatedAt: chatGenerations.createdAt,
+            eventRecordedAt: chatGenerationEvents.recordedAt,
           })
           .from(chatGenerationEvents)
+          .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
           .where(inArray(chatGenerationEvents.assistantMessageId, assistantMessageIds))
-          .orderBy(desc(chatGenerationEvents.generationSeq))
+          .orderBy(
+            desc(chatGenerations.createdAt),
+            desc(chatGenerationEvents.recordedAt),
+            desc(chatGenerationEvents.generationSeq),
+          )
         : Promise.resolve([]),
       nativeSteerMessageIds.length > 0
         ? db
@@ -2836,6 +2843,91 @@ export function chatService(db: Db) {
         const generationId = generationIdByAssistantMessageId.get(messageId);
         return Boolean(generationId && nativeSteerTargetGenerationIds.has(generationId));
       });
+    const assistantGenerationIds = [
+      ...new Set(generationIdByAssistantMessageId.values()),
+    ];
+    const assistantGenerationPairs = [...generationIdByAssistantMessageId].map(
+      ([assistantMessageId, generationId]) => ({ assistantMessageId, generationId }),
+    );
+    const selectedGenerationEventCondition = assistantGenerationPairs.length > 0
+      ? or(...assistantGenerationPairs.map(({ assistantMessageId, generationId }) => and(
+        eq(chatGenerationEvents.assistantMessageId, assistantMessageId),
+        eq(chatGenerationEvents.generationId, generationId),
+      )))
+      : undefined;
+    const generationIdsNeedingFullTranscript = includeTranscript
+      ? assistantGenerationIds
+      : [...nativeSteerTargetGenerationIds].filter((generationId) =>
+        assistantGenerationIds.includes(generationId));
+    const assistantMessageIdsNeedingFullTranscript = assistantGenerationPairs
+      .filter(({ generationId }) => generationIdsNeedingFullTranscript.includes(generationId))
+      .map(({ assistantMessageId }) => assistantMessageId);
+    const transcriptByAssistantMessageId = new Map<string, ChatStreamTranscriptEntry[]>();
+    if (generationIdsNeedingFullTranscript.length > 0) {
+      const transcriptEventRows = await db
+        .select({
+          assistantMessageId: chatGenerationEvents.assistantMessageId,
+          payload: chatGenerationEvents.payload,
+        })
+        .from(chatGenerationEvents)
+        .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
+        .where(and(
+          selectedGenerationEventCondition,
+          inArray(chatGenerationEvents.assistantMessageId, assistantMessageIdsNeedingFullTranscript),
+          eq(chatGenerationEvents.eventKind, "transcript"),
+          or(
+            isNull(chatGenerations.acceptedThroughSeq),
+            lte(chatGenerationEvents.generationSeq, chatGenerations.acceptedThroughSeq),
+          ),
+        ))
+        .orderBy(
+          asc(chatGenerationEvents.generationId),
+          asc(chatGenerationEvents.generationSeq),
+        );
+      for (const eventRow of transcriptEventRows) {
+        if (!eventRow.assistantMessageId) continue;
+        const entry = eventRow.payload.entry;
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+        const transcript = transcriptByAssistantMessageId.get(eventRow.assistantMessageId);
+        if (transcript) transcript.push(entry as ChatStreamTranscriptEntry);
+        else transcriptByAssistantMessageId.set(
+          eventRow.assistantMessageId,
+          [entry as ChatStreamTranscriptEntry],
+        );
+      }
+    }
+    const transcriptSummaryByAssistantMessageId = new Map<
+      string,
+      MessageHydrationRow["transcriptSummary"]
+    >();
+    if (!includeTranscript && assistantGenerationPairs.length > 0) {
+      const summaryRows = await db
+        .select({
+          assistantMessageId: chatGenerationEvents.assistantMessageId,
+          entryCount: sql<number>`count(*)`,
+          startedAt: sql<string | null>`min(${chatGenerationEvents.payload}->'entry'->>'ts')`,
+          endedAt: sql<string | null>`max(${chatGenerationEvents.payload}->'entry'->>'ts')`,
+        })
+        .from(chatGenerationEvents)
+        .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
+        .where(and(
+          selectedGenerationEventCondition,
+          eq(chatGenerationEvents.eventKind, "transcript"),
+          or(
+            isNull(chatGenerations.acceptedThroughSeq),
+            lte(chatGenerationEvents.generationSeq, chatGenerations.acceptedThroughSeq),
+          ),
+        ))
+        .groupBy(chatGenerationEvents.assistantMessageId);
+      for (const summaryRow of summaryRows) {
+        if (!summaryRow.assistantMessageId) continue;
+        transcriptSummaryByAssistantMessageId.set(summaryRow.assistantMessageId, {
+          entryCount: Number(summaryRow.entryCount),
+          startedAt: summaryRow.startedAt,
+          endedAt: summaryRow.endedAt,
+        });
+      }
+    }
     const nativeSteerTranscriptPayloadByMessageId = new Map<string, Record<string, unknown> | null>();
     if (nativeSteerAssistantMessageIds.length > 0) {
       const transcriptPayloadRows = await db
@@ -2858,10 +2950,15 @@ export function chatService(db: Db) {
       const includeRowTranscript = includeTranscript
         || Boolean(generationId && nativeSteerTargetGenerationIds.has(generationId));
       const transcriptPayload = nativeSteerTranscriptPayloadByMessageId.get(row.id) ?? row.structuredPayload;
-      const transcript = includeRowTranscript ? chatTranscriptFromPayload(transcriptPayload) : [];
+      const ledgerTranscript = transcriptByAssistantMessageId.get(row.id);
+      const transcript = includeRowTranscript
+        ? ledgerTranscript?.length
+          ? ledgerTranscript
+          : chatTranscriptFromPayload(transcriptPayload)
+        : [];
       const transcriptSummary = includeRowTranscript
         ? chatTranscriptSummaryFromEntries(transcript)
-        : row.transcriptSummary ?? null;
+        : transcriptSummaryByAssistantMessageId.get(row.id) ?? row.transcriptSummary ?? null;
       const structuredPayload = effectiveStructuredPayload(row);
       return {
         ...row,
@@ -3536,9 +3633,46 @@ export function chatService(db: Db) {
         .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
+      const generation = await db
+        .select({
+          generationId: chatGenerationEvents.generationId,
+          acceptedThroughSeq: chatGenerations.acceptedThroughSeq,
+        })
+        .from(chatGenerationEvents)
+        .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
+        .where(eq(chatGenerationEvents.assistantMessageId, messageId))
+        .orderBy(
+          desc(chatGenerations.createdAt),
+          desc(chatGenerationEvents.recordedAt),
+          desc(chatGenerationEvents.generationSeq),
+        )
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      const transcript = generation
+        ? await db
+          .select({ payload: chatGenerationEvents.payload })
+          .from(chatGenerationEvents)
+          .where(and(
+            eq(chatGenerationEvents.generationId, generation.generationId),
+            eq(chatGenerationEvents.assistantMessageId, messageId),
+            eq(chatGenerationEvents.eventKind, "transcript"),
+            generation.acceptedThroughSeq === null
+              ? undefined
+              : lte(chatGenerationEvents.generationSeq, generation.acceptedThroughSeq),
+          ))
+          .orderBy(asc(chatGenerationEvents.generationSeq))
+          .then((events) => events.flatMap((event) => {
+            const entry = event.payload.entry;
+            return entry && typeof entry === "object" && !Array.isArray(entry)
+              ? [entry as ChatStreamTranscriptEntry]
+              : [];
+          }))
+        : [];
       return {
         messageId: row.id,
-        transcript: chatTranscriptFromPayload(row.structuredPayload),
+        transcript: transcript.length > 0
+          ? transcript
+          : chatTranscriptFromPayload(row.structuredPayload),
       };
   }
 

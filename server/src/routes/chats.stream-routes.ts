@@ -409,6 +409,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               replyingAgentId,
               assistantProgressMessageId,
               activeChatRunId,
+              undefined,
+              false,
             );
             lastProjectionError = undefined;
             break;
@@ -584,7 +586,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                     runId: activeChatRunId,
                     bodyHash: hashChatGenerationBody(projectedBody),
                     body: projectedBody,
-                    transcript: [...transcript],
                     replyingAgentId: chatReplyingAgentId(assistantInput.conversation),
                     chatTurnId: turnContextForPartial!.chatTurnId,
                     turnVariant: turnContextForPartial!.turnVariant,
@@ -620,7 +621,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   1,
                   activeControl?.attemptEpoch ?? generation?.attemptEpoch ?? 1,
                 );
-                const projectedTranscript = [...transcript, entry];
                 let committed;
                 try {
                   committed = await svc.generationProtocol.appendVisibleEventAndProject({
@@ -634,7 +634,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                     runId: activeChatRunId,
                     bodyHash: hashChatGenerationBody(admittedAssistantBody),
                     body: admittedAssistantBody,
-                    transcript: projectedTranscript,
                     replyingAgentId: chatReplyingAgentId(assistantInput.conversation),
                     chatTurnId: turnContextForPartial!.chatTurnId,
                     turnVariant: turnContextForPartial!.turnVariant,
@@ -690,7 +689,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   runId: activeChatRunId,
                   bodyHash: hashChatGenerationBody(streamed.reply.body),
                   body: streamed.reply.body,
-                  transcript: [...transcript],
                   replyingAgentId: streamed.replyingAgentId,
                   chatTurnId: turnContextForPartial!.chatTurnId,
                   turnVariant: turnContextForPartial!.turnVariant,
@@ -723,6 +721,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               streamed.replyingAgentId,
               assistantProgressMessageId,
               activeChatRunId,
+              false,
             );
             await linkChatRunMessages(assistantInput.conversation, activeChatRunId, createdMessages);
             generationTerminalStatus = "completed";
@@ -787,6 +786,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         assistantProgressMessageId,
         activeChatRunId,
         failurePayload,
+        false,
       ).catch(() => null);
       await linkChatRunMessages(
         assistantConversationForPartial ?? (conversation as ChatConversation),

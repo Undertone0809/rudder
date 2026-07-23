@@ -162,6 +162,41 @@ describe("chatGenerationProtocolService", () => {
     return generation;
   }
 
+  it("keeps streaming transcript evidence in the generation ledger instead of the message payload", async () => {
+    const generation = await seedGeneration();
+    const entry = {
+      kind: "stdout" as const,
+      ts: "2026-07-23T08:00:00.000Z",
+      text: `one transcript ledger entry ${"x".repeat(512)}`,
+    };
+
+    const projection = await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      eventKind: "transcript",
+      payload: { entry },
+      bodyHash: hashChatGenerationBody(""),
+      body: "",
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    const [persistedMessage] = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, projection.message.id));
+    const [persistedEvent] = await db
+      .select()
+      .from(chatGenerationEvents)
+      .where(eq(chatGenerationEvents.id, projection.event.id));
+
+    expect(persistedMessage?.structuredPayload).toBeNull();
+    expect(persistedEvent?.payload).toEqual(expect.objectContaining({ entry }));
+    expect(JSON.stringify(persistedEvent?.payload).length).toBeLessThan(1_024);
+  });
+
   it("serializes visible events and applies an idempotent Stop cutoff", async () => {
     const generation = await seedGeneration();
     const bodies = ["First", "First second"];
@@ -335,7 +370,6 @@ describe("chatGenerationProtocolService", () => {
       bodyLength: finalBody.length,
       bodyHash: hashChatGenerationBody(finalBody),
       body: finalBody,
-      transcript: [],
       chatTurnId: randomUUID(),
       turnVariant: 0,
     });
@@ -398,7 +432,6 @@ describe("chatGenerationProtocolService", () => {
       messageId: completion.message.id,
       bodyHash: hashChatGenerationBody(`${finalBody} late`),
       body: `${finalBody} late`,
-      transcript: [],
       chatTurnId: completion.message.chatTurnId!,
       turnVariant: completion.message.turnVariant,
     })).rejects.toMatchObject({
@@ -432,7 +465,6 @@ describe("chatGenerationProtocolService", () => {
       payload: { resultKind: "message", body: finalBody },
       bodyHash: hashChatGenerationBody(finalBody),
       body: finalBody,
-      transcript: [],
       chatTurnId: randomUUID(),
       turnVariant: 0,
     });
@@ -544,7 +576,6 @@ describe("chatGenerationProtocolService", () => {
       bodyLength: 14,
       bodyHash: hashChatGenerationBody("Visible prefix"),
       body: "Visible prefix",
-      transcript: [],
       chatTurnId,
       turnVariant: 0,
     });
@@ -560,7 +591,6 @@ describe("chatGenerationProtocolService", () => {
       bodyLength: 12,
       bodyHash: hashChatGenerationBody("Visible prefix hidden tail"),
       body: "Visible prefix hidden tail",
-      transcript: [],
       chatTurnId,
       turnVariant: 0,
     });
@@ -593,7 +623,6 @@ describe("chatGenerationProtocolService", () => {
       messageId: first.message.id,
       bodyHash: hashChatGenerationBody("Completed too late"),
       body: "Completed too late",
-      transcript: [],
       chatTurnId,
       turnVariant: 0,
     })).rejects.toMatchObject({
