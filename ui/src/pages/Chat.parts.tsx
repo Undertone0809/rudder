@@ -1420,6 +1420,27 @@ export function assistantStateLabel(state: ChatStreamDraftState | ChatMessage["s
   return null;
 }
 
+const STEER_FALLBACK_TERMINAL_REASONS = new Set([
+  "steer_fallback",
+  "steer_fallback_runtime_owner_missing",
+]);
+const STOPPED_REPLY_PLACEHOLDER = "Chat run stopped before a final reply. Continue the conversation to resume from the preserved context.";
+
+export function isSteerFallbackChatMessage(message: Pick<ChatMessage, "role" | "generationTerminalReason">) {
+  return message.role === "assistant"
+    && STEER_FALLBACK_TERMINAL_REASONS.has(message.generationTerminalReason ?? "");
+}
+
+export function displayedChatMessageState(message: Pick<ChatMessage, "role" | "status" | "generationTerminalReason">) {
+  return isSteerFallbackChatMessage(message) ? "completed" as const : message.status;
+}
+
+export function shouldHideSteerFallbackAssistantBubble(
+  message: Pick<ChatMessage, "role" | "body" | "generationTerminalReason">,
+) {
+  return isSteerFallbackChatMessage(message) && message.body.trim() === STOPPED_REPLY_PLACEHOLDER;
+}
+
 export function statusChipClassName(state: ChatStreamDraftState | ChatMessage["status"]) {
   if (state === "failed") return "border-destructive/30 bg-destructive/10 text-destructive";
   if (state === "interrupted") return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";

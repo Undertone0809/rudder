@@ -79,7 +79,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { chatForkSystemMessageParts, readStructuredPayloadString, sideChatStartedSystemMessageParts } from "./Chat.message-system-parts";
-import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, statusChipClassName } from "./Chat.parts";
+import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, shouldHideSteerFallbackAssistantBubble, statusChipClassName } from "./Chat.parts";
 import { ChatInlineVisualContent } from "./ChatInlineVisual";
 
 export { readStructuredPayloadString } from "./Chat.message-system-parts";
@@ -2241,18 +2241,20 @@ export function ChatMessageItem({
   }
 
   const isUser = message.role === "user";
-  const statusLabel = !isUser ? assistantStateLabel(message.status) : null;
+  if (shouldHideSteerFallbackAssistantBubble(message)) return null;
+  const displayedState = displayedChatMessageState(message);
+  const statusLabel = !isUser ? assistantStateLabel(displayedState) : null;
   const inlineVisualAttachmentIds = new Set([...chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload), ...rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload)].filter((mapping) => mapping.status === "ready").map((mapping) => mapping.attachmentId));
   const visibleMessageAttachments = message.attachments.filter(
     (attachment) => !inlineVisualAttachmentIds.has(attachment.id),
   );
   const canContinueInterrupted = Boolean(onContinueInterruptedMessage) && canContinueInterruptedChatMessage(message);
-  const recoverableFailure = message.status === "failed" ? recoverableFailureFromMessage(message) : null;
+  const recoverableFailure = displayedState === "failed" ? recoverableFailureFromMessage(message) : null;
   const canRetryFailed = Boolean(onRetryFailedMessage) && canRetryFailedChatMessage(message);
   const failedMessageTitle = recoverableFailure?.phase === "runtime_boot" || recoverableFailure?.action === "repair_runtime"
     ? "Runtime unavailable"
     : "Response failed";
-  const isEmptyStreamingAssistant = !isUser && message.status === "streaming" && message.body.trim().length === 0;
+  const isEmptyStreamingAssistant = !isUser && displayedState === "streaming" && message.body.trim().length === 0;
   const canShowAssistantMessageActions = !isUser && message.status !== "stopped";
   const isInlineEditing = isUser && Boolean(inlineEdit);
 
@@ -2267,7 +2269,7 @@ export function ChatMessageItem({
           />
           {statusLabel && !isEmptyStreamingAssistant ? (
             <div className="mb-2 flex items-center gap-2">
-              <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(message.status))}>
+              <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(displayedState))}>
                 {statusLabel}
               </span>
               {canContinueInterrupted ? (
@@ -2281,7 +2283,7 @@ export function ChatMessageItem({
               ) : null}
             </div>
           ) : null}
-          {message.status === "failed" ? (
+          {displayedState === "failed" ? (
             <div
               className="mb-3 flex max-w-[72ch] items-start gap-3 rounded-[var(--radius-lg)] border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-destructive"
             >
@@ -2601,19 +2603,22 @@ function transcriptSummaryDurationMs(summary: NonNullable<ChatMessage["transcrip
 export function LazyStreamTranscriptItem({
   summary,
   state,
+  generationTerminalReason,
   loading,
   onLoad,
 }: {
   summary: NonNullable<ChatMessage["transcriptSummary"]>;
   state: ChatStreamDraftState | ChatMessage["status"];
+  generationTerminalReason?: string | null;
   loading?: boolean;
   onLoad: () => void;
 }) {
   const durationMs = transcriptSummaryDurationMs(summary);
+  const displayedState = displayedChatMessageState({ role: "assistant", status: state as ChatMessage["status"], generationTerminalReason });
   const statusHint =
-    state === "failed"
+    displayedState === "failed"
       ? "Stopped with errors"
-      : state === "stopped"
+      : displayedState === "stopped"
         ? "Stopped"
         : "";
 
@@ -2649,6 +2654,7 @@ export function StreamTranscriptItem({
   entries,
   steerMessages = [],
   state,
+  generationTerminalReason,
   streamStartedAt,
   streamEndedAt,
   assistantMessageBody,
@@ -2661,6 +2667,7 @@ export function StreamTranscriptItem({
   entries: TranscriptEntry[];
   steerMessages?: ChatMessage[];
   state: ChatStreamDraftState | ChatMessage["status"];
+  generationTerminalReason?: string | null;
   streamStartedAt: Date;
   streamEndedAt?: Date | null;
   assistantMessageBody?: string | null;
@@ -2698,10 +2705,11 @@ export function StreamTranscriptItem({
 
   if (timelineEntries.length === 0) return null;
 
+  const displayedState = displayedChatMessageState({ role: "assistant", status: state as ChatMessage["status"], generationTerminalReason });
   const statusHint =
-    state === "failed"
+    displayedState === "failed"
       ? "Stopped with errors"
-      : state === "stopped"
+      : displayedState === "stopped"
         ? "Stopped"
         : "";
 

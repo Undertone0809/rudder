@@ -420,6 +420,8 @@ export interface ChatMessage {
   runId?: string | null;
   /** Chat generation that owns this assistant message and its Work Transcript. */
   generationId?: string | null;
+  /** Terminal reason of the owning generation, when the message belongs to one. */
+  generationTerminalReason?: string | null;
   /** Agent whose runtime produced this assistant message. */
   replyingAgentId: string | null;
   /** Groups user+assistant rows for one logical turn; new variant on edit/regenerate. */

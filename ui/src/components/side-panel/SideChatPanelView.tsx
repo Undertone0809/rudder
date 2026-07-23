@@ -305,6 +305,7 @@ export function SideChatPanelView({
                     <StreamTranscriptItem
                       entries={transcript}
                       state={message.status}
+                      generationTerminalReason={message.generationTerminalReason}
                       streamStartedAt={new Date(message.createdAt)}
                       streamEndedAt={new Date(message.updatedAt)}
                       assistantMessageBody={message.body}
