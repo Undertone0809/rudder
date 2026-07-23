@@ -1418,4 +1418,64 @@ describe("Main Workbench state", () => {
       nextTarget,
     );
   });
+
+  it("discards only the exact terminal promotion attempt", () => {
+    const source = {
+      viewInstanceId: "view-source",
+      savedViewId: null,
+      sourceRevision: 3,
+      runtimeId: "runtime-source",
+      target: browserTarget("view-source"),
+      originContextKey: "chat:source",
+    };
+    const failed = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "runtime/admit",
+        organizationId: ORGANIZATION_A,
+        runtime: {
+          id: "runtime-source",
+          viewInstanceId: "view-source",
+          targetKind: "browser",
+          target: source.target,
+          host: { kind: "side", contextKey: "chat:source" },
+        },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        source,
+        clientMutationId: "mutation-a",
+      },
+      {
+        type: "promotion/server-fail",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        expectedSourceRevision: 3,
+        error: "failed",
+      },
+    );
+
+    const staleDiscard = mainWorkbenchReducer(failed, {
+      type: "promotion/discard",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      expectedSourceRevision: 2,
+    });
+    expect(staleDiscard).toBe(failed);
+
+    const discarded = mainWorkbenchReducer(failed, {
+      type: "promotion/discard",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      expectedSourceRevision: 3,
+    });
+    expect(discarded.organizations[ORGANIZATION_A]?.promotionsById)
+      .not.toHaveProperty("promotion-a");
+    expect(
+      discarded.organizations[ORGANIZATION_A]
+        ?.runtimesById["runtime-source"]?.host,
+    ).toEqual({ kind: "side", contextKey: "chat:source" });
+  });
 });

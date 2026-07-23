@@ -253,4 +253,155 @@ describe("MessengerSavedViewWorkspace", () => {
       '[data-view-instance-id="saved-browser-instance"]',
     )).toBeNull();
   });
+
+  it.each([
+    "claim_failed",
+    "commit_unknown",
+    "server_failed",
+    "pending",
+    "reconciling",
+    "claiming",
+    "detaching",
+  ] as const)(
+    "does not cold-open a retained %s promotion source as a duplicate Main tab",
+    async (status) => {
+      const sourceTarget = {
+        kind: "local_app" as const,
+        desktopInstallationId: "installation-a",
+        appPublicId: "public-a",
+        localBindingId: "binding-a",
+        label: "MKT dashboard",
+        viewInstanceId: "view-a",
+      };
+      const promotion = {
+        id: "promotion-a",
+        organizationId: "org-a",
+        clientMutationId: "mutation-a",
+        status,
+        source: {
+          viewInstanceId: "view-a",
+          savedViewId: status === "pending"
+              || status === "server_failed"
+              || status === "commit_unknown"
+            ? null
+            : "saved-a",
+          sourceRevision: 2,
+          target: sourceTarget,
+          originContextKey: "chat:chat-a",
+          runtimeId: "runtime-a",
+        },
+        ...(status === "claim_failed"
+          || status === "claiming"
+          || status === "detaching"
+          ? { savedViewId: "saved-a" }
+          : {}),
+        ...(status === "claim_failed"
+          || status === "commit_unknown"
+          || status === "server_failed"
+          ? { error: "retry required" }
+          : {}),
+        ...(status === "detaching"
+          ? { rollback: { activeViewInstanceId: null, tab: null } }
+          : {}),
+      };
+      await renderWorkspace({
+        organizations: {
+          "org-a": {
+            activeViewInstanceId: null,
+            tabOrder: [],
+            tabsByViewInstanceId: {},
+            // Hydration must be guarded by the retained attempt itself rather
+            // than relying on a coincidental runtime-host conflict.
+            runtimesById: {},
+            promotionsById: {
+              "promotion-a": promotion,
+            },
+          },
+        },
+      } as MainWorkbenchState);
+
+      await waitForAct(() => expect(getSavedView).toHaveBeenCalled());
+      expect(host?.querySelector('[data-view-instance-id="view-a"]'))
+        .toBeNull();
+    },
+  );
+
+  it("does not let a retained promotion for another exact instance block hydration", async () => {
+    await renderWorkspace({
+      organizations: {
+        "org-a": {
+          activeViewInstanceId: null,
+          tabOrder: [],
+          tabsByViewInstanceId: {},
+          runtimesById: {},
+          promotionsById: {
+            "promotion-other": {
+              id: "promotion-other",
+              organizationId: "org-a",
+              clientMutationId: "mutation-other",
+              status: "pending",
+              source: {
+                viewInstanceId: "view-other",
+                savedViewId: null,
+                sourceRevision: 1,
+                target: {
+                  kind: "local_app",
+                  desktopInstallationId: "installation-a",
+                  appPublicId: "public-other",
+                  localBindingId: "binding-other",
+                  label: "Other app",
+                  viewInstanceId: "view-other",
+                },
+                originContextKey: "chat:chat-a",
+                runtimeId: "runtime-other",
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).not.toBeNull());
+  });
+
+  it("does not let the same view id from another target kind block hydration", async () => {
+    await renderWorkspace({
+      organizations: {
+        "org-a": {
+          activeViewInstanceId: null,
+          tabOrder: [],
+          tabsByViewInstanceId: {},
+          runtimesById: {},
+          promotionsById: {
+            "promotion-browser": {
+              id: "promotion-browser",
+              organizationId: "org-a",
+              clientMutationId: "mutation-browser",
+              status: "pending",
+              source: {
+                viewInstanceId: "view-a",
+                savedViewId: null,
+                sourceRevision: 1,
+                target: {
+                  kind: "browser",
+                  tabId: "tab-a",
+                  url: "https://example.com",
+                  label: "Example",
+                  viewInstanceId: "view-a",
+                },
+                originContextKey: "chat:chat-a",
+                runtimeId: "runtime-browser",
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).not.toBeNull());
+  });
 });

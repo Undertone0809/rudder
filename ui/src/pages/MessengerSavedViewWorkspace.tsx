@@ -49,13 +49,24 @@ export function MessengerSavedViewWorkspace({
       ? { ...rawTarget, viewInstanceId } as MainWorkbenchTarget
       : null;
   }, [savedViewQuery.data]);
+  const retainedPromotion = useMemo(
+    () => Object.values(workbench.promotionsById).find((promotion) => (
+      promotion.source.savedViewId === savedViewId
+      || ("savedViewId" in promotion && promotion.savedViewId === savedViewId)
+      || (
+        promotion.source.target.kind === target?.kind
+        && promotion.source.viewInstanceId === target.viewInstanceId
+      )
+    )) ?? null,
+    [savedViewId, target?.viewInstanceId, workbench.promotionsById],
+  );
   const [openAttempt, setOpenAttempt] = useState<{
     savedViewId: string;
     result: MainWorkbenchAdmission;
   } | null>(null);
 
   useEffect(() => {
-    if (!target) return;
+    if (!target || retainedPromotion) return;
     const runtimeId = createMainWorkbenchRuntimeId(organizationId, target);
     const result = workbench.openSavedTab(savedViewId, {
       viewInstanceId: target.viewInstanceId,
@@ -68,6 +79,7 @@ export function MessengerSavedViewWorkspace({
     organizationId,
     savedViewId,
     target,
+    retainedPromotion,
     workbench.openSavedTab,
   ]);
 
@@ -114,6 +126,11 @@ export function MessengerSavedViewWorkspace({
       {savedViewQuery.isPending ? (
         <p className="sr-only" role="status" aria-live="polite">
           Opening Saved View…
+        </p>
+      ) : null}
+      {retainedPromotion ? (
+        <p className="sr-only" role="status" aria-live="polite">
+          This Saved View move is retained in Side for recovery.
         </p>
       ) : null}
       <MessengerMainWorkbench
