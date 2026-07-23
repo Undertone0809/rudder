@@ -445,6 +445,29 @@ export function SavedViewPromotionProvider({
       savedViewId: result.savedView.id,
       expectedSourceRevision: attempt.sourceRevision,
     });
+    const latestRuntimeTarget = liveSurfaceRuntime.getRuntimeTarget(
+      attempt.runtimeId,
+    );
+    if (
+      latestRuntimeTarget
+      && latestRuntimeTarget.kind === attempt.target.kind
+      && latestRuntimeTarget.viewInstanceId === attempt.target.viewInstanceId
+    ) {
+      workbench.dispatch({
+        type: "runtime/update-target",
+        organizationId,
+        runtimeId: attempt.runtimeId,
+        viewInstanceId: attempt.target.viewInstanceId,
+        target: latestRuntimeTarget as MainWorkbenchTarget,
+      });
+      workbench.dispatch({
+        type: "tab/update-target",
+        organizationId,
+        runtimeId: attempt.runtimeId,
+        viewInstanceId: attempt.target.viewInstanceId,
+        target: latestRuntimeTarget as MainWorkbenchTarget,
+      });
+    }
     attemptsRef.current.delete(attempt.key);
     unlockAttempt(attempt);
     return result;

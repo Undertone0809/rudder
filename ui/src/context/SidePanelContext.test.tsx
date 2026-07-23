@@ -524,6 +524,41 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "tab-count")).toBe("0");
   });
 
+  it("does not steal Command+W or the Desktop accelerator from a Main runtime", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const { desktopShell } = stubDesktopShell();
+    ({ container, root } = renderSidePanelProvider());
+    click(container, "Chat A");
+    click(container, "Open issue");
+
+    const mainHost = document.createElement("div");
+    mainHost.dataset.testid = "live-surface-runtime-host";
+    mainHost.dataset.ownerId = "main:org-a:view-a";
+    const mainInput = document.createElement("input");
+    mainHost.appendChild(mainInput);
+    document.body.appendChild(mainHost);
+    await act(async () => {
+      mainInput.focus();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(desktopShell.setSidePanelCloseShortcutActive)
+      .toHaveBeenLastCalledWith(false);
+
+    const shortcut = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "w",
+      metaKey: true,
+    });
+    act(() => mainInput.dispatchEvent(shortcut));
+
+    expect(shortcut.defaultPrevented).toBe(false);
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "tab-count")).toBe("1");
+    mainHost.remove();
+  });
+
   it("does not intercept the non-platform close-tab modifier", () => {
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     ({ container, root } = renderSidePanelProvider());
@@ -649,6 +684,36 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "active-key")).toBe("browser-tab:browser-8");
     expect(text(container, "tab-keys")).toContain("browser-tab:browser-1");
     expect(text(container, "tab-keys")).not.toContain("browser-tab:browser-9");
+  });
+
+  it("shares the Side Browser limit across retained Chat and Issue contexts", () => {
+    ({ container, root } = renderSidePanelProvider());
+
+    act(() => {
+      for (let index = 1; index <= 8; index += 1) {
+        const contextKey = index <= 4 ? "chat:a" : "issue:b";
+        expect(sidePanelControls?.openTargetForContext(contextKey, {
+          kind: "browser",
+          label: `Browser ${index}`,
+          tabId: `browser-${index}`,
+          url: `https://example.com/${index}`,
+        })).toEqual({ admitted: true });
+      }
+    });
+
+    let overflow: ReturnType<NonNullable<typeof sidePanelControls>["openTargetForContext"]>
+      | undefined;
+    act(() => {
+      overflow = sidePanelControls?.openTargetForContext("chat:c", {
+        kind: "browser",
+        label: "Browser 9",
+        tabId: "browser-9",
+        url: "https://example.com/9",
+      });
+    });
+    expect(overflow).toEqual({ admitted: false, reason: "browser_capacity" });
+    act(() => sidePanelControls?.setContextKey("chat:c"));
+    expect(text(container, "tab-count")).toBe("0");
   });
 
   it("reuses the active Browser tab for an ordinary routed link at capacity", () => {

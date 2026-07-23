@@ -1,7 +1,10 @@
 import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
-import { buildLibraryFileMentionMarkdown } from "../../packages/shared/src/index.ts";
+import {
+  buildAutomationMentionHref,
+  buildLibraryFileMentionMarkdown,
+} from "../../packages/shared/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 
@@ -95,6 +98,84 @@ async function openGlobalLibraryFileInSidePanel(page: Page, fileName: string) {
 }
 
 test.describe("Messenger Saved Views", () => {
+  test("runs a moved Main Automation and opens its linked Messenger chat", async ({ page }) => {
+    const organization = await createOrganization(
+      page.request,
+      "Messenger-Main-Automation",
+    );
+    const agent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Main Automation Agent",
+    }) as { id: string };
+    const automationResponse = await page.request.post(
+      `/api/orgs/${organization.id}/automations`,
+      {
+        data: {
+          title: "Main workbench automation",
+          description: "Open the linked chat after a manual run.",
+          assigneeAgentId: agent.id,
+          priority: "medium",
+          outputMode: "chat_output",
+        },
+      },
+    );
+    expect(
+      automationResponse.ok(),
+      await automationResponse.text(),
+    ).toBe(true);
+    const automation = await automationResponse.json() as {
+      id: string;
+      title: string;
+    };
+    const chatResponse = await page.request.post(
+      `/api/orgs/${organization.id}/chats`,
+      {
+        data: {
+          title: "Automation workbench host",
+          issueCreationMode: "manual_approval",
+          planMode: false,
+          initialMessage: { body: "Open the Automation." },
+        },
+      },
+    );
+    expect(chatResponse.ok(), await chatResponse.text()).toBe(true);
+    const chat = await chatResponse.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Open [${automation.title}](${buildAutomationMentionHref(
+        automation.id,
+        automation.title,
+      )}).`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await selectOrganization(page, organization);
+    await page.goto(
+      `/${organization.issuePrefix}/messenger/chat/${chat.id}`,
+    );
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await assistantMessage
+      .locator('a[data-mention-kind="automation"]')
+      .click();
+    await expect(page.getByTestId("automation-detail-shell")).toBeVisible();
+    await page.getByTestId("chat-side-panel-keep-in-messenger").click();
+    await expect(page.getByText("Moved to Messenger")).toBeVisible();
+    await expect(page).toHaveURL(/\/messenger\/saved\/[^/]+$/);
+    await expect(page.getByTestId("automation-detail-shell")).toBeVisible();
+
+    await page.getByRole("button", { name: "Run now" }).click();
+    await expect(page).toHaveURL(/\/messenger\/chat\/[0-9a-f-]+$/, {
+      timeout: 20_000,
+    });
+  });
+
   test("moves only the exact Side Panel instance into Main and keeps remove separate from close", async ({ page }, testInfo) => {
     const organization = await createOrganization(page.request, "Messenger-Saved-View-Workflow");
     const filePath = `docs/saved-view-${randomUUID()}.md`;
