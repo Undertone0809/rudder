@@ -8181,7 +8181,7 @@ describe("messengerService and issue follows", () => {
     expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toHaveLength(0);
   });
 
-  it("two-pass forks preserve safe structured payload and re-own annotation sources and files", async () => {
+  it("two-pass forks preserve safe payload, omit Run transcript provenance, and re-own annotation sources and files", async () => {
     const orgId = randomUUID();
     const userId = "board-user-chat-annotation-fork";
     const annotationId = randomUUID();
@@ -8371,12 +8371,7 @@ describe("messengerService and issue follows", () => {
       .from(chatMessages)
       .where(eq(chatMessages.id, copiedSource.id))
       .then((rows) => rows[0]!);
-    expect(copiedSourceRow.structuredPayload).toMatchObject({
-      __chatTranscript: [expect.objectContaining({
-        generationId: processGenerationId,
-        text: processSource,
-      })],
-    });
+    expect(copiedSourceRow.structuredPayload).not.toHaveProperty("__chatTranscript");
     expect(copiedUser.attachments[0]).toMatchObject({
       conversationId: child.id,
       messageId: copiedUser.id,

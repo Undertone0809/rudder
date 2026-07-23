@@ -13,6 +13,7 @@ import {
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
+import { stripChatMetadataFromPayload } from "./chats.helpers.js";
 import type { MessageHydrationRow } from "./chats.types.js";
 
 type ChatTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -219,7 +220,9 @@ export async function copyForkChatMessages(input: {
         };
     });
     const copiedStructuredPayload = {
-      ...(sanitizeChatStructuredPayload(message.structuredPayload) ?? {}),
+      ...(sanitizeChatStructuredPayload(
+        stripChatMetadataFromPayload(message.structuredPayload),
+      ) ?? {}),
       ...(copiedAnnotations.length > 0 ? { inlineAnnotations: copiedAnnotations } : {}),
       ...(copiedVisualMappings.length > 0 ? { inlineVisuals: copiedVisualMappings } : {}),
       ...(copiedVisualMappingsV1.length > 0 ? { inlineVisualsV1: copiedVisualMappingsV1 } : {}),
