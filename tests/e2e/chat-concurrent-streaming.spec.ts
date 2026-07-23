@@ -60,6 +60,27 @@ async function createQueuedMessage(page: Page, chatId: string, body: string, ind
   expect(res.ok()).toBe(true);
 }
 
+async function setPlanMode(page: Page, enabled: boolean) {
+  const menuButton = page.getByRole("button", { name: "Add files and options" });
+  await menuButton.click();
+  const toggle = page.getByRole("switch", { name: "Plan mode" });
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-checked", String(!enabled));
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+  await menuButton.click();
+  await expect(toggle).toHaveCount(0);
+}
+
+function assertForbiddenQueueCopy(page: Page) {
+  return Promise.all([
+    expect(page.getByText("Needs attention", { exact: true })).toHaveCount(0),
+    expect(page.getByText("Restarting with feedback", { exact: true })).toHaveCount(0),
+    expect(page.getByText("Running feedback", { exact: true })).toHaveCount(0),
+    expect(page.getByText("Delivery unconfirmed", { exact: true })).toHaveCount(0),
+  ]);
+}
+
 test("allows sending a new chat while another chat is still streaming", async ({ page }) => {
   const organization = await createStreamingOrg(page, `Concurrent-Chat-${Date.now()}`);
 
@@ -132,7 +153,7 @@ test("adds a composer message to Queue while the current chat is streaming", asy
   await composer.fill("This should be queued, not sent concurrently");
   await composer.press("Enter");
   await expect(page.getByTestId("chat-running-queue")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("chat-running-queue-item").first()).toContainText("Up next");
+  await expect(page.getByTestId("chat-running-queue-item").first()).toContainText("Queued");
   await expect(page.getByTestId("chat-running-queue-item").first()).toContainText("This should be queued");
 
   const queueRes = await page.request.get(`/api/chats/${chatId}/queue`);
@@ -172,7 +193,7 @@ test("adds a composer message to Queue while the current chat is streaming", asy
   });
   await expect(
     page.getByTestId("chat-assistant-message").filter({ hasText: "Chat run stopped before a final reply" }),
-  ).toHaveCount(1, { timeout: 30_000 });
+  ).toHaveCount(0, { timeout: 30_000 });
 
   const finalQueueRes = await page.request.get(`/api/chats/${chatId}/queue`);
   expect(finalQueueRes.ok()).toBe(true);
@@ -180,7 +201,8 @@ test("adds a composer message to Queue while the current chat is streaming", asy
   expect(finalQueue.items).toHaveLength(0);
 });
 
-test("removes a queued message from the composer as soon as its user message is delivered", async ({ page }) => {
+for (const planMode of [false, true]) {
+test(`auto-delivers a queued message in Plan mode ${planMode ? "ON" : "OFF"} without resurrecting it after Stop`, async ({ page }) => {
   const organization = await createStreamingOrg(page, `Queue-Delivery-${Date.now()}`);
 
   await page.goto("/");
@@ -191,6 +213,7 @@ test("removes a queued message from the composer as soon as its user message is 
 
   const composer = page.locator(".rudder-mdxeditor-content").first();
   await expect(composer).toBeVisible({ timeout: 15_000 });
+  if (planMode) await setPlanMode(page, true);
   await composer.fill("Start the first reply");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page).toHaveURL(/\/messenger\/chat\/[^/]+$/i, { timeout: 15_000 });
@@ -198,10 +221,13 @@ test("removes a queued message from the composer as soon as its user message is 
 
   await composer.fill("Run this immediately after the first reply");
   await composer.press("Enter");
-  await expect(page.getByTestId("chat-running-queue-item")).toContainText(
+  const queueItem = page.getByTestId("chat-running-queue-item");
+  await expect(queueItem).toContainText("Queued");
+  await expect(queueItem).toContainText(
     "Run this immediately after the first reply",
     { timeout: 15_000 },
   );
+  await assertForbiddenQueueCopy(page);
 
   const deliveredBubble = page.getByTestId("chat-user-message-bubble").filter({
     hasText: "Run this immediately after the first reply",
@@ -209,9 +235,25 @@ test("removes a queued message from the composer as soon as its user message is 
   await expect(deliveredBubble).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible();
   await expect(page.getByTestId("chat-running-queue")).toHaveCount(0);
+  const deliveredChatId = currentChatId(page.url());
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/chats/${deliveredChatId}/queue`);
+    expect(response.ok()).toBe(true);
+    return (await response.json()).items.length;
+  }, { timeout: 30_000 }).toBe(0);
+  await page.getByRole("button", { name: "Stop streaming" }).click();
+  await expect(page.getByRole("button", { name: "Stop streaming" })).toHaveCount(0, { timeout: 15_000 });
+  await expect(deliveredBubble).toHaveCount(1);
+  await expect(page.getByTestId("chat-running-queue")).toHaveCount(0);
+  const queueRes = await page.request.get(`/api/chats/${deliveredChatId}/queue`);
+  expect(queueRes.ok()).toBe(true);
+  expect((await queueRes.json()).items).toHaveLength(0);
+  await assertForbiddenQueueCopy(page);
 });
+}
 
-test("delivers native Codex Steer into the active App Server turn", async ({ page }) => {
+for (const planMode of [false, true]) {
+test(`delivers native Codex Steer into the active App Server turn in Plan mode ${planMode ? "ON" : "OFF"}`, async ({ page }) => {
   const orgRes = await page.request.post("/api/orgs", {
     data: { name: `Native-Steer-${Date.now()}` },
   });
@@ -233,6 +275,7 @@ test("delivers native Codex Steer into the active App Server turn", async ({ pag
   await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${chatAgent.id}`);
 
   const composer = page.locator(".rudder-mdxeditor-content").first();
+  if (planMode) await setPlanMode(page, true);
   await composer.fill("Keep Steer message position stable");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page).toHaveURL(/\/messenger\/chat\/[^/]+$/i, { timeout: 15_000 });
@@ -282,6 +325,9 @@ test("delivers native Codex Steer into the active App Server turn", async ({ pag
   const queueRes = await page.request.get(`/api/chats/${chatId}/queue`);
   expect(queueRes.ok()).toBe(true);
   expect((await queueRes.json()).items).toHaveLength(0);
+  await expect(page.getByText("Chat run stopped before a final reply", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("Stopped", { exact: true })).toHaveCount(0);
+  await assertForbiddenQueueCopy(page);
 
   await page.reload();
   await expect(page.getByTestId("chat-transcript-steer-message").filter({ hasText: "Use the revised direction" })).toHaveCount(1, {
@@ -290,6 +336,7 @@ test("delivers native Codex Steer into the active App Server turn", async ({ pag
   await expect(page.getByText("Reasoning after Steer", { exact: true })).toBeVisible({ timeout: 20_000 });
   await assertEmbeddedTimelineOrder(true);
 });
+}
 
 test("keeps accepted Steer visible and ordered while an edited response is active", async ({ page }) => {
   test.setTimeout(90_000);
@@ -455,7 +502,7 @@ test("runs Stop-then-Steer feedback as a server-owned continuation", async ({ pa
     .click();
   await expect(page.getByTestId("chat-running-queue-item")).toHaveCount(3, { timeout: 15_000 });
   await expect(page.getByTestId("chat-running-queue")).toContainText("3 queued");
-  await expect(page.getByTestId("chat-running-queue-item").nth(0)).toContainText("Up next");
+  await expect(page.getByTestId("chat-running-queue-item").nth(0)).toContainText("Queued");
   await expect(page.getByTestId("chat-running-queue-item").nth(1)).toContainText("#2");
   await expect(page.getByTestId("chat-running-queue-item").nth(2)).toContainText("#3");
   await expect(page.getByTestId("chat-running-queue-item").nth(2)).toContainText("Third parked Queue message");
