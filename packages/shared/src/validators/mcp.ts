@@ -15,6 +15,7 @@ const connectionNameSchema = z.string()
   .min(1)
   .max(80)
   .regex(/^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$/, "Use lowercase letters, numbers, underscores, and hyphens");
+const reservedMcpConnectionNames = new Set(["rudder-tools", "rudder-browser"]);
 const environmentNameSchema = z.string()
   .min(1)
   .max(160)
@@ -361,6 +362,15 @@ function validateConnectionSecretMutation(
 
 export const createMcpConnectionSchema = z.object(mcpConnectionInputFields)
   .strict()
+  .superRefine((value, ctx) => {
+    if (reservedMcpConnectionNames.has(value.name)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["name"],
+        message: `${value.name} is reserved for an internal Rudder runtime`,
+      });
+    }
+  })
   .superRefine(validateSafeConnectionConfig)
   .superRefine(validateConnectionSecretMutation)
   .transform((value) => ({

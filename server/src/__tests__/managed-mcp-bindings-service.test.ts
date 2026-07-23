@@ -24,7 +24,11 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { managedMcpBindingService } from "../services/mcp/managed-bindings.js";
 import { ManagedMcpClientError, type ManagedMcpClient } from "../services/mcp/managed-client.js";
-import { managedMcpRuntimeService } from "../services/mcp/managed-runtime.js";
+import {
+  boundedRedactedMcpAuditRecord,
+  managedMcpRuntimeService,
+} from "../services/mcp/managed-runtime.js";
+import { normalizeMcpDiscoveredTools } from "../services/mcp/tool-discovery.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -326,6 +330,96 @@ describe("managedMcpBindingService", () => {
       ?.toolPolicy.allowedToolNames).toEqual(["external.alpha.read"]);
   });
 
+  it("preserves disabled and revoked binding state when a tool-only update omits status", async () => {
+    const fixture = await seed(db);
+    const svc = managedMcpBindingService(db);
+    await svc.upsert(fixture.orgId, fixture.agentId, fixture.first.id, {
+      status: "disabled",
+    });
+    const disabled = await svc.upsert(fixture.orgId, fixture.agentId, fixture.first.id, {
+      enabledToolIds: [fixture.alphaRead.id],
+    });
+    expect(disabled.binding).toMatchObject({
+      status: "disabled",
+      enabledToolIds: [fixture.alphaRead.id],
+    });
+    const persistedDisabled = await db.select().from(agentCustomIntegrationBindings)
+      .where(eq(agentCustomIntegrationBindings.id, disabled.binding!.id))
+      .then((rows) => rows[0]!);
+    expect(persistedDisabled.revokedAt).toBeNull();
+
+    await svc.upsert(fixture.orgId, fixture.agentId, fixture.second.id, {});
+    const revoked = await svc.revoke(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.second.id,
+      { userId: "board" },
+    );
+    const persistedRevoked = await db.select().from(agentCustomIntegrationBindings)
+      .where(eq(agentCustomIntegrationBindings.id, revoked!.binding!.id))
+      .then((rows) => rows[0]!);
+    expect(persistedRevoked.revokedAt).toBeInstanceOf(Date);
+    const updated = await svc.upsert(fixture.orgId, fixture.agentId, fixture.second.id, {
+      enabledToolIds: [fixture.betaRead.id],
+    });
+    expect(updated.binding).toMatchObject({
+      status: "revoked",
+      enabledToolIds: [fixture.betaRead.id],
+    });
+    const persistedUpdated = await db.select().from(agentCustomIntegrationBindings)
+      .where(eq(agentCustomIntegrationBindings.id, updated.binding!.id))
+      .then((rows) => rows[0]!);
+    expect(persistedUpdated.revokedAt?.getTime())
+      .toBe(persistedRevoked.revokedAt?.getTime());
+  });
+
+  it("uses the persisted tool namespace as the runtime server name for long connection names", async () => {
+    const fixture = await seed(db);
+    const connectionName = "c".repeat(80);
+    const [normalized] = normalizeMcpDiscoveredTools(connectionName, [{
+      name: "read",
+      inputSchema: { type: "object" },
+    }]);
+    const [connection] = await db.insert(mcpConnections).values({
+      orgId: fixture.orgId,
+      name: connectionName,
+      displayName: "Long connection",
+      provider: "custom",
+      transport: "streamable_http",
+      accessMode: "provider_default",
+      status: "active",
+      safeConfig: { url: "https://long.example.test/mcp" },
+      enabled: true,
+      required: false,
+      activatedAt: new Date(),
+    }).returning();
+    const [tool] = await db.insert(customIntegrationTools).values({
+      orgId: fixture.orgId,
+      connectionId: connection!.id,
+      externalToolName: "read",
+      rudderToolName: normalized!.rudderToolName,
+      inputSchema: { type: "object" },
+      status: "active",
+      enabled: true,
+    }).returning();
+    const svc = managedMcpBindingService(db);
+    await svc.upsert(fixture.orgId, fixture.agentId, connection!.id, {
+      enabledToolIds: [tool!.id],
+    });
+
+    const runtime = await svc.listRuntimeBindings(fixture.orgId, fixture.agentId);
+    const binding = runtime.find((entry) =>
+      entry.toolPolicy.allowedToolNames.includes(normalized!.rudderToolName));
+    const expectedNamespace = normalized!.rudderToolName
+      .slice("external.".length, -".read".length);
+    expect(binding).toMatchObject({
+      serverName: expectedNamespace,
+      toolPolicy: { allowedToolNames: [normalized!.rudderToolName] },
+    });
+    expect(normalized!.rudderToolName.startsWith(`external.${binding!.serverName}.`))
+      .toBe(true);
+  });
+
   it("rejects foreign and cross-connection tool IDs", async () => {
     const fixture = await seed(db);
     const svc = managedMcpBindingService(db);
@@ -344,6 +438,34 @@ describe("managedMcpBindingService", () => {
     )).rejects.toThrow("MCP connection not found");
     await expect(svc.listForAgent(fixture.orgId, fixture.otherAgentId))
       .rejects.toThrow("Agent must belong to same organization");
+  });
+
+  it("excludes malformed bindings whose joined connection belongs to another organization", async () => {
+    const fixture = await seed(db);
+    await db.insert(agentCustomIntegrationBindings).values({
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      connectionId: fixture.foreign.id,
+      status: "active",
+      enabledToolIds: [fixture.foreignRead.id],
+    });
+
+    await expect(managedMcpBindingService(db).listRuntimeBindings(
+      fixture.orgId,
+      fixture.agentId,
+    )).resolves.toEqual([]);
+  });
+
+  it("keeps bounded audit records within 24 KiB for multibyte UTF-8 content", () => {
+    const audit = boundedRedactedMcpAuditRecord(Object.fromEntries(
+      Array.from({ length: 20 }, (_, index) => [
+        `field${index}`,
+        "😀".repeat(2_048),
+      ]),
+    ));
+
+    expect(Buffer.byteLength(JSON.stringify(audit), "utf8"))
+      .toBeLessThanOrEqual(24 * 1_024);
   });
 
   it("omits unavailable optional bindings, fails unavailable required bindings, and returns exact neutral DTOs", async () => {

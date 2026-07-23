@@ -121,10 +121,29 @@ export function boundedRedactedMcpAuditRecord(
   if (Buffer.byteLength(serialized, "utf8") <= MAX_AUDIT_RECORD_BYTES) {
     return record;
   }
-  return {
-    truncated: true,
-    preview: serialized.slice(0, 16 * 1024),
-  };
+  let lower = 0;
+  let upper = serialized.length;
+  while (lower < upper) {
+    const midpoint = Math.ceil((lower + upper) / 2);
+    const candidate = {
+      truncated: true,
+      preview: serialized.slice(0, midpoint),
+    };
+    if (
+      Buffer.byteLength(JSON.stringify(candidate), "utf8")
+      <= MAX_AUDIT_RECORD_BYTES
+    ) {
+      lower = midpoint;
+    } else {
+      upper = midpoint - 1;
+    }
+  }
+  let preview = serialized.slice(0, lower);
+  const trailingCodeUnit = preview.charCodeAt(preview.length - 1);
+  if (trailingCodeUnit >= 0xD800 && trailingCodeUnit <= 0xDBFF) {
+    preview = preview.slice(0, -1);
+  }
+  return { truncated: true, preview };
 }
 
 function safeError(error: unknown): ManagedMcpClientError {

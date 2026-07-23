@@ -128,6 +128,10 @@ function boundedSegment(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength - suffix.length - 1)}-${suffix}`;
 }
 
+export function managedMcpRuntimeServerName(connectionName: string): string {
+  return boundedSegment(toolSlug(connectionName), 56);
+}
+
 function boundedNamespacedToolName(
   prefix: string,
   toolName: string,
@@ -169,7 +173,7 @@ export function normalizeMcpDiscoveredTools(
     names.add(tool.name);
   }
 
-  const connectionPrefix = `external.${boundedSegment(toolSlug(connectionName), 56)}`;
+  const connectionPrefix = `external.${managedMcpRuntimeServerName(connectionName)}`;
   const slugCounts = new Map<string, number>();
   for (const tool of tools) {
     const slug = toolSlug(tool.name);

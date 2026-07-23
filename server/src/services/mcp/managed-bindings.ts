@@ -18,6 +18,7 @@ import {
 } from "@rudderhq/shared";
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { notFound, unprocessable } from "../../errors.js";
+import { managedMcpRuntimeServerName } from "./tool-discovery.js";
 
 type ConnectionRow = typeof mcpConnections.$inferSelect;
 type BindingRow = typeof agentCustomIntegrationBindings.$inferSelect;
@@ -248,9 +249,13 @@ export function managedMcpBindingService(db: Db) {
       const updated = existing
         ? await tx.update(agentCustomIntegrationBindings)
           .set({
-            status: input.status ?? "active",
+            status: input.status ?? existing.status,
             enabledToolIds,
-            revokedAt: input.status === "revoked" ? now : null,
+            revokedAt: input.status === undefined
+              ? existing.revokedAt
+              : input.status === "revoked"
+                ? now
+                : null,
             updatedAt: now,
           })
           .where(eq(agentCustomIntegrationBindings.id, existing.id))
@@ -352,6 +357,7 @@ export function managedMcpBindingService(db: Db) {
         eq(agentCustomIntegrationBindings.orgId, orgId),
         eq(agentCustomIntegrationBindings.agentId, agentId),
         eq(agentCustomIntegrationBindings.status, "active"),
+        eq(mcpConnections.orgId, orgId),
       ))
       .orderBy(asc(mcpConnections.name));
 
@@ -418,7 +424,7 @@ export function managedMcpBindingService(db: Db) {
         .sort();
       runtime.push({
         bindingId: binding.id,
-        serverName: connection.name,
+        serverName: managedMcpRuntimeServerName(connection.name),
         toolPolicy: {
           mode: "allowlist",
           allowedToolNames,

@@ -87,6 +87,22 @@ describe("managed MCP shared contracts", () => {
     }).success).toBe(true);
   });
 
+  it("rejects internal runtime server names when creating external MCP connections", () => {
+    const schema = exportedSchema("createMcpConnectionSchema");
+    if (!schema) return;
+
+    for (const name of ["rudder-tools", "rudder-browser"]) {
+      expect(schema.safeParse({
+        name,
+        displayName: "Reserved runtime name",
+        provider: "custom",
+        transport: "streamable_http",
+        accessMode: "provider_default",
+        safeConfig: { url: "https://mcp.example.com" },
+      }).success).toBe(false);
+    }
+  });
+
   it("keeps secret mutation fields out of safe connection config", () => {
     const schema = exportedSchema("createMcpConnectionSchema");
     if (!schema) return;
