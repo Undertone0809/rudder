@@ -1,7 +1,7 @@
 import { issuesApi } from "@/api/issues";
 import { messengerApi } from "@/api/messenger";
-import { useToast } from "@/context/ToastContext";
 import { useOptionalSavedViewPromotion } from "@/context/SavedViewPromotionContext";
+import { useToast } from "@/context/ToastContext";
 import {
   savedViewKeepInputFromSidePanelTarget,
   savedViewPlacementForSidePanelContext,

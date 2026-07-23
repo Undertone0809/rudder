@@ -383,14 +383,14 @@ export function BrowserLiveSurface({
         onCycleTabRef.current(input.shift ? -1 : 1);
         return;
       }
+      if (readDesktopShell()?.onBrowserShortcut) return;
       if (isBrowserSidePanelCloseShortcutInput(inputEvent.input)) {
         event.preventDefault();
         onCloseTargetRef.current(targetRef.current);
         return;
       }
       if (
-        readDesktopShell()?.onBrowserShortcut
-        || !inputEvent.input
+        !inputEvent.input
         || !activeRef.current
       ) return;
       const action = resolveBrowserShortcutInput(inputEvent.input, {

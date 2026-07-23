@@ -110,4 +110,57 @@ describe("BrowserLiveSurface", () => {
 
     expect(onWebContentsIdChange).toHaveBeenCalledWith(73);
   });
+
+  it("lets the Desktop owner bridge exclusively route guest Browser shortcuts", () => {
+    const onOpenTarget = vi.fn();
+    const onCloseTarget = vi.fn();
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        onBrowserShortcut: vi.fn(),
+      },
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          target={{
+            kind: "browser",
+            label: "Example",
+            tabId: "browser-owner",
+            url: "https://example.com",
+            viewInstanceId: "view-owner",
+          }}
+          targetKey="browser-tab:browser-owner"
+          onOpenTarget={onOpenTarget}
+          onReplaceTarget={vi.fn()}
+          onCloseTarget={onCloseTarget}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+    const webview = container.querySelector("webview");
+    const newTab = new Event("before-input-event", { cancelable: true });
+    Object.defineProperty(newTab, "input", {
+      configurable: true,
+      value: { key: "t", meta: true, type: "keyDown" },
+    });
+    const close = new Event("before-input-event", { cancelable: true });
+    Object.defineProperty(close, "input", {
+      configurable: true,
+      value: { control: true, key: "w", type: "keyDown" },
+    });
+
+    act(() => {
+      webview?.dispatchEvent(newTab);
+      webview?.dispatchEvent(close);
+    });
+
+    expect(onOpenTarget).not.toHaveBeenCalled();
+    expect(onCloseTarget).not.toHaveBeenCalled();
+  });
 });

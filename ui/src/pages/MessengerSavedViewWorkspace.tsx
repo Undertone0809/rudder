@@ -1,4 +1,5 @@
 import { messengerApi } from "@/api/messenger";
+import { Button } from "@/components/ui/button";
 import { MessengerMainWorkbench } from "@/components/workbench/MessengerMainWorkbench";
 import {
   createMainWorkbenchRuntimeId,
@@ -10,8 +11,7 @@ import { sidePanelTargetFromSavedView } from "@/lib/messenger-saved-views";
 import { queryKeys } from "@/lib/queryKeys";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, RotateCw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export function MessengerSavedViewWorkspace({
   organizationId,
@@ -64,9 +64,13 @@ export function MessengerSavedViewWorkspace({
     savedViewId: string;
     result: MainWorkbenchAdmission;
   } | null>(null);
+  const requestedOpenKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!target || retainedPromotion) return;
+    const openKey = `${savedViewId}:${target.kind}:${target.viewInstanceId}`;
+    if (requestedOpenKeyRef.current === openKey) return;
+    requestedOpenKeyRef.current = openKey;
     const runtimeId = createMainWorkbenchRuntimeId(organizationId, target);
     const result = workbench.openSavedTab(savedViewId, {
       viewInstanceId: target.viewInstanceId,

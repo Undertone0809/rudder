@@ -54,4 +54,12 @@ describe("side panel close shortcut input", () => {
       operatorBrowserGuest: false,
     }, "darwin")).toBeNull();
   });
+
+  it("routes Command+W from an operator guest to that exact Browser owner", () => {
+    expect(resolveProtectedDesktopShortcutRoute({ key: "w", meta: true }, {
+      sidePanelCloseActive: true,
+      browserSurfaceActive: false,
+      operatorBrowserGuest: true,
+    }, "darwin")).toEqual({ kind: "close_browser_owner_tab" });
+  });
 });

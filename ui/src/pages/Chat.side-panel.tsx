@@ -1546,21 +1546,6 @@ export function ChatSidePanel({
     };
   }, [activeBrowserTargetKey, sidePanel.open]);
 
-  useEffect(() => {
-    const desktopShell = readDesktopShell();
-    if (!desktopShell?.onBrowserShortcut) return undefined;
-    return desktopShell.onBrowserShortcut((action) => {
-      const activeElement = document.activeElement;
-      if (
-        !sidePanel.open
-        || !activeBrowserTargetKey
-        || !activeElement
-        || !panelRef.current?.contains(activeElement)
-      ) return;
-      browserShortcutControllersRef.current.get(activeBrowserTargetKey)?.(action);
-    });
-  }, [activeBrowserTargetKey, sidePanel.open]);
-
   const handleSidePanelKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
     if (readDesktopShell()?.onBrowserShortcut || !activeBrowserTargetKey) return;
     const action = resolveBrowserShortcutInput({
