@@ -5722,13 +5722,17 @@ describe("Chat streaming controls", () => {
     await clickEnabledButtonByAriaLabel(container, "Queue");
 
     expect(mockState.createQueuedMessage).toHaveBeenCalledTimes(1);
-    expect(mockState.createQueuedMessage).toHaveBeenCalledWith("chat-1", expect.objectContaining({
-      expectedGenerationId: "generation-1",
-      payload: expect.objectContaining({
-        body: "Add this after the current reply.",
-        metadata: { source: "chat_composer" },
+    expect(mockState.createQueuedMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.objectContaining({
+        expectedGenerationId: "generation-1",
+        payload: expect.objectContaining({
+          body: "Add this after the current reply.",
+          metadata: { source: "chat_composer" },
+        }),
       }),
-    }));
+      { files: [] },
+    );
     expect(mockState.sendMessageStream).not.toHaveBeenCalled();
     expect(mockState.pushToast).toHaveBeenCalledWith({
       title: "Queued",

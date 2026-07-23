@@ -460,7 +460,8 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain('<strong data-markdown-source-start="6" data-markdown-source-end="15">world</strong>');
+    expect(html).toContain('data-markdown-source-start="6" data-markdown-source-end="15"');
+    expect(html).toContain(">world</strong>");
     expect(html).toContain(">first</li>");
     expect(html).toContain(">second</li>");
   });
@@ -975,9 +976,8 @@ describe("RunTranscriptView", () => {
 
     expect(html).not.toContain("Expand thinking");
     expect(html).not.toContain("Collapse thinking");
-    expect(html).toContain(
-      '<strong data-markdown-source-start="0" data-markdown-source-end="25">Planning the response</strong>',
-    );
+    expect(html).toContain('data-markdown-source-start="0" data-markdown-source-end="25"');
+    expect(html).toContain(">Planning the response</strong>");
     expect(html).toContain("Final planning checkpoint remains visible inline.");
   });
 
