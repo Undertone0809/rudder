@@ -49,6 +49,7 @@ function formatRunOccurrenceForTest(date: Date, now: Date) {
 
 test.describe("Run transcript detail", () => {
   test("renders detail transcripts as readable progress chunks with collapsed grouped tool activity", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "dark" });
     const organization = await createOrganization(page, `Run-Detail-${Date.now()}`);
 
     await page.goto("/");
@@ -63,26 +64,76 @@ test.describe("Run transcript detail", () => {
     await page.getByRole("button", { name: "Show settled state" }).click();
     await expect(page.getByRole("button", { name: "Show streaming state" })).toBeVisible({ timeout: 15_000 });
 
-    const firstProgressChunk = page.getByRole("button", { name: /Expand tool activity group 1/ }).filter({ hasText: "Explored 2 files" });
+    const firstProgressChunk = page.getByRole("button", { name: /Expand tool activity group 1/ }).filter({ hasText: "Read 2 files" });
     await expect(firstProgressChunk).toHaveCount(1);
     await expect(page.getByText("Model turn", { exact: false })).toHaveCount(0);
     await expect(page.getByText("Read", { exact: true })).toHaveCount(0);
     await expect(page.getByText("doc/product/GOAL.md", { exact: true })).toHaveCount(0);
     await expect(page.getByText("doc/archive/SPEC-implementation.md", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Marked PAP-473 done", { exact: false })).toBeVisible();
-    await expect(page.getByText("added review summary comment", { exact: false })).toBeVisible();
+    await expect(page.getByText("added file-backed comment", { exact: false })).toBeVisible();
     await expect(page.getByText("Ran rudder issue done", { exact: false })).toHaveCount(0);
 
     await firstProgressChunk.click();
     await expect(page.getByText("Read doc/product/GOAL.md", { exact: false })).toBeVisible();
     await expect(page.getByText("Read doc/archive/SPEC-implementation.md", { exact: false })).toBeVisible();
 
-    const externalToolGroup = page.getByRole("button", { name: /Expand tool activity group 2/ }).filter({ hasText: "2 searches, used 1 tool" });
+    const externalToolGroup = page.getByRole("button", { name: /Expand tool activity group 2/ }).filter({ hasText: "Searched 2 times, used 2 tools" });
     await expect(externalToolGroup).toHaveCount(1);
     await externalToolGroup.click();
     await expect(page.getByText("Web searched \"transcript UI rendering examples\"", { exact: false })).toBeVisible();
-    await expect(page.getByText("Called fetch_pr via github", { exact: false })).toBeVisible();
+    const githubMcpRow = page.getByRole("button", { name: /tool details: Call fetch PR/ });
+    const rudderMcpRow = page.getByRole("button", { name: /tool details: Call Rudder chat transcript/ });
+    await expect(githubMcpRow).toHaveCount(1);
+    await expect(rudderMcpRow).toHaveCount(1);
+    await expect(githubMcpRow).toHaveAccessibleName("Expand tool details: Call fetch PR");
+    await expect(rudderMcpRow).toHaveAccessibleName("Expand tool details: Call Rudder chat transcript");
+    await expect(githubMcpRow.locator('img[src="/brands/github-logo.svg"]')).toBeVisible();
+    await expect(rudderMcpRow.locator('img[src="/rudder-logo.png"]')).toBeVisible();
+
+    const groupIconBox = await externalToolGroup.locator('[data-transcript-action-summary-icon="true"]').boundingBox();
+    const githubIconBox = await githubMcpRow.locator('[data-transcript-action-icon-slot="true"]').boundingBox();
+    expect(groupIconBox).not.toBeNull();
+    expect(githubIconBox).not.toBeNull();
+    expect(Math.abs((groupIconBox?.x ?? 0) - (githubIconBox?.x ?? 0))).toBeLessThanOrEqual(1);
+
+    await expect(page.getByText("repo_full_name Undertone0809/rudder", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("eeb73ad1-e000-4dce-9d47-23106fa36bbc", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("rudder-tools", { exact: false })).toHaveCount(0);
+
+    const rudderDisclosure = rudderMcpRow.locator('[data-transcript-action-row-disclosure="true"]');
+    await expect(rudderDisclosure).toHaveCSS("opacity", "0");
+    await rudderMcpRow.hover();
+    await expect(rudderDisclosure).toHaveCSS("opacity", "1");
+    await page.mouse.move(0, 0);
+    await expect(rudderDisclosure).toHaveCSS("opacity", "0");
+
+    await githubMcpRow.focus();
+    await page.keyboard.press("Tab");
+    await expect(rudderMcpRow).toBeFocused();
+    await expect(rudderDisclosure).toHaveCSS("opacity", "1");
+    await rudderMcpRow.blur();
+    await page.mouse.move(0, 0);
+    await expect(rudderDisclosure).toHaveCSS("opacity", "0");
+
+    await page.screenshot({
+      path: "/tmp/rudder-run-transcript-mcp-idle.png",
+      fullPage: true,
+    });
+    await rudderMcpRow.hover();
+    await page.screenshot({
+      path: "/tmp/rudder-run-transcript-mcp-hover.png",
+      fullPage: true,
+    });
+
+    await githubMcpRow.click();
     await expect(page.getByText("repo_full_name Undertone0809/rudder", { exact: false })).toBeVisible();
+    await rudderMcpRow.click();
+    await expect(page.getByText("eeb73ad1-e000-4dce-9d47-23106fa36bbc", { exact: false })).toBeVisible();
+    await expect(page.getByText("rudder-tools", { exact: false }).first()).toBeVisible();
+    await page.mouse.move(0, 0);
+    await rudderMcpRow.blur();
+    await expect(rudderDisclosure).toHaveCSS("opacity", "0");
 
     const skillUseRow = page.getByRole("button", { name: /Expand tool details/ }).filter({ hasText: "Use flomo-local-api skill" });
     await expect(skillUseRow).toHaveCount(1);
@@ -97,7 +148,7 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByText("/workspaces/agents/gabriel--fixture/instructions/MEMORY.md", { exact: false })).toHaveCount(0);
     await page.getByRole("button", { name: "Expand memory update details" }).first().click();
     await expect(page.getByText("/workspaces/agents/gabriel--fixture/instructions/MEMORY.md", { exact: false })).toHaveCount(2);
-    await expect(page.getByRole("button", { name: /Memory update failed, Failed/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Memory update failed, Gabriel, Knowledge graph" })).toBeVisible();
     await expect(page.getByText("Knowledge graph", { exact: false })).toBeVisible();
     await expect(page.getByText("permission denied", { exact: false }).first()).toBeVisible();
 
