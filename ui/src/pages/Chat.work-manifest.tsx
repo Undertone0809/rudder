@@ -1,4 +1,5 @@
 import { WebsiteLinkIcon } from "@/components/MarkdownBody";
+import { StatusIcon } from "@/components/StatusIcon";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { isPreviewableImage } from "@/lib/image-actions";
 import { cn } from "@/lib/utils";
@@ -20,7 +21,7 @@ import {
   Repeat2,
   X,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 export interface ChatWorkManifestProps {
   manifest: ChatWorkManifestResponse | null;
@@ -57,6 +58,17 @@ function manifestFilePath(item: ChatWorkManifestItem) {
   return metadataPath ?? item.title;
 }
 
+function manifestIssueStatus(item: ChatWorkManifestItem) {
+  const status = typeof item.metadata?.issueStatus === "string"
+    ? item.metadata.issueStatus.trim()
+    : "";
+  return status || null;
+}
+
+function issueStatusLabel(status: string) {
+  return status.replaceAll("_", " ").replace(/\b\w/gu, (character) => character.toUpperCase());
+}
+
 function ManifestItemIcon({ item }: { item: ChatWorkManifestItem }) {
   const externalUrl = websiteUrl(item);
   if (externalUrl) {
@@ -79,6 +91,21 @@ function ManifestItemIcon({ item }: { item: ChatWorkManifestItem }) {
   } as const;
 
   if (item.targetType === "issue" || item.targetType === "issue_comment") {
+    const issueStatus = manifestIssueStatus(item);
+    if (issueStatus) {
+      const statusLabel = `Issue status: ${issueStatusLabel(issueStatus)}`;
+      return (
+        <span
+          className="inline-flex size-3.5 shrink-0"
+          data-file-icon="issue"
+          data-issue-status={issueStatus}
+          aria-hidden="true"
+          title={statusLabel}
+        >
+          <StatusIcon status={issueStatus} className="size-3.5" />
+        </span>
+      );
+    }
     return <ClipboardList {...iconProps} data-file-icon="issue" />;
   }
   if (item.targetType === "automation") {
@@ -138,7 +165,12 @@ function ManifestRow({
   onOpen(): void;
   onJump(): void;
 }) {
+  const rowId = useId();
   const externalUrl = websiteUrl(item);
+  const issueStatus = item.targetType === "issue" || item.targetType === "issue_comment"
+    ? manifestIssueStatus(item)
+    : null;
+  const issueStatusDescriptionId = `${rowId}-issue-status`;
   return (
     <div className="group flex min-h-10 items-center gap-1">
       <button
@@ -146,6 +178,7 @@ function ManifestRow({
         className="flex min-w-0 flex-1 items-center gap-2 rounded-[var(--radius-sm)] px-1.5 py-1.5 text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
         onClick={onOpen}
         title={item.title}
+        aria-describedby={issueStatus ? issueStatusDescriptionId : undefined}
       >
         <span className="grid size-6 shrink-0 place-items-center rounded-[calc(var(--radius-sm)-1px)] bg-muted/65 text-muted-foreground transition-colors group-hover:bg-background/65 group-hover:text-foreground">
           <ManifestItemIcon item={item} />
@@ -157,6 +190,11 @@ function ManifestRow({
           ) : null}
         </span>
       </button>
+      {issueStatus ? (
+        <span id={issueStatusDescriptionId} className="sr-only">
+          Issue status: {issueStatusLabel(issueStatus)}
+        </span>
+      ) : null}
       {item.messageId ? (
         <button
           type="button"

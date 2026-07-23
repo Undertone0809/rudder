@@ -2689,6 +2689,9 @@ describe("Chat Side Panel link handling", () => {
         status: "done",
       },
     });
+    expect(mockState.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["chats", "org-1", "work-manifest"],
+    });
 
     const commentEditor = container.querySelector<HTMLTextAreaElement>('textarea[placeholder="Leave a comment..."]');
     expect(commentEditor).not.toBeNull();

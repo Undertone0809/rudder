@@ -374,6 +374,10 @@ test.describe("Chat proposal review block", () => {
       exact: true,
     });
     await expect(createdIssueManifestRow).toBeVisible();
+    const createdIssueStatusIcon = createdIssueManifestRow
+      .locator("[data-file-icon='issue'][data-issue-status='todo'] [data-slot='issue-status-icon']");
+    await expect(createdIssueStatusIcon).toBeVisible();
+    await expect(createdIssueStatusIcon).toHaveAttribute("data-status", "todo");
     await expect(page.locator("html")).toHaveClass(/dark/);
     await page.screenshot({
       path: testInfo.outputPath("chat-created-issue-manifest-dark.png"),

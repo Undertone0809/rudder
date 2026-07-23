@@ -14,6 +14,7 @@ import {
 import {
   chatInlineVisualMappingsFromStructuredPayload,
   extractVisibleChatWorkTargets,
+  isUuidLike,
   normalizeChatWorkExternalUrl,
   preferChatWorkManifestCategory,
   rudderInlineVisualMappingsFromStructuredPayload,
@@ -164,6 +165,7 @@ export function chatWorkManifestService(db: Db) {
           id: issues.id,
           identifier: issues.identifier,
           title: issues.title,
+          status: issues.status,
           createdByAgentId: issues.createdByAgentId,
           createdByUserId: issues.createdByUserId,
         })
@@ -209,6 +211,7 @@ export function chatWorkManifestService(db: Db) {
           metadata: {
             issueId: issue.id,
             ref: issueRef,
+            issueStatus: issue.status,
           },
         });
       }
@@ -266,6 +269,54 @@ export function chatWorkManifestService(db: Db) {
           createdByUserId: attachment.createdByUserId,
           metadata: { assetId: attachment.assetId, contentType: attachment.contentType },
         });
+      }
+    }
+
+    const referencedIssueAliases = [...new Set(
+      [...candidates.values()]
+        .filter((candidate) => candidate.targetType === "issue" || candidate.targetType === "issue_comment")
+        .map((candidate) => typeof candidate.metadata?.issueId === "string"
+          ? candidate.metadata.issueId.trim()
+          : "")
+        .filter(Boolean),
+    )];
+    const referencedIssueIds = referencedIssueAliases.filter((alias) => isUuidLike(alias));
+    const referencedIssueIdentifiers = referencedIssueAliases
+      .filter((alias) => !isUuidLike(alias))
+      .map((alias) => alias.toUpperCase());
+    const [referencedIssuesById, referencedIssuesByIdentifier] = await Promise.all([
+      referencedIssueIds.length > 0
+        ? db
+          .select({ id: issues.id, identifier: issues.identifier, status: issues.status })
+          .from(issues)
+          .where(and(
+            eq(issues.orgId, conversation.orgId),
+            inArray(issues.id, referencedIssueIds),
+          ))
+        : Promise.resolve([]),
+      referencedIssueIdentifiers.length > 0
+        ? db
+          .select({ id: issues.id, identifier: issues.identifier, status: issues.status })
+          .from(issues)
+          .where(and(
+            eq(issues.orgId, conversation.orgId),
+            inArray(issues.identifier, referencedIssueIdentifiers),
+          ))
+        : Promise.resolve([]),
+    ]);
+    const issueStatusByAlias = new Map<string, string>();
+    for (const issue of [...referencedIssuesById, ...referencedIssuesByIdentifier]) {
+      issueStatusByAlias.set(normalizeIssueAlias(issue.id), issue.status);
+      if (issue.identifier) issueStatusByAlias.set(normalizeIssueAlias(issue.identifier), issue.status);
+    }
+    for (const candidate of candidates.values()) {
+      if (candidate.targetType !== "issue" && candidate.targetType !== "issue_comment") continue;
+      const issueAlias = typeof candidate.metadata?.issueId === "string"
+        ? candidate.metadata.issueId.trim()
+        : "";
+      const issueStatus = issueStatusByAlias.get(normalizeIssueAlias(issueAlias));
+      if (issueStatus) {
+        candidate.metadata = { ...(candidate.metadata ?? {}), issueStatus };
       }
     }
 

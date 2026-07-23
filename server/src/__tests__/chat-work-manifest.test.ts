@@ -411,8 +411,56 @@ describe("chatWorkManifestService", () => {
       metadata: {
         issueId,
         ref: "PRI-42",
+        issueStatus: "todo",
       },
     });
+  });
+
+  it("hydrates current issue status for visible references without crossing organizations", async () => {
+    const first = await seedBase("IssueStatus");
+    const second = await seedBase("ForeignIssueStatus");
+    const issueId = randomUUID();
+    const foreignIssueId = randomUUID();
+    await db.insert(issues).values([
+      {
+        id: issueId,
+        orgId: first.orgId,
+        title: "Visible status issue",
+        identifier: "STATUS-1",
+        status: "in_progress",
+      },
+      {
+        id: foreignIssueId,
+        orgId: second.orgId,
+        title: "Foreign status issue",
+        identifier: "FOREIGN-STATUS-1",
+        status: "blocked",
+      },
+    ]);
+    await db.insert(chatMessages).values({
+      orgId: first.orgId,
+      conversationId: first.conversationId,
+      role: "user",
+      body: [
+        `[Visible issue](issue://${issueId}?r=STATUS-1)`,
+        "[Identifier route](/issues/status-1)",
+        `[Foreign issue](issue://${foreignIssueId}?r=FOREIGN-STATUS-1)`,
+      ].join(" "),
+    });
+
+    await svc.reconcileConversation(first.conversationId);
+    const initialManifest = await svc.getConversationManifest(first.conversationId);
+    expect(initialManifest.references).toHaveLength(3);
+    expect(initialManifest.references.slice(0, 2).map((item) => item.metadata?.issueStatus))
+      .toEqual(["in_progress", "in_progress"]);
+    expect(initialManifest.references[2]?.metadata).not.toHaveProperty("issueStatus");
+
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, issueId));
+    await svc.reconcileConversation(first.conversationId);
+    const refreshedManifest = await svc.getConversationManifest(first.conversationId);
+    expect(refreshedManifest.references.slice(0, 2).map((item) => item.metadata?.issueStatus))
+      .toEqual(["done", "done"]);
+    expect(refreshedManifest.references[2]?.metadata).not.toHaveProperty("issueStatus");
   });
 
   it("omits stale primary-issue provenance and rejects cross-organization primary issues", async () => {

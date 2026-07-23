@@ -30,6 +30,9 @@ describe("LiveUpdatesProvider issue invalidation", () => {
     expect(invalidations).toContainEqual({
       queryKey: queryKeys.issues.listUnreadTouchedByMe("organization-1"),
     });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.chats.workManifests("organization-1"),
+    });
   });
 });
 

@@ -16,9 +16,15 @@ supersedes: []
 related_code:
   - server/src/services/chat-work-manifest.ts
   - server/src/__tests__/chat-work-manifest.test.ts
+  - ui/src/lib/queryKeys.ts
+  - ui/src/context/LiveUpdatesProvider.tsx
+  - ui/src/context/LiveUpdatesProvider.test.ts
+  - ui/src/pages/Chat.side-panel.tsx
+  - ui/src/pages/Chat.attachment-preview.test.tsx
+  - ui/src/pages/Chat.work-manifest.tsx
+  - ui/src/pages/Chat.work-manifest.test.tsx
   - tests/e2e/chat-proposal-review.spec.ts
   - tests/e2e/chat-work-manifest.spec.ts
-  - ui/src/pages/Chat.work-manifest.tsx
   - ui/src/pages/Chat.tsx
   - doc/product/domains/collaboration/chat-messenger-im.md
 commit_refs:
@@ -75,10 +81,18 @@ The approved R6Z-15 scope explicitly authorizes the concrete
    `issueId` and `ref`.
 5. Let the existing reconciliation transaction update, deduplicate, or remove
    the derived row. Do not give this Reference durable Output retention.
-6. Keep `ui/src/pages/Chat.work-manifest.tsx` and the existing issue Side Panel
-   target mapping unchanged. Start the selected Chat's manifest invalidation
-   immediately in `refreshChat`, because regression testing showed that waiting
-   behind broader list refreshes delayed the new Reference.
+6. Hydrate resolvable same-organization issue and issue-comment References with
+   the issue's current status, and render the canonical issue `StatusIcon`
+   instead of a generic issue glyph. Keep unresolved and cross-organization
+   links on the generic fallback without leaking status.
+7. Keep the existing issue Side Panel target mapping unchanged. Start the
+   selected Chat's manifest invalidation immediately in `refreshChat`, because
+   regression testing showed that waiting behind broader list refreshes delayed
+   the new Reference.
+8. Invalidate the organization-scoped Work manifest query prefix after a local
+   Side Panel issue update and after issue live activity. Expose the rendered
+   status through an accessible row description while keeping the visual icon
+   decorative and the issue title as the row's accessible name.
 
 ## Regression coverage
 
@@ -93,6 +107,17 @@ Extend `server/src/__tests__/chat-work-manifest.test.ts` to prove:
 - superseded or foreign message provenance is omitted;
 - a primary issue from another organization is not projected;
 - clearing the association or deleting the issue removes the derived row.
+- current same-organization issue status is hydrated without leaking status
+  from an unresolved or cross-organization target.
+
+### Client
+
+Extend focused UI tests to prove:
+
+- issue activity and a successful Side Panel issue mutation invalidate the
+  current organization's Work manifest prefix;
+- issue rows render the canonical status glyph and expose a screen-reader
+  status description without changing the title-based row name.
 
 ### End to end
 
@@ -100,7 +125,7 @@ Extend `tests/e2e/chat-proposal-review.spec.ts` so manual approval proves:
 
 - no issue Reference is visible while the proposal is pending;
 - approval makes the issue appear without a page refresh;
-- the row contains the identifier and title;
+- the row contains the identifier, title, and canonical issue status icon;
 - clicking the row opens the correct issue in the current Chat's Side Panel
   without changing the route;
 - closing the panel restores the Work manifest.
@@ -135,16 +160,25 @@ exercise the real local workflow before handoff.
 
 - The current conversation's same-organization primary issue is projected once
   as a Reference and wins canonical deduplication over explicit issue links,
-  including case-insensitive identifier aliases.
+  including current identifiers resolved case-insensitively.
+- Same-organization issue References carry their current issue status and use
+  the canonical status glyph; unresolved and cross-organization links retain
+  the generic issue fallback.
+- Side Panel issue changes and issue live activity invalidate the current
+  organization's manifest cache, so restored rows do not retain stale status.
+  The status is also available as an accessible description.
 - Proposal provenance is retained only for a current visible source message;
   cleared, deleted, detached, and cross-organization associations reconcile
   away.
-- The approval E2E proves pre-approval absence, no-refresh appearance, correct
-  Side Panel identity, unchanged Chat URL, preserved draft, and manifest
-  restoration after close. Independent review and visual verification found no
-  remaining blocker.
+- The approval E2E proves pre-approval absence, no-refresh appearance, the
+  canonical status icon, correct Side Panel identity, unchanged Chat URL,
+  preserved draft, and manifest restoration after close. Independent review
+  and black-box verification found no remaining blocker.
 - Focused service tests, related E2E scenarios, product-logic validation,
-  changed-file import lint, typecheck, and source builds pass. Repository-wide
-  lint and Vitest retain unrelated baseline/environment failures outside the
-  files changed by this plan; Desktop packaging also depends on registry
-  downloads and was blocked by an external `ECONNRESET`.
+  changed-file import lint, typecheck, and the repository build pass.
+  Repository-wide lint and Vitest retain unrelated baseline/environment
+  failures outside the files changed by this plan.
+- Legacy relative links that use an organization prefix alias from before an
+  organization rename safely retain the generic issue icon. They still open the
+  correct issue and do not leak status; alias hydration remains a separate
+  compatibility improvement.
