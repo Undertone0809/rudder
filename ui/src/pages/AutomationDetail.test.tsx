@@ -421,6 +421,8 @@ function renderPage(props: {
   automationId?: string;
   embedded?: boolean;
   onClose?: () => void;
+  onOpenRunChat?: (conversationId: string) => void;
+  surface?: "page" | "side_panel" | "workbench";
 } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -493,6 +495,27 @@ describe("AutomationDetail", () => {
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(mockSetHeaderActions.mock.calls.some(([actions]) => actions !== null)).toBe(false);
+  });
+
+  it("uses a route-free full workbench surface without duplicate panel chrome", async () => {
+    const onClose = vi.fn();
+    const container = renderPage({
+      automationId: "auto-1",
+      onClose,
+      surface: "workbench",
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="automation-detail-shell"]')
+      ?.getAttribute("data-surface")).toBe("workbench");
+    expect(container.querySelector('[data-testid="automation-detail-panel-header"]'))
+      .toBeNull();
+    expect(container.textContent).toContain("Details");
+    expect(mockSetHeaderActions.mock.calls.some(([actions]) => actions !== null))
+      .toBe(false);
   });
 
   it("keeps run state compact and moves high-frequency fields into the configuration rail", async () => {

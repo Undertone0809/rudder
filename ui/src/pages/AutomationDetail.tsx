@@ -69,39 +69,46 @@ interface AutomationDetailProps {
   automationId?: string;
   embedded?: boolean;
   onClose?: () => void;
+  onOpenRunChat?: (conversationId: string) => void;
+  surface?: "page" | "side_panel" | "workbench";
 }
 
 function EmbeddedAutomationDetailState({
   children,
   onClose,
+  surface,
 }: {
   children: ReactNode;
   onClose?: () => void;
+  surface: "side_panel" | "workbench";
 }) {
   return (
     <div
       className="scrollbar-auto-hide h-full min-h-0 overflow-y-auto overscroll-contain"
       data-testid="automation-detail-shell"
+      data-surface={surface}
     >
-      <header
-        data-testid="automation-detail-panel-header"
-        className="sticky top-3 z-20 mx-3 mt-3 rounded-[var(--radius-md)] border border-border/70 bg-background/95 px-3 py-2 backdrop-blur sm:mx-4 sm:px-4"
-      >
-        <div className="flex min-w-0 items-center justify-between gap-3">
-          <span className="text-xs font-medium text-muted-foreground">Automation</span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground"
-            aria-label="Close automation detail"
-            title="Close automation detail"
-            onClick={onClose}
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-      </header>
+      {surface === "side_panel" ? (
+        <header
+          data-testid="automation-detail-panel-header"
+          className="sticky top-3 z-20 mx-3 mt-3 rounded-[var(--radius-md)] border border-border/70 bg-background/95 px-3 py-2 backdrop-blur sm:mx-4 sm:px-4"
+        >
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground">Automation</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground"
+              aria-label="Close automation detail"
+              title="Close automation detail"
+              onClick={onClose}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        </header>
+      ) : null}
       <div className="p-4 sm:p-5">{children}</div>
     </div>
   );
@@ -109,9 +116,13 @@ function EmbeddedAutomationDetailState({
 
 export function AutomationDetail({
   automationId: providedAutomationId,
-  embedded = false,
+  embedded: embeddedProp = false,
   onClose,
+  onOpenRunChat,
+  surface: requestedSurface,
 }: AutomationDetailProps = {}) {
+  const surface = requestedSurface ?? (embeddedProp ? "side_panel" : "page");
+  const embedded = surface !== "page";
   const { automationId: routeAutomationId } = useParams<{ automationId: string }>();
   const automationId = providedAutomationId ?? routeAutomationId;
   const { selectedOrganizationId, selectedOrganization } = useOrganization();
@@ -370,7 +381,8 @@ export function AutomationDetail({
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.activity(selectedOrganizationId!, automationId!) }),
       ]);
       if (run.linkedChatConversationId) {
-        navigate(`/messenger/chat/${run.linkedChatConversationId}`);
+        if (onOpenRunChat) onOpenRunChat(run.linkedChatConversationId);
+        else navigate(`/messenger/chat/${run.linkedChatConversationId}`);
       }
     },
     onError: (error) => {
@@ -902,7 +914,7 @@ export function AutomationDetail({
   if (isLoading) {
     if (embedded) {
       return (
-        <EmbeddedAutomationDetailState onClose={onClose}>
+        <EmbeddedAutomationDetailState onClose={onClose} surface={surface === "workbench" ? "workbench" : "side_panel"}>
           <PageSkeleton variant="issues-list" />
         </EmbeddedAutomationDetailState>
       );
@@ -914,7 +926,7 @@ export function AutomationDetail({
     const message = error instanceof Error ? error.message : "Automation not found";
     if (embedded) {
       return (
-        <EmbeddedAutomationDetailState onClose={onClose}>
+        <EmbeddedAutomationDetailState onClose={onClose} surface={surface === "workbench" ? "workbench" : "side_panel"}>
           <p className="text-sm text-destructive">{message}</p>
         </EmbeddedAutomationDetailState>
       );
@@ -963,8 +975,9 @@ export function AutomationDetail({
         embedded && "scrollbar-auto-hide h-full min-h-0 overflow-y-auto overscroll-contain",
       )}
       data-testid="automation-detail-shell"
+      data-surface={surface}
     >
-      {embedded ? (
+      {surface === "side_panel" ? (
         <header
           data-testid="automation-detail-panel-header"
           className="sticky top-3 z-20 mx-3 mt-3 rounded-[var(--radius-md)] border border-border/70 bg-card/95 px-3 py-2 backdrop-blur sm:mx-4 sm:px-4"

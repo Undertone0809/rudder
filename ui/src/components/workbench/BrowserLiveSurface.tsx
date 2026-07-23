@@ -43,6 +43,7 @@ const BROWSER_LIVE_SURFACE_ZOOM_FACTORS = [
 type BrowserWebviewElement = HTMLElement & {
   canGoBack?: () => boolean;
   canGoForward?: () => boolean;
+  getWebContentsId?: () => number;
   getURL?: () => string;
   goBack?: () => void;
   goForward?: () => void;
@@ -72,6 +73,8 @@ export type BrowserLiveSurfaceProps = {
   onOpenTarget: (target: SidePanelTarget) => void;
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
   onCloseTarget: (target: SidePanelTarget) => void;
+  onCycleTab?: (direction: -1 | 1) => void;
+  onWebContentsIdChange?: (webContentsId: number | null) => void;
   onRegisterShortcutController: (
     key: string,
     controller: ((action: BrowserShortcutAction) => void) | null,
@@ -86,6 +89,8 @@ export function BrowserLiveSurface({
   onOpenTarget,
   onReplaceTarget,
   onCloseTarget,
+  onCycleTab,
+  onWebContentsIdChange,
   onRegisterShortcutController,
 }: BrowserLiveSurfaceProps) {
   const addressInputRef = useRef<HTMLInputElement | null>(null);
@@ -96,6 +101,8 @@ export function BrowserLiveSurface({
   const targetRef = useRef(target);
   const onReplaceTargetRef = useRef(onReplaceTarget);
   const onCloseTargetRef = useRef(onCloseTarget);
+  const onCycleTabRef = useRef(onCycleTab);
+  const onWebContentsIdChangeRef = useRef(onWebContentsIdChange);
   const activeRef = useRef(active);
   const executeBrowserShortcutRef = useRef<((action: BrowserShortcutAction) => void) | null>(null);
   const [webviewNode, setWebviewNode] = useState<BrowserWebviewElement | null>(null);
@@ -120,6 +127,8 @@ export function BrowserLiveSurface({
   targetRef.current = target;
   onReplaceTargetRef.current = onReplaceTarget;
   onCloseTargetRef.current = onCloseTarget;
+  onCycleTabRef.current = onCycleTab;
+  onWebContentsIdChangeRef.current = onWebContentsIdChange;
   activeRef.current = active;
 
   const safeWebviewCall = useCallback(<T,>(
@@ -348,6 +357,10 @@ export function BrowserLiveSurface({
     };
     const handleDomReady = () => {
       webviewReadyRef.current = true;
+      const webContentsId = webview.getWebContentsId?.();
+      if (typeof webContentsId === "number" && Number.isFinite(webContentsId)) {
+        onWebContentsIdChangeRef.current?.(webContentsId);
+      }
       if (zoomFactorRef.current !== 1) {
         safeWebviewCall(
           (readyWebview) => readyWebview.setZoomFactor?.(zoomFactorRef.current),
@@ -358,6 +371,18 @@ export function BrowserLiveSurface({
     };
     const handleBeforeInput = (event: Event) => {
       const inputEvent = event as BrowserWebviewInputEvent;
+      const input = inputEvent.input;
+      const isCycleTab = input
+        && input.type !== "keyUp"
+        && (input.key === "Tab" || input.code === "Tab")
+        && Boolean(input.control)
+        && !input.meta
+        && !input.alt;
+      if (isCycleTab && activeRef.current && onCycleTabRef.current) {
+        event.preventDefault();
+        onCycleTabRef.current(input.shift ? -1 : 1);
+        return;
+      }
       if (isBrowserSidePanelCloseShortcutInput(inputEvent.input)) {
         event.preventDefault();
         onCloseTargetRef.current(targetRef.current);
@@ -414,6 +439,10 @@ export function BrowserLiveSurface({
     webviewReadyRef.current = false;
     setWebviewNode(node);
     if (!node) setNavigationState({ canGoBack: false, canGoForward: false });
+  }, []);
+
+  useEffect(() => () => {
+    onWebContentsIdChangeRef.current?.(null);
   }, []);
 
   const navigateTo = useCallback((nextValue: string) => {
