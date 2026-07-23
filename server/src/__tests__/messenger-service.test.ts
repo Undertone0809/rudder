@@ -615,6 +615,430 @@ describe("messengerService and issue follows", () => {
     });
   });
 
+  it("acknowledges a legacy stream queue item when its user message is durable, regardless of a later assistant failure", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const itemId = randomUUID();
+    const sourceMessageId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger legacy delivery acknowledgement org",
+      urlKey: deriveOrganizationUrlKey("Messenger legacy delivery acknowledgement org"),
+      issuePrefix: `D${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Legacy delivery acknowledgement chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatQueuedMessages).values({
+      id: itemId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "dequeue_claimed",
+      clientMutationId: "legacy-delivery-ack",
+      payload: { body: "Persist this follow-up exactly once" },
+    });
+    await db.insert(chatMessages).values({
+      id: sourceMessageId,
+      orgId,
+      conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Persist this follow-up exactly once",
+    });
+
+    const acknowledged = await chatSvc.markQueuedMessageRunning({
+      conversationId,
+      itemId,
+      sourceMessageId,
+    });
+    await chatSvc.markQueuedMessageDeliveryTerminal({
+      conversationId,
+      itemId,
+      status: "failed",
+    });
+
+    expect(acknowledged).toMatchObject({
+      status: "completed",
+      sourceMessageId,
+      deliveredMessageId: sourceMessageId,
+    });
+    const [stored] = await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.id, itemId));
+    expect(stored).toMatchObject({ status: "completed", sourceMessageId, deliveredMessageId: sourceMessageId });
+  });
+
+  it("acknowledges server queue delivery before an assistant terminal outcome can change it", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger server delivery acknowledgement org",
+      urlKey: deriveOrganizationUrlKey("Messenger server delivery acknowledgement org"),
+      issuePrefix: `Q${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Server delivery acknowledgement chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    const queued = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "server-delivery-ack",
+      payload: { body: "Prepare this continuation before the runtime finishes" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const claim = await chatSvc.claimNextServerQueuedMessage({ workerId: "delivery-ack-worker", leaseMs: 30_000 });
+
+    const acknowledged = await chatSvc.acknowledgeServerQueuedMessageDelivery({
+      itemId: claim!.item.id,
+      generationId: claim!.generationId,
+      leaseToken: claim!.leaseToken,
+      leaseEpoch: claim!.leaseEpoch,
+    });
+    const terminalCompletion = await chatSvc.completeServerQueuedMessageDelivery({
+      itemId: claim!.item.id,
+      generationId: claim!.generationId,
+      leaseToken: claim!.leaseToken,
+      leaseEpoch: claim!.leaseEpoch,
+      status: "failed",
+      reason: "assistant_runtime_failed_after_delivery",
+    });
+
+    expect(acknowledged).toMatchObject({
+      id: queued.id,
+      status: "completed",
+      deliveredMessageId: claim!.userMessageId,
+    });
+    expect(terminalCompletion).toBeNull();
+    const [stored] = await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.id, queued.id));
+    expect(stored).toMatchObject({ status: "completed", deliveredMessageId: claim!.userMessageId });
+  });
+
+  it("does not reconcile a live server delivery claim before its runtime control handle accepts it", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger live claim reconciliation fence org",
+      urlKey: deriveOrganizationUrlKey("Messenger live claim reconciliation fence org"),
+      issuePrefix: `F${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Live claim reconciliation fence chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "live-server-claim-before-runtime-acceptance",
+      payload: { body: "Do not acknowledge before the runtime handle exists" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const claim = await chatSvc.claimNextServerQueuedMessage({ workerId: "live-claim-worker", leaseMs: 30_000 });
+
+    expect(await chatSvc.listQueuedMessages(conversationId)).toMatchObject([
+      { id: claim!.item.id, status: "dequeue_claimed" },
+    ]);
+    expect(await chatSvc.acknowledgeServerQueuedMessageDelivery({
+      itemId: claim!.item.id,
+      generationId: claim!.generationId,
+      leaseToken: claim!.leaseToken,
+      leaseEpoch: claim!.leaseEpoch,
+    })).toMatchObject({ id: claim!.item.id, status: "completed" });
+  });
+
+  it("routes an expired server claim through claim recovery instead of durable-delivery reconciliation", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger expired claim recovery fence org",
+      urlKey: deriveOrganizationUrlKey("Messenger expired claim recovery fence org"),
+      issuePrefix: `E${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Expired claim recovery fence chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "expired-server-claim-before-runtime-acceptance",
+      payload: { body: "Recover this claim; do not infer runtime acceptance" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const claim = await chatSvc.claimNextServerQueuedMessage({ workerId: "expired-claim-worker", leaseMs: 30_000 });
+    const recoveryNow = new Date(Date.now() + 60_000);
+
+    expect(await chatSvc.recoverExpiredServerQueueClaims(recoveryNow)).toEqual({
+      inspected: 1,
+      requeued: 1,
+      ambiguous: 0,
+    });
+    const [stored] = await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.id, claim!.item.id));
+    expect(stored).toMatchObject({
+      status: "queued",
+      continuationGenerationId: null,
+      deliveryLeaseToken: null,
+      deliveredMessageId: claim!.userMessageId,
+    });
+  });
+
+  it("reconciles a historical server failure only after its linked generation is terminal", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger terminal legacy server reconciliation org",
+      urlKey: deriveOrganizationUrlKey("Messenger terminal legacy server reconciliation org"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Terminal legacy server reconciliation chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "terminal-server-failure-with-durable-user-message",
+      payload: { body: "Repair this historical server delivery failure" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const claim = await chatSvc.claimNextServerQueuedMessage({ workerId: "terminal-legacy-worker", leaseMs: 30_000 });
+    await chatSvc.markGenerationTerminal(claim!.generationId, "failed");
+    await chatSvc.completeServerQueuedMessageDelivery({
+      itemId: claim!.item.id,
+      generationId: claim!.generationId,
+      leaseToken: claim!.leaseToken,
+      leaseEpoch: claim!.leaseEpoch,
+      status: "failed",
+      reason: "legacy_terminal_failure_after_user_delivery",
+    });
+
+    expect(await chatSvc.listQueuedMessages(conversationId)).toEqual([]);
+    const [stored] = await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.id, claim!.item.id));
+    expect(stored).toMatchObject({
+      status: "completed",
+      continuationGenerationId: claim!.generationId,
+      deliveryLeaseEpoch: claim!.leaseEpoch,
+      deliveredMessageId: claim!.userMessageId,
+    });
+  });
+
+  it("does not reconcile terminal evidence while an unacknowledged server claim still holds its lease", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger terminal-before-release fence org",
+      urlKey: deriveOrganizationUrlKey("Messenger terminal-before-release fence org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Terminal-before-release fence chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "terminal-evidence-before-unacknowledged-claim-release",
+      payload: { body: "Do not repair this until its claim is released" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const claim = await chatSvc.claimNextServerQueuedMessage({ workerId: "terminal-before-release-worker", leaseMs: 30_000 });
+    await chatSvc.markGenerationTerminal(claim!.generationId, "failed");
+
+    expect(await chatSvc.listQueuedMessages(conversationId)).toMatchObject([
+      { id: claim!.item.id, status: "dequeue_claimed", deliveryLeaseToken: claim!.leaseToken },
+    ]);
+  });
+
+  it("reconciles legacy abnormal delivery rows only when their delivered user message belongs to the same organization and conversation", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const conversationId = randomUUID();
+    const otherConversationId = randomUUID();
+    const repairableItemId = randomUUID();
+    const unsafeItemId = randomUUID();
+    const deliveredMessageId = randomUUID();
+    const crossScopeMessageId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Messenger legacy reconciliation org",
+        urlKey: deriveOrganizationUrlKey("Messenger legacy reconciliation org"),
+        issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Messenger legacy reconciliation other org",
+        urlKey: deriveOrganizationUrlKey("Messenger legacy reconciliation other org"),
+        issuePrefix: `O${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(chatConversations).values([
+      { id: conversationId, orgId, title: "Reconciliation chat", issueCreationMode: "manual_approval", planMode: false },
+      { id: otherConversationId, orgId: otherOrgId, title: "Other reconciliation chat", issueCreationMode: "manual_approval", planMode: false },
+    ]);
+    await db.insert(chatMessages).values([
+      {
+        id: deliveredMessageId,
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Already delivered follow-up",
+      },
+      {
+        id: crossScopeMessageId,
+        orgId: otherOrgId,
+        conversationId: otherConversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Wrong scope evidence",
+      },
+    ]);
+    await db.insert(chatQueuedMessages).values([
+      {
+        id: repairableItemId,
+        orgId,
+        conversationId,
+        position: 1,
+        status: "failed_actionable",
+        clientMutationId: "legacy-delivered-failed-row",
+        payload: { body: "Already delivered follow-up" },
+        sourceMessageId: deliveredMessageId,
+        deliveredMessageId,
+      },
+      {
+        id: unsafeItemId,
+        orgId,
+        conversationId,
+        position: 2,
+        status: "running",
+        clientMutationId: "legacy-cross-scope-delivery-evidence",
+        payload: { body: "Wrong scope evidence" },
+        deliveredMessageId: crossScopeMessageId,
+      },
+    ]);
+
+    expect(await chatSvc.listQueuedMessages(conversationId)).toHaveLength(1);
+    const rows = await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.conversationId, conversationId));
+    expect(rows.find((row) => row.id === repairableItemId)).toMatchObject({
+      status: "completed",
+      deliveredMessageId,
+      lastDeliveryReason: null,
+    });
+    expect(rows.find((row) => row.id === unsafeItemId)).toMatchObject({ status: "running" });
+  });
+
+  it("retries a confirmed pre-delivery Steer failure without resending durable delivered evidence", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const oldActionId = randomUUID();
+    const retryActionId = randomUUID();
+    const itemId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger retryable pre-delivery failure org",
+      urlKey: deriveOrganizationUrlKey("Messenger retryable pre-delivery failure org"),
+      issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Retryable pre-delivery failure chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({ id: generationId, orgId, conversationId, status: "stopped" });
+    await db.insert(chatControlActions).values({
+      id: oldActionId,
+      orgId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+      actionKind: "steer",
+      localDisposition: "failed_actionable",
+      providerDisposition: "rejected",
+      lastError: "provider_rejected_before_delivery",
+    });
+    await db.insert(chatQueuedMessages).values({
+      id: itemId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "failed_actionable",
+      deliveryIntent: "steer",
+      deliveryDisposition: "failed_actionable",
+      controlActionId: oldActionId,
+      clientMutationId: "retry-confirmed-pre-delivery-failure",
+      payload: { body: "Retry only because it was never delivered" },
+      requestActor: boardQueueRequestActor(orgId),
+      lastDeliveryReason: "provider_rejected_before_delivery",
+    });
+
+    const retried = await chatSvc.beginSteerControlAction({
+      orgId,
+      conversationId,
+      itemId,
+      controlActionId: retryActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const idempotentRetry = await chatSvc.beginSteerControlAction({
+      orgId,
+      conversationId,
+      itemId,
+      controlActionId: retryActionId,
+      expectedGenerationId: generationId,
+      expectedAttemptEpoch: 1,
+      expectedControlVersion: 0,
+      requestActor: boardQueueRequestActor(orgId),
+    });
+
+    expect(retried).toMatchObject({
+      idempotent: false,
+      action: { id: retryActionId, providerDisposition: "not_sent" },
+      item: { status: "continuation_pending", controlActionId: retryActionId },
+    });
+    expect(idempotentRetry).toMatchObject({ idempotent: true, action: { id: retryActionId } });
+  });
+
   it("keeps cancelled Queue tombstones hidden and rejects every Steer path", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();

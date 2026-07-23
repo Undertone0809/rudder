@@ -74,6 +74,7 @@ const mockChatService = vi.hoisted(() => ({
   markGenerationControlAttemptCompleted: vi.fn(),
   claimNextServerQueuedMessage: vi.fn(),
   renewServerQueuedMessageClaim: vi.fn(),
+  acknowledgeServerQueuedMessageDelivery: vi.fn(),
   completeServerQueuedMessageDelivery: vi.fn(),
   releaseServerQueuedMessageClaim: vi.fn(),
   recoverExpiredServerQueueClaims: vi.fn(),
@@ -613,6 +614,7 @@ describe("chat routes", () => {
     mockChatService.markGenerationControlAttemptCompleted.mockResolvedValue(undefined);
     mockChatService.claimNextServerQueuedMessage.mockResolvedValue(null);
     mockChatService.renewServerQueuedMessageClaim.mockResolvedValue(true);
+    mockChatService.acknowledgeServerQueuedMessageDelivery.mockResolvedValue(null);
     mockChatService.completeServerQueuedMessageDelivery.mockResolvedValue(null);
     mockChatService.releaseServerQueuedMessageClaim.mockResolvedValue(null);
     mockChatService.recoverExpiredServerQueueClaims.mockResolvedValue({ inspected: 0, requeued: 0, ambiguous: 0 });
@@ -725,6 +727,150 @@ describe("chat routes", () => {
       totalCount: 1,
       project: { id: "project-1", totalCount: 3 },
     });
+  });
+
+  it("keeps a server-owned queued message retryable when runtime boot fails before a control handle is registered", async () => {
+    const previousWorkerFlag = process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
+    process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = "true";
+    const conversation = createConversation();
+    const queuedUserMessage = createMessage("queued-user-message", "user", "message", "Retry after runtime boot failure");
+    const claim = {
+      item: {
+        id: "queued-1",
+        conversationId: conversation.id,
+        orgId: conversation.orgId,
+        requestActor: {
+          type: "board",
+          source: "session",
+          userId: "user-1",
+          orgIds: [conversation.orgId],
+          isInstanceAdmin: false,
+        },
+      },
+      generationId: "queued-generation-1",
+      userMessageId: queuedUserMessage.id,
+      leaseToken: "queued-delivery-lease",
+      leaseEpoch: 1,
+    };
+    try {
+      mockChatService.getById.mockResolvedValue(conversation);
+      mockChatService.getMessage.mockResolvedValue(queuedUserMessage);
+      mockChatService.listMessages.mockResolvedValue([queuedUserMessage]);
+      mockChatService.claimNextServerQueuedMessage
+        .mockResolvedValueOnce(claim)
+        .mockResolvedValue(null);
+      mockChatService.releaseServerQueuedMessageClaim.mockResolvedValue({
+        id: claim.item.id,
+        status: "failed_actionable",
+      });
+      mockChatService.getLatestGeneration.mockResolvedValue({
+        id: claim.generationId,
+        attemptEpoch: 1,
+        controlOwnerToken: claim.leaseToken,
+      });
+      mockChatAssistantService.streamChatAssistantReply.mockRejectedValue(new Error("runtime boot rejected"));
+
+      const res = await request(createApp())
+        .post(`/api/chats/${conversation.id}/queue`)
+        .send({
+          clientMutationId: "queue-runtime-boot-failure",
+          payload: { body: queuedUserMessage.body },
+        });
+
+      expect(res.status).toBe(201);
+      await waitUntil(() => {
+        expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledOnce();
+        expect(mockChatService.releaseServerQueuedMessageClaim).toHaveBeenCalledWith(expect.objectContaining({
+          itemId: claim.item.id,
+          generationId: claim.generationId,
+        }));
+      });
+      expect(mockChatService.acknowledgeServerQueuedMessageDelivery).not.toHaveBeenCalled();
+    } finally {
+      if (previousWorkerFlag === undefined) delete process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
+      else process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = previousWorkerFlag;
+    }
+  });
+
+  it("acknowledges a server-owned queued message at control-handle registration before a later runtime failure", async () => {
+    const previousWorkerFlag = process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
+    process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = "true";
+    const conversation = createConversation();
+    const queuedUserMessage = createMessage("queued-user-message", "user", "message", "Persist this before the runtime fails");
+    const claim = {
+      item: {
+        id: "queued-1",
+        conversationId: conversation.id,
+        orgId: conversation.orgId,
+        requestActor: {
+          type: "board",
+          source: "session",
+          userId: "user-1",
+          orgIds: [conversation.orgId],
+          isInstanceAdmin: false,
+        },
+      },
+      generationId: "queued-generation-1",
+      userMessageId: queuedUserMessage.id,
+      leaseToken: "queued-delivery-lease",
+      leaseEpoch: 1,
+    };
+    try {
+      mockChatService.getById.mockResolvedValue(conversation);
+      mockChatService.getMessage.mockResolvedValue(queuedUserMessage);
+      mockChatService.listMessages.mockResolvedValue([queuedUserMessage]);
+      mockChatService.claimNextServerQueuedMessage
+        .mockResolvedValueOnce(claim)
+        .mockResolvedValue(null);
+      mockChatService.acknowledgeServerQueuedMessageDelivery.mockResolvedValue({
+        id: claim.item.id,
+        status: "completed",
+      });
+      mockChatService.getLatestGeneration.mockResolvedValue({
+        id: claim.generationId,
+        attemptEpoch: 1,
+        controlOwnerToken: claim.leaseToken,
+      });
+      mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+        const attempt = await input.controlCoordinator.beginAttempt({
+          attemptIndex: 0,
+          runtimeType: "codex_local",
+          model: null,
+          isFallback: false,
+        });
+        await attempt.register({
+          runtimeType: "codex_local",
+          capabilities: { steer: "native", interrupt: "process" },
+          steer: async () => ({ disposition: "closing" }),
+          interrupt: async () => ({ disposition: "interrupted" }),
+          dispose: async () => undefined,
+        });
+        await attempt.complete();
+        throw new Error("runtime failed after accepting the queued user message");
+      });
+
+      const res = await request(createApp())
+        .post(`/api/chats/${conversation.id}/queue`)
+        .send({
+          clientMutationId: "queue-runtime-accepted-then-failed",
+          payload: { body: queuedUserMessage.body },
+        });
+
+      expect(res.status).toBe(201);
+      await waitUntil(() => {
+        expect(mockChatService.acknowledgeServerQueuedMessageDelivery).toHaveBeenCalledWith({
+          itemId: claim.item.id,
+          generationId: claim.generationId,
+          leaseToken: claim.leaseToken,
+          leaseEpoch: claim.leaseEpoch,
+        });
+      });
+      expect(mockChatService.releaseServerQueuedMessageClaim).not.toHaveBeenCalled();
+      expect(mockChatService.completeServerQueuedMessageDelivery).not.toHaveBeenCalled();
+    } finally {
+      if (previousWorkerFlag === undefined) delete process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
+      else process.env.RUDDER_CHAT_QUEUE_WORKER_TEST = previousWorkerFlag;
+    }
   });
 
   it("returns 404 for a missing chat work manifest", async () => {
