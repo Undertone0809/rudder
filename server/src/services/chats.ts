@@ -78,6 +78,8 @@ type ApprovalRow = typeof approvals.$inferSelect;
 
 const CHAT_TITLE_MAX_LENGTH = 200;
 
+class InvalidQueueDeliveryReconciliationActionLinkError extends Error {}
+
 export type { ChatServerQueueClaim } from "./chats.types.js";
 
 export function chatService(db: Db) {
@@ -2903,50 +2905,56 @@ export function chatService(db: Db) {
       const isSteer = item.deliveryIntent === "steer" || item.status === "running_next";
       const nextStatus = isSteer ? "delivered" : "completed";
       const nextDisposition = isSteer ? "delivered" : null;
-      const reconciledItem = await db.transaction(async (tx) => {
-        const [updated] = await tx
-          .update(chatQueuedMessages)
-          .set({
-            status: nextStatus,
-            deliveryDisposition: nextDisposition,
-            sourceMessageId: evidence.id,
-            deliveredMessageId: evidence.id,
-            continuationMessageId: evidence.id,
-            deliveryLeaseToken: null,
-            deliveryLeaseOwner: null,
-            deliveryLeaseExpiresAt: null,
-            lastDeliveryReason: null,
-            reconciliationReason: "durable_delivery_evidence",
-            version: sql`${chatQueuedMessages.version} + 1`,
-            updatedAt: now,
-          })
-          .where(and(
-            eq(chatQueuedMessages.id, item.id),
-            eq(chatQueuedMessages.version, item.version),
-            isNull(chatQueuedMessages.cancelledAt),
-          ))
-          .returning({ id: chatQueuedMessages.id });
-        if (!updated) return false;
-        if (item.controlActionId) {
-          const [updatedAction] = await tx
-            .update(chatControlActions)
+      let reconciledItem: boolean;
+      try {
+        reconciledItem = await db.transaction(async (tx) => {
+          const [updated] = await tx
+            .update(chatQueuedMessages)
             .set({
-              localDisposition: "delivered",
-              lastError: null,
-              resolvedAt: now,
+              status: nextStatus,
+              deliveryDisposition: nextDisposition,
+              sourceMessageId: evidence.id,
+              deliveredMessageId: evidence.id,
+              continuationMessageId: evidence.id,
+              deliveryLeaseToken: null,
+              deliveryLeaseOwner: null,
+              deliveryLeaseExpiresAt: null,
+              lastDeliveryReason: null,
+              reconciliationReason: "durable_delivery_evidence",
+              version: sql`${chatQueuedMessages.version} + 1`,
               updatedAt: now,
             })
             .where(and(
-              eq(chatControlActions.id, item.controlActionId),
-              eq(chatControlActions.orgId, item.orgId),
+              eq(chatQueuedMessages.id, item.id),
+              eq(chatQueuedMessages.version, item.version),
+              isNull(chatQueuedMessages.cancelledAt),
             ))
-            .returning({ id: chatControlActions.id });
-          if (!updatedAction) {
-            throw new Error("Linked chat control action was not updated during delivery reconciliation");
+            .returning({ id: chatQueuedMessages.id });
+          if (!updated) return false;
+          if (item.controlActionId) {
+            const [updatedAction] = await tx
+              .update(chatControlActions)
+              .set({
+                localDisposition: "delivered",
+                lastError: null,
+                resolvedAt: now,
+                updatedAt: now,
+              })
+              .where(and(
+                eq(chatControlActions.id, item.controlActionId),
+                eq(chatControlActions.orgId, item.orgId),
+              ))
+              .returning({ id: chatControlActions.id });
+            if (!updatedAction) {
+              throw new InvalidQueueDeliveryReconciliationActionLinkError();
+            }
           }
-        }
-        return true;
-      });
+          return true;
+        });
+      } catch (error) {
+        if (error instanceof InvalidQueueDeliveryReconciliationActionLinkError) continue;
+        throw error;
+      }
       if (reconciledItem) reconciled += 1;
     }
     return reconciled;

@@ -1172,14 +1172,90 @@ describe("messengerService and issue follows", () => {
       sourceMessageId: evidenceId,
     });
 
-    await expect(chatSvc.listQueuedMessages(conversationId)).rejects.toThrow(
-      "Linked chat control action was not updated during delivery reconciliation",
-    );
+    expect(await chatSvc.listQueuedMessages(conversationId)).toMatchObject([
+      { id: itemId, status: "failed_actionable", deliveryDisposition: "failed_actionable" },
+    ]);
 
     const [storedItem] = await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.id, itemId));
     const [storedAction] = await db.select().from(chatControlActions).where(eq(chatControlActions.id, actionId));
     expect(storedItem).toMatchObject({ status: "failed_actionable", deliveryDisposition: "failed_actionable" });
     expect(storedAction).toMatchObject({ localDisposition: "failed_actionable", providerDisposition: "rejected" });
+  });
+
+  it("skips a poisoned legacy control-action link while global claim and recovery process valid work", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const conversationId = randomUUID();
+    const actionId = randomUUID();
+    const poisonItemId = randomUUID();
+    const evidenceId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Messenger poisoned reconciliation claim org",
+        urlKey: deriveOrganizationUrlKey("Messenger poisoned reconciliation claim org"),
+        issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Messenger poisoned reconciliation claim other org",
+        urlKey: deriveOrganizationUrlKey("Messenger poisoned reconciliation claim other org"),
+        issuePrefix: `Z${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Poisoned reconciliation claim chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatControlActions).values({
+      id: actionId,
+      orgId: otherOrgId,
+      actionKind: "steer",
+      localDisposition: "failed_actionable",
+      providerDisposition: "rejected",
+    });
+    await db.insert(chatMessages).values({
+      id: evidenceId,
+      orgId,
+      conversationId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Poisoned legacy evidence must not halt queue delivery",
+    });
+    await db.insert(chatQueuedMessages).values({
+      id: poisonItemId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "failed_actionable",
+      deliveryIntent: "steer",
+      deliveryDisposition: "failed_actionable",
+      controlActionId: actionId,
+      clientMutationId: "poisoned-legacy-control-action-link",
+      payload: { body: "Poisoned legacy evidence must not halt queue delivery" },
+      sourceMessageId: evidenceId,
+    });
+    const valid = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "valid-work-after-poisoned-legacy-row",
+      payload: { body: "Claim and recover this valid queue item" },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+
+    const claim = await chatSvc.claimNextServerQueuedMessage({ workerId: "poisoned-row-worker", leaseMs: 30_000 });
+    const recovery = await chatSvc.recoverExpiredServerQueueClaims(new Date(Date.now() + 60_000));
+
+    expect(claim).toMatchObject({ item: { id: valid.id } });
+    expect(recovery).toEqual({ inspected: 1, requeued: 1, ambiguous: 0 });
+    const [poisoned] = await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.id, poisonItemId));
+    expect(poisoned).toMatchObject({ status: "failed_actionable", deliveryDisposition: "failed_actionable" });
   });
 
   it("retries a confirmed pre-delivery Steer failure without resending durable delivered evidence", async () => {
