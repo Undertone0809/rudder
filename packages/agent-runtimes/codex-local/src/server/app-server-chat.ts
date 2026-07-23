@@ -36,6 +36,7 @@ export interface CodexAppServerChatOptions {
   modelReasoningEffort: string;
   search: boolean;
   bypassApprovalsAndSandbox: boolean;
+  sandboxMode?: "read-only" | null;
   imagePaths: string[];
   sessionId: string | null;
   timeoutSec: number;
@@ -518,7 +519,9 @@ export async function executeCodexAppServerChat(
       model: options.model || null,
       cwd: options.cwd,
       approvalPolicy: options.bypassApprovalsAndSandbox ? "never" : null,
-      sandbox: options.bypassApprovalsAndSandbox ? "danger-full-access" : null,
+      sandbox: options.bypassApprovalsAndSandbox
+        ? "danger-full-access"
+        : options.sandboxMode ?? null,
       config: {
         web_search: options.search ? "live" : "disabled",
         skills: { bundled: { enabled: false } },
@@ -559,7 +562,11 @@ export async function executeCodexAppServerChat(
       input,
       cwd: options.cwd,
       approvalPolicy: options.bypassApprovalsAndSandbox ? "never" : null,
-      sandboxPolicy: options.bypassApprovalsAndSandbox ? { type: "dangerFullAccess" } : null,
+      sandboxPolicy: options.bypassApprovalsAndSandbox
+        ? { type: "dangerFullAccess" }
+        : options.sandboxMode === "read-only"
+          ? { type: "readOnly" }
+          : null,
       model: options.model || null,
       effort: options.modelReasoningEffort || null,
     })) ?? {};
