@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { resolveMessengerRoute } from "./useMessenger";
 
 describe("resolveMessengerRoute Saved Views", () => {
+  it("parses the Main Workbench route before falling back to the Messenger root", () => {
+    expect(resolveMessengerRoute("/messenger/workbench")).toEqual({
+      kind: "workbench",
+    });
+  });
+
   it("parses the stable Saved View workspace route", () => {
     expect(resolveMessengerRoute("/messenger/saved/30000000-0000-4000-8000-000000000001")).toEqual({
       kind: "saved_view",

@@ -1,8 +1,10 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveSharedRudderHomeDir } from "./runtime-cache.js";
 
 export const DESKTOP_POSTGRES_RUNTIME_DIR = "postgres-18.4";
+export const RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV = "RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR";
 export const RUDDER_POSTGRES_BIN_DIR_ENV = "RUDDER_POSTGRES_BIN_DIR";
 
 export function desktopPostgresPlatformSegment(
@@ -59,7 +61,7 @@ export function resolveDesktopPostgresBinDir(rootDir: string, options: {
   return isCompletePostgresBinDir(binDir, options) ? binDir : null;
 }
 
-export function resolvePreferredDesktopPostgresBinDir(options: {
+type DesktopPostgresResolutionOptions = {
   isPackaged: boolean;
   resourcesPath: string;
   externalRuntimeCacheDir?: string | null;
@@ -67,9 +69,77 @@ export function resolvePreferredDesktopPostgresBinDir(options: {
   platform?: NodeJS.Platform;
   arch?: NodeJS.Architecture;
   validateVersion?: boolean;
-}): string | null {
+};
+
+function pathsMatch(left: string, right: string): boolean {
+  return path.resolve(left) === path.resolve(right);
+}
+
+function pathIsInside(candidatePath: string, rootPath: string): boolean {
+  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  return relative === "" || (
+    relative !== ".."
+    && !relative.startsWith(`..${path.sep}`)
+    && !path.isAbsolute(relative)
+  );
+}
+
+function isVersionedRudderRuntimePostgresBinDir(
+  binDir: string,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  const runtimesRoot = path.join(resolveSharedRudderHomeDir(env), "runtimes");
+  const relative = path.relative(runtimesRoot, path.resolve(binDir));
+  if (
+    relative === ""
+    || relative === ".."
+    || relative.startsWith(`..${path.sep}`)
+    || path.isAbsolute(relative)
+  ) {
+    return false;
+  }
+  const segments = relative.split(path.sep);
+  return (
+    segments.length === 4
+    && segments[0]?.length > 0
+    && segments[1] === DESKTOP_POSTGRES_RUNTIME_DIR
+    && segments[2]?.length > 0
+    && segments[3] === "bin"
+  );
+}
+
+export function isDesktopManagedPostgresBinDir(options: {
+  binDir: string;
+  resourcesPath: string;
+  env?: NodeJS.ProcessEnv;
+}): boolean {
   const env = options.env ?? process.env;
-  if (env[RUDDER_POSTGRES_BIN_DIR_ENV]?.trim()) return null;
+  const managedBinDir = env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV]?.trim();
+  if (managedBinDir && pathsMatch(options.binDir, managedBinDir)) return true;
+  return (
+    pathIsInside(
+      options.binDir,
+      path.join(options.resourcesPath, DESKTOP_POSTGRES_RUNTIME_DIR),
+    )
+    || isVersionedRudderRuntimePostgresBinDir(options.binDir, env)
+  );
+}
+
+export function resolvePreferredDesktopPostgresBinDir(
+  options: DesktopPostgresResolutionOptions,
+): string | null {
+  const env = options.env ?? process.env;
+  const currentBinDir = env[RUDDER_POSTGRES_BIN_DIR_ENV]?.trim();
+  if (
+    currentBinDir
+    && !isDesktopManagedPostgresBinDir({
+      binDir: currentBinDir,
+      resourcesPath: options.resourcesPath,
+      env,
+    })
+  ) {
+    return null;
+  }
   if (!options.isPackaged) return null;
 
   if (options.externalRuntimeCacheDir) {
@@ -78,4 +148,98 @@ export function resolvePreferredDesktopPostgresBinDir(options: {
   }
 
   return resolveDesktopPostgresBinDir(options.resourcesPath, options);
+}
+
+export function reconcileDesktopPostgresBinDir(
+  options: DesktopPostgresResolutionOptions,
+): string | null {
+  const env = options.env ?? process.env;
+  const currentBinDir = env[RUDDER_POSTGRES_BIN_DIR_ENV]?.trim();
+  const currentIsManaged = Boolean(
+    currentBinDir
+    && isDesktopManagedPostgresBinDir({
+      binDir: currentBinDir,
+      resourcesPath: options.resourcesPath,
+      env,
+    }),
+  );
+  const preferredBinDir = resolvePreferredDesktopPostgresBinDir(options);
+
+  if (preferredBinDir) {
+    env[RUDDER_POSTGRES_BIN_DIR_ENV] = preferredBinDir;
+    env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV] = preferredBinDir;
+    return preferredBinDir;
+  }
+  if (currentIsManaged) {
+    delete env[RUDDER_POSTGRES_BIN_DIR_ENV];
+    delete env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV];
+    return null;
+  }
+  return currentBinDir || null;
+}
+
+export function reconcilePackagedDesktopPostgresBinDir(
+  resourcesPath: string,
+  externalRuntimeCacheDir?: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  return reconcileDesktopPostgresBinDir({
+    isPackaged: true,
+    resourcesPath,
+    externalRuntimeCacheDir,
+    env,
+  });
+}
+
+export function captureDesktopPostgresEnvironment(env: NodeJS.ProcessEnv = process.env): {
+  binDir?: string;
+  managedBinDir?: string;
+} {
+  return {
+    ...(env[RUDDER_POSTGRES_BIN_DIR_ENV] === undefined
+      ? {}
+      : { binDir: env[RUDDER_POSTGRES_BIN_DIR_ENV] }),
+    ...(env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV] === undefined
+      ? {}
+      : { managedBinDir: env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV] }),
+  };
+}
+
+export function restoreDesktopPostgresEnvironment(
+  snapshot: ReturnType<typeof captureDesktopPostgresEnvironment>,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (snapshot.binDir === undefined) delete env[RUDDER_POSTGRES_BIN_DIR_ENV];
+  else env[RUDDER_POSTGRES_BIN_DIR_ENV] = snapshot.binDir;
+  if (snapshot.managedBinDir === undefined) delete env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV];
+  else env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV] = snapshot.managedBinDir;
+}
+
+export function createDesktopUpdateChildEnvironment(options: {
+  resourcesPath: string;
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  validateVersion?: boolean;
+}): NodeJS.ProcessEnv {
+  const env = { ...(options.env ?? process.env) };
+  const currentBinDir = env[RUDDER_POSTGRES_BIN_DIR_ENV]?.trim();
+  if (
+    currentBinDir
+    && isDesktopManagedPostgresBinDir({
+      binDir: currentBinDir,
+      resourcesPath: options.resourcesPath,
+      env,
+    })
+  ) {
+    if (isCompletePostgresBinDir(currentBinDir, {
+      platform: options.platform,
+      validateVersion: options.validateVersion,
+    })) {
+      env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV] = currentBinDir;
+    } else {
+      delete env[RUDDER_POSTGRES_BIN_DIR_ENV];
+      delete env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV];
+    }
+  }
+  return env;
 }

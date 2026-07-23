@@ -101,6 +101,8 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
         dedupeKey: "https://example.com/reused-link",
       })}>Open routed link</button>
       <button type="button" onClick={() => sidePanel.openTargetForContext("chat:a", issueTarget)}>Open issue for A</button>
+      <button type="button" onClick={() => sidePanel.holdDisplayedContext("org-a", "chat:a")}>Hold chat A</button>
+      <button type="button" onClick={sidePanel.clearDisplayedContextHold}>Clear hold</button>
       <button type="button" onClick={sidePanel.openEmpty}>Open empty</button>
       <button type="button" onClick={sidePanel.hidePanel}>Hide</button>
       <button type="button" onClick={() => sidePanel.activeKey && sidePanel.closeTarget(sidePanel.activeKey)}>Close active</button>
@@ -111,6 +113,7 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
       <span data-testid="tab-keys">{sidePanel.tabs.map(sidePanelTargetKey).join(",")}</span>
       <span data-testid="tab-urls">{sidePanel.tabs.map((target) => target.kind === "browser" ? target.url : "").join(",")}</span>
       <span data-testid="view-instance-ids">{sidePanel.tabs.map((target) => "viewInstanceId" in target ? target.viewInstanceId ?? "" : "").join(",")}</span>
+      <span data-testid="held-context">{sidePanel.displayedContextHold ? `${sidePanel.displayedContextHold.organizationId}:${sidePanel.displayedContextHold.contextKey}` : ""}</span>
     </div>
   );
 }
@@ -233,6 +236,179 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "open")).toBe("false");
     expect(text(container, "active-key")).toBe("");
     expect(text(container, "tab-count")).toBe("0");
+  });
+
+  it("detaches the exact active middle tab and selects its right neighbor without requesting close", () => {
+    const closeRequest = vi.fn();
+    ({ container, root } = renderSidePanelProvider(closeRequest));
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    for (const tabId of ["a", "b", "c"]) {
+      act(() => sidePanelControls!.openTarget({
+        kind: "browser",
+        url: `https://example.com/${tabId}`,
+        label: tabId.toUpperCase(),
+        tabId,
+      }));
+    }
+    act(() => sidePanelControls!.setActiveKey("browser-tab:b"));
+    const revision = sidePanelControls!.getTargetRevisionForContext("chat:a", "browser-tab:b");
+    expect(revision).not.toBeNull();
+
+    let result: unknown;
+    act(() => {
+      result = sidePanelControls!.detachTargetForContext("chat:a", "browser-tab:b", revision!);
+    });
+
+    expect(result).toMatchObject({
+      detached: true,
+      target: { kind: "browser", tabId: "b" },
+    });
+    expect(sidePanelControls!.tabs.map(sidePanelTargetKey)).toEqual([
+      "browser-tab:a",
+      "browser-tab:c",
+    ]);
+    expect(sidePanelControls!.activeKey).toBe("browser-tab:c");
+    expect(sidePanelControls!.open).toBe(true);
+    expect(closeRequest).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale exact detach after that target was replaced", () => {
+    ({ container, root } = renderSidePanelProvider());
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    act(() => sidePanelControls!.openTarget({
+      kind: "browser",
+      url: "https://example.com/original",
+      label: "Original",
+      tabId: "browser-a",
+    }));
+    const key = "browser-tab:browser-a";
+    const revision = sidePanelControls!.getTargetRevisionForContext("chat:a", key);
+    expect(revision).not.toBeNull();
+    act(() => sidePanelControls!.replaceTargetForContext("chat:a", key, {
+      kind: "browser",
+      url: "https://example.com/changed",
+      label: "Changed",
+      tabId: "browser-a",
+    }));
+
+    let result: unknown;
+    act(() => {
+      result = sidePanelControls!.detachTargetForContext("chat:a", key, revision!);
+    });
+
+    expect(result).toEqual({
+      detached: false,
+      reason: "revision_mismatch",
+      revision: (revision ?? 0) + 1,
+    });
+    expect(sidePanelControls!.tabs).toHaveLength(1);
+    expect(sidePanelControls!.tabs[0]).toMatchObject({
+      kind: "browser",
+      url: "https://example.com/changed",
+    });
+  });
+
+  it("rejects an exact detach when the caller did not capture a revision", () => {
+    ({ container, root } = renderSidePanelProvider());
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    act(() => sidePanelControls!.openTarget({
+      kind: "browser",
+      url: "https://example.com/revision-required",
+      label: "Revision required",
+      tabId: "browser-revision-required",
+    }));
+    const key = "browser-tab:browser-revision-required";
+    const detachWithoutRevision = sidePanelControls!.detachTargetForContext as (
+      contextKey: string,
+      exactKey: string,
+    ) => unknown;
+
+    let result: unknown;
+    act(() => {
+      result = detachWithoutRevision("chat:a", key);
+    });
+
+    expect(result).toEqual({
+      detached: false,
+      reason: "revision_mismatch",
+      revision: 0,
+    });
+    expect(sidePanelControls!.tabs).toHaveLength(1);
+  });
+
+  it("does not let an old revision detach a later tab that reused the same exact key", () => {
+    ({ container, root } = renderSidePanelProvider());
+    const target: SidePanelTarget = {
+      kind: "browser",
+      url: "https://example.com/reused",
+      label: "Reused",
+      tabId: "browser-reused",
+    };
+    const key = "browser-tab:browser-reused";
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    act(() => sidePanelControls!.openTarget(target));
+    const firstRevision = sidePanelControls!.getTargetRevisionForContext("chat:a", key);
+    expect(firstRevision).not.toBeNull();
+    act(() => {
+      sidePanelControls!.detachTargetForContext("chat:a", key, firstRevision!);
+      sidePanelControls!.openTargetForContext("chat:a", target);
+    });
+
+    let staleResult: unknown;
+    act(() => {
+      staleResult = sidePanelControls!.detachTargetForContext("chat:a", key, firstRevision!);
+    });
+
+    expect(staleResult).toEqual({
+      detached: false,
+      reason: "revision_mismatch",
+      revision: (firstRevision ?? 0) + 1,
+    });
+    expect(sidePanelControls!.tabs).toHaveLength(1);
+  });
+
+  it("detaches a non-current context without changing the displayed context", () => {
+    ({ container, root } = renderSidePanelProvider());
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    act(() => sidePanelControls!.openTarget({
+      kind: "browser",
+      url: "https://example.com/a",
+      label: "A",
+      tabId: "a",
+    }));
+    const revision = sidePanelControls!.getTargetRevisionForContext("chat:a", "browser-tab:a");
+    expect(revision).not.toBeNull();
+    act(() => sidePanelControls!.setContextKey("chat:b"));
+    act(() => sidePanelControls!.openTarget(issueTarget));
+
+    act(() => {
+      sidePanelControls!.detachTargetForContext("chat:a", "browser-tab:a", revision!);
+    });
+
+    expect(sidePanelControls!.contextKey).toBe("chat:b");
+    expect(sidePanelControls!.open).toBe(true);
+    expect(sidePanelControls!.activeKey).toBe("issue:issue-1:");
+    expect(sidePanelControls!.tabs.map(sidePanelTargetKey)).toEqual(["issue:issue-1:"]);
+
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    expect(sidePanelControls!.open).toBe(false);
+    expect(sidePanelControls!.tabs).toHaveLength(0);
+  });
+
+  it("holds a displayed source context until explicit hide or clear", () => {
+    ({ container, root } = renderSidePanelProvider());
+
+    click(container, "Chat A");
+    click(container, "Open issue");
+    click(container, "Hold chat A");
+    expect(text(container, "held-context")).toBe("org-a:chat:a");
+
+    click(container, "Hide");
+    expect(text(container, "held-context")).toBe("");
+
+    click(container, "Hold chat A");
+    click(container, "Clear hold");
+    expect(text(container, "held-context")).toBe("");
   });
 
   it("focuses a canonical file normally but creates a distinct explicit instance", () => {

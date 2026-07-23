@@ -2,8 +2,8 @@
   "version": 1,
   "classifications": [
     {"reminder":"home: reviewer should compare English and Chinese counterparts","fingerprint":"338c5480d45a1eb553c92ace575d9a614517b118a310a70b0321f21c915ab0fa","classification":"false-positive","reviewed_revision":"c5236c074-working-tree-review-2026-07-21"},
-    {"reminder":"installation: reviewer should compare English and Chinese counterparts","fingerprint":"d3000a2d5a5031637f870d47fa677d45842cad48e41cf67e44510a86efcd1cbf","classification":"false-positive","reviewed_revision":"c5236c074-working-tree-review-2026-07-21"},
-    {"reminder":"installation: reviewer should compare public facts with DESKTOP.STARTUP.RECOVERY.001","fingerprint":"d3000a2d5a5031637f870d47fa677d45842cad48e41cf67e44510a86efcd1cbf","classification":"false-positive","reviewed_revision":"c5236c074-working-tree-review-2026-07-21"},
+    {"reminder":"installation: reviewer should compare English and Chinese counterparts","fingerprint":"c25eb371534b698ded65bb0446bde600d42fe628b1c85f25a5203c1e4dfca4bc","classification":"false-positive","reviewed_revision":"f219590fe-canary-postgres-update-review-2026-07-23"},
+    {"reminder":"installation: reviewer should compare public facts with DESKTOP.STARTUP.RECOVERY.001","fingerprint":"c25eb371534b698ded65bb0446bde600d42fe628b1c85f25a5203c1e4dfca4bc","classification":"false-positive","reviewed_revision":"f219590fe-canary-postgres-update-review-2026-07-23"},
     {"reminder":"first-organization: reviewer should compare English and Chinese counterparts","fingerprint":"6c18d31e7d96c2eb711ddf69c7f8b4895adc008915982523f02e5e358169839c","classification":"false-positive","reviewed_revision":"a394e2162-ci-recovery-review-2026-07-23"},
     {"reminder":"first-organization: reviewer should compare public facts with ORG.ONBOARDING.001, ORG.IDENTITY.001, ISSUE.STATE.001, ROUTING.ASSIGNMENT.001, REVIEW.DECISION.001, REVIEW.CLOSEOUT.001","fingerprint":"6c18d31e7d96c2eb711ddf69c7f8b4895adc008915982523f02e5e358169839c","classification":"false-positive","reviewed_revision":"a394e2162-ci-recovery-review-2026-07-23"},
     {"reminder":"overview: reviewer should compare English and Chinese counterparts","fingerprint":"fd87ed708c3373236794de464aeb98fe2d9360bf87791bf507ccfa4fbcd1a3bf","classification":"false-positive","reviewed_revision":"c5236c074-working-tree-review-2026-07-21"},
@@ -63,7 +63,7 @@
     {"reminder":"gdpval-harness: reviewer should compare English and Chinese counterparts","fingerprint":"776fc041708cf5a61dcde022c6511ab7a8a23146f5b601fef1e9f767c92fd312","classification":"fixed","reviewed_revision":"93df830ef-working-tree-review-2026-07-21"},
     {"reminder":"about: reviewer should compare English and Chinese counterparts","fingerprint":"f9e86f129053ae312a0cd33658537b048bd5863349983b317b6905cea12e131c","classification":"false-positive","reviewed_revision":"c5236c074-working-tree-review-2026-07-21"},
     {"reminder":"contact: reviewer should compare English and Chinese counterparts","fingerprint":"68ea9f0d1530b21e9b29492f43f4452022443cc389552454f5c52d895b0d733c","classification":"false-positive","reviewed_revision":"ae3284612-discord-icon-review-2026-07-22"},
-    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"6bc7c9c5dab8a4d7212fe60c11567debadffa6a285aeddefa802c4f38665499c","classification":"false-positive","reviewed_revision":"release-pipeline-review-2026-07-22"}
+    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"2081507d7dcc7c813c18dfb22cd55bff3b5f1afc7e00c166f186a55467b66f94","classification":"false-positive","reviewed_revision":"release-handoff-ci-review-2026-07-23"}
   ],
   "allowed_classifications": ["fixed", "intentional", "false-positive"]
 }

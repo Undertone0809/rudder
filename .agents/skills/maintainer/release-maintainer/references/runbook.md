@@ -42,6 +42,11 @@ cannot be safely inferred.
   explicitly dispatch `desktop-release.yml`, or the maintainer must do it.
 - Stables are manually promoted from an explicitly chosen source ref and use
   npm dist-tag `latest`.
+- Stable preflight must fail closed unless `npm-stable` has required reviewers,
+  `main` is protected for normal changes, and the release workflow has the
+  narrow direct-push and workflow-dispatch permissions needed for its generated
+  post-stable version commit. Do not bypass these checks or treat the
+  confirmation string as a substitute for the repository safeguards.
 - Stable tags point at the original source commit, not at a generated release
   commit.
 - After a stable `vX.Y.Z` is published and verified, older canary GitHub
@@ -84,6 +89,10 @@ cannot be safely inferred.
   local shell can publish or repair npm state.
 - Release-maintenance commits that should not publish another canary must
   include `[skip release]`, then be verified as skipped in `release.yml`.
+- After a stable publish, the workflow should commit the next-patch base
+  directly to `main` with `[skip release]`. Verify that commit exists (or that
+  `main` was already advanced) and that its explicitly dispatched CI succeeds
+  before calling the version handoff complete.
 - If a normal `main` push is already running while you make release-maintenance
   changes, watch it to completion. It may publish the next canary, and that
   canary still needs npm, tag, Desktop, and Release-title verification. After
@@ -419,6 +428,10 @@ rudder start --no-open
 
 The second command is only expected to work after the persistent CLI exists.
 
+13. Confirm the workflow committed `X.Y.(Z+1)` directly to `main` with
+    `[skip release]` and dispatched the trusted CI workflow with its immutable
+    head SHA, or reported that `main` already has a newer base.
+
 If the workflow fails after npm publish, do not rerun the whole stable workflow
 without first classifying the partial state. Stable npm versions are immutable;
 repair the missing downstream surfaces for the same version and tag.
@@ -516,7 +529,13 @@ known risk is the in-app update path itself.
 
 ### Version Bump
 
-Use this before the next stable line.
+After stable, the workflow runs the equivalent of:
+
+```bash
+node scripts/prepare-next-release.mjs --stable-version X.Y.Z
+```
+
+If automation could not push the handoff commit, recover manually:
 
 ```bash
 node scripts/release-package-map.mjs set-version X.Y.Z
@@ -525,7 +544,8 @@ pnpm test:run
 pnpm build
 ```
 
-Then commit only the intended version and release-note changes.
+Then commit only the intended version changes with `[skip release]`, push them
+to `main`, and explicitly dispatch CI for that commit.
 
 ### Rollback
 

@@ -2,6 +2,10 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV,
+  RUDDER_POSTGRES_BIN_DIR_ENV,
+} from "./postgres-runtime.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 
@@ -162,6 +166,36 @@ describe("desktop update flow", () => {
       message: "Rudder Desktop launched.",
       percent: 100,
     });
+  });
+
+  it("does not pass an incomplete Desktop-managed PostgreSQL path to the update child", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const previousPostgresBinDir = process.env[RUDDER_POSTGRES_BIN_DIR_ENV];
+    const previousManagedPostgresBinDir = process.env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV];
+    const managedBinDir = path.join("/tmp/previous-rudder-resources", "postgres-18.4", "darwin-arm64", "bin");
+    process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = managedBinDir;
+    process.env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV] = managedBinDir;
+
+    try {
+      const { flow } = createFlow();
+      await flow.installUpdate("0.3.4");
+
+      const spawnOptions = spawnMock.mock.calls[0]?.[2];
+      expect(spawnOptions.env[RUDDER_POSTGRES_BIN_DIR_ENV]).toBeUndefined();
+      expect(spawnOptions.env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV]).toBeUndefined();
+    } finally {
+      if (previousPostgresBinDir === undefined) {
+        delete process.env[RUDDER_POSTGRES_BIN_DIR_ENV];
+      } else {
+        process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = previousPostgresBinDir;
+      }
+      if (previousManagedPostgresBinDir === undefined) {
+        delete process.env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV];
+      } else {
+        process.env[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV] = previousManagedPostgresBinDir;
+      }
+    }
   });
 
   it("clears the post-update reload marker when an applied update child exits successfully", async () => {

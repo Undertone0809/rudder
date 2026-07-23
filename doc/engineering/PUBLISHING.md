@@ -83,9 +83,11 @@ to the next base to be visible as updates to stable users.
 `scripts/release.sh <channel> --preflight` performs these version, existing-tag,
 existing-npm-version, and stable-notes checks without installing dependencies
 or building the workspace. GitHub release automation runs it before expensive
-work. After a stable succeeds, `scripts/prepare-next-release.mjs` creates an
-idempotent next-patch pull request from current `main`; it never pushes the bump
-directly to protected `main`.
+work. After a stable succeeds, `scripts/prepare-next-release.mjs` idempotently
+updates current `main` to the next patch base, pushes one generated
+`[skip release]` maintenance commit, and explicitly dispatches CI for that SHA.
+Normal contributors still use pull requests; only this release handoff uses the
+narrow direct-push path.
 
 ## Version formats
 

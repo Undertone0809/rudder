@@ -72,9 +72,9 @@ import {
   type PostUpdateReloadMarker,
 } from "./post-update-reload.js";
 import {
-  resolveDesktopPostgresBinDir,
-  resolvePreferredDesktopPostgresBinDir,
-  RUDDER_POSTGRES_BIN_DIR_ENV,
+  captureDesktopPostgresEnvironment,
+  reconcilePackagedDesktopPostgresBinDir,
+  restoreDesktopPostgresEnvironment,
 } from "./postgres-runtime.js";
 import {
   markReleaseNotesShown,
@@ -690,14 +690,7 @@ function applyDesktopEnvironment(): LocalEnvProfile {
   process.env.SERVE_UI = "true";
   process.env.RUDDER_UI_DEV_MIDDLEWARE = "false";
   process.env.RUDDER_OPEN_ON_LISTEN = "false";
-  const postgresBinDir = resolvePreferredDesktopPostgresBinDir({
-    isPackaged: app.isPackaged,
-    resourcesPath: process.resourcesPath,
-    externalRuntimeCacheDir: externalServerRuntimeCacheDir,
-  });
-  if (postgresBinDir) {
-    process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = postgresBinDir;
-  }
+  if (app.isPackaged) reconcilePackagedDesktopPostgresBinDir(process.resourcesPath, externalServerRuntimeCacheDir);
   return profile;
 }
 
@@ -1780,10 +1773,8 @@ async function importServerModule(): Promise<ServerModule> {
       onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
     });
     if (externalRuntime) {
-      const previousPostgresBinDir = process.env[RUDDER_POSTGRES_BIN_DIR_ENV];
-      const hasExplicitPostgresBinDir = Boolean(previousPostgresBinDir?.trim());
-      const postgresBinDir = hasExplicitPostgresBinDir ? null : resolveDesktopPostgresBinDir(externalRuntime.cacheDir);
-      if (postgresBinDir) process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = postgresBinDir;
+      const previousPostgresEnvironment = captureDesktopPostgresEnvironment();
+      reconcilePackagedDesktopPostgresBinDir(process.resourcesPath, externalRuntime.cacheDir);
       console.info("[rudder-desktop] loading server runtime from shared cache", {
         entrypoint: externalRuntime.entrypoint,
       });
@@ -1792,12 +1783,9 @@ async function importServerModule(): Promise<ServerModule> {
         externalServerRuntimeCacheDir = externalRuntime.cacheDir;
         return mod;
       } catch (error) {
-        if (previousPostgresBinDir === undefined) {
-          delete process.env[RUDDER_POSTGRES_BIN_DIR_ENV];
-        } else {
-          process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = previousPostgresBinDir;
-        }
+        restoreDesktopPostgresEnvironment(previousPostgresEnvironment);
         externalServerRuntimeCacheDir = null;
+        reconcilePackagedDesktopPostgresBinDir(process.resourcesPath);
         console.warn("[rudder-desktop] failed to load shared server runtime cache, falling back to bundled runtime", error);
       }
     }

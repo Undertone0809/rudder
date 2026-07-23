@@ -12,6 +12,7 @@ import {
   clearPostUpdateReloadMarker,
   writePostUpdateReloadMarker,
 } from "./post-update-reload.js";
+import { createDesktopUpdateChildEnvironment } from "./postgres-runtime.js";
 import {
   normalizeDesktopUpdateChannel,
   readDesktopUpdateChannel,
@@ -583,7 +584,9 @@ export function createDesktopUpdateFlow(context: {
       ];
       const child = spawn(process.execPath, args, {
         detached: true,
-        env: process.env,
+        env: createDesktopUpdateChildEnvironment({
+          resourcesPath: process.resourcesPath,
+        }),
         stdio: ["pipe", "pipe", "pipe"],
       });
       let updateChildFinalized = false;
