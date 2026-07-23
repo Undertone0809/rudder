@@ -426,9 +426,10 @@ export function resolveDisplayedSidePanelContext(
   const isHoldableContext = hold?.contextKey.startsWith("chat:")
     || hold?.contextKey.startsWith("issue:");
   if (
-    (isWorkbenchRoute || routeContextKey === hold?.contextKey)
+    hold !== null
+    && (isWorkbenchRoute || routeContextKey === hold.contextKey)
     && isHoldableContext
-    && hold?.organizationId === organizationId
+    && hold.organizationId === organizationId
   ) {
     return { contextKey: hold.contextKey, preserveHold: true };
   }
