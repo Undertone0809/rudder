@@ -678,7 +678,8 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("I am checking the chat surface first.");
-    expect(html).toContain("Read ui/src/pages/Chat.tsx");
+    expect(html).toContain("Read Chat.tsx");
+    expect(html).not.toContain(">ui/src/pages/Chat.tsx</");
     expect(html).not.toContain("Final answer shown");
     expect(html).not.toContain("in the assistant message.");
   });
@@ -1936,8 +1937,9 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Read ");
-    expect(html).toContain("docs/PRODUCT.md");
-    expect(html).toContain('aria-label="Open file docs/PRODUCT.md"');
+    expect(html).toContain(">PRODUCT.md</button>");
+    expect(html).not.toContain(">docs/PRODUCT.md</button>");
+    expect(html).toContain('aria-label="Open file PRODUCT.md"');
     expect(html).toContain('data-transcript-file-target="/Users/zeeland/work/rudder/docs/PRODUCT.md"');
     expect(html).toContain("underline-offset-4");
   });
@@ -2824,7 +2826,7 @@ describe("RunTranscriptView", () => {
         runtime: "Cursor",
         name: "EditToolCall",
         input: { path: "ui/src/components/transcript/RunTranscriptView.semantic.tsx" },
-        expected: "Edited ui/src/components/transcript/RunTranscriptView.semantic.tsx",
+        expected: "Edited RunTranscriptView.semantic.tsx",
       },
       {
         runtime: "Gemini",
@@ -2842,7 +2844,7 @@ describe("RunTranscriptView", () => {
         runtime: "Pi",
         name: "WriteFileToolCall",
         input: { filePath: "doc/engineering/DESIGN.md" },
-        expected: "Edited doc/engineering/DESIGN.md",
+        expected: "Edited DESIGN.md",
       },
       {
         runtime: "Claude",

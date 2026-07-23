@@ -19,6 +19,42 @@ async function createOrganization(page: Page, name: string) {
   return orgRes.json();
 }
 
+async function installRunTranscriptFilePreviewStub(page: Page, expectedPaths: string[]) {
+  await page.addInitScript((paths) => {
+    const previewCalls: string[] = [];
+    Object.defineProperty(window, "__rudderTranscriptPreviewCalls", {
+      configurable: true,
+      value: previewCalls,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        openPath: async () => {},
+        previewLocalFile: async (filePath: string) => {
+          previewCalls.push(filePath);
+          if (!paths.includes(filePath)) throw new Error(`Unexpected transcript file path: ${filePath}`);
+          const fileName = filePath.split("/").at(-1) ?? filePath;
+          return {
+            canonicalPath: filePath,
+            fileName,
+            parentPath: filePath.slice(0, filePath.lastIndexOf("/")),
+            contentType: "text/plain; charset=utf-8",
+            previewKind: "text",
+            content: fileName === "SKILL.md"
+              ? "# systematic-debugging\n\nUse evidence before fixes."
+              : "export const runTranscriptEvidence = true;",
+            base64: null,
+            sizeBytes: 54,
+            modifiedAt: "2026-07-24T00:00:00.000Z",
+            truncated: false,
+          };
+        },
+        setSidePanelCloseShortcutActive: async () => {},
+      },
+    });
+  }, expectedPaths);
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -685,6 +721,136 @@ test.describe("Run transcript detail", () => {
     expect(mobileOlderTimingBox!.x + mobileOlderTimingBox!.width).toBeLessThanOrEqual(mobileListBox!.x + mobileListBox!.width + 1);
     await page.screenshot({
       path: "/tmp/rudder-agent-run-list-occurrence-times-mobile.png",
+      fullPage: true,
+    });
+  });
+
+  test("opens transcript Read and Skill artifacts in the global Side Panel from the real run page", async ({ page }) => {
+    test.setTimeout(120_000);
+    const organization = await createOrganization(page, `Run-Transcript-Artifacts-${Date.now()}`);
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Transcript Artifact Tester",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+    const runId = randomUUID();
+    const sourcePath = "/workspace/rudder/ui/src/components/transcript/RunTranscriptView.tsx";
+    const skillPath = "/workspace/rudder/.agents/skills/systematic-debugging/SKILL.md";
+    await installRunTranscriptFilePreviewStub(page, [sourcePath, skillPath]);
+
+    const startedAt = new Date("2026-07-24T08:00:00.000Z");
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "scheduled",
+      triggerDetail: "Scheduled heartbeat",
+      status: "succeeded",
+      startedAt,
+      finishedAt: new Date(startedAt.getTime() + 4_000),
+      resultJson: { summary: "Inspected transcript artifacts." },
+      createdAt: startedAt,
+      updatedAt: new Date(startedAt.getTime() + 4_000),
+    });
+    const transcriptEntries = [
+      { kind: "system", text: "turn started" },
+      { kind: "assistant", text: "I will inspect the implementation evidence." },
+      {
+        kind: "tool_call",
+        name: "read",
+        toolUseId: "read-source",
+        input: { path: sourcePath, cwd: "/workspace/rudder" },
+      },
+      {
+        kind: "tool_result",
+        toolUseId: "read-source",
+        content: "export function RunTranscriptView() {}",
+        isError: false,
+      },
+      {
+        kind: "tool_call",
+        name: "command_execution",
+        toolUseId: "read-skill",
+        input: {
+          command: "sed -n '1,240p' .agents/skills/systematic-debugging/SKILL.md",
+          cwd: "/workspace/rudder",
+        },
+      },
+      {
+        kind: "tool_result",
+        toolUseId: "read-skill",
+        content: "# systematic-debugging",
+        isError: false,
+      },
+    ];
+    await e2eDb.insert(heartbeatRunEvents).values(transcriptEntries.map((entry, index) => ({
+      orgId: organization.id,
+      runId,
+      agentId: agent.id,
+      seq: 100 + index,
+      eventType: "transcript.entry",
+      stream: "system",
+      level: "info",
+      message: "chat transcript entry",
+      payload: {
+        ...entry,
+        ts: new Date(startedAt.getTime() + 1_000 + index).toISOString(),
+      },
+      createdAt: new Date(startedAt.getTime() + 1_000 + index),
+    })));
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(detailPane.getByText("Transcript", { exact: true })).toBeVisible({ timeout: 15_000 });
+
+    const activity = detailPane.getByRole("button", { name: /Expand tool activity/ }).first();
+    await expect(activity).toContainText(/Used 1 skill/i);
+    await expect(activity).toContainText(/read 1 file/i);
+    await expect(detailPane.locator("[data-transcript-file-target]")).toHaveCount(0);
+    await activity.click();
+
+    const sourceTarget = detailPane.locator(`[data-transcript-file-target="${sourcePath}"]`);
+    const skillTarget = detailPane.locator(`[data-transcript-file-target="${skillPath}"]`);
+    await expect(sourceTarget).toHaveText("RunTranscriptView.tsx");
+    await expect(skillTarget).toHaveText("systematic-debugging");
+    await expect(detailPane.getByText(sourcePath, { exact: true })).toHaveCount(0);
+    await expect(detailPane.getByText(skillPath, { exact: true })).toHaveCount(0);
+
+    const runUrl = page.url();
+    await sourceTarget.click();
+    await expect(page).toHaveURL(runUrl);
+    const sidePanel = page.getByRole("complementary", { name: "Side Panel" });
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByRole("tab", { name: "RunTranscriptView.tsx" })).toBeVisible();
+    const localPreview = sidePanel.getByTestId("chat-side-panel-local-file-view");
+    await expect(localPreview.getByText("RunTranscriptView.tsx", { exact: true })).toBeVisible();
+    await expect(localPreview.getByText("/workspace/rudder/ui/src/components/transcript", { exact: true })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Expand transcript" }).click();
+    const transcriptDialog = page.getByRole("dialog", { name: "Transcript" });
+    await expect(transcriptDialog).toBeVisible();
+    const modalActivity = transcriptDialog.getByRole("button", { name: /Expand tool activity/ }).first();
+    await modalActivity.click();
+    await transcriptDialog.locator(`[data-transcript-file-target="${skillPath}"]`).click();
+    await expect(transcriptDialog).toBeHidden();
+    await expect(page).toHaveURL(runUrl);
+    await expect(sidePanel.getByRole("tab", { name: "systematic-debugging" })).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-local-file-view").getByText("SKILL.md", { exact: true })).toBeVisible();
+    await expect(sidePanel.getByText("/workspace/rudder/.agents/skills/systematic-debugging", { exact: true })).toHaveCount(0);
+
+    await page.screenshot({
+      path: "/tmp/rudder-agent-run-transcript-file-side-panel.png",
       fullPage: true,
     });
   });

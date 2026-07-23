@@ -6,6 +6,7 @@ import {
   FileText,
   FolderOpen,
   Globe,
+  Images,
   ListTree,
   Logs,
   Plug,
@@ -36,7 +37,8 @@ export type TranscriptToolCategory =
   | "skill"
   | "mcp"
   | "list"
-  | "inspect";
+  | "inspect"
+  | "image";
 
 export type TranscriptDigestBucket =
   | "explore"
@@ -58,16 +60,40 @@ export interface TranscriptActionIconTreatment {
 export interface TranscriptToolSemanticInfo {
   category: TranscriptToolCategory;
   label: string;
+  actionKind?: "read" | "skill" | "file_change" | "image_view";
   summary: string;
   bucket: TranscriptDigestBucket;
   quantity: number;
   noun: "file" | "location" | "item" | "tool" | "command" | "skill";
   fileTargets?: TranscriptFileTarget[];
+  fileChanges?: TranscriptFileChangeEvidence[];
+  image?: TranscriptImageEvidence;
+  evidenceWarning?: string;
 }
 
 export interface TranscriptFileTarget {
+  /** Original evidence label. Keep this for raw details and tooltips. */
   label: string;
+  /** Compact operator-facing label. */
+  displayLabel: string;
   path: string | null;
+}
+
+export interface TranscriptFileChangeEvidence {
+  additions: number;
+  deletions: number;
+  diff: string | null;
+  diffOriginalBytes: number | null;
+  diffTruncated: boolean;
+  displayLabel: string;
+  movePath: string | null;
+  operation: "add" | "delete" | "update" | "move" | "unknown";
+  path: string;
+}
+
+export interface TranscriptImageEvidence {
+  displayLabel: string;
+  path: string;
 }
 
 export interface TranscriptToolCardEntry {
@@ -539,6 +565,8 @@ export function getTranscriptActionIconTreatment(category: TranscriptActionIconC
       return { key: "edit", label: "Edit", Icon: FileDiff };
     case "inspect":
       return { key: "inspect", label: "Inspect", Icon: ListTree };
+    case "image":
+      return { key: "image", label: "Image", Icon: Images };
     case "list":
       return { key: "list", label: "Explore files", Icon: FolderOpen };
     case "mcp":

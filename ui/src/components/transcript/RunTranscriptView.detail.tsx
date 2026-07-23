@@ -107,6 +107,7 @@ export function TranscriptDetailTimeline({
   thinkingClassName,
   showDeveloperDiagnostics,
   onMarkdownLinkClick,
+  onOpenFile,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
@@ -114,6 +115,7 @@ export function TranscriptDetailTimeline({
   thinkingClassName?: string;
   showDeveloperDiagnostics: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
+  onOpenFile?: (targetPath: string, label: string) => void;
 }) {
   const { preludeBlocks, turns } = useMemo(
     () => normalizeChatTranscriptTurns(entries, streaming, { showDeveloperDiagnostics }),
@@ -178,6 +180,7 @@ export function TranscriptDetailTimeline({
               thinkingClassName={thinkingClassName}
               variant="detail"
               onMarkdownLinkClick={onMarkdownLinkClick}
+              onOpenFile={onOpenFile}
             />
           </div>
         );

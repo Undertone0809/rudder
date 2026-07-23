@@ -34,16 +34,33 @@ import { CopyText } from "../components/CopyText";
 import { PageTabBar } from "../components/PageTabBar";
 import { RunTranscriptView, type TranscriptMode } from "../components/transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
+import { useSidePanel } from "../context/SidePanelContext";
 import { shouldPollLiveRunBackfill } from "../lib/live-run-backfill";
 import { queryKeys } from "../lib/queryKeys";
 import { getRunFailureDisplay } from "../lib/run-detail-display";
 import { heartbeatRunEventsToTranscriptEntries, mergeTranscriptEntries } from "../lib/run-detail-events";
+import type { SidePanelTarget } from "../lib/side-panel-targets";
 import { cn } from "../lib/utils";
 import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForDisplay, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readScrollMetrics, redactPathText, redactPathValue, RunEventsList, RunLogChunk, runLogChunkDedupeKey, ScrollContainer, scrollToContainerBottom, utf8ByteLength, WorkspaceOperationsSection } from "./AgentDetail.helpers";
 
 export function runDateToIso(value: Date | string | null | undefined): string | null {
   if (!value) return null;
   return typeof value === "string" ? value : value.toISOString();
+}
+
+export function openRunTranscriptLocalFile(
+  openTarget: (target: SidePanelTarget) => unknown,
+  closeTranscriptDialog: () => void,
+  targetPath: string,
+  label: string,
+) {
+  closeTranscriptDialog();
+  const fileName = (label.trim() || targetPath).split(/[\\/]/u).filter(Boolean).at(-1) ?? targetPath;
+  openTarget({
+    kind: "local_file",
+    filePath: targetPath,
+    label: fileName,
+  });
 }
 
 export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeType: string }) {
@@ -60,6 +77,7 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
   const [activeDetailTab, setActiveDetailTab] = useState<RunDetailTab>("transcript");
   const failureDisplay = getRunFailureDisplay(run);
   const [transcriptModalOpen, setTranscriptModalOpen] = useState(false);
+  const { openTarget: openSidePanelTarget } = useSidePanel();
   const [transcriptDialogMotion, setTranscriptDialogMotion] = useState({
     fromX: "0px",
     fromY: "-16px",
@@ -69,6 +87,14 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
     fromScaleY: "0.96",
   });
   const transcriptVisible = activeDetailTab === "transcript";
+  const openTranscriptFile = useCallback((targetPath: string, label: string) => {
+    openRunTranscriptLocalFile(
+      openSidePanelTarget,
+      () => setTranscriptModalOpen(false),
+      targetPath,
+      label,
+    );
+  }, [openSidePanelTarget]);
   const logEndRef = useRef<HTMLDivElement>(null);
   const transcriptExpandButtonRef = useRef<HTMLButtonElement>(null);
   const pendingLogLineRef = useRef("");
@@ -662,6 +688,7 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
               collapseStdout
               emptyMessage={run.logRef ? "Waiting for transcript..." : "No persisted transcript for this run."}
               presentation="detail"
+              onOpenFile={openTranscriptFile}
             />
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
@@ -797,6 +824,7 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
               collapseStdout
               emptyMessage={run.logRef ? "Waiting for transcript..." : "No persisted transcript for this run."}
               presentation="detail"
+              onOpenFile={openTranscriptFile}
             />
             {logError && (
               <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
