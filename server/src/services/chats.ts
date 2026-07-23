@@ -3517,7 +3517,7 @@ export function chatService(db: Db) {
       await copyForkChatMessages({
         tx,
         messages: forkMessages,
-        sourceConversationId: source.id,
+        sourceConversation: source,
         targetConversationId: child.id,
         orgId: input.orgId,
       });

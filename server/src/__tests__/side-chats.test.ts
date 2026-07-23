@@ -24,7 +24,9 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { hashChatAnnotationSource } from "../services/chat-inline-annotations.js";
 import { chatWorkManifestService } from "../services/chat-work-manifest.js";
+import { chatService } from "../services/chats.js";
 import { SIDE_CHAT_TTL_MS, sideChatService } from "../services/side-chats.js";
 
 type EmbeddedPostgresInstance = {
@@ -90,6 +92,7 @@ async function startTempDatabase() {
 
 describe("sideChatService", () => {
   let db!: ReturnType<typeof createDb>;
+  let chats!: ReturnType<typeof chatService>;
   let service!: ReturnType<typeof sideChatService>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
@@ -97,6 +100,7 @@ describe("sideChatService", () => {
   beforeAll(async () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
+    chats = chatService(db);
     service = sideChatService(db);
     instance = started.instance;
     dataDir = started.dataDir;
@@ -186,6 +190,62 @@ describe("sideChatService", () => {
       sourceMessageId: source.anchorMessageId,
       clientMutationId: "side-chat-test-mutation",
     });
+  }
+
+  async function createKeptSideChatWithParentAnchorAnnotation(
+    source: Awaited<ReturnType<typeof createSource>>,
+  ) {
+    const sideChat = await createSideChat(source);
+    const annotationId = randomUUID();
+    const selectedText = "Anchored answer";
+    const annotatedUser = await chats.addUserChatMessage(
+      sideChat.id,
+      source.orgId,
+      "Explain the parent evidence.",
+      null,
+      {
+        structuredPayloadProvided: true,
+        structuredPayload: {
+          inlineAnnotations: [{
+            id: annotationId,
+            selectedText,
+            comment: "Keep the exact parent anchor.",
+            sourceConversationId: source.sourceConversationId,
+            sourceMessageId: source.anchorMessageId,
+            surface: "assistant_body",
+            sourceHash: hashChatAnnotationSource(selectedText),
+            start: 0,
+            end: selectedText.length,
+            prefix: "",
+            suffix: "",
+            attachmentIds: [],
+          }],
+        },
+        attachments: [{
+          provider: "local_disk",
+          objectKey: `side-chat-parent-annotation-${randomUUID()}`,
+          contentType: "image/png",
+          byteSize: 16,
+          sha256: "d".repeat(64),
+          originalFilename: "parent-annotation.png",
+          createdByAgentId: null,
+          createdByUserId: source.userId,
+        }],
+        attachmentFileIndexesByAnnotationId: new Map([[annotationId, [0]]]),
+      },
+    );
+    const reply = await chats.addMessage(sideChat.id, {
+      orgId: source.orgId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Follow-up answer in the Side Chat.",
+    });
+    await service.keepInMessenger({
+      conversationId: sideChat.id,
+      userId: source.userId,
+    });
+    return { annotatedUser, annotationId, reply, sideChat };
   }
 
   it("creates one hidden Side Chat per client mutation and copies context only through the anchor", async () => {
@@ -351,6 +411,145 @@ describe("sideChatService", () => {
     const manifest = await manifestService.getConversationManifest(sideChat.id);
     expect(manifest.sources.map((item) => item.title)).toContain("ordinary-source.txt");
     expect(manifest.sources.map((item) => item.title)).not.toContain("annotation-context.png");
+  });
+
+  it("remaps an exact inherited parent-anchor annotation when opening a nested Side Chat from a kept Side Chat", async () => {
+    const source = await createSource();
+    const kept = await createKeptSideChatWithParentAnchorAnnotation(source);
+
+    const nested = await service.create({
+      orgId: source.orgId,
+      userId: source.userId,
+      sourceConversationId: kept.sideChat.id,
+      sourceMessageId: kept.reply.id,
+      clientMutationId: "nested-side-chat-parent-annotation",
+    });
+    const copiedMessages = await chats.listMessages(nested.id, {
+      includeTranscript: false,
+    });
+    const copiedSource = copiedMessages.find((message) => message.body === "Anchored answer");
+    const copiedUser = copiedMessages.find((message) => message.body === kept.annotatedUser.body);
+    const [copiedAnnotation] = chatInlineAnnotationsFromStructuredPayload(
+      copiedUser?.structuredPayload,
+    );
+
+    expect(copiedSource).toBeDefined();
+    expect(copiedAnnotation).toMatchObject({
+      id: kept.annotationId,
+      sourceConversationId: nested.id,
+      sourceMessageId: copiedSource?.id,
+      attachmentIds: [copiedUser?.attachments[0]?.id],
+    });
+    expect(copiedUser?.attachments[0]?.id).not.toBe(kept.annotatedUser.attachments[0]?.id);
+  });
+
+  it("remaps an exact inherited parent-anchor annotation when forking a kept Side Chat", async () => {
+    const source = await createSource();
+    const kept = await createKeptSideChatWithParentAnchorAnnotation(source);
+    const boundary = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, kept.sideChat.id))
+      .then((messages) => messages.find((message) =>
+        message.structuredPayload?.eventType === "side_chat_started"
+      ));
+    const legacyBoundaryPayload = { ...(boundary?.structuredPayload ?? {}) };
+    delete legacyBoundaryPayload.copiedSourceMessageId;
+    await db
+      .update(chatMessages)
+      .set({ structuredPayload: legacyBoundaryPayload })
+      .where(eq(chatMessages.id, boundary!.id));
+
+    const fork = await chats.forkConversation({
+      sourceConversationId: kept.sideChat.id,
+      orgId: source.orgId,
+      userId: source.userId,
+      sourceMessageId: kept.reply.id,
+      createdByUserId: source.userId,
+    });
+    const copiedMessages = await chats.listMessages(fork.id, {
+      includeTranscript: false,
+    });
+    const copiedSource = copiedMessages.find((message) => message.body === "Anchored answer");
+    const copiedUser = copiedMessages.find((message) => message.body === kept.annotatedUser.body);
+    const [copiedAnnotation] = chatInlineAnnotationsFromStructuredPayload(
+      copiedUser?.structuredPayload,
+    );
+
+    expect(copiedSource).toBeDefined();
+    expect(copiedAnnotation).toMatchObject({
+      id: kept.annotationId,
+      sourceConversationId: fork.id,
+      sourceMessageId: copiedSource?.id,
+      attachmentIds: [copiedUser?.attachments[0]?.id],
+    });
+    expect(copiedUser?.attachments[0]?.id).not.toBe(kept.annotatedUser.attachments[0]?.id);
+  });
+
+  it.each([
+    ["a same-organization sibling", false],
+    ["a cross-organization conversation", true],
+  ])("rejects %s as inherited annotation lineage when forking a kept Side Chat", async (_label, crossOrganization) => {
+    const source = await createSource();
+    const kept = await createKeptSideChatWithParentAnchorAnnotation(source);
+    const foreign = crossOrganization
+      ? await createSource("foreign-side-chat-owner", "Foreign source")
+      : null;
+    const foreignConversationId = foreign?.sourceConversationId ?? randomUUID();
+    const foreignMessageId = foreign?.anchorMessageId ?? randomUUID();
+    if (!foreign) {
+      await db.insert(chatConversations).values({
+        id: foreignConversationId,
+        orgId: source.orgId,
+        title: "Sibling source",
+        createdByUserId: source.userId,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      });
+      await db.insert(chatMessages).values({
+        id: foreignMessageId,
+        orgId: source.orgId,
+        conversationId: foreignConversationId,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: "Sibling source",
+      });
+    }
+    await db
+      .update(chatMessages)
+      .set({
+        structuredPayload: {
+          inlineAnnotations: [{
+            id: kept.annotationId,
+            selectedText: foreign ? "Anchored answer" : "Sibling source",
+            comment: "Forged lineage",
+            sourceConversationId: foreignConversationId,
+            sourceMessageId: foreignMessageId,
+            surface: "assistant_body",
+            sourceHash: hashChatAnnotationSource(
+              foreign ? "Anchored answer" : "Sibling source",
+            ),
+            start: 0,
+            end: (foreign ? "Anchored answer" : "Sibling source").length,
+            prefix: "",
+            suffix: "",
+            attachmentIds: [],
+          }],
+        },
+      })
+      .where(eq(chatMessages.id, kept.annotatedUser.id));
+
+    await expect(chats.forkConversation({
+      sourceConversationId: kept.sideChat.id,
+      orgId: source.orgId,
+      userId: source.userId,
+      sourceMessageId: kept.reply.id,
+      createdByUserId: source.userId,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("outside"),
+    });
   });
 
   it("snapshots and bounds the direct source title when the Side Chat is created", async () => {

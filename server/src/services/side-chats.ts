@@ -12,6 +12,7 @@ import {
 import { and, asc, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 
 export const SIDE_CHAT_TTL_MS = 2 * 60 * 60 * 1000;
@@ -263,12 +264,16 @@ export function sideChatService(db: Db) {
       }
 
       const copiedSourceMessages = sourceMessages.slice(0, anchorIndex + 1);
-      const sourceMessageById = new Map(
-        copiedSourceMessages.map((message) => [message.id, message]),
-      );
       const copiedMessageIds = new Map(
         copiedSourceMessages.map((message) => [message.id, randomUUID()]),
       );
+      const resolveAnnotationSource = await createChatAnnotationCopySourceResolver({
+        tx,
+        orgId: input.orgId,
+        sourceConversation: source,
+        messages: copiedSourceMessages,
+        operationLabel: "Side Chat",
+      });
 
       const sourceAttachments = copiedMessageIds.size > 0
         ? await tx
@@ -288,11 +293,10 @@ export function sideChatService(db: Db) {
         const copiedAnnotations = chatInlineAnnotationsFromStructuredPayload(
           message.structuredPayload,
         ).map((annotation) => {
-          if (annotation.sourceConversationId !== source.id) {
-            throw unprocessable("Side Chat annotation source conversation falls outside the copied range");
-          }
-          const sourceMessage = sourceMessageById.get(annotation.sourceMessageId);
-          const copiedSourceMessageId = copiedMessageIds.get(annotation.sourceMessageId);
+          const sourceMessage = resolveAnnotationSource(annotation);
+          const copiedSourceMessageId = sourceMessage
+            ? copiedMessageIds.get(sourceMessage.id)
+            : null;
           if (
             !sourceMessage
             || !copiedSourceMessageId
@@ -368,6 +372,7 @@ export function sideChatService(db: Db) {
             sourceConversationId: source.id,
             sourceConversationTitle: source.title,
             sourceMessageId: anchor.id,
+            copiedSourceMessageId: copiedMessageIds.get(anchor.id),
           },
           createdAt: now,
           updatedAt: now,

@@ -13,6 +13,7 @@ import {
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
+import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
 import { stripChatMetadataFromPayload } from "./chats.helpers.js";
 import type { MessageHydrationRow } from "./chats.types.js";
 
@@ -51,16 +52,20 @@ export async function listRecentUserChatMessages(db: Db, conversationId: string,
 export async function copyForkChatMessages(input: {
   tx: ChatTransaction;
   messages: ChatMessageRow[];
-  sourceConversationId: string;
+  sourceConversation: typeof chatConversations.$inferSelect;
   targetConversationId: string;
   orgId: string;
 }) {
   const copiedMessageIdBySourceId = new Map(
     input.messages.map((message) => [message.id, randomUUID()]),
   );
-  const sourceMessageById = new Map(
-    input.messages.map((message) => [message.id, message]),
-  );
+  const resolveAnnotationSource = await createChatAnnotationCopySourceResolver({
+    tx: input.tx,
+    orgId: input.orgId,
+    sourceConversation: input.sourceConversation,
+    messages: input.messages,
+    operationLabel: "Fork",
+  });
   const attachmentIds = new Set<string>();
   for (const message of input.messages) {
     for (const annotation of chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)) {
@@ -93,7 +98,7 @@ export async function copyForkChatMessages(input: {
         .innerJoin(assets, eq(chatAttachments.assetId, assets.id))
         .where(and(
           eq(chatAttachments.orgId, input.orgId),
-          eq(chatAttachments.conversationId, input.sourceConversationId),
+          eq(chatAttachments.conversationId, input.sourceConversation.id),
           eq(assets.orgId, input.orgId),
           inArray(chatAttachments.id, [...attachmentIds]),
         ))
@@ -142,11 +147,10 @@ export async function copyForkChatMessages(input: {
     const copiedAnnotations = chatInlineAnnotationsFromStructuredPayload(
       message.structuredPayload,
     ).map((annotation) => {
-      if (annotation.sourceConversationId !== input.sourceConversationId) {
-        throw unprocessable("Fork annotation source conversation falls outside the copied range");
-      }
-      const copiedSourceMessageId = copiedMessageIdBySourceId.get(annotation.sourceMessageId);
-      const sourceMessage = sourceMessageById.get(annotation.sourceMessageId);
+      const sourceMessage = resolveAnnotationSource(annotation);
+      const copiedSourceMessageId = sourceMessage
+        ? copiedMessageIdBySourceId.get(sourceMessage.id)
+        : null;
       if (
         !copiedSourceMessageId
         || !sourceMessage
