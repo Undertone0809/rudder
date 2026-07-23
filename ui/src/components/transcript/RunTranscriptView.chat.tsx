@@ -190,7 +190,6 @@ export function TranscriptChatStdoutActionRow({
   block,
   density,
   inline = false,
-  quiet = true,
 }: {
   block: Extract<TranscriptBlock, { type: "stdout" }>;
   density: TranscriptDensity;
@@ -236,9 +235,8 @@ export function TranscriptChatStdoutActionRow({
         </span>
         <span
           className={cn(
-            "inline-flex h-5 w-5 items-center justify-center text-muted-foreground",
+            "inline-flex h-5 w-5 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
             chevronOffsetClass,
-            quiet && !open && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
           )}
           data-transcript-action-row-disclosure="true"
         >
@@ -376,9 +374,8 @@ export function TranscriptChatToolActionRow({
             <button
               type="button"
               className={cn(
-                "-my-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                "-my-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
                 chevronOffsetClass,
-                quiet && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
               )}
               onClick={toggleDetails}
               aria-expanded={open}
@@ -420,9 +417,8 @@ export function TranscriptChatToolActionRow({
           {canExpand && !inline && !inspectAgent ? (
             <span
               className={cn(
-                "inline-flex h-5 w-5 items-center justify-center text-muted-foreground",
+                "inline-flex h-5 w-5 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
                 chevronOffsetClass,
-                quiet && "opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
               )}
               data-transcript-action-row-disclosure="true"
             >
