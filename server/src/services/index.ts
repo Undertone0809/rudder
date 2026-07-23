@@ -34,6 +34,11 @@ export {
   type ManagedMcpClientOptions
 } from "./mcp/managed-client.js";
 export {
+  managedMcpConnectionService,
+  type ManagedMcpConnectionServiceOptions,
+  type ManagedMcpMutationActor
+} from "./mcp/managed-connections.js";
+export {
   MCP_PROVIDER_REGISTRY,
   resolveCuratedMcpEndpoint
 } from "./mcp/provider-registry.js";

@@ -23,6 +23,8 @@ export interface RudderAppOptions {
    * supplies an explicit (deny-all by default) value.
    */
   mcpDeploymentAllowlists?: McpDeploymentAllowlists;
+  /** Host environment source used only through managed MCP allowlist policy. */
+  mcpHostEnv?: Record<string, string | undefined>;
   instanceId?: string;
   localEnv?: string | null;
   runtimeOwnerKind?: string | null;

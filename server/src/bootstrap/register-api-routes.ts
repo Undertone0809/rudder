@@ -19,6 +19,7 @@ import { healthRoutes } from "../routes/health.js";
 import { instanceSettingsRoutes } from "../routes/instance-settings.js";
 import { integrationRoutes } from "../routes/integrations.js";
 import { issueRoutes } from "../routes/issues.js";
+import { managedMcpConnectionRoutes } from "../routes/managed-mcp-connections.js";
 import { messengerRoutes } from "../routes/messenger.js";
 import { onboardingRoutes } from "../routes/onboarding.js";
 import { organizationSkillRoutes } from "../routes/organization-skills.js";
@@ -68,6 +69,16 @@ export function registerApiRoutes(
   api.use(calendarRoutes(db));
   api.use(runWorkspaceRoutes(db));
   api.use(integrationRoutes(db));
+  api.use(managedMcpConnectionRoutes(db, {
+    deploymentMode: opts.deploymentMode,
+    allowlists: opts.mcpDeploymentAllowlists ?? {
+      httpOrigins: [],
+      stdioCommands: [],
+      stdioWorkingDirectories: [],
+      stdioEnvironmentNames: [],
+    },
+    hostEnv: opts.mcpHostEnv ?? process.env,
+  }));
   api.use(goalRoutes(db));
   api.use(approvalRoutes(db));
   api.use(secretRoutes(db));

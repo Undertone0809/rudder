@@ -62,7 +62,10 @@ for exceptions to the default network and process boundary:
 - `RUDDER_MCP_STDIO_CWD_ALLOWLIST`: comma-separated exact working directories
   accepted in `authenticated` mode.
 - `RUDDER_MCP_STDIO_ENV_ALLOWLIST`: comma-separated environment variable names
-  that an authenticated managed MCP process may receive.
+  that an authenticated managed MCP process may receive. The same allowlist
+  also controls environment names referenced by Custom Streamable HTTP
+  `headersFromEnv` and `bearerTokenEnvVar` settings; organization owners cannot
+  use those settings to read arbitrary deployment environment variables.
 
 `local_trusted` permits custom STDIO commands because it is a single-operator
 host boundary. `authenticated` denies STDIO commands, working directories, and

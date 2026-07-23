@@ -111,6 +111,9 @@ describe("managed MCP connection schema", () => {
       "connection_id",
       "redacted_dispatch_outcome",
     ]));
+    expect(
+      getTableConfig(schema.customIntegrationTools).indexes.map((index) => index.config.name),
+    ).toContain("custom_integration_tools_connection_external_name_uq");
   });
 
   it("keeps legacy custom integration references nullable for backward-compatible managed rows", () => {

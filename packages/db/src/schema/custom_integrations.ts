@@ -57,6 +57,9 @@ export const customIntegrationTools = pgTable(
   (table) => ({
     orgIntegrationIdx: index("custom_integration_tools_org_integration_idx").on(table.orgId, table.integrationId),
     orgConnectionIdx: index("custom_integration_tools_org_connection_idx").on(table.orgId, table.connectionId),
+    connectionExternalNameUq: uniqueIndex("custom_integration_tools_connection_external_name_uq")
+      .on(table.connectionId, table.externalToolName)
+      .where(sql`${table.connectionId} is not null`),
     orgToolNameUq: uniqueIndex("custom_integration_tools_org_tool_name_uq").on(table.orgId, table.rudderToolName),
     ownerCheck: check(
       "custom_integration_tools_owner_check",
