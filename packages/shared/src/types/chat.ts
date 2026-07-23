@@ -45,6 +45,47 @@ export interface ChatAttachment {
   contentPath: string;
 }
 
+export type ChatInlineAnnotationSurface = "assistant_body" | "process_transcript";
+export type ChatInlineAnnotationTranscriptKind = "thinking" | "assistant";
+
+interface ChatInlineAnnotationBase {
+  id: string;
+  selectedText: string;
+  comment?: string | null;
+  sourceConversationId: string;
+  sourceMessageId: string;
+  sourceHash: string;
+  start: number;
+  end: number;
+  prefix: string;
+  suffix: string;
+}
+
+type ChatInlineAnnotationProvenance =
+  | {
+    surface: "assistant_body";
+    transcriptKind?: never;
+    generationId?: never;
+    generationSeqStart?: never;
+    generationSeqEnd?: never;
+  }
+  | {
+    surface: "process_transcript";
+    transcriptKind: ChatInlineAnnotationTranscriptKind;
+    generationId: string;
+    generationSeqStart: number;
+    generationSeqEnd: number;
+  };
+
+export type ChatInlineAnnotation = ChatInlineAnnotationBase & ChatInlineAnnotationProvenance & {
+  attachmentIds: string[];
+};
+
+export type ChatInlineAnnotationInput = ChatInlineAnnotationBase & ChatInlineAnnotationProvenance & {
+  attachmentIds?: string[];
+  attachmentFileIndexes?: number[];
+};
+
 export interface ChatPrimaryIssueSummary {
   id: string;
   identifier: string | null;
@@ -188,6 +229,7 @@ export type ChatSteerResult =
 export interface ChatQueuedMessagePayload {
   body: string;
   attachmentIds?: string[];
+  inlineAnnotations?: ChatInlineAnnotation[];
   projectId?: string | null;
   skillRefs?: string[];
   accessMode?: string | null;
