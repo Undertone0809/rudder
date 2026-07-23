@@ -236,6 +236,10 @@ describe("managedMcpConnectionService", () => {
       },
       hostEnv: {},
       createClient,
+      createOAuthCredential: () => ({
+        token: async () => "managed-oauth-test-token",
+        refresh: async () => undefined,
+      }),
       dnsLookup: async () => [{ address: "93.184.216.34", family: 4 as const }],
       ...overrides,
     });
@@ -286,6 +290,43 @@ describe("managedMcpConnectionService", () => {
       safeConfig: { url: "https://attacker.test/mcp" },
       secrets: { bearerToken: "never-persist-this" },
     }, { userId: "owner-1" })).rejects.toThrow();
+  });
+
+  it("never decrypts curated OAuth tokens when the provider-neutral credential factory is missing", async () => {
+    const orgId = await seedOrg(db);
+    const oauthSecret = await secretService(db).create(orgId, {
+      name: "Managed OAuth fallback trap",
+      provider: "local_encrypted",
+      value: JSON.stringify({
+        tokens: { access_token: "must-not-become-static-bearer" },
+      }),
+    }, undefined, {
+      allowManaged: true,
+      purpose: "managed_mcp_oauth",
+    });
+    const svc = service({ createOAuthCredential: undefined });
+    const connection = await svc.create(orgId, {
+      name: "linear-no-factory",
+      displayName: "Linear no factory",
+      provider: "linear",
+      transport: "streamable_http",
+      safeConfig: {},
+    }, { userId: "owner-1" });
+    await db.insert(mcpOAuthGrants).values({
+      orgId,
+      connectionId: connection.id,
+      credentialSecretId: oauthSecret.id,
+      status: "active",
+    });
+    await db.update(mcpConnections).set({
+      status: "active",
+      enabled: true,
+      externalScope: "workspace-a",
+    }).where(eq(mcpConnections.id, connection.id));
+
+    await expect(svc.refreshTools(orgId, connection.id))
+      .rejects.toThrow(/credential factory is not configured/i);
+    expect(createClient).not.toHaveBeenCalled();
   });
 
   it("encrypts custom HTTP credential material, redacts summaries, preserves it, replaces it, and clears it", async () => {
@@ -1228,7 +1269,11 @@ describe("managedMcpConnectionService", () => {
     expect(grant).toMatchObject({
       status: "needs_reauth",
       statusMetadata: { reason: "connection_reconnect" },
+      credentialSecretId: null,
     });
+    expect(await db.select().from(organizationSecrets)
+      .where(eq(organizationSecrets.id, grantCredential.id)))
+      .toHaveLength(0);
     await expect(svc.refreshTools(orgId, connection.id)).rejects.toThrow(/not ready/i);
     expect(createClient).not.toHaveBeenCalled();
   });

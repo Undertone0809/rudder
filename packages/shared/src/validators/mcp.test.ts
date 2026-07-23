@@ -466,13 +466,17 @@ describe("managed MCP shared contracts", () => {
     const selectionSchema = exportedSchema("mcpScopeSelectionSchema");
     if (!startSchema || !callbackSchema || !selectionSchema) return;
 
+    expect(startSchema.safeParse({}).success).toBe(true);
     expect(startSchema.safeParse({
       connectionId: "11111111-1111-4111-8111-111111111111",
-      redirectUri: "http://127.0.0.1:3100/api/mcp/oauth/callback",
-    }).success).toBe(true);
+    }).success).toBe(false);
+    expect(startSchema.safeParse({
+      redirectUri: "https://attacker.example/oauth/callback",
+    }).success).toBe(false);
     expect(callbackSchema.safeParse({
       state: "opaque-one-time-state",
       code: "provider-code",
+      iss: "https://oauth.example.com",
     }).success).toBe(true);
     expect(selectionSchema.safeParse({
       connectionId: "11111111-1111-4111-8111-111111111111",
@@ -483,6 +487,41 @@ describe("managed MCP shared contracts", () => {
       state: "opaque-one-time-state",
       code: "provider-code",
       refreshToken: "must-not-cross-the-callback-contract",
+    }).success).toBe(false);
+    expect(callbackSchema.safeParse({
+      state: "opaque-one-time-state",
+      error: "access_denied",
+      errorDescription: "must-not-be-reflected",
+      iss: "https://oauth.example.com",
+    }).success).toBe(true);
+    expect(callbackSchema.safeParse({
+      state: "opaque-one-time-state",
+      code: "provider-code",
+      error: "access_denied",
+    }).success).toBe(false);
+    expect(callbackSchema.safeParse({
+      state: "opaque-one-time-state",
+    }).success).toBe(false);
+  });
+
+  it("accepts persisted curated feature-group config without allowing it in create input", () => {
+    const safeConfigSchema = exportedSchema("mcpConnectionSafeConfigSchema");
+    const createSchema = exportedSchema("createMcpConnectionSchema");
+    if (!safeConfigSchema || !createSchema) return;
+    const safeConfig = {
+      featureGroups: {
+        mode: "provider_default",
+        excluded: ["storage"],
+      },
+    };
+
+    expect(safeConfigSchema.safeParse(safeConfig).success).toBe(true);
+    expect(createSchema.safeParse({
+      name: "supabase-main",
+      displayName: "Supabase",
+      provider: "supabase",
+      transport: "streamable_http",
+      safeConfig,
     }).success).toBe(false);
   });
 

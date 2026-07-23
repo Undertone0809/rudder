@@ -76,8 +76,8 @@ export const mcpOAuthGrants = pgTable(
     providerSubject: text("provider_subject"),
     providerScopes: jsonb("provider_scopes").$type<string[]>().notNull().default([]),
     externalScopeMetadata: jsonb("external_scope_metadata").$type<Record<string, unknown>>().notNull().default({}),
-    credentialSecretId: uuid("credential_secret_id").notNull()
-      .references(() => organizationSecrets.id, { onDelete: "restrict" }),
+    credentialSecretId: uuid("credential_secret_id")
+      .references(() => organizationSecrets.id, { onDelete: "set null" }),
     status: text("status").notNull().default("active"),
     statusMetadata: jsonb("status_metadata").$type<Record<string, unknown>>().notNull().default({}),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
@@ -91,6 +91,10 @@ export const mcpOAuthGrants = pgTable(
     orgStatusIdx: index("mcp_oauth_grants_org_status_idx").on(table.orgId, table.status),
     authorizingUserIdx: index("mcp_oauth_grants_authorizing_user_idx").on(table.authorizingUserId),
     credentialSecretIdx: index("mcp_oauth_grants_credential_secret_idx").on(table.credentialSecretId),
+    activeCredentialCheck: check(
+      "mcp_oauth_grants_active_credential_check",
+      sql`${table.status} <> 'active' or ${table.credentialSecretId} is not null`,
+    ),
   }),
 );
 
@@ -102,8 +106,8 @@ export const mcpOAuthSessions = pgTable(
     connectionId: uuid("connection_id").notNull().references(() => mcpConnections.id, { onDelete: "cascade" }),
     authorizingUserId: text("authorizing_user_id").references(() => authUsers.id, { onDelete: "set null" }),
     stateHash: text("state_hash").notNull(),
-    credentialSecretId: uuid("credential_secret_id").notNull()
-      .references(() => organizationSecrets.id, { onDelete: "restrict" }),
+    credentialSecretId: uuid("credential_secret_id")
+      .references(() => organizationSecrets.id, { onDelete: "set null" }),
     redirectUri: text("redirect_uri").notNull(),
     status: text("status").notNull().default("authorizing"),
     statusMetadata: jsonb("status_metadata").$type<Record<string, unknown>>().notNull().default({}),
@@ -124,6 +128,10 @@ export const mcpOAuthSessions = pgTable(
     consumedAfterCreateCheck: check(
       "mcp_oauth_sessions_consumed_after_create_check",
       sql`${table.consumedAt} is null or ${table.consumedAt} >= ${table.createdAt}`,
+    ),
+    authorizingCredentialCheck: check(
+      "mcp_oauth_sessions_authorizing_credential_check",
+      sql`${table.status} <> 'authorizing' or ${table.credentialSecretId} is not null`,
     ),
   }),
 );

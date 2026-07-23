@@ -1000,6 +1000,7 @@ async function startServerRuntime(
   const appHandle = await createRudderApp(db as any, {
     uiMode,
     serverPort: listenPort,
+    authPublicBaseUrl: config.authPublicBaseUrl ?? null,
     storageService,
     deploymentMode: config.deploymentMode,
     deploymentExposure: config.deploymentExposure,

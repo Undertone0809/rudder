@@ -41,6 +41,11 @@ export {
   type ManagedMcpMutationActor
 } from "./mcp/managed-connections.js";
 export {
+  managedMcpOAuthService,
+  type ManagedMcpOAuthActor,
+  type ManagedMcpOAuthServiceOptions
+} from "./mcp/oauth.js";
+export {
   MCP_PROVIDER_REGISTRY,
   resolveCuratedMcpEndpoint
 } from "./mcp/provider-registry.js";

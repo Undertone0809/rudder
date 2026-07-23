@@ -35,10 +35,18 @@ export interface McpLegacyManualSafeConfig {
   legacyConfigRetained: true;
 }
 
+export interface McpCuratedSafeConfig {
+  featureGroups: {
+    mode: "provider_default";
+    excluded: string[];
+  };
+}
+
 export type McpConnectionSafeConfig =
   | McpStdioSafeConfig
   | McpStreamableHttpSafeConfig
-  | McpLegacyManualSafeConfig;
+  | McpLegacyManualSafeConfig
+  | McpCuratedSafeConfig;
 
 export interface McpConnectionSummary {
   id: string;

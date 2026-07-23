@@ -119,10 +119,18 @@ export const mcpLegacyManualSafeConfigSchema = z.object({
   legacyConfigRetained: z.literal(true),
 }).strict();
 
+export const mcpCuratedSafeConfigSchema = z.object({
+  featureGroups: z.object({
+    mode: z.literal("provider_default"),
+    excluded: z.array(z.string().min(1).max(120)).max(100),
+  }).strict(),
+}).strict();
+
 export const mcpConnectionSafeConfigSchema = z.union([
   mcpStdioSafeConfigSchema,
   mcpStreamableHttpSafeConfigSchema,
   mcpLegacyManualSafeConfigSchema,
+  mcpCuratedSafeConfigSchema,
 ]);
 
 const mcpConnectionInputFields = {
@@ -435,10 +443,7 @@ export const mcpProviderCatalogEntrySchema = z.object({
 export const mcpProviderCatalogSchema = z.array(mcpProviderCatalogEntrySchema);
 mcpProviderCatalogSchema.parse(MCP_PROVIDER_CATALOG);
 
-export const mcpOAuthStartSchema = z.object({
-  connectionId: uuidSchema,
-  redirectUri: z.string().url().max(8_192),
-}).strict();
+export const mcpOAuthStartSchema = z.object({}).strict();
 
 export const mcpOAuthStartResponseSchema = z.object({
   connectionId: uuidSchema,
@@ -451,6 +456,7 @@ export const mcpOAuthCallbackSchema = z.object({
   code: z.string().min(1).max(16_384).optional(),
   error: z.string().min(1).max(512).optional(),
   errorDescription: z.string().max(4_096).optional(),
+  iss: z.string().url().max(8_192).optional(),
 }).strict().superRefine((value, ctx) => {
   if (Boolean(value.code) === Boolean(value.error)) {
     ctx.addIssue({

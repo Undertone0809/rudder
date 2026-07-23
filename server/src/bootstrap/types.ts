@@ -9,6 +9,8 @@ export type UiMode = "none" | "static" | "vite-dev";
 export interface RudderAppOptions {
   uiMode: UiMode;
   serverPort: number;
+  /** Canonical external HTTPS origin used for authenticated OAuth callbacks. */
+  authPublicBaseUrl?: string | null;
   storageService: StorageService;
   deploymentMode: DeploymentMode;
   deploymentExposure: DeploymentExposure;

@@ -22,12 +22,22 @@ const mockService = vi.hoisted(() => ({
   disconnect: vi.fn(),
   listTools: vi.fn(),
 }));
+const mockOAuthService = vi.hoisted(() => ({
+  start: vi.fn(),
+  callback: vi.fn(),
+  getGrantSummary: vi.fn(),
+  listScopeOptions: vi.fn(),
+  selectScope: vi.fn(),
+  createCredential: vi.fn(),
+  revoke: vi.fn(),
+}));
 let capturedErrorBody: unknown;
 
 vi.mock("../services/index.js", () => ({
   accessService: () => ({ getMembership: mockMembership }),
   logActivity: mockLogActivity,
   managedMcpConnectionService: () => mockService,
+  managedMcpOAuthService: () => mockOAuthService,
 }));
 
 function connectionSummary() {
@@ -68,6 +78,8 @@ function createApp(actor: Record<string, unknown>) {
   });
   app.use("/api", managedMcpConnectionRoutes({} as never, {
     deploymentMode: "authenticated",
+    serverPort: 3100,
+    authPublicBaseUrl: "https://rudder.example.test",
     allowlists: {
       httpOrigins: [],
       stdioCommands: [],
@@ -101,6 +113,30 @@ describe("managed MCP connection organization routes", () => {
     mockService.disconnect.mockResolvedValue({ ...connectionSummary(), status: "disabled" });
     mockService.listTools.mockResolvedValue([]);
     mockService.refreshTools.mockResolvedValue([]);
+    mockOAuthService.createCredential.mockReturnValue({
+      token: vi.fn(),
+      refresh: vi.fn(),
+    });
+    mockOAuthService.start.mockResolvedValue({
+      connectionId,
+      authorizationUrl: "https://oauth.example.test/authorize",
+      expiresAt: new Date("2026-07-23T00:10:00.000Z"),
+    });
+    mockOAuthService.callback.mockResolvedValue({ connectionId, status: "active" });
+    mockOAuthService.getGrantSummary.mockResolvedValue({
+      id: "55555555-5555-4555-8555-555555555555",
+      connectionId,
+      status: "active",
+      hasCredentials: true,
+    });
+    mockOAuthService.listScopeOptions.mockResolvedValue([]);
+    mockOAuthService.selectScope.mockResolvedValue(connectionSummary());
+    mockOAuthService.revoke.mockResolvedValue({
+      ...connectionSummary(),
+      provider: "linear",
+      status: "revoked",
+      enabled: false,
+    });
   });
 
   it("allows organization members to read catalog, connections, and tools", async () => {
@@ -274,5 +310,175 @@ describe("managed MCP connection organization routes", () => {
       { userId: "owner-1", agentId: null },
     );
     expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("maps standard OAuth callback query names and prevents browser propagation", async () => {
+    const response = await request(createApp({
+      type: "none",
+      source: "none",
+    })).get(
+      "/api/mcp/oauth/callback"
+      + "?state=opaque-one-time-state"
+      + "&error=access_denied"
+      + "&error_description=provider-private-description"
+      + "&error_uri=https%3A%2F%2Foauth.example.test%2Ferror"
+      + "&iss=https%3A%2F%2Foauth.example.test",
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers.pragma).toBe("no-cache");
+    expect(response.headers["referrer-policy"]).toBe("no-referrer");
+    expect(mockOAuthService.callback).toHaveBeenCalledWith({
+      state: "opaque-one-time-state",
+      code: undefined,
+      error: "access_denied",
+      errorDescription: "provider-private-description",
+      iss: "https://oauth.example.test",
+    });
+  });
+
+  it("lets organization members read OAuth grant and scope summaries", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "member-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    expect((await request(app).get(
+      `/api/orgs/${orgId}/mcp/connections/${connectionId}/oauth/grant`,
+    )).status).toBe(200);
+    expect((await request(app).get(
+      `/api/orgs/${orgId}/mcp/connections/${connectionId}/oauth/scopes`,
+    )).status).toBe(200);
+    expect(mockOAuthService.getGrantSummary).toHaveBeenCalledWith(orgId, connectionId);
+    expect(mockOAuthService.listScopeOptions).toHaveBeenCalledWith(orgId, connectionId);
+    expect(mockMembership).not.toHaveBeenCalled();
+  });
+
+  it("rejects agents and cross-organization boards from every OAuth management endpoint", async () => {
+    const agent = createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId,
+      source: "agent_key",
+    });
+    const crossOrg = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [otherOrgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+    const endpoints = [
+      { method: "get", path: "oauth/grant" },
+      { method: "get", path: "oauth/scopes" },
+      { method: "post", path: "oauth/start", body: {} },
+      {
+        method: "post",
+        path: "oauth/scope",
+        body: { externalScope: "project-a", accessMode: "read_only" },
+      },
+      { method: "post", path: "reconnect", body: {} },
+      { method: "post", path: "disconnect", body: {} },
+    ] as const;
+
+    for (const app of [agent, crossOrg]) {
+      for (const endpoint of endpoints) {
+        const base = `/api/orgs/${orgId}/mcp/connections/${connectionId}/${endpoint.path}`;
+        const response = endpoint.method === "get"
+          ? await request(app).get(base)
+          : await request(app).post(base).send(endpoint.body);
+        expect(response.status).toBe(403);
+      }
+    }
+    expect(mockOAuthService.start).not.toHaveBeenCalled();
+    expect(mockOAuthService.getGrantSummary).not.toHaveBeenCalled();
+    expect(mockOAuthService.listScopeOptions).not.toHaveBeenCalled();
+    expect(mockOAuthService.selectScope).not.toHaveBeenCalled();
+    expect(mockOAuthService.revoke).not.toHaveBeenCalled();
+    expect(mockService.get).not.toHaveBeenCalled();
+  });
+
+  it("allows owners, instance administrators, and local implicit boards to manage OAuth", async () => {
+    const owner = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+    const admin = createApp({
+      type: "board",
+      userId: "admin-1",
+      orgIds: [],
+      source: "session",
+      isInstanceAdmin: true,
+    });
+    const local = createApp({
+      type: "board",
+      userId: "local-board",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    expect((await request(owner)
+      .post(`/api/orgs/${orgId}/mcp/connections/${connectionId}/oauth/start`)
+      .send({})).status).toBe(201);
+    expect((await request(admin)
+      .post(`/api/orgs/${orgId}/mcp/connections/${connectionId}/oauth/scope`)
+      .send({ externalScope: "project-a", accessMode: "read_only" })).status).toBe(200);
+    mockService.get.mockResolvedValue({
+      ...connectionSummary(),
+      provider: "linear",
+      status: "active",
+    });
+    expect((await request(local)
+      .post(`/api/orgs/${orgId}/mcp/connections/${connectionId}/disconnect`)
+      .send({})).status).toBe(200);
+  });
+
+  it("revokes curated connections before disconnect or a new authorization", async () => {
+    mockService.get.mockResolvedValue({
+      ...connectionSummary(),
+      provider: "linear",
+      status: "active",
+    });
+    const app = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const disconnected = await request(app)
+      .post(`/api/orgs/${orgId}/mcp/connections/${connectionId}/disconnect`)
+      .send({});
+    const reconnected = await request(app)
+      .post(`/api/orgs/${orgId}/mcp/connections/${connectionId}/reconnect`)
+      .send({});
+
+    expect(disconnected.status).toBe(200);
+    expect(reconnected.status).toBe(201);
+    expect(reconnected.body.authorizationUrl).toBe("https://oauth.example.test/authorize");
+    expect(mockOAuthService.revoke).toHaveBeenNthCalledWith(
+      1,
+      orgId,
+      connectionId,
+      expect.objectContaining({ userId: "owner-1" }),
+    );
+    expect(mockOAuthService.revoke).toHaveBeenNthCalledWith(
+      2,
+      orgId,
+      connectionId,
+      expect.objectContaining({ userId: "owner-1" }),
+      "connection_reconnect",
+    );
+    expect(mockOAuthService.start).toHaveBeenCalledOnce();
+    expect(mockService.disconnect).not.toHaveBeenCalled();
+    expect(mockService.reconnect).not.toHaveBeenCalled();
   });
 });

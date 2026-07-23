@@ -211,6 +211,7 @@ describe("managed MCP Streamable HTTP client", () => {
     const server = await startMockMcpServer({ alwaysUnauthorized: true });
     servers.push(server);
     let refreshes = 0;
+    let reauthorizationTransitions = 0;
 
     await expect(createManagedMcpClient({
       transport: "streamable_http",
@@ -222,6 +223,9 @@ describe("managed MCP Streamable HTTP client", () => {
           refresh: async () => {
             refreshes += 1;
           },
+          markNeedsReauth: async () => {
+            reauthorizationTransitions += 1;
+          },
         },
       }),
       startupTimeoutMs: 1_000,
@@ -229,6 +233,7 @@ describe("managed MCP Streamable HTTP client", () => {
     })).rejects.toMatchObject({ code: "mcp_upstream_unauthorized" });
 
     expect(refreshes).toBe(1);
+    expect(reauthorizationTransitions).toBe(1);
     expect(server.requests.filter((request) => request.method === "initialize")).toHaveLength(2);
   });
 

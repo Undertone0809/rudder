@@ -71,6 +71,8 @@ export function registerApiRoutes(
   api.use(integrationRoutes(db));
   api.use(managedMcpConnectionRoutes(db, {
     deploymentMode: opts.deploymentMode,
+    serverPort: opts.serverPort,
+    authPublicBaseUrl: opts.authPublicBaseUrl,
     allowlists: opts.mcpDeploymentAllowlists ?? {
       httpOrigins: [],
       stdioCommands: [],

@@ -30,6 +30,7 @@ import {
   resolveMcpHttpCredentials,
   type ManagedMcpClient,
   type ManagedMcpClientOptions,
+  type ManagedMcpOAuthCredential,
 } from "./managed-client.js";
 import {
   MCP_PROVIDER_REGISTRY,
@@ -70,6 +71,10 @@ export interface ManagedMcpConnectionServiceOptions {
   allowlists: McpDeploymentAllowlists;
   hostEnv?: Record<string, string | undefined>;
   createClient?: (options: ManagedMcpClientOptions) => Promise<ManagedMcpClient>;
+  createOAuthCredential?: (
+    orgId: string,
+    connectionId: string,
+  ) => ManagedMcpOAuthCredential;
   dnsLookup?: McpDnsLookup;
 }
 
@@ -538,6 +543,7 @@ export function managedMcpConnectionService(
     let url: string;
     let curatedOrigin: string | undefined;
     let credential: ManagedMcpCredentialPayload = {};
+    let oauthCredential: ManagedMcpOAuthCredential | undefined;
     if (row.provider === "custom") {
       const config = asHttpConfig(row.safeConfig);
       if (!config.url) throw unprocessable("Custom Streamable HTTP connection requires a URL");
@@ -572,19 +578,13 @@ export function managedMcpConnectionService(
           eq(mcpOAuthGrants.status, "active"),
         ))
         .then((rows) => rows[0] ?? null);
-      if (!grant) throw unprocessable("Managed MCP OAuth authorization is required");
-      const raw = await secrets.resolveSecretValue(row.orgId, grant.credentialSecretId, "latest");
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        throw unprocessable("Managed MCP OAuth credential material is invalid");
+      if (!grant?.credentialSecretId) {
+        throw unprocessable("Managed MCP OAuth authorization is required");
       }
-      if (!isRecord(parsed)) throw unprocessable("Managed MCP OAuth credential material is invalid");
-      const token = [parsed.accessToken, parsed.bearerToken, parsed.token]
-        .find((value): value is string => typeof value === "string" && value.length > 0);
-      if (!token) throw unprocessable("Managed MCP OAuth credential material is invalid");
-      credential = { bearerToken: token };
+      if (!options.createOAuthCredential) {
+        throw unprocessable("Managed MCP OAuth credential factory is not configured");
+      }
+      oauthCredential = options.createOAuthCredential(row.orgId, row.id);
     }
 
     const config = asHttpConfig(row.safeConfig);
@@ -595,6 +595,7 @@ export function managedMcpConnectionService(
       credentials: resolveMcpHttpCredentials({
         bearerToken: credential.bearerToken,
         secretHeaders: credential.headers,
+        oauth: oauthCredential,
       }),
       network: {
         allowedOrigins: allowlists.httpOrigins,
@@ -880,18 +881,26 @@ export function managedMcpConnectionService(
           .then((rows) => rows[0] ?? null);
         if (!updated) throw notFound("MCP connection not found");
         if (existing.provider !== "custom") {
-          await tx
-            .update(mcpOAuthGrants)
-            .set({
-              status: "needs_reauth",
-              statusMetadata: { reason: "connection_reconnect" },
-              updatedAt: now,
-            })
+          const activeGrant = await tx.select().from(mcpOAuthGrants)
             .where(and(
               eq(mcpOAuthGrants.orgId, orgId),
               eq(mcpOAuthGrants.connectionId, connectionId),
               eq(mcpOAuthGrants.status, "active"),
-            ));
+            ))
+            .for("update")
+            .then((rows) => rows[0] ?? null);
+          if (activeGrant) {
+            await tx.update(mcpOAuthGrants).set({
+              status: "needs_reauth",
+              statusMetadata: { reason: "connection_reconnect" },
+              credentialSecretId: null,
+              updatedAt: now,
+            }).where(eq(mcpOAuthGrants.id, activeGrant.id));
+            if (activeGrant.credentialSecretId) {
+              await tx.delete(organizationSecrets)
+                .where(eq(organizationSecrets.id, activeGrant.credentialSecretId));
+            }
+          }
         }
         await tx.insert(activityLog).values(managedMcpActivityValues({
           orgId,

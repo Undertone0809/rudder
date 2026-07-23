@@ -35,11 +35,13 @@ export class ManagedMcpClientError extends Error {
 export interface ManagedMcpOAuthCredential {
   token(): Promise<string>;
   refresh(): Promise<void>;
+  markNeedsReauth?(): Promise<void>;
 }
 
 export interface ResolvedMcpHttpCredentials {
   headers: Record<string, string>;
   authProvider?: AuthProvider;
+  onUnauthorizedFailure?: () => Promise<void>;
 }
 
 export function resolveMcpHttpCredentials(input: {
@@ -74,6 +76,9 @@ export function resolveMcpHttpCredentials(input: {
         token: () => input.oauth!.token(),
         onUnauthorized: async () => input.oauth!.refresh(),
       }
+      : undefined,
+    onUnauthorizedFailure: input.oauth?.markNeedsReauth
+      ? () => input.oauth!.markNeedsReauth!()
       : undefined,
   };
 }
@@ -237,6 +242,21 @@ export async function createManagedMcpClient(
     })();
     return closePromise;
   };
+  const mapClientError = async (
+    error: unknown,
+    action: "connect" | "discover" | "call",
+  ): Promise<ManagedMcpClientError> => {
+    if (
+      options.transport === "streamable_http"
+      && (
+        error instanceof UnauthorizedError
+        || (error instanceof SdkHttpError && error.status === 401)
+      )
+    ) {
+      await options.credentials.onUnauthorizedFailure?.().catch(() => undefined);
+    }
+    return safeClientError(error, action);
+  };
 
   if (options.transport === "streamable_http") {
     assertSafeMcpHeaders(options.staticHeaders ?? {});
@@ -287,7 +307,7 @@ export async function createManagedMcpClient(
     await sdkClient.connect(transport, { timeout: options.startupTimeoutMs });
   } catch (error) {
     await closeSdkClient().catch(() => undefined);
-    throw safeClientError(error, "connect");
+    throw await mapClientError(error, "connect");
   }
   if (stdioTransport) {
     let resolveStdioClosed: (() => void) | null = null;
@@ -321,7 +341,7 @@ export async function createManagedMcpClient(
         );
         return result.tools;
       } catch (error) {
-        throw safeClientError(error, "discover");
+        throw await mapClientError(error, "discover");
       }
     },
     async callTool(name, args) {
@@ -338,7 +358,7 @@ export async function createManagedMcpClient(
             "Managed MCP tool result exceeds the output limit",
           );
         }
-        throw safeClientError(error, "call");
+        throw await mapClientError(error, "call");
       }
     },
     async close() {
