@@ -14,6 +14,7 @@ import { PriorityIcon } from "@/components/PriorityIcon";
 import { LocalAppPanelView } from "@/components/side-panel/LocalAppPanelView";
 import { LocalAppsPanel } from "@/components/side-panel/LocalAppsPanel";
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
+import { SubagentPanelView } from "@/components/side-panel/SubagentPanelView";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TranscriptLocalFilePreview } from "@/components/transcript/TranscriptLocalFilePreview";
 import { Button } from "@/components/ui/button";
@@ -1998,6 +1999,7 @@ export function ChatSidePanel({
   const issueTarget = activeTarget?.kind === "issue" ? activeTarget : null;
   const chatTarget = activeTarget?.kind === "chat" ? activeTarget : null;
   const sideChatTarget = activeTarget?.kind === "side_chat" ? activeTarget : null;
+  const subagentTarget = activeTarget?.kind === "subagent" ? activeTarget : null;
   const automationTarget = activeTarget?.kind === "automation" ? activeTarget : null;
   const libraryFileTarget = activeTarget?.kind === "library_file" ? activeTarget : null;
   const localFileTarget = activeTarget?.kind === "local_file" ? activeTarget : null;
@@ -2461,7 +2463,7 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
-          browserTarget || localAppsTarget || localAppTarget || issueTarget || automationTarget || libraryFilePreviewPath || localFileTarget || sideChatTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          browserTarget || localAppsTarget || localAppTarget || issueTarget || automationTarget || libraryFilePreviewPath || localFileTarget || sideChatTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {browserTargets.map((target) => {
@@ -2552,6 +2554,8 @@ export function ChatSidePanel({
               onRegisterCloseHandler={registerSideChatCloseHandler}
               onReplaceTarget={replaceSidePanelTarget}
             />
+          ) : subagentTarget ? (
+            <SubagentPanelView target={subagentTarget} />
           ) : chatTarget ? (
             <div className="space-y-4" data-testid="chat-side-panel-chat-view">
               <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3">

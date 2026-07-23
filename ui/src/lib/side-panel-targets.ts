@@ -1,3 +1,4 @@
+import type { TranscriptEntry } from "@/agent-runtimes";
 import { parseMentionChipHref } from "@/lib/mention-chips";
 
 export type SidePanelTarget =
@@ -19,6 +20,20 @@ export type SidePanelTarget =
       conversationId: string;
       messageId: string | null;
       label: string;
+    }
+  | {
+      kind: "subagent";
+      callId: string;
+      threadId: string;
+      avatarSeed: string;
+      label: string;
+      senderLabel: string;
+      prompt: string;
+      model: string | null;
+      reasoningEffort: string | null;
+      status: string;
+      response: string | null;
+      entries: TranscriptEntry[];
     }
   | {
       kind: "side_chat";
@@ -130,6 +145,7 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "issue") return `issue:${target.issueId}:${target.commentId ?? ""}`;
   if (target.kind === "automation") return `automation:${target.automationId}`;
   if (target.kind === "chat") return `chat:${target.conversationId}:${target.messageId ?? ""}`;
+  if (target.kind === "subagent") return `subagent:${target.callId}:${target.threadId}`;
   if (target.kind === "side_chat") return target.conversationId
     ? `side-chat:${target.conversationId}`
     : `side-chat:draft:${target.clientMutationId}`;
@@ -178,6 +194,7 @@ export function sidePanelFullPageHref(target: SidePanelTarget): string | null {
     const base = `/messenger/chat/${target.conversationId}`;
     return target.messageId ? `${base}?messageId=${encodeURIComponent(target.messageId)}` : base;
   }
+  if (target.kind === "subagent") return null;
   if (target.kind === "side_chat") {
     if (target.conversationId) return `/messenger/chat/${target.conversationId}`;
     const base = `/messenger/chat/${target.sourceConversationId}`;

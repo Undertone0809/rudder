@@ -9,6 +9,7 @@ import { filterChatAssistantTranscriptEntries, TranscriptChatToolActionRow } fro
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo } from "./RunTranscriptView.semantic";
 import { getTranscriptAgentAvatarImageSrc } from "./TranscriptAgentAvatarIcon";
+import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
 function countOccurrences(value: string, needle: string) {
   return value.split(needle).length - 1;
@@ -2556,10 +2557,31 @@ describe("RunTranscriptView", () => {
                 receiver_thread_ids: ["thread-child-1"],
                 model: "gpt-5.6-sol",
                 reasoning_effort: "high",
+                agents_states: {
+                  "thread-child-1": { status: "completed", message: "Review passed." },
+                },
+                agent_transcripts: {
+                  "thread-child-1": {
+                    status: "completed",
+                    entries: [
+                      {
+                        kind: "thinking",
+                        ts: "2026-07-23T00:00:01.500Z",
+                        text: "I’ll inspect the collaboration renderer.",
+                      },
+                      {
+                        kind: "assistant",
+                        ts: "2026-07-23T00:00:01.750Z",
+                        text: "Review passed.",
+                      },
+                    ],
+                  },
+                },
               }),
               isError: false,
             },
           ]}
+          onOpenAgent={() => undefined}
         />
       </ThemeProvider>,
     );
@@ -2568,9 +2590,101 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("gpt-5.6-sol");
     expect(html).toContain("high reasoning");
     expect(html).toContain('data-transcript-agent-avatar="collab-1"');
+    expect(html).toContain('data-transcript-agent-inspect="thread-child-1"');
+    expect(html).toContain('aria-label="Inspect agent thread-child-1"');
     expect(html).toContain('src="data:image/svg+xml');
     expect(html).not.toContain('data-transcript-action-icon="tool"');
     expect(html).not.toContain("Collab Tool Call");
+  });
+
+  it("merges a later wait snapshot into the inspectable spawn agent", () => {
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "tool_call",
+        ts: "2026-07-23T00:00:01.000Z",
+        name: "spawn_agent",
+        toolUseId: "spawn-1",
+        input: {
+          id: "spawn-1",
+          message: "Review the transcript renderer.",
+          receiver_thread_ids: [],
+        },
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-07-23T00:00:02.000Z",
+        toolUseId: "spawn-1",
+        content: JSON.stringify({
+          status: "completed",
+          receiver_thread_ids: ["thread-child-1"],
+          agents_states: {
+            "thread-child-1": { status: "inProgress" },
+          },
+          agent_transcripts: {
+            "thread-child-1": {
+              status: "inProgress",
+              entries: [{
+                kind: "thinking",
+                ts: "2026-07-23T00:00:01.500Z",
+                text: "Starting the review.",
+              }],
+            },
+          },
+        }),
+        isError: false,
+      },
+      {
+        kind: "tool_call",
+        ts: "2026-07-23T00:00:03.000Z",
+        name: "wait_agent",
+        toolUseId: "wait-1",
+        input: { receiver_thread_ids: ["thread-child-1"] },
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-07-23T00:00:04.000Z",
+        toolUseId: "wait-1",
+        content: JSON.stringify({
+          status: "completed",
+          receiver_thread_ids: ["thread-child-1"],
+          agents_states: {
+            "thread-child-1": { status: "completed", message: "Review passed." },
+          },
+          agent_transcripts: {
+            "thread-child-1": {
+              status: "completed",
+              entries: [
+                {
+                  kind: "thinking",
+                  ts: "2026-07-23T00:00:01.500Z",
+                  text: "Starting the review.",
+                },
+                {
+                  kind: "assistant",
+                  ts: "2026-07-23T00:00:03.500Z",
+                  text: "Review passed.",
+                },
+              ],
+            },
+          },
+        }),
+        isError: false,
+      },
+    ];
+
+    const inspection = collectTranscriptAgentInspections(
+      normalizeTranscript(entries, false),
+    ).get("spawn-1");
+
+    expect(inspection).toMatchObject({
+      threadId: "thread-child-1",
+      status: "completed",
+      response: "Review passed.",
+      entries: [
+        { kind: "thinking", text: "Starting the review." },
+        { kind: "assistant", text: "Review passed." },
+      ],
+    });
   });
 
   it("keeps generated spawn-agent avatars stable per collaboration call", () => {

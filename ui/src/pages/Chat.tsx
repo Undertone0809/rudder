@@ -15,6 +15,7 @@ import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { ProjectIcon } from "@/components/ProjectIdentity";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
+import type { TranscriptAgentInspection } from "@/components/transcript/RunTranscriptView";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -369,6 +370,25 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     ? customGroups.find((group) => group.entries.some((entry) => entry.threadKey === selectedConversationThreadKey))?.id ?? null
     : null; const selectedConversationGenerating = Boolean(selectedConversation && (streamDrafts[selectedConversation.id] || sendInFlightByChatId[selectedConversation.id])); const selectedConversationTitleGenerating = Boolean(selectedConversation && generatingChatTitleIds.has(selectedConversation.id)); const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
   const pendingSelectedConversationProjectId = selectedConversation && pendingProjectContextOverride?.chatId === selectedConversation.id ? pendingProjectContextOverride.projectId : undefined; const activeProjectId = selectedConversation ? (pendingSelectedConversationProjectId ?? selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId; const activePlanMode = pendingPlanModeOverride ?? selectedConversation?.planMode ?? draftPlanMode; const activeSkillAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const activeSkillAgent = activeSkillAgentId ? (agents ?? []).find((agent) => agent.id === activeSkillAgentId) ?? null : null; const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue_project__"}`; const draftIssueProjectKey = draftIssueContext?.projectId ?? "__no_issue_project__"; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}:${draftIssueProjectKey}`;
+  const openSubagentInspection = useCallback((inspection: TranscriptAgentInspection) => {
+    if (!selectedConversation) return;
+    const senderAgentId = selectedConversation.chatRuntime.runtimeAgentId ?? selectedConversation.preferredAgentId;
+    const senderLabel = (agents ?? []).find((agent) => agent.id === senderAgentId)?.name
+      ?? selectedConversation.chatRuntime.sourceLabel
+      ?? "Main agent";
+    const promptLabel = inspection.prompt.replace(/\s+/g, " ").trim();
+    const shortPrompt = promptLabel.length > 42 ? `${promptLabel.slice(0, 41)}…` : promptLabel;
+    const threadIdentity = inspection.threadId.startsWith("thread-")
+      ? inspection.threadId.slice("thread-".length)
+      : inspection.threadId;
+    const threadLabel = threadIdentity.length > 8 ? threadIdentity.slice(-8) : threadIdentity;
+    openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+      kind: "subagent",
+      ...inspection,
+      label: shortPrompt ? `Sub-agent ${threadLabel} · ${shortPrompt}` : `Sub-agent ${threadLabel}`,
+      senderLabel,
+    });
+  }, [agents, openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey, selectedConversation]);
   const draftContextLinks = useMemo(
     () => buildDraftChatContextLinks(
       activeProjectId === NO_PROJECT_ID ? null : activeProjectId,
@@ -2887,7 +2907,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     streamStartedAt={activeStream.createdAt}
                                     assistantMessageBody={activeStream.body}
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
-                                    onOpenFile={openTranscriptFile} />
+                                    onOpenFile={openTranscriptFile}
+                                    onOpenAgent={openSubagentInspection} />
                                   <AssistantDraftItem
                                     body={activeStream.body}
                                     createdAt={activeStream.createdAt}
@@ -2923,7 +2944,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     assistantMessageBody={message.body}
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
                                     defaultOpen={Boolean(openProcessMessageIds[message.id])} onOpenChange={(open) => setProcessOpenForMessage(message.id, open)}
-                                    onOpenFile={openTranscriptFile} /> ) : shouldRenderLazyTranscript && message.transcriptSummary ? (
+                                    onOpenFile={openTranscriptFile}
+                                    onOpenAgent={openSubagentInspection} /> ) : shouldRenderLazyTranscript && message.transcriptSummary ? (
                                   <LazyStreamTranscriptItem
                                     summary={message.transcriptSummary}
                                     state={message.status}

@@ -74,6 +74,7 @@ export interface TranscriptToolCardEntry {
   ts: string;
   endTs?: string;
   name: string;
+  toolUseId?: string;
   input: unknown;
   result?: string;
   isError?: boolean;
@@ -110,6 +111,20 @@ export interface RunTranscriptViewProps {
   hiddenAssistantMessageText?: string | null;
   /** Open a structured local-file target without inferring paths from rendered prose. */
   onOpenFile?: (targetPath: string, label: string) => void;
+  /** Inspect a spawned Codex sub-agent in the read-only Side Panel. */
+  onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+}
+
+export interface TranscriptAgentInspection {
+  callId: string;
+  threadId: string;
+  avatarSeed: string;
+  prompt: string;
+  model: string | null;
+  reasoningEffort: string | null;
+  status: string;
+  response: string | null;
+  entries: TranscriptEntry[];
 }
 
 export type TranscriptBlock =

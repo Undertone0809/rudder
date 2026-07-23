@@ -253,6 +253,7 @@ function mergeCollaborationToolResultInput(
       ? resultRecord.receiverThreadIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
       : null;
   const agentsStates = asRecord(resultRecord.agents_states) ?? asRecord(resultRecord.agentsStates);
+  const agentTranscripts = asRecord(resultRecord.agent_transcripts) ?? asRecord(resultRecord.agentTranscripts);
 
   block.input = {
     ...inputRecord,
@@ -262,6 +263,7 @@ function mergeCollaborationToolResultInput(
     ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
     ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {}),
     ...(agentsStates ? { agents_states: agentsStates } : {}),
+    ...(agentTranscripts ? { agent_transcripts: agentTranscripts } : {}),
   };
 }
 

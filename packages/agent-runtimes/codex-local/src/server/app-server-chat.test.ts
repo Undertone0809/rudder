@@ -67,6 +67,39 @@ rl.on("line", (line) => {
     send({ id: message.id, result: { thread: { id: threadId } } });
     return;
   }
+  if (message.method === "thread/read") {
+    send({
+      id: message.id,
+      result: {
+        thread: {
+          id: message.params.threadId,
+          turns: [{
+            id: "turn-child-1",
+            status: "completed",
+            items: [
+              {
+                type: "userMessage",
+                id: "child-user-1",
+                content: [{ type: "text", text: "Review the transcript renderer for collaboration events." }],
+              },
+              {
+                type: "reasoning",
+                id: "child-reasoning-1",
+                summary: ["I’ll inspect the collaboration rendering path."],
+                content: [],
+              },
+              {
+                type: "agentMessage",
+                id: "child-agent-1",
+                text: "Review passed.",
+              },
+            ],
+          }],
+        },
+      },
+    });
+    return;
+  }
   if (message.method === "turn/start") {
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
@@ -300,11 +333,50 @@ describe("executeCodexAppServerChat", () => {
         reasoning_effort: "high",
         sender_thread_id: "thread-app-1",
         receiver_thread_ids: ["thread-child-1"],
-        agents_states: {
-          "thread-child-1": { status: "completed", message: "Review passed." },
+      agents_states: {
+        "thread-child-1": { status: "completed", message: "Review passed." },
+      },
+      agent_transcripts: {
+        "thread-child-1": {
+          status: "completed",
+          entries: [
+            {
+              kind: "thinking",
+              ts: "2026-07-23T00:00:00.000Z",
+              text: "I’ll inspect the collaboration rendering path.",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-07-23T00:00:00.000Z",
+              text: "Review passed.",
+            },
+          ],
         },
-      }),
-      isError: false,
+      },
+    }),
+    isError: false,
+  });
+
+    const collabResult = entries.find((entry) => entry.kind === "tool_result");
+    const collabPayload = collabResult?.kind === "tool_result"
+      ? JSON.parse(collabResult.content) as Record<string, unknown>
+      : null;
+    expect(collabPayload).toMatchObject({
+      agent_transcripts: {
+        "thread-child-1": {
+          status: "completed",
+          entries: [
+            {
+              kind: "thinking",
+              text: "I’ll inspect the collaboration rendering path.",
+            },
+            {
+              kind: "assistant",
+              text: "Review passed.",
+            },
+          ],
+        },
+      },
     });
     expect(entries).not.toContainEqual(expect.objectContaining({
       kind: "system",

@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStatus, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
+import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
+import { transcriptAgentInspectionForTool } from "./TranscriptAgentInspection";
+
+const EMPTY_AGENT_INSPECTIONS = new Map<string, TranscriptAgentInspection>();
 
 export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTranscriptAction[] {
   const actions: ChatTranscriptAction[] = [];
@@ -31,6 +34,7 @@ export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTra
           ts: block.ts,
           endTs: block.endTs,
           name: block.name,
+          toolUseId: block.toolUseId,
           input: block.input,
           result: block.result,
           isError: block.isError,
@@ -195,6 +199,8 @@ export function TranscriptChatToolActionRow({
   defaultOpenOnError = false,
   highlightError = true,
   onOpenFile,
+  agentInspection,
+  onOpenAgent,
   quiet = true,
 }: {
   block: TranscriptToolCardEntry;
@@ -203,6 +209,8 @@ export function TranscriptChatToolActionRow({
   defaultOpenOnError?: boolean;
   highlightError?: boolean;
   onOpenFile?: (targetPath: string, label: string) => void;
+  agentInspection?: TranscriptAgentInspection | null;
+  onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   quiet?: boolean;
 }) {
   const semantic = describeToolSemanticInfo(block.name, block.input);
@@ -249,6 +257,10 @@ export function TranscriptChatToolActionRow({
     if (inline || !canExpand) return;
     setOpen((value) => !value);
   };
+  const inspectableAgent = agentInspection && onOpenAgent ? agentInspection : null;
+  const inspectAgent = inspectableAgent && onOpenAgent
+    ? () => onOpenAgent(inspectableAgent)
+    : null;
 
   return (
     <div
@@ -310,9 +322,14 @@ export function TranscriptChatToolActionRow({
         <button
           type="button"
           className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}
-          onClick={toggleDetails}
-          aria-expanded={canExpand && !inline ? open : undefined}
-          aria-label={canExpand && !inline ? detailLabel : undefined}
+          onClick={inspectAgent ?? toggleDetails}
+          aria-expanded={!inspectAgent && canExpand && !inline ? open : undefined}
+          aria-label={inspectAgent
+            ? `Inspect agent ${inspectableAgent?.threadId}`
+            : canExpand && !inline
+              ? detailLabel
+              : undefined}
+          data-transcript-agent-inspect={inspectAgent ? inspectableAgent?.threadId : undefined}
         >
           <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
           <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
@@ -328,7 +345,7 @@ export function TranscriptChatToolActionRow({
               {statusText}
             </span>
           ) : null}
-          {canExpand && !inline ? (
+          {canExpand && !inline && !inspectAgent ? (
             <span
               className={cn(
                 "inline-flex h-5 w-5 items-center justify-center text-muted-foreground",
@@ -387,6 +404,8 @@ export function TranscriptChatActionRow({
   defaultOpenOnError = false,
   highlightError = true,
   onOpenFile,
+  agentInspections = EMPTY_AGENT_INSPECTIONS,
+  onOpenAgent,
   quiet = true,
 }: {
   action: ChatTranscriptAction;
@@ -395,6 +414,8 @@ export function TranscriptChatActionRow({
   defaultOpenOnError?: boolean;
   highlightError?: boolean;
   onOpenFile?: (targetPath: string, label: string) => void;
+  agentInspections?: Map<string, TranscriptAgentInspection>;
+  onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   quiet?: boolean;
 }) {
   if (action.type === "stdout") {
@@ -409,6 +430,8 @@ export function TranscriptChatActionRow({
       defaultOpenOnError={defaultOpenOnError}
       highlightError={highlightError}
       onOpenFile={onOpenFile}
+      agentInspection={transcriptAgentInspectionForTool(action.entry, agentInspections)}
+      onOpenAgent={onOpenAgent}
       quiet={quiet}
     />
   );
@@ -494,6 +517,8 @@ export function TranscriptChatActionGroup({
   groupIndex,
   groupCount,
   onOpenFile,
+  agentInspections = EMPTY_AGENT_INSPECTIONS,
+  onOpenAgent,
 }: {
   actions: ChatTranscriptAction[];
   density: TranscriptDensity;
@@ -501,6 +526,8 @@ export function TranscriptChatActionGroup({
   groupIndex: number;
   groupCount: number;
   onOpenFile?: (targetPath: string, label: string) => void;
+  agentInspections?: Map<string, TranscriptAgentInspection>;
+  onOpenAgent?: (agent: TranscriptAgentInspection) => void;
 }) {
   const compact = density === "compact";
   const singleAction = actions[0];
@@ -532,6 +559,8 @@ export function TranscriptChatActionGroup({
           action={singleAction}
           density={density}
           inline
+          agentInspections={agentInspections}
+          onOpenAgent={onOpenAgent}
         />
       </div>
     );
@@ -546,6 +575,8 @@ export function TranscriptChatActionGroup({
           defaultOpenOnError={false}
           highlightError={!detailVariant}
           onOpenFile={onOpenFile}
+          agentInspections={agentInspections}
+          onOpenAgent={onOpenAgent}
           quiet={!detailVariant}
         />
       </div>
@@ -610,6 +641,8 @@ export function TranscriptChatActionGroup({
               action={action}
               density={density}
               onOpenFile={onOpenFile}
+              agentInspections={agentInspections}
+              onOpenAgent={onOpenAgent}
               quiet={!detailVariant}
             />
           ))}
@@ -626,6 +659,8 @@ export function TranscriptChatTurn({
   variant = "chat",
   onMarkdownLinkClick,
   onOpenFile,
+  agentInspections = EMPTY_AGENT_INSPECTIONS,
+  onOpenAgent,
 }: {
   turn: ChatTranscriptTurn;
   density: TranscriptDensity;
@@ -633,6 +668,8 @@ export function TranscriptChatTurn({
   variant?: "chat" | "detail";
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   onOpenFile?: (targetPath: string, label: string) => void;
+  agentInspections?: Map<string, TranscriptAgentInspection>;
+  onOpenAgent?: (agent: TranscriptAgentInspection) => void;
 }) {
   const detailVariant = variant === "detail";
   const segments = segmentChatTranscriptBlocks(turn.blocks);
@@ -659,6 +696,8 @@ export function TranscriptChatTurn({
               groupIndex={segments.slice(0, index).filter((item) => item.type === "actions").length}
               groupCount={actionGroupCount}
               onOpenFile={onOpenFile}
+              agentInspections={agentInspections}
+              onOpenAgent={onOpenAgent}
             />
           )
       ))}
@@ -852,6 +891,8 @@ export function TranscriptChatTimeline({
   showDeveloperDiagnostics,
   onMarkdownLinkClick,
   onOpenFile,
+  agentInspections,
+  onOpenAgent,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
@@ -863,6 +904,8 @@ export function TranscriptChatTimeline({
   showDeveloperDiagnostics: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   onOpenFile?: (targetPath: string, label: string) => void;
+  agentInspections: Map<string, TranscriptAgentInspection>;
+  onOpenAgent?: (agent: TranscriptAgentInspection) => void;
 }) {
   const timelineEntries = useMemo(
     () => filterChatAssistantTranscriptEntries(entries, {
@@ -897,6 +940,8 @@ export function TranscriptChatTimeline({
           thinkingClassName={thinkingClassName}
           onMarkdownLinkClick={onMarkdownLinkClick}
           onOpenFile={onOpenFile}
+          agentInspections={agentInspections}
+          onOpenAgent={onOpenAgent}
         />
       ))}
     </div>

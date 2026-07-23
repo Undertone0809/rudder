@@ -310,6 +310,45 @@ function normalizeCollabAgentToolName(tool: string): string {
   }
 }
 
+function parseCollabAgentTranscriptItems(items: unknown[], fallbackTs: string): TranscriptEntry[] {
+  return items.flatMap((rawItem) => {
+    const item = asRecord(rawItem);
+    if (!item) return [];
+    const ts = firstString(item.completedAt, item.startedAt, item.createdAt, item.updatedAt) || fallbackTs;
+    const type = asString(item.type);
+    if (
+      type === "command_execution"
+      || type === "web_search"
+      || type === "mcp_tool_call"
+      || type === "collab_agent_tool_call"
+    ) {
+      return [
+        ...parseCodexItem(item, ts, "started"),
+        ...parseCodexItem(item, ts, "completed"),
+      ];
+    }
+    return parseCodexItem(item, ts, "completed");
+  });
+}
+
+function parseCollabAgentTranscripts(item: Record<string, unknown>, ts: string) {
+  const transcripts = asRecord(item.agentTranscripts) ?? asRecord(item.agent_transcripts);
+  if (!transcripts) return null;
+
+  const parsed = Object.fromEntries(
+    Object.entries(transcripts).flatMap(([threadId, rawSnapshot]) => {
+      const snapshot = asRecord(rawSnapshot);
+      if (!snapshot) return [];
+      const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+      return [[threadId, {
+        status: asString(snapshot.status, "unknown"),
+        entries: parseCollabAgentTranscriptItems(items, ts),
+      }]];
+    }),
+  );
+  return Object.keys(parsed).length > 0 ? parsed : null;
+}
+
 function parseCollabAgentToolCallItem(
   item: Record<string, unknown>,
   ts: string,
@@ -341,6 +380,7 @@ function parseCollabAgentToolCallItem(
   }
 
   const status = asString(item.status, "completed");
+  const agentTranscripts = parseCollabAgentTranscripts(item, ts);
   return [{
     kind: "tool_result",
     ts,
@@ -354,6 +394,7 @@ function parseCollabAgentToolCallItem(
       ...(asString(item.senderThreadId) ? { sender_thread_id: asString(item.senderThreadId) } : {}),
       receiver_thread_ids: receiverThreadIds,
       agents_states: agentsStates,
+      ...(agentTranscripts ? { agent_transcripts: agentTranscripts } : {}),
     }),
     isError: status === "failed" || isToolError(item),
   }];

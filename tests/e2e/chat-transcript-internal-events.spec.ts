@@ -165,7 +165,71 @@ test("shows concrete Codex spawn-agent details in Messenger process activity", a
             model: "gpt-5.6-sol",
             reasoning_effort: "high",
             agents_states: {
+              "thread-child-1": { status: "inProgress" },
+            },
+            agent_transcripts: {
+              "thread-child-1": {
+                status: "inProgress",
+                entries: [
+                  {
+                    kind: "thinking",
+                    ts: "2026-07-23T00:00:01.250Z",
+                    text: "I’ll inspect how collaboration rows are normalized and rendered.",
+                  },
+                ],
+              },
+            },
+          }),
+          isError: false,
+        },
+        {
+          kind: "tool_call",
+          ts: "2026-07-23T00:00:01.500Z",
+          name: "wait_agent",
+          toolUseId: "wait-agent-1",
+          input: { receiver_thread_ids: ["thread-child-1"] },
+        },
+        {
+          kind: "tool_result",
+          ts: "2026-07-23T00:00:02.000Z",
+          toolUseId: "wait-agent-1",
+          toolName: "wait_agent",
+          content: JSON.stringify({
+            status: "completed",
+            receiver_thread_ids: ["thread-child-1"],
+            agents_states: {
               "thread-child-1": { status: "completed", message: "Review passed." },
+            },
+            agent_transcripts: {
+              "thread-child-1": {
+                status: "completed",
+                entries: [
+                  {
+                    kind: "thinking",
+                    ts: "2026-07-23T00:00:01.250Z",
+                    text: "I’ll inspect how collaboration rows are normalized and rendered.",
+                  },
+                  {
+                    kind: "tool_call",
+                    ts: "2026-07-23T00:00:01.500Z",
+                    name: "command_execution",
+                    toolUseId: "child-command-1",
+                    input: { command: "rg -n \"spawn_agent\" ui/src/components/transcript" },
+                  },
+                  {
+                    kind: "tool_result",
+                    ts: "2026-07-23T00:00:01.750Z",
+                    toolUseId: "child-command-1",
+                    content: "ui/src/components/transcript/RunTranscriptView.semantic.tsx",
+                    isError: false,
+                  },
+                  {
+                    kind: "assistant",
+                    ts: "2026-07-23T00:00:02.000Z",
+                    text: "Review passed.",
+                  },
+                ],
+              },
             },
           }),
           isError: false,
@@ -186,14 +250,27 @@ test("shows concrete Codex spawn-agent details in Messenger process activity", a
   await expect(page.getByText("The independent review passed.", { exact: true })).toBeVisible();
   const transcript = page.getByTestId("chat-transcript-item");
   await transcript.getByRole("button").first().click();
+  await transcript.getByRole("button", { name: "Expand tool activity" }).click();
   await expect(transcript).toContainText(
     "Spawned agent thread-child-1: Review the transcript renderer for collaboration events.",
   );
   await expect(transcript).toContainText("gpt-5.6-sol");
   await expect(transcript).toContainText("high reasoning");
-  await expect(transcript.locator('[data-transcript-agent-avatar="collab-agent-1"]')).toBeVisible();
+  await expect(transcript.locator('[data-transcript-agent-avatar="collab-agent-1"]').first()).toBeVisible();
   await expect(transcript).not.toContainText("Collab Tool Call");
-  await page.screenshot({ path: "/tmp/rudder-spawn-agent-transcript-details.png", fullPage: true });
+  await transcript.locator('[data-transcript-agent-inspect="thread-child-1"]').click();
+
+  const sidePanel = page.getByTestId("chat-side-panel");
+  await expect(sidePanel).toBeVisible();
+  await expect(sidePanel.getByText(/Sub-agent child-1 · Review the transcript renderer/, { exact: false }).first()).toBeVisible();
+  await expect(sidePanel.getByText("Transcript Delegation Agent", { exact: true })).toBeVisible();
+  await expect(sidePanel.getByText("Review the transcript renderer for collaboration events.", { exact: true })).toBeVisible();
+  await expect(sidePanel.getByText("I’ll inspect how collaboration rows are normalized and rendered.", { exact: true })).toBeVisible();
+  await expect(sidePanel.getByText("Searched \"spawn_agent\" in ui/src/components/transcript", { exact: true })).toBeVisible();
+  await expect(sidePanel.getByText("Review passed.", { exact: true })).toBeVisible();
+  await expect(sidePanel.getByRole("textbox")).toHaveCount(0);
+  await expect(sidePanel.getByRole("button", { name: /send|resume|message agent/i })).toHaveCount(0);
+  await page.screenshot({ path: "/tmp/rudder-spawn-agent-side-panel.png", fullPage: true });
 });
 
 test("does not show an empty transcript block when Messenger has only internal lifecycle entries", async ({ page }) => {

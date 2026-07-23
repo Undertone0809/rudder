@@ -7,9 +7,10 @@ import { TranscriptChatTimeline } from "./RunTranscriptView.chat";
 import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
+import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
 export { resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget } from "./RunTranscriptView.common";
-export type { TranscriptDensity, TranscriptMode, TranscriptPresentation } from "./RunTranscriptView.common";
+export type { TranscriptAgentInspection, TranscriptDensity, TranscriptMode, TranscriptPresentation } from "./RunTranscriptView.common";
 export { normalizeTranscript } from "./RunTranscriptView.normalize";
 
 function trailingEntriesByVisibleLimit(
@@ -43,6 +44,7 @@ export function RunTranscriptView({
   hideAssistantMessages = false,
   hiddenAssistantMessageText = null,
   onOpenFile,
+  onOpenAgent,
 }: RunTranscriptViewProps) {
   const toastContext = useOptionalToast();
   const handleMarkdownLinkClick = useCallback<TranscriptMarkdownLinkClickHandler>(({ event, href }) => {
@@ -107,6 +109,10 @@ export function RunTranscriptView({
   );
   const visibleBlocks = limit ? blocks.slice(-limit) : blocks;
   const visibleNiceEntries = trailingEntriesByVisibleLimit(renderableEntries, limit);
+  const agentInspections = useMemo(
+    () => collectTranscriptAgentInspections(blocks),
+    [blocks],
+  );
 
   if (renderableEntries.length === 0) {
     if (!emptyMessage) return null;
@@ -163,6 +169,8 @@ export function RunTranscriptView({
           showDeveloperDiagnostics={showDeveloperDiagnostics}
           onMarkdownLinkClick={handleMarkdownLinkClick}
           onOpenFile={handleOpenFile}
+          agentInspections={agentInspections}
+          onOpenAgent={onOpenAgent}
         />
       </div>
     );

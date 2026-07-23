@@ -16,6 +16,8 @@ import {
 const APP_SERVER_INTERRUPT_TIMEOUT_MS = 1_000;
 const APP_SERVER_PROCESS_HARD_DEADLINE_MS = 2_000;
 const APP_SERVER_CAPTURE_LIMIT = 8 * 1024 * 1024;
+const APP_SERVER_SUBAGENT_ITEM_LIMIT = 256;
+const APP_SERVER_SUBAGENT_READ_TIMEOUT_MS = 1_500;
 
 type PackageJson = { version?: string };
 
@@ -120,6 +122,27 @@ function normalizeThreadItem(value: unknown): JsonRecord {
     return { ...item, type: "web_search" };
   }
   return { ...item, type: type || "unknown" };
+}
+
+function readThreadSnapshot(response: unknown): { status: string; items: JsonRecord[] } | null {
+  const thread = asRecord(asRecord(response)?.thread);
+  if (!thread) return null;
+  const turns = Array.isArray(thread.turns)
+    ? thread.turns.map(asRecord).filter((turn): turn is JsonRecord => Boolean(turn))
+    : [];
+  const items = turns
+    .flatMap((turn) => Array.isArray(turn.items) ? turn.items : [])
+    .map(normalizeThreadItem)
+    .slice(-APP_SERVER_SUBAGENT_ITEM_LIMIT);
+  const lastTurn = turns.at(-1);
+  const status = asString(lastTurn?.status) || asString(thread.status) || "unknown";
+  return { status, items };
+}
+
+function collabAgentReceiverThreadIds(item: JsonRecord): string[] {
+  return Array.isArray(item.receiverThreadIds)
+    ? item.receiverThreadIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [];
 }
 
 function usageFromNotification(params: JsonRecord): UsageSummary | null {
@@ -344,8 +367,27 @@ export async function executeCodexAppServerChat(
         return;
       }
       if (notification.method === "item/started" || notification.method === "item/completed") {
-        const item = normalizeThreadItem(params.item);
+        let item = normalizeThreadItem(params.item);
         if (item.type === "userMessage") return;
+        if (notification.method === "item/completed" && item.type === "collab_agent_tool_call") {
+          const snapshots = await Promise.all(collabAgentReceiverThreadIds(item).map(async (receiverThreadId) => {
+            try {
+              const response = await client.request("thread/read", {
+                threadId: receiverThreadId,
+                includeTurns: true,
+              }, APP_SERVER_SUBAGENT_READ_TIMEOUT_MS);
+              return [receiverThreadId, readThreadSnapshot(response)] as const;
+            } catch {
+              return [receiverThreadId, null] as const;
+            }
+          }));
+          const agentTranscripts = Object.fromEntries(
+            snapshots.filter((entry): entry is readonly [string, NonNullable<ReturnType<typeof readThreadSnapshot>>] => Boolean(entry[1])),
+          );
+          if (Object.keys(agentTranscripts).length > 0) {
+            item = { ...item, agentTranscripts };
+          }
+        }
         if (notification.method === "item/completed" && item.type === "agent_message") {
           finalAgentText = asString(item.text) || finalAgentText;
         }
