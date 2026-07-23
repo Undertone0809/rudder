@@ -44,6 +44,7 @@ const mockChatService = vi.hoisted(() => ({
   getMessage: vi.fn(),
   addMessage: vi.fn(),
   updateMessage: vi.fn(),
+  updateMessageStructuredPayload: vi.fn(),
   updateMessageInternalInlineVisuals: vi.fn(),
   markInterruptedStreamingMessages: vi.fn(),
   addUserChatMessage: vi.fn(),
@@ -160,6 +161,10 @@ const mockChatWorkManifest = vi.hoisted(() => ({
   getConversationManifest: vi.fn(),
 }));
 
+const mockChatInlineAnnotations = vi.hoisted(() => ({
+  prepare: vi.fn(),
+}));
+
 const mockChatSteerMessages = vi.hoisted(() => ({
   beginControlAction: vi.fn(),
   scheduleContinuation: vi.fn(),
@@ -245,6 +250,37 @@ vi.mock("../services/chat-work-manifest.js", () => ({
 vi.mock("../services/chat-steer-messages.js", () => ({
   chatSteerMessageService: () => mockChatSteerMessages,
 }));
+
+vi.mock("../services/chat-inline-annotations.js", async () => {
+  const actual = await vi.importActual<typeof import("../services/chat-inline-annotations.js")>(
+    "../services/chat-inline-annotations.js",
+  );
+  return {
+    ...actual,
+    chatInlineAnnotationService: () => mockChatInlineAnnotations,
+  };
+});
+
+const annotationConversationId = "10000000-0000-4000-8000-000000000001";
+const annotationSourceMessageId = "10000000-0000-4000-8000-000000000002";
+
+function createInlineAnnotation(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "10000000-0000-4000-8000-000000000003",
+    surface: "assistant_body",
+    selectedText: "Quoted assistant response",
+    comment: "Explain this boundary",
+    sourceConversationId: annotationConversationId,
+    sourceMessageId: annotationSourceMessageId,
+    sourceHash: "a".repeat(64),
+    start: 0,
+    end: 10,
+    prefix: "",
+    suffix: "",
+    attachmentIds: [],
+    ...overrides,
+  };
+}
 
 function createConversation(overrides: Partial<Record<string, unknown>> = {}) {
   const now = new Date("2026-03-26T08:00:00.000Z");
@@ -493,9 +529,37 @@ describe("chat routes", () => {
       originalFilename: "image.png",
     });
     mockStorage.deleteObject.mockResolvedValue(undefined);
-    mockChatService.addUserChatMessage.mockImplementation(async (_cid: string, _orgId: string, body: string) =>
-      createMessage("message-user", "user", "message", body),
-    );
+    mockChatService.addUserChatMessage.mockImplementation(async (
+      _cid: string,
+      _orgId: string,
+      body: string,
+      _editUserMessageId?: string | null,
+      options?: { structuredPayload?: Record<string, unknown> | null },
+    ) => ({
+      ...createMessage("message-user", "user", "message", body),
+      structuredPayload: options?.structuredPayload ?? null,
+    }));
+    mockChatService.updateMessageStructuredPayload.mockImplementation(async (
+      _conversationId: string,
+      messageId: string,
+      structuredPayload: Record<string, unknown> | null,
+    ) => ({
+      ...createMessage(messageId, "user", "message", ""),
+      structuredPayload,
+    }));
+    mockChatInlineAnnotations.prepare.mockImplementation(async (input: {
+      annotations: Array<Record<string, unknown>>;
+    }) => ({
+      annotations: input.annotations.map(({ attachmentFileIndexes: _ignored, ...annotation }) => annotation),
+      attachmentFileIndexesByAnnotationId: new Map(
+        input.annotations.map((annotation) => [
+          annotation.id,
+          Array.isArray(annotation.attachmentFileIndexes)
+            ? annotation.attachmentFileIndexes
+            : [],
+        ]),
+      ),
+    }));
     mockChatService.updateMessage.mockImplementation(async (_conversationId: string, messageId: string, input: Record<string, unknown>) => ({
       ...createMessage(
         messageId,
@@ -1510,6 +1574,82 @@ describe("chat routes", () => {
     }
   });
 
+  it("rejects an invalid response annotation before persisting a user message or invoking the assistant", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatInlineAnnotations.prepare.mockRejectedValueOnce(
+      unprocessable("Annotation source hash does not match persisted source"),
+    );
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages`)
+      .send({
+        body: "",
+        inlineAnnotations: [createInlineAnnotation()],
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("source hash");
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockStorage.putFile).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("persists canonical annotations while keeping quote and comment text out of activity details", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    const annotation = createInlineAnnotation();
+    const assistantMessage = {
+      ...createMessage("message-assistant", "assistant", "message", "Explanation"),
+      conversationId: annotationConversationId,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockImplementation(async () => [{
+      ...createMessage("message-user", "user", "message", "Explain this"),
+      conversationId: annotationConversationId,
+      structuredPayload: { inlineAnnotations: [annotation] },
+    }]);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValueOnce({
+      outcome: "completed",
+      partialBody: "Explanation",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Explanation",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages`)
+      .send({
+        body: "Explain this",
+        inlineAnnotations: [annotation],
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledWith(
+      annotationConversationId,
+      "organization-1",
+      "Explain this",
+      null,
+      {
+        structuredPayload: { inlineAnnotations: [annotation] },
+        structuredPayloadProvided: true,
+      },
+    );
+    const userActivity = mockLogActivity.mock.calls
+      .map((call) => call[1])
+      .find((activity) => activity?.details?.role === "user");
+    expect(userActivity?.details).toMatchObject({
+      annotationCount: 1,
+      annotationSourceMessageIds: [annotationSourceMessageId],
+    });
+    expect(JSON.stringify(userActivity?.details)).not.toContain(annotation.selectedText);
+    expect(JSON.stringify(userActivity?.details)).not.toContain(annotation.comment);
+  });
+
   it("rejects agent-authenticated streaming chat sends before assistant generation", async () => {
     const conversation = createConversation();
     mockChatService.getById.mockResolvedValue(conversation);
@@ -1575,6 +1715,33 @@ describe("chat routes", () => {
     } finally {
       releaseGeneration?.();
     }
+  });
+
+  it("rejects a multipart annotation file index before storing files or creating a generation", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatInlineAnnotations.prepare.mockRejectedValueOnce(
+      unprocessable("Annotation file index does not match an uploaded file"),
+    );
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages/stream`)
+      .field("body", "Explain this")
+      .field("inlineAnnotations", JSON.stringify([
+        createInlineAnnotation({ attachmentFileIndexes: [1] }),
+      ]))
+      .attach("files", Buffer.from("file"), {
+        filename: "annotation.txt",
+        contentType: "text/plain",
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("file index");
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockStorage.putFile).not.toHaveBeenCalled();
+    expect(mockChatService.createAttachment).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
   });
 
   it("rejects local streaming sends to Feishu-bound chat conversations", async () => {
@@ -4494,8 +4661,7 @@ describe("chat routes", () => {
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "Yes.");
 
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
-    mockChatService.createAttachment.mockResolvedValueOnce(attachment);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessageWithAttachment);
     mockChatService.listMessages.mockResolvedValue([userMessageWithAttachment]);
     mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
     mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
@@ -4539,14 +4705,20 @@ describe("chat routes", () => {
       originalFilename: "image.png",
       contentType: "image/png",
     }));
-    expect(mockChatService.createAttachment).toHaveBeenCalledWith(expect.objectContaining({
-      orgId: "organization-1",
-      conversationId: "chat-1",
-      messageId: "message-user",
-      contentType: "image/png",
-      originalFilename: "image.png",
-      createdByUserId: "user-1",
-    }));
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledWith(
+      "chat-1",
+      "organization-1",
+      "Can you see this?",
+      null,
+      expect.objectContaining({
+        attachments: [expect.objectContaining({
+          objectKey: "chats/chat-1/image.png",
+          contentType: "image/png",
+          originalFilename: "image.png",
+          createdByUserId: "user-1",
+        })],
+      }),
+    );
     expect(events[0]).toEqual(expect.objectContaining({
       type: "ack",
       userMessage: expect.objectContaining({
@@ -4560,6 +4732,165 @@ describe("chat routes", () => {
         attachments: [expect.objectContaining({ id: "attachment-1" })],
       })],
     }));
+  });
+
+  it("binds multipart annotation files into the canonical user message before the stream ack", async () => {
+    const attachmentId = "10000000-0000-4000-8000-000000000004";
+    const assetId = "10000000-0000-4000-8000-000000000005";
+    const conversation = createConversation({ id: annotationConversationId });
+    const annotationInput = createInlineAnnotation({ attachmentFileIndexes: [0] });
+    const canonicalAnnotation = createInlineAnnotation({
+      attachmentIds: [attachmentId],
+    });
+    const userMessage = {
+      ...createMessage("10000000-0000-4000-8000-000000000006", "user", "message", "Explain this"),
+      conversationId: annotationConversationId,
+      structuredPayload: {
+        inlineAnnotations: [createInlineAnnotation()],
+      },
+    };
+    const attachment = {
+      id: attachmentId,
+      orgId: "organization-1",
+      conversationId: annotationConversationId,
+      messageId: userMessage.id,
+      assetId,
+      provider: "local_disk",
+      objectKey: "chats/annotation/context.txt",
+      contentType: "text/plain",
+      byteSize: 4,
+      sha256: "sha256",
+      originalFilename: "context.txt",
+      createdByAgentId: null,
+      createdByUserId: "user-1",
+      contentPath: `/api/assets/${assetId}/content`,
+      createdAt: new Date("2026-03-26T08:01:00.000Z"),
+      updatedAt: new Date("2026-03-26T08:01:00.000Z"),
+    };
+    const canonicalUserMessage = {
+      ...userMessage,
+      structuredPayload: { inlineAnnotations: [canonicalAnnotation] },
+      attachments: [attachment],
+    };
+    const assistantMessage = {
+      ...createMessage("message-assistant", "assistant", "message", "Explanation"),
+      conversationId: annotationConversationId,
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(canonicalUserMessage);
+    mockChatService.listMessages.mockResolvedValue([canonicalUserMessage]);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValueOnce({
+      outcome: "completed",
+      partialBody: "Explanation",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Explanation",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages/stream`)
+      .field("body", "Explain this")
+      .field("inlineAnnotations", JSON.stringify([annotationInput]))
+      .attach("files", Buffer.from("file"), {
+        filename: "context.txt",
+        contentType: "text/plain",
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledWith(
+      annotationConversationId,
+      "organization-1",
+      "Explain this",
+      null,
+      expect.objectContaining({
+        structuredPayload: {
+          inlineAnnotations: [createInlineAnnotation()],
+        },
+        structuredPayloadProvided: true,
+        attachments: [expect.objectContaining({
+          originalFilename: "image.png",
+          createdByUserId: "user-1",
+        })],
+        attachmentFileIndexesByAnnotationId: expect.any(Map),
+      }),
+    );
+    expect(events[0]).toMatchObject({
+      type: "ack",
+      userMessage: {
+        id: userMessage.id,
+        structuredPayload: {
+          inlineAnnotations: [canonicalAnnotation],
+        },
+        attachments: [{ id: attachmentId }],
+      },
+    });
+    expect(JSON.stringify(events[0])).not.toContain("attachmentFileIndexes");
+  });
+
+  it("removes staged objects and emits no assistant message when atomic multipart persistence fails", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockRejectedValueOnce(
+      unprocessable("Annotation file attachment could not be rebound to the user message"),
+    );
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages/stream`)
+      .field("body", "Explain this")
+      .field("inlineAnnotations", JSON.stringify([
+        createInlineAnnotation({ attachmentFileIndexes: [0] }),
+      ]))
+      .attach("files", Buffer.from("file"), {
+        filename: "context.txt",
+        contentType: "text/plain",
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockStorage.putFile).toHaveBeenCalledTimes(1);
+    expect(mockStorage.deleteObject).toHaveBeenCalledWith(
+      "organization-1",
+      "chats/chat-1/image.png",
+    );
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+    expect(mockChatService.addMessage).not.toHaveBeenCalled();
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "error",
+        messageId: null,
+      }),
+    ]);
   });
 
   it("keeps copied edit attachments in the stream ack when no new files are uploaded", async () => {
@@ -4886,7 +5217,12 @@ describe("chat routes", () => {
       expect.objectContaining({
         status: "stopped",
         body: "Before stop",
-        transcript: [beforeStopTranscript],
+        transcript: [{
+          ...beforeStopTranscript,
+          generationId: "generation-1",
+          generationSeqStart: 1,
+          generationSeqEnd: 1,
+        }],
       }),
     );
   });
@@ -4981,7 +5317,10 @@ describe("chat routes", () => {
       .map((line) => JSON.parse(line));
 
     expect(events).toContainEqual(expect.objectContaining({ type: "assistant_delta", delta: "Visible prefix" }));
-    expect(events).toContainEqual(expect.objectContaining({ type: "transcript_entry", entry: visibleTranscript }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "transcript_entry",
+      entry: expect.objectContaining(visibleTranscript),
+    }));
     expect(JSON.stringify(events)).not.toContain("unadmitted tail");
     expect(JSON.stringify(events)).not.toContain("Unadmitted transcript");
     expect(mockChatService.updateMessage).not.toHaveBeenCalledWith(
@@ -4999,7 +5338,12 @@ describe("chat routes", () => {
       expect.objectContaining({
         body: "Visible prefix",
         status: "stopped",
-        transcript: [visibleTranscript],
+        transcript: [{
+          ...visibleTranscript,
+          generationId: "generation-1",
+          generationSeqStart: 2,
+          generationSeqEnd: 2,
+        }],
       }),
     );
   });

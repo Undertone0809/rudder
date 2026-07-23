@@ -16,8 +16,8 @@ import {
   chatQueuedMessages,
   organizations
 } from "@rudderhq/db";
-import { sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
@@ -25,6 +25,7 @@ import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 import { chatGenerationProtocolService } from "./chat-generation-protocol.js";
+import { createChatAnnotationMessagePersistence } from "./chats.annotation-persistence.js";
 import {
   ACTIVE_CHAT_GENERATION_STATUSES,
   CHAT_GENERATION_CONTROL_LEASE_MS,
@@ -88,6 +89,7 @@ export function chatService(db: Db) {
   const issueApprovalsSvc = issueApprovalService(db);
   const organizationsSvc = organizationService(db);
   const agentsSvc = agentService(db);
+  const addUserChatMessage = createChatAnnotationMessagePersistence(db, getMessage);
 
   async function ensureConversationUserStates(rows: ConversationRow[], userId: string) {
     if (rows.length === 0) return;
@@ -3542,7 +3544,10 @@ export function chatService(db: Db) {
       };
   }
 
-  async function getMessage(conversationId: string, messageId: string) {
+  async function getMessage(
+    conversationId: string,
+    messageId: string,
+  ): Promise<ChatMessage | null> {
       const row = await db
         .select()
         .from(chatMessages)
@@ -3550,124 +3555,7 @@ export function chatService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
       const [hydrated] = await hydrateMessages([row]);
-      return hydrated ?? null;
-  }
-
-  async function assignLegacyTurnChainForUserMessage(target: MessageRow) {
-    const turnId = randomUUID();
-    const now = new Date();
-    await db
-      .update(chatMessages)
-      .set({ chatTurnId: turnId, turnVariant: 0, updatedAt: now })
-      .where(eq(chatMessages.id, target.id));
-    const following = await db
-      .select()
-      .from(chatMessages)
-      .where(
-        and(eq(chatMessages.conversationId, target.conversationId), gt(chatMessages.createdAt, target.createdAt)),
-      )
-      .orderBy(chatMessages.createdAt);
-    for (const row of following) {
-      if (row.role === "user") break;
-      await db
-        .update(chatMessages)
-        .set({ chatTurnId: turnId, turnVariant: 0, updatedAt: now })
-        .where(eq(chatMessages.id, row.id));
-    }
-  }
-
-  async function supersedeActiveMessagesFrom(conversationId: string, fromCreatedAt: Date) {
-    const now = new Date();
-    await db
-      .update(chatMessages)
-      .set({ supersededAt: now, updatedAt: now })
-      .where(
-        and(
-          eq(chatMessages.conversationId, conversationId),
-          isNull(chatMessages.supersededAt),
-          gte(chatMessages.createdAt, fromCreatedAt),
-        ),
-      );
-  }
-
-  async function copyMessageAttachments(sourceMessageId: string, targetMessageId: string) {
-    const sourceAttachments = await db
-      .select()
-      .from(chatAttachments)
-      .where(eq(chatAttachments.messageId, sourceMessageId))
-      .orderBy(chatAttachments.createdAt);
-    if (sourceAttachments.length === 0) return;
-
-    await db
-      .insert(chatAttachments)
-      .values(
-        sourceAttachments.map((attachment) => ({
-          orgId: attachment.orgId,
-          conversationId: attachment.conversationId,
-          messageId: targetMessageId,
-          assetId: attachment.assetId,
-        })),
-      );
-  }
-
-  async function addUserChatMessage(
-    conversationId: string,
-    orgId: string,
-    body: string,
-    editUserMessageId?: string | null,
-    options: { structuredPayload?: Record<string, unknown> | null } = {},
-  ) {
-    if (editUserMessageId) {
-      let [target] = await db
-        .select()
-        .from(chatMessages)
-        .where(and(eq(chatMessages.id, editUserMessageId), eq(chatMessages.conversationId, conversationId)))
-        .limit(1);
-      if (!target) {
-        throw notFound("Chat message not found");
-      }
-      if (target.role !== "user" || target.kind !== "message") {
-        throw unprocessable("Only plain user messages can be edited");
-      }
-      if (target.supersededAt) {
-        throw unprocessable("Cannot edit a superseded message");
-      }
-      if (!target.chatTurnId) {
-        await assignLegacyTurnChainForUserMessage(target);
-        [target] = await db
-          .select()
-          .from(chatMessages)
-          .where(eq(chatMessages.id, editUserMessageId))
-          .limit(1);
-        if (!target?.chatTurnId) {
-          throw new Error("Failed to assign chat turn metadata");
-        }
-      }
-      await supersedeActiveMessagesFrom(conversationId, target.createdAt);
-      const turnId = target.chatTurnId!;
-      const nextVariant = target.turnVariant + 1;
-      const editedMessage = await addMessage(conversationId, {
-        orgId,
-        role: "user",
-        kind: "message",
-        body,
-        chatTurnId: turnId,
-        turnVariant: nextVariant,
-      });
-      await copyMessageAttachments(target.id, editedMessage.id);
-      return (await getMessage(conversationId, editedMessage.id)) ?? editedMessage;
-    }
-
-    const turnId = randomUUID();
-    return addMessage(conversationId, {
-      orgId,
-      role: "user",
-      kind: "message",
-      body,
-      structuredPayload: options.structuredPayload ?? null,
-      chatTurnId: turnId,
-      turnVariant: 0,
-    });
+      return hydrated ? hydrated as ChatMessage : null;
   }
 
   async function addMessage(
@@ -4558,6 +4446,7 @@ export function chatService(db: Db) {
     getMessageTranscript,
     addMessage,
     updateMessage,
+    updateMessageStructuredPayload,
     updateMessageInternalInlineVisuals,
     markInterruptedStreamingMessages,
     addUserChatMessage,

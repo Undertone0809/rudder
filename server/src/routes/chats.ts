@@ -47,6 +47,7 @@ import {
   steerActiveChatGeneration
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
+import { chatInlineAnnotationService } from "../services/chat-inline-annotations.js";
 import { chatSteerMessageService } from "../services/chat-steer-messages.js";
 import {
   buildChatTitlePromptFromMessages,
@@ -81,6 +82,11 @@ import {
   type ChatBackgroundTimer,
 } from "./chat-background-runtime.js";
 import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
+import {
+  createChatAnnotationRouteHelpers,
+  turnContextFromUserMessage,
+  type ChatTurnContext,
+} from "./chats.annotation-routes.js";
 import { attachGeneratedChatFiles } from "./chats.generated-attachments.js";
 import {
   isMultipartRequest,
@@ -120,6 +126,19 @@ export function chatRoutes(
   const chatTitles = chatTitleGenerationService({ chats: svc, productIntelligence });
   const steerMessages = chatSteerMessageService(db);
   const sideChats = sideChatService(db);
+  const inlineAnnotations = chatInlineAnnotationService(db);
+  const {
+    addAgentAuthoredMessage,
+    addUserMessage,
+    cleanupStoredUserMessageFiles,
+    storeUserMessageFiles,
+  } = createChatAnnotationRouteHelpers({
+    db,
+    storage,
+    chats: svc,
+    logActivity,
+    assertLocalMutationAllowed: assertChatLocalMutationAllowed,
+  });
 
   const CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE =
     "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
@@ -399,88 +418,6 @@ export function chatRoutes(
         runId: requestActor.runId,
       },
     } as unknown as Request;
-  }
-
-  type ChatTurnContext = { chatTurnId: string; turnVariant: number };
-
-  function turnContextFromUserMessage(userMessage: ChatMessage): ChatTurnContext {
-    if (!userMessage.chatTurnId) {
-      throw new Error("User message missing chat turn id");
-    }
-    return { chatTurnId: userMessage.chatTurnId, turnVariant: userMessage.turnVariant };
-  }
-
-  async function addUserMessage(
-    conversation: ChatConversation,
-    body: string,
-    actor: ActorInfo,
-    editUserMessageId?: string | null,
-  ) {
-    assertChatLocalMutationAllowed(conversation);
-    const userMessage = await svc.addUserChatMessage(
-      conversation.id,
-      conversation.orgId,
-      body,
-      editUserMessageId ?? null,
-    );
-
-    await logActivity(db, {
-      orgId: conversation.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.message_added",
-      entityType: "chat",
-      entityId: conversation.id,
-      details: {
-        messageId: userMessage.id,
-        role: "user",
-        kind: "message",
-        editUserMessageId: editUserMessageId ?? null,
-      },
-    });
-
-    return userMessage as ChatMessage;
-  }
-
-  async function addAgentAuthoredMessage(
-    conversation: ChatConversation,
-    body: string,
-    actor: ActorInfo,
-  ) {
-    assertChatLocalMutationAllowed(conversation);
-    if (!actor.agentId) {
-      throw forbidden("Agent authentication required");
-    }
-
-    const message = await svc.addMessage(conversation.id, {
-      orgId: conversation.orgId,
-      role: "assistant",
-      kind: "message",
-      body,
-      replyingAgentId: actor.agentId,
-    }) as ChatMessage;
-
-    await logActivity(db, {
-      orgId: conversation.orgId,
-      actorType: "agent",
-      actorId: actor.agentId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.message_added",
-      entityType: "chat",
-      entityId: conversation.id,
-      details: {
-        messageId: message.id,
-        role: "assistant",
-        kind: "message",
-        replyingAgentId: actor.agentId,
-        source: "agent_direct_message",
-      },
-    });
-
-    return message;
   }
 
   async function attachFilesToUserMessage(
@@ -2413,7 +2350,17 @@ export function chatRoutes(
     res.json(transcript);
   });
 
-  router.post("/chats/:id/messages", validate(addChatMessageSchema), async (req, res) => {
+  router.post(
+    "/chats/:id/messages",
+    (req, res, next) => {
+      res.locals.inlineAnnotationsProvided = Object.hasOwn(
+        req.body ?? {},
+        "inlineAnnotations",
+      );
+      next();
+    },
+    validate(addChatMessageSchema),
+    async (req, res) => {
     const conversation = await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
@@ -2433,6 +2380,16 @@ export function chatRoutes(
       return;
     }
 
+    const inlineAnnotationsProvided = res.locals.inlineAnnotationsProvided === true;
+    const preparedAnnotations = inlineAnnotationsProvided
+      ? await inlineAnnotations.prepare({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        annotations: req.body.inlineAnnotations,
+        uploadedFileCount: 0,
+        editUserMessageId: req.body.editUserMessageId ?? null,
+      })
+      : null;
     const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
     if (!assistantAvailability.available) {
       res.status(503).json({ error: assistantAvailability.error });
@@ -2454,6 +2411,9 @@ export function chatRoutes(
         payload: {
           body: req.body.body,
           attachmentIds: [],
+          ...(inlineAnnotationsProvided
+            ? { inlineAnnotations: preparedAnnotations?.annotations ?? [] }
+            : {}),
           skillRefs: [],
           projectId: null,
           accessMode: null,
@@ -2475,6 +2435,10 @@ export function chatRoutes(
         req.body.body,
         actor,
         req.body.editUserMessageId ?? null,
+        {
+          provided: inlineAnnotationsProvided,
+          prepared: preparedAnnotations,
+        },
       );
       await touchSideChat(req, conversation as ChatConversation);
       if (!req.body.editUserMessageId) {
@@ -2569,7 +2533,8 @@ export function chatRoutes(
     } finally {
       releaseGeneration();
     }
-  });
+    },
+  );
 
   registerChatStreamRoutes({
     router,
@@ -2600,6 +2565,9 @@ export function chatRoutes(
     assertContextLinksBelongToCompany,
     turnContextFromUserMessage,
     addUserMessage,
+    inlineAnnotations,
+    storeUserMessageFiles,
+    cleanupStoredUserMessageFiles,
     startChatTitleGeneration,
     attachFilesToUserMessage,
     loadAssistantInput,

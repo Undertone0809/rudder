@@ -574,9 +574,21 @@ export interface ChatOperationProposalDecision {
   decidedAt: string | null;
 }
 
+export interface ChatTranscriptGenerationProvenance {
+  generationId: string;
+  generationSeqStart: number;
+  generationSeqEnd: number;
+}
+
+export type ChatStreamTranscriptTextEntry = {
+  kind: "assistant" | "thinking";
+  ts: string;
+  text: string;
+  delta?: boolean;
+} & Partial<ChatTranscriptGenerationProvenance>;
+
 export type ChatStreamTranscriptEntry =
-  | { kind: "assistant"; ts: string; text: string; delta?: boolean }
-  | { kind: "thinking"; ts: string; text: string; delta?: boolean }
+  | ChatStreamTranscriptTextEntry
   | { kind: "user"; ts: string; text: string }
   | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string }
   | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean }
