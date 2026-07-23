@@ -1108,6 +1108,32 @@ export function AutomationDetail({
       )}>
         <main className={cn("min-w-0 space-y-6", embedded && "contents")}>
           <section className={cn("max-w-none space-y-3", embedded && "order-1")}>
+            {surface === "workbench" ? (
+              <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border/60 pb-3">
+                <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
+                  <span className={cn(
+                    "h-2 w-2 shrink-0 rounded-full",
+                    automationEnabled ? "bg-emerald-500" : "bg-muted-foreground/45",
+                  )} />
+                  <span className="truncate">{automationLabel}</span>
+                  <span className={cn("truncate font-normal", editSyncClassName)}>{editSyncLabel}</span>
+                </div>
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  className="shrink-0"
+                  aria-label="Run now"
+                  disabled={runAutomation.isPending || !automationEnabled}
+                  onClick={() => runAutomation.mutate()}
+                >
+                  {runAutomation.isPending
+                    ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    : <Play className="h-3.5 w-3.5" />}
+                  {runAutomation.isPending ? "Starting..." : "Run now"}
+                </Button>
+              </div>
+            ) : null}
             <textarea
               ref={titleInputRef}
               className={cn(

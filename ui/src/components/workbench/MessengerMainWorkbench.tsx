@@ -280,6 +280,10 @@ function MainLiveSurfacePanel({
     onCloseTarget: closeTarget,
     onCycleTab: cycleTarget,
     onOpenTarget: (nextTarget: SidePanelTarget) => {
+      if (nextTarget.kind === "chat") {
+        navigate(`/messenger/chat/${nextTarget.conversationId}`);
+        return;
+      }
       if (nextTarget.kind === "browser") {
         const opened = workbench.createSessionBrowser(nextTarget);
         if (opened.admitted) {
@@ -776,7 +780,7 @@ export function MessengerMainWorkbench({
   ]);
 
   const handleWorkbenchKeyDown = useCallback((
-    event: ReactKeyboardEvent<HTMLDivElement>,
+    event: ReactKeyboardEvent<HTMLDivElement> | KeyboardEvent,
   ) => {
     if (event.defaultPrevented) return;
     if (
@@ -814,6 +818,24 @@ export function MessengerMainWorkbench({
     workbench.activeTab,
     workbench.createSessionBrowser,
   ]);
+
+  useEffect(() => {
+    const handleDocumentKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const mainRuntimeHost = target.closest<HTMLElement>(
+        "[data-testid='live-surface-runtime-host'][data-owner-id^='main:']",
+      );
+      const belongsToOrganizationRuntime = mainRuntimeHost
+        ?.dataset.ownerId?.startsWith(`main:${organizationId}:`) ?? false;
+      if (!belongsToOrganizationRuntime) return;
+      handleWorkbenchKeyDown(event);
+    };
+    document.addEventListener("keydown", handleDocumentKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", handleDocumentKeyDown, true);
+    };
+  }, [handleWorkbenchKeyDown, organizationId]);
 
   const panels = useMemo(() => workbench.tabs.map((tab) => {
     const active = tab.viewInstanceId === workbench.activeViewInstanceId;

@@ -513,6 +513,7 @@ describe("AutomationDetail", () => {
       ?.getAttribute("data-surface")).toBe("workbench");
     expect(container.querySelector('[data-testid="automation-detail-panel-header"]'))
       .toBeNull();
+    expect(container.querySelector('button[aria-label="Run now"]')).toBeTruthy();
     expect(container.textContent).toContain("Details");
     expect(mockSetHeaderActions.mock.calls.some(([actions]) => actions !== null))
       .toBe(false);

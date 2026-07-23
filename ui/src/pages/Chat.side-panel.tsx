@@ -48,6 +48,7 @@ import { useBrowserSavedViewMetadataPersister } from "@/hooks/useBrowserSavedVie
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import { createBrowserSidePanelTarget as createChatSidePanelBrowserTarget } from "@/lib/browser-side-panel";
 import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspaceLaunchTarget } from "@/lib/desktop-shell";
+import { MAIN_WORKBENCH_BROWSER_CAPACITY } from "@/lib/main-workbench-state";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
@@ -1391,7 +1392,6 @@ export function ChatSidePanel({
   const sideChatCloseHandlersRef = useRef(new Map<string, () => Promise<string | null>>());
   const closingSideChatKeysRef = useRef(new Set<string>());
   const movingSideChatKeyRef = useRef<string | null>(null);
-  const browserShortcutScopeActiveRef = useRef(false);
   const lastOpenDesktopPanelRef = useRef<ReactElement | null>(null);
   const queryClient = useQueryClient();
   const operatorDisplayName = useOperatorDisplayName();
@@ -1437,6 +1437,13 @@ export function ChatSidePanel({
     browserTargets,
     organizationId: selectedOrganizationId,
   });
+  const liveBrowserCount = liveSurfaceRuntime && selectedOrganizationId
+    ? liveSurfaceRuntime.getLiveBrowserCount(selectedOrganizationId)
+    : browserTargets.length;
+  const canOpenNewBrowserGuest = (
+    browserTargets.length < MAX_BROWSER_TABS_PER_CONTEXT
+    && liveBrowserCount < MAIN_WORKBENCH_BROWSER_CAPACITY
+  );
   useLayoutEffect(() => {
     if (isMobile) return undefined;
     if (sidePanel.open) {
@@ -1513,38 +1520,6 @@ export function ChatSidePanel({
   const sourceConversationId = sidePanel.contextKey.startsWith("chat:")
     ? sidePanel.contextKey.slice("chat:".length) || null
     : null;
-
-  useEffect(() => {
-    const desktopShell = readDesktopShell();
-    const setBrowserSurfaceShortcutActive = desktopShell?.setBrowserSurfaceShortcutActive;
-    if (!setBrowserSurfaceShortcutActive) return undefined;
-    let disposed = false;
-    const syncScope = () => {
-      if (disposed) return;
-      const activeElement = document.activeElement;
-      const nextActive = Boolean(
-        sidePanel.open
-        && activeBrowserTargetKey
-        && activeElement
-        && panelRef.current?.contains(activeElement),
-      );
-      if (browserShortcutScopeActiveRef.current === nextActive) return;
-      browserShortcutScopeActiveRef.current = nextActive;
-      void setBrowserSurfaceShortcutActive(nextActive).catch(() => undefined);
-    };
-    const queueScopeSync = () => queueMicrotask(syncScope);
-    document.addEventListener("focusin", queueScopeSync, true);
-    document.addEventListener("focusout", queueScopeSync, true);
-    syncScope();
-    return () => {
-      disposed = true;
-      document.removeEventListener("focusin", queueScopeSync, true);
-      document.removeEventListener("focusout", queueScopeSync, true);
-      if (!browserShortcutScopeActiveRef.current) return;
-      browserShortcutScopeActiveRef.current = false;
-      void setBrowserSurfaceShortcutActive(false).catch(() => undefined);
-    };
-  }, [activeBrowserTargetKey, sidePanel.open]);
 
   const handleSidePanelKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
     if (readDesktopShell()?.onBrowserShortcut || !activeBrowserTargetKey) return;
@@ -1648,7 +1623,17 @@ export function ChatSidePanel({
   const openSidePanelTarget = (nextTarget: SidePanelTarget) => {
     if (nextTarget.kind === "browser" && !browserAvailable) return;
     if (nextTarget.kind === "local_apps" && !localAppsAvailable) return;
-    sidePanel.openTarget(nextTarget);
+    const result = sidePanel.openTarget(nextTarget, {
+      allowNewBrowserGuest: nextTarget.kind !== "browser"
+        || canOpenNewBrowserGuest,
+    });
+    if (!result.admitted && result.reason === "browser_capacity") {
+      pushToast({
+        title: "Browser tab limit reached",
+        body: `Close a Browser tab to open another. Side Panel and Main share ${MAIN_WORKBENCH_BROWSER_CAPACITY} live tabs.`,
+        tone: "error",
+      });
+    }
   };
   const replaceSidePanelTarget = (key: string, nextTarget: SidePanelTarget) => sidePanel.replaceTarget(key, nextTarget);
   const cycleSidePanelTab = useCallback((direction: -1 | 1) => {
@@ -2021,7 +2006,7 @@ export function ChatSidePanel({
                 key={runtimeId}
                 active={active}
                 callbacks={{
-                  canOpenNewTab: browserTargets.length < MAX_BROWSER_TABS_PER_CONTEXT,
+                  canOpenNewTab: canOpenNewBrowserGuest,
                   onCloseTarget: (nextTarget) => {
                     void closeSidePanelTab(nextTarget);
                   },
@@ -2048,7 +2033,7 @@ export function ChatSidePanel({
               <div key={targetKey} className={cn("h-full min-h-0", active ? "block" : "hidden")} aria-hidden={!active}>
                 <BrowserLiveSurface
                   active={active}
-                  canOpenNewTab={browserTargets.length < MAX_BROWSER_TABS_PER_CONTEXT}
+                  canOpenNewTab={canOpenNewBrowserGuest}
                   target={target}
                   targetKey={targetKey}
                   onOpenTarget={openSidePanelTarget}

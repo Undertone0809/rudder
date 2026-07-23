@@ -267,12 +267,29 @@ test.describe("Messenger Local Apps", () => {
     );
     await expect(savedTab).toBeVisible();
 
-    for (let index = 0; index < 7; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       await main.getByRole("button", { name: "New Browser tab" }).click();
     }
-    await expect(main.getByRole("tab")).toHaveCount(8);
+    await expect(main.getByRole("tab")).toHaveCount(7);
+
+    await page.getByTestId("global-side-panel-trigger").evaluate(
+      (button: HTMLButtonElement) => button.click(),
+    );
+    await page.getByTestId("chat-side-panel-empty-browser-target").click();
+    await expect(page.getByTestId("chat-side-panel-tab")).toHaveCount(1);
     await expect(main.getByRole("button", { name: "New Browser tab" }))
       .toBeDisabled();
+    await expect(page.locator(
+      "[data-testid='live-surface-runtime-host'][data-owner-id^='side:']",
+    ).getByRole("button", { name: "Open new browser tab" })).toBeDisabled();
+
+    await page.getByTestId("chat-side-panel-tab").hover();
+    await page.getByTestId("chat-side-panel-tab-close").click();
+    await expect(page.getByTestId("chat-side-panel-tab")).toHaveCount(0);
+    await expect(main.getByRole("button", { name: "New Browser tab" }))
+      .toBeEnabled();
+    await main.getByRole("button", { name: "New Browser tab" }).click();
+    await expect(main.getByRole("tab")).toHaveCount(8);
 
     await savedTab.locator("..").getByRole("button", {
       name: /Close .* tab/,

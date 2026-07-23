@@ -220,9 +220,15 @@ function ownerSurface(ownerId: string): "side_panel" | "workbench" {
 }
 
 function ownerReady(owner: LiveSurfaceOwnerRegistration | null | undefined) {
-  if (!owner?.active || !owner.element.isConnected) return false;
+  if (!ownerClaimable(owner)) return false;
   const rect = owner.element.getBoundingClientRect();
   return rect.width > 0 && rect.height > 0;
+}
+
+function ownerClaimable(
+  owner: LiveSurfaceOwnerRegistration | null | undefined,
+): owner is LiveSurfaceOwnerRegistration {
+  return Boolean(owner?.active && owner.element.isConnected);
 }
 
 export function LiveSurfaceRuntimeProvider({
@@ -255,7 +261,6 @@ export function LiveSurfaceRuntimeProvider({
       webContentsId: null,
     };
     record.owners.set(registration.ownerId, registration);
-    record.target = registration.target;
     if (registration.renderSurface) record.renderSurface = registration.renderSurface;
     recordsRef.current.set(registration.runtimeId, record);
     touch();
@@ -290,7 +295,13 @@ export function LiveSurfaceRuntimeProvider({
       || targetChanged;
     if (!changed) return;
     record.owners.set(registration.ownerId, registration);
-    if (targetChanged) record.target = registration.target;
+    if (
+      targetChanged
+      && record.leaseOwnerId === registration.ownerId
+      && !record.interactionLocked
+    ) {
+      record.target = registration.target;
+    }
     if (registration.renderSurface) record.renderSurface = registration.renderSurface;
     touch();
   }, [touch]);
@@ -308,7 +319,7 @@ export function LiveSurfaceRuntimeProvider({
   const autoClaimSurface = useCallback((runtimeId: string, ownerId: string) => {
     const record = recordsRef.current.get(runtimeId);
     const owner = record?.owners.get(ownerId);
-    if (!record || !ownerReady(owner)) return false;
+    if (!record || !ownerClaimable(owner)) return false;
     if (record.leaseOwnerId && record.leaseOwnerId !== ownerId) return false;
     if (record.leaseOwnerId === ownerId) return true;
     record.leaseOwnerId = ownerId;
@@ -675,7 +686,9 @@ function RuntimeSurface({
     ) {
       runtime.updateTarget(record.runtimeId, nextTarget);
     }
-    callbacks?.onReplaceTarget?.(nextTarget);
+    if (!record.interactionLocked) {
+      callbacks?.onReplaceTarget?.(nextTarget);
+    }
   };
   const renderedCustomSurface = record.renderSurface?.({
     active: visible,

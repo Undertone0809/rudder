@@ -19,6 +19,7 @@ import {
   type MainWorkbenchTarget,
 } from "@/lib/main-workbench-state";
 import { queryKeys } from "@/lib/queryKeys";
+import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import type {
   MessengerCustomGroupsResponse,
   MessengerSavedView,
@@ -132,7 +133,7 @@ vi.mock("@/components/workbench/BrowserLiveSurface", () => ({
   }: {
     target: Extract<MainWorkbenchTarget, { kind: "browser" }>;
     onCloseTarget: (target: MainWorkbenchTarget) => void;
-    onOpenTarget: (target: MainWorkbenchTarget) => void;
+    onOpenTarget: (target: SidePanelTarget) => void;
     onReplaceTarget: (key: string, target: MainWorkbenchTarget) => void;
     onCycleTab?: (direction: -1 | 1) => void;
   }) => (
@@ -168,6 +169,18 @@ vi.mock("@/components/workbench/BrowserLiveSurface", () => ({
         onClick={() => onCycleTab?.(1)}
       >
         Cycle
+      </button>
+      <button
+        type="button"
+        data-testid="mock-open-linked-chat"
+        onClick={() => onOpenTarget({
+          kind: "chat",
+          conversationId: "automation-linked-chat",
+          label: "Automation run",
+          messageId: null,
+        })}
+      >
+        Open linked chat
       </button>
       <button
         type="button"
@@ -842,25 +855,44 @@ describe("MessengerMainWorkbench", () => {
     expect(controls!.tabs).toHaveLength(2);
   });
 
+  it("opens an Automation-linked chat instead of swallowing the workbench callback", () => {
+    renderWorkbench({ runtimeLayer: true });
+    openKinds(["browser"]);
+
+    act(() => {
+      host
+        ?.querySelector<HTMLButtonElement>('[data-testid="mock-open-linked-chat"]')
+        ?.click();
+    });
+
+    expect(navigate).toHaveBeenLastCalledWith(
+      "/messenger/chat/automation-linked-chat",
+    );
+  });
+
   it("owns Cmd/Ctrl+T, Cmd/Ctrl+W, and Ctrl+Tab while focus is in Main", async () => {
-    renderWorkbench();
+    renderWorkbench({ runtimeLayer: true });
     openKinds(["browser", "library_document"]);
-    const workbench = host!.querySelector<HTMLElement>(
-      '[data-testid="messenger-main-workbench"]',
+    act(() => controls!.focusTab("view-0"));
+    const runtimeControl = host!.querySelector<HTMLButtonElement>(
+      '[data-testid="mock-browser-replace"]',
     )!;
+    runtimeControl.focus();
+    expect(runtimeControl.closest("[data-testid='messenger-main-workbench']"))
+      .toBeNull();
     navigate.mockClear();
 
     act(() => {
-      workbench.dispatchEvent(new KeyboardEvent("keydown", {
+      runtimeControl.dispatchEvent(new KeyboardEvent("keydown", {
         bubbles: true,
         key: "Tab",
         ctrlKey: true,
       }));
     });
-    expect(controls!.activeViewInstanceId).toBe("view-0");
+    expect(controls!.activeViewInstanceId).toBe("view-1");
 
     act(() => {
-      workbench.dispatchEvent(new KeyboardEvent("keydown", {
+      runtimeControl.dispatchEvent(new KeyboardEvent("keydown", {
         bubbles: true,
         key: "t",
         metaKey: true,
@@ -870,7 +902,7 @@ describe("MessengerMainWorkbench", () => {
     expect(controls!.activeTab?.target.kind).toBe("browser");
 
     await act(async () => {
-      workbench.dispatchEvent(new KeyboardEvent("keydown", {
+      runtimeControl.dispatchEvent(new KeyboardEvent("keydown", {
         bubbles: true,
         key: "w",
         metaKey: true,

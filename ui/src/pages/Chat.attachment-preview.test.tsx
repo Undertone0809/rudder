@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 
 import { ApiError } from "@/api/client";
+import { DesktopBrowserLinkBridge } from "@/components/DesktopBrowserLinkBridge";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { ImagePreviewProvider } from "@/context/ImagePreviewContext";
+import {
+  LiveSurfaceRuntimeLayer,
+  LiveSurfaceRuntimeProvider,
+} from "@/context/LiveSurfaceRuntimeContext";
 import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
@@ -14,7 +19,8 @@ import {
 import {
   readPendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
-import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type BrowserShortcutAction, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
+import type { DesktopBrowserShortcutRequest } from "@/lib/desktop-shell";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -25,6 +31,28 @@ import { ChatSidePanel } from "./Chat.side-panel";
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
+
+const nativeGetBoundingClientRect =
+  HTMLElement.prototype.getBoundingClientRect;
+
+function makeLiveSurfaceAnchorsVisible() {
+  HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.hasAttribute("data-owner-id")) {
+      return {
+        bottom: 800,
+        height: 720,
+        left: 0,
+        right: 1_200,
+        top: 80,
+        width: 1_200,
+        x: 0,
+        y: 80,
+        toJSON: () => ({}),
+      };
+    }
+    return nativeGetBoundingClientRect.call(this);
+  };
+}
 
 const PREVIEW_IMAGE_SRC =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='320' viewBox='0 0 480 320'%3E%3Crect width='480' height='320' fill='%232f80ed'/%3E%3Ctext x='240' y='168' fill='white' font-size='34' font-family='Arial' text-anchor='middle'%3EPreview%3C/text%3E%3C/svg%3E";
@@ -109,7 +137,7 @@ const mockState = vi.hoisted(() => ({
   stopMessageStream: vi.fn(),
   streamDrafts: {} as Record<string, ChatStreamDraft>,
   intelligenceProfiles: [] as Array<{ id: string; orgId: string; purpose: string; status: string }>,
-  browserShortcutListener: null as ((action: BrowserShortcutAction) => void) | null,
+  browserShortcutListener: null as ((request: DesktopBrowserShortcutRequest) => void) | null,
   openPath: vi.fn(),
   previewLocalFile: vi.fn(),
   savedViewPromotionDiscard: vi.fn(),
@@ -403,6 +431,9 @@ vi.mock("react-router-dom", () => ({
 }));
 
 vi.mock("@/context/OrganizationContext", () => ({
+  useOptionalOrganization: () => ({
+    selectedOrganizationId: "org-1",
+  }),
   useOrganization: () => ({
     selectedOrganizationId: "org-1",
     selectedOrganization: { id: "org-1", name: "Rudder", issuePrefix: "RUD", urlKey: "rudder" },
@@ -1181,7 +1212,13 @@ function installLocalStorageMock() {
   });
 }
 
-function renderChat({ expanded = false }: { expanded?: boolean } = {}) {
+function renderChat({
+  expanded = false,
+  stableRuntime = false,
+}: {
+  expanded?: boolean;
+  stableRuntime?: boolean;
+} = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -1194,11 +1231,12 @@ function renderChat({ expanded = false }: { expanded?: boolean } = {}) {
   };
 
   const render = (targetRoot: Root) => {
-    targetRoot.render(
+    const content = (
       <ThemeProvider>
         <ImagePreviewProvider>
           <SidePanelProvider>
             <SidePanelTestContextBinder />
+            {stableRuntime ? <DesktopBrowserLinkBridge /> : null}
             <Chat />
             <ChatSidePanel
               selectedOrganizationId="org-1"
@@ -1207,7 +1245,17 @@ function renderChat({ expanded = false }: { expanded?: boolean } = {}) {
             />
           </SidePanelProvider>
         </ImagePreviewProvider>
-      </ThemeProvider>,
+      </ThemeProvider>
+    );
+    targetRoot.render(
+      stableRuntime
+        ? (
+            <LiveSurfaceRuntimeProvider>
+              {content}
+              <LiveSurfaceRuntimeLayer />
+            </LiveSurfaceRuntimeProvider>
+          )
+        : content,
     );
   };
 
@@ -1576,7 +1624,7 @@ beforeEach(() => {
       forceOpenExternal: vi.fn(async () => undefined),
       setSidePanelCloseShortcutActive: vi.fn(async () => undefined),
       setBrowserSurfaceShortcutActive: vi.fn(async () => undefined),
-      onBrowserShortcut: vi.fn((listener: (action: BrowserShortcutAction) => void) => {
+      onBrowserShortcut: vi.fn((listener: (request: DesktopBrowserShortcutRequest) => void) => {
         mockState.browserShortcutListener = listener;
         return () => {
           if (mockState.browserShortcutListener === listener) mockState.browserShortcutListener = null;
@@ -1594,6 +1642,7 @@ afterEach(() => {
   cleanupFn = null;
   delete (window as typeof window & { desktopShell?: unknown }).desktopShell;
   document.body.innerHTML = "";
+  HTMLElement.prototype.getBoundingClientRect = nativeGetBoundingClientRect;
   vi.unstubAllGlobals();
 });
 
@@ -4592,12 +4641,21 @@ describe("Chat Side Panel link handling", () => {
     expect(dnsErrorState?.textContent).not.toContain("refused to connect");
   });
 
-  it("routes focused Desktop Browser shortcuts to the active ready webview", async () => {
+  it("activates Desktop Browser shortcuts when the stable runtime address bar has focus", async () => {
+    makeLiveSurfaceAnchorsVisible();
     mockState.messagesByChatId = {
-      "chat-1": [message({ id: "browser-shortcut-actions", body: "Use Browser shortcuts." })],
+      "chat-1": [message({ id: "stable-browser-shortcut-scope", body: "Use Browser shortcuts." })],
     };
+    const desktopShell = (window as typeof window & {
+      desktopShell?: {
+        setBrowserSurfaceShortcutActive?: (active: boolean) => Promise<void>;
+      };
+    }).desktopShell;
+    const setBrowserSurfaceShortcutActive = vi.mocked(
+      desktopShell!.setBrowserSurfaceShortcutActive!,
+    );
 
-    const { container } = renderChat();
+    const { container } = renderChat({ stableRuntime: true });
     await act(async () => {
       await Promise.resolve();
     });
@@ -4605,118 +4663,31 @@ describe("Chat Side Panel link handling", () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]')?.click();
       await Promise.resolve();
     });
-
-    let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    const browserOption = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']")!;
+    const browserOption = Array.from(sidePanel.querySelectorAll<HTMLButtonElement>("button")).find(
       (candidate) => candidate.textContent?.includes("Browser"),
     );
+    expect(browserOption).not.toBeUndefined();
     await act(async () => {
       browserOption?.click();
       await Promise.resolve();
-    });
-
-    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]')!;
-    await act(async () => {
-      urlInput.value = "localhost:4173/browser-fixture";
-      urlInput.dispatchEvent(new Event("input", { bubbles: true }));
-      urlInput.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await Promise.resolve();
     });
 
-    const webview = container.querySelector<HTMLElement & {
-      canGoBack?: () => boolean;
-      canGoForward?: () => boolean;
-      getURL?: () => string;
-      goBack?: () => void;
-      goForward?: () => void;
-      reload?: () => void;
-      reloadIgnoringCache?: () => void;
-      setZoomFactor?: (factor: number) => void;
-    }>("[data-testid='chat-side-panel-browser-webview']")!;
-    const reload = vi.fn();
-    const reloadIgnoringCache = vi.fn();
-    const goBack = vi.fn();
-    const goForward = vi.fn();
-    const setZoomFactor = vi.fn();
-    Object.assign(webview, {
-      canGoBack: () => true,
-      canGoForward: () => true,
-      getURL: () => "http://localhost:4173/browser-fixture",
-      goBack,
-      goForward,
-      reload,
-      reloadIgnoringCache,
-      setZoomFactor,
-    });
+    const runtimeHost = container.querySelector<HTMLElement>(
+      "[data-testid='live-surface-runtime-host'][data-target-kind='browser']",
+    );
+    expect(runtimeHost).not.toBeNull();
+    const urlInput = runtimeHost!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]')!;
+    expect(sidePanel.contains(urlInput)).toBe(false);
+
     await act(async () => {
-      webview.dispatchEvent(new Event("dom-ready"));
       urlInput.focus();
       await Promise.resolve();
-    });
-
-    expect(mockState.browserShortcutListener).not.toBeNull();
-    await act(async () => {
-      mockState.browserShortcutListener?.("reload");
-      mockState.browserShortcutListener?.("reload_ignoring_cache");
-      mockState.browserShortcutListener?.("go_back");
-      mockState.browserShortcutListener?.("go_forward");
-      mockState.browserShortcutListener?.("zoom_in");
       await Promise.resolve();
     });
 
-    expect(reload).toHaveBeenCalledTimes(1);
-    expect(reloadIgnoringCache).toHaveBeenCalledTimes(1);
-    expect(goBack).toHaveBeenCalledTimes(1);
-    expect(goForward).toHaveBeenCalledTimes(1);
-    expect(setZoomFactor).toHaveBeenLastCalledWith(1.1);
-    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-zoom']")?.textContent).toBe("110%");
-
-    await act(async () => {
-      mockState.browserShortcutListener?.("zoom_out");
-      mockState.browserShortcutListener?.("zoom_reset");
-      await Promise.resolve();
-    });
-    expect(setZoomFactor).toHaveBeenLastCalledWith(1);
-    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-zoom']")).toBeNull();
-
-    const focusTarget = sidePanel!.querySelector<HTMLButtonElement>('button[aria-label="Open new browser tab"]')!;
-    focusTarget.focus();
-    urlInput.setSelectionRange(0, 0);
-    await act(async () => {
-      mockState.browserShortcutListener?.("focus_location");
-      await Promise.resolve();
-    });
-    expect(document.activeElement).toBe(urlInput);
-    expect(urlInput.selectionStart).toBe(0);
-    expect(urlInput.selectionEnd).toBe(urlInput.value.length);
-
-    const outsideButton = document.createElement("button");
-    document.body.appendChild(outsideButton);
-    outsideButton.focus();
-    await act(async () => {
-      mockState.browserShortcutListener?.("reload");
-      await Promise.resolve();
-    });
-    expect(reload).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      focusTarget.focus();
-      mockState.browserShortcutListener?.("new_tab");
-      await Promise.resolve();
-    });
-    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
-    const activeBlankAddress = container.querySelector<HTMLInputElement>(
-      "[data-testid='chat-side-panel-browser-view'] input[aria-label='Browser URL']",
-    )!;
-    activeBlankAddress.focus();
-    await act(async () => {
-      mockState.browserShortcutListener?.("reload");
-      mockState.browserShortcutListener?.("zoom_in");
-      await Promise.resolve();
-    });
-    expect(reload).toHaveBeenCalledTimes(1);
-    expect(setZoomFactor).toHaveBeenCalledTimes(3);
+    expect(setBrowserSurfaceShortcutActive).toHaveBeenLastCalledWith(true);
   });
 
   it("hides Browser entry points outside the Desktop Browser capability", async () => {
@@ -4737,13 +4708,14 @@ describe("Chat Side Panel link handling", () => {
     expect(Array.from(sidePanel!.querySelectorAll("button")).some((button) => button.textContent?.includes("Browser"))).toBe(false);
   });
 
-  it("closes the active Browser side panel tab when the webview receives Command+W", async () => {
+  it("closes the active Browser side panel tab when its stable runtime receives Command+W", async () => {
+    makeLiveSurfaceAnchorsVisible();
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "browser-side-panel-shortcut-message", body: "Open the browser panel." })],
     };
 
-    const { container } = renderChat();
+    const { container } = renderChat({ stableRuntime: true });
     await act(async () => {
       await Promise.resolve();
     });
@@ -4761,31 +4733,30 @@ describe("Chat Side Panel link handling", () => {
     await act(async () => {
       browserOption?.click();
       await Promise.resolve();
+      await Promise.resolve();
     });
 
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
+    const runtimeHost = container.querySelector<HTMLElement>(
+      "[data-testid='live-surface-runtime-host'][data-target-kind='browser']",
+    );
+    expect(runtimeHost).not.toBeNull();
+    const urlInput = runtimeHost!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
     await act(async () => {
-      urlInput!.value = "localhost:4173/browser-fixture";
-      urlInput!.dispatchEvent(new Event("input", { bubbles: true }));
-      urlInput!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      urlInput!.focus();
+      await Promise.resolve();
       await Promise.resolve();
     });
 
-    const webview = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-browser-webview']");
-    expect(webview).not.toBeNull();
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(1);
 
-    const shortcut = new Event("before-input-event", { bubbles: true, cancelable: true }) as Event & {
-      input?: { key: string; meta: boolean };
-    };
-    shortcut.input = { key: "w", meta: true };
     await act(async () => {
-      webview!.dispatchEvent(shortcut);
+      mockState.browserShortcutListener?.({
+        action: "close_tab",
+      });
       await Promise.resolve();
     });
 
-    expect(shortcut.defaultPrevented).toBe(true);
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(0);
     expect(container.querySelector("[data-testid='chat-side-panel']")).toBeNull();
   });

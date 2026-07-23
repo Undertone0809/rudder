@@ -15,7 +15,7 @@ import type {
 } from "@/lib/desktop-shell";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, useEffect } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopBrowserLinkBridge } from "./DesktopBrowserLinkBridge";
@@ -52,6 +52,7 @@ function ExactGuestOwner({
 }) {
   const runtime = useLiveSurfaceRuntime();
   const runtimeId = createLiveSurfaceRuntimeId("org-a", ownerBrowser);
+  const [active, setActive] = useState(true);
   useEffect(() => {
     runtime.registerWebContentsId(runtimeId, 42);
     runtime.registerBrowserShortcutController(
@@ -66,19 +67,32 @@ function ExactGuestOwner({
   return (
     <>
       <LiveSurfaceAnchor
-        active
+        active={active}
         callbacks={{ onCloseTarget, onOpenTarget }}
         hostId="main:org-a:owner-view"
         ownerId="main:org-a:owner-view"
         runtimeId={runtimeId}
         target={ownerBrowser}
       />
+      <div
+        aria-hidden={!active}
+        data-runtime-id={runtimeId}
+        hidden={!active}
+        inert={!active ? true : undefined}
+      >
+        <button
+          type="button"
+          data-testid="active-browser-control"
+        >
+          Browser control
+        </button>
+      </div>
       <button
         type="button"
-        data-runtime-id={runtimeId}
-        data-testid="active-browser-control"
+        data-testid="hide-browser-runtime"
+        onClick={() => setActive(false)}
       >
-        Browser control
+        Hide Browser
       </button>
     </>
   );
@@ -166,11 +180,13 @@ describe("DesktopBrowserLinkBridge", () => {
     const openTarget = vi.fn();
     const closeTarget = vi.fn();
     const shortcutController = vi.fn();
+    const setBrowserSurfaceShortcutActive = vi.fn(async () => undefined);
     (window as typeof window & { desktopShell?: Partial<DesktopShellApi> }).desktopShell = {
       onBrowserShortcut: (nextListener) => {
         shortcutListener = nextListener;
         return () => undefined;
       },
+      setBrowserSurfaceShortcutActive,
       onOpenWebLink: (nextListener) => {
         linkListener = nextListener;
         return () => undefined;
@@ -243,6 +259,27 @@ describe("DesktopBrowserLinkBridge", () => {
     expect(shortcutController).toHaveBeenCalledWith("new_tab");
     expect(shortcutController).toHaveBeenCalledWith("reload");
     expect(closeTarget).toHaveBeenCalledWith(ownerBrowser);
+
+    const shortcutCountBeforeHide = shortcutController.mock.calls.length;
+    const closeCountBeforeHide = closeTarget.mock.calls.length;
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='hide-browser-runtime']",
+      )?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(
+      container.querySelector("[data-testid='active-browser-control']"),
+    );
+    expect(setBrowserSurfaceShortcutActive).toHaveBeenLastCalledWith(false);
+
+    await act(async () => {
+      shortcutListener?.({ action: "reload" });
+      shortcutListener?.({ action: "close_tab" });
+    });
+    expect(shortcutController).toHaveBeenCalledTimes(shortcutCountBeforeHide);
+    expect(closeTarget).toHaveBeenCalledTimes(closeCountBeforeHide);
 
     await act(async () => root.unmount());
     container.remove();
