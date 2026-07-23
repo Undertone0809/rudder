@@ -9,6 +9,12 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImagePreviewProvider } from "../context/ImagePreviewContext";
 import { ThemeProvider } from "../context/ThemeContext";
+import {
+  CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
+  CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+  resolveChatAnnotationRange,
+  restoreChatAnnotationRange,
+} from "../lib/chat-response-annotation-selection";
 import { __clearWebsiteMetadataIconCacheForTests, MarkdownBody, WebsiteLinkIcon } from "./MarkdownBody";
 import type { MentionOption } from "./MarkdownEditor";
 import {
@@ -283,6 +289,91 @@ async function advanceTimersAndFlush(ms: number) {
 }
 
 describe("MarkdownBody", () => {
+  it("stores raw source offsets alongside rendered offsets after response normalization", () => {
+    const source = "Plan\\n\\n-[]任务\\n<br />\\nDone";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const task = container.querySelector("li")!;
+    const paragraphs = Array.from(container.querySelectorAll("p"));
+    const done = paragraphs.at(-1)!;
+    const taskStart = Number(task.dataset.markdownSourceStart);
+    const taskEnd = Number(task.dataset.markdownSourceEnd);
+    const doneStart = Number(done.dataset.markdownSourceStart);
+    const doneEnd = Number(done.dataset.markdownSourceEnd);
+
+    expect(source.slice(taskStart, taskEnd)).toBe("-[]任务");
+    expect(source.slice(doneStart, doneEnd)).toBe("Done");
+    expect(task.dataset.markdownRenderedSourceStart).not.toBe(task.dataset.markdownSourceStart);
+    expect(done.dataset.markdownRenderedSourceStart).not.toBe(done.dataset.markdownSourceStart);
+  });
+
+  it("resolves normalized DOM selections to canonical raw message ranges", () => {
+    const source = "Plan\\n\\n-[]任务\\n<br />\\nDone";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const sourceRoot = container.querySelector<HTMLElement>(".rudder-markdown")!;
+    sourceRoot.setAttribute(CHAT_ANNOTATION_SOURCE_ATTRIBUTE, "assistant:message-normalized");
+    sourceRoot.setAttribute(CHAT_ANNOTATION_BLOCK_ATTRIBUTE, "message-normalized");
+    const taskText = Array.from(sourceRoot.querySelector("li")!.childNodes)
+      .find((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.includes("任务"))!;
+    const doneText = Array.from(sourceRoot.querySelectorAll("p")).at(-1)!.firstChild!;
+    const range = document.createRange();
+    range.setStart(taskText, taskText.textContent!.indexOf("任务"));
+    range.setEnd(doneText, "Done".length);
+
+    const result = resolveChatAnnotationRange({
+      range,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+    expect(result).toMatchObject({
+      start: source.indexOf("任务"),
+      end: source.length,
+    });
+
+    const restored = restoreChatAnnotationRange({
+      sourceRoot,
+      source,
+      start: source.indexOf("任务"),
+      end: source.length,
+    });
+    expect(restored?.startContainer).toBe(taskText);
+    expect(restored?.startOffset).toBe(taskText.textContent!.indexOf("任务"));
+    expect(restored?.endContainer).toBe(doneText);
+    expect(restored?.endOffset).toBe("Done".length);
+  });
+
+  it("maps generated bare-agent mention Markdown back to the original mention text", () => {
+    const source = "你好 @Alice 👩🏽‍💻 &amp; 完成";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody
+          agentMentions={[{ name: "Alice", agentId: "agent-1" }]}
+        >
+          {source}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+    const mention = container.querySelector<HTMLElement>(
+      '[data-mention-kind="agent"]',
+    )!;
+    const start = Number(mention.dataset.markdownSourceStart);
+    const end = Number(mention.dataset.markdownSourceEnd);
+
+    expect(source.slice(start, end)).toBe("@Alice");
+    expect(Number(mention.dataset.markdownRenderedSourceEnd)).toBeGreaterThan(end);
+  });
+
   it("renders a file-type icon for local file links with source locations", () => {
     const container = render(
       <ThemeProvider>

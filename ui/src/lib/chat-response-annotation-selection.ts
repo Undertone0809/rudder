@@ -2,6 +2,7 @@ import type {
   ChatInlineAnnotationSurface,
   ChatInlineAnnotationTranscriptKind,
 } from "@rudderhq/shared";
+import { createMarkdownSourceBoundaryMap } from "./markdown-normalize";
 
 export const CHAT_ANNOTATION_SOURCE_ATTRIBUTE = "data-chat-annotation-source";
 export const CHAT_ANNOTATION_BLOCK_ATTRIBUTE = "data-chat-annotation-block";
@@ -169,7 +170,13 @@ function renderedTextToSourceSpans(
       break;
     }
 
-    if (sourceIndex < 0) return null;
+    if (sourceIndex < 0) {
+      const mapping = createMarkdownSourceBoundaryMap(source, renderedText);
+      return Array.from({ length: renderedText.length }, (_, renderedIndex) => ({
+        start: sourceBase + mapping.renderedBoundaryToRaw[renderedIndex]!,
+        end: sourceBase + mapping.renderedBoundaryToRaw[renderedIndex + 1]!,
+      }));
+    }
     spans.push({
       start: sourceBase + sourceIndex,
       end: sourceBase + sourceEnd,
