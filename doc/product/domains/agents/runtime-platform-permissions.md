@@ -9,6 +9,8 @@ contract_ids:
 related_code:
   - packages/agent-runtime-utils/src/rudder-mcp.ts
   - packages/agent-runtime-utils/src/server-utils.cli.ts
+  - packages/shared/src/types/mcp.ts
+  - packages/shared/src/validators/mcp.ts
   - packages/agent-runtimes/claude-local/src/server/execute.ts
   - packages/agent-runtimes/codex-local/src/server/codex-home.ts
   - packages/agent-runtimes/codex-local/src/server/execute.ts
@@ -21,6 +23,8 @@ related_code:
   - desktop/scripts/after-pack.mjs
 related_tests:
   - packages/agent-runtime-utils/src/server-utils.test.ts
+  - packages/shared/src/validators/mcp.test.ts
+  - scripts/managed-mcp-product-contract.test.mjs
   - server/src/__tests__/codex-local-execute.test.ts
   - server/src/__tests__/claude-local-execute.test.ts
   - server/src/__tests__/cursor-local-execute.test.ts
@@ -33,6 +37,7 @@ related_plans:
   - doc/plans/2026-06-21-product-logic-registry.md
   - doc/plans/2026-06-26-local-runtime-operator-home-default.md
   - doc/plans/2026-07-12-built-in-browser.md
+  - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
 edit_policy: user_confirmed_only
 ---
 
@@ -95,6 +100,13 @@ not receive the Browser profile path, cookies, Desktop Broker credential, or
 permission to discover Browser state from the operator home. The shared website
 profile belongs to Desktop, not to adapter-managed runtime state.
 
+Managed external MCP adds distinct OAuth token, runtime identity, network,
+STDIO process, and environment variable boundaries. Provider tokens and
+temporary OAuth material remain encrypted on the Rudder server. A runtime
+receives only a run-scoped proxy identity and provider-neutral tool
+descriptors; it never receives provider access/refresh tokens, PKCE verifiers,
+dynamic client secrets, or organization secret identifiers.
+
 ## Actors / Objects / State
 
 - Operator: the human whose machine, local CLIs, provider credentials, and
@@ -124,6 +136,14 @@ profile belongs to Desktop, not to adapter-managed runtime state.
 - Agent Browser lease: Desktop-owned, in-memory tab control scoped to the
   authenticated organization, agent, run, and tab, independent of child
   process filesystem access.
+- External MCP grant: organization credential boundary associated with the
+  authorizing Rudder user and provider subject/scope, but distinct from both
+  identities.
+- External MCP proxy identity: short-lived run-scoped authorization used only
+  between the runtime adapter and Rudder's proxy.
+- Custom MCP process/network target: operator-supplied STDIO command or
+  Streamable HTTP endpoint validated against the active deployment mode and
+  administrator policy before discovery or dispatch.
 
 ## Entry Points / Inputs
 
@@ -138,6 +158,8 @@ profile belongs to Desktop, not to adapter-managed runtime state.
 - Environment inputs including `HOME`, `USERPROFILE`, `RUDDER_HOME`,
   `RUDDER_OPERATOR_HOME`, provider-specific home variables,
   `RUDDER_BROWSER_ENABLED`, and `PATH`/`Path`.
+- Managed external MCP binding assembly and every proxied discovery or tool
+  dispatch.
 
 ## Product Logic Flow
 
@@ -204,6 +226,36 @@ profile belongs to Desktop, not to adapter-managed runtime state.
    adapter invocation with a clear error code/message that tells the operator
    what permission, path, login, or configuration needs repair.
 
+11. Provider OAuth access tokens, refresh tokens, client secrets, PKCE
+    verifiers, and temporary dynamic-client metadata stay in encrypted
+    organization secrets. They are never written into prompts, tool arguments,
+    adapter config, command lines, child environment variables, or audit
+    outcomes.
+
+12. Runtime adapters receive a provider-neutral, run-scoped external MCP proxy
+    binding. The runtime identity authorizes only the selected organization,
+    agent, run, connection, binding, and enabled tools; it does not become the
+    provider OAuth identity.
+
+13. Arbitrary custom STDIO execution is permitted only in `local_trusted`.
+    Authenticated deployments require instance-administrator allowlists for
+    commands, executable paths, working directories, and environment variable
+    names. Sensitive environment values remain server-side encrypted; allowed
+    safe values and environment references must not broaden inherited host
+    environment access.
+
+14. Custom Streamable HTTP permits public HTTPS targets by default. HTTP,
+    loopback, private-network, redirect, and OAuth metadata targets require
+    deployment-administrator allowlists. Resolution and redirect handling must
+    resist DNS rebinding, and authorization, cookie, proxy authorization, API
+    key, host, and other unsafe headers cannot be smuggled through non-secret
+    config.
+
+15. Every discovery and dispatch revalidates the current deployment boundary.
+    Required connections fail the run with safe actionable evidence when
+    unavailable; optional connections may be omitted or reported without
+    exposing credentials or target-internal response data.
+
 ## Decision Table
 
 | Case | Conditions | Product result | Must not happen | Evidence |
@@ -221,6 +273,11 @@ profile belongs to Desktop, not to adapter-managed runtime state.
 | Desktop resource packaging | Packaged app copies resources on Windows | Packaging may dereference symlinks into real files/directories | Runtime skill injection must not assume packaging fallback also protects run-time temp dirs | Desktop packaging code and separate runtime adapter tests |
 | Built-in Browser enabled for supported local adapter | Trusted run context enables Browser | Managed MCP/native config receives only the capability flag and runtime-owned tool identity | Adapter must not receive Browser profile paths, cookies, Broker credentials, or an agent-overridable enable flag | Adapter execute and run-context tests |
 | Browser disabled or runtime unsupported | Live setting is off, runtime is remote, or no secure managed tool path exists | Remove the managed Browser flag/tools or report capability unavailable | Inherited env or user MCP config must not expose stale Browser control | Negative adapter and MCP manifest tests |
+| Managed provider OAuth grant | Connection is active for the organization and agent | Runtime gets a run-scoped proxy identity; Rudder injects provider credentials server-side per call | OAuth tokens or secret ids must not enter adapter config, prompts, arguments, logs, or model-visible errors | Proxy authorization and secret-redaction tests |
+| Custom STDIO in `local_trusted` | Operator config passes validation | Rudder may launch the configured command with bounded args, cwd, environment, timeouts, output, and cleanup | Child process must not inherit unselected secret environment or outlive required cleanup | Process allowlist, isolation, timeout, and cleanup tests |
+| Custom STDIO in authenticated deployment | Command/path/env is not instance-admin allowlisted | Discovery and dispatch are rejected with a policy error | Organization managers must not bypass deployment-admin process policy | Authenticated deployment negative tests |
+| Public HTTPS Streamable HTTP target | URL and resolved addresses remain public and headers are safe | Discovery/dispatch may proceed through the managed client | Redirects or DNS changes must not pivot into private/loopback targets | SSRF, redirect, and DNS rebinding tests |
+| Private, loopback, HTTP, redirect, or OAuth metadata target | Deployment-admin allowlist is absent | Target is rejected before credential use | Credentials must not be sent while evaluating or reporting the blocked target | Network policy and credential non-disclosure tests |
 
 ## Actor-Visible Input
 
@@ -360,6 +417,13 @@ Evidence can include:
   `AGENT.BROWSER.001`, but its profile data and Broker credential must never be
   copied into operator home, adapter-managed runtime state, prompts, or model
   tool arguments.
+- Provider OAuth identity, the authorizing Rudder user, and run-scoped proxy
+  identity are separate authorization boundaries.
+- External MCP credentials remain server-side and are never materialized in
+  runtime homes, generated adapter source, prompts, tool arguments, or
+  redacted dispatch outcomes.
+- Safe custom STDIO/HTTP configuration is not authorization to access arbitrary
+  processes, environment values, headers, redirects, or network ranges.
 
 ## Drift Boundaries
 
@@ -375,6 +439,9 @@ Requires updating this contract:
 - changing permission/preflight error semantics for managed workspaces
 - changing who can set the managed Browser capability flag or exposing Browser
   profile/Broker state to a runtime process
+- changing managed external MCP OAuth/token materialization, run-scoped proxy
+  identity, STDIO allowlists, environment selection, HTTP/redirect policy, or
+  network target validation
 
 Does not require updating this contract:
 
@@ -391,11 +458,14 @@ Related plans:
 - `doc/plans/2026-06-21-product-logic-registry.md`
 - `doc/plans/2026-06-26-local-runtime-operator-home-default.md`
 - `doc/plans/2026-07-12-built-in-browser.md`
+- `doc/plans/2026-07-23-managed-mcp-oauth-integrations.md`
 
 Related code:
 
 - `packages/agent-runtime-utils/src/server-utils.cli.ts`
 - `packages/agent-runtime-utils/src/rudder-mcp.ts`
+- `packages/shared/src/types/mcp.ts`
+- `packages/shared/src/validators/mcp.ts`
 - `packages/agent-runtimes/claude-local/src/server/execute.ts`
 - `packages/agent-runtimes/codex-local/src/server/codex-home.ts`
 - `packages/agent-runtimes/codex-local/src/server/execute.ts`

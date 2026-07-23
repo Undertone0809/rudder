@@ -70,6 +70,25 @@ export {
   type PluginStateScopeKind, type PluginStatus, type PluginUiSlotEntityType, type PluginUiSlotType, type PluginWebhookDeliveryStatus, type PrincipalType, type ProjectIconName, type ProjectResourceAttachmentRole, type ProjectStatus, type RudderAgentV1McpToolName, type RudderBrowserMcpToolName, type RudderCoreMcpToolName, type SecretProvider, type SideChatState, type StorageProvider, type WakeupRequestStatus, type WakeupTriggerDetail
 } from "./constants.js";
 
+export {
+  MCP_AGENT_BINDING_STATUSES,
+  MCP_CONNECTION_ACCESS_MODES,
+  MCP_CONNECTION_PROVIDERS,
+  MCP_CONNECTION_STATUSES,
+  MCP_CONNECTION_TRANSPORTS,
+  MCP_OAUTH_GRANT_STATUSES,
+  MCP_OAUTH_SESSION_STATUSES,
+  MCP_OAUTH_SESSION_TTL_MS,
+  MCP_PROVIDER_CATALOG,
+  type McpAgentBindingStatus,
+  type McpConnectionAccessMode,
+  type McpConnectionProvider,
+  type McpConnectionStatus,
+  type McpConnectionTransport,
+  type McpOAuthGrantStatus,
+  type McpOAuthSessionStatus
+} from "./constants.js";
+
 export { resolveAgentRunScene, toAgentRun, toAgentRunOrigin, toAgentRuns, toHeartbeatRun, toHeartbeatRuns, toPublicHeartbeatRunContextSnapshot } from "./agent-run.js";
 export type { AgentRunOrigin, AgentRunOriginInput } from "./agent-run.js";
 export {
@@ -87,6 +106,24 @@ export type {
   CustomIntegrationToolSummary
 } from "./types/custom-integration.js";
 
+export type {
+  ManagedExternalMcpBinding,
+  ManagedExternalMcpBindings,
+  McpAgentBinding,
+  McpConnectionSafeConfig,
+  McpConnectionSummary,
+  McpDiscoveredTool,
+  McpExternalScopeOption,
+  McpExternalScopeSelectionResponse,
+  McpLegacyManualSafeConfig,
+  McpOAuthCallbackResult,
+  McpOAuthGrantSummary,
+  McpOAuthStartResponse,
+  McpProviderCatalogEntry,
+  McpStdioSafeConfig,
+  McpStreamableHttpSafeConfig
+} from "./types/mcp.js";
+
 export {
   createCustomIntegrationSchema,
   createCustomIntegrationToolCallSchema,
@@ -102,6 +139,41 @@ export {
   type CreateCustomIntegrationToolCall,
   type UpdateCustomIntegrationBinding
 } from "./validators/custom-integration.js";
+
+export {
+  createMcpConnectionSchema,
+  managedExternalMcpBindingSchema,
+  managedExternalMcpBindingsSchema,
+  mcpAgentBindingSchema,
+  mcpAgentBindingStatusSchema,
+  mcpConnectionAccessModeSchema,
+  mcpConnectionProviderSchema,
+  mcpConnectionSafeConfigSchema,
+  mcpConnectionStatusSchema,
+  mcpConnectionSummarySchema,
+  mcpConnectionTransportSchema,
+  mcpDiscoveredToolSchema,
+  mcpExternalScopeOptionSchema,
+  mcpLegacyManualSafeConfigSchema,
+  mcpOAuthCallbackSchema,
+  mcpOAuthGrantStatusSchema,
+  mcpOAuthGrantSummarySchema,
+  mcpOAuthStartResponseSchema,
+  mcpOAuthStartSchema,
+  mcpProviderCatalogEntrySchema,
+  mcpProviderCatalogSchema,
+  mcpScopeSelectionSchema,
+  mcpStdioSafeConfigSchema,
+  mcpStreamableHttpSafeConfigSchema,
+  updateMcpAgentBindingSchema,
+  updateMcpConnectionSchema,
+  type CreateMcpConnection,
+  type McpOAuthCallback,
+  type McpOAuthStart,
+  type McpScopeSelection,
+  type UpdateMcpAgentBinding,
+  type UpdateMcpConnection
+} from "./validators/mcp.js";
 
 export {
   appendChatGenerationEventSchema,

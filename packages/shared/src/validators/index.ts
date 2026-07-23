@@ -146,6 +146,41 @@ export {
 } from "./custom-integration.js";
 
 export {
+  createMcpConnectionSchema,
+  managedExternalMcpBindingSchema,
+  managedExternalMcpBindingsSchema,
+  mcpAgentBindingSchema,
+  mcpAgentBindingStatusSchema,
+  mcpConnectionAccessModeSchema,
+  mcpConnectionProviderSchema,
+  mcpConnectionSafeConfigSchema,
+  mcpConnectionStatusSchema,
+  mcpConnectionSummarySchema,
+  mcpConnectionTransportSchema,
+  mcpDiscoveredToolSchema,
+  mcpExternalScopeOptionSchema,
+  mcpLegacyManualSafeConfigSchema,
+  mcpOAuthCallbackSchema,
+  mcpOAuthGrantStatusSchema,
+  mcpOAuthGrantSummarySchema,
+  mcpOAuthStartResponseSchema,
+  mcpOAuthStartSchema,
+  mcpProviderCatalogEntrySchema,
+  mcpProviderCatalogSchema,
+  mcpScopeSelectionSchema,
+  mcpStdioSafeConfigSchema,
+  mcpStreamableHttpSafeConfigSchema,
+  updateMcpAgentBindingSchema,
+  updateMcpConnectionSchema,
+  type CreateMcpConnection,
+  type McpOAuthCallback,
+  type McpOAuthStart,
+  type McpScopeSelection,
+  type UpdateMcpAgentBinding,
+  type UpdateMcpConnection
+} from "./mcp.js";
+
+export {
   executionWorkspaceStatusSchema, runWorkspaceStatusSchema, updateExecutionWorkspaceSchema, updateRunWorkspaceSchema, type UpdateExecutionWorkspace, type UpdateRunWorkspace
 } from "./execution-workspace.js";
 
