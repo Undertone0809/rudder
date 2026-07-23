@@ -2736,7 +2736,7 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
     await page.getByTestId("global-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await sidePanel.waitFor({ state: "visible", timeout: 15_000 });
-    const browserView = sidePanel.getByTestId("chat-side-panel-browser-view");
+    const browserView = page.getByTestId("chat-side-panel-browser-view");
     if (!(await browserView.isVisible().catch(() => false))) {
       const browserButton = sidePanel.getByTestId("chat-side-panel-empty-browser-target");
       if (await browserButton.isVisible().catch(() => false)) {
@@ -2881,10 +2881,10 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
 
       await browserUrlInput.focus();
       await pressElectronSurfaceShortcut(electronApp, "window", "=", [shortcutModifier]);
-      await sidePanel.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "visible", timeout: 15_000 });
-      assert.equal(await sidePanel.getByTestId("chat-side-panel-browser-zoom").textContent(), "110%");
+      await page.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "visible", timeout: 15_000 });
+      assert.equal(await page.getByTestId("chat-side-panel-browser-zoom").textContent(), "110%");
       await pressElectronSurfaceShortcut(electronApp, "window", "0", [shortcutModifier]);
-      await sidePanel.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "detached", timeout: 15_000 });
+      await page.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "detached", timeout: 15_000 });
 
       const browserTabCountBeforeShortcut = await sidePanel.getByTestId("chat-side-panel-tab").count();
       const nativeWindowCountBeforeShortcut = electronApp
@@ -3048,7 +3048,7 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
 
       await browserUrlInput.fill(localFileFixture.missingUrl);
       await browserUrlInput.press("Enter");
-      const fileLoadError = sidePanel.getByTestId("chat-side-panel-browser-error");
+      const fileLoadError = page.getByTestId("chat-side-panel-browser-error");
       await fileLoadError.waitFor({ state: "visible", timeout: 30_000 });
       assert.match(await fileLoadError.innerText(), /ERR_FILE_NOT_FOUND/);
       assert.equal(page.url(), rudderUrl, "missing local files should not replace the Rudder route");
@@ -3064,10 +3064,216 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           return false;
         }
       }, null, { timeout: 30_000 });
-      await sidePanel.getByTestId("chat-side-panel-browser-view").waitFor({ state: "visible", timeout: 15_000 });
+      await page.getByTestId("chat-side-panel-browser-view").waitFor({ state: "visible", timeout: 15_000 });
+
+      const promotionUrl = `${fixtureUrl}#messenger-main-promotion`;
+      await browserUrlInput.fill(promotionUrl);
+      await browserUrlInput.press("Enter");
+      await page.waitForFunction(async ({ expectedUrl }) => {
+        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+        if (!webview
+          || typeof webview.getURL !== "function"
+          || typeof webview.executeJavaScript !== "function"
+          || webview.getURL() !== expectedUrl) return false;
+        return (await webview.executeJavaScript("document.querySelector('h1')?.textContent")) === "Rudder Browser fixture";
+      }, { expectedUrl: promotionUrl }, { timeout: 30_000 });
+
+      const movingSideTab = sidePanel.locator(
+        '[data-testid="chat-side-panel-tab"][aria-selected="true"]',
+      );
+      const movingViewInstanceId = await movingSideTab.getAttribute("data-view-instance-id");
+      assert.ok(movingViewInstanceId, "the promoted Browser tab must expose its view instance identity");
+      const sideTabCountBeforeMove = await sidePanel.getByTestId("chat-side-panel-tab").count();
+      const browserGuestCountBeforeMove = await page.locator("webview[data-browser-tab-id]").count();
+      assert.ok(sideTabCountBeforeMove > 1, "Browser move smoke requires sibling Side Panel tabs");
+      const browserTransferMarker = randomUUID();
+      const guestBeforeMove = await page.evaluate(async ({ marker, expectedUrl }) => {
+        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+        if (!webview
+          || typeof webview.getWebContentsId !== "function"
+          || typeof webview.executeJavaScript !== "function") {
+          throw new Error("active Browser guest was not available before Move");
+        }
+        webview.__rudderBrowserTransferMarker = marker;
+        if (typeof webview.setZoomFactor === "function") webview.setZoomFactor(1.1);
+        const guestState = await webview.executeJavaScript(`(() => {
+          const input = document.querySelector("#smoke-input");
+          if (input) input.value = "preserve-this-form";
+          window.scrollTo(0, 900);
+          window.__rudderBrowserHeapMarker = ${JSON.stringify(browserTransferMarker)};
+          return {
+            formValue: input?.value ?? null,
+            heapMarker: window.__rudderBrowserHeapMarker,
+            historyLength: history.length,
+            scrollY: window.scrollY,
+          };
+        })()`);
+        return {
+          browserTabId: webview.getAttribute("data-browser-tab-id"),
+          domMarker: webview.__rudderBrowserTransferMarker,
+          guestState,
+          url: webview.getURL(),
+          webContentsId: webview.getWebContentsId(),
+          zoomFactor: typeof webview.getZoomFactor === "function" ? webview.getZoomFactor() : null,
+          expectedUrl,
+        };
+      }, { marker: browserTransferMarker, expectedUrl: promotionUrl });
+      assert.equal(guestBeforeMove.url, promotionUrl);
+      assert.ok(guestBeforeMove.browserTabId);
+      assert.equal(guestBeforeMove.guestState.formValue, "preserve-this-form");
+      assert.equal(guestBeforeMove.guestState.heapMarker, browserTransferMarker);
+      assert.ok(guestBeforeMove.guestState.scrollY > 0);
+
+      const moveResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return response.request().method() === "POST"
+          && url.pathname === `/api/orgs/${companyId}/messenger/saved-views/keep`;
+      }, { timeout: 15_000 });
+      await sidePanel.getByTestId("chat-side-panel-keep-in-messenger").click();
+      const moveResponse = await moveResponsePromise;
+      assert.equal(moveResponse.status(), 201, "Move Browser Saved View returned an unexpected status");
+      const moveResult = JSON.parse(await moveResponse.text());
+      assert.equal(moveResult?.savedView?.targetPayload?.kind, "browser");
+      assert.equal(moveResult?.savedView?.targetPayload?.viewInstanceId, movingViewInstanceId);
+      const savedBrowser = await waitForBrowserSavedView(baseUrl, companyId, movingViewInstanceId);
+      assert.equal(savedBrowser.savedView.id, moveResult.savedView.id);
+      assert.ok(
+        savedBrowser.group.entries.some((entry) => (
+          entry.item?.type === "thread" && entry.itemKey === `chat:${chat.id}`
+        )),
+        "moving from an ungrouped Chat should atomically group the Chat and Browser Saved View",
+      );
+      await page.getByText(/^Moved to /).waitFor({ state: "visible", timeout: 15_000 });
+      await page.waitForURL(
+        new RegExp(`/${issuePrefix}/messenger/saved/${savedBrowser.savedView.id}$`),
+        { timeout: 30_000 },
+      );
+
+      const workbench = page.getByTestId("messenger-main-workbench");
+      await workbench.waitFor({ state: "visible", timeout: 15_000 });
+      const mainTab = workbench.locator(
+        `[role="tab"][data-view-instance-id="${movingViewInstanceId}"]`,
+      );
+      await mainTab.waitFor({ state: "visible", timeout: 15_000 });
+      assert.equal(await mainTab.getAttribute("aria-selected"), "true");
+      assert.equal(
+        await sidePanel.locator(
+          `[data-testid="chat-side-panel-tab"][data-view-instance-id="${movingViewInstanceId}"]`,
+        ).count(),
+        0,
+        "Move must detach the exact Browser tab from the Side Panel",
+      );
+      assert.equal(
+        await sidePanel.getByTestId("chat-side-panel-tab").count(),
+        sideTabCountBeforeMove - 1,
+        "Move must leave every sibling Side Panel tab in place",
+      );
+      assert.equal(
+        await page.locator("webview[data-browser-tab-id]").count(),
+        browserGuestCountBeforeMove,
+        "Move must not create or destroy a Browser guest",
+      );
+
+      const guestAfterMove = await page.evaluate(async ({ browserTabId }) => {
+        const webview = document.querySelector(
+          `[data-testid='chat-side-panel-browser-webview'][data-active='true'][data-browser-tab-id="${CSS.escape(browserTabId)}"]`,
+        );
+        if (!webview
+          || typeof webview.getWebContentsId !== "function"
+          || typeof webview.executeJavaScript !== "function") {
+          throw new Error("the exact Browser guest was not active in Main Workbench");
+        }
+        return {
+          browserTabId: webview.getAttribute("data-browser-tab-id"),
+          domMarker: webview.__rudderBrowserTransferMarker ?? null,
+          guestState: await webview.executeJavaScript(`(() => ({
+            formValue: document.querySelector("#smoke-input")?.value ?? null,
+            heapMarker: window.__rudderBrowserHeapMarker ?? null,
+            historyLength: history.length,
+            scrollY: window.scrollY,
+          }))()`),
+          url: webview.getURL(),
+          webContentsId: webview.getWebContentsId(),
+          zoomFactor: typeof webview.getZoomFactor === "function" ? webview.getZoomFactor() : null,
+        };
+      }, { browserTabId: guestBeforeMove.browserTabId });
+      assert.deepEqual(
+        guestAfterMove,
+        {
+          browserTabId: guestBeforeMove.browserTabId,
+          domMarker: guestBeforeMove.domMarker,
+          guestState: guestBeforeMove.guestState,
+          url: guestBeforeMove.url,
+          webContentsId: guestBeforeMove.webContentsId,
+          zoomFactor: guestBeforeMove.zoomFactor,
+        },
+        "Move must preserve the exact Browser guest, URL, history, form, scroll, zoom, and heap marker",
+      );
+
+      const fullBleed = await page.evaluate(() => {
+        const root = document.querySelector("[data-testid='messenger-main-workbench']");
+        const tablist = root?.querySelector("[role='tablist']");
+        const panel = root?.querySelector("[role='tabpanel']:not([hidden])");
+        const anchor = panel?.querySelector("[data-testid='messenger-main-live-surface-anchor']");
+        const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
+          .find((candidate) => candidate.getAttribute("data-owner-id")?.startsWith("main:"));
+        if (!root || !tablist || !panel || !anchor || !host) {
+          throw new Error("Main Workbench full-bleed geometry was unavailable");
+        }
+        const rect = (element) => {
+          const value = element.getBoundingClientRect();
+          return {
+            bottom: value.bottom,
+            left: value.left,
+            right: value.right,
+            top: value.top,
+          };
+        };
+        return {
+          anchor: rect(anchor),
+          host: rect(host),
+          nestedCardCount: root.querySelectorAll(".workspace-main-card").length,
+          panel: rect(panel),
+          root: rect(root),
+          rootBorderRadius: getComputedStyle(root).borderRadius,
+          rootPadding: getComputedStyle(root).padding,
+          tablist: rect(tablist),
+        };
+      });
+      const withinTwoPixels = (left, right) => Math.abs(left - right) <= 2;
+      assert.equal(fullBleed.nestedCardCount, 0, "Main Browser must not be nested in another workspace card");
+      assert.ok(
+        fullBleed.rootBorderRadius === "0px" || fullBleed.rootBorderRadius === "",
+        `Main Workbench must not add an inner rounded frame (received ${fullBleed.rootBorderRadius})`,
+      );
+      assert.equal(fullBleed.rootPadding, "0px", "Main Workbench must not inset the Browser surface");
+      assert.ok(withinTwoPixels(fullBleed.panel.left, fullBleed.root.left));
+      assert.ok(withinTwoPixels(fullBleed.panel.right, fullBleed.root.right));
+      assert.ok(withinTwoPixels(fullBleed.panel.bottom, fullBleed.root.bottom));
+      assert.ok(withinTwoPixels(fullBleed.panel.top, fullBleed.tablist.bottom));
+      for (const edge of ["bottom", "left", "right", "top"]) {
+        assert.ok(
+          withinTwoPixels(fullBleed.host[edge], fullBleed.anchor[edge]),
+          `the live Browser host must fill the Main panel anchor at ${edge}`,
+        );
+      }
+      const savedBrowserRow = page.getByTestId(
+        `messenger-saved-view-${safeLocalAppTestId(savedBrowser.entry.id)}`,
+      );
+      await savedBrowserRow.waitFor({ state: "visible", timeout: 15_000 });
+      assert.equal(
+        (await savedBrowserRow.innerText()).includes(promotionUrl),
+        false,
+        "Messenger Browser rows must not display the URL",
+      );
+      if (browserSmokeScreenshotPath) {
+        await mkdir(path.dirname(browserSmokeScreenshotPath), { recursive: true });
+        await page.screenshot({ path: browserSmokeScreenshotPath, fullPage: true });
+      }
+      console.log("[desktop-smoke] Browser exact guest moved into a full-bleed Main Workbench while sibling Side tabs stayed in place");
     }
 
-    console.log("[desktop-smoke] Side Panel Browser loaded the isolated fixture and preserved the Rudder route");
+    console.log("[desktop-smoke] Side Panel Browser loaded the isolated fixture and completed Main Workbench promotion");
     return page;
   } finally {
     if (!providedFixture) await fixture.stop().catch(() => {});
@@ -3670,7 +3876,7 @@ async function openLocalAppSmokeDefinition(page, definition) {
   const row = catalog.getByTestId(`local-apps-app-${bindingTestId}`);
   await row.waitFor({ state: "visible", timeout: 15_000 });
   await row.getByTestId(`local-apps-open-${bindingTestId}`).click();
-  const activeView = sidePanel
+  const activeView = page
     .locator('[data-testid="local-app-view"][data-active="true"]')
     .filter({ hasText: definition.title });
   await activeView.waitFor({ state: "visible", timeout: 15_000 });
@@ -3693,6 +3899,22 @@ async function waitForLocalAppSavedView(baseUrl, companyId, localBindingId) {
         const savedView = entry.item?.type === "saved_view" ? entry.item.savedView : null;
         if (savedView?.targetPayload?.kind === "local_app"
           && savedView.targetPayload.localBindingId === localBindingId) {
+          return { directory: payload, entry, group, savedView };
+        }
+      }
+    }
+    return null;
+  });
+}
+
+async function waitForBrowserSavedView(baseUrl, companyId, viewInstanceId) {
+  return waitForSmokeCondition("the Browser Saved View to appear in Messenger", async () => {
+    const payload = await readMessengerCustomGroups(baseUrl, companyId);
+    for (const group of payload.groups ?? []) {
+      for (const entry of group.entries ?? []) {
+        const savedView = entry.item?.type === "saved_view" ? entry.item.savedView : null;
+        if (savedView?.targetPayload?.kind === "browser"
+          && savedView.targetPayload.viewInstanceId === viewInstanceId) {
           return { directory: payload, entry, group, savedView };
         }
       }
@@ -3983,6 +4205,26 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
   }, { bindingId: definition.localBindingId, expectedUrl });
 }
 
+async function readActiveLocalAppGuestIdentity(page, definition, marker = null) {
+  return page.evaluate(({ bindingId, marker: nextMarker }) => {
+    const webview = Array.from(document.querySelectorAll("[data-testid='local-app-webview']"))
+      .find((candidate) => candidate.getAttribute("data-local-binding-id") === bindingId
+        && candidate.getAttribute("data-active") === "true");
+    if (!webview || typeof webview.getWebContentsId !== "function") {
+      throw new Error("The active Local App guest was not available");
+    }
+    if (nextMarker) webview.__rudderLocalAppTransferMarker = nextMarker;
+    return {
+      domMarker: webview.__rudderLocalAppTransferMarker ?? null,
+      partition: webview.getAttribute("partition"),
+      webContentsId: webview.getWebContentsId(),
+    };
+  }, {
+    bindingId: definition.localBindingId,
+    marker,
+  });
+}
+
 async function runLocalAppsScenario(mode) {
   if (process.platform !== "darwin") {
     console.log(`[desktop-smoke] Local Apps scenario skipped on ${process.platform}: macOS-only V1 capability`);
@@ -4066,100 +4308,8 @@ async function runLocalAppsScenario(mode) {
       envValues: inheritedEnvValues,
       label,
     });
-    const keepButton = initial.sidePanel.getByTestId("chat-side-panel-keep-in-messenger");
-    await keepButton.waitFor({ state: "visible", timeout: 15_000 });
-    assert.equal(await keepButton.isEnabled(), true, "Local App Keep in Messenger should be enabled");
-    const keepRequestPromise = run.page.waitForRequest((request) => {
-      const url = new URL(request.url());
-      return request.method() === "POST"
-        && url.pathname === `/api/orgs/${company.id}/messenger/saved-views/keep`;
-    }, { timeout: 15_000 });
-    const keepResponsePromise = run.page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return response.request().method() === "POST"
-        && url.pathname === `/api/orgs/${company.id}/messenger/saved-views/keep`;
-    }, { timeout: 15_000 });
-    await keepButton.click();
-    const keepExchange = await Promise.race([
-      Promise.all([keepRequestPromise, keepResponsePromise]),
-      run.page.getByText("Could not keep this view", { exact: true })
-        .waitFor({ state: "visible", timeout: 15_000 })
-        .then(async () => {
-          const errorToast = run.page.getByText("Could not keep this view", { exact: true })
-            .locator("xpath=ancestor::li[1]");
-          throw new Error(`Keep Local App Saved View did not issue a request: ${await errorToast.innerText()}`);
-        }),
-    ]);
-    const [keepRequest, keepResponse] = keepExchange;
-    const keepRequestBody = keepRequest.postDataJSON();
-    assertExactLocalAppSavedViewTarget(
-      keepRequestBody?.target,
-      expectedSavedViewTarget,
-      "Keep request",
-    );
-    assertNoLocalAppRuntimeDetails(keepRequestBody, privacyOptions("Keep request"));
-    const keepResponseBody = await keepResponse.text();
-    assert.equal(
-      keepResponse.status(),
-      201,
-      "Keep Local App Saved View returned an unexpected status",
-    );
-    const keepResult = JSON.parse(keepResponseBody);
-    assertExactLocalAppSavedViewTarget(
-      keepResult?.savedView?.targetPayload,
-      expectedSavedViewTarget,
-      "Keep response",
-    );
-    assertNoLocalAppRuntimeDetails(keepResult, privacyOptions("Keep response"));
-    await run.page.getByText("Kept in Messenger", { exact: true }).waitFor({ state: "visible", timeout: 15_000 });
-    const saved = await waitForLocalAppSavedView(run.baseUrl, company.id, definition.localBindingId);
-    assertExactLocalAppSavedViewTarget(
-      saved.savedView.targetPayload,
-      expectedSavedViewTarget,
-      "Messenger group response",
-    );
-    assertNoLocalAppRuntimeDetails(saved.directory, privacyOptions("Messenger group response"));
-    assert.ok(
-      saved.group.entries.some((entry) => entry.item?.type === "thread" && entry.itemKey === `chat:${chat.id}`),
-      "keeping from an ungrouped Chat should atomically group the Chat and Local App Saved View",
-    );
-    const savedRowTestId = `messenger-saved-view-${safeLocalAppTestId(saved.entry.id)}`;
-    const savedRow = run.page.getByTestId(savedRowTestId);
-    await savedRow.waitFor({ state: "visible", timeout: 30_000 });
-    await savedRow.locator("a").click();
-    await run.page.waitForURL(new RegExp(`/${companyRouteKey}/messenger/saved/${saved.savedView.id}$`), { timeout: 30_000 });
-    const restoredView = run.page
-      .locator('[data-testid="local-app-view"][data-active="true"]')
-      .filter({ hasText: definition.title });
-    await restoredView.waitFor({ state: "visible", timeout: 15_000 });
-    const restoredTab = run.page.locator(
-      `[data-testid="chat-side-panel-tab"][aria-selected="true"][data-view-instance-id="${saved.savedView.targetPayload.viewInstanceId}"]`,
-    );
-    await restoredTab.waitFor({ state: "visible", timeout: 15_000 });
-    assert.ok((await restoredTab.innerText()).includes(definition.title));
-    await restoredView.getByTestId("local-app-start").waitFor({ state: "visible", timeout: 15_000 });
-    assert.equal((await readDesktopLocalAppStatus(run.page, definition.id)).status, "stopped");
-    assert.equal(
-      (await readLocalAppSmokeRegistry(registryPath)).runtimeDescriptors?.[definition.id],
-      undefined,
-      "opening a Messenger Saved View must not create a runtime descriptor",
-    );
-    if (project.markerPath) assert.equal(await pathExists(project.markerPath), false, "opening a Messenger Saved View must not start a Local App");
 
-    await run.page.reload();
-    await run.page.waitForLoadState("networkidle");
-    await restoredView.waitFor({ state: "visible", timeout: 30_000 });
-    await restoredTab.waitFor({ state: "visible", timeout: 15_000 });
-    await restoredView.getByTestId("local-app-start").waitFor({ state: "visible", timeout: 15_000 });
-    assert.equal((await readDesktopLocalAppStatus(run.page, definition.id)).status, "stopped");
-    assert.equal(
-      (await readLocalAppSmokeRegistry(registryPath)).runtimeDescriptors?.[definition.id],
-      undefined,
-      "reloading a Messenger Saved View must not create a runtime descriptor",
-    );
-    if (project.markerPath) assert.equal(await pathExists(project.markerPath), false, "reloading a Saved View must not start a Local App");
-
-    await restoredView.getByTestId("local-app-start").click();
+    await initial.view.getByTestId("local-app-start").click();
     const runningStatus = await waitForSmokeCondition("the Local App runtime to start", async () => {
       const status = await readDesktopLocalAppStatus(run.page, definition.id);
       return status.status === "running" ? status : null;
@@ -4209,40 +4359,150 @@ async function runLocalAppsScenario(mode) {
       title: webviewEvidence.title,
       url: webviewEvidence.url,
     }));
-    const markerBeforeReopen = project.markerPath ? await readFile(project.markerPath, "utf8") : null;
+    const markerBeforeMove = project.markerPath ? await readFile(project.markerPath, "utf8") : null;
     const generation = runningStatus.generation;
     assert.ok(generation, "running Local App should expose one runtime generation");
+    const transferMarker = randomUUID();
+    const guestBeforeMove = await readActiveLocalAppGuestIdentity(
+      run.page,
+      definition,
+      transferMarker,
+    );
+
+    const keepButton = initial.sidePanel.getByTestId("chat-side-panel-keep-in-messenger");
+    await keepButton.waitFor({ state: "visible", timeout: 15_000 });
+    assert.equal(await keepButton.isEnabled(), true, "Local App Keep in Messenger should be enabled");
+    const keepRequestPromise = run.page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return request.method() === "POST"
+        && url.pathname === `/api/orgs/${company.id}/messenger/saved-views/keep`;
+    }, { timeout: 15_000 });
+    const keepResponsePromise = run.page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "POST"
+        && url.pathname === `/api/orgs/${company.id}/messenger/saved-views/keep`;
+    }, { timeout: 15_000 });
+    await keepButton.click();
+    const keepExchange = await Promise.race([
+      Promise.all([keepRequestPromise, keepResponsePromise]),
+      run.page.getByText("Could not keep this view", { exact: true })
+        .waitFor({ state: "visible", timeout: 15_000 })
+        .then(async () => {
+          const errorToast = run.page.getByText("Could not keep this view", { exact: true })
+            .locator("xpath=ancestor::li[1]");
+          throw new Error(`Keep Local App Saved View did not issue a request: ${await errorToast.innerText()}`);
+        }),
+    ]);
+    const [keepRequest, keepResponse] = keepExchange;
+    const keepRequestBody = keepRequest.postDataJSON();
+    assertExactLocalAppSavedViewTarget(
+      keepRequestBody?.target,
+      expectedSavedViewTarget,
+      "Keep request",
+    );
+    assertNoLocalAppRuntimeDetails(keepRequestBody, privacyOptions("Keep request"));
+    const keepResponseBody = await keepResponse.text();
+    assert.equal(
+      keepResponse.status(),
+      201,
+      "Keep Local App Saved View returned an unexpected status",
+    );
+    const keepResult = JSON.parse(keepResponseBody);
+    assertExactLocalAppSavedViewTarget(
+      keepResult?.savedView?.targetPayload,
+      expectedSavedViewTarget,
+      "Keep response",
+    );
+    assertNoLocalAppRuntimeDetails(keepResult, privacyOptions("Keep response"));
+    await run.page.getByText(/^Moved to /).waitFor({ state: "visible", timeout: 15_000 });
+    const saved = await waitForLocalAppSavedView(run.baseUrl, company.id, definition.localBindingId);
+    assertExactLocalAppSavedViewTarget(
+      saved.savedView.targetPayload,
+      expectedSavedViewTarget,
+      "Messenger group response",
+    );
+    assertNoLocalAppRuntimeDetails(saved.directory, privacyOptions("Messenger group response"));
+    assert.ok(
+      saved.group.entries.some((entry) => entry.item?.type === "thread" && entry.itemKey === `chat:${chat.id}`),
+      "keeping from an ungrouped Chat should atomically group the Chat and Local App Saved View",
+    );
+    const savedRowTestId = `messenger-saved-view-${safeLocalAppTestId(saved.entry.id)}`;
+    const savedRow = run.page.getByTestId(savedRowTestId);
+    await savedRow.waitFor({ state: "visible", timeout: 30_000 });
+    await run.page.waitForURL(new RegExp(`/${companyRouteKey}/messenger/saved/${saved.savedView.id}$`), { timeout: 30_000 });
+    const mainWorkbench = run.page.getByTestId("messenger-main-workbench");
+    await mainWorkbench.waitFor({ state: "visible", timeout: 15_000 });
+    const mainTab = mainWorkbench.locator(
+      `[role="tab"][data-view-instance-id="${saved.savedView.targetPayload.viewInstanceId}"]`,
+    );
+    await mainTab.waitFor({ state: "visible", timeout: 15_000 });
+    assert.equal(await mainTab.getAttribute("aria-selected"), "true");
+    assert.equal(
+      await initial.sidePanel.locator(
+        `[data-testid="chat-side-panel-tab"][data-view-instance-id="${saved.savedView.targetPayload.viewInstanceId}"]`,
+      ).count(),
+      0,
+      "Move must detach only the exact Local App tab from the Side Panel",
+    );
+    const mainView = run.page
+      .locator('[data-testid="local-app-view"][data-active="true"]')
+      .filter({ hasText: definition.title });
+    await mainView.waitFor({ state: "visible", timeout: 15_000 });
+    await mainView.getByTestId("local-app-webview").waitFor({ state: "visible", timeout: 15_000 });
+    const guestAfterMove = await readActiveLocalAppGuestIdentity(run.page, definition);
+    assert.deepEqual(
+      guestAfterMove,
+      guestBeforeMove,
+      "Move must retain the exact Local App DOM guest, partition, and webContentsId",
+    );
+    const statusAfterMove = await readDesktopLocalAppStatus(run.page, definition.id);
+    assert.equal(statusAfterMove.generation, generation, "Move must keep the same Local App runtime generation");
+    const descriptorAfterMove = await readLocalAppRuntimeDescriptor(registryPath, definition.id);
+    assert.equal(descriptorAfterMove?.pid, runningDescriptor.pid, "Move must keep the same Local App PID");
+    assert.equal(descriptorAfterMove?.generation, runningDescriptor.generation, "Move must keep the same descriptor generation");
+    if (project.markerPath) {
+      assert.equal(await readFile(project.markerPath, "utf8"), markerBeforeMove, "Move must not run the Local App command twice");
+    }
+    await assertLocalAppEndpointReachable(attested, definition, "Move must not stop the Local App");
 
     await mkdir(path.dirname(localAppSmokeScreenshotPath), { recursive: true });
     await run.page.screenshot({ path: localAppSmokeScreenshotPath, fullPage: true });
-    console.log(`[desktop-smoke] Local App screenshot: ${localAppSmokeScreenshotPath}`);
+    console.log(`[desktop-smoke] Local App Main Workbench screenshot: ${localAppSmokeScreenshotPath}`);
 
-    const runningPanel = run.page.getByTestId("chat-side-panel");
-    await runningPanel.getByTestId("chat-side-panel-collapse").click();
-    await runningPanel.waitFor({ state: "hidden", timeout: 5_000 });
-    assert.equal((await readDesktopLocalAppStatus(run.page, definition.id)).generation, generation);
-    await assertLocalAppEndpointReachable(attested, definition, "closing the Side Panel must not stop the Local App");
-    await openSmokeSidePanel(run.page);
-    await runningPanel.getByTestId("local-app-webview").waitFor({ state: "visible", timeout: 15_000 });
-
-    const localAppTab = runningPanel.getByTestId("chat-side-panel-tab").filter({ hasText: definition.title }).last();
-    await localAppTab.waitFor({ state: "visible", timeout: 15_000 });
-    await localAppTab.evaluate((tab) => {
-      const close = tab.parentElement?.querySelector("[data-testid='chat-side-panel-tab-close']");
-      if (!(close instanceof HTMLButtonElement)) throw new Error("Local App tab close button was not found");
-      close.click();
-    });
-    await waitForSmokeCondition("the Local App tab to close", async () => (
-      await runningPanel.getByTestId("local-app-view").count() === 0
-    ));
-    assert.equal((await readDesktopLocalAppStatus(run.page, definition.id)).generation, generation);
-    await assertLocalAppEndpointReachable(attested, definition, "closing the Local App tab must not stop its runtime");
-    const reopened = await openLocalAppSmokeDefinition(run.page, definition);
-    await reopened.view.getByTestId("local-app-webview").waitFor({ state: "visible", timeout: 30_000 });
-    assert.equal((await readDesktopLocalAppStatus(run.page, definition.id)).generation, generation);
+    await run.page.reload();
+    await run.page.waitForLoadState("networkidle");
+    await run.page.waitForURL(new RegExp(`/${companyRouteKey}/messenger/saved/${saved.savedView.id}$`), { timeout: 30_000 });
+    await mainWorkbench.waitFor({ state: "visible", timeout: 30_000 });
+    await mainTab.waitFor({ state: "visible", timeout: 15_000 });
+    await mainView.waitFor({ state: "visible", timeout: 30_000 });
+    await mainView.getByTestId("local-app-webview").waitFor({ state: "visible", timeout: 30_000 });
+    const statusAfterReload = await readDesktopLocalAppStatus(run.page, definition.id);
+    assert.equal(statusAfterReload.generation, generation, "Saved route reload must not start a new Local App generation");
+    const descriptorAfterReload = await readLocalAppRuntimeDescriptor(registryPath, definition.id);
+    assert.equal(descriptorAfterReload?.pid, runningDescriptor.pid, "Saved route reload must keep the Local App PID");
+    assert.equal(descriptorAfterReload?.generation, runningDescriptor.generation);
     if (project.markerPath) {
-      assert.equal(await readFile(project.markerPath, "utf8"), markerBeforeReopen, "reopening must reuse the running generation");
+      assert.equal(await readFile(project.markerPath, "utf8"), markerBeforeMove, "Saved route reload must not run the command again");
     }
+    await assertLocalAppEndpointReachable(attested, definition, "Saved route reload must leave the listener running");
+
+    await mainWorkbench.getByRole("button", { name: `Close ${definition.title} tab` }).click();
+    await mainTab.waitFor({ state: "detached", timeout: 15_000 });
+    await savedRow.waitFor({ state: "visible", timeout: 15_000 });
+    const statusAfterClose = await readDesktopLocalAppStatus(run.page, definition.id);
+    assert.equal(statusAfterClose.generation, generation, "closing the Main tab must not stop the Local App");
+    await assertLocalAppEndpointReachable(attested, definition, "closing the Main tab must leave the listener running");
+
+    await savedRow.locator("a").click();
+    await run.page.waitForURL(new RegExp(`/${companyRouteKey}/messenger/saved/${saved.savedView.id}$`), { timeout: 30_000 });
+    await mainTab.waitFor({ state: "visible", timeout: 15_000 });
+    await mainView.waitFor({ state: "visible", timeout: 30_000 });
+    await mainView.getByTestId("local-app-webview").waitFor({ state: "visible", timeout: 30_000 });
+    const guestBeforeRemove = await readActiveLocalAppGuestIdentity(
+      run.page,
+      definition,
+      randomUUID(),
+    );
 
     const currentSavedRow = run.page.getByTestId(savedRowTestId);
     await currentSavedRow.waitFor({ state: "visible", timeout: 15_000 });
@@ -4255,8 +4515,16 @@ async function runLocalAppsScenario(mode) {
     assert.equal(afterRemovalStatus.status, "running", "Messenger Remove must not stop a Local App");
     assert.equal(afterRemovalStatus.generation, generation, "Messenger Remove must keep the same runtime generation");
     await assertLocalAppEndpointReachable(attested, definition, "Messenger Remove must leave the Local App listener running");
+    await run.page.waitForURL(new RegExp(`/${companyRouteKey}/messenger/workbench$`), { timeout: 15_000 });
+    await mainTab.waitFor({ state: "visible", timeout: 15_000 });
+    const guestAfterRemove = await readActiveLocalAppGuestIdentity(run.page, definition);
+    assert.deepEqual(
+      guestAfterRemove,
+      guestBeforeRemove,
+      "Remove from Messenger must leave the open Main guest as the same session-only tab",
+    );
 
-    await reopened.view.getByTestId("local-app-stop").click();
+    await mainView.getByTestId("local-app-stop").click();
     await waitForSmokeCondition("the Local App runtime status to become stopped", async () => {
       const status = await readDesktopLocalAppStatus(run.page, definition.id);
       return status.status === "stopped" ? status : null;
@@ -4267,9 +4535,9 @@ async function runLocalAppsScenario(mode) {
       markerPath: project.markerPath,
       registryPath,
     });
-    const logsButton = reopened.view.getByRole("button", { name: "Show logs" });
+    const logsButton = mainView.getByRole("button", { name: "Show logs" });
     await logsButton.click();
-    const logs = reopened.view.getByTestId("local-app-logs");
+    const logs = mainView.getByTestId("local-app-logs");
     await logs.waitFor({ state: "visible", timeout: 10_000 });
     const logText = await waitForSmokeCondition("Local App runtime logs", async () => {
       const text = (await logs.textContent())?.trim() ?? "";
@@ -4277,7 +4545,7 @@ async function runLocalAppsScenario(mode) {
     });
     if (!project.external) assert.match(logText, /Rudder Local Apps smoke fixture listening/);
 
-    console.log("[desktop-smoke] Local Apps stayed inert on open/restore, loaded an attested isolated webview, reused one runtime, and stopped without residue");
+    console.log("[desktop-smoke] Local App exact guest moved into Main Workbench, close/remove preserved its runtime, and explicit Stop left no residue");
   } catch (error) {
     scenarioError = sanitizeLocalAppSmokeError(error, inheritedEnvValues);
     console.error(`[desktop-smoke] Local Apps scenario failed: ${scenarioError.message}`);
