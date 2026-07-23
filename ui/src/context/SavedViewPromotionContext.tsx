@@ -6,6 +6,7 @@ import {
   type LiveSurfaceTarget,
 } from "@/context/LiveSurfaceRuntimeContext";
 import { useMainWorkbench } from "@/context/MainWorkbenchContext";
+import { useOptionalOrganization } from "@/context/OrganizationContext";
 import { useSidePanel } from "@/context/SidePanelContext";
 import type { MainWorkbenchTarget } from "@/lib/main-workbench-state";
 import {
@@ -60,6 +61,10 @@ export type SavedViewPromotionMoveState = {
 };
 
 type SavedViewPromotionContextValue = {
+  finalizeSavedViewRemoval: (
+    organizationId: string,
+    savedViewId: string,
+  ) => void;
   getMoveState: (
     organizationId: string,
     contextKey: string,
@@ -83,6 +88,11 @@ type SavedViewPromotionContextValue = {
     contextKey: string,
     target: SidePanelTarget,
   ) => boolean;
+  setSavedViewRemovalPending: (
+    organizationId: string,
+    savedViewId: string,
+    pending: boolean,
+  ) => void;
 };
 
 const SavedViewPromotionContext =
@@ -127,6 +137,10 @@ function movingKey(
         normalized.viewInstanceId,
       ])
     : "";
+}
+
+function savedViewRemovalKey(organizationId: string, savedViewId: string) {
+  return JSON.stringify([organizationId.trim(), savedViewId]);
 }
 
 function cacheKeepResult(
@@ -276,9 +290,18 @@ export function SavedViewPromotionProvider({
   const queryClient = useQueryClient();
   const sidePanel = useSidePanel();
   const workbench = useMainWorkbench();
+  const organization = useOptionalOrganization();
   const liveSurfaceRuntime = useLiveSurfaceRuntime();
   const movingRef = useRef(new Set<string>());
   const attemptsRef = useRef(new Map<string, RetainedPromotionAttempt>());
+  const savedViewRemovalStatesRef = useRef(new Map<
+    string,
+    { pendingCount: number; removed: boolean }
+  >());
+  const currentOrganizationIdRef = useRef<string | null | undefined>(
+    organization?.selectedOrganizationId,
+  );
+  currentOrganizationIdRef.current = organization?.selectedOrganizationId;
   const [revision, setRevision] = useState(0);
   const touch = useCallback(() => setRevision((current) => current + 1), []);
 
@@ -293,6 +316,58 @@ export function SavedViewPromotionProvider({
     result: MessengerSavedViewKeepResult,
   ): Promise<MessengerSavedViewKeepResult> => {
     const organizationId = attempt.request.organizationId.trim();
+    if (
+      currentOrganizationIdRef.current !== undefined
+      && currentOrganizationIdRef.current !== organizationId
+    ) {
+      liveSurfaceRuntime.claimSurface(attempt.runtimeId, attempt.sideOwnerId);
+      workbench.dispatch({
+        type: "promotion/claim-fail",
+        organizationId,
+        promotionId: attempt.promotionId,
+        savedViewId: result.savedView.id,
+        expectedSourceRevision: attempt.sourceRevision,
+        error: "organization_changed",
+      });
+      unlockAttempt(attempt);
+      throw new Error(
+        "Saved in Messenger. Return to the original organization to retry the move.",
+      );
+    }
+    const stopForSavedViewRemoval = () => {
+      if (!savedViewRemovalStatesRef.current.has(
+        savedViewRemovalKey(organizationId, result.savedView.id),
+      )) {
+        return false;
+      }
+      liveSurfaceRuntime.claimSurface(attempt.runtimeId, attempt.sideOwnerId);
+      const promotion = workbench.getState().organizations[organizationId]
+        ?.promotionsById[attempt.promotionId];
+      if (promotion?.status === "claiming") {
+        workbench.dispatch({
+          type: "promotion/claim-fail",
+          organizationId,
+          promotionId: attempt.promotionId,
+          savedViewId: result.savedView.id,
+          expectedSourceRevision: attempt.sourceRevision,
+          error: "saved_view_removal_pending",
+        });
+      } else if (promotion?.status === "detaching") {
+        workbench.dispatch({
+          type: "promotion/detach-fail",
+          organizationId,
+          promotionId: attempt.promotionId,
+          savedViewId: result.savedView.id,
+          expectedSourceRevision: attempt.sourceRevision,
+          error: "saved_view_removal_pending",
+        });
+      }
+      unlockAttempt(attempt);
+      return true;
+    };
+    if (stopForSavedViewRemoval()) {
+      throw new Error("Saved View removal interrupted this move.");
+    }
     sidePanel.holdDisplayedContext(organizationId, attempt.request.contextKey);
     const claimedState = workbench.dispatch({
       type: "promotion/claim",
@@ -315,6 +390,9 @@ export function SavedViewPromotionProvider({
       attempt.mainOwnerId,
       claimTimeoutMs,
     );
+    if (stopForSavedViewRemoval()) {
+      throw new Error("Saved View removal interrupted this move.");
+    }
     const claimed = ownerReady
       && liveSurfaceRuntime.claimSurface(
         attempt.runtimeId,
@@ -334,6 +412,9 @@ export function SavedViewPromotionProvider({
       throw new Error(
         "Saved in Messenger, but Main is not ready. Retry the move.",
       );
+    }
+    if (stopForSavedViewRemoval()) {
+      throw new Error("Saved View removal interrupted this move.");
     }
 
     const detached = sidePanel.detachTargetForContext(
@@ -372,6 +453,66 @@ export function SavedViewPromotionProvider({
     liveSurfaceRuntime,
     navigate,
     sidePanel,
+    unlockAttempt,
+    workbench,
+  ]);
+
+  const setSavedViewRemovalPending = useCallback((
+    organizationId: string,
+    savedViewId: string,
+    pending: boolean,
+  ) => {
+    const key = savedViewRemovalKey(organizationId, savedViewId);
+    const current = savedViewRemovalStatesRef.current.get(key);
+    if (pending) {
+      savedViewRemovalStatesRef.current.set(key, {
+        pendingCount: (current?.pendingCount ?? 0) + 1,
+        removed: current?.removed ?? false,
+      });
+      return;
+    }
+    if (current?.removed) return;
+    const pendingCount = Math.max(0, (current?.pendingCount ?? 0) - 1);
+    if (pendingCount === 0) savedViewRemovalStatesRef.current.delete(key);
+    else savedViewRemovalStatesRef.current.set(key, {
+      pendingCount,
+      removed: false,
+    });
+  }, []);
+
+  const finalizeSavedViewRemoval = useCallback((
+    organizationIdInput: string,
+    savedViewId: string,
+  ) => {
+    const organizationId = organizationIdInput.trim();
+    savedViewRemovalStatesRef.current.set(
+      savedViewRemovalKey(organizationId, savedViewId),
+      { pendingCount: 0, removed: true },
+    );
+    for (const attempt of Array.from(attemptsRef.current.values())) {
+      if (attempt.request.organizationId.trim() !== organizationId) continue;
+      const promotion = workbench.getState().organizations[organizationId]
+        ?.promotionsById[attempt.promotionId];
+      const promotionSavedViewId = attempt.result?.savedView.id
+        ?? (
+          promotion && "savedViewId" in promotion
+            ? promotion.savedViewId
+            : promotion?.source.savedViewId
+        );
+      if (promotionSavedViewId !== savedViewId || !promotion) continue;
+      liveSurfaceRuntime.claimSurface(attempt.runtimeId, attempt.sideOwnerId);
+      workbench.dispatch({
+        type: "promotion/cancel-saved-view",
+        organizationId,
+        promotionId: attempt.promotionId,
+        savedViewId,
+        expectedSourceRevision: promotion.source.sourceRevision,
+      });
+      attemptsRef.current.delete(attempt.key);
+      unlockAttempt(attempt);
+    }
+  }, [
+    liveSurfaceRuntime,
     unlockAttempt,
     workbench,
   ]);
@@ -757,8 +898,25 @@ export function SavedViewPromotionProvider({
   }, [workbench.state]);
 
   const value = useMemo(
-    () => ({ discard, getMoveState, isMoving, promote, retry }),
-    [discard, getMoveState, isMoving, promote, retry, revision],
+    () => ({
+      discard,
+      finalizeSavedViewRemoval,
+      getMoveState,
+      isMoving,
+      promote,
+      retry,
+      setSavedViewRemovalPending,
+    }),
+    [
+      discard,
+      finalizeSavedViewRemoval,
+      getMoveState,
+      isMoving,
+      promote,
+      retry,
+      revision,
+      setSavedViewRemovalPending,
+    ],
   );
   return (
     <SavedViewPromotionContext.Provider value={value}>

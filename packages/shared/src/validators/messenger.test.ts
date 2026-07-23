@@ -178,6 +178,19 @@ describe("Messenger custom group item-key aliases", () => {
       name: "Mixed",
       itemKeys: ["chat:abc", savedViewItemKey],
     })).toMatchObject({ itemKeys: ["chat:abc", savedViewItemKey] });
+    expect(createMessengerCustomGroupWithEntriesSchema.parse({
+      name: "Mixed",
+      itemKeys: ["chat:abc", savedViewItemKey],
+      anchorItemKey: "chat:abc",
+    })).toMatchObject({
+      itemKeys: ["chat:abc", savedViewItemKey],
+      anchorItemKey: "chat:abc",
+    });
+    expect(createMessengerCustomGroupWithEntriesSchema.safeParse({
+      name: "Mixed",
+      itemKeys: ["chat:abc", savedViewItemKey],
+      anchorItemKey: "chat:missing",
+    }).success).toBe(false);
     expect(assignMessengerCustomGroupEntrySchema.safeParse({ itemKey: "saved-view:not-a-uuid" }).success).toBe(false);
   });
 

@@ -169,6 +169,7 @@ export function messengerRoutes(db: Db) {
         generatedName ?? req.body.name,
         req.body.icon ?? null,
         itemKeys,
+        req.body.anchorItemKey,
       ));
     },
   );

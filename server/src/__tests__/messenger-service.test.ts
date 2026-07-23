@@ -2623,6 +2623,100 @@ describe("messengerService and issue follows", () => {
     expect(customGroups.groups).toEqual([]);
   });
 
+  it("atomically reuses the group that acquires a loose Chat anchor", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-custom-group-anchor-reuse";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Custom Group Anchor Reuse Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Custom Group Anchor Reuse Org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const conversationId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Loose research",
+      summary: "Summary",
+      issueCreationMode: "manual_approval" as const,
+      planMode: false,
+      createdByUserId: userId,
+    });
+    const anchorItemKey = `chat:${conversationId}`;
+    const left = await insertSavedViewFixture(orgId, userId, {
+      target: {
+        kind: "browser",
+        tabId: "anchor-left",
+        url: "https://example.test/left",
+        viewInstanceId: "anchor-left",
+      },
+      title: "Left",
+    });
+    const right = await insertSavedViewFixture(orgId, userId, {
+      target: {
+        kind: "browser",
+        tabId: "anchor-right",
+        url: "https://example.test/right",
+        viewInstanceId: "anchor-right",
+      },
+      title: "Right",
+    });
+
+    await Promise.all([
+      messengerSvc.createCustomGroupWithEntries(
+        orgId,
+        userId,
+        "Left group",
+        null,
+        [anchorItemKey, `saved-view:${left.id}`],
+        anchorItemKey,
+      ),
+      messengerSvc.createCustomGroupWithEntries(
+        orgId,
+        userId,
+        "Right group",
+        null,
+        [anchorItemKey, `saved-view:${right.id}`],
+        anchorItemKey,
+      ),
+    ]);
+
+    const customGroups = await messengerSvc.listCustomGroups(orgId, userId);
+    expect(customGroups.groups).toHaveLength(1);
+    expect(new Set(
+      customGroups.groups[0]?.entries.map((entry) => entry.itemKey),
+    )).toEqual(new Set([
+      anchorItemKey,
+      `saved-view:${left.id}`,
+      `saved-view:${right.id}`,
+    ]));
+  });
+
+  it("rejects a system-thread anchor for Saved View group creation", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-custom-group-invalid-anchor";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Custom Group Invalid Anchor Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Custom Group Invalid Anchor Org"),
+      issuePrefix: `I${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await expect(messengerSvc.createCustomGroupWithEntries(
+      orgId,
+      userId,
+      "Invalid anchor",
+      null,
+      ["approvals"],
+      "approvals",
+    )).rejects.toThrow(/anchor must be a Chat or Issue/i);
+  });
+
   it("omits and prunes stale custom group entries during hydration", async () => {
     const orgId = randomUUID();
     const userId = "board-user-custom-group-stale";
