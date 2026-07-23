@@ -128,7 +128,7 @@ test.describe("Run transcript detail", () => {
     });
 
     await githubMcpRow.click();
-    await expect(page.getByText("repo_full_name Undertone0809/rudder", { exact: false })).toBeVisible();
+    await expect(page.getByText("Undertone0809/rudder", { exact: false })).toBeVisible();
     await rudderMcpRow.click();
     await expect(page.getByText("eeb73ad1-e000-4dce-9d47-23106fa36bbc", { exact: false })).toBeVisible();
     await expect(page.getByText("rudder-tools", { exact: false }).first()).toBeVisible();
