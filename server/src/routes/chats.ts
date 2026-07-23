@@ -170,6 +170,130 @@ export function chatRoutes(
     });
   }
 
+  function parseQueuedMultipartBody(
+    body: Record<string, unknown> | undefined,
+    mode: "create" | "update",
+  ) {
+    const raw = { ...(body ?? {}) };
+    let payload: Record<string, unknown> = {};
+    if (typeof raw.payload === "string") {
+      try {
+        const parsed = JSON.parse(raw.payload);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          payload = parsed as Record<string, unknown>;
+        }
+      } catch {
+        return null;
+      }
+    } else if (raw.payload && typeof raw.payload === "object" && !Array.isArray(raw.payload)) {
+      payload = raw.payload as Record<string, unknown>;
+    } else {
+      const payloadKeys = [
+        "body",
+        "inlineAnnotations",
+        "projectId",
+        "skillRefs",
+        "accessMode",
+        "model",
+        "effort",
+        "metadata",
+      ] as const;
+      for (const key of payloadKeys) {
+        if (Object.hasOwn(raw, key)) payload[key] = raw[key];
+      }
+    }
+    if (typeof payload.inlineAnnotations === "string") {
+      try {
+        payload.inlineAnnotations = JSON.parse(payload.inlineAnnotations);
+      } catch {
+        return null;
+      }
+    }
+    for (const key of ["skillRefs", "metadata"] as const) {
+      if (typeof payload[key] !== "string") continue;
+      try {
+        payload[key] = JSON.parse(payload[key] as string);
+      } catch {
+        return null;
+      }
+    }
+    if (mode === "create") {
+      return {
+        clientMutationId: raw.clientMutationId,
+        expectedGenerationId:
+          typeof raw.expectedGenerationId === "string" && raw.expectedGenerationId.trim()
+            ? raw.expectedGenerationId
+            : null,
+        payload,
+      };
+    }
+    const version = typeof raw.version === "string" ? Number(raw.version) : raw.version;
+    return { version, payload };
+  }
+
+  async function storeQueuedAnnotationFiles(
+    conversation: ChatConversation,
+    files: Array<{ mimetype: string; buffer: Buffer; originalname: string }>,
+  ) {
+    const storedFiles: Array<Awaited<ReturnType<StorageService["putFile"]>>> = [];
+    try {
+      for (const file of files) {
+        storedFiles.push(await storage.putFile({
+          orgId: conversation.orgId,
+          namespace: `chat-queue-annotations/${conversation.id}`,
+          originalFilename: file.originalname || null,
+          contentType: (file.mimetype || "").toLowerCase(),
+          body: file.buffer,
+        }));
+      }
+      return storedFiles;
+    } catch (error) {
+      await Promise.all(
+        storedFiles.map((stored) =>
+          storage.deleteObject(conversation.orgId, stored.objectKey).catch(() => undefined),
+        ),
+      );
+      throw error;
+    }
+  }
+
+  async function cleanupCommittedQueuedAnnotationAssets(
+    orgId: string,
+    queueItemId: string,
+    cleanupAttachments: Array<{ assetId: string; objectKey: string }>,
+  ) {
+    const deletedAssetIds: string[] = [];
+    for (const attachment of cleanupAttachments) {
+      try {
+        await storage.deleteObject(orgId, attachment.objectKey);
+        deletedAssetIds.push(attachment.assetId);
+      } catch (error) {
+        logger.warn(
+          { err: error, queuedMessageId: queueItemId, assetId: attachment.assetId },
+          "failed to delete orphaned queued annotation asset",
+        );
+      }
+    }
+    if (deletedAssetIds.length > 0) {
+      await svc.finalizeQueuedAnnotationAssetCleanup({ orgId, assetIds: deletedAssetIds });
+    }
+  }
+
+  async function cleanupUncommittedQueuedAnnotationFiles(
+    orgId: string,
+    queueMutationId: string,
+    attachments: Array<{ objectKey: string }>,
+  ) {
+    await Promise.all(attachments.map((attachment) =>
+      storage.deleteObject(orgId, attachment.objectKey).catch((error) => {
+        logger.warn(
+          { err: error, queueMutationId },
+          "failed to compensate an uncommitted queued annotation object",
+        );
+      }),
+    ));
+  }
+
   async function assertConversationAccess(req: Request, conversationId: string) {
     const conversation = await svc.getById(conversationId);
     if (!conversation) return null;
@@ -1892,7 +2016,7 @@ export function chatRoutes(
     res.json(await svc.getQueueSnapshot(conversation.id, active?.generationId ?? null));
   });
 
-  router.post("/chats/:id/queue", validate(createChatQueuedMessageSchema), async (req, res) => {
+  router.post("/chats/:id/queue", async (req, res) => {
     const conversation = await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
@@ -1900,15 +2024,70 @@ export function chatRoutes(
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
-    const requestActor = queueRequestActor(req);
-    const item = await svc.createQueuedMessage({
+    const multipart = isMultipartRequest(req);
+    if (multipart) await runMessageFileUpload(req, res);
+    const files = multipart ? uploadedMessageFiles(req) : [];
+    const fileValidationError = validateUploadedMessageFiles(files);
+    if (fileValidationError) {
+      res.status(400).json({ error: fileValidationError });
+      return;
+    }
+    const requestBody = multipart
+      ? parseQueuedMultipartBody(req.body as Record<string, unknown> | undefined, "create")
+      : req.body;
+    const parsed = createChatQueuedMessageSchema.safeParse(requestBody);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Invalid queued message request",
+        details: parsed.error.issues,
+      });
+      return;
+    }
+    const preparedAnnotations = await inlineAnnotations.prepare({
       orgId: conversation.orgId,
       conversationId: conversation.id,
-      clientMutationId: req.body.clientMutationId,
-      expectedGenerationId: req.body.expectedGenerationId ?? getActiveChatGeneration(conversation.id)?.generationId ?? null,
-      payload: req.body.payload,
-      requestActor,
+      annotations: parsed.data.payload.inlineAnnotations,
+      uploadedFileCount: files.length,
     });
+    const storedFiles = await storeQueuedAnnotationFiles(conversation as ChatConversation, files);
+    const requestActor = queueRequestActor(req);
+    let result;
+    try {
+      result = await svc.createQueuedMessageWithStagedAttachments({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        clientMutationId: parsed.data.clientMutationId,
+        expectedGenerationId:
+          parsed.data.expectedGenerationId
+          ?? getActiveChatGeneration(conversation.id)?.generationId
+          ?? null,
+        payload: {
+          ...parsed.data.payload,
+          inlineAnnotations: preparedAnnotations.annotations,
+        },
+        requestActor,
+        stagedAttachments: storedFiles.map((attachment) => ({
+          ...attachment,
+          createdByAgentId: req.actor.type === "agent" ? (req.actor.agentId ?? null) : null,
+          createdByUserId: req.actor.type === "board" ? (req.actor.userId ?? null) : null,
+        })),
+        attachmentFileIndexesByAnnotationId:
+          preparedAnnotations.attachmentFileIndexesByAnnotationId,
+      });
+    } catch (error) {
+      await cleanupUncommittedQueuedAnnotationFiles(
+        conversation.orgId,
+        parsed.data.clientMutationId,
+        storedFiles,
+      );
+      throw error;
+    }
+    await cleanupUncommittedQueuedAnnotationFiles(
+      conversation.orgId,
+      parsed.data.clientMutationId,
+      result.cleanupAttachments,
+    );
+    const item = result.item;
     const actor = getActorInfo(req);
     await logActivity(db, {
       orgId: conversation.orgId,
@@ -1922,6 +2101,12 @@ export function chatRoutes(
       details: {
         queuedMessageId: item.id,
         position: item.position,
+        annotationCount: item.annotationCount ?? 0,
+        annotationSourceMessageIds: [
+          ...new Set(
+            (item.payload.inlineAnnotations ?? []).map((annotation) => annotation.sourceMessageId),
+          ),
+        ],
       },
     });
     wakeServerQueue();
@@ -1980,7 +2165,7 @@ export function chatRoutes(
     res.json({ item });
   });
 
-  router.patch("/chats/:id/queue/:itemId", validate(updateChatQueuedMessageSchema), async (req, res) => {
+  router.patch("/chats/:id/queue/:itemId", async (req, res) => {
     const conversation = await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
@@ -1988,13 +2173,77 @@ export function chatRoutes(
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
-    const item = await svc.updateQueuedMessage({
-      conversationId: conversation.id,
-      itemId: req.params.itemId as string,
-      version: req.body.version,
-      payload: req.body.payload,
-    });
-    res.json(item);
+    const multipart = isMultipartRequest(req);
+    if (multipart) await runMessageFileUpload(req, res);
+    const files = multipart ? uploadedMessageFiles(req) : [];
+    const fileValidationError = validateUploadedMessageFiles(files);
+    if (fileValidationError) {
+      res.status(400).json({ error: fileValidationError });
+      return;
+    }
+    const requestBody = multipart
+      ? parseQueuedMultipartBody(req.body as Record<string, unknown> | undefined, "update")
+      : req.body;
+    const inlineAnnotationsProvided = Boolean(
+      requestBody
+      && typeof requestBody === "object"
+      && "payload" in requestBody
+      && requestBody.payload
+      && typeof requestBody.payload === "object"
+      && Object.hasOwn(requestBody.payload, "inlineAnnotations"),
+    );
+    const parsed = updateChatQueuedMessageSchema.safeParse(requestBody);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Invalid queued message update",
+        details: parsed.error.issues,
+      });
+      return;
+    }
+    const preparedAnnotations = inlineAnnotationsProvided
+      ? await inlineAnnotations.prepare({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        annotations: parsed.data.payload.inlineAnnotations ?? [],
+        uploadedFileCount: files.length,
+      })
+      : null;
+    const storedFiles = await storeQueuedAnnotationFiles(conversation as ChatConversation, files);
+    let result;
+    try {
+      result = await svc.updateQueuedMessageWithStagedAttachments({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        itemId: req.params.itemId as string,
+        version: parsed.data.version,
+        payload: {
+          ...parsed.data.payload,
+          ...(inlineAnnotationsProvided
+            ? { inlineAnnotations: preparedAnnotations?.annotations ?? [] }
+            : {}),
+        },
+        stagedAttachments: storedFiles.map((attachment) => ({
+          ...attachment,
+          createdByAgentId: req.actor.type === "agent" ? (req.actor.agentId ?? null) : null,
+          createdByUserId: req.actor.type === "board" ? (req.actor.userId ?? null) : null,
+        })),
+        attachmentFileIndexesByAnnotationId:
+          preparedAnnotations?.attachmentFileIndexesByAnnotationId ?? new Map(),
+      });
+    } catch (error) {
+      await cleanupUncommittedQueuedAnnotationFiles(
+        conversation.orgId,
+        req.params.itemId as string,
+        storedFiles,
+      );
+      throw error;
+    }
+    await cleanupCommittedQueuedAnnotationAssets(
+      conversation.orgId,
+      result.item.id,
+      result.cleanupAttachments,
+    );
+    res.json(result.item);
   });
 
   router.delete("/chats/:id/queue/:itemId", async (req, res) => {
@@ -2010,12 +2259,18 @@ export function chatRoutes(
       res.status(400).json({ error: "Invalid queued message cancel request", details: parsed.error.issues });
       return;
     }
-    const item = await svc.cancelQueuedMessage({
+    const result = await svc.cancelQueuedMessageWithStagedAttachments({
+      orgId: conversation.orgId,
       conversationId: conversation.id,
       itemId: req.params.itemId as string,
       version: parsed.data.version ?? null,
     });
-    res.json(item);
+    await cleanupCommittedQueuedAnnotationAssets(
+      conversation.orgId,
+      result.item.id,
+      result.cleanupAttachments,
+    );
+    res.json(result.item);
   });
 
   router.post("/chats/:id/queue/:itemId/steer", validate(steerChatQueuedMessageSchema), async (req, res) => {
@@ -2568,6 +2823,8 @@ export function chatRoutes(
     inlineAnnotations,
     storeUserMessageFiles,
     cleanupStoredUserMessageFiles,
+    storeQueuedAnnotationFiles,
+    cleanupUncommittedQueuedAnnotationFiles,
     startChatTitleGeneration,
     attachFilesToUserMessage,
     loadAssistantInput,

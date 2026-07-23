@@ -60,8 +60,12 @@ const mockChatService = vi.hoisted(() => ({
   replaceSystemGeneratedTitle: vi.fn(),
   getQueueSnapshot: vi.fn(),
   createQueuedMessage: vi.fn(),
+  createQueuedMessageWithStagedAttachments: vi.fn(),
   updateQueuedMessage: vi.fn(),
+  updateQueuedMessageWithStagedAttachments: vi.fn(),
   cancelQueuedMessage: vi.fn(),
+  cancelQueuedMessageWithStagedAttachments: vi.fn(),
+  finalizeQueuedAnnotationAssetCleanup: vi.fn(),
   scheduleSteerContinuation: vi.fn(),
   markQueuedMessageSteerFallback: vi.fn(),
   beginSteerControlAction: vi.fn(),
@@ -625,6 +629,13 @@ describe("chat routes", () => {
       createdAt: new Date("2026-03-26T08:02:00.000Z"),
       updatedAt: new Date("2026-03-26T08:02:00.000Z"),
     }));
+    mockChatService.createQueuedMessageWithStagedAttachments.mockImplementation(
+      async (input: Record<string, unknown>) => ({
+        item: await mockChatService.createQueuedMessage(input),
+        accepted: true,
+        cleanupAttachments: [],
+      }),
+    );
     mockChatService.updateQueuedMessage.mockImplementation(async (_chatId: string, itemId: string, input: Record<string, unknown>) => ({
       id: itemId,
       orgId: "organization-1",
@@ -662,7 +673,22 @@ describe("chat routes", () => {
       createdAt: new Date("2026-03-26T08:02:00.000Z"),
       updatedAt: new Date("2026-03-26T08:03:00.000Z"),
     }));
+    mockChatService.updateQueuedMessageWithStagedAttachments.mockImplementation(
+      async (input: Record<string, unknown>) => ({
+        item: await mockChatService.updateQueuedMessage(
+          input.conversationId,
+          input.itemId,
+          input,
+        ),
+        cleanupAttachments: [],
+      }),
+    );
     mockChatService.cancelQueuedMessage.mockResolvedValue(null);
+    mockChatService.cancelQueuedMessageWithStagedAttachments.mockResolvedValue({
+      item: null,
+      cleanupAttachments: [],
+    });
+    mockChatService.finalizeQueuedAnnotationAssetCleanup.mockResolvedValue([]);
     mockChatService.markQueuedMessageSteerFallback.mockResolvedValue({
       id: "queued-1",
       status: "queued",
@@ -1717,10 +1743,91 @@ describe("chat routes", () => {
     }
   });
 
+  it("queues multipart annotation files when another generation owns the chat", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    const releaseGeneration = claimChatGeneration(
+      annotationConversationId,
+      new AbortController(),
+      "10000000-0000-4000-8000-000000000011",
+    );
+    const canonicalAnnotation = createInlineAnnotation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockStorage.putFile.mockResolvedValueOnce({
+      provider: "local_disk",
+      objectKey: `chat-queue-annotations/${annotationConversationId}/during-stream.txt`,
+      contentType: "text/plain",
+      byteSize: 4,
+      sha256: "d".repeat(64),
+      originalFilename: "during-stream.txt",
+    });
+    mockChatService.createQueuedMessageWithStagedAttachments.mockResolvedValue({
+      accepted: true,
+      cleanupAttachments: [],
+      item: {
+        id: "queued-stream-1",
+        annotationCount: 1,
+        payload: { body: "", inlineAnnotations: [canonicalAnnotation] },
+      },
+    });
+
+    try {
+      const res = await request(createApp())
+        .post(`/api/chats/${annotationConversationId}/messages/stream`)
+        .field("body", "")
+        .field("inlineAnnotations", JSON.stringify([
+          createInlineAnnotation({ attachmentFileIndexes: [0] }),
+        ]))
+        .attach("files", Buffer.from("file"), {
+          filename: "during-stream.txt",
+          contentType: "text/plain",
+        })
+        .buffer(true)
+        .parse((response, callback) => {
+          let text = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk) => {
+            text += chunk;
+          });
+          response.on("end", () => callback(null, text));
+        });
+
+      expect(res.status).toBe(202);
+      expect(mockStorage.putFile).toHaveBeenCalledWith(expect.objectContaining({
+        namespace: `chat-queue-annotations/${annotationConversationId}`,
+      }));
+      expect(mockChatService.createQueuedMessageWithStagedAttachments).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          payload: expect.objectContaining({
+            body: "",
+            inlineAnnotations: [canonicalAnnotation],
+          }),
+          stagedAttachments: [expect.objectContaining({
+            objectKey: `chat-queue-annotations/${annotationConversationId}/during-stream.txt`,
+          })],
+          attachmentFileIndexesByAnnotationId: expect.any(Map),
+        }),
+      );
+      expect(JSON.parse(String(res.body).trim())).toMatchObject({
+        type: "queued",
+        item: {
+          id: "queued-stream-1",
+          annotationCount: 1,
+          payload: { inlineAnnotations: [canonicalAnnotation] },
+        },
+      });
+      expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+      expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+    } finally {
+      releaseGeneration?.();
+    }
+  });
+
   it("rejects a multipart annotation file index before storing files or creating a generation", async () => {
     const conversation = createConversation({ id: annotationConversationId });
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatInlineAnnotations.prepare.mockRejectedValueOnce(
+    mockChatInlineAnnotations.prepare.mockRejectedValue(
       unprocessable("Annotation file index does not match an uploaded file"),
     );
 
@@ -1835,6 +1942,257 @@ describe("chat routes", () => {
     } finally {
       release?.();
     }
+  });
+
+  it("stages multipart Queue annotation files without leaking private storage references", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    const annotationInput = createInlineAnnotation({ attachmentFileIndexes: [0] });
+    const canonicalAnnotation = createInlineAnnotation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockStorage.putFile.mockResolvedValueOnce({
+      provider: "local_disk",
+      objectKey: `chat-queue-annotations/${annotationConversationId}/staged.txt`,
+      contentType: "text/plain",
+      byteSize: 4,
+      sha256: "a".repeat(64),
+      originalFilename: "staged.txt",
+    });
+    mockChatService.createQueuedMessageWithStagedAttachments.mockResolvedValue({
+      accepted: true,
+      cleanupAttachments: [],
+      item: {
+        id: "queued-1",
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        position: 1,
+        status: "queued",
+        version: 1,
+        clientMutationId: "queue-files",
+        deliveryIntent: "queue",
+        deliveryDisposition: null,
+        controlActionId: null,
+        expectedGenerationId: null,
+        activeGenerationId: null,
+        attemptEpoch: null,
+        providerClientMessageId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        providerEvidence: null,
+        continuationGenerationId: null,
+        continuationMessageId: null,
+        deliveryLeaseToken: null,
+        deliveryLeaseEpoch: 0,
+        deliveryLeaseOwner: null,
+        deliveryLeaseExpiresAt: null,
+        reconciliationReason: null,
+        deliveryAttempts: 0,
+        lastAttemptAt: null,
+        lastDeliveryReason: null,
+        sourceMessageId: null,
+        deliveredMessageId: null,
+        cancelledAt: null,
+        steeredAt: null,
+        dequeuedAt: null,
+        createdAt: new Date("2026-03-26T08:02:00.000Z"),
+        updatedAt: new Date("2026-03-26T08:02:00.000Z"),
+        annotationCount: 1,
+        payload: { body: "", inlineAnnotations: [canonicalAnnotation] },
+      },
+    });
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/queue`)
+      .field("clientMutationId", "queue-files")
+      .field("body", "")
+      .field("inlineAnnotations", JSON.stringify([annotationInput]))
+      .attach("files", Buffer.from("file"), {
+        filename: "staged.txt",
+        contentType: "text/plain",
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockChatInlineAnnotations.prepare).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      annotations: [annotationInput],
+      uploadedFileCount: 1,
+    }));
+    expect(mockStorage.putFile).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: conversation.orgId,
+      namespace: `chat-queue-annotations/${annotationConversationId}`,
+      originalFilename: "staged.txt",
+    }));
+    expect(mockChatService.createQueuedMessageWithStagedAttachments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        clientMutationId: "queue-files",
+        payload: expect.objectContaining({
+          body: "",
+          inlineAnnotations: [canonicalAnnotation],
+        }),
+        stagedAttachments: [expect.objectContaining({
+          objectKey: `chat-queue-annotations/${annotationConversationId}/staged.txt`,
+        })],
+        attachmentFileIndexesByAnnotationId: expect.any(Map),
+      }),
+    );
+    expect(res.body).toMatchObject({
+      annotationCount: 1,
+      payload: { body: "", inlineAnnotations: [canonicalAnnotation] },
+    });
+    expect(JSON.stringify(res.body)).not.toContain("objectKey");
+    expect(JSON.stringify(res.body)).not.toContain("assetId");
+    expect(JSON.stringify(res.body)).not.toContain("attachmentFileIndexes");
+  });
+
+  it("compensates staged Queue objects when atomic persistence fails", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockStorage.putFile.mockResolvedValueOnce({
+      provider: "local_disk",
+      objectKey: `chat-queue-annotations/${annotationConversationId}/failed.txt`,
+      contentType: "text/plain",
+      byteSize: 4,
+      sha256: "b".repeat(64),
+      originalFilename: "failed.txt",
+    });
+    mockChatService.createQueuedMessageWithStagedAttachments.mockRejectedValue(
+      unprocessable("Queue persistence failed"),
+    );
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/queue`)
+      .field("clientMutationId", "queue-files-failed")
+      .field("inlineAnnotations", JSON.stringify([
+        createInlineAnnotation({ attachmentFileIndexes: [0] }),
+      ]))
+      .attach("files", Buffer.from("file"), {
+        filename: "failed.txt",
+        contentType: "text/plain",
+      });
+
+    expect(res.status).toBe(422);
+    expect(mockStorage.deleteObject).toHaveBeenCalledWith(
+      conversation.orgId,
+      `chat-queue-annotations/${annotationConversationId}/failed.txt`,
+    );
+  });
+
+  it("replaces multipart Queue annotation files and cleans the committed prior asset", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    const annotationInput = createInlineAnnotation({ attachmentFileIndexes: [0] });
+    const canonicalAnnotation = createInlineAnnotation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockStorage.putFile.mockResolvedValueOnce({
+      provider: "local_disk",
+      objectKey: `chat-queue-annotations/${annotationConversationId}/replacement.txt`,
+      contentType: "text/plain",
+      byteSize: 4,
+      sha256: "c".repeat(64),
+      originalFilename: "replacement.txt",
+    });
+    mockChatService.updateQueuedMessageWithStagedAttachments.mockResolvedValue({
+      item: {
+        id: "queued-1",
+        version: 2,
+        annotationCount: 1,
+        payload: { body: "Updated", inlineAnnotations: [canonicalAnnotation] },
+      },
+      cleanupAttachments: [{
+        assetId: "10000000-0000-4000-8000-000000000088",
+        objectKey: `chat-queue-annotations/${annotationConversationId}/prior.txt`,
+      }],
+    });
+
+    const res = await request(createApp())
+      .patch(`/api/chats/${annotationConversationId}/queue/queued-1`)
+      .field("version", "1")
+      .field("body", "Updated")
+      .field("inlineAnnotations", JSON.stringify([annotationInput]))
+      .attach("files", Buffer.from("file"), {
+        filename: "replacement.txt",
+        contentType: "text/plain",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.updateQueuedMessageWithStagedAttachments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        itemId: "queued-1",
+        version: 1,
+        payload: expect.objectContaining({
+          body: "Updated",
+          inlineAnnotations: [canonicalAnnotation],
+        }),
+        stagedAttachments: [expect.objectContaining({
+          objectKey: `chat-queue-annotations/${annotationConversationId}/replacement.txt`,
+        })],
+        attachmentFileIndexesByAnnotationId: expect.any(Map),
+      }),
+    );
+    expect(mockStorage.deleteObject).toHaveBeenCalledTimes(1);
+    expect(mockStorage.deleteObject).toHaveBeenCalledWith(
+      conversation.orgId,
+      `chat-queue-annotations/${annotationConversationId}/prior.txt`,
+    );
+    expect(mockChatService.finalizeQueuedAnnotationAssetCleanup).toHaveBeenCalledWith({
+      orgId: conversation.orgId,
+      assetIds: ["10000000-0000-4000-8000-000000000088"],
+    });
+    expect(JSON.stringify(res.body)).not.toContain("objectKey");
+  });
+
+  it("rejects a queued annotation file index before storing any object", async () => {
+    const conversation = createConversation({ id: annotationConversationId });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatInlineAnnotations.prepare.mockRejectedValue(
+      unprocessable("Annotation file index does not match an uploaded file"),
+    );
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/queue`)
+      .field("clientMutationId", "queue-invalid-index")
+      .field("inlineAnnotations", JSON.stringify([
+        createInlineAnnotation({ attachmentFileIndexes: [1] }),
+      ]))
+      .attach("files", Buffer.from("file"), {
+        filename: "only.txt",
+        contentType: "text/plain",
+      });
+
+    expect(res.status).toBe(422);
+    expect(mockStorage.putFile).not.toHaveBeenCalled();
+    expect(mockChatService.createQueuedMessageWithStagedAttachments).not.toHaveBeenCalled();
+  });
+
+  it("deletes only orphaned Queue annotation objects after cancellation commits", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.cancelQueuedMessageWithStagedAttachments.mockResolvedValue({
+      item: { id: "queued-1", status: "cancelled", payload: { body: "cancelled" } },
+      cleanupAttachments: [{
+        assetId: "10000000-0000-4000-8000-000000000099",
+        objectKey: "chat-queue-annotations/chat-1/orphan.txt",
+      }],
+    });
+
+    const res = await request(createApp())
+      .delete("/api/chats/chat-1/queue/queued-1")
+      .send({ version: 1 });
+
+    expect(res.status).toBe(200);
+    expect(mockStorage.deleteObject).toHaveBeenCalledWith(
+      conversation.orgId,
+      "chat-queue-annotations/chat-1/orphan.txt",
+    );
+    expect(mockChatService.finalizeQueuedAnnotationAssetCleanup).toHaveBeenCalledWith({
+      orgId: conversation.orgId,
+      assetIds: ["10000000-0000-4000-8000-000000000099"],
+    });
+    expect(res.body).toMatchObject({ id: "queued-1", status: "cancelled" });
+    expect(JSON.stringify(res.body)).not.toContain("objectKey");
   });
 
   it("does not mutate Feishu-bound chat messages while listing messages", async () => {

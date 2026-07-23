@@ -403,9 +403,33 @@ export const createChatQueuedMessageSchema = z.object({
   payload: chatQueuedMessagePayloadSchema,
 });
 
+const chatQueuedMessageUpdatePayloadSchema = z.object({
+  body: z.string().trim().max(20000).default(""),
+  attachmentIds: z.array(z.string().uuid()).optional().default([]),
+  inlineAnnotations: chatInlineAnnotationsInputSchema.optional(),
+  projectId: z.string().uuid().optional().nullable(),
+  skillRefs: z.array(z.string().trim().min(1).max(240)).optional().default([]),
+  accessMode: z.string().trim().min(1).max(120).optional().nullable(),
+  model: z.string().trim().min(1).max(120).optional().nullable(),
+  effort: z.string().trim().min(1).max(120).optional().nullable(),
+  metadata: z.record(z.unknown()).optional().nullable(),
+}).superRefine((value, ctx) => {
+  if (
+    value.body.length === 0
+    && value.inlineAnnotations !== undefined
+    && value.inlineAnnotations.length === 0
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Queued message body or at least one inline annotation is required",
+      path: ["body"],
+    });
+  }
+});
+
 export const updateChatQueuedMessageSchema = z.object({
   version: z.number().int().positive(),
-  payload: chatQueuedMessagePayloadSchema,
+  payload: chatQueuedMessageUpdatePayloadSchema,
 });
 
 export const cancelChatQueuedMessageSchema = z.object({

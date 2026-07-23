@@ -90,6 +90,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     inlineAnnotations,
     storeUserMessageFiles,
     cleanupStoredUserMessageFiles,
+    storeQueuedAnnotationFiles,
+    cleanupUncommittedQueuedAnnotationFiles,
     startChatTitleGeneration,
     attachFilesToUserMessage,
     loadAssistantInput,
@@ -191,30 +193,76 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         res.status(409).json({ error: "A chat reply is already being generated for this conversation" });
         return;
       }
-      if (messageFiles.length > 0) {
-        res.status(422).json({ error: "Queue does not support new files yet" });
-        return;
-      }
-      const item = await svc.createQueuedMessage({
-        orgId: conversation.orgId,
-        conversationId: conversation.id,
-        clientMutationId: `stream:${randomUUID()}`,
-        expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
-        requestActor: queueRequestActor(req),
-        payload: {
-          body: parsedBody.data.body,
-          attachmentIds: [],
-          ...(inlineAnnotationsProvided
-            ? { inlineAnnotations: preparedAnnotations?.annotations ?? [] }
-            : {}),
-          skillRefs: [],
-          projectId: null,
-          accessMode: null,
-          model: null,
-          effort: null,
-          metadata: {
-            source: "stream_endpoint_during_active_generation",
+      const clientMutationId = `stream:${randomUUID()}`;
+      const storedQueueFiles = await storeQueuedAnnotationFiles(
+        conversation as ChatConversation,
+        messageFiles,
+      );
+      let queuedResult;
+      try {
+        queuedResult = await svc.createQueuedMessageWithStagedAttachments({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          clientMutationId,
+          expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
+          requestActor: queueRequestActor(req),
+          payload: {
+            body: parsedBody.data.body,
+            attachmentIds: [],
+            ...(inlineAnnotationsProvided
+              ? { inlineAnnotations: preparedAnnotations?.annotations ?? [] }
+              : {}),
+            skillRefs: [],
+            projectId: null,
+            accessMode: null,
+            model: null,
+            effort: null,
+            metadata: {
+              source: "stream_endpoint_during_active_generation",
+            },
           },
+          stagedAttachments: storedQueueFiles.map((attachment: Record<string, unknown>) => ({
+            ...attachment,
+            createdByAgentId: null,
+            createdByUserId: actor.actorId,
+          })),
+          attachmentFileIndexesByAnnotationId:
+            preparedAnnotations?.attachmentFileIndexesByAnnotationId ?? new Map(),
+        });
+      } catch (error) {
+        await cleanupUncommittedQueuedAnnotationFiles(
+          conversation.orgId,
+          clientMutationId,
+          storedQueueFiles,
+        );
+        throw error;
+      }
+      await cleanupUncommittedQueuedAnnotationFiles(
+        conversation.orgId,
+        clientMutationId,
+        queuedResult.cleanupAttachments,
+      );
+      const item = queuedResult.item;
+      await logActivity(db, {
+        orgId: conversation.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "chat.queue.created",
+        entityType: "chat",
+        entityId: conversation.id,
+        details: {
+          queuedMessageId: item.id,
+          position: item.position,
+          annotationCount: item.annotationCount ?? 0,
+          annotationSourceMessageIds: [
+            ...new Set(
+              (item.payload.inlineAnnotations ?? []).map(
+                (annotation: { sourceMessageId: string }) => annotation.sourceMessageId,
+              ),
+            ),
+          ],
         },
       });
       res.status(202);

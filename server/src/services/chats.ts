@@ -16,7 +16,7 @@ import {
   chatQueuedMessages,
   organizations
 } from "@rudderhq/db";
-import { sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
+import { sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
@@ -25,6 +25,17 @@ import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 import { chatGenerationProtocolService } from "./chat-generation-protocol.js";
+import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
+import {
+  hydrateQueuedMessage,
+  materializeQueuedUserMessage,
+  normalizeQueuedMessagePayload,
+  QUEUED_ANNOTATION_ASSETS_KEY,
+  queuedAnnotationAssetState,
+  queuedMessageMutationFingerprint,
+  withQueuedAnnotationAssetState,
+  type StagedQueuedAnnotationAttachment,
+} from "./chat-queued-message-materialization.js";
 import { createChatAnnotationMessagePersistence } from "./chats.annotation-persistence.js";
 import {
   ACTIVE_CHAT_GENERATION_STATUSES,
@@ -620,33 +631,6 @@ export function chatService(db: Db) {
 
   function isQueuePositionConflict(error: unknown): boolean {
     return isPostgresError(error, "23505");
-  }
-
-  function normalizeQueuedPayload(payload: Record<string, unknown>): ChatQueuedMessagePayload {
-    return {
-      body: String(payload.body ?? ""),
-      attachmentIds: Array.isArray(payload.attachmentIds)
-        ? payload.attachmentIds.filter((id): id is string => typeof id === "string")
-        : [],
-      projectId: typeof payload.projectId === "string" ? payload.projectId : null,
-      skillRefs: Array.isArray(payload.skillRefs)
-        ? payload.skillRefs.filter((ref): ref is string => typeof ref === "string")
-        : [],
-      accessMode: typeof payload.accessMode === "string" ? payload.accessMode : null,
-      model: typeof payload.model === "string" ? payload.model : null,
-      effort: typeof payload.effort === "string" ? payload.effort : null,
-      metadata:
-        payload.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
-          ? payload.metadata as Record<string, unknown>
-          : null,
-    };
-  }
-
-  function hydrateQueuedMessage(row: ChatQueuedMessageRow): ChatQueuedMessage {
-    return {
-      ...row,
-      payload: normalizeQueuedPayload(row.payload),
-    };
   }
 
   async function createGeneration(orgId: string, conversationId: string): Promise<ChatGenerationRow> {
@@ -1800,25 +1784,28 @@ export function chatService(db: Db) {
     });
   }
 
-  async function createQueuedMessage(input: {
+  async function createQueuedMessageWithStagedAttachments(input: {
     orgId: string;
     conversationId: string;
     clientMutationId: string;
     payload: ChatQueuedMessagePayload;
     expectedGenerationId?: string | null;
     requestActor?: ChatQueueRequestActor | null;
+    stagedAttachments: readonly StagedQueuedAnnotationAttachment[];
+    attachmentFileIndexesByAnnotationId: ReadonlyMap<string, readonly number[]>;
   }) {
-    const payload = {
-      ...input.payload,
-      body: input.payload.body.trim(),
-      attachmentIds: input.payload.attachmentIds ?? [],
-      skillRefs: input.payload.skillRefs ?? [],
-      projectId: input.payload.projectId ?? null,
-      accessMode: input.payload.accessMode ?? null,
-      model: input.payload.model ?? null,
-      effort: input.payload.effort ?? null,
-      metadata: input.payload.metadata ?? null,
-    };
+    if ((input.payload.attachmentIds?.length ?? 0) > 0) {
+      throw unprocessable("Queued messages cannot reference client-provided attachment ids");
+    }
+    const payload = normalizeQueuedMessagePayload(input.payload as unknown as Record<string, unknown>);
+    if (!payload.body.trim() && (payload.inlineAnnotations?.length ?? 0) === 0) {
+      throw unprocessable("Queued message body or at least one inline annotation is required");
+    }
+    const fingerprint = queuedMessageMutationFingerprint({
+      payload,
+      stagedAttachments: input.stagedAttachments,
+      attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+    });
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         return await db.transaction(async (tx) => {
@@ -1827,6 +1814,7 @@ export function chatService(db: Db) {
             .from(chatQueuedMessages)
             .where(
               and(
+                eq(chatQueuedMessages.orgId, input.orgId),
                 eq(chatQueuedMessages.conversationId, input.conversationId),
                 eq(chatQueuedMessages.clientMutationId, input.clientMutationId),
               ),
@@ -1834,18 +1822,65 @@ export function chatService(db: Db) {
             .limit(1)
             .then((rows) => rows[0] ?? null);
           if (existing) {
-            if (JSON.stringify(existing.payload) !== JSON.stringify(payload)) {
+            const existingPrivateState = queuedAnnotationAssetState(existing.payload);
+            const existingFingerprint = existingPrivateState?.fingerprint
+              ?? queuedMessageMutationFingerprint({
+                payload: normalizeQueuedMessagePayload(existing.payload),
+                stagedAttachments: [],
+                attachmentFileIndexesByAnnotationId: new Map(),
+              });
+            if (existingFingerprint !== fingerprint) {
               throw conflict("Queued message idempotency key reused with a different payload");
             }
-            return hydrateQueuedMessage(existing);
+            return {
+              item: hydrateQueuedMessage(existing),
+              accepted: false,
+              cleanupAttachments: [...input.stagedAttachments],
+            };
           }
 
+          await validateCanonicalChatInlineAnnotations(tx, {
+            orgId: input.orgId,
+            conversationId: input.conversationId,
+            annotations: payload.inlineAnnotations ?? [],
+            uploadedFileCount: input.stagedAttachments.length,
+            attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+          });
+          const assetIds: string[] = [];
+          for (const attachment of input.stagedAttachments) {
+            const [asset] = await tx
+              .insert(assets)
+              .values({
+                orgId: input.orgId,
+                provider: attachment.provider,
+                objectKey: attachment.objectKey,
+                contentType: attachment.contentType,
+                byteSize: attachment.byteSize,
+                sha256: attachment.sha256,
+                originalFilename: attachment.originalFilename,
+                createdByAgentId: attachment.createdByAgentId,
+                createdByUserId: attachment.createdByUserId,
+              })
+              .returning({ id: assets.id });
+            if (!asset) throw new Error("Failed to stage queued annotation asset");
+            assetIds.push(asset.id);
+          }
+          const persistedPayload = withQueuedAnnotationAssetState({
+            payload,
+            fingerprint,
+            assetIds,
+            stagedAttachments: input.stagedAttachments,
+            attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+          });
           const [positionRow] = await tx
             .select({
               nextPosition: sql<number>`coalesce(max(${chatQueuedMessages.position}), 0) + 1`,
             })
             .from(chatQueuedMessages)
-            .where(eq(chatQueuedMessages.conversationId, input.conversationId));
+            .where(and(
+              eq(chatQueuedMessages.orgId, input.orgId),
+              eq(chatQueuedMessages.conversationId, input.conversationId),
+            ));
           const [row] = await tx
             .insert(chatQueuedMessages)
             .values({
@@ -1853,13 +1888,17 @@ export function chatService(db: Db) {
               conversationId: input.conversationId,
               clientMutationId: input.clientMutationId,
               position: Number(positionRow?.nextPosition ?? 1),
-              payload,
+              payload: persistedPayload,
               requestActor: input.requestActor ?? null,
               expectedGenerationId: input.expectedGenerationId ?? null,
             })
             .returning();
           if (!row) throw new Error("Failed to create queued chat message");
-          return hydrateQueuedMessage(row);
+          return {
+            item: hydrateQueuedMessage(row),
+            accepted: true,
+            cleanupAttachments: [] as StagedQueuedAnnotationAttachment[],
+          };
         });
       } catch (error) {
         if (attempt < 2 && isQueuePositionConflict(error)) continue;
@@ -1869,68 +1908,283 @@ export function chatService(db: Db) {
     throw new Error("Failed to create queued chat message");
   }
 
+  async function createQueuedMessage(input: {
+    orgId: string;
+    conversationId: string;
+    clientMutationId: string;
+    payload: ChatQueuedMessagePayload;
+    expectedGenerationId?: string | null;
+    requestActor?: ChatQueueRequestActor | null;
+  }) {
+    const result = await createQueuedMessageWithStagedAttachments({
+      ...input,
+      stagedAttachments: [],
+      attachmentFileIndexesByAnnotationId: new Map(),
+    });
+    return result.item;
+  }
+
+  async function queuedAssetCleanupRows(
+    tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+    orgId: string,
+    payload: Record<string, unknown>,
+  ) {
+    const state = queuedAnnotationAssetState(payload);
+    if (!state || state.attachments.length === 0) return [];
+    const rows = await tx
+      .select()
+      .from(assets)
+      .where(and(
+        eq(assets.orgId, orgId),
+        inArray(assets.id, state.attachments.map((attachment) => attachment.assetId)),
+      ))
+      .for("share");
+    if (rows.length !== state.attachments.length) {
+      throw unprocessable("Queued annotation assets are incomplete");
+    }
+    return rows.map((asset) => ({
+      assetId: asset.id,
+      provider: asset.provider,
+      objectKey: asset.objectKey,
+      contentType: asset.contentType,
+      byteSize: asset.byteSize,
+      sha256: asset.sha256,
+      originalFilename: asset.originalFilename,
+      createdByAgentId: asset.createdByAgentId,
+      createdByUserId: asset.createdByUserId,
+    }));
+  }
+
+  async function updateQueuedMessageWithStagedAttachments(input: {
+    orgId: string;
+    conversationId: string;
+    itemId: string;
+    version: number;
+    payload: ChatQueuedMessagePayload;
+    stagedAttachments: readonly StagedQueuedAnnotationAttachment[];
+    attachmentFileIndexesByAnnotationId: ReadonlyMap<string, readonly number[]>;
+  }) {
+    if ((input.payload.attachmentIds?.length ?? 0) > 0) {
+      throw unprocessable("Queued messages cannot reference client-provided attachment ids");
+    }
+    if (input.stagedAttachments.length > 0 && input.payload.inlineAnnotations === undefined) {
+      throw unprocessable("Queued annotation files require an explicit annotation replacement");
+    }
+    return db.transaction(async (tx) => {
+      const current = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(
+          eq(chatQueuedMessages.orgId, input.orgId),
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.version, input.version),
+          eq(chatQueuedMessages.status, "queued"),
+          isNull(chatQueuedMessages.cancelledAt),
+        ))
+        .limit(1)
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!current) throw conflict("Queued message was changed or is no longer editable");
+      const currentPayload = normalizeQueuedMessagePayload(current.payload);
+      const payload = normalizeQueuedMessagePayload({
+        ...input.payload,
+        inlineAnnotations: input.payload.inlineAnnotations === undefined
+          ? currentPayload.inlineAnnotations
+          : input.payload.inlineAnnotations,
+      });
+      if (!payload.body.trim() && (payload.inlineAnnotations?.length ?? 0) === 0) {
+        throw unprocessable("Queued message body or at least one inline annotation is required");
+      }
+      const replacingAnnotations = input.payload.inlineAnnotations !== undefined;
+      const currentPrivateState = queuedAnnotationAssetState(current.payload);
+      const currentAttachmentFileIndexesByAnnotationId = new Map<string, number[]>();
+      for (const attachment of currentPrivateState?.attachments ?? []) {
+        const indexes = currentAttachmentFileIndexesByAnnotationId.get(attachment.annotationId);
+        if (indexes) indexes.push(attachment.fileIndex);
+        else currentAttachmentFileIndexesByAnnotationId.set(attachment.annotationId, [attachment.fileIndex]);
+      }
+      await validateCanonicalChatInlineAnnotations(tx, {
+        orgId: input.orgId,
+        conversationId: input.conversationId,
+        annotations: payload.inlineAnnotations ?? [],
+        uploadedFileCount: replacingAnnotations
+          ? input.stagedAttachments.length
+          : currentPrivateState?.attachments.length ?? 0,
+        attachmentFileIndexesByAnnotationId: replacingAnnotations
+          ? input.attachmentFileIndexesByAnnotationId
+          : currentAttachmentFileIndexesByAnnotationId,
+      });
+      const cleanupAttachments = replacingAnnotations
+        ? await queuedAssetCleanupRows(tx, input.orgId, current.payload)
+        : [];
+      let persistedPayload: Record<string, unknown> = payload;
+      if (replacingAnnotations) {
+        const fingerprint = queuedMessageMutationFingerprint({
+          payload,
+          stagedAttachments: input.stagedAttachments,
+          attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+        });
+        const assetIds: string[] = [];
+        for (const attachment of input.stagedAttachments) {
+          const [asset] = await tx
+            .insert(assets)
+            .values({
+              orgId: input.orgId,
+              provider: attachment.provider,
+              objectKey: attachment.objectKey,
+              contentType: attachment.contentType,
+              byteSize: attachment.byteSize,
+              sha256: attachment.sha256,
+              originalFilename: attachment.originalFilename,
+              createdByAgentId: attachment.createdByAgentId,
+              createdByUserId: attachment.createdByUserId,
+            })
+            .returning({ id: assets.id });
+          if (!asset) throw new Error("Failed to stage replacement queued annotation asset");
+          assetIds.push(asset.id);
+        }
+        persistedPayload = withQueuedAnnotationAssetState({
+          payload,
+          fingerprint,
+          assetIds,
+          stagedAttachments: input.stagedAttachments,
+          attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+        });
+      } else if (currentPrivateState) {
+        persistedPayload = {
+          ...payload,
+          [QUEUED_ANNOTATION_ASSETS_KEY]: current.payload[QUEUED_ANNOTATION_ASSETS_KEY],
+        };
+      }
+      const now = new Date();
+      const [row] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          payload: persistedPayload,
+          version: input.version + 1,
+          lastDeliveryReason: null,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatQueuedMessages.orgId, input.orgId),
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.version, input.version),
+          eq(chatQueuedMessages.status, "queued"),
+          isNull(chatQueuedMessages.cancelledAt),
+        ))
+        .returning();
+      if (!row) throw conflict("Queued message was changed or is no longer editable");
+      return { item: hydrateQueuedMessage(row), cleanupAttachments };
+    });
+  }
+
   async function updateQueuedMessage(input: {
+    orgId: string;
     conversationId: string;
     itemId: string;
     version: number;
     payload: ChatQueuedMessagePayload;
   }) {
-    const now = new Date();
-    const [row] = await db
-      .update(chatQueuedMessages)
-      .set({
-        payload: {
-          ...input.payload,
-          body: input.payload.body.trim(),
-          attachmentIds: input.payload.attachmentIds ?? [],
-          skillRefs: input.payload.skillRefs ?? [],
-          projectId: input.payload.projectId ?? null,
-          accessMode: input.payload.accessMode ?? null,
-          model: input.payload.model ?? null,
-          effort: input.payload.effort ?? null,
-          metadata: input.payload.metadata ?? null,
-        },
-        version: input.version + 1,
-        lastDeliveryReason: null,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(chatQueuedMessages.conversationId, input.conversationId),
-          eq(chatQueuedMessages.id, input.itemId),
-          eq(chatQueuedMessages.version, input.version),
-          eq(chatQueuedMessages.status, "queued"),
-        ),
-      )
-      .returning();
-    if (!row) throw conflict("Queued message was changed or is no longer editable");
-    return hydrateQueuedMessage(row);
+    const result = await updateQueuedMessageWithStagedAttachments({
+      ...input,
+      stagedAttachments: [],
+      attachmentFileIndexesByAnnotationId: new Map(),
+    });
+    return result.item;
   }
 
-  async function cancelQueuedMessage(input: {
+  async function cancelQueuedMessageWithStagedAttachments(input: {
+    orgId: string;
     conversationId: string;
     itemId: string;
     version?: number | null;
   }) {
-    const now = new Date();
-    const conditions = [
-      eq(chatQueuedMessages.conversationId, input.conversationId),
-      eq(chatQueuedMessages.id, input.itemId),
-      eq(chatQueuedMessages.status, "queued"),
-    ];
-    if (input.version) conditions.push(eq(chatQueuedMessages.version, input.version));
-    const [row] = await db
-      .update(chatQueuedMessages)
-      .set({
-        status: "cancelled",
-        version: sql`${chatQueuedMessages.version} + 1`,
-        cancelledAt: now,
-        updatedAt: now,
-      })
-      .where(and(...conditions))
-      .returning();
-    if (!row) throw conflict("Queued message was changed or is no longer cancellable");
-    return hydrateQueuedMessage(row);
+    return db.transaction(async (tx) => {
+      const conditions = [
+        eq(chatQueuedMessages.orgId, input.orgId),
+        eq(chatQueuedMessages.conversationId, input.conversationId),
+        eq(chatQueuedMessages.id, input.itemId),
+        eq(chatQueuedMessages.status, "queued"),
+        isNull(chatQueuedMessages.cancelledAt),
+      ];
+      if (input.version) conditions.push(eq(chatQueuedMessages.version, input.version));
+      const current = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(...conditions))
+        .limit(1)
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!current) throw conflict("Queued message was changed or is no longer cancellable");
+      const cleanupAttachments = await queuedAssetCleanupRows(tx, input.orgId, current.payload);
+      const now = new Date();
+      const [row] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          payload: normalizeQueuedMessagePayload(current.payload),
+          status: "cancelled",
+          version: sql`${chatQueuedMessages.version} + 1`,
+          cancelledAt: now,
+          updatedAt: now,
+        })
+        .where(and(
+          ...conditions,
+          eq(chatQueuedMessages.version, current.version),
+        ))
+        .returning();
+      if (!row) throw conflict("Queued message was changed or is no longer cancellable");
+      return { item: hydrateQueuedMessage(row), cleanupAttachments };
+    });
+  }
+
+  async function cancelQueuedMessage(input: {
+    orgId: string;
+    conversationId: string;
+    itemId: string;
+    version?: number | null;
+  }) {
+    const result = await cancelQueuedMessageWithStagedAttachments(input);
+    return result.item;
+  }
+
+  async function finalizeQueuedAnnotationAssetCleanup(input: {
+    orgId: string;
+    assetIds: readonly string[];
+  }) {
+    if (input.assetIds.length === 0) return [];
+    return db.transaction(async (tx) => {
+      const linkedRows = await tx
+        .select({ assetId: chatAttachments.assetId })
+        .from(chatAttachments)
+        .where(and(
+          eq(chatAttachments.orgId, input.orgId),
+          inArray(chatAttachments.assetId, [...input.assetIds]),
+        ));
+      const linkedIds = new Set(linkedRows.map((row) => row.assetId));
+      const queueRows = await tx
+        .select({ payload: chatQueuedMessages.payload })
+        .from(chatQueuedMessages)
+        .where(eq(chatQueuedMessages.orgId, input.orgId));
+      const referencedIds = new Set(
+        queueRows.flatMap((row) =>
+          queuedAnnotationAssetState(row.payload)?.attachments.map((attachment) => attachment.assetId) ?? []
+        ),
+      );
+      const safeIds = [...new Set(input.assetIds)].filter(
+        (assetId) => !linkedIds.has(assetId) && !referencedIds.has(assetId),
+      );
+      if (safeIds.length === 0) return [];
+      const deleted = await tx
+        .delete(assets)
+        .where(and(
+          eq(assets.orgId, input.orgId),
+          inArray(assets.id, safeIds),
+        ))
+        .returning({ id: assets.id });
+      return deleted.map((row) => row.id);
+    });
   }
 
   async function scheduleSteerContinuation(input: {
@@ -2159,6 +2413,11 @@ export function chatService(db: Db) {
           candidate.status === "queued"
           && latestGeneration
           && latestGeneration.status !== "completed"
+          && !(
+            candidate.continuationMessageId
+            && latestGeneration.status === "aborted"
+            && latestGeneration.terminalReason === candidate.lastDeliveryReason
+          )
         ) {
           continue;
         }
@@ -2192,9 +2451,27 @@ export function chatService(db: Db) {
           continue;
         }
 
+        const materialized = await materializeQueuedUserMessage(tx, {
+          orgId: candidate.orgId,
+          conversationId: candidate.conversationId,
+          item: candidate,
+          now,
+          expectedStatuses: [candidate.status],
+          structuredPayload: isSteer
+            ? {
+              source: "steer",
+              targetGenerationId: candidate.activeGenerationId ?? candidate.expectedGenerationId,
+              queueItemId: candidate.id,
+              controlActionId: candidate.controlActionId,
+              deliveryDisposition: candidate.deliveryDisposition,
+            }
+            : { source: "queue", queueItemId: candidate.id },
+        });
+        const materializedItem = materialized.item;
+        const userMessageId = materialized.message.id;
         const generationId = randomUUID();
         const leaseToken = randomUUID();
-        const leaseEpoch = candidate.deliveryLeaseEpoch + 1;
+        const leaseEpoch = materializedItem.deliveryLeaseEpoch + 1;
         await tx.insert(chatGenerations).values({
           id: generationId,
           orgId: candidate.orgId,
@@ -2209,46 +2486,6 @@ export function chatService(db: Db) {
           createdAt: now,
           updatedAt: now,
         });
-
-        let userMessageId = candidate.continuationMessageId;
-        if (userMessageId) {
-          const existingMessage = await tx
-            .select({ id: chatMessages.id })
-            .from(chatMessages)
-            .where(and(
-              eq(chatMessages.id, userMessageId),
-              eq(chatMessages.orgId, candidate.orgId),
-              eq(chatMessages.conversationId, candidate.conversationId),
-              eq(chatMessages.role, "user"),
-            ))
-            .limit(1)
-            .then((rows) => rows[0] ?? null);
-          if (!existingMessage) userMessageId = null;
-        }
-        if (!userMessageId) {
-          userMessageId = randomUUID();
-          await tx.insert(chatMessages).values({
-            id: userMessageId,
-            orgId: candidate.orgId,
-            conversationId: candidate.conversationId,
-            role: "user",
-            kind: "message",
-            status: "completed",
-            body: normalizeQueuedPayload(candidate.payload).body,
-            structuredPayload: null,
-            chatTurnId: randomUUID(),
-            turnVariant: 0,
-            createdAt: now,
-            updatedAt: now,
-          });
-          await tx
-            .update(chatConversations)
-            .set({ lastMessageAt: now, updatedAt: now })
-            .where(and(
-              eq(chatConversations.id, candidate.conversationId),
-              eq(chatConversations.orgId, candidate.orgId),
-            ));
-        }
 
         const [claimed] = await tx
           .update(chatQueuedMessages)
@@ -2273,7 +2510,10 @@ export function chatService(db: Db) {
           })
           .where(and(
             eq(chatQueuedMessages.id, candidate.id),
-            eq(chatQueuedMessages.version, candidate.version),
+            eq(chatQueuedMessages.orgId, candidate.orgId),
+            eq(chatQueuedMessages.conversationId, candidate.conversationId),
+            eq(chatQueuedMessages.status, candidate.status),
+            eq(chatQueuedMessages.version, materializedItem.version),
             isNull(chatQueuedMessages.cancelledAt),
           ))
           .returning();
@@ -2687,7 +2927,7 @@ export function chatService(db: Db) {
     if (!row || row.status !== "dequeue_claimed") {
       throw conflict("Queued message is not claimed for delivery");
     }
-    const payload = normalizeQueuedPayload(row.payload);
+    const payload = normalizeQueuedMessagePayload(row.payload);
     if (payload.body.trim() !== input.body.trim()) {
       throw conflict("Queued message body no longer matches claimed payload");
     }
@@ -4424,8 +4664,12 @@ export function chatService(db: Db) {
     getQueueSnapshot,
     listQueuedMessages,
     createQueuedMessage,
+    createQueuedMessageWithStagedAttachments,
     updateQueuedMessage,
+    updateQueuedMessageWithStagedAttachments,
     cancelQueuedMessage,
+    cancelQueuedMessageWithStagedAttachments,
+    finalizeQueuedAnnotationAssetCleanup,
     scheduleSteerContinuation,
     markQueuedMessageSteerFallback,
     beginSteerControlAction,

@@ -15,6 +15,7 @@ import {
   MAX_CHAT_INLINE_ANNOTATIONS,
   normalizeChatInlineAnnotations,
   sanitizeChatStructuredPayload,
+  updateChatQueuedMessageSchema,
 } from "../index.js";
 import type { ChatInlineAnnotationInput } from "../types/chat.js";
 import type { AddChatMessage, ChatQueuedMessagePayloadInput } from "./chat.js";
@@ -103,6 +104,23 @@ describe("chat inline annotation contracts", () => {
       body: "",
       inlineAnnotations: [assistantAnnotation()],
     }).success).toBe(false);
+  });
+
+  it("keeps omitted queued-edit annotations distinct from an explicit replacement", () => {
+    const preserved = updateChatQueuedMessageSchema.parse({
+      version: 2,
+      payload: { body: "Only revise the prose" },
+    });
+    const replaced = updateChatQueuedMessageSchema.parse({
+      version: 2,
+      payload: {
+        body: "Remove the annotations",
+        inlineAnnotations: [],
+      },
+    });
+
+    expect(Object.hasOwn(preserved.payload, "inlineAnnotations")).toBe(false);
+    expect(replaced.payload.inlineAnnotations).toEqual([]);
   });
 
   it("normalizes comments and strips request-only attachment file indexes", () => {

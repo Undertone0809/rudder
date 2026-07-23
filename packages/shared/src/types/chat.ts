@@ -247,6 +247,7 @@ export interface ChatQueuedMessage {
   version: number;
   clientMutationId: string;
   payload: ChatQueuedMessagePayload;
+  annotationCount?: number;
   requestActor?: ChatQueueRequestActor | null;
   deliveryIntent: ChatQueueDeliveryIntent;
   deliveryDisposition: ChatControlDisposition | null;
