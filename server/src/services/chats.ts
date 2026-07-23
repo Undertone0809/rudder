@@ -620,7 +620,9 @@ export function chatService(db: Db) {
     return isPostgresError(error, "23505");
   }
 
-  function normalizeQueuedPayload(payload: Record<string, unknown>): ChatQueuedMessagePayload {
+  type QueuedPayloadInput = Record<string, unknown> | ChatQueuedMessagePayload;
+
+  function normalizeQueuedPayload(payload: QueuedPayloadInput): ChatQueuedMessagePayload {
     return {
       body: String(payload.body ?? ""),
       attachmentIds: Array.isArray(payload.attachmentIds)
@@ -638,6 +640,31 @@ export function chatService(db: Db) {
           ? payload.metadata as Record<string, unknown>
           : null,
     };
+  }
+
+  function queuedPayloadIdempotencySignature(payload: QueuedPayloadInput) {
+    const normalized = normalizeQueuedPayload(payload);
+    return JSON.stringify({
+      body: normalized.body,
+      attachmentIds: normalized.attachmentIds,
+      projectId: normalized.projectId,
+      skillRefs: normalized.skillRefs,
+      accessMode: normalized.accessMode,
+      effort: normalized.effort,
+      metadata: normalized.metadata,
+    });
+  }
+
+  function assertQueuedPayloadReplayCompatible(
+    existingPayload: QueuedPayloadInput,
+    incomingPayload: QueuedPayloadInput,
+  ) {
+    if (
+      queuedPayloadIdempotencySignature(existingPayload)
+      !== queuedPayloadIdempotencySignature(incomingPayload)
+    ) {
+      throw conflict("Queued message idempotency key reused with a different payload");
+    }
   }
 
   function hydrateQueuedMessage(row: ChatQueuedMessageRow): ChatQueuedMessage {
@@ -1832,9 +1859,7 @@ export function chatService(db: Db) {
             .limit(1)
             .then((rows) => rows[0] ?? null);
           if (existing) {
-            if (JSON.stringify(existing.payload) !== JSON.stringify(payload)) {
-              throw conflict("Queued message idempotency key reused with a different payload");
-            }
+            assertQueuedPayloadReplayCompatible(existing.payload, payload);
             return hydrateQueuedMessage(existing);
           }
 
@@ -1867,6 +1892,27 @@ export function chatService(db: Db) {
     throw new Error("Failed to create queued chat message");
   }
 
+  async function getQueuedMessageReplay(input: {
+    conversationId: string;
+    clientMutationId: string;
+    payload: ChatQueuedMessagePayload;
+  }) {
+    const existing = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.clientMutationId, input.clientMutationId),
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!existing) return null;
+    assertQueuedPayloadReplayCompatible(existing.payload, input.payload);
+    return hydrateQueuedMessage(existing);
+  }
+
   async function updateQueuedMessage(input: {
     conversationId: string;
     itemId: string;
@@ -1874,6 +1920,21 @@ export function chatService(db: Db) {
     payload: ChatQueuedMessagePayload;
   }) {
     const now = new Date();
+    const current = await db
+      .select({ payload: chatQueuedMessages.payload })
+      .from(chatQueuedMessages)
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.version, input.version),
+          eq(chatQueuedMessages.status, "queued"),
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!current) throw conflict("Queued message was changed or is no longer editable");
+    const admittedPayload = normalizeQueuedPayload(current.payload);
     const [row] = await db
       .update(chatQueuedMessages)
       .set({
@@ -1884,8 +1945,8 @@ export function chatService(db: Db) {
           skillRefs: input.payload.skillRefs ?? [],
           projectId: input.payload.projectId ?? null,
           accessMode: input.payload.accessMode ?? null,
-          model: input.payload.model ?? null,
-          effort: input.payload.effort ?? null,
+          model: admittedPayload.model,
+          effort: admittedPayload.effort,
           metadata: input.payload.metadata ?? null,
         },
         version: input.version + 1,
@@ -3162,6 +3223,7 @@ export function chatService(db: Db) {
           title: childTitle,
           summary: source.summary,
           preferredAgentId: source.preferredAgentId,
+          modelOverride: null,
           routedAgentId: source.routedAgentId,
           primaryIssueId: source.primaryIssueId,
           forkedFromConversationId: source.id,
@@ -3270,6 +3332,45 @@ export function chatService(db: Db) {
         .returning();
       if (!updated) return null;
       return getById(id);
+  }
+
+  async function updateAgentModelInvariant(input: {
+    id: string;
+    patch: Partial<typeof chatConversations.$inferInsert>;
+    expectedPreferredAgentId: string | null;
+  }) {
+    const hasPreferredAgentPatch = Object.prototype.hasOwnProperty.call(
+      input.patch,
+      "preferredAgentId",
+    );
+    const requestedPreferredAgentId = hasPreferredAgentPatch
+      ? input.patch.preferredAgentId ?? null
+      : input.expectedPreferredAgentId;
+    const preferredAgentChanged = requestedPreferredAgentId !== input.expectedPreferredAgentId;
+    if (preferredAgentChanged && input.expectedPreferredAgentId !== null) {
+      throw conflict("Chat agent is locked after the conversation starts");
+    }
+    const patch = preferredAgentChanged
+      ? { ...input.patch, modelOverride: null }
+      : input.patch;
+    const preferredAgentCondition = input.expectedPreferredAgentId === null
+      ? isNull(chatConversations.preferredAgentId)
+      : eq(chatConversations.preferredAgentId, input.expectedPreferredAgentId);
+    const [updated] = await db
+      .update(chatConversations)
+      .set({
+        ...patch,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(chatConversations.id, input.id),
+        preferredAgentCondition,
+      ))
+      .returning();
+    if (!updated) {
+      throw conflict("Chat agent changed while applying the conversation model update");
+    }
+    return getById(input.id);
   }
 
   async function updateDefaultTitle(id: string, title: string, expectedCurrentTitle = "New chat") {
@@ -4513,6 +4614,7 @@ export function chatService(db: Db) {
     create,
     createWithInitialMessage,
     update,
+    updateAgentModelInvariant,
     updateDefaultTitle,
     replaceSystemGeneratedTitle,
     listRecentUserMessages,
@@ -4535,6 +4637,7 @@ export function chatService(db: Db) {
     getLatestGeneration,
     getQueueSnapshot,
     listQueuedMessages,
+    getQueuedMessageReplay,
     createQueuedMessage,
     updateQueuedMessage,
     cancelQueuedMessage,

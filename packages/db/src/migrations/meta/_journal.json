@@ -778,6 +778,13 @@
       "when": 1784751551013,
       "tag": "0110_supreme_mathemanic",
       "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1784806650087,
+      "tag": "0111_narrow_black_panther",
+      "breakpoints": true
     }
   ]
 }

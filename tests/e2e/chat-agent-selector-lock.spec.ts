@@ -67,7 +67,10 @@ test.describe("Chat agent selector lock", () => {
     expect(patchResponse.ok()).toBe(true);
 
     await expect(agentSelector).toContainText("Migration Agent");
-    await expect(agentSelector).toBeDisabled();
+    await expect(agentSelector).toBeEnabled();
+    await agentSelector.click();
+    await expect(page.getByTestId("chat-model-selector")).toBeEnabled();
+    await agentSelector.click();
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await expect(composer).toBeVisible();
@@ -77,7 +80,7 @@ test.describe("Chat agent selector lock", () => {
     await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Streaming reply", { timeout: 15_000 });
   });
 
-  test("locks the selected agent after the first message starts", async ({ page }) => {
+  test("locks agent choice while keeping the selected runtime menu available", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Agent-Lock-Chat-${Date.now()}`,
@@ -103,9 +106,11 @@ test.describe("Chat agent selector lock", () => {
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat`);
+    await expect(page.locator("html")).toHaveClass(/dark/);
 
     const agentSelector = page.getByTestId("chat-agent-selector");
     await expect(agentSelector).toBeVisible({ timeout: 15_000 });
@@ -118,19 +123,47 @@ test.describe("Chat agent selector lock", () => {
     await composer.fill("Start the locked-agent conversation");
     await page.getByRole("button", { name: "Send" }).click();
 
-    await expect(agentSelector).toBeDisabled({ timeout: 15_000 });
+    await expect(agentSelector).toBeEnabled({ timeout: 15_000 });
     await expect(agentSelector.getByTestId("chat-agent-selector-icon")).toBeVisible();
     await expect(agentSelector.getByTestId("chat-agent-selector-chevron")).toHaveCount(0);
 
-    const backgroundBeforeHover = await agentSelector.evaluate((element) => getComputedStyle(element).backgroundColor);
-    await agentSelector.hover({ force: true });
-    await expect.poll(async () => agentSelector.evaluate((element) => getComputedStyle(element).backgroundColor))
-      .toBe(backgroundBeforeHover);
+    await agentSelector.click();
+    await expect(page.getByTestId("chat-agent-menu")).toBeVisible();
+    await expect(page.getByRole("menuitemradio", { name: /Lock Agent/ })).toBeDisabled();
+    await expect(page.getByTestId("chat-model-selector")).toBeEnabled();
+    await page.waitForTimeout(500);
+    await page.screenshot({
+      path: "/tmp/rudder-chat-conversation-model-selector-dark.png",
+      fullPage: true,
+    });
+    await agentSelector.click();
+    await page.setViewportSize({ width: 760, height: 900 });
+    await page.waitForTimeout(500);
+    await agentSelector.click();
+    await expect(page.getByTestId("chat-model-selector")).toBeEnabled();
+    await page.waitForTimeout(500);
+    await page.screenshot({
+      path: "/tmp/rudder-chat-conversation-model-selector-narrow-dark.png",
+      fullPage: true,
+    });
+    await agentSelector.click();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.evaluate(() => {
+      window.localStorage.setItem("rudder.theme", "light");
+    });
+    await page.reload();
+    await expect(page.locator("html")).not.toHaveClass(/dark/);
+    await expect(agentSelector).toBeEnabled({ timeout: 15_000 });
+    await agentSelector.click();
+    await expect(page.getByTestId("chat-model-selector")).toBeEnabled();
+    await page.waitForTimeout(500);
+    await page.screenshot({
+      path: "/tmp/rudder-chat-conversation-model-selector-light.png",
+      fullPage: true,
+    });
+    await agentSelector.click();
 
-    await agentSelector.evaluate((element) => (element as HTMLButtonElement).click());
-    await expect(page.getByTestId("chat-agent-menu")).toHaveCount(0);
-
-    await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 15_000 });
-    await expect(agentSelector).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
+    await expect(agentSelector).toBeEnabled();
   });
 });

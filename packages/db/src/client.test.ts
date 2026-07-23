@@ -539,6 +539,7 @@ describe("applyPendingMigrations", () => {
           "0108_atomic_chat_first_turn_cleanup.sql",
           "0109_many_carmella_unuscione.sql",
           "0110_supreme_mathemanic.sql",
+          "0111_narrow_black_panther.sql",
         ],
         reason: "pending-migrations",
       });
@@ -669,6 +670,7 @@ describe("applyPendingMigrations", () => {
           "0108_atomic_chat_first_turn_cleanup.sql",
           "0109_many_carmella_unuscione.sql",
           "0110_supreme_mathemanic.sql",
+          "0111_narrow_black_panther.sql",
         ],
         reason: "pending-migrations",
       });

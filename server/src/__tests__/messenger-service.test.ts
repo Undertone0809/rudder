@@ -237,6 +237,162 @@ describe("messengerService and issue follows", () => {
     }
   });
 
+  it("does not inherit a conversation model override when forking", async () => {
+    const orgId = randomUUID();
+    const sourceConversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Model Override Fork Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Model Override Fork Org"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: sourceConversationId,
+      orgId,
+      title: "Overridden source chat",
+      modelOverride: "gpt-5.6-terra",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+
+    const fork = await chatSvc.forkConversation({
+      sourceConversationId,
+      orgId,
+      userId: "fork-model-test-user",
+      createdByUserId: "fork-model-test-user",
+    });
+
+    expect(fork).toMatchObject({
+      forkedFromConversationId: sourceConversationId,
+      modelOverride: null,
+    });
+    const [persistedFork] = await db
+      .select({ modelOverride: chatConversations.modelOverride })
+      .from(chatConversations)
+      .where(eq(chatConversations.id, fork.id));
+    expect(persistedFork?.modelOverride).toBeNull();
+  });
+
+  it("replays queued mutations across server-owned model snapshot changes", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Queue Model Replay Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Queue Model Replay Org"),
+      issuePrefix: `Q${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Queue model replay chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+
+    const created = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "lost-queue-response",
+      payload: {
+        body: "Retry this unchanged request",
+        model: "gpt-5.6-terra",
+      },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+    const replay = await chatSvc.getQueuedMessageReplay({
+      conversationId,
+      clientMutationId: "lost-queue-response",
+      payload: {
+        body: "Retry this unchanged request",
+        model: "gpt-5.6-luna",
+      },
+    });
+    const racedReplay = await chatSvc.createQueuedMessage({
+      orgId,
+      conversationId,
+      clientMutationId: "lost-queue-response",
+      payload: {
+        body: "Retry this unchanged request",
+        model: "gpt-5.6-luna",
+      },
+      requestActor: boardQueueRequestActor(orgId),
+    });
+
+    expect(replay).toMatchObject({
+      id: created.id,
+      payload: { model: "gpt-5.6-terra" },
+    });
+    expect(racedReplay).toMatchObject({
+      id: created.id,
+      payload: { model: "gpt-5.6-terra" },
+    });
+    await expect(chatSvc.getQueuedMessageReplay({
+      conversationId,
+      clientMutationId: "lost-queue-response",
+      payload: {
+        body: "A different request",
+        model: "gpt-5.6-luna",
+      },
+    })).rejects.toThrow("Queued message idempotency key reused with a different payload");
+  });
+
+  it("atomically clears a historical model override when assigning its first Agent", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const agentId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Agent Model Invariant Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Agent Model Invariant Org"),
+      issuePrefix: `I${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Invariant Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Historical unassigned chat",
+      preferredAgentId: null,
+      modelOverride: "gpt-5.6-terra",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+
+    await chatSvc.updateAgentModelInvariant({
+      id: conversationId,
+      expectedPreferredAgentId: null,
+      patch: { modelOverride: "gpt-5.6-luna" },
+    });
+    const assigned = await chatSvc.updateAgentModelInvariant({
+      id: conversationId,
+      expectedPreferredAgentId: null,
+      patch: { preferredAgentId: agentId },
+    });
+
+    expect(assigned).toMatchObject({
+      preferredAgentId: agentId,
+      modelOverride: null,
+    });
+    await expect(chatSvc.updateAgentModelInvariant({
+      id: conversationId,
+      expectedPreferredAgentId: null,
+      patch: { modelOverride: "gpt-5.6-terra" },
+    })).rejects.toThrow("Chat agent changed while applying the conversation model update");
+  });
+
   it("keeps queue snapshots read-only when a DB active generation has no local owner", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();
@@ -782,7 +938,10 @@ describe("messengerService and issue follows", () => {
       conversationId,
       clientMutationId: "stop-steer-race",
       expectedGenerationId: generationId,
-      payload: { body: "Continue with this feedback after Stop" },
+      payload: {
+        body: "Continue with this feedback after Stop",
+        model: "gpt-5.6-luna",
+      },
       requestActor: boardQueueRequestActor(orgId),
     });
     await chatSvc.markGenerationTerminal(generationId, "stopped");
@@ -809,7 +968,11 @@ describe("messengerService and issue follows", () => {
     expect(scheduled).toMatchObject({
       idempotent: false,
       action: { localDisposition: "continuation_pending", providerDisposition: "not_sent" },
-      item: { status: "continuation_pending", deliveryIntent: "steer" },
+      item: {
+        status: "continuation_pending",
+        deliveryIntent: "steer",
+        payload: { model: "gpt-5.6-luna" },
+      },
     });
     expect(retried).toMatchObject({
       idempotent: true,
@@ -827,6 +990,7 @@ describe("messengerService and issue follows", () => {
         id: queued.id,
         status: "running_next",
         deliveryDisposition: "running_next",
+        payload: { model: "gpt-5.6-luna" },
       },
     });
     expect(claim?.generationId).toBeTruthy();

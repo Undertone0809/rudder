@@ -1,0 +1,1 @@
+ALTER TABLE "chat_conversations" ADD COLUMN "model_override" text;

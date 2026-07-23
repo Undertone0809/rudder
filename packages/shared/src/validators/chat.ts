@@ -122,10 +122,13 @@ export const createChatContextLinkSchema = z.object({
   metadata: z.record(z.unknown()).optional().nullable(),
 });
 
+export const chatModelOverrideSchema = z.string().trim().min(1).max(120).nullable();
+
 export const chatDraftSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   summary: z.string().trim().max(5000).optional().nullable(),
   preferredAgentId: z.string().uuid().optional().nullable(),
+  modelOverride: chatModelOverrideSchema.optional(),
   issueCreationMode: chatIssueCreationModeSchema.optional(),
   planMode: z.boolean().optional(),
   contextLinks: z.array(createChatContextLinkSchema).optional().default([]),

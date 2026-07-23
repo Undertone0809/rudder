@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useChatDraftQueries } from "./Chat.workspace-helpers";
+import { advanceChatDraftModelScope, chatComposerSubmitAction, chatSendButtonDisabled, useChatDraftQueries } from "./Chat.workspace-helpers";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -33,6 +33,7 @@ function DraftQueryProbe() {
     selectedOrganizationId: "org-1",
     selectedConversation: null,
     activeAgentId: "agent-1",
+    modelOverride: "gpt-5.6-terra",
     activeProjectId: "__no_project__",
     issueContextId: null,
     planMode: false,
@@ -123,5 +124,61 @@ describe("useChatDraftQueries", () => {
 
     unmountProbe(second.root, second.container);
     queryClient.clear();
+  });
+});
+
+describe("chatComposerSubmitAction", () => {
+  it("blocks keyboard Queue while a conversation model change is pending", () => {
+    expect(chatComposerSubmitAction({
+      composerUnavailable: false,
+      newConversationSendInFlight: false,
+      modelSelectionPending: true,
+      selectedConversationHasActiveReply: true,
+      hasSelectedConversation: true,
+      controlsDisabled: true,
+    })).toBe("none");
+  });
+
+  it("still allows Queue during an active reply when no model change is pending", () => {
+    expect(chatComposerSubmitAction({
+      composerUnavailable: false,
+      newConversationSendInFlight: false,
+      modelSelectionPending: false,
+      selectedConversationHasActiveReply: true,
+      hasSelectedConversation: true,
+      controlsDisabled: true,
+    })).toBe("queue");
+  });
+});
+
+describe("chatSendButtonDisabled", () => {
+  it("keeps Stop available while a conversation model change is pending", () => {
+    expect(chatSendButtonDisabled({
+      selectedConversationExternalBound: false,
+      modelSelectionPending: true,
+      composerUnavailable: false,
+      sendButtonMode: "stop",
+      hasDraft: false,
+    })).toBe(false);
+  });
+
+  it.each(["send", "queue"] as const)("blocks %s while a conversation model change is pending", (sendButtonMode) => {
+    expect(chatSendButtonDisabled({
+      selectedConversationExternalBound: false,
+      modelSelectionPending: true,
+      composerUnavailable: false,
+      sendButtonMode,
+      hasDraft: true,
+    })).toBe(true);
+  });
+});
+
+describe("advanceChatDraftModelScope", () => {
+  it("resets a draft override when the effective Agent or organization changes", () => {
+    const initial = advanceChatDraftModelScope(null, "org-1", "agent-1");
+    expect(initial).toEqual({ scope: "org-1:agent-1", reset: false });
+    expect(advanceChatDraftModelScope(initial.scope, "org-1", "agent-2").reset).toBe(true);
+    expect(advanceChatDraftModelScope(initial.scope, "org-2", "agent-1").reset).toBe(true);
+    expect(advanceChatDraftModelScope(initial.scope, "org-1", "agent-1").reset).toBe(false);
   });
 });

@@ -148,6 +148,7 @@ export function useChatDraftQueries(input: {
   selectedOrganizationId: string | null | undefined;
   selectedConversation: ChatConversation | null | undefined;
   activeAgentId: string | null;
+  modelOverride?: string | null;
   activeProjectId: string;
   issueContextId: string | null;
   planMode: boolean;
@@ -163,9 +164,10 @@ export function useChatDraftQueries(input: {
     enabled: Boolean(input.selectedOrganizationId) && input.activeProjectId !== input.noProjectId,
   });
   const draftPreflightQuery = useQuery({
-    queryKey: ["chats", input.selectedOrganizationId ?? "__none__", "draft-preflight", input.activeAgentId ?? "__none__", input.activeProjectId, input.issueContextId ?? "__none__", input.planMode],
+    queryKey: ["chats", input.selectedOrganizationId ?? "__none__", "draft-preflight", input.activeAgentId ?? "__none__", input.modelOverride ?? "__agent_default__", input.activeProjectId, input.issueContextId ?? "__none__", input.planMode],
     queryFn: () => chatsApi.preflightDraft(input.selectedOrganizationId!, {
       preferredAgentId: input.activeAgentId!,
+      modelOverride: input.modelOverride,
       issueCreationMode: "manual_approval",
       planMode: input.planMode,
       contextLinks: input.contextLinks,
@@ -178,6 +180,54 @@ export function useChatDraftQueries(input: {
     gcTime: CHAT_DRAFT_PREFLIGHT_GC_TIME_MS,
   });
   return { draftPreflightQuery, projectConversationsQuery };
+}
+
+export function chatComposerSubmitAction(input: {
+  composerUnavailable: boolean;
+  newConversationSendInFlight: boolean;
+  modelSelectionPending: boolean;
+  selectedConversationHasActiveReply: boolean;
+  hasSelectedConversation: boolean;
+  controlsDisabled: boolean;
+}) {
+  if (
+    input.composerUnavailable
+    || input.newConversationSendInFlight
+    || input.modelSelectionPending
+  ) {
+    return "none" as const;
+  }
+  if (input.selectedConversationHasActiveReply && input.hasSelectedConversation) {
+    return "queue" as const;
+  }
+  return input.controlsDisabled ? "none" as const : "send" as const;
+}
+
+export function chatSendButtonDisabled(input: {
+  selectedConversationExternalBound: boolean;
+  modelSelectionPending: boolean;
+  composerUnavailable: boolean;
+  sendButtonMode: SendButtonMode;
+  hasDraft: boolean;
+}) {
+  if (input.selectedConversationExternalBound || input.composerUnavailable) return true;
+  if (input.sendButtonMode === "sending" || input.sendButtonMode === "stopping") return true;
+  if (input.sendButtonMode === "send" || input.sendButtonMode === "queue") {
+    return input.modelSelectionPending || !input.hasDraft;
+  }
+  return false;
+}
+
+export function advanceChatDraftModelScope(
+  previousScope: string | null,
+  organizationId: string | null | undefined,
+  agentId: string | null | undefined,
+) {
+  const scope = `${organizationId ?? "__none__"}:${agentId ?? "__none__"}`;
+  return {
+    scope,
+    reset: previousScope !== null && previousScope !== scope,
+  };
 }
 
 export async function createQueuedComposerMessage(input: {

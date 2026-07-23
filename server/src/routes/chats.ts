@@ -293,6 +293,7 @@ export function chatRoutes(
     res: Response,
     input: {
       preferredAgentId?: string | null;
+      modelOverride?: string | null;
       planMode?: boolean;
       contextLinks?: Array<{ entityType: "issue" | "project" | "agent"; entityId: string; metadata?: Record<string, unknown> | null }>;
     },
@@ -324,10 +325,23 @@ export function chatRoutes(
     const availability = await assistantSvc.getDraftChatAssistantAvailability({
       orgId,
       preferredAgentId,
+      modelOverride: input.modelOverride ?? null,
       contextLinks,
       planMode: input.planMode ?? false,
     });
-    return { orgId, organization, contextLinks, preferredAgentId, availability };
+    return {
+      orgId,
+      organization,
+      contextLinks,
+      preferredAgentId,
+      modelOverride: input.modelOverride ?? null,
+      availability,
+    };
+  }
+
+  async function conversationModelSnapshot(conversation: ChatConversation) {
+    const runtime = await assistantSvc.getChatAssistantAvailability(conversation);
+    return runtime.model !== "Default model" ? runtime.model : null;
   }
 
   type ActorInfo = ReturnType<typeof getActorInfo>;
@@ -1275,6 +1289,7 @@ export function chatRoutes(
       assistantConversation = assistantInput.conversation;
       const streamed = await assistantSvc.streamChatAssistantReply({
         ...assistantInput,
+        modelSnapshot: claim.item.payload.model,
         userMessageId: userMessage.id,
         chatTurnId: turnContext.chatTurnId,
         turnVariant: turnContext.turnVariant,
@@ -1602,6 +1617,7 @@ export function chatRoutes(
       title: req.body.title,
       summary: req.body.summary ?? null,
       preferredAgentId: draft.preferredAgentId,
+      modelOverride: draft.modelOverride,
       issueCreationMode: req.body.issueCreationMode ?? draft.organization.defaultChatIssueCreationMode,
       planMode: req.body.planMode ?? false,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
@@ -1680,10 +1696,29 @@ export function chatRoutes(
         return;
       }
     }
-    const updated = await svc.update(existing.id, {
+    const preferredAgentChanged = typeof req.body.preferredAgentId === "string"
+      && req.body.preferredAgentId !== existing.preferredAgentId;
+    if (preferredAgentChanged && existing.preferredAgentId) {
+      throw conflict("Chat agent is locked after the conversation starts");
+    }
+    const conversationPatch = {
       ...req.body,
-      resolvedAt: req.body.resolvedAt ? new Date(req.body.resolvedAt) : req.body.resolvedAt,
-    });
+      ...(preferredAgentChanged ? { modelOverride: null } : {}),
+      ...(req.body.resolvedAt !== undefined
+        ? { resolvedAt: req.body.resolvedAt ? new Date(req.body.resolvedAt) : null }
+        : {}),
+    };
+    const updatesAgentModelInvariant = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "preferredAgentId",
+    ) || Object.prototype.hasOwnProperty.call(req.body, "modelOverride");
+    const updated = updatesAgentModelInvariant
+      ? await svc.updateAgentModelInvariant({
+        id: existing.id,
+        patch: conversationPatch,
+        expectedPreferredAgentId: existing.preferredAgentId,
+      })
+      : await svc.update(existing.id, conversationPatch);
     const actor = getActorInfo(req);
     await logActivity(db, {
       orgId: existing.orgId,
@@ -1694,7 +1729,7 @@ export function chatRoutes(
       action: "chat.updated",
       entityType: "chat",
       entityId: existing.id,
-      details: req.body,
+      details: conversationPatch,
     });
     res.json(updated ? await assistantSvc.enrichConversation(updated as ChatConversation) : null);
   });
@@ -1963,13 +1998,25 @@ export function chatRoutes(
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
+    const replay = await svc.getQueuedMessageReplay({
+      conversationId: conversation.id,
+      clientMutationId: req.body.clientMutationId,
+      payload: req.body.payload,
+    });
+    if (replay) {
+      res.status(201).json(replay);
+      return;
+    }
     const requestActor = queueRequestActor(req);
     const item = await svc.createQueuedMessage({
       orgId: conversation.orgId,
       conversationId: conversation.id,
       clientMutationId: req.body.clientMutationId,
       expectedGenerationId: req.body.expectedGenerationId ?? getActiveChatGeneration(conversation.id)?.generationId ?? null,
-      payload: req.body.payload,
+      payload: {
+        ...req.body.payload,
+        model: await conversationModelSnapshot(conversation as ChatConversation),
+      },
       requestActor,
     });
     const actor = getActorInfo(req);
@@ -2457,7 +2504,7 @@ export function chatRoutes(
           skillRefs: [],
           projectId: null,
           accessMode: null,
-          model: null,
+          model: assistantAvailability.model === "Default model" ? null : assistantAvailability.model,
           effort: null,
           metadata: {
             source: "messages_endpoint_during_active_generation",
@@ -2489,6 +2536,9 @@ export function chatRoutes(
           try {
             const streamed = await assistantSvc.streamChatAssistantReply({
               ...assistantInput,
+              modelSnapshot: assistantAvailability.model === "Default model"
+                ? null
+                : assistantAvailability.model,
               userMessageId: userMessage.id,
               chatTurnId: turnContext.chatTurnId,
               turnVariant: turnContext.turnVariant,

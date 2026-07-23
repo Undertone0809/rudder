@@ -155,6 +155,7 @@ function makeConversation(overrides: Partial<ChatConversation> = {}): ChatConver
     latestUserMessagePreview: null,
     userMessageCount: 0,
     preferredAgentId: "agent-1",
+    modelOverride: null,
     routedAgentId: null,
     primaryIssueId: null,
     primaryIssue: null,
@@ -896,6 +897,77 @@ describe("chatAssistantService operator profile prompt injection", () => {
       dangerouslyBypassApprovalsAndSandbox: false,
       extraArgs: expect.arrayContaining(["-s", "read-only"]),
     }));
+  });
+
+  it("applies a conversation model override without mutating fallback or workspace config", async () => {
+    const modelFallbacks = [{
+      agentRuntimeType: "codex_local",
+      model: "gpt-5.4-mini",
+    }];
+    mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
+      resolvedConfig: {},
+      runtimeConfig: {
+        model: "gpt-5.4",
+        modelReasoningEffort: "ultra",
+        modelFallbacks,
+        cwd: "/tmp/chat-workspace",
+        rudderSkillSync: { desiredSkills: ["org/build-advisor"] },
+      },
+      runtimeSkillEntries: [],
+      secretKeys: new Set(["OPENAI_API_KEY"]),
+    });
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation({ modelOverride: "gpt-5.6-terra" }),
+      messages: makeMessages(),
+      contextLinks: [],
+    });
+
+    const runtimeConfig = mockAdapter.execute.mock.calls.at(-1)?.[0]?.config as Record<string, unknown>;
+    expect(runtimeConfig).toEqual(expect.objectContaining({
+      model: "gpt-5.6-terra",
+      modelReasoningEffort: "ultra",
+      modelFallbacks,
+      cwd: "/tmp/chat-workspace",
+      rudderSkillSync: { desiredSkills: ["org/build-advisor"] },
+    }));
+  });
+
+  it("prefers an admitted model snapshot and resets only an incompatible inherited effort", async () => {
+    const modelFallbacks = [{
+      agentRuntimeType: "codex_local",
+      model: "gpt-5.4-mini",
+    }];
+    mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
+      resolvedConfig: {},
+      runtimeConfig: {
+        model: "gpt-5.4",
+        modelReasoningEffort: "ultra",
+        reasoningEffort: "ultra",
+        modelFallbacks,
+        cwd: "/tmp/chat-workspace",
+      },
+      runtimeSkillEntries: [],
+      secretKeys: new Set(),
+    });
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation({ modelOverride: "gpt-5.6-sol" }),
+      messages: makeMessages(),
+      contextLinks: [],
+      modelSnapshot: "gpt-5.5",
+    });
+
+    const runtimeConfig = mockAdapter.execute.mock.calls.at(-1)?.[0]?.config as Record<string, unknown>;
+    expect(runtimeConfig).toEqual(expect.objectContaining({
+      model: "gpt-5.5",
+      modelFallbacks,
+      cwd: "/tmp/chat-workspace",
+    }));
+    expect(runtimeConfig).not.toHaveProperty("modelReasoningEffort");
+    expect(runtimeConfig).not.toHaveProperty("reasoningEffort");
   });
 
   it("applies plan-mode prompt guidance and a structured Claude permission overlay", async () => {

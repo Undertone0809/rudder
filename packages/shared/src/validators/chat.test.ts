@@ -5,6 +5,7 @@ import {
   chatAskUserRequestSchema,
   chatAutomationCreateFromStructuredPayload,
   chatControlDispositionSchema,
+  chatDraftSchema,
   chatIssueProposalFromStructuredPayload,
   chatQueuedMessageStatusSchema,
   chatRichReferencesFromStructuredPayload,
@@ -16,6 +17,18 @@ import {
 
 const generationId = "11111111-1111-4111-8111-111111111111";
 const controlActionId = "22222222-2222-4222-8222-222222222222";
+
+describe("conversation model override", () => {
+  it("accepts a trimmed model id or null and rejects blank or oversized ids", () => {
+    expect(chatDraftSchema.parse({
+      preferredAgentId: generationId,
+      modelOverride: "  gpt-5.6-terra  ",
+    }).modelOverride).toBe("gpt-5.6-terra");
+    expect(chatDraftSchema.parse({ modelOverride: null }).modelOverride).toBeNull();
+    expect(chatDraftSchema.safeParse({ modelOverride: "   " }).success).toBe(false);
+    expect(chatDraftSchema.safeParse({ modelOverride: "m".repeat(121) }).success).toBe(false);
+  });
+});
 
 describe("durable chat controls", () => {
   it("accepts every honest queue disposition and durable state", () => {

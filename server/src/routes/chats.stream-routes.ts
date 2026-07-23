@@ -13,7 +13,8 @@ import {
   updateChatConversationUserStateSchema,
   type ChatAttachment,
   type ChatConversation,
-  type ChatMessage
+  type ChatMessage,
+  type ChatQueuedMessage
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
 import multer from "multer";
@@ -211,12 +212,18 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
 
     const queuedMessageId = parsedBody.data.queuedMessageId ?? null;
+    let admittedModelSnapshot = atomicFirstTurn?.conversation.chatRuntime.model === "Default model"
+      ? null
+      : atomicFirstTurn?.conversation.chatRuntime.model ?? null;
     if (!atomicFirstTurn) {
       const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
       if (!assistantAvailability.available) {
         res.status(503).json({ error: assistantAvailability.error });
         return;
       }
+      admittedModelSnapshot = assistantAvailability.model === "Default model"
+        ? null
+        : assistantAvailability.model;
     }
 
     const abortController = new AbortController();
@@ -246,7 +253,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           skillRefs: [],
           projectId: null,
           accessMode: null,
-          model: null,
+          model: admittedModelSnapshot,
           effort: null,
           metadata: {
             source: "stream_endpoint_during_active_generation",
@@ -263,9 +270,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
     const startupGate = createStartingChatGenerationGate();
     startingChatGenerationGates.set(conversation.id, startupGate);
+    let claimedQueuedMessage: ChatQueuedMessage | null = null;
     if (queuedMessageId) {
       try {
-        await svc.assertQueuedMessageClaimedForDelivery({
+        claimedQueuedMessage = await svc.assertQueuedMessageClaimedForDelivery({
           conversationId: conversation.id,
           itemId: queuedMessageId,
           body: parsedBody.data.body,
@@ -517,6 +525,9 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           try {
             const streamed = await assistantSvc.streamChatAssistantReply({
               ...assistantInput,
+              modelSnapshot: claimedQueuedMessage
+                ? claimedQueuedMessage.payload.model
+                : admittedModelSnapshot,
               userMessageId: userMessage.id,
               chatTurnId: turnContextForPartial.chatTurnId,
               turnVariant: turnContextForPartial.turnVariant,
@@ -920,6 +931,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       title: parsed.data.title,
       summary: parsed.data.summary ?? null,
       preferredAgentId: draft.preferredAgentId,
+      modelOverride: draft.modelOverride,
       issueCreationMode: parsed.data.issueCreationMode ?? draft.organization.defaultChatIssueCreationMode,
       planMode: parsed.data.planMode ?? false,
       createdByUserId: actor.actorId,

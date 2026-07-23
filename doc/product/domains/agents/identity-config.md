@@ -193,21 +193,28 @@ Product model:
   `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, and
   `gpt-5.2`; discovered OpenAI models do not augment or reorder it. Explicit
   custom model values may still be preserved where the editor supports them.
+- Chat conversation model selection reuses the same runtime-owned catalogs,
+  Codex fixed ordering, and dynamic runtime discovery. It may display a
+  persisted unknown/custom current value for compatibility, but it does not
+  add a new free-input model editor.
 - New Codex agent configurations default to `gpt-5.6-sol`, including the
   onboarding and standard agent-creation surfaces.
 - Codex thinking effort is model-family-specific. The GPT-5.6 Codex variants
   offer Light, Medium, High, Extra High, Max, and Ultra; the remaining curated
   Codex models offer Low, Medium, High, and Extra High. Switching models clears
   an effort value that the new model does not support, including primary,
-  fallback, and New Issue override surfaces.
+  fallback, New Issue override, and derived Chat conversation surfaces. Chat
+  performs this compatibility fallback only in the derived conversation config
+  and never writes it back to the Agent.
 - Runtime environment test results are tri-state operator evidence: `pass` is
   ready, `warn` is visible setup guidance, and `fail` is a failed probe. Warning
   checks must remain visible instead of being hidden or normalized to a pass.
 
 Flow:
 
-1. Agent config loads the operator-facing runtime choices, the runtime-owned
-   model catalog, and, when available, server-side CLI probe status.
+1. Agent config and Chat conversation overrides load the operator-facing
+   runtime choices, the runtime-owned model catalog, and, when available,
+   server-side CLI probe status.
 2. The runtime selector groups choices by setup state so the operator can see
    ready local runtimes, runtimes needing setup, and non-probed runtimes before
    choosing.
@@ -246,6 +253,9 @@ Invariants:
   types as first-class operator choices.
 - Codex model discovery must not turn the fixed Codex menu into an account- or
   API-key-dependent list. Catalog changes are deliberate product updates.
+- Conversation-scoped selectors must not create a second model catalog or
+  reorder runtime-owned choices. Replacing the primary model must preserve the
+  Agent fallback chain and all unrelated runtime configuration.
 - A warning-only environment result must remain distinguishable from both pass
   and fail while leaving supported configuration and recovery actions visible.
 - Runtime adapters must not expose Browser tools from inherited user MCP config
@@ -267,6 +277,8 @@ Evidence:
   fixed Codex model ordering, and hidden process/HTTP entries.
 - Adapter model tests prove Codex ignores discovered OpenAI models and returns
   the curated menu in its declared order.
+- Chat model-selector and assistant tests prove catalog reuse, unknown current
+  value compatibility, fallback preservation, and derived effort fallback.
 - Codex, Claude, OpenCode, and Pi execute tests cover managed Browser capability
   propagation and prove the eight Browser tools are absent when disabled.
 - Codex App Server tests cover bidirectional request handling, native

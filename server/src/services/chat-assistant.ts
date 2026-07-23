@@ -17,7 +17,7 @@ import type { StorageService } from "../storage/types.js";
 import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
-import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { applyChatPrimaryModel, asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
 import { enrichConversationRuntimeDescriptors } from "./chat-assistant.runtime-batch.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
 import {
@@ -48,13 +48,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   const chatRunsSvc = chatAgentRunService(db);
 
   async function resolveChatInvocation(input: {
-    conversation: Pick<ChatConversation, "id" | "orgId" | "preferredAgentId" | "primaryIssueId" | "contextLinks" | "planMode">;
+    conversation: Pick<ChatConversation, "id" | "orgId" | "preferredAgentId" | "modelOverride" | "primaryIssueId" | "contextLinks" | "planMode">;
     contextLinks: ChatContextLink[];
     materializeManagedInstructions?: boolean;
+    modelSnapshot?: string | null;
   }) {
     const runtimeSource = await resolveConversationRuntime(
       input.conversation,
-      { materializeManagedInstructions: input.materializeManagedInstructions },
+      {
+        materializeManagedInstructions: input.materializeManagedInstructions,
+        ...(input.modelSnapshot !== undefined ? { modelSnapshot: input.modelSnapshot } : {}),
+      },
     );
     if (!runtimeSource.descriptor.available) {
       return {
@@ -253,8 +257,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   }
 
   async function resolveConversationRuntime(
-    conversation: Pick<ChatConversation, "orgId" | "preferredAgentId">,
-    options?: { materializeManagedInstructions?: boolean },
+    conversation: Pick<ChatConversation, "orgId" | "preferredAgentId" | "modelOverride">,
+    options?: {
+      materializeManagedInstructions?: boolean;
+      modelSnapshot?: string | null;
+    },
   ) {
     if (conversation.preferredAgentId) {
       const agentRuntime = await resolveAgentRuntime(
@@ -262,7 +269,36 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         conversation.preferredAgentId,
         options,
       );
-      if (agentRuntime) return agentRuntime;
+      if (agentRuntime) {
+        const selectedModel = options && Object.prototype.hasOwnProperty.call(options, "modelSnapshot")
+          ? safeTrim(options.modelSnapshot)
+          : safeTrim(conversation.modelOverride);
+        if (
+          !selectedModel ||
+          !agentRuntime.agentRuntimeType ||
+          !agentRuntime.agentRuntimeConfig ||
+          !agentRuntime.runtimeAgent
+        ) {
+          return agentRuntime;
+        }
+        const derivedConfig = applyChatPrimaryModel(
+          agentRuntime.agentRuntimeType,
+          agentRuntime.agentRuntimeConfig,
+          selectedModel,
+        );
+        return {
+          ...agentRuntime,
+          descriptor: {
+            ...agentRuntime.descriptor,
+            model: selectedModel,
+          },
+          runtimeAgent: {
+            ...agentRuntime.runtimeAgent,
+            agentRuntimeConfig: derivedConfig,
+          },
+          agentRuntimeConfig: derivedConfig,
+        };
+      }
     }
 
     return {
@@ -296,6 +332,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       conversation: input.conversation,
       contextLinks: input.contextLinks,
       materializeManagedInstructions: true,
+      modelSnapshot: input.modelSnapshot,
     });
     if (resolvedInvocation.availabilityError) {
       throw new Error(resolvedInvocation.availabilityError);
@@ -1145,6 +1182,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     getDraftChatAssistantAvailability: async (input: {
       orgId: string;
       preferredAgentId: string | null;
+      modelOverride?: string | null;
       contextLinks?: Array<Pick<ChatContextLink, "entityType" | "entityId"> & Partial<ChatContextLink>>;
       planMode?: boolean;
     }) => {
@@ -1154,6 +1192,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           id: randomUUID(),
           orgId: input.orgId,
           preferredAgentId: input.preferredAgentId,
+          modelOverride: input.modelOverride ?? null,
           primaryIssueId: null,
           contextLinks,
           planMode: input.planMode ?? false,

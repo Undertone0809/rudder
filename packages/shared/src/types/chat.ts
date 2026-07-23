@@ -374,6 +374,7 @@ export interface ChatConversation {
   userMessageCount: number;
   searchPreview?: string | null;
   preferredAgentId: string | null;
+  modelOverride?: string | null;
   routedAgentId: string | null;
   primaryIssueId: string | null;
   forkedFromConversationId: string | null;

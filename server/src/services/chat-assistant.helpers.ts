@@ -1,3 +1,4 @@
+import { GPT_5_6_CODEX_LOCAL_MODEL_IDS } from "@rudderhq/agent-runtime-codex-local";
 import type {
   AgentRuntimeControlCoordinator,
   AgentRuntimeMediaAttachment,
@@ -132,6 +133,7 @@ export interface GenerateChatAssistantReplyInput {
   contextLinks: ChatContextLink[];
   issueLabels?: IssueLabel[] | null;
   operatorProfile?: OperatorProfileSettings | null;
+  modelSnapshot?: string | null;
 }
 
 export interface StreamChatAssistantReplyInput extends GenerateChatAssistantReplyInput {
@@ -1178,6 +1180,53 @@ export function chatExecutionConfig(
     maxTurns: 1,
     chrome: false,
   };
+}
+
+const GPT_5_6_CODEX_LOCAL_MODEL_ID_SET = new Set<string>(GPT_5_6_CODEX_LOCAL_MODEL_IDS);
+const CODEX_LOCAL_REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
+const GPT_5_6_CODEX_LOCAL_REASONING_EFFORTS = new Set([
+  "light",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+]);
+
+export function applyChatPrimaryModel(
+  agentRuntimeType: AgentRuntimeType,
+  agentRuntimeConfig: Record<string, unknown>,
+  model: string | null | undefined,
+) {
+  const selectedModel = safeTrim(model);
+  if (!selectedModel) return agentRuntimeConfig;
+
+  const nextConfig: Record<string, unknown> = {
+    ...agentRuntimeConfig,
+    model: selectedModel,
+  };
+  if (agentRuntimeType !== "codex_local") return nextConfig;
+
+  const inheritedEffort = safeTrim(
+    typeof nextConfig.modelReasoningEffort === "string"
+      ? nextConfig.modelReasoningEffort
+      : typeof nextConfig.reasoningEffort === "string"
+        ? nextConfig.reasoningEffort
+        : null,
+  );
+  if (!inheritedEffort) return nextConfig;
+
+  const supportedEfforts = GPT_5_6_CODEX_LOCAL_MODEL_ID_SET.has(selectedModel.toLowerCase())
+    ? GPT_5_6_CODEX_LOCAL_REASONING_EFFORTS
+    : CODEX_LOCAL_REASONING_EFFORTS;
+  if (supportedEfforts.has(inheritedEffort.toLowerCase())) return nextConfig;
+
+  const {
+    modelReasoningEffort: _modelReasoningEffort,
+    reasoningEffort: _reasoningEffort,
+    ...configWithAutomaticEffort
+  } = nextConfig;
+  return configWithAutomaticEffort;
 }
 
 export function linkedIssueIdsForChat(
