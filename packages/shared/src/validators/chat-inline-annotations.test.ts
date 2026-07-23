@@ -207,6 +207,31 @@ describe("chat inline annotation contracts", () => {
     ]).success).toBe(false);
   });
 
+  it("requires unique canonical source ranges even when annotation ids differ", () => {
+    expect(chatInlineAnnotationsInputSchema.safeParse([
+      assistantAnnotation(1),
+      assistantAnnotation(2, {
+        selectedText: "A duplicate snapshot",
+        comment: "A different comment cannot make the same anchor unique.",
+      }),
+    ]).success).toBe(false);
+    expect(chatInlineAnnotationsInputSchema.safeParse([
+      processAnnotation(1),
+      processAnnotation(2, {
+        selectedText: "A duplicate Process snapshot",
+        comment: "Still the same generation range and source offsets.",
+      }),
+    ]).success).toBe(false);
+    expect(chatInlineAnnotationsInputSchema.safeParse([
+      assistantAnnotation(1),
+      assistantAnnotation(2, {
+        start: 34,
+        end: 42,
+        selectedText: "Distinct",
+      }),
+    ]).success).toBe(true);
+  });
+
   it("requires complete process provenance and forbids it on assistant body annotations", () => {
     expect(chatInlineAnnotationInputSchema.safeParse(processAnnotation()).success).toBe(true);
     expect(chatInlineAnnotationInputSchema.safeParse(processAnnotation(1, {

@@ -9,6 +9,7 @@ import {
 import {
   chatInlineAnnotationsFromStructuredPayload,
   type ChatInlineAnnotation,
+  type ChatStreamTranscriptEntry,
   type ChatStreamTranscriptTextEntry,
 } from "@rudderhq/shared";
 import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
@@ -16,11 +17,14 @@ import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import type { ChatGenerationProtocolTransaction } from "./chat-generation-protocol.helpers.js";
+import { renderedMarkdownSelectionText } from "./chat-inline-annotation-rendering.js";
 import { chatTranscriptFromPayload } from "./chats.helpers.js";
 
 const STABLE_ANNOTATION_MESSAGE_STATUSES = new Set(["completed", "stopped", "failed"]);
 const STABLE_ANNOTATION_GENERATION_STATUSES = new Set(["completed", "stopped", "failed"]);
 const MAX_PROCESS_ANNOTATION_EVENT_SPAN = 1_000;
+const INTERNAL_RESULT_MARKER_PATTERN =
+  /RUDDER_RESULT_(?:BEGIN|END)|__RUDDER_RESULT_[a-f0-9-]+__/i;
 
 type ValidationQuery = Pick<ChatGenerationProtocolTransaction, "select">;
 
@@ -95,71 +99,134 @@ function isExplicitlyHiddenTranscriptEvidence(
     || visibility === "private";
 }
 
-const HTML_CHARACTER_REFERENCES: Readonly<Record<string, string>> = {
-  amp: "&",
-  apos: "'",
-  copy: "©",
-  gt: ">",
-  hellip: "…",
-  laquo: "«",
-  ldquo: "“",
-  lsquo: "‘",
-  lt: "<",
-  mdash: "—",
-  nbsp: " ",
-  ndash: "–",
-  quot: "\"",
-  raquo: "»",
-  rdquo: "”",
-  reg: "®",
-  rsquo: "’",
-  trade: "™",
-};
-
-function decodeHtmlCharacterReferences(value: string) {
-  return value.replace(
-    /&(?:#([0-9]+)|#x([0-9a-f]+)|([a-z][a-z0-9]+));/gi,
-    (match, decimal: string | undefined, hexadecimal: string | undefined, named: string | undefined) => {
-      if (named) return HTML_CHARACTER_REFERENCES[named.toLowerCase()] ?? match;
-      const codePoint = Number.parseInt(decimal ?? hexadecimal ?? "", hexadecimal ? 16 : 10);
-      if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return match;
-      return String.fromCodePoint(codePoint);
-    },
-  );
-}
-
-function comparableRenderedCharacters(value: string, decodeEntities: boolean) {
-  const decoded = decodeEntities ? decodeHtmlCharacterReferences(value) : value;
-  const withoutLinkDestinations = decoded.replace(
-    /]\((?:\\.|[^)])*\)/g,
-    "]",
-  );
-  return Array.from(withoutLinkDestinations.normalize("NFKC"))
-    .filter((character) => !/[\p{White_Space}\u200b\ufeff]/u.test(character));
-}
-
-function assertSelectedTextPlausiblyMatchesRange(
+function assertSelectedTextExactlyMatchesRange(
   annotation: ChatInlineAnnotation,
   source: string,
 ) {
-  const rawSelection = source.slice(annotation.start, annotation.end);
-  const selectedCharacters = comparableRenderedCharacters(annotation.selectedText, false);
-  const sourceCharacters = comparableRenderedCharacters(rawSelection, true);
-  let sourceIndex = 0;
-  for (const selectedCharacter of selectedCharacters) {
-    while (
-      sourceIndex < sourceCharacters.length
-      && sourceCharacters[sourceIndex] !== selectedCharacter
-    ) {
-      sourceIndex += 1;
-    }
-    if (sourceIndex >= sourceCharacters.length) {
-      throw unprocessable(
-        "Annotation selected text is not plausible for its declared Markdown source range",
-      );
-    }
-    sourceIndex += 1;
+  const expectedSelectedText = renderedMarkdownSelectionText(
+    source,
+    annotation.start,
+    annotation.end,
+  );
+  if (
+    expectedSelectedText === null
+    || !/[^\p{White_Space}\u200b\ufeff]/u.test(expectedSelectedText)
+  ) {
+    throw unprocessable("Annotation source range must contain visible text");
   }
+  if (annotation.selectedText !== expectedSelectedText) {
+    throw unprocessable(
+      "Annotation selected text does not exactly match its rendered Markdown source range",
+    );
+  }
+}
+
+function trimTrailingWhitespace(value: string) {
+  return value.replace(/\s+$/g, "");
+}
+
+function redactAssistantSuffixFromVisibleProjection(
+  entries: ChatStreamTranscriptEntry[],
+  hiddenAssistantMessageText: string,
+) {
+  let remaining = trimTrailingWhitespace(hiddenAssistantMessageText);
+  if (!remaining) return entries;
+
+  const nextEntries: ChatStreamTranscriptEntry[] = [];
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.kind !== "assistant" || !remaining) {
+      nextEntries.push(entry);
+      continue;
+    }
+
+    const entryText = trimTrailingWhitespace(entry.text);
+    remaining = trimTrailingWhitespace(remaining);
+    if (!entryText) {
+      nextEntries.push(entry);
+      continue;
+    }
+    if (remaining.endsWith(entryText)) {
+      remaining = trimTrailingWhitespace(
+        remaining.slice(0, remaining.length - entryText.length),
+      );
+      continue;
+    }
+    if (entryText.endsWith(remaining)) {
+      const visibleText = trimTrailingWhitespace(
+        entryText.slice(0, entryText.length - remaining.length),
+      );
+      remaining = "";
+      if (visibleText) nextEntries.push({ ...entry, text: visibleText });
+      continue;
+    }
+    nextEntries.push(entry);
+  }
+
+  return remaining ? entries : nextEntries.reverse();
+}
+
+function transcriptEntriesBeforeAssistantTextIndex(
+  entries: ChatStreamTranscriptTextEntry[],
+  endIndex: number,
+) {
+  const visible: ChatStreamTranscriptTextEntry[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const entryEnd = offset + entry.text.length;
+    if (entryEnd <= endIndex) {
+      visible.push(entry);
+    } else if (offset < endIndex) {
+      const text = trimTrailingWhitespace(entry.text.slice(0, endIndex - offset));
+      if (text) visible.push({ ...entry, text });
+      break;
+    } else {
+      break;
+    }
+    offset = entryEnd;
+  }
+  return visible;
+}
+
+function stripInternalResultProtocolFromVisibleProjection(
+  entries: ChatStreamTranscriptEntry[],
+) {
+  const filtered: ChatStreamTranscriptEntry[] = [];
+  let assistantGroup: ChatStreamTranscriptTextEntry[] = [];
+
+  const flushAssistantGroup = () => {
+    if (assistantGroup.length === 0) return;
+    const markerIndex = assistantGroup
+      .map((entry) => entry.text)
+      .join("")
+      .search(INTERNAL_RESULT_MARKER_PATTERN);
+    filtered.push(...(
+      markerIndex < 0
+        ? assistantGroup
+        : transcriptEntriesBeforeAssistantTextIndex(assistantGroup, markerIndex)
+    ));
+    assistantGroup = [];
+  };
+
+  for (const entry of entries) {
+    if (entry.kind === "assistant") {
+      assistantGroup.push(entry);
+      continue;
+    }
+    flushAssistantGroup();
+    filtered.push(entry);
+  }
+  flushAssistantGroup();
+  return filtered;
+}
+
+function visibleChatTranscriptProjection(
+  entries: ChatStreamTranscriptEntry[],
+  hiddenAssistantMessageText: string,
+) {
+  return stripInternalResultProtocolFromVisibleProjection(
+    redactAssistantSuffixFromVisibleProjection(entries, hiddenAssistantMessageText),
+  );
 }
 
 function annotationSnapshotsAreSemanticallyIdentical(
@@ -403,7 +470,8 @@ async function validateProcessAnnotation(
     ));
   }
   const source = processAnnotationSource(textEntries);
-  const projectedEntry = chatTranscriptFromPayload(input.sourceMessage.structuredPayload)
+  const projectedEntries = chatTranscriptFromPayload(input.sourceMessage.structuredPayload);
+  const projectedEntry = projectedEntries
     .find((entry) =>
       entry.kind === input.annotation.transcriptKind
       && entry.generationId === generation.id
@@ -414,7 +482,32 @@ async function validateProcessAnnotation(
   if (!projectedEntry) {
     throw unprocessable("Process annotation evidence is not present in the visible message projection");
   }
-  return source;
+  const visibleEntry = visibleChatTranscriptProjection(
+    projectedEntries,
+    input.sourceMessage.body,
+  ).find((entry): entry is ChatStreamTranscriptTextEntry =>
+    (entry.kind === "assistant" || entry.kind === "thinking")
+    && entry.kind === input.annotation.transcriptKind
+    && entry.generationId === generation.id
+    && entry.generationSeqStart === input.annotation.generationSeqStart
+    && entry.generationSeqEnd === input.annotation.generationSeqEnd
+  );
+  if (
+    !visibleEntry
+    || annotationRangeFallsOutsideVisibleProjection(input.annotation, visibleEntry.text)
+  ) {
+    throw unprocessable("Process annotation evidence is not present in the visible message projection");
+  }
+  return visibleEntry.text;
+}
+
+function annotationRangeFallsOutsideVisibleProjection(
+  annotation: ChatInlineAnnotation,
+  source: string,
+) {
+  return annotation.start < 0
+    || annotation.end <= annotation.start
+    || annotation.end > source.length;
 }
 
 export async function validateCanonicalChatInlineAnnotations(
@@ -468,7 +561,7 @@ export async function validateCanonicalChatInlineAnnotations(
         sourceMessage: source,
     });
     assertSourceAnchor(annotation, anchorSource);
-    assertSelectedTextPlausiblyMatchesRange(annotation, anchorSource);
+    assertSelectedTextExactlyMatchesRange(annotation, anchorSource);
   }
 }
 

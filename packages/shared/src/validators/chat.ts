@@ -251,6 +251,7 @@ function createChatInlineAnnotationsSchema<T extends z.ZodTypeAny>(annotationSch
       let totalTextLength = 0;
       let attachmentReferenceCount = 0;
       const annotationIds = new Set<string>();
+      const sourceRanges = new Set<string>();
       const attachmentIds = new Set<string>();
       const attachmentFileIndexes = new Set<number>();
 
@@ -266,6 +267,25 @@ function createChatInlineAnnotationsSchema<T extends z.ZodTypeAny>(annotationSch
           });
         }
         annotationIds.add(annotation.id);
+        const sourceRangeKey = JSON.stringify([
+          annotation.sourceConversationId,
+          annotation.sourceMessageId,
+          annotation.surface,
+          annotation.surface === "process_transcript" ? annotation.transcriptKind : null,
+          annotation.surface === "process_transcript" ? annotation.generationId : null,
+          annotation.surface === "process_transcript" ? annotation.generationSeqStart : null,
+          annotation.surface === "process_transcript" ? annotation.generationSeqEnd : null,
+          annotation.start,
+          annotation.end,
+        ]);
+        if (sourceRanges.has(sourceRangeKey)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Annotation source ranges must be unique across the message",
+            path: [annotationIndex, "start"],
+          });
+        }
+        sourceRanges.add(sourceRangeKey);
         annotation.attachmentIds.forEach((attachmentId: string, attachmentIndex: number) => {
           if (attachmentIds.has(attachmentId)) {
             ctx.addIssue({

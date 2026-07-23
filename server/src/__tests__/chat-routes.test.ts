@@ -1586,6 +1586,50 @@ describe("chat routes", () => {
     expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
   });
 
+  it("rejects agent-authenticated annotation fields instead of silently dropping them", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+
+    const res = await request(createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: "run-1",
+    }))
+      .post("/api/chats/chat-1/messages")
+      .send({
+        body: "Agent-authored prose",
+        inlineAnnotations: [createInlineAnnotation()],
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("annotations");
+    expect(mockChatService.addMessage).not.toHaveBeenCalled();
+    expect(mockChatInlineAnnotations.prepare).not.toHaveBeenCalled();
+  });
+
+  it("requires a nonempty body independently for agent-authenticated messages", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+
+    const res = await request(createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: "run-1",
+    }))
+      .post("/api/chats/chat-1/messages")
+      .send({
+        body: "",
+        inlineAnnotations: [createInlineAnnotation()],
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("nonempty body");
+    expect(mockChatService.addMessage).not.toHaveBeenCalled();
+    expect(mockChatInlineAnnotations.prepare).not.toHaveBeenCalled();
+  });
+
   it("rejects local message sends to Feishu-bound chat conversations", async () => {
     const conversation = createFeishuBackedConversation();
     mockChatService.getById.mockResolvedValue(conversation);

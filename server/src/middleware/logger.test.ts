@@ -38,6 +38,42 @@ describe("HTTP request-body logging", () => {
     expect(requestBodyForLogs({ originalUrl: "/api/issues" }, body)).toBe(body);
   });
 
+  it("redacts direct and queued inline annotation request bodies", () => {
+    const direct = {
+      body: "",
+      inlineAnnotations: [{
+        selectedText: "PRIVATE_SELECTED_TEXT",
+        comment: "PRIVATE_OPERATOR_COMMENT",
+      }],
+    };
+    const queued = {
+      payload: {
+        body: "",
+        inlineAnnotations: [{
+          selectedText: "PRIVATE_THINKING_TEXT",
+          comment: null,
+        }],
+      },
+    };
+
+    expect(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/messages" },
+      direct,
+    )).toBe("[REDACTED]");
+    expect(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/queue" },
+      queued,
+    )).toBe("[REDACTED]");
+    expect(JSON.stringify(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/messages" },
+      direct,
+    ))).not.toContain("PRIVATE_SELECTED_TEXT");
+    expect(JSON.stringify(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/queue" },
+      queued,
+    ))).not.toContain("PRIVATE_THINKING_TEXT");
+  });
+
   it("keeps Browser bodies redacted when an HTTP request returns before its route", async () => {
     const app = express();
     let loggedBody: unknown;

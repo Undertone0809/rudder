@@ -24,6 +24,18 @@ function isBrowserRequest(req: object): boolean {
     || pathname === "/api/instance/browser/broker";
 }
 
+function containsInlineAnnotations(body: unknown): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  if (Object.hasOwn(body, "inlineAnnotations")) return true;
+  const payload = (body as { payload?: unknown }).payload;
+  return Boolean(
+    payload
+    && typeof payload === "object"
+    && !Array.isArray(payload)
+    && Object.hasOwn(payload, "inlineAnnotations"),
+  );
+}
+
 export function markHttpRequestBodySensitive(req: object): void {
   (req as { __rudderSensitiveRequestBody?: boolean }).__rudderSensitiveRequestBody = true;
 }
@@ -40,6 +52,7 @@ export function markBrowserHttpRequestBodySensitive(
 export function requestBodyForLogs(req: object, body: unknown): unknown {
   return (req as { __rudderSensitiveRequestBody?: boolean }).__rudderSensitiveRequestBody === true
     || isBrowserRequest(req)
+    || containsInlineAnnotations(body)
     ? REDACTED_REQUEST_BODY
     : body;
 }

@@ -158,8 +158,8 @@ describe("chatInlineAnnotationService", () => {
     body: string,
     overrides: Partial<ChatInlineAnnotationInput> = {},
   ): ChatInlineAnnotationInput {
-    const start = body.indexOf("[the docs]");
-    const end = body.indexOf(" before shipping.");
+    const start = body.indexOf("the docs");
+    const end = body.indexOf("run tests") + "run tests".length;
     return {
       id: randomUUID(),
       surface: "assistant_body",
@@ -186,6 +186,7 @@ describe("chatInlineAnnotationService", () => {
   }) {
     const generationId = randomUUID();
     const text = input.text ?? "Inspect";
+    const kind = input.entryOverrides?.kind === "assistant" ? "assistant" : "thinking";
     const ts = "2026-07-23T10:00:00.000Z";
     await db.insert(chatGenerations).values({
       id: generationId,
@@ -202,7 +203,7 @@ describe("chatInlineAnnotationService", () => {
       eventKind: "transcript",
       payload: {
         entry: {
-          kind: "thinking",
+          kind,
           ts,
           text,
           delta: true,
@@ -215,7 +216,7 @@ describe("chatInlineAnnotationService", () => {
       await db.update(chatMessages).set({
         structuredPayload: {
           __chatTranscript: [{
-            kind: "thinking",
+            kind,
             ts,
             text,
             delta: true,
@@ -264,7 +265,7 @@ describe("chatInlineAnnotationService", () => {
       "Second block.",
     ].join("\n");
     const source = await seedSource({ body });
-    const start = body.indexOf("[中文文档]");
+    const start = body.indexOf("中文文档");
     const end = body.indexOf("Second block.") + "Second block.".length;
 
     await expect(service.prepare({
@@ -274,7 +275,7 @@ describe("chatInlineAnnotationService", () => {
       annotations: [{
         id: randomUUID(),
         surface: "assistant_body",
-        selectedText: "中文文档 与 npm test & verify. Second block.",
+        selectedText: "中文文档 与 npm test & verify.\nSecond block.",
         comment: null,
         sourceConversationId: source.conversationId,
         sourceMessageId: source.sourceMessageId,
@@ -287,8 +288,76 @@ describe("chatInlineAnnotationService", () => {
       }],
     })).resolves.toMatchObject({
       annotations: [expect.objectContaining({
-        selectedText: "中文文档 与 npm test & verify. Second block.",
+        selectedText: "中文文档 与 npm test & verify.\nSecond block.",
       })],
+    });
+  });
+
+  it.each([
+    ["omitted rendered characters", "中文文档 与 npm test verify.\nSecond block."],
+    ["altered block whitespace", "中文文档 与 npm test & verify. Second block."],
+    ["inserted rendered characters", "中文文档 与 npm test & verify. EXTRA\nSecond block."],
+  ])("rejects %s from an otherwise valid Markdown range", async (_label, selectedText) => {
+    const body = [
+      "## 说明",
+      "",
+      "阅读 [中文文档](https://example.test/docs) 与 `npm test` &amp; verify.",
+      "",
+      "Second block.",
+    ].join("\n");
+    const source = await seedSource({ body });
+    const start = body.indexOf("中文文档");
+    const end = body.indexOf("Second block.") + "Second block.".length;
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "assistant_body",
+        selectedText,
+        comment: null,
+        sourceConversationId: source.conversationId,
+        sourceMessageId: source.sourceMessageId,
+        sourceHash: sha256(body),
+        start,
+        end,
+        prefix: body.slice(Math.max(0, start - 12), start),
+        suffix: body.slice(end, end + 12),
+        attachmentIds: [],
+      }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("selected text"),
+    });
+  });
+
+  it("rejects a zero-width-only rendered selection", async () => {
+    const body = "\u200b";
+    const source = await seedSource({ body });
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "assistant_body",
+        selectedText: body,
+        comment: null,
+        sourceConversationId: source.conversationId,
+        sourceMessageId: source.sourceMessageId,
+        sourceHash: sha256(body),
+        start: 0,
+        end: body.length,
+        prefix: "",
+        suffix: "",
+        attachmentIds: [],
+      }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("visible text"),
     });
   });
 
@@ -561,7 +630,7 @@ describe("chatInlineAnnotationService", () => {
       id: randomUUID(),
       surface: "process_transcript",
       transcriptKind: "thinking",
-      selectedText: "the docs before editing",
+      selectedText: "the docs before editing.",
       comment: null,
       sourceConversationId: source.conversationId,
       sourceMessageId: source.sourceMessageId,
@@ -569,9 +638,9 @@ describe("chatInlineAnnotationService", () => {
       generationId,
       generationSeqStart: 1,
       generationSeqEnd: 2,
-      start: 0,
-      end: processSource.length,
-      prefix: "",
+      start: processSource.indexOf("the docs"),
+      end: processSource.indexOf("editing.") + "editing.".length,
+      prefix: processSource.slice(0, processSource.indexOf("the docs")),
       suffix: "",
       attachmentIds: [],
     };
@@ -660,6 +729,125 @@ describe("chatInlineAnnotationService", () => {
     });
   });
 
+  it("rejects the assistant final-answer suffix hidden by the Chat Process projection", async () => {
+    const finalAnswer = "Final answer";
+    const processSource = `Exploration\n${finalAnswer}`;
+    const source = await seedSource({ body: finalAnswer });
+    const evidence = await seedProcessEvidence({
+      source,
+      text: processSource,
+      entryOverrides: { kind: "assistant" },
+    });
+    const start = processSource.indexOf(finalAnswer);
+    const annotation: ChatInlineAnnotationInput = {
+      id: randomUUID(),
+      surface: "process_transcript",
+      transcriptKind: "assistant",
+      selectedText: finalAnswer,
+      sourceConversationId: source.conversationId,
+      sourceMessageId: source.sourceMessageId,
+      sourceHash: sha256(processSource),
+      generationId: evidence.generationId,
+      generationSeqStart: 1,
+      generationSeqEnd: 1,
+      start,
+      end: processSource.length,
+      prefix: processSource.slice(0, start),
+      suffix: "",
+      attachmentIds: [],
+    };
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      annotations: [annotation],
+      uploadedFileCount: 0,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("visible message projection"),
+    });
+  });
+
+  it("accepts the visible assistant Process prefix after final-answer suffix redaction", async () => {
+    const visibleProcess = "Exploration";
+    const finalAnswer = "Final answer";
+    const processSource = `${visibleProcess}\n${finalAnswer}`;
+    const source = await seedSource({ body: finalAnswer });
+    const evidence = await seedProcessEvidence({
+      source,
+      text: processSource,
+      entryOverrides: { kind: "assistant" },
+    });
+    const annotation: ChatInlineAnnotationInput = {
+      id: randomUUID(),
+      surface: "process_transcript",
+      transcriptKind: "assistant",
+      selectedText: visibleProcess,
+      sourceConversationId: source.conversationId,
+      sourceMessageId: source.sourceMessageId,
+      sourceHash: sha256(visibleProcess),
+      generationId: evidence.generationId,
+      generationSeqStart: 1,
+      generationSeqEnd: 1,
+      start: 0,
+      end: visibleProcess.length,
+      prefix: "",
+      suffix: "",
+      attachmentIds: [],
+    };
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      annotations: [annotation],
+      uploadedFileCount: 0,
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({
+        selectedText: visibleProcess,
+        sourceHash: sha256(visibleProcess),
+      })],
+    });
+  });
+
+  it("rejects assistant protocol text hidden by the Chat Process projection", async () => {
+    const processSource = "Visible investigation\nRUDDER_RESULT_BEGIN\nPRIVATE_FINAL_PROTOCOL";
+    const source = await seedSource({ body: "Final answer" });
+    const evidence = await seedProcessEvidence({
+      source,
+      text: processSource,
+      entryOverrides: { kind: "assistant" },
+    });
+    const selectedText = "PRIVATE_FINAL_PROTOCOL";
+    const start = processSource.indexOf(selectedText);
+    const annotation: ChatInlineAnnotationInput = {
+      id: randomUUID(),
+      surface: "process_transcript",
+      transcriptKind: "assistant",
+      selectedText,
+      sourceConversationId: source.conversationId,
+      sourceMessageId: source.sourceMessageId,
+      sourceHash: sha256(processSource),
+      generationId: evidence.generationId,
+      generationSeqStart: 1,
+      generationSeqEnd: 1,
+      start,
+      end: start + selectedText.length,
+      prefix: processSource.slice(Math.max(0, start - 160), start),
+      suffix: "",
+      attachmentIds: [],
+    };
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      annotations: [annotation],
+      uploadedFileCount: 0,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("visible message projection"),
+    });
+  });
+
   it("rejects fabricated selected text for a plain Process source range", async () => {
     const source = await seedSource({ body: "Final answer" });
     const evidence = await seedProcessEvidence({ source });
@@ -709,7 +897,7 @@ describe("chatInlineAnnotationService", () => {
         id: randomUUID(),
         surface: "process_transcript",
         transcriptKind: "thinking",
-        selectedText: "中文文档 与 npm test & verify. Second block.",
+        selectedText: "中文文档 与 npm test & verify.\nSecond block.",
         comment: null,
         sourceConversationId: source.conversationId,
         sourceMessageId: source.sourceMessageId,
@@ -717,15 +905,15 @@ describe("chatInlineAnnotationService", () => {
         generationId: evidence.generationId,
         generationSeqStart: 1,
         generationSeqEnd: 1,
-        start: processSource.indexOf("[中文文档]"),
+        start: processSource.indexOf("中文文档"),
         end: processSource.length,
-        prefix: processSource.slice(0, processSource.indexOf("[中文文档]")),
+        prefix: processSource.slice(0, processSource.indexOf("中文文档")),
         suffix: "",
         attachmentIds: [],
       }],
     })).resolves.toMatchObject({
       annotations: [expect.objectContaining({
-        selectedText: "中文文档 与 npm test & verify. Second block.",
+        selectedText: "中文文档 与 npm test & verify.\nSecond block.",
       })],
     });
   });

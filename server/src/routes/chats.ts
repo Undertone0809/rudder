@@ -2640,6 +2640,14 @@ export function chatRoutes(
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     if (actor.actorType === "agent") {
+      if (!req.body.body.trim()) {
+        res.status(422).json({ error: "Agent-authored chat messages require a nonempty body" });
+        return;
+      }
+      if (res.locals.inlineAnnotationsProvided === true) {
+        res.status(422).json({ error: "Agent-authored chat messages cannot include response annotations" });
+        return;
+      }
       if (req.body.editUserMessageId) {
         res.status(422).json({ error: "Agent-authored chat messages cannot edit operator messages" });
         return;
