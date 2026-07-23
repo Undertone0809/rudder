@@ -2154,7 +2154,44 @@ describe("chat routes", () => {
     expect(response.body).toEqual({ error: "Queued feedback delivery is not safely retryable" });
   });
 
-  it("delivers queued feedback through the active runtime control handle", async () => {
+  it("rejects an active-generation retry when queue-side acknowledgement evidence exists", async () => {
+    const conversation = createConversation();
+    const generationId = "10000000-0000-4000-8000-000000000001";
+    const freshActionId = "20000000-0000-4000-8000-000000000002";
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getQueueSnapshot.mockResolvedValue({
+      activeGenerationId: generationId,
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
+      items: [],
+    });
+    mockChatSteerMessages.beginControlAction.mockRejectedValue(
+      conflict("Queued feedback delivery is not safely retryable"),
+    );
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/queue/queued-1/steer")
+      .send({
+        expectedActiveGenerationId: generationId,
+        controlActionId: freshActionId,
+        expectedAttemptEpoch: 1,
+        expectedControlVersion: 0,
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({ error: "Queued feedback delivery is not safely retryable" });
+    expect(mockChatSteerMessages.beginControlAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        itemId: "queued-1",
+        controlActionId: freshActionId,
+        expectedGenerationId: generationId,
+      }),
+    );
+    expect(mockChatSteerMessages.scheduleContinuation).not.toHaveBeenCalled();
+  });
+
+  it("retries failed actionable feedback through the active runtime control handle", async () => {
     const conversation = createConversation();
     const generationId = "10000000-0000-4000-8000-000000000001";
     const controlActionId = "20000000-0000-4000-8000-000000000002";
@@ -2165,8 +2202,8 @@ describe("chat routes", () => {
       position: 1,
       status: "steer_pending",
       version: 2,
-      clientMutationId: "client-1",
-      payload: { body: "Use the public API" },
+      clientMutationId: "retry-failed-actionable-active",
+      payload: { body: "Retry this confirmed pre-delivery failure" },
       deliveryIntent: "steer",
       deliveryDisposition: "pending",
       controlActionId,
@@ -2273,9 +2310,17 @@ describe("chat routes", () => {
         },
       });
       expect(steer).toHaveBeenCalledWith({
-        text: "Use the public API",
+        text: "Retry this confirmed pre-delivery failure",
         clientMessageId: controlActionId,
       });
+      expect(mockChatSteerMessages.beginControlAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          itemId: "queued-1",
+          controlActionId,
+          expectedGenerationId: generationId,
+        }),
+      );
+      expect(mockChatSteerMessages.scheduleContinuation).not.toHaveBeenCalled();
       expect(mockChatService.markQueuedMessageSteerFallback).not.toHaveBeenCalled();
     } finally {
       release?.();
