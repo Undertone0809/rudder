@@ -1,3 +1,4 @@
+import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
 import type { MessengerThreadDensity } from "@/lib/messenger-preferences";
 import { messengerSavedViewRoute } from "@/lib/messenger-saved-views";
 import { Link } from "@/lib/router";
@@ -8,7 +9,6 @@ import type {
   MessengerSavedView,
 } from "@rudderhq/shared";
 import {
-  AppWindow,
   BookOpenText,
   File,
   Folder,
@@ -16,7 +16,7 @@ import {
   Globe2,
   MoreHorizontal,
   Trash2,
-  Workflow,
+  Workflow
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -134,7 +134,13 @@ function SavedViewIcon({ savedView }: { savedView: MessengerSavedView }) {
     );
   }
   if (kind === "local_app") {
-    return <AppWindow className="h-3.5 w-3.5" data-testid="messenger-saved-view-local-app-icon" aria-hidden />;
+    return (
+      <LocalAppIdentityIcon
+        className="h-3.5 w-3.5 rounded-[3px]"
+        identity={savedView.targetPayload}
+        testId="messenger-saved-view-local-app-icon"
+      />
+    );
   }
   if (kind === "library_directory") {
     return (

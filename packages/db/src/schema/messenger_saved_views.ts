@@ -20,6 +20,7 @@ export const messengerSavedViews = pgTable(
     favicon: text("favicon"),
     sortOrder: integer("sort_order").notNull().default(0),
     hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+    primaryRailPinnedAt: timestamp("primary_rail_pinned_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -36,6 +37,9 @@ export const messengerSavedViews = pgTable(
     orgUserVisibleOrderIdx: index("messenger_saved_views_org_user_visible_order_idx")
       .on(table.orgId, table.userId, table.sortOrder, table.createdAt)
       .where(sql`${table.hiddenAt} is null`),
+    orgUserPrimaryRailPinsIdx: index("messenger_saved_views_org_user_primary_rail_pins_idx")
+      .on(table.orgId, table.userId, table.primaryRailPinnedAt)
+      .where(sql`${table.primaryRailPinnedAt} is not null`),
   }),
 );
 

@@ -55,6 +55,7 @@ async function installLocalAppsStub(page: Page) {
       readiness: { path: "/api/health", timeoutMs: 30_000 },
       openPath: "/outreach",
       trustFingerprint: "fingerprint-a",
+      iconDataUrl: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iOCIgZmlsbD0iIzBmOGE2MyIvPjxwYXRoIGQ9Ik03IDIzVjloNGw1IDcgNS03aDR2MTRoLTR2LThsLTUgNi01LTZ2OHoiIGZpbGw9IndoaXRlIi8+PC9zdmc+",
       approvedFingerprint: "fingerprint-a",
       createdAt: "2026-07-23T00:00:00.000Z",
       updatedAt: "2026-07-23T00:00:00.000Z",
@@ -400,11 +401,37 @@ test.describe("Messenger Local Apps", () => {
       `[role="tab"][data-view-instance-id="${movedInstanceId}"][aria-selected="true"]`,
     );
     await expect(movedTab).toBeVisible();
+    await expect(main).toHaveClass(/messenger-main-workbench-surface/);
+    const mainSurface = await main.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        backgroundImage: style.backgroundImage,
+        borderRadius: style.borderRadius,
+      };
+    });
+    expect(mainSurface.backgroundImage).not.toBe("none");
+    expect(mainSurface.borderRadius).not.toBe("0px");
+    await expect(main.getByRole("button", {
+      name: "Reorder MKT dashboard local tab",
+    })).toHaveCount(0);
     await expect(sourceGuest).toHaveAttribute(
       "data-e2e-live-marker",
       "mkt-guest-before-move",
     );
     expect((await calls(page)).start).toBe(startCallsBeforeMove);
+    expect((await calls(page)).stop ?? 0).toBe(0);
+
+    await movedTab.hover();
+    await main.getByRole("button", {
+      name: "More options for MKT dashboard local",
+    }).click();
+    await page.getByRole("menuitem", { name: "Project settings" }).click();
+    const runningSettings = page.getByTestId("local-app-definition-review");
+    await expect(runningSettings.getByLabel("Name", { exact: true })).toBeDisabled();
+    await expect(runningSettings).toContainText(
+      "Stop this Local App to edit project settings.",
+    );
+    await runningSettings.getByRole("button", { name: "Cancel" }).click();
     expect((await calls(page)).stop ?? 0).toBe(0);
 
     const directory = await groups(page, organization.id);
@@ -428,6 +455,30 @@ test.describe("Messenger Local Apps", () => {
     expect(serializedTarget).not.toContain("executable");
     expect(serializedTarget).not.toContain("environment");
 
+    const liveLocalApp = page.getByTestId("local-app-view")
+      .filter({ hasText: "MKT dashboard local" });
+    await liveLocalApp.getByTestId("local-app-more").click();
+    await page.getByRole("menuitem", { name: "Pin to Primary Rail" }).click();
+    const primaryRailPin = page.getByTestId("primary-rail")
+      .getByRole("link", { name: "MKT dashboard local" });
+    await expect(primaryRailPin).toBeVisible();
+    await expect(primaryRailPin.getByTestId("primary-rail-local-app-icon")).toBeVisible();
+    await liveLocalApp.getByTestId("local-app-more").click();
+    await expect(page.getByRole("menuitem", { name: "Edit details" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Unpin from Primary Rail" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Stop" })).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("local-app-more-menu-and-primary-rail-pin.png"),
+      fullPage: true,
+    });
+    if (process.env.RUDDER_E2E_VISUAL_PROOF_PATH) {
+      await page.screenshot({
+        path: process.env.RUDDER_E2E_VISUAL_PROOF_PATH,
+        fullPage: true,
+      });
+    }
+    await page.keyboard.press("Escape");
+
     await main.getByRole("button", { name: "New Browser tab" }).click();
     await expect(main.getByRole("tab")).toHaveCount(2);
     expect((await calls(page)).stop ?? 0).toBe(0);
@@ -444,7 +495,7 @@ test.describe("Messenger Local Apps", () => {
     }).click();
     await expect(savedRow).toBeVisible();
     expect((await calls(page)).stop ?? 0).toBe(0);
-    await savedRow.click();
+    await primaryRailPin.click();
     await expect(main.locator(
       `[role="tab"][data-view-instance-id="${movedInstanceId}"][aria-selected="true"]`,
     )).toBeVisible();
@@ -462,14 +513,33 @@ test.describe("Messenger Local Apps", () => {
       `[role="tab"][data-view-instance-id="${movedInstanceId}"][aria-selected="true"]`,
     )).toBeVisible();
     await expect(savedRow).toHaveCount(0);
+    await expect(primaryRailPin).toHaveCount(0);
     expect((await calls(page)).stop ?? 0).toBe(0);
 
     const restoredView = page.getByTestId("local-app-view")
       .filter({ hasText: "MKT dashboard local" });
-    await restoredView.getByTestId("local-app-stop").click();
+    await restoredView.getByTestId("local-app-more").click();
+    await page.getByRole("menuitem", { name: "Stop" }).click();
     await expect(restoredView).toContainText("Stopped");
     expect((await calls(page)).stop).toBe(1);
     expect((await calls(page)).start).toBe(startCallsBeforeMove);
+
+    const sessionTab = main.locator(
+      `[role="tab"][data-view-instance-id="${movedInstanceId}"]`,
+    );
+    await sessionTab.hover();
+    await main.getByRole("button", {
+      name: "More options for MKT dashboard local",
+    }).click();
+    await page.getByRole("menuitem", { name: "Project settings" }).click();
+    const editableSettings = page.getByTestId("local-app-definition-review");
+    await editableSettings.getByLabel("Name", { exact: true })
+      .fill("MKT command center");
+    await editableSettings.getByLabel("Page to open after readiness")
+      .fill("/overview");
+    await editableSettings.getByRole("button", { name: "Review & save" }).click();
+    await expect(main.getByRole("tab", { name: /MKT command center/ })).toBeVisible();
+    expect((await calls(page)).update).toBe(1);
 
     await page.screenshot({
       path: testInfo.outputPath("messenger-main-mkt-local-app.png"),

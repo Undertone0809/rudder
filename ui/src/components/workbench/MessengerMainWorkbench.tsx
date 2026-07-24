@@ -1,4 +1,5 @@
 import { messengerApi } from "@/api/messenger";
+import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
 import { LocalAppDefinitionReviewDialog } from "@/components/side-panel/LocalAppsPanel";
 import { Button } from "@/components/ui/button";
 import {
@@ -206,7 +207,13 @@ function SortableWorkbenchTab({
           if (!event.defaultPrevented) onKeyDown(event);
         }}
       >
-        {favicon ? (
+        {tab.target.kind === "local_app" ? (
+          <LocalAppIdentityIcon
+            className="h-3.5 w-3.5 shrink-0 rounded-sm"
+            identity={tab.target}
+            testId="messenger-workbench-local-app-icon"
+          />
+        ) : favicon ? (
           <img
             src={favicon}
             alt=""
@@ -412,8 +419,17 @@ function MainLiveSurfacePanel({
   ]);
   const callbacks = useMemo(() => ({
     canOpenNewTab: workbench.canCreateBrowser,
+    savedViewId: tab.savedViewId,
     onCloseTarget: closeTarget,
     onCycleTab: cycleTarget,
+    onLocalAppTitleChange: (title: string) => {
+      if (tab.target.kind !== "local_app") return;
+      workbench.updateTarget(
+        tab.runtimeId,
+        tab.viewInstanceId,
+        { ...tab.target, label: title },
+      );
+    },
     onOpenTarget: (nextTarget: SidePanelTarget) => {
       if (nextTarget.kind === "chat") {
         navigate(`/messenger/chat/${nextTarget.conversationId}`);
@@ -459,10 +475,15 @@ function MainLiveSurfacePanel({
     organizationId,
     replaceTarget,
     tab.originContextKey,
+    tab.runtimeId,
+    tab.savedViewId,
+    tab.target,
+    tab.viewInstanceId,
     toast,
     workbench.canCreateBrowser,
     workbench.createSessionBrowser,
     workbench.createSessionTab,
+    workbench.updateTarget,
   ]);
 
   return (

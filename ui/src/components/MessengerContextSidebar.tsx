@@ -1929,6 +1929,9 @@ export function MessengerContextSidebar() {
       savedViewId,
     );
     await refreshSavedViewPlacements(organizationId);
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.messenger.primaryRailPins(organizationId),
+    });
     if (
       focusItemKey
       && currentOrganizationIdRef.current === organizationId

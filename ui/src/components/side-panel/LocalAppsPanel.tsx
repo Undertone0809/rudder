@@ -1,3 +1,4 @@
+import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -223,7 +224,7 @@ function LocalAppCatalogRow({
     >
       <div className="flex items-start gap-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[color:var(--surface-active)] text-muted-foreground">
-          <AppWindow className="h-4 w-4" aria-hidden />
+          <LocalAppIdentityIcon className="h-4 w-4" iconDataUrl={definition.iconDataUrl} />
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold text-foreground">{definition.title}</h3>
