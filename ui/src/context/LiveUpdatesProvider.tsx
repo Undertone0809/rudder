@@ -648,6 +648,7 @@ function invalidateActivityQueries(
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPreview(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.issues(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.chats.workManifests(orgId) });
     if (entityId) {
       const details = readRecord(payload.details);
       const issueRefs = resolveIssueQueryRefs(queryClient, orgId, entityId, details);

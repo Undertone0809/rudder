@@ -1398,9 +1398,11 @@ contracts:
       - ui/src/lib/image-actions.test.ts
       - tests/e2e/chat-work-manifest.spec.ts
       - tests/e2e/chat-work-manifest-image-preview.spec.ts
+      - tests/e2e/chat-proposal-review.spec.ts
     related_plans:
       - doc/plans/2026-07-12-chat-work-manifest.md
       - doc/plans/2026-07-23-chat-response-annotations.md
+      - doc/plans/2026-07-23-chat-created-issue-work-manifest.md
   CHAT.SIDE.PANEL.001:
     owner: product
     domain: collaboration

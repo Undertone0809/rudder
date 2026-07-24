@@ -57,13 +57,22 @@ function attachmentItem(id: string, title: string, contentType: string | null = 
   };
 }
 
-function referenceItem(id: string, targetType: ChatWorkManifestItem["targetType"], title: string): ChatWorkManifestItem {
+function referenceItem(
+  id: string,
+  targetType: ChatWorkManifestItem["targetType"],
+  title: string,
+  issueStatus?: string,
+): ChatWorkManifestItem {
   return {
     ...item(id, "reference", title),
     targetType,
     url: null,
     metadata: targetType === "issue" || targetType === "issue_comment"
-      ? { issueId: id, commentId: targetType === "issue_comment" ? `comment-${id}` : null }
+      ? {
+        issueId: id,
+        commentId: targetType === "issue_comment" ? `comment-${id}` : null,
+        ...(issueStatus ? { issueStatus } : {}),
+      }
       : targetType === "automation"
         ? { automationId: id }
         : targetType === "chat_conversation"
@@ -183,7 +192,7 @@ describe("ChatWorkManifest", () => {
       outputs: [],
       sources: [],
       references: [
-        referenceItem("issue-1", "issue", "ZST-1"),
+        referenceItem("issue-1", "issue", "ZST-1", "blocked"),
         referenceItem("automation-1", "automation", "Daily report"),
         referenceItem("chat-1", "chat_conversation", "Planning chat"),
       ],
@@ -203,13 +212,24 @@ describe("ChatWorkManifest", () => {
     const expandButton = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
       .find((button) => button.textContent?.includes("View all 3"));
     act(() => expandButton?.click());
-    const iconFor = (title: string) => Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
-      .find((button) => button.title === title)
+    const rowFor = (title: string) => Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.title === title);
+    const iconFor = (title: string) => rowFor(title)
       ?.querySelector("[data-file-icon]")
       ?.getAttribute("data-file-icon");
     expect(iconFor("ZST-1")).toBe("issue");
     expect(iconFor("Daily report")).toBe("automation");
     expect(iconFor("Planning chat")).toBe("chat");
+    const issueIcon = rowFor("ZST-1")?.querySelector("[data-file-icon='issue']");
+    expect(issueIcon?.getAttribute("data-issue-status")).toBe("blocked");
+    expect(issueIcon?.getAttribute("title")).toBe("Issue status: Blocked");
+    expect(issueIcon?.getAttribute("aria-hidden")).toBe("true");
+    expect(issueIcon?.querySelector("[data-slot='issue-status-icon']")?.getAttribute("data-status"))
+      .toBe("blocked");
+    const issueRow = rowFor("ZST-1");
+    const statusDescriptionId = issueRow?.getAttribute("aria-describedby");
+    expect(statusDescriptionId).toBeTruthy();
+    expect(container.querySelector(`[id="${statusDescriptionId}"]`)?.textContent).toBe("Issue status: Blocked");
   });
 
   it("keeps the full reference title accessible while constraining long rows to one truncated line", () => {

@@ -100,6 +100,7 @@ export const queryKeys = {
       ["chats", orgId, status, "search", q] as const,
     detail: (orgId: string, chatId: string) => ["chats", orgId, "detail", chatId] as const,
     messages: (orgId: string, chatId: string) => ["chats", orgId, "messages", chatId] as const,
+    workManifests: (orgId: string) => ["chats", orgId, "work-manifest"] as const,
     workManifest: (orgId: string, chatId: string) => ["chats", orgId, "work-manifest", chatId] as const,
     queue: (orgId: string, chatId: string) => ["chats", orgId, "queue", chatId] as const,
   },

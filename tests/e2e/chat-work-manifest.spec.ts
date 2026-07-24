@@ -246,8 +246,11 @@ test.describe("Chat Work Manifest", () => {
     await expect(page.locator("html")).toHaveClass(/dark/);
     await expect(githubLogo).toHaveAttribute("data-dark-mode", "invert");
     await expect(githubLogo).toHaveCSS("filter", "invert(1)");
-    await expect(references.getByRole("button", { name: new RegExp(issue.identifier) }).locator("[data-file-icon='issue']"))
-      .toBeVisible();
+    const issueStatusIcon = references
+      .getByRole("button", { name: new RegExp(issue.identifier) })
+      .locator("[data-file-icon='issue'][data-issue-status='todo'] [data-slot='issue-status-icon']");
+    await expect(issueStatusIcon).toBeVisible();
+    await expect(issueStatusIcon).toHaveAttribute("data-status", "todo");
     await expect(references.getByRole("button", { name: new RegExp(automation.title) }).locator("[data-file-icon='automation']"))
       .toBeVisible();
     const referencedChatButton = references.getByRole("button", { name: referencedChatTitle, exact: true });

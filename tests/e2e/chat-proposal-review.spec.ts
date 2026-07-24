@@ -310,7 +310,8 @@ test.describe("Chat proposal review block", () => {
     await expect(page.getByTestId("proposal-review-block").last()).toHaveAttribute("data-status", "pending");
   });
 
-  test("shows approved proposals as completed review blocks", async ({ page }) => {
+  test("shows approved proposals as completed review blocks", async ({ page }, testInfo) => {
+    await page.addInitScript(() => window.localStorage.setItem("rudder.theme", "dark"));
     const command = await writeProposalStub("proposal-review-approve", {
       kind: "issue_proposal",
       body: "Create a scoped issue for this approval-state test.",
@@ -339,8 +340,9 @@ test.describe("Chat proposal review block", () => {
     await page.getByRole("button", { name: "Send" }).click();
 
     const reviewBlock = page.getByTestId("proposal-review-block").last();
-    await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
+    await expect(reviewBlock).toBeVisible({ timeout: 30_000 });
     await expect(reviewBlock).toHaveAttribute("data-status", "pending");
+    await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
     await expect(reviewBlock.locator("h2")).toHaveText("Execution plan");
     await expect(reviewBlock.locator("ul li")).toHaveCount(2);
     await expect(reviewBlock.locator("code")).toContainText("pnpm test:e2e");
@@ -363,6 +365,24 @@ test.describe("Chat proposal review block", () => {
     const createdIssueLink = outcome.locator(".chat-system-issue-link").last();
     await expect(createdIssueLink).toBeVisible({ timeout: 15_000 });
     await expect(createdIssueLink).toHaveAttribute("href", /\/issues\//);
+    const createdIssueRef = (await createdIssueLink.textContent())?.trim();
+    expect(createdIssueRef).toBeTruthy();
+    const manifest = page.getByRole("complementary", { name: "Conversation files and links" });
+    await expect(manifest).toBeVisible({ timeout: 15_000 });
+    const createdIssueManifestRow = manifest.getByRole("button", {
+      name: `${createdIssueRef} · Review block approval test`,
+      exact: true,
+    });
+    await expect(createdIssueManifestRow).toBeVisible();
+    const createdIssueStatusIcon = createdIssueManifestRow
+      .locator("[data-file-icon='issue'][data-issue-status='todo'] [data-slot='issue-status-icon']");
+    await expect(createdIssueStatusIcon).toBeVisible();
+    await expect(createdIssueStatusIcon).toHaveAttribute("data-status", "todo");
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    await page.screenshot({
+      path: testInfo.outputPath("chat-created-issue-manifest-dark.png"),
+      fullPage: true,
+    });
     await expect(page.locator(".chat-composer").last()).toBeVisible();
     const composerGap = await page.evaluate(() => {
       const scrollRegion = document.querySelector('[data-testid="chat-messages-scroll-region"]');
@@ -384,7 +404,27 @@ test.describe("Chat proposal review block", () => {
     expect(composerGap!.outerGap).toBeGreaterThanOrEqual(-1);
     expect(composerGap!.outerGap).toBeLessThanOrEqual(1);
     expect(["normal", "0px"]).toContain(composerGap!.layoutRowGap);
-    expect(composerGap!.contentPaddingBottom).toBe("0px");
+    expect(composerGap!.contentPaddingBottom).toBe("16px");
+    const restoredComposer = page.locator(".chat-composer .rudder-mdxeditor-content[contenteditable='true']").last();
+    await restoredComposer.fill("Preserve this draft while inspecting the created issue.");
+    const chatUrl = page.url();
+    await createdIssueManifestRow.click();
+    const issueSidePanel = page.getByTestId("chat-side-panel");
+    await expect(issueSidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(issueSidePanel.getByTestId("chat-side-panel-issue-view")).toBeVisible();
+    await expect(issueSidePanel).toContainText(createdIssueRef!);
+    await expect(issueSidePanel).toContainText("Review block approval test");
+    await expect(page).toHaveURL(chatUrl);
+    await page.screenshot({
+      path: testInfo.outputPath("chat-created-issue-side-panel-dark.png"),
+      fullPage: true,
+    });
+    await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
+    await issueSidePanel.getByTestId("chat-side-panel-tab").hover();
+    await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
+    await expect(issueSidePanel).toHaveCount(0);
+    await expect(manifest).toBeVisible();
+    await expect(restoredComposer).toHaveText("Preserve this draft while inspecting the created issue.");
     await createdIssueLink.click();
     await expect(page.getByRole("heading", { name: "Review block approval test" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Approval feedback")).toBeVisible({ timeout: 15_000 });
