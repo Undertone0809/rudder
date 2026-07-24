@@ -221,6 +221,12 @@ test.describe("Messenger Saved Views", () => {
 
     const mainWorkbench = page.getByTestId("messenger-main-workbench");
     await expect(mainWorkbench).toBeVisible();
+    await expect(mainWorkbench).not.toHaveClass(/workspace-main-card/);
+    await expect(mainWorkbench).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(mainWorkbench.getByRole("tablist")).toHaveCSS(
+      "background-color",
+      "rgba(0, 0, 0, 0)",
+    );
     await expect(mainWorkbench.locator(
       `[role="tab"][data-view-instance-id="${movedInstanceId}"][aria-selected="true"]`,
     )).toBeVisible();

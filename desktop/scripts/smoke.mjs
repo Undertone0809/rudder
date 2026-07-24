@@ -3412,17 +3412,21 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           nestedCardCount: root.querySelectorAll(".workspace-main-card").length,
           panel: rect(panel),
           root: rect(root),
+          rootBackgroundAlpha: backgroundAlpha(root),
           rootBorderRadius: getComputedStyle(root).borderRadius,
           rootPadding: getComputedStyle(root).padding,
           tablist: rect(tablist),
+          tablistBackgroundAlpha: backgroundAlpha(tablist),
         };
       });
       const withinTwoPixels = (left, right) => Math.abs(left - right) <= 2;
       assert.equal(fullBleed.nestedCardCount, 0, "Main Browser must not be nested in another workspace card");
       assert.ok(
-        Number.parseFloat(fullBleed.rootBorderRadius) > 0,
-        `Main Workbench must use the shared workspace-card radius (received ${fullBleed.rootBorderRadius})`,
+        fullBleed.rootBorderRadius === "0px" || fullBleed.rootBorderRadius === "",
+        `Main Workbench must leave its shell backdrop transparent (received radius ${fullBleed.rootBorderRadius})`,
       );
+      assert.equal(fullBleed.rootBackgroundAlpha, 0, "Main Workbench shell backdrop must be transparent");
+      assert.equal(fullBleed.tablistBackgroundAlpha, 0, "Main Workbench tab strip must be transparent");
       assert.equal(fullBleed.rootPadding, "0px", "Main Workbench must not inset the Browser surface");
       assert.ok(
         Number.parseFloat(fullBleed.hostBottomLeftRadius) > 0
