@@ -116,8 +116,10 @@ describe("release workflow latency contracts", () => {
 
     expect(docsProductionWorkflow).toContain("workflow_call:");
     expect(docsProductionWorkflow).toContain("release_docs_approved:");
+    expect(docsProductionWorkflow).toContain('if [ "$RELEASE_DOCS_APPROVED" = "true" ]; then');
+    expect(docsProductionWorkflow).not.toContain('if [ "$GITHUB_EVENT_NAME" = "workflow_call" ]; then');
     expect(docsProductionWorkflow).toContain("type: boolean");
-    expect(docsProductionWorkflow).toContain('test "$RELEASE_DOCS_APPROVED" = "true"');
+    expect(docsProductionWorkflow).toContain('test "$CONFIRM_DOMAIN" = "$DOCS_PRODUCTION_DOMAIN"');
     expect(docsProductionWorkflow).toContain("^docs/release/v[0-9]+");
   });
 });
