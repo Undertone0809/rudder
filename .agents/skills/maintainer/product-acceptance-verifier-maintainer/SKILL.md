@@ -1,12 +1,11 @@
 ---
 name: product-acceptance-verifier-maintainer
-description: "Use after implementation when Rudder needs independent black-box acceptance of a terminal UI, Desktop, CLI, runtime, integration, or release outcome. Returns exactly PASS, FAIL, or QUESTION; it does not review diffs or implement fixes."
+description: "Use after implementation when Rudder needs independent black-box acceptance of a concrete terminal UI, Desktop, CLI, runtime, integration, or release outcome. Returns exactly PASS, FAIL, or QUESTION. Do not use for code review, root-cause diagnosis, or ordinary unit/integration/focused test execution without a public terminal surface."
 ---
 
 # Product Acceptance Verifier Maintainer
 
-Act as the independent acceptance boundary between “the implementation checks
-passed” and “the requested product outcome was observed.”
+Separate passing implementation checks from an observed product outcome.
 
 ## Exclusive Outcome
 
@@ -36,6 +35,9 @@ or generic “looks good” confirmation.
 ## Procedure
 
 1. Rewrite the request as observable acceptance criteria.
+   Freeze them before execution. Rebaseline only from the user, an owning
+   product contract, or a recorded product decision—not from an author reacting
+   to failed evidence.
 2. Resolve the required target before mutating anything: environment,
    organization/account, runtime instance, data, build/version, and visible
    surface.
@@ -50,10 +52,14 @@ or generic “looks good” confirmation.
 
 ## Real-Environment Rule
 
-A disposable isolated Rudder instance with the real API, PostgreSQL, runtime,
-and terminal UI is valid evidence for a generic “real local” claim. Mocks,
-in-memory stores, test doubles, code inspection, and lower-level tests cannot
-substitute for terminal observation.
+A disposable Rudder instance with real API, PostgreSQL, runtime, and terminal
+UI can prove a generic “real local” claim. Mocks, test doubles, code inspection,
+and lower-level tests cannot substitute for terminal observation.
+
+Unit, integration, service, and focused E2E tests are supporting evidence only
+unless they drive the same public terminal surface and environment named by the
+acceptance criteria. If no qualifying terminal surface can be observed, return
+`QUESTION`; never turn a green lower-level suite into `PASS`.
 
 If the user names an existing shared instance, account, external integration,
 installed application, production target, or dataset, an isolated substitute
@@ -82,3 +88,6 @@ Adjacent risk checked:
 Supporting evidence:
 Missing or blocked:
 ```
+
+Use [`evals/evals.json`](evals/evals.json) for routing, proof, authority, and
+criterion-freeze regressions.

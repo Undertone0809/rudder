@@ -1,0 +1,47 @@
+{
+  "skill_name": "rudder-real-runtime-verifier-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "你不是说 OpenCode 和 Pi 都真实跑过吗？现在把 Codex、Claude、OpenCode、Pi 都在我本地 Rudder 上重新跑一遍，必须看 transcript，确认有没有 fallback 用 rudder cli。",
+      "expected_output": "Builds a runtime matrix, runs or inspects real local runs, checks structured transcripts for Rudder tools and shell/CLI fallback, separates provider blockers, and reports run IDs plus mutation ledger.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Pi 的 rudder_issue_context 传了 {} 后 missing argument，但是最后 issue done 了。这个算通过吗？",
+      "expected_output": "Does not blindly pass; classifies final product effect separately from schema/tool usability failure, cites Pi tool_execution events and nested tool error evidence, and recommends schema/error propagation fixes.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "OpenCode 默认模型没任何 JSON 输出，但 deepseek 模型跑通了 issue workflow。你怎么给验收结论？",
+      "expected_output": "Reports default model as failed or provider-blocked, alternate model as adapter-path pass, and explicitly avoids hiding the default failure behind the alternate-model success.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Messenger 里的 Browser 圆角和不透明背景刚修好，请在真实 Electron 里做黑盒验收。",
+      "expected_output": "Does not route to the real runtime verifier because the request is general Desktop/UI product acceptance with no agent runtime, typed Rudder tool, provider matrix, transcript, or CLI-fallback question. Routes to product-acceptance-verifier-maintainer.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "本地 pnpm dev 启动不起来，API health 也不稳定，帮我恢复。",
+      "expected_output": "Does not route to the real runtime verifier. Routes Desktop/dev-shell startup recovery to rudder-desktop-dev-recovery-maintainer and does not run an agent provider matrix.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "分析单个失败 run ade50c99，告诉我第一处错误和根因。",
+      "expected_output": "Does not route to the provider-matrix runtime verifier. Routes single-run reconstruction and root-cause analysis to debug-run-transcript-maintainer; returns to runtime verification only for a post-fix real rerun when needed.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "0.6.0 的 npm、GitHub Release、Desktop assets 和 docs 都发布完整了吗？",
+      "expected_output": "Does not route to the agent runtime verifier. Uses release-maintainer for release-state verification, optionally with product acceptance for a terminal install surface, without probing Codex/Claude/OpenCode/Pi tools.",
+      "files": []
+    }
+  ]
+}

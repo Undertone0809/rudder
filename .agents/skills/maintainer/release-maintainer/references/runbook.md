@@ -18,6 +18,23 @@ tools instead of stopping at guidance. Prefer `git`, `gh`, `npm`, and repository
 scripts for discoverable state. Ask the user only for secrets or decisions that
 cannot be safely inferred.
 
+## Release Authorization
+
+A target-specific instruction such as `release Rudder 0.6.0`, `发版 0.6.0`, or
+`publish v0.6.0 stable` authorizes the complete named release workflow:
+preparation, required landing, npm/GitHub/Desktop publication, matching
+production changelog deployment, deterministic cleanup and next-version
+handoff, and final verification. Report the locked source, checks, risks,
+migrations, and rollback point before irreversible publication, but continue
+without asking for duplicate release or docs approval.
+
+Generic `continue`, `finish`, `implement`, plan approval, or staging approval is
+not release authority unless the same active conversation already contains an
+unrevoked target-specific release request. Ask again only when the version,
+target, reviewed source, or material release scope changes. Credentials,
+repository protections, required environment reviewers, and fail-closed checks
+remain mandatory platform gates.
+
 ## First Principles
 
 - npm publishes the CLI and public runtime/workspace packages.
@@ -417,13 +434,12 @@ node scripts/release-package-map.mjs list
    `source_ref`.
 8. If dry-run passes, present the immutable source SHA, version, npm/GitHub/
    Desktop targets, public docs target, completed checks, known failures,
-   migration/data impact, and rollback point. Obtain two fresh approvals:
-   - stable publication for that exact source and version;
-   - production deployment of that exact changelog to `docs.rudderhq.dev`.
-9. Only after both approvals, rerun with the same locked SHA using
+   migration/data impact, and rollback point. When the active request already
+   names this release, continue without a second chat approval.
+9. Rerun with the same locked SHA using
    `dry_run: false`, `confirm_stable: PUBLISH STABLE`, and
-   `confirm_docs: PUBLISH DOCS`. The workflow input strings enforce the
-   approvals; they do not replace them.
+   `confirm_docs: PUBLISH DOCS`. These workflow strings confirm the already
+   authorized exact release; they do not authorize a different source or target.
 10. Wait for or request `npm-stable` approval.
 11. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
     workflow, and assets.
@@ -771,8 +787,8 @@ When the user asks "what do I do now?", answer in this order:
    failing checks, dirty release files, or missing Desktop artifacts.
 3. **Next Actions**: numbered, executable steps with exact commands or GitHub UI
    actions.
-4. **Human Gates**: approvals, npm login/trusted-publisher setup, GitHub
-   environment approval, announcement copy.
+4. **External Gates**: credentials, trusted-publisher setup, GitHub environment
+   approval, and unresolved target or scope decisions.
 5. **Verification**: exact checks that prove the release surface is complete.
 
 For hands-on release execution, keep short status updates while working, then

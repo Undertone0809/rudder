@@ -192,29 +192,33 @@ If a corner case is too expensive or impossible to cover in E2E, document why an
 
 ## 5.1 Release And Deployment Authorization
 
-Implementation authority is not release authority. Treat local implementation,
-branch push/PR, shared staging, stable publication, and production deployment as
-separate transitions.
+Implementation authority is not release authority. An explicit target-specific
+release instruction is release authority for that complete release workflow.
 
 - `start`, `continue`, `proceed`, `implement`, `finish`, or approval of a plan
   authorizes implementation and verification only. The default stopping point
   is Review Ready: validated changes committed and pushed on the current branch,
   a PR when appropriate, review evidence, and a release-risk summary.
+- A request such as `release Rudder 0.6.0`, `发版 0.6.0`, or `publish v0.6.0
+  stable` authorizes the named release end to end: release preparation, required
+  landing, stable npm/GitHub/Desktop publication, matching production changelog
+  deployment, deterministic post-release cleanup and next-version handoff, and
+  public-surface verification. Do not pause for a second chat approval after
+  presenting the locked source, checks, risks, and rollback point.
 - Automatic branch previews are review surfaces only. Do not promote them or
   assign shared aliases without explicit authorization.
-- Production docs, stable npm/GitHub/Desktop releases, and any other production
-  publish require a fresh, target-specific confirmation at the deployment gate.
-  A plan that mentions deployment, a request to start, or staging approval does
-  not satisfy that gate.
-- Never choose `dry_run: false`, enter `confirm_domain` or `confirm_stable`,
+- Never choose `dry_run: false`, enter `confirm_docs` or `confirm_stable`,
   supply a production tag, invoke a deployment hook, or run an equivalent
-  production command on the user's behalf unless the user explicitly approved
-  that exact release. Workflow inputs are safeguards, not substitutes for human
-  authorization.
-- Before asking for production approval, report the exact commit/tag and target,
+  production command unless the user explicitly requested that exact release.
+  Generic continuation language and plan approval do not satisfy this rule.
+- Before irreversible publication, report the exact commit/tag and target,
   completed checks, unresolved or unrelated failing checks, migration or data
-  impact, and rollback point. After approval, release only that reviewed source
-  and verify the public surface.
+  impact, and rollback point as a progress update, then continue under the
+  existing release authorization. Ask again only if the version, target,
+  reviewed source, or material release scope changes.
+- Repository protection rules, required GitHub environment reviewers,
+  credentials, and fail-closed workflow checks remain mandatory external gates.
+  They are safeguards, not reasons to invent a duplicate Codex approval prompt.
 
 ## 6. Database Change Workflow
 

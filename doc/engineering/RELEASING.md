@@ -60,21 +60,26 @@ the Vercel owner or explicitly scope docs-site publishing out of that release.
 
 ## Authorization Gates
 
-Release preparation and release execution are separate operations:
+Release preparation and release execution require different authority:
 
 1. **Review Ready** — identify the exact source SHA, complete verification,
    prepare release notes/screenshots, push the feature branch, and open the PR.
-2. **Landing/Staging Gate** — obtain explicit permission before merging to
-   `main` when that merge publishes a canary or updates docs staging.
-3. **Production Gate** — report the exact source ref, version/tag, production
-   targets, successful and failing checks, and rollback point; then stop and wait
-   for an operator to explicitly approve the production release.
+2. **Target-specific release request** — an instruction such as `release Rudder
+   0.6.0`, `发版 0.6.0`, or `publish v0.6.0 stable` authorizes the full named
+   workflow: required landing, stable npm/GitHub/Desktop publication, matching
+   production changelog deployment, deterministic cleanup and next-version
+   handoff, and final verification.
+3. **Production status gate** — report the exact source ref, version/tag,
+   production targets, successful and failing checks, migration/data impact,
+   and rollback point before irreversible publication. Continue under the
+   target-specific release request without asking for duplicate chat approval.
 
 Instructions such as `start`, `continue`, `proceed`, `implement`, or approval of
 a plan do not satisfy the production gate. A staging approval is not production
 approval. Agents and automation must not set `dry_run: false`, enter workflow
 confirmation strings, or synthesize a release tag as evidence of approval. The
-operator's explicit authorization must exist before those values are supplied.
+operator's target-specific release instruction must exist before those values
+are supplied.
 That stable-release authorization also covers creating the deterministic
 post-release PR that advances `main` to the next patch base; it does not
 authorize bypassing that PR's review or CI.
@@ -84,10 +89,12 @@ The workflow also fails closed unless `npm-stable` has required reviewers,
 version PR and dispatch its CI. These repository settings are part of the
 release gate, not optional documentation.
 
-Even when an initial request or plan includes production deployment, always
-pause at the production gate after presenting the reviewed source, target,
-checks, known failures, and rollback point. Only the operator's latest explicit
-approval for that described release authorizes proceeding.
+When the initial request explicitly names the release action and target
+version, do not pause for a second Codex approval after presenting the reviewed
+source, target, checks, known failures, and rollback point. Ask again only when
+the version, target, reviewed source, or material release scope changes.
+Repository protections, required GitHub environment reviewers, credentials,
+and fail-closed workflow checks remain mandatory platform gates.
 
 ## Docs Site Releases
 
@@ -121,7 +128,7 @@ Canaries cover verification, npm, a traceability tag, and Desktop portable asset
 - stable public changelog entries are always present in both `docs/releases.mdx`
   and `docs/zh/releases.mdx`
 - stable docs production is promoted from the matching immutable `vX.Y.Z` tag
-  only after explicit docs-domain authorization
+  under the same target-specific stable release authorization
 - canary GitHub Releases are only for traceability and Desktop portable assets
 - canaries never require changelog generation
 
@@ -175,12 +182,12 @@ Inputs:
   - preview only when true
 - `confirm_stable`
   - leave empty for dry runs
-  - after explicit production authorization, enter `PUBLISH STABLE` for the
-    real stable release
+  - after a target-specific stable release request, enter `PUBLISH STABLE` for
+    that exact release
 - `confirm_docs`
   - leave empty for dry runs
-  - after separately approving the `docs.rudderhq.dev` deployment for this
-    exact stable source, enter `PUBLISH DOCS`
+  - use `PUBLISH DOCS` for the matching changelog deployment covered by that
+    same stable release request
 
 Before running stable:
 
@@ -190,13 +197,12 @@ Before running stable:
    `docs/zh/releases.mdx` on that source ref
 4. confirm that exact source commit has a successful `CI` run
 5. run the workflow with `dry_run: true`
-6. present the exact source ref, version, checks, targets, and rollback point;
-   obtain explicit production approval
-7. obtain a separate explicit approval to deploy that exact changelog to
-   `docs.rudderhq.dev`
-8. run the workflow with `dry_run: false`, `confirm_stable: PUBLISH STABLE`,
+6. present the exact source ref, version, checks, targets, migration/data
+   impact, and rollback point as a progress update; if the active request
+   explicitly names this release, continue without another chat approval
+7. run the workflow with `dry_run: false`, `confirm_stable: PUBLISH STABLE`,
    and `confirm_docs: PUBLISH DOCS`
-9. after stable and the docs deployment are both published, confirm the
+8. after stable and the docs deployment are both published, confirm the
    workflow opened the protected next-patch-base PR and its explicitly
    dispatched CI succeeded
 
@@ -378,7 +384,8 @@ use **Re-run failed jobs** for the original Release workflow so it reuses the
 existing `vX.Y.Z` tag. The next-release-base job remains blocked until the
 matching public changelog deploy passes. For historical releases such as
 `v0.5.1`, which predate this automation, run `Docs production` manually from
-the immutable stable tag after explicit docs-domain approval.
+the immutable stable tag under an explicit target-specific release or docs
+deployment request.
 
 ## Smoke Testing
 
