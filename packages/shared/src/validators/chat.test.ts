@@ -28,6 +28,16 @@ describe("conversation model override", () => {
     expect(chatDraftSchema.safeParse({ modelOverride: "   " }).success).toBe(false);
     expect(chatDraftSchema.safeParse({ modelOverride: "m".repeat(121) }).success).toBe(false);
   });
+
+  it("accepts a trimmed effort id or null and rejects blank or oversized ids", () => {
+    expect(chatDraftSchema.parse({
+      preferredAgentId: generationId,
+      effortOverride: "  xhigh  ",
+    }).effortOverride).toBe("xhigh");
+    expect(chatDraftSchema.parse({ effortOverride: null }).effortOverride).toBeNull();
+    expect(chatDraftSchema.safeParse({ effortOverride: "   " }).success).toBe(false);
+    expect(chatDraftSchema.safeParse({ effortOverride: "e".repeat(121) }).success).toBe(false);
+  });
 });
 
 describe("durable chat controls", () => {

@@ -25,7 +25,13 @@ function capturedModel(capture: Capture) {
   return modelIndex >= 0 ? capture.argv[modelIndex + 1] ?? null : null;
 }
 
-test("persists one conversation override, freezes running and queued models, and resets new Chat", async ({ page }, testInfo) => {
+function capturedEffort(capture: Capture) {
+  const effortArg = capture.argv.find((value) => value.startsWith("model_reasoning_effort="));
+  if (!effortArg) return null;
+  return JSON.parse(effortArg.slice("model_reasoning_effort=".length)) as string;
+}
+
+test("persists conversation runtime overrides, freezes running and queued turns, and resets new Chat", async ({ page }, testInfo) => {
   test.slow();
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-model-selector-"));
   const commandPath = path.join(tempDir, "codex-chat-model-stub");
@@ -94,15 +100,26 @@ process.stdin.on("end", async () => {
     }, organization.id);
     await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${agent.id}`);
 
-    const agentSelector = page.getByTestId("chat-agent-selector");
-    await expect(agentSelector).toContainText("Conversation Model Agent", { timeout: 15_000 });
-    await agentSelector.click();
+    const runtimeSelector = page.getByTestId("chat-runtime-selector");
+    await expect(runtimeSelector).toContainText("gpt-5.5 · High", { timeout: 15_000 });
+    await runtimeSelector.focus();
+    await runtimeSelector.press("Enter");
+    await expect(page.getByTestId("chat-model-selector")).toBeFocused();
+    await page.getByTestId("chat-model-selector").press("Escape");
+    await expect(runtimeSelector).toBeFocused();
+    await runtimeSelector.click();
+    await expect(page.getByTestId("chat-runtime-menu")).not.toContainText("Conversation Model Agent");
     const modelSelector = page.getByTestId("chat-model-selector");
+    const effortSelector = page.getByTestId("chat-effort-selector");
     await expect(modelSelector).toHaveValue("");
     await expect(modelSelector.locator("option").first()).toHaveText("Agent default · gpt-5.5");
+    await expect(effortSelector).toHaveValue("");
+    await expect(effortSelector.locator("option").first()).toHaveText("Agent default · High");
     await modelSelector.selectOption("gpt-5.6-terra");
     await expect(modelSelector).toHaveValue("gpt-5.6-terra");
-    await agentSelector.click();
+    await effortSelector.selectOption("xhigh");
+    await expect(effortSelector).toHaveValue("xhigh");
+    await runtimeSelector.click();
 
     const composer = page.getByTestId("chat-composer-editor-scroll")
       .locator(".rudder-mdxeditor-content")
@@ -116,22 +133,52 @@ process.stdin.on("end", async () => {
     }).toBe(1);
     await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible();
 
-    await agentSelector.click();
-    await expect(page.getByRole("menuitemradio", { name: /Conversation Model Agent/ })).toBeDisabled();
+    await runtimeSelector.click();
+    await expect(page.getByTestId("chat-runtime-menu")).not.toContainText("Agents");
     const runningModelSelector = page.getByTestId("chat-model-selector");
-    const patchResponse = page.waitForResponse((response) =>
+    const runningEffortSelector = page.getByTestId("chat-effort-selector");
+    let releaseModelPatch!: () => void;
+    const modelPatchGate = new Promise<void>((resolve) => {
+      releaseModelPatch = resolve;
+    });
+    let observeModelPatch!: () => void;
+    const modelPatchObserved = new Promise<void>((resolve) => {
+      observeModelPatch = resolve;
+    });
+    await page.route(`**/api/chats/${firstConversationId}`, async (route) => {
+      if (route.request().method() !== "PATCH") {
+        await route.continue();
+        return;
+      }
+      observeModelPatch();
+      await modelPatchGate;
+      await route.continue();
+    });
+    const modelPatchResponse = page.waitForResponse((response) =>
       response.request().method() === "PATCH"
       && response.url().includes(`/api/chats/${firstConversationId}`),
     );
     await runningModelSelector.selectOption("gpt-5.6-luna");
-    expect((await patchResponse).ok()).toBe(true);
+    await modelPatchObserved;
+    await expect(page.getByRole("button", { name: "Stop streaming" })).toBeEnabled();
+    releaseModelPatch();
+    expect((await modelPatchResponse).ok()).toBe(true);
+    await page.unroute(`**/api/chats/${firstConversationId}`);
     await expect(runningModelSelector).toHaveValue("gpt-5.6-luna");
+    await expect(runningEffortSelector).toBeEnabled();
+    const effortPatchResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes(`/api/chats/${firstConversationId}`),
+    );
+    await runningEffortSelector.selectOption("medium");
+    expect((await effortPatchResponse).ok()).toBe(true);
+    await expect(runningEffortSelector).toHaveValue("medium");
     await expect(runningModelSelector).toBeEnabled();
     await page.screenshot({
       path: testInfo.outputPath("conversation-model-selector-running-dark.png"),
       fullPage: true,
     });
-    await agentSelector.click();
+    await runtimeSelector.click();
 
     await composer.fill("Queue this with Luna");
     const queueResponsePromise = page.waitForResponse((response) =>
@@ -141,11 +188,17 @@ process.stdin.on("end", async () => {
     await composer.press("Enter");
     const queueResponse = await queueResponsePromise;
     expect(queueResponse.ok()).toBe(true);
-    const queued = await queueResponse.json() as { payload: { model: string | null } };
+    const queued = await queueResponse.json() as {
+      runtimeSnapshotVersion: number | null;
+      payload: { model: string | null; effort: string | null };
+    };
+    expect(queued.runtimeSnapshotVersion).toBe(1);
     expect(queued.payload.model).toBe("gpt-5.6-luna");
+    expect(queued.payload.effort).toBe("medium");
 
-    await agentSelector.click();
+    await runtimeSelector.click();
     const postAdmissionModelSelector = page.getByTestId("chat-model-selector");
+    const postAdmissionEffortSelector = page.getByTestId("chat-effort-selector");
     const postAdmissionPatch = page.waitForResponse((response) =>
       response.request().method() === "PATCH"
       && response.url().includes(`/api/chats/${firstConversationId}`),
@@ -153,7 +206,14 @@ process.stdin.on("end", async () => {
     await postAdmissionModelSelector.selectOption("gpt-5.6-sol");
     expect((await postAdmissionPatch).ok()).toBe(true);
     await expect(postAdmissionModelSelector).toBeEnabled();
-    await agentSelector.click();
+    await expect(postAdmissionEffortSelector).toBeEnabled();
+    const postAdmissionEffortPatch = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes(`/api/chats/${firstConversationId}`),
+    );
+    await postAdmissionEffortSelector.selectOption("ultra");
+    expect((await postAdmissionEffortPatch).ok()).toBe(true);
+    await runtimeSelector.click();
 
     await expect.poll(async () => (await readCaptures(capturePath)).length, {
       timeout: 75_000,
@@ -163,20 +223,29 @@ process.stdin.on("end", async () => {
       "gpt-5.6-terra",
       "gpt-5.6-luna",
     ]);
+    expect(firstTwoCaptures.map(capturedEffort)).toEqual([
+      "xhigh",
+      "medium",
+    ]);
 
     await page.reload();
-    await agentSelector.click();
+    await runtimeSelector.click();
     await expect(page.getByTestId("chat-model-selector")).toHaveValue("gpt-5.6-sol");
-    await agentSelector.click();
+    await expect(page.getByTestId("chat-effort-selector")).toHaveValue("ultra");
+    await runtimeSelector.click();
     const persistedRes = await page.request.get(`/api/chats/${firstConversationId}`);
     expect(persistedRes.ok()).toBe(true);
-    expect((await persistedRes.json()).modelOverride).toBe("gpt-5.6-sol");
+    expect(await persistedRes.json()).toMatchObject({
+      modelOverride: "gpt-5.6-sol",
+      effortOverride: "ultra",
+    });
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${agent.id}`);
-    await expect(agentSelector).toContainText("Conversation Model Agent", { timeout: 15_000 });
-    await agentSelector.click();
+    await expect(runtimeSelector).toContainText("gpt-5.5 · High", { timeout: 15_000 });
+    await runtimeSelector.click();
     await expect(page.getByTestId("chat-model-selector")).toHaveValue("");
-    await agentSelector.click();
+    await expect(page.getByTestId("chat-effort-selector")).toHaveValue("");
+    await runtimeSelector.click();
     await composer.fill("A separate conversation uses the Agent default");
     await page.getByRole("button", { name: "Send" }).click();
     await expect.poll(async () => (await readCaptures(capturePath)).length, {
@@ -187,6 +256,11 @@ process.stdin.on("end", async () => {
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
+    ]);
+    expect(captures.map(capturedEffort)).toEqual([
+      "xhigh",
+      "medium",
+      "high",
     ]);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });

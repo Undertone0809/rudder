@@ -1,7 +1,12 @@
 import type { Agent } from "@rudderhq/shared";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ChatConversationModelSelect, chatConversationModelOptions } from "./Chat.model-selector";
+import {
+  ChatConversationRuntimeControls,
+  chatConversationModelOptions,
+  chatRuntimeSelectionLabel,
+  normalizedChatRuntimeOverridesForModel,
+} from "./Chat.model-selector";
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
   return {
@@ -65,10 +70,10 @@ describe("chat conversation model options", () => {
 
   it("announces model discovery failures even when fallback options remain", () => {
     const html = renderToStaticMarkup(
-      <ChatConversationModelSelect
+      <ChatConversationRuntimeControls
         agent={makeAgent()}
         adapterModels={[]}
-        modelOverride={null}
+        overrides={{ modelOverride: null, effortOverride: null }}
         error={new Error("Model discovery failed")}
         onChange={() => undefined}
       />,
@@ -76,5 +81,74 @@ describe("chat conversation model options", () => {
 
     expect(html).toContain('role="status"');
     expect(html).toContain("Model discovery failed");
+  });
+
+  it("renders model and thinking controls without an Agent picker", () => {
+    const html = renderToStaticMarkup(
+      <ChatConversationRuntimeControls
+        agent={makeAgent({
+          agentRuntimeConfig: {
+            model: "gpt-5.6-sol",
+            modelReasoningEffort: "high",
+          },
+        })}
+        adapterModels={[]}
+        overrides={{ modelOverride: null, effortOverride: null }}
+        onChange={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="chat-model-selector"');
+    expect(html).toContain('data-testid="chat-effort-selector"');
+    expect(html).toContain("Agent default · gpt-5.6-sol");
+    expect(html).toContain("Agent default · High");
+    expect(html).not.toContain(">Agents<");
+  });
+
+  it("preserves Agent effort inheritance when runtime derivation must fall back to Auto", () => {
+    const next = normalizedChatRuntimeOverridesForModel(
+      makeAgent({
+          agentRuntimeConfig: {
+            model: "gpt-5.6-sol",
+            modelReasoningEffort: "ultra",
+          },
+      }),
+      { modelOverride: null, effortOverride: null },
+      "gpt-5.5",
+    );
+
+    expect(next).toEqual({
+      modelOverride: "gpt-5.5",
+      effortOverride: null,
+    });
+  });
+
+  it("summarizes the effective conversation model and effort for the composer pill", () => {
+    expect(chatRuntimeSelectionLabel({
+      agent: makeAgent(),
+      runtime: {
+        sourceType: "agent",
+        sourceLabel: "Noah",
+        runtimeAgentId: "agent-1",
+        agentRuntimeType: "codex_local",
+        model: "gpt-5.6-terra",
+        effort: "medium",
+        available: true,
+        error: null,
+      },
+      overrides: {
+        modelOverride: "gpt-5.6-terra",
+        effortOverride: "high",
+      },
+    })).toBe("gpt-5.6-terra · High");
+
+    expect(chatRuntimeSelectionLabel({
+      agent: makeAgent(),
+      runtime: null,
+      overrides: {
+        modelOverride: "gpt-5.6-terra",
+        effortOverride: "xhigh",
+      },
+    })).toBe("gpt-5.6-terra · Extra High");
   });
 });

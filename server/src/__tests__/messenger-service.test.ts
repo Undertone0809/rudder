@@ -342,6 +342,58 @@ describe("messengerService and issue follows", () => {
     expect(replaced).toMatchObject({ annotationCount: 0 });
   });
 
+  it("treats model and effort as immutable server-owned queue admission snapshots", async () => {
+    const fixture = await createQueuedAnnotationFixture({ body: "fixture" });
+    const clientMutationId = randomUUID();
+    const created = await chatSvc.createQueuedMessage({
+      orgId: fixture.orgId,
+      conversationId: fixture.conversationId,
+      clientMutationId,
+      runtimeSnapshotVersion: 1,
+      payload: {
+        body: "Run with this admitted runtime",
+        model: "gpt-5.6-terra",
+        effort: "xhigh",
+      },
+      requestActor: boardQueueRequestActor(fixture.orgId),
+    });
+
+    const replay = await (chatSvc as any).getQueuedMessageReplay({
+      conversationId: fixture.conversationId,
+      clientMutationId,
+      payload: {
+        body: "Run with this admitted runtime",
+        model: "gpt-5.5",
+        effort: "low",
+      },
+    });
+    expect(replay).toMatchObject({
+      id: created.id,
+      payload: {
+        body: "Run with this admitted runtime",
+        model: "gpt-5.6-terra",
+        effort: "xhigh",
+      },
+    });
+
+    const edited = await chatSvc.updateQueuedMessage({
+      orgId: fixture.orgId,
+      conversationId: fixture.conversationId,
+      itemId: created.id,
+      version: created.version,
+      payload: {
+        body: "Edited prose keeps the admitted runtime",
+        model: "client-forged-model",
+        effort: "client-forged-effort",
+      },
+    });
+    expect(edited.payload).toMatchObject({
+      body: "Edited prose keeps the admitted runtime",
+      model: "gpt-5.6-terra",
+      effort: "xhigh",
+    });
+  });
+
   it("materializes annotation-only queue work once and converges every message link", async () => {
     const fixture = await createQueuedAnnotationFixture();
 
@@ -652,7 +704,12 @@ describe("messengerService and issue follows", () => {
       orgId: fixture.orgId,
       conversationId: fixture.conversationId,
       clientMutationId,
-      payload: { body: "", inlineAnnotations: [fixture.annotation] },
+      payload: {
+        body: "",
+        inlineAnnotations: [fixture.annotation],
+        model: "legacy-client-model",
+        effort: null,
+      },
       requestActor: boardQueueRequestActor(fixture.orgId),
       stagedAttachments: [stagedAttachment],
       attachmentFileIndexesByAnnotationId: new Map([[fixture.annotation.id, [0]]]),
@@ -664,6 +721,13 @@ describe("messengerService and issue follows", () => {
     };
     const replay = await (chatSvc as any).createQueuedMessageWithStagedAttachments({
       ...create,
+      runtimeSnapshotVersion: 1,
+      payload: {
+        ...create.payload,
+        model: "gpt-5.6-terra",
+        effort: "high",
+      },
+      idempotencyPayload: create.payload,
       stagedAttachments: [duplicateObject],
     });
     const [rawQueued] = await db
@@ -679,6 +743,7 @@ describe("messengerService and issue follows", () => {
       .where(eq(assets.orgId, fixture.orgId));
 
     expect(first).toMatchObject({ accepted: true, cleanupAttachments: [] });
+    expect(first.item.runtimeSnapshotVersion).toBeNull();
     expect(first.item).toMatchObject({ annotationCount: 1 });
     expect(first.item.payload).not.toHaveProperty("__rudderQueueAnnotationAssets");
     expect(first.item.payload.inlineAnnotations?.[0]?.attachmentIds).toEqual([]);
@@ -9845,6 +9910,8 @@ describe("messengerService and issue follows", () => {
     });
     const source = await chatSvc.create(orgId, {
       title: "Leaf fork topic",
+      modelOverride: "gpt-5.6-terra",
+      effortOverride: "xhigh",
       issueCreationMode: "manual_approval",
       planMode: false,
       createdByUserId: userId,
@@ -9866,7 +9933,11 @@ describe("messengerService and issue follows", () => {
     });
 
     const groups = await messengerSvc.listCustomGroups(orgId, userId);
-    expect(child.title).toBe("Leaf fork topic (2)");
+    expect(child).toMatchObject({
+      title: "Leaf fork topic (2)",
+      modelOverride: null,
+      effortOverride: null,
+    });
     expect(groups.groups).toHaveLength(1);
     expect(groups.groups[0]?.name).toBe("Leaf fork topic");
     expect(groups.groups[0]?.icon).toBe(MESSENGER_FORK_GROUP_DEFAULT_ICON);

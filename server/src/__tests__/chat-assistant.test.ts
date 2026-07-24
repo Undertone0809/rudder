@@ -159,6 +159,7 @@ function makeConversation(overrides: Partial<ChatConversation> = {}): ChatConver
     userMessageCount: 0,
     preferredAgentId: "agent-1",
     modelOverride: null,
+    effortOverride: null,
     routedAgentId: null,
     primaryIssueId: null,
     primaryIssue: null,
@@ -178,6 +179,7 @@ function makeConversation(overrides: Partial<ChatConversation> = {}): ChatConver
       runtimeAgentId: "agent-1",
       agentRuntimeType: "codex_local",
       model: "gpt-5.4",
+      effort: null,
       available: true,
       error: null,
     },
@@ -480,6 +482,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       runtimeAgentId: "agent-1",
       agentRuntimeType: "codex_local",
       model: "gpt-5.4",
+      effort: null,
       available: true,
       error: null,
     };
@@ -580,6 +583,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       runtimeAgentId: "agent-1",
       agentRuntimeType: "process",
       model: "Default model",
+      effort: null,
       available: true,
       error: null,
     });
@@ -950,6 +954,64 @@ describe("chatAssistantService operator profile prompt injection", () => {
       cwd: "/tmp/chat-workspace",
       rudderSkillSync: { desiredSkills: ["org/build-advisor"] },
     }));
+  });
+
+  it("applies a conversation effort override while preserving the Agent runtime config", async () => {
+    const modelFallbacks = [{
+      agentRuntimeType: "codex_local",
+      model: "gpt-5.4-mini",
+    }];
+    mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
+      resolvedConfig: {},
+      runtimeConfig: {
+        model: "gpt-5.6-sol",
+        modelReasoningEffort: "medium",
+        modelFallbacks,
+        cwd: "/tmp/chat-workspace",
+      },
+      runtimeSkillEntries: [],
+      secretKeys: new Set(),
+    });
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation({ effortOverride: "xhigh" }),
+      messages: makeMessages(),
+      contextLinks: [],
+    });
+
+    const runtimeConfig = mockAdapter.execute.mock.calls.at(-1)?.[0]?.config as Record<string, unknown>;
+    expect(runtimeConfig).toEqual(expect.objectContaining({
+      model: "gpt-5.6-sol",
+      modelReasoningEffort: "xhigh",
+      modelFallbacks,
+      cwd: "/tmp/chat-workspace",
+    }));
+  });
+
+  it("freezes an explicit Auto effort snapshot for an admitted turn", async () => {
+    mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
+      resolvedConfig: {},
+      runtimeConfig: {
+        model: "gpt-5.6-sol",
+        modelReasoningEffort: "high",
+        reasoningEffort: "high",
+      },
+      runtimeSkillEntries: [],
+      secretKeys: new Set(),
+    });
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation({ effortOverride: "xhigh" }),
+      messages: makeMessages(),
+      contextLinks: [],
+      effortSnapshot: null,
+    });
+
+    const runtimeConfig = mockAdapter.execute.mock.calls.at(-1)?.[0]?.config as Record<string, unknown>;
+    expect(runtimeConfig).not.toHaveProperty("modelReasoningEffort");
+    expect(runtimeConfig).not.toHaveProperty("reasoningEffort");
   });
 
   it("prefers an admitted model snapshot and resets only an incompatible inherited effort", async () => {

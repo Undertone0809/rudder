@@ -29,6 +29,7 @@ function makeConversation(overrides: Partial<ChatConversation> = {}): ChatConver
     userMessageCount: 0,
     preferredAgentId: "agent-1",
     modelOverride: null,
+    effortOverride: null,
     routedAgentId: null,
     primaryIssueId: null,
     forkedFromConversationId: null,
@@ -146,6 +147,25 @@ describe("enrichConversationRuntimeDescriptors", () => {
       "gpt-5.4",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
+    ]);
+  });
+
+  it("resolves the same model separately for distinct conversation effort overrides", async () => {
+    const resolveDescriptor = vi.fn(async (
+      conversation: Pick<ChatConversation, "orgId" | "preferredAgentId" | "effortOverride">,
+    ) => makeDescriptor({ effort: conversation.effortOverride ?? null }));
+
+    const enriched = await enrichConversationRuntimeDescriptors([
+      makeConversation({ id: "chat-default", effortOverride: null }),
+      makeConversation({ id: "chat-high", effortOverride: "high" }),
+      makeConversation({ id: "chat-xhigh", effortOverride: "xhigh" }),
+    ], resolveDescriptor);
+
+    expect(resolveDescriptor).toHaveBeenCalledTimes(3);
+    expect(enriched.map((conversation) => conversation.chatRuntime.effort)).toEqual([
+      null,
+      "high",
+      "xhigh",
     ]);
   });
 

@@ -1822,6 +1822,8 @@ export function chatService(db: Db) {
     conversationId: string;
     clientMutationId: string;
     payload: ChatQueuedMessagePayload;
+    idempotencyPayload?: ChatQueuedMessagePayload;
+    runtimeSnapshotVersion?: 1 | null;
     expectedGenerationId?: string | null;
     requestActor?: ChatQueueRequestActor | null;
     stagedAttachments: readonly StagedQueuedAnnotationAttachment[];
@@ -1838,6 +1840,7 @@ export function chatService(db: Db) {
       payload,
       stagedAttachments: input.stagedAttachments,
       attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+      runtimeSnapshotVersion: input.runtimeSnapshotVersion,
     });
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -1856,13 +1859,25 @@ export function chatService(db: Db) {
             .then((rows) => rows[0] ?? null);
           if (existing) {
             const existingPrivateState = queuedAnnotationAssetState(existing.payload);
+            const replayPayload = existing.runtimeSnapshotVersion === 1
+              ? payload
+              : normalizeQueuedMessagePayload(
+                  (input.idempotencyPayload ?? input.payload) as unknown as Record<string, unknown>,
+                );
             const existingFingerprint = existingPrivateState?.fingerprint
               ?? queuedMessageMutationFingerprint({
                 payload: normalizeQueuedMessagePayload(existing.payload),
                 stagedAttachments: [],
                 attachmentFileIndexesByAnnotationId: new Map(),
+                runtimeSnapshotVersion: existing.runtimeSnapshotVersion,
               });
-            if (existingFingerprint !== fingerprint) {
+            const replayFingerprint = queuedMessageMutationFingerprint({
+              payload: replayPayload,
+              stagedAttachments: input.stagedAttachments,
+              attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+              runtimeSnapshotVersion: existing.runtimeSnapshotVersion,
+            });
+            if (existingFingerprint !== replayFingerprint) {
               throw conflict("Queued message idempotency key reused with a different payload");
             }
             return {
@@ -1922,6 +1937,7 @@ export function chatService(db: Db) {
               clientMutationId: input.clientMutationId,
               position: Number(positionRow?.nextPosition ?? 1),
               payload: persistedPayload,
+              runtimeSnapshotVersion: input.runtimeSnapshotVersion ?? null,
               requestActor: input.requestActor ?? null,
               expectedGenerationId: input.expectedGenerationId ?? null,
             })
@@ -1941,11 +1957,53 @@ export function chatService(db: Db) {
     throw new Error("Failed to create queued chat message");
   }
 
+  async function getQueuedMessageReplay(input: {
+    conversationId: string;
+    clientMutationId: string;
+    payload: ChatQueuedMessagePayload;
+  }) {
+    const existing = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.clientMutationId, input.clientMutationId),
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!existing) return null;
+    const privateState = queuedAnnotationAssetState(existing.payload);
+    if ((privateState?.attachments.length ?? 0) > 0) {
+      throw conflict("Queued message idempotency key reused without its original attachments");
+    }
+    const emptyBindings = new Map<string, readonly number[]>();
+    const existingFingerprint = queuedMessageMutationFingerprint({
+      payload: normalizeQueuedMessagePayload(existing.payload),
+      stagedAttachments: [],
+      attachmentFileIndexesByAnnotationId: emptyBindings,
+      runtimeSnapshotVersion: existing.runtimeSnapshotVersion,
+    });
+    const replayFingerprint = queuedMessageMutationFingerprint({
+      payload: normalizeQueuedMessagePayload(input.payload as unknown as Record<string, unknown>),
+      stagedAttachments: [],
+      attachmentFileIndexesByAnnotationId: emptyBindings,
+      runtimeSnapshotVersion: existing.runtimeSnapshotVersion,
+    });
+    if (existingFingerprint !== replayFingerprint) {
+      throw conflict("Queued message idempotency key reused with a different payload");
+    }
+    return hydrateQueuedMessage(existing);
+  }
+
   async function createQueuedMessage(input: {
     orgId: string;
     conversationId: string;
     clientMutationId: string;
     payload: ChatQueuedMessagePayload;
+    idempotencyPayload?: ChatQueuedMessagePayload;
+    runtimeSnapshotVersion?: 1 | null;
     expectedGenerationId?: string | null;
     requestActor?: ChatQueueRequestActor | null;
   }) {
@@ -2025,6 +2083,10 @@ export function chatService(db: Db) {
         inlineAnnotations: input.payload.inlineAnnotations === undefined
           ? currentPayload.inlineAnnotations
           : input.payload.inlineAnnotations,
+        // Editing a queued message changes its content, not the runtime
+        // admission snapshot captured when the item entered the queue.
+        model: currentPayload.model,
+        effort: currentPayload.effort,
       });
       if (!payload.body.trim() && (payload.inlineAnnotations?.length ?? 0) === 0) {
         throw unprocessable("Queued message body or at least one inline annotation is required");
@@ -2061,6 +2123,7 @@ export function chatService(db: Db) {
           payload,
           stagedAttachments: input.stagedAttachments,
           attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+          runtimeSnapshotVersion: current.runtimeSnapshotVersion,
         });
         const assetIds: string[] = [];
         for (const attachment of input.stagedAttachments) {
@@ -3873,6 +3936,8 @@ export function chatService(db: Db) {
           title: childTitle,
           summary: source.summary,
           preferredAgentId: source.preferredAgentId,
+          modelOverride: null,
+          effortOverride: null,
           routedAgentId: source.routedAgentId,
           primaryIssueId: source.primaryIssueId,
           forkedFromConversationId: source.id,
@@ -3981,6 +4046,45 @@ export function chatService(db: Db) {
         .returning();
       if (!updated) return null;
       return getById(id);
+  }
+
+  async function updateAgentModelInvariant(input: {
+    id: string;
+    patch: Partial<typeof chatConversations.$inferInsert>;
+    expectedPreferredAgentId: string | null;
+  }) {
+    const hasPreferredAgentPatch = Object.prototype.hasOwnProperty.call(
+      input.patch,
+      "preferredAgentId",
+    );
+    const requestedPreferredAgentId = hasPreferredAgentPatch
+      ? input.patch.preferredAgentId ?? null
+      : input.expectedPreferredAgentId;
+    const preferredAgentChanged = requestedPreferredAgentId !== input.expectedPreferredAgentId;
+    if (preferredAgentChanged && input.expectedPreferredAgentId !== null) {
+      throw conflict("Chat agent is locked after the conversation starts");
+    }
+    const patch = preferredAgentChanged
+      ? { ...input.patch, modelOverride: null, effortOverride: null }
+      : input.patch;
+    const preferredAgentCondition = input.expectedPreferredAgentId === null
+      ? isNull(chatConversations.preferredAgentId)
+      : eq(chatConversations.preferredAgentId, input.expectedPreferredAgentId);
+    const [updated] = await db
+      .update(chatConversations)
+      .set({
+        ...patch,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(chatConversations.id, input.id),
+        preferredAgentCondition,
+      ))
+      .returning();
+    if (!updated) {
+      throw conflict("Chat agent changed while applying the conversation runtime update");
+    }
+    return getById(input.id);
   }
 
   async function updateDefaultTitle(id: string, title: string, expectedCurrentTitle = "New chat") {
@@ -5157,6 +5261,7 @@ export function chatService(db: Db) {
     create,
     createWithInitialMessage,
     update,
+    updateAgentModelInvariant,
     updateDefaultTitle,
     replaceSystemGeneratedTitle,
     listRecentUserMessages,
@@ -5179,6 +5284,7 @@ export function chatService(db: Db) {
     getLatestGeneration,
     getQueueSnapshot,
     listQueuedMessages,
+    getQueuedMessageReplay,
     createQueuedMessage,
     createQueuedMessageWithStagedAttachments,
     updateQueuedMessage,

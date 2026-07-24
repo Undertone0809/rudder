@@ -190,7 +190,7 @@ test.describe("Chat project empty heading", () => {
     const projectIcon = page.getByTestId("chat-project-icon");
     await expect(projectIcon).toBeVisible();
     await expect(projectIcon.locator("svg")).toHaveCount(1);
-    await expect(page.getByTestId("chat-agent-selector").locator(".lucide-chevron-down")).toHaveCount(0);
+    await expect(page.getByTestId("chat-runtime-selector").locator(".lucide-chevron-down")).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Skills", exact: true }).locator("svg")).toHaveCount(0);
     await expect(recentConversations).toContainText("Beta roadmap thread", { timeout: 15_000 });
     await expect(recentConversations).not.toContainText("Alpha kickoff thread");

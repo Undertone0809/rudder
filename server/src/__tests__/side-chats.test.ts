@@ -141,6 +141,7 @@ describe("sideChatService", () => {
       title,
       createdByUserId: userId,
       modelOverride: "gpt-5.6-terra",
+      effortOverride: "xhigh",
       issueCreationMode: "manual_approval",
       planMode: false,
     });
@@ -265,6 +266,7 @@ describe("sideChatService", () => {
       forkedFromMessageId: source.anchorMessageId,
       createdByUserId: source.userId,
       modelOverride: null,
+      effortOverride: null,
     });
     expect(first.sideChatExpiresAt?.getTime()).toBeGreaterThanOrEqual(before + SIDE_CHAT_TTL_MS - 1_000);
 

@@ -1,89 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { randomUUID } from "node:crypto";
-import { chatConversations, chatMessages, createDb } from "../../packages/db/src/index.ts";
-import { createE2EChatAgent } from "./support/chat-agent";
-import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
+import { E2E_CODEX_STUB } from "./support/e2e-env";
 
-const e2eDb = createDb(E2E_DATABASE_URL);
-
-test.describe("Chat agent selector lock", () => {
-  test("allows repairing a historical unassigned conversation before sending", async ({ page }) => {
+test.describe("Chat runtime selector availability", () => {
+  test("keeps model and reasoning controls available after conversation start", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
-        name: `Agent-Repair-Chat-${Date.now()}`,
-      },
-    });
-    expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json();
-    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Migration Agent" });
-    const conversationId = randomUUID();
-    const messageId = randomUUID();
-    const createdAt = new Date("2026-05-07T08:00:00.000Z");
-
-    await e2eDb.insert(chatConversations).values({
-      id: conversationId,
-      orgId: organization.id,
-      title: "Migrated unassigned chat",
-      preferredAgentId: null,
-      issueCreationMode: "manual_approval",
-      lastMessageAt: createdAt,
-      createdAt,
-      updatedAt: createdAt,
-    });
-    await e2eDb.insert(chatMessages).values({
-      id: messageId,
-      orgId: organization.id,
-      conversationId,
-      role: "user",
-      kind: "message",
-      status: "completed",
-      body: "Historical Copilot-era message",
-      createdAt,
-      updatedAt: createdAt,
-    });
-
-    await page.goto("/");
-    await page.evaluate((orgId) => {
-      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
-    }, organization.id);
-
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`);
-
-    const agentSelector = page.getByTestId("chat-agent-selector");
-    await expect(agentSelector).toBeVisible({ timeout: 15_000 });
-    await expect(agentSelector).toContainText("Migration Agent");
-    await expect(agentSelector).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
-
-    const patchPromise = page.waitForResponse((response) => {
-      if (!response.url().includes(`/api/chats/${conversationId}`)) return false;
-      if (response.request().method() !== "PATCH") return false;
-      const body = response.request().postDataJSON() as { preferredAgentId?: string };
-      return body.preferredAgentId === agent.id;
-    });
-    await agentSelector.click();
-    await page.getByRole("menuitemradio", { name: /Migration Agent/ }).click();
-    const patchResponse = await patchPromise;
-    expect(patchResponse.ok()).toBe(true);
-
-    await expect(agentSelector).toContainText("Migration Agent");
-    await expect(agentSelector).toBeEnabled();
-    await agentSelector.click();
-    await expect(page.getByTestId("chat-model-selector")).toBeEnabled();
-    await agentSelector.click();
-
-    const composer = page.locator(".rudder-mdxeditor-content").first();
-    await expect(composer).toBeVisible();
-    await composer.fill("Continue this migrated conversation");
-    await page.getByRole("button", { name: "Send" }).click();
-
-    await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Streaming reply", { timeout: 15_000 });
-  });
-
-  test("locks agent choice while keeping the selected runtime menu available", async ({ page }) => {
-    const orgRes = await page.request.post("/api/orgs", {
-      data: {
-        name: `Agent-Lock-Chat-${Date.now()}`,
+        name: `Runtime-Control-Chat-${Date.now()}`,
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -91,17 +13,19 @@ test.describe("Chat agent selector lock", () => {
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
-        name: "Lock Agent",
+        name: "Internal Runtime Agent",
         role: "engineer",
         title: "Engineer",
         agentRuntimeType: "codex_local",
         agentRuntimeConfig: {
           model: "gpt-5.4",
+          modelReasoningEffort: "high",
           command: E2E_CODEX_STUB,
         },
       },
     });
     expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -109,61 +33,26 @@ test.describe("Chat agent selector lock", () => {
       window.localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
 
-    await page.goto(`/${organization.issuePrefix}/messenger/chat`);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${agent.id}`);
     await expect(page.locator("html")).toHaveClass(/dark/);
 
-    const agentSelector = page.getByTestId("chat-agent-selector");
-    await expect(agentSelector).toBeVisible({ timeout: 15_000 });
-    await agentSelector.click();
-    await page.getByRole("menuitemradio", { name: /Lock Agent/ }).click();
-    await expect(agentSelector).toContainText("Lock Agent");
+    const runtimeSelector = page.getByTestId("chat-runtime-selector");
+    await expect(runtimeSelector).toContainText("gpt-5.4 · High", { timeout: 15_000 });
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
-    await expect(composer).toBeVisible();
-    await composer.fill("Start the locked-agent conversation");
+    await composer.fill("Start the runtime-controlled conversation");
     await page.getByRole("button", { name: "Send" }).click();
 
-    await expect(agentSelector).toBeEnabled({ timeout: 15_000 });
-    await expect(agentSelector.getByTestId("chat-agent-selector-icon")).toBeVisible();
-    await expect(agentSelector.getByTestId("chat-agent-selector-chevron")).toHaveCount(0);
+    await expect(runtimeSelector).toBeEnabled({ timeout: 15_000 });
+    await runtimeSelector.click();
+    const runtimeMenu = page.getByTestId("chat-runtime-menu");
+    await expect(runtimeMenu).toBeVisible();
+    await expect(runtimeMenu).not.toContainText("Internal Runtime Agent");
+    await expect(page.getByRole("menuitemradio")).toHaveCount(0);
+    await expect(page.getByTestId("chat-model-selector")).toBeEnabled();
+    await expect(page.getByTestId("chat-effort-selector")).toBeEnabled();
 
-    await agentSelector.click();
-    await expect(page.getByTestId("chat-agent-menu")).toBeVisible();
-    await expect(page.getByRole("menuitemradio", { name: /Lock Agent/ })).toBeDisabled();
-    await expect(page.getByTestId("chat-model-selector")).toBeEnabled();
-    await page.waitForTimeout(500);
-    await page.screenshot({
-      path: "/tmp/rudder-chat-conversation-model-selector-dark.png",
-      fullPage: true,
-    });
-    await agentSelector.click();
-    await page.setViewportSize({ width: 760, height: 900 });
-    await page.waitForTimeout(500);
-    await agentSelector.click();
-    await expect(page.getByTestId("chat-model-selector")).toBeEnabled();
-    await page.waitForTimeout(500);
-    await page.screenshot({
-      path: "/tmp/rudder-chat-conversation-model-selector-narrow-dark.png",
-      fullPage: true,
-    });
-    await agentSelector.click();
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.evaluate(() => {
-      window.localStorage.setItem("rudder.theme", "light");
-    });
-    await page.reload();
-    await expect(page.locator("html")).not.toHaveClass(/dark/);
-    await expect(agentSelector).toBeEnabled({ timeout: 15_000 });
-    await agentSelector.click();
-    await expect(page.getByTestId("chat-model-selector")).toBeEnabled();
-    await page.waitForTimeout(500);
-    await page.screenshot({
-      path: "/tmp/rudder-chat-conversation-model-selector-light.png",
-      fullPage: true,
-    });
-    await agentSelector.click();
-
-    await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
-    await expect(agentSelector).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Stop streaming" }))
+      .toBeVisible({ timeout: 15_000 });
   });
 });

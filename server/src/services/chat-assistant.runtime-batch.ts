@@ -3,7 +3,7 @@ import type { ChatConversation, ChatRuntimeDescriptor } from "@rudderhq/shared";
 export async function enrichConversationRuntimeDescriptors<T extends ChatConversation>(
   conversations: readonly T[],
   resolveDescriptor: (
-    conversation: Pick<ChatConversation, "orgId" | "preferredAgentId" | "modelOverride">,
+    conversation: Pick<ChatConversation, "orgId" | "preferredAgentId" | "modelOverride" | "effortOverride">,
   ) => Promise<ChatRuntimeDescriptor>,
 ): Promise<T[]> {
   const descriptorPromises = new Map<string, Promise<ChatRuntimeDescriptor>>();
@@ -13,6 +13,7 @@ export async function enrichConversationRuntimeDescriptors<T extends ChatConvers
       conversation.orgId,
       conversation.preferredAgentId,
       conversation.modelOverride,
+      conversation.effortOverride,
     ]);
     let descriptorPromise = descriptorPromises.get(key);
     if (!descriptorPromise) {

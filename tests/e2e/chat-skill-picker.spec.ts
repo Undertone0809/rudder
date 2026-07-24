@@ -66,19 +66,21 @@ test.describe("Chat skill picker", () => {
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat`);
 
-    await expect(page.getByRole("button", { name: new RegExp(agent.name) })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-runtime-selector")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "Skills" })).toBeVisible();
 
     const composerSurface = page.locator(".chat-composer").first();
-    await page.getByTestId("chat-agent-selector").click();
-    const agentMenu = page.getByTestId("chat-agent-menu");
-    await expect(agentMenu).toBeVisible();
+    await page.getByTestId("chat-runtime-selector").click();
+    const runtimeMenu = page.getByTestId("chat-runtime-menu");
+    await expect(runtimeMenu).toBeVisible();
     const composerSurfaceBox = await composerSurface.boundingBox();
-    const agentMenuBox = await agentMenu.boundingBox();
+    const runtimeMenuBox = await runtimeMenu.boundingBox();
     expect(composerSurfaceBox).not.toBeNull();
-    expect(agentMenuBox).not.toBeNull();
-    expect(agentMenuBox!.y + agentMenuBox!.height).toBeLessThanOrEqual(composerSurfaceBox!.y + 1);
-    await expect(page.getByRole("menuitemradio", { name: "No agent selected" })).toHaveCount(0);
+    expect(runtimeMenuBox).not.toBeNull();
+    expect(runtimeMenuBox!.y + runtimeMenuBox!.height).toBeLessThanOrEqual(composerSurfaceBox!.y + 1);
+    await expect(runtimeMenu).not.toContainText(agent.name);
+    await expect(page.getByTestId("chat-model-selector")).toBeVisible();
+    await expect(page.getByTestId("chat-effort-selector")).toBeVisible();
   });
 
   test("searches installed skills, inserts immediately, and keeps readable markdown", async ({ page }) => {

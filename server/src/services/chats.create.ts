@@ -12,6 +12,7 @@ export type CreateChatInput = {
   summary?: string | null;
   preferredAgentId?: string | null;
   modelOverride?: string | null;
+  effortOverride?: string | null;
   issueCreationMode: "manual_approval" | "auto_create";
   planMode: boolean;
   createdByUserId: string | null;
@@ -32,6 +33,7 @@ export async function createChatConversation(db: Db, orgId: string, data: Create
         summary: data.summary ?? null,
         preferredAgentId: data.preferredAgentId ?? null,
         modelOverride: data.modelOverride ?? null,
+        effortOverride: data.effortOverride ?? null,
         issueCreationMode: data.issueCreationMode,
         planMode: data.planMode,
         createdByUserId: data.createdByUserId,
@@ -62,6 +64,7 @@ export type CreateChatWithInitialMessageInput = {
   summary?: string | null;
   preferredAgentId?: string | null;
   modelOverride?: string | null;
+  effortOverride?: string | null;
   issueCreationMode: "manual_approval" | "auto_create";
   planMode: boolean;
   createdByUserId: string | null;
@@ -106,6 +109,7 @@ export async function createChatWithInitialMessage(
         summary: data.summary ?? null,
         preferredAgentId: data.preferredAgentId ?? null,
         modelOverride: data.modelOverride ?? null,
+        effortOverride: data.effortOverride ?? null,
         issueCreationMode: data.issueCreationMode,
         planMode: data.planMode,
         createdByUserId: data.createdByUserId,
@@ -166,6 +170,7 @@ export async function createChatWithInitialMessage(
           title: conversationRow.title,
           contextLinkCount: contextLinks.length,
           modelOverride: conversationRow.modelOverride,
+          effortOverride: conversationRow.effortOverride,
         },
       });
       await logActivity(client, {

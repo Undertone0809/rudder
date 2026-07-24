@@ -48,6 +48,7 @@ export type ChatSteerQueuedMessageRequest = {
 export type ChatDraftRequest = {
   preferredAgentId: string;
   modelOverride?: string | null;
+  effortOverride?: string | null;
   issueCreationMode: ChatIssueCreationMode;
   planMode: boolean;
   contextLinks: Array<{ entityType: "issue" | "project" | "agent"; entityId: string }>;
@@ -125,6 +126,7 @@ export const chatsApi = {
       summary?: string | null;
       preferredAgentId?: string | null;
       modelOverride?: string | null;
+      effortOverride?: string | null;
       issueCreationMode?: ChatIssueCreationMode;
       planMode?: boolean;
       contextLinks?: Array<{ entityType: "issue" | "project" | "agent"; entityId: string }>;
@@ -152,6 +154,7 @@ export const chatsApi = {
       summary: string | null;
       preferredAgentId: string | null;
       modelOverride: string | null;
+      effortOverride: string | null;
       routedAgentId: string | null;
       issueCreationMode: ChatIssueCreationMode;
       planMode: boolean;
@@ -197,6 +200,7 @@ export const chatsApi = {
         form.append("body", body);
         form.append("preferredAgentId", options.preferredAgentId);
         if (options.modelOverride) form.append("modelOverride", options.modelOverride);
+        if (options.effortOverride) form.append("effortOverride", options.effortOverride);
         form.append("issueCreationMode", options.issueCreationMode);
         form.append("planMode", String(options.planMode));
         form.append("contextLinks", JSON.stringify(options.contextLinks));
@@ -212,6 +216,7 @@ export const chatsApi = {
         body,
         preferredAgentId: options.preferredAgentId,
         modelOverride: options.modelOverride,
+        effortOverride: options.effortOverride,
         issueCreationMode: options.issueCreationMode,
         planMode: options.planMode,
         contextLinks: options.contextLinks,

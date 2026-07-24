@@ -547,6 +547,7 @@ describe("applyPendingMigrations", () => {
           "0116_dark_skreet.sql",
           "0117_reflective_namora.sql",
           "0118_flippant_longshot.sql",
+          "0119_slim_tony_stark.sql",
         ],
         reason: "pending-migrations",
       });
@@ -685,6 +686,7 @@ describe("applyPendingMigrations", () => {
           "0116_dark_skreet.sql",
           "0117_reflective_namora.sql",
           "0118_flippant_longshot.sql",
+          "0119_slim_tony_stark.sql",
         ],
         reason: "pending-migrations",
       });

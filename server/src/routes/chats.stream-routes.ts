@@ -180,13 +180,21 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         editUserMessageId: parsedBody.data.editUserMessageId ?? null,
       })
       : null;
+    let runtimeSnapshot = atomicFirstTurn?.runtimeSnapshot ?? null;
     if (!atomicFirstTurn) {
       const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
       if (!assistantAvailability.available) {
         res.status(503).json({ error: assistantAvailability.error });
         return;
       }
+      runtimeSnapshot = {
+        model: assistantAvailability.model === "Default model"
+          ? null
+          : assistantAvailability.model,
+        effort: assistantAvailability.effort ?? null,
+      };
     }
+    if (!runtimeSnapshot) throw new Error("Chat runtime snapshot is unavailable");
 
     const abortController = new AbortController();
     const releaseGeneration = claimChatGeneration(conversation.id, abortController, null);
@@ -210,6 +218,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           orgId: conversation.orgId,
           conversationId: conversation.id,
           clientMutationId,
+          runtimeSnapshotVersion: 1,
           expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
           requestActor: queueRequestActor(req),
           payload: {
@@ -221,8 +230,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
             skillRefs: [],
             projectId: null,
             accessMode: null,
-            model: null,
-            effort: null,
+            model: runtimeSnapshot.model,
+            effort: runtimeSnapshot.effort,
             metadata: {
               source: "stream_endpoint_during_active_generation",
             },
@@ -549,6 +558,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           try {
             const streamed = await assistantSvc.streamChatAssistantReply({
               ...assistantInput,
+              modelSnapshot: runtimeSnapshot.model,
+              effortSnapshot: runtimeSnapshot.effort,
               userMessageId: userMessage.id,
               chatTurnId: turnContextForPartial.chatTurnId,
               turnVariant: turnContextForPartial.turnVariant,
@@ -1001,6 +1012,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       title: parsed.data.title,
       summary: parsed.data.summary ?? null,
       preferredAgentId: draft.preferredAgentId,
+      modelOverride: draft.modelOverride,
+      effortOverride: draft.effortOverride,
       issueCreationMode: parsed.data.issueCreationMode ?? draft.organization.defaultChatIssueCreationMode,
       planMode: parsed.data.planMode ?? false,
       createdByUserId: actor.actorId,
@@ -1019,6 +1032,13 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       conversation,
       userMessage: accepted.message,
       uploadPrepared,
+      runtimeSnapshot: {
+        model: draft.modelOverride
+          ?? (draft.availability.model === "Default model"
+            ? null
+            : draft.availability.model),
+        effort: draft.availability.effort ?? null,
+      },
     };
     await handleChatMessageStream(req, res);
   });

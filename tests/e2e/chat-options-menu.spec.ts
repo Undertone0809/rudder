@@ -322,18 +322,19 @@ test.describe("Chat options menu", () => {
     await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${chatAgent.id}`);
     await expect(selector).toContainText("Launch Context", { timeout: 15_000 });
     const toolbar = page.getByTestId("chat-composer-toolbar");
+    const runtimeSelector = toolbar.getByTestId("chat-runtime-selector");
     await expect(toolbar.getByTestId("chat-project-selector")).toBeVisible();
-    await expect(toolbar.getByRole("button", { name: /Project Agent/ })).toBeVisible();
+    await expect(runtimeSelector).toBeVisible();
 
     const composerBox = await page.locator(".rudder-mdxeditor-content").first().boundingBox();
     const selectorBox = await selector.boundingBox();
-    const agentBox = await toolbar.getByRole("button", { name: /Project Agent/ }).boundingBox();
+    const runtimeBox = await runtimeSelector.boundingBox();
     expect(composerBox).not.toBeNull();
     expect(selectorBox).not.toBeNull();
-    expect(agentBox).not.toBeNull();
+    expect(runtimeBox).not.toBeNull();
     expect(selectorBox!.y).toBeGreaterThan(composerBox!.y);
     expect(
-      Math.abs((selectorBox!.y + selectorBox!.height / 2) - (agentBox!.y + agentBox!.height / 2)),
+      Math.abs((selectorBox!.y + selectorBox!.height / 2) - (runtimeBox!.y + runtimeBox!.height / 2)),
     ).toBeLessThan(10);
 
     await selector.click();
@@ -424,7 +425,7 @@ test.describe("Chat options menu", () => {
     await page.goto(`/chat/${chat.id}`);
 
     const toolbar = page.getByTestId("chat-composer-toolbar");
-    await expect(toolbar.getByRole("button", { name: /Projectless Agent/ })).toBeVisible({ timeout: 15_000 });
+    await expect(toolbar.getByTestId("chat-runtime-selector")).toBeVisible({ timeout: 15_000 });
     await expect(toolbar.getByTestId("chat-project-selector")).toHaveCount(0);
     await expect(toolbar).not.toContainText("No project");
   });
@@ -729,25 +730,16 @@ test.describe("Chat options menu", () => {
 
     await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agentA.id}&projectId=${alpha.id}`);
     await expect(selector).toContainText(alpha.name, { timeout: 15_000 });
-    await expect(page.getByTestId("chat-agent-selector")).toContainText("Wesley");
+    await expect(page.getByTestId("chat-runtime-selector")).toBeVisible();
 
     await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agentB.id}&projectId=${beta.id}`);
     await expect(selector).toContainText(beta.name, { timeout: 15_000 });
-    await expect(page.getByTestId("chat-agent-selector")).toContainText("Mira");
+    await expect(page.getByTestId("chat-runtime-selector")).toBeVisible();
 
     await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agentA.id}`);
     await expect(selector).toContainText(alpha.name, { timeout: 15_000 });
-    await expect(page.getByTestId("chat-agent-selector")).toContainText("Wesley");
 
     await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agentB.id}`);
-    await expect(selector).toContainText(beta.name, { timeout: 15_000 });
-    await expect(page.getByTestId("chat-agent-selector")).toContainText("Mira");
-
-    await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agentA.id}`);
-    await expect(selector).toContainText(alpha.name, { timeout: 15_000 });
-    await page.getByTestId("chat-agent-selector").click();
-    await page.getByRole("menuitemradio", { name: /Mira/ }).click();
-    await expect(page.getByTestId("chat-agent-selector")).toContainText("Mira");
     await expect(selector).toContainText(beta.name, { timeout: 15_000 });
   });
 });

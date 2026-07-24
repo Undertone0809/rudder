@@ -341,12 +341,14 @@ export const createChatContextLinkSchema = z.object({
 });
 
 export const chatModelOverrideSchema = z.string().trim().min(1).max(120).nullable();
+export const chatEffortOverrideSchema = z.string().trim().min(1).max(120).nullable();
 
 export const chatDraftSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   summary: z.string().trim().max(5000).optional().nullable(),
   preferredAgentId: z.string().uuid().optional().nullable(),
   modelOverride: chatModelOverrideSchema.optional(),
+  effortOverride: chatEffortOverrideSchema.optional(),
   issueCreationMode: chatIssueCreationModeSchema.optional(),
   planMode: z.boolean().optional(),
   contextLinks: z.array(createChatContextLinkSchema).optional().default([]),

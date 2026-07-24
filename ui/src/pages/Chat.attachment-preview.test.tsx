@@ -8033,7 +8033,9 @@ describe("Chat project context selector", () => {
 
     expect(projectSelector).not.toBeNull();
     expect(projectSelector?.querySelector("[data-testid='chat-project-icon']")).toBeNull();
-    expect(container.querySelector("[data-testid='chat-agent-selector-chevron']")).toBeNull();
+    expect(
+      container.querySelector("[data-testid='chat-runtime-selector'] .lucide-chevron-down"),
+    ).not.toBeNull();
 
     act(() => {
       projectSelector?.dispatchEvent(new MouseEvent("click", { bubbles: true }));

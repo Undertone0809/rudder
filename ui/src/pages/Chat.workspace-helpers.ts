@@ -219,6 +219,7 @@ export function useChatDraftQueries(input: {
   selectedConversation: ChatConversation | null | undefined;
   activeAgentId: string | null;
   modelOverride?: string | null;
+  effortOverride?: string | null;
   activeProjectId: string;
   issueContextId: string | null;
   planMode: boolean;
@@ -234,10 +235,11 @@ export function useChatDraftQueries(input: {
     enabled: Boolean(input.selectedOrganizationId) && input.activeProjectId !== input.noProjectId,
   });
   const draftPreflightQuery = useQuery({
-    queryKey: ["chats", input.selectedOrganizationId ?? "__none__", "draft-preflight", input.activeAgentId ?? "__none__", input.modelOverride ?? "__agent_default__", input.activeProjectId, input.issueContextId ?? "__none__", input.planMode],
+    queryKey: ["chats", input.selectedOrganizationId ?? "__none__", "draft-preflight", input.activeAgentId ?? "__none__", input.modelOverride ?? "__agent_default__", input.effortOverride ?? "__agent_default__", input.activeProjectId, input.issueContextId ?? "__none__", input.planMode],
     queryFn: () => chatsApi.preflightDraft(input.selectedOrganizationId!, {
       preferredAgentId: input.activeAgentId!,
       modelOverride: input.modelOverride,
+      effortOverride: input.effortOverride,
       issueCreationMode: "manual_approval",
       planMode: input.planMode,
       contextLinks: input.contextLinks,
