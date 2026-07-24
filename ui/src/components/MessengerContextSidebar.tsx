@@ -52,7 +52,6 @@ import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
 import {
   useMainWorkbench,
-  useOrganizationMainWorkbench,
 } from "@/context/MainWorkbenchContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useOptionalSavedViewPromotion } from "@/context/SavedViewPromotionContext";
@@ -568,7 +567,6 @@ export function MessengerContextSidebar() {
   );
   const model = useMessengerModel({ splitIssues: splitIssueNotifications });
   const mainWorkbench = useMainWorkbench();
-  const workbench = useOrganizationMainWorkbench(model.selectedOrganizationId);
   const savedViewPromotion = useOptionalSavedViewPromotion();
   const { isMobile, setSidebarOpen } = useSidebar();
   const { confirm } = useDialog();
@@ -1251,6 +1249,8 @@ export function MessengerContextSidebar() {
     if (route.kind === "system") return route.threadKind;
     return null;
   }, [route, visibleThreadSummaries]);
+  const activeSavedViewId =
+    route.kind === "saved_view" ? route.savedViewId : null;
   const sortableThreadSectionKeys = useMemo(() => (
     organizedThreadSections
       .filter((section) => effectiveThreadOrganizationRule !== "custom" || section.key !== "custom:pinned")
@@ -2555,7 +2555,7 @@ export function MessengerContextSidebar() {
             pendingSavedViewPlacementItemKeys.has(itemKey);
           const row = (
             <MessengerSavedViewRow
-              active={workbench.activeTab?.savedViewId === entry.item.savedView.id}
+              active={activeSavedViewId === entry.item.savedView.id}
               currentGroupId={customGroup.id}
               density={threadDensity}
               entry={entry}
@@ -2573,7 +2573,7 @@ export function MessengerContextSidebar() {
             >
               {(savedDragHandleProps, dragging) => (
                 <MessengerSavedViewRow
-                  active={workbench.activeTab?.savedViewId === entry.item.savedView.id}
+                  active={activeSavedViewId === entry.item.savedView.id}
                   currentGroupId={customGroup.id}
                   density={threadDensity}
                   dragHandleProps={savedDragHandleProps}

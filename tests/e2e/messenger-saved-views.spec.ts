@@ -487,8 +487,14 @@ test.describe("Messenger Saved Views", () => {
       `a[href$="/messenger/saved/${savedView.savedView.id}"]`,
     ).locator("..");
     await expect(savedRow).toBeVisible();
+    await expect(savedRow).toHaveAttribute("data-active", "true");
     await expect(page.getByTestId("messenger-saved-views-section")).toHaveCount(0);
     await expect(savedRow.locator('[data-testid$="-unread-badge"]')).toHaveCount(0);
+
+    await page.getByRole("link", { name: "New chat" }).click();
+    await expect(page).toHaveURL(/\/messenger\/chat$/);
+    await expect(savedRow).toHaveAttribute("data-active", "false");
+    await expect(savedRow.locator("a")).not.toHaveAttribute("aria-current", "page");
   });
 
   test("explains that a global Side Panel view needs an existing group", async ({ page }) => {

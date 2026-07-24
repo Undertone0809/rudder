@@ -3555,7 +3555,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "approvals");
   });
 
-  it("derives Saved View selection from the active Main Workbench tab, not a session-only tab", () => {
+  it("derives Saved View selection from the current route, not the active Main Workbench tab", () => {
     installLocalStorage({
       "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
     });
@@ -3569,21 +3569,26 @@ describe("MessengerContextSidebar chat actions", () => {
       },
     ];
     workbenchActiveSavedViewId = "30000000-0000-4000-8000-000000000001";
+    messengerRoute = { kind: "chat", conversationId: "chat-a" };
 
     const { container } = renderSidebar();
     expect(
       container.querySelector('[data-testid="messenger-saved-view-entry-saved-a"]')
         ?.getAttribute("data-active"),
-    ).toBe("true");
+    ).toBe("false");
     cleanupSidebar();
 
     workbenchActiveSavedViewId = null;
     workbenchTabs = [{ savedViewId: null, viewInstanceId: "session-only" }];
+    messengerRoute = {
+      kind: "saved_view",
+      savedViewId: "30000000-0000-4000-8000-000000000001",
+    };
     const rerendered = renderSidebar().container;
     expect(
       rerendered.querySelector('[data-testid="messenger-saved-view-entry-saved-a"]')
         ?.getAttribute("data-active"),
-    ).toBe("false");
+    ).toBe("true");
   });
 
   it("registers pointer and keyboard sensors and preserves mixed entry order in one SortableContext", async () => {
