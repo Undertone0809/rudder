@@ -3409,6 +3409,8 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           host: rect(host),
           hostBottomLeftRadius: getComputedStyle(host).borderBottomLeftRadius,
           hostBottomRightRadius: getComputedStyle(host).borderBottomRightRadius,
+          hostTopLeftRadius: getComputedStyle(host).borderTopLeftRadius,
+          hostTopRightRadius: getComputedStyle(host).borderTopRightRadius,
           nestedCardCount: root.querySelectorAll(".workspace-main-card").length,
           panel: rect(panel),
           root: rect(root),
@@ -3422,16 +3424,18 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       const withinTwoPixels = (left, right) => Math.abs(left - right) <= 2;
       assert.equal(fullBleed.nestedCardCount, 0, "Main Browser must not be nested in another workspace card");
       assert.ok(
-        fullBleed.rootBorderRadius === "0px" || fullBleed.rootBorderRadius === "",
-        `Main Workbench must leave its shell backdrop transparent (received radius ${fullBleed.rootBorderRadius})`,
+        Number.parseFloat(fullBleed.rootBorderRadius) > 0,
+        `Main Workbench must retain its transparent rounded boundary (received radius ${fullBleed.rootBorderRadius})`,
       );
       assert.equal(fullBleed.rootBackgroundAlpha, 0, "Main Workbench shell backdrop must be transparent");
       assert.equal(fullBleed.tablistBackgroundAlpha, 0, "Main Workbench tab strip must be transparent");
       assert.equal(fullBleed.rootPadding, "0px", "Main Workbench must not inset the Browser surface");
       assert.ok(
-        Number.parseFloat(fullBleed.hostBottomLeftRadius) > 0
+        Number.parseFloat(fullBleed.hostTopLeftRadius) > 0
+          && Number.parseFloat(fullBleed.hostTopRightRadius) > 0
+          && Number.parseFloat(fullBleed.hostBottomLeftRadius) > 0
           && Number.parseFloat(fullBleed.hostBottomRightRadius) > 0,
-        "Main Browser runtime host must clip its visible content to the workspace bottom corners",
+        "Main Browser runtime host must clip its visible content to every workspace corner",
       );
       assert.equal(
         fullBleed.browserToolbarFlowsDirectlyIntoContent,

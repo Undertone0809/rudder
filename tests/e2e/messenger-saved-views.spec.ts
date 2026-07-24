@@ -223,6 +223,12 @@ test.describe("Messenger Saved Views", () => {
     await expect(mainWorkbench).toBeVisible();
     await expect(mainWorkbench).not.toHaveClass(/workspace-main-card/);
     await expect(mainWorkbench).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(mainWorkbench).not.toHaveCSS("border-radius", "0px");
+    const mainRuntimeHost = page.locator(
+      '[data-testid="live-surface-runtime-host"][data-owner-id^="main:"]',
+    );
+    await expect(mainRuntimeHost).not.toHaveCSS("border-top-left-radius", "0px");
+    await expect(mainRuntimeHost).not.toHaveCSS("border-top-right-radius", "0px");
     await expect(mainWorkbench.getByRole("tablist")).toHaveCSS(
       "background-color",
       "rgba(0, 0, 0, 0)",

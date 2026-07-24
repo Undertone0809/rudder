@@ -516,7 +516,7 @@ function tabs() {
 }
 
 describe("MessengerMainWorkbench", () => {
-  it("renders a transparent full-bleed workbench without nesting another Browser card", () => {
+  it("renders a transparent rounded workbench without nesting another Browser card", () => {
     renderWorkbench();
     openKinds(["browser", "local_app", "library_document", "automation"]);
 
@@ -525,7 +525,7 @@ describe("MessengerMainWorkbench", () => {
     )!;
     expect(workbench.querySelectorAll('[role="tablist"]')).toHaveLength(1);
     expect(workbench.className).not.toContain("workspace-main-card");
-    expect(workbench.className).not.toMatch(/\brounded/);
+    expect(workbench.className).toContain("rounded-[var(--desktop-workspace-radius)]");
     expect(workbench.className).not.toMatch(/\bp-[1-9]/);
     expect(workbench.querySelector('[data-testid="browser-main-card"]')).toBeNull();
     expect(workbench.querySelector('[data-testid="messenger-main-live-surface-anchor"]'))

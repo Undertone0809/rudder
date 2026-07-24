@@ -207,7 +207,7 @@ describe("LiveSurfaceRuntimeProvider", () => {
     expect(host?.getAttribute("data-owner-id")).toBe("main:org-a:view-a");
     expect(host?.style.left).toBe("300px");
     expect(host?.style.width).toBe("900px");
-    expect(host?.className).toContain("rounded-b-[var(--desktop-workspace-radius)]");
+    expect(host?.className).toContain("rounded-[var(--desktop-workspace-radius)]");
   });
 
   it("claims an active Side owner before its opening animation has geometry", () => {

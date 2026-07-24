@@ -814,7 +814,7 @@ export function LiveSurfaceRuntimeLayer() {
             inert={inert ? true : undefined}
             className={`fixed flex min-h-0 flex-col overflow-hidden bg-[color:var(--surface-panel)] ${
               owner?.ownerId.startsWith("main:")
-                ? "rounded-b-[var(--desktop-workspace-radius)]"
+                ? "rounded-[var(--desktop-workspace-radius)]"
                 : ""
             }`}
             style={{
