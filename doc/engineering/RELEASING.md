@@ -98,14 +98,17 @@ The public docs site uses separate staging and production channels:
   runs automatically on `main` pushes that touch the docs tree or docs deployment
   workflow.
 - `docs.rudderhq.dev` is production. It does not auto-follow `main`.
-  Publish it manually with
+  An approved stable release invokes
   [`.github/workflows/docs-production.yml`](../.github/workflows/docs-production.yml)
-  from the Actions tab.
+  against its immutable `vX.Y.Z` tag after the npm, GitHub Release, and Desktop
+  asset steps succeed. Other docs changes still publish manually from the
+  Actions tab.
 
 Production docs publishes create a git tag in the form `docs/vYYYY.MM.DD`, for
 example `docs/v2026.05.27`. If the default date tag already exists for a
 different commit, pass a more specific `tag_name` input such as
-`docs/v2026.05.27.2`.
+`docs/v2026.05.27.2`. A stable-release docs deployment uses the immutable,
+versioned marker `docs/release/vX.Y.Z` instead.
 
 Canaries cover verification, npm, a traceability tag, and Desktop portable assets.
 
@@ -115,6 +118,10 @@ Canaries cover verification, npm, a traceability tag, and Desktop portable asset
 - stables publish from an explicitly chosen source ref
 - tags point at the original source commit, not a generated release commit
 - stable notes are always `releases/vX.Y.Z.md`
+- stable public changelog entries are always present in both `docs/releases.mdx`
+  and `docs/zh/releases.mdx`
+- stable docs production is promoted from the matching immutable `vX.Y.Z` tag
+  only after explicit docs-domain authorization
 - canary GitHub Releases are only for traceability and Desktop portable assets
 - canaries never require changelog generation
 
@@ -170,19 +177,28 @@ Inputs:
   - leave empty for dry runs
   - after explicit production authorization, enter `PUBLISH STABLE` for the
     real stable release
+- `confirm_docs`
+  - leave empty for dry runs
+  - after separately approving the `docs.rudderhq.dev` deployment for this
+    exact stable source, enter `PUBLISH DOCS`
 
 Before running stable:
 
 1. pick the canary commit or tag you trust
 2. confirm the committed public package version is the stable version you want to ship
-3. create or update `releases/vX.Y.Z.md` on that source ref
+3. create or update `releases/vX.Y.Z.md`, `docs/releases.mdx`, and
+   `docs/zh/releases.mdx` on that source ref
 4. confirm that exact source commit has a successful `CI` run
 5. run the workflow with `dry_run: true`
 6. present the exact source ref, version, checks, targets, and rollback point;
    obtain explicit production approval
-7. run the workflow with `dry_run: false` and `confirm_stable: PUBLISH STABLE`
-8. after stable is published, confirm the workflow directly committed the
-   next-patch base to `main` and its explicitly dispatched CI succeeded
+7. obtain a separate explicit approval to deploy that exact changelog to
+   `docs.rudderhq.dev`
+8. run the workflow with `dry_run: false`, `confirm_stable: PUBLISH STABLE`,
+   and `confirm_docs: PUBLISH DOCS`
+9. after stable and the docs deployment are both published, confirm the
+   workflow directly committed the next-patch base to `main` and its explicitly
+   dispatched CI succeeded
 
 Example:
 
@@ -199,6 +215,8 @@ The workflow:
 - creates git tag `vX.Y.Z`
 - creates or updates the GitHub Release from `releases/vX.Y.Z.md`
 - starts the desktop release workflow for `vX.Y.Z`
+- invokes docs production from the same `vX.Y.Z` source and verifies the public
+  docs domains before advancing the next release base
 - deletes obsolete `canary/v*` GitHub Releases and git tags whose canary base is
   the released stable version or older, while preserving the current npm
   `@rudderhq/cli@canary` target if the next-base canary has not been published
@@ -206,8 +224,8 @@ The workflow:
 - commits the next canary/stable base directly to `main` with `[skip release]`
   and dispatches the trusted CI workflow with the immutable bump SHA, unless
   `main` already advanced
-- records the announcement channel, and publishes docs production when website
-  content is part of the release scope
+- makes the website changelog deployment a required stable-release surface;
+  canary releases never deploy it
 
 Users install stable Rudder with:
 
@@ -286,6 +304,12 @@ The public docs changelog must be updated in the same stable-release pass:
 
 Canaries do not get changelog files.
 
+`./scripts/release.sh stable --preflight` fails closed unless all three stable
+release narratives exist on the selected source: `releases/vX.Y.Z.md`, the
+English `## vX.Y.Z` entry, and the Chinese `## vX.Y.Z` entry. The public entries
+must include the version's GitHub Release link and the `New Features`,
+`Improvements`, and `Bug Fixes` sections in that order.
+
 Use this body shape for `releases/vX.Y.Z.md` because GitHub already renders the
 release title, tag, author, and publish date around the notes:
 
@@ -346,6 +370,14 @@ The repo intentionally does not run this through GitHub Actions because:
 - canaries are too frequent
 - stable notes are the only public narrative surface that needs LLM help
 - maintainer LLM tokens should not live in Actions
+
+If stable npm publication succeeds but the docs-production child workflow
+fails, do not publish the same npm version again. Fix the docs deployment and
+use **Re-run failed jobs** for the original Release workflow so it reuses the
+existing `vX.Y.Z` tag. The next-release-base job remains blocked until the
+matching public changelog deploy passes. For historical releases such as
+`v0.5.1`, which predate this automation, run `Docs production` manually from
+the immutable stable tag after explicit docs-domain approval.
 
 ## Smoke Testing
 

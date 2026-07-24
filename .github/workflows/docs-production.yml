@@ -15,6 +15,20 @@ on:
         description: "Enter only after explicit operator approval; type docs.rudderhq.dev"
         required: true
         type: string
+  workflow_call:
+    inputs:
+      source_ref:
+        description: "Immutable stable release tag or commit to publish"
+        required: true
+        type: string
+      tag_name:
+        description: "Stable docs deployment tag"
+        required: true
+        type: string
+      release_docs_approved:
+        description: "Set only by the stable release workflow after its separate docs confirmation"
+        required: true
+        type: boolean
 
 permissions:
   contents: write
@@ -44,7 +58,13 @@ jobs:
       - name: Confirm production target
         env:
           CONFIRM_DOMAIN: ${{ inputs.confirm_domain }}
-        run: test "$CONFIRM_DOMAIN" = "$DOCS_PRODUCTION_DOMAIN"
+          RELEASE_DOCS_APPROVED: ${{ inputs.release_docs_approved }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_call" ]; then
+            test "$RELEASE_DOCS_APPROVED" = "true"
+          else
+            test "$CONFIRM_DOMAIN" = "$DOCS_PRODUCTION_DOMAIN"
+          fi
 
       - uses: actions/checkout@v6
         with:
@@ -80,7 +100,7 @@ jobs:
             tag="docs/v$(TZ=Asia/Shanghai date +%Y.%m.%d)"
           fi
 
-          if [[ ! "$tag" =~ ^docs/v[0-9]{4}\.[0-9]{2}\.[0-9]{2}([.-][A-Za-z0-9._-]+)?$ ]]; then
+          if [[ ! "$tag" =~ ^docs/v[0-9]{4}\.[0-9]{2}\.[0-9]{2}([.-][A-Za-z0-9._-]+)?$ && ! "$tag" =~ ^docs/release/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid docs tag: $tag" >&2
             exit 1
           fi

@@ -20,6 +20,11 @@ on:
         required: false
         default: ""
         type: string
+      confirm_docs:
+        description: "For a real stable publish, enter PUBLISH DOCS only after explicit docs.rudderhq.dev deployment approval"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -46,7 +51,10 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
         env:
           CONFIRM_STABLE: ${{ inputs.confirm_stable }}
-        run: test "$CONFIRM_STABLE" = "PUBLISH STABLE"
+          CONFIRM_DOCS: ${{ inputs.confirm_docs }}
+        run: |
+          test "$CONFIRM_STABLE" = "PUBLISH STABLE"
+          test "$CONFIRM_DOCS" = "PUBLISH DOCS"
 
       - name: Require release repository safeguards
         if: github.event_name == 'workflow_dispatch'
@@ -315,12 +323,28 @@ jobs:
             --remote origin \
             --stable-version "${{ steps.publish.outputs.version }}"
 
+  stable-docs:
+    name: Publish stable changelog to docs production
+    needs:
+      - preflight
+      - stable
+    if: needs.stable.result == 'success'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/docs-production.yml
+    with:
+      source_ref: v${{ needs.stable.outputs.version }}
+      tag_name: docs/release/v${{ needs.stable.outputs.version }}
+      release_docs_approved: true
+    secrets: inherit
+
   next-release-base:
     name: Advance next release base
     needs:
       - preflight
       - stable
-    if: needs.stable.result == 'success'
+      - stable-docs
+    if: needs.stable.result == 'success' && needs.stable-docs.result == 'success'
     permissions:
       actions: write
       contents: write
