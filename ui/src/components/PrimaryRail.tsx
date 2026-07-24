@@ -130,7 +130,7 @@ function RailNavItem({
         cn(
           "relative z-10 flex min-h-[56px] w-[var(--primary-rail-item-width,66px)] translate-x-[var(--primary-rail-item-shift,0.25rem)] flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
           (active ?? isActive)
-            ? "text-[#def4eb] dark:text-[#def4eb]"
+            ? "text-[color:var(--sidebar-foreground)] dark:text-[#def4eb]"
             : [
               "text-[color:color-mix(in_oklab,var(--sidebar-foreground)_86%,var(--sidebar))]",
               "hover:bg-[color:color-mix(in_oklab,var(--sidebar)_58%,white)]",
@@ -171,7 +171,7 @@ function RailNavItem({
           </span>
         ) : null}
       </span>
-      <span className="max-w-full text-center whitespace-normal [overflow-wrap:anywhere]">{label}</span>
+      <span className="block w-full min-w-0 truncate text-center" title={label}>{label}</span>
     </NavLink>
   );
 }

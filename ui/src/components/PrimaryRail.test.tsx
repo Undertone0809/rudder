@@ -505,7 +505,7 @@ describe("PrimaryRail active motion indicator", () => {
   it("shows pinned Local App Saved Views after the fixed destinations", async () => {
     mockState.pinnedLocalApps = [{
       id: "saved-local-a",
-      title: "MKT dashboard",
+      title: "MKT dashboard with a very long project name",
       targetPayload: {
         kind: "local_app",
         desktopInstallationId: "installation-a",
@@ -518,10 +518,12 @@ describe("PrimaryRail active motion indicator", () => {
     await renderPrimaryRail();
 
     const pinnedLink = Array.from(document.querySelectorAll("a"))
-      .find((link) => link.textContent?.includes("MKT dashboard"));
+      .find((link) => link.textContent?.includes("MKT dashboard with a very long project name"));
     expect(pinnedLink?.getAttribute("href")).toBe("/messenger/saved/saved-local-a");
     expect(pinnedLink?.querySelector('[data-testid="primary-rail-local-app-icon"]')).not.toBeNull();
-    expect(pinnedLink?.lastElementChild?.className).toContain("[overflow-wrap:anywhere]");
+    expect(pinnedLink?.lastElementChild?.className).toContain("truncate");
+    expect(pinnedLink?.lastElementChild?.getAttribute("title"))
+      .toBe("MKT dashboard with a very long project name");
     expect(document.querySelector(".motion-rail-nav")?.className).toContain("overflow-y-auto");
   });
 
@@ -546,6 +548,8 @@ describe("PrimaryRail active motion indicator", () => {
     const pinned = links.find((link) => link.textContent?.includes("MKT dashboard"));
     expect(messenger?.hasAttribute("aria-current")).toBe(false);
     expect(pinned?.getAttribute("aria-current")).toBe("page");
+    expect(pinned?.className).toContain("var(--sidebar-foreground)");
+    expect(pinned?.className).toContain("dark:text-[#def4eb]");
     expect(pinned?.querySelector('[data-testid="primary-rail-pinned-active-indicator"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="primary-rail-active-indicator"]')).toBeNull();
   });
