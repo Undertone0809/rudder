@@ -170,6 +170,14 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "ui/src/lib/main-workbench-state.ts",
+      "lines": 1501,
+      "owner": "collaboration-ui",
+      "rationale": "Main workbench restoration, ownership, and promotion state were consolidated while the Messenger workbench contract stabilizes.",
+      "target": "Extract restoration and promotion policies into focused modules and reduce the state coordinator below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
       "path": "ui/src/pages/Costs.tsx",
       "lines": 1669,
       "owner": "costs-ui",
