@@ -293,7 +293,7 @@ export function TranscriptChatToolActionRow({
         : block.status === "running"
           ? "Waiting for result..."
           : null;
-  const canExpand = semantic.actionKind !== "skill"
+  const canExpand = semantic.category !== "skill"
     && Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
   const [open, setOpen] = useState(inline || (defaultOpenOnError && block.status === "error"));
   const duration = quiet ? null : formatTranscriptDuration(block.ts, block.endTs);

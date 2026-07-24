@@ -227,7 +227,10 @@ function collectResponseAnnotationTextRects(
     }
     const range = document.createRange();
     range.selectNodeContents(node);
-    rects.push(...Array.from(range.getClientRects()).filter(
+    const nodeRects = typeof range.getClientRects === "function"
+      ? Array.from(range.getClientRects())
+      : [];
+    rects.push(...nodeRects.filter(
       (rect) => rect.width > 0 && rect.height > 0,
     ));
   }

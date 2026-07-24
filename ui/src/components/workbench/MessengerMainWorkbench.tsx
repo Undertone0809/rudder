@@ -255,11 +255,12 @@ function LocalAppTabActions({
 }) {
   const queryClient = useQueryClient();
   const localApps = readDesktopShell()?.localApps;
+  const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const definitionsQuery = useQuery({
     queryKey: queryKeys.localApps.definitions,
     queryFn: () => localApps!.list(),
-    enabled: Boolean(localApps?.supported),
+    enabled: Boolean(localApps?.supported && (menuOpen || settingsOpen)),
     staleTime: 1_000,
   });
   const definition = definitionsQuery.data?.find(
@@ -268,7 +269,7 @@ function LocalAppTabActions({
   const statusQuery = useQuery({
     queryKey: queryKeys.localApps.status(target.localBindingId),
     queryFn: () => localApps!.status(definition!.id),
-    enabled: Boolean(localApps?.supported && definition),
+    enabled: Boolean(localApps?.supported && settingsOpen && definition),
   });
   const editable = statusQuery.data?.status === "stopped"
     || statusQuery.data?.status === "failed";
@@ -299,7 +300,11 @@ function LocalAppTabActions({
 
   return (
     <>
-      <DropdownMenu modal={false}>
+      <DropdownMenu
+        modal={false}
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
+      >
         <DropdownMenuTrigger asChild>
           <button
             type="button"
@@ -312,7 +317,7 @@ function LocalAppTabActions({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
           <DropdownMenuItem
-            disabled={!definition}
+            disabled={!localApps?.supported}
             onSelect={() => {
               updateMutation.reset();
               setSettingsOpen(true);
