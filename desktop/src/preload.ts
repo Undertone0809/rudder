@@ -264,8 +264,14 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:set-deferred-update-prompt-ready", Boolean(ready)) as Promise<void>,
   setSidePanelCloseShortcutActive: (active: boolean) =>
     ipcRenderer.invoke("desktop:set-side-panel-close-shortcut-active", Boolean(active)) as Promise<void>,
-  setBrowserSurfaceShortcutActive: (active: boolean) =>
-    ipcRenderer.invoke("desktop:set-browser-surface-shortcut-active", Boolean(active)) as Promise<void>,
+  setBrowserSurfaceShortcutActive: (
+    active: boolean,
+    owner?: "main_workbench" | "side_panel",
+  ) => ipcRenderer.invoke(
+    "desktop:set-browser-surface-shortcut-active",
+    Boolean(active),
+    owner,
+  ) as Promise<void>,
   onBrowserShortcut: (
     listener: (request: {
       action: DesktopBrowserOwnerShortcutAction;
@@ -309,6 +315,15 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.on("desktop:close-side-panel-active-tab", wrapped);
     return () => {
       ipcRenderer.removeListener("desktop:close-side-panel-active-tab", wrapped);
+    };
+  },
+  onOpenEmptySidePanel: (listener: () => void) => {
+    const wrapped = () => {
+      listener();
+    };
+    ipcRenderer.on("desktop:open-empty-side-panel", wrapped);
+    return () => {
+      ipcRenderer.removeListener("desktop:open-empty-side-panel", wrapped);
     };
   },
   onDeferredUpdatePrompt: (listener: (prompt: DesktopDeferredUpdatePrompt) => void) => {
@@ -434,12 +449,16 @@ declare global {
       onUpdateProgress(listener: (event: DesktopUpdateProgressEvent) => void): () => void;
       setDeferredUpdatePromptReady(ready: boolean): Promise<void>;
       setSidePanelCloseShortcutActive(active: boolean): Promise<void>;
-      setBrowserSurfaceShortcutActive(active: boolean): Promise<void>;
+      setBrowserSurfaceShortcutActive(
+        active: boolean,
+        owner?: "main_workbench" | "side_panel",
+      ): Promise<void>;
       onBrowserShortcut(listener: (request: {
         action: DesktopBrowserOwnerShortcutAction;
         sourceWebContentsId?: number;
       }) => void): () => void;
       onCloseSidePanelActiveTab(listener: () => void): () => void;
+      onOpenEmptySidePanel(listener: () => void): () => void;
       onDeferredUpdatePrompt(listener: (prompt: DesktopDeferredUpdatePrompt) => void): () => void;
       respondDeferredUpdatePrompt(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
       getSystemPermissions(): Promise<DesktopSystemPermissions>;

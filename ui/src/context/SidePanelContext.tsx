@@ -635,6 +635,12 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   }, [currentContextState.activeKey, hasActiveClosableTab, requestCloseTarget]);
 
   useEffect(() => {
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.onOpenEmptySidePanel) return undefined;
+    return desktopShell.onOpenEmptySidePanel(openEmpty);
+  }, [openEmpty]);
+
+  useEffect(() => {
     if (!open || !currentContextState.activeKey) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (belongsToMainWorkbenchSurface(event.target)) return;

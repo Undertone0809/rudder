@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isSidePanelCloseShortcutInput,
+  isSidePanelToggleShortcutInput,
   resolveProtectedDesktopShortcutRoute,
 } from "./side-panel-close-shortcut.js";
 
@@ -52,6 +53,7 @@ describe("side panel close shortcut input", () => {
       sidePanelCloseActive: false,
       browserSurfaceActive: true,
       operatorBrowserGuest: false,
+      browserSurfaceOwner: "main_workbench",
     }, "darwin")).toBeNull();
   });
 
@@ -61,5 +63,72 @@ describe("side panel close shortcut input", () => {
       browserSurfaceActive: false,
       operatorBrowserGuest: true,
     }, "darwin")).toEqual({ kind: "close_browser_owner_tab" });
+  });
+
+  it("routes Cmd/Ctrl+T to open an empty Side Panel without changing the close route", () => {
+    expect(isSidePanelToggleShortcutInput({ key: "t", meta: true }, "darwin")).toBe(true);
+    expect(isSidePanelToggleShortcutInput({ code: "KeyT", control: true }, "win32")).toBe(true);
+    expect(isSidePanelToggleShortcutInput({ key: "t", control: true }, "darwin")).toBe(false);
+    expect(isSidePanelToggleShortcutInput({ key: "t", meta: true, shift: true }, "darwin")).toBe(false);
+    expect(resolveProtectedDesktopShortcutRoute({ key: "t", meta: true }, {
+      sidePanelCloseActive: false,
+      browserSurfaceActive: false,
+      operatorBrowserGuest: false,
+    }, "darwin")).toEqual({ kind: "open_empty_side_panel" });
+    expect(resolveProtectedDesktopShortcutRoute({ key: "t", meta: true }, {
+      sidePanelCloseActive: false,
+      browserSurfaceActive: true,
+      operatorBrowserGuest: false,
+      browserSurfaceOwner: "main_workbench",
+    }, "darwin")).toEqual({ kind: "browser", action: "new_tab" });
+    expect(resolveProtectedDesktopShortcutRoute({ key: "t", meta: true }, {
+      sidePanelCloseActive: false,
+      browserSurfaceActive: false,
+      operatorBrowserGuest: true,
+      browserSurfaceOwner: "main_workbench",
+    }, "darwin")).toEqual({ kind: "browser", action: "new_tab" });
+    expect(resolveProtectedDesktopShortcutRoute({ key: "w", meta: true }, {
+      sidePanelCloseActive: true,
+      browserSurfaceActive: false,
+      operatorBrowserGuest: false,
+    }, "darwin")).toEqual({ kind: "close_side_panel_tab" });
+  });
+
+  it("opens the Side Panel from Side Browser and Local App surfaces while preserving Main Browser new-tab", () => {
+    const sideBrowserGuest = {
+      sidePanelCloseActive: false,
+      browserSurfaceActive: false,
+      operatorBrowserGuest: true,
+      browserSurfaceOwner: "side_panel",
+    } as const;
+    const sideBrowserRenderer = {
+      ...sideBrowserGuest,
+      operatorBrowserGuest: false,
+      browserSurfaceActive: true,
+    } as const;
+    const sideLocalAppGuest = {
+      ...sideBrowserGuest,
+      browserSurfaceOwner: "side_panel",
+    } as const;
+    const mainBrowserGuest = {
+      ...sideBrowserGuest,
+      browserSurfaceOwner: "main_workbench",
+    } as const;
+    const mainBrowserRenderer = {
+      ...mainBrowserGuest,
+      operatorBrowserGuest: false,
+      browserSurfaceActive: true,
+    } as const;
+
+    expect(resolveProtectedDesktopShortcutRoute({ key: "t", meta: true }, sideBrowserGuest, "darwin"))
+      .toEqual({ kind: "open_empty_side_panel" });
+    expect(resolveProtectedDesktopShortcutRoute({ key: "t", meta: true }, sideBrowserRenderer, "darwin"))
+      .toEqual({ kind: "open_empty_side_panel" });
+    expect(resolveProtectedDesktopShortcutRoute({ key: "t", meta: true }, sideLocalAppGuest, "darwin"))
+      .toEqual({ kind: "open_empty_side_panel" });
+    expect(resolveProtectedDesktopShortcutRoute({ key: "t", meta: true }, mainBrowserGuest, "darwin"))
+      .toEqual({ kind: "browser", action: "new_tab" });
+    expect(resolveProtectedDesktopShortcutRoute({ key: "t", meta: true }, mainBrowserRenderer, "darwin"))
+      .toEqual({ kind: "browser", action: "new_tab" });
   });
 });

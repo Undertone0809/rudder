@@ -10,7 +10,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
-function focusedLiveRuntimeId() {
+function focusedLiveRuntime() {
   const host = document.activeElement
     ?.closest<HTMLElement>("[data-runtime-id]");
   if (
@@ -19,7 +19,18 @@ function focusedLiveRuntimeId() {
     || host.hasAttribute("inert")
     || host.getAttribute("aria-hidden") === "true"
   ) return null;
-  return host.dataset.runtimeId ?? null;
+  const runtimeId = host.dataset.runtimeId;
+  if (!runtimeId) return null;
+  return {
+    runtimeId,
+    owner: host.dataset.ownerId?.startsWith("main:")
+      ? "main_workbench" as const
+      : "side_panel" as const,
+  };
+}
+
+function focusedLiveRuntimeId() {
+  return focusedLiveRuntime()?.runtimeId ?? null;
 }
 
 export function DesktopBrowserLinkBridge() {
@@ -123,15 +134,19 @@ export function DesktopBrowserLinkBridge() {
     if (!setBrowserSurfaceShortcutActive || !liveSurfaceRuntime) return undefined;
     let disposed = false;
     let active = false;
+    let lastOwner: "main_workbench" | "side_panel" | undefined;
     const syncScope = () => {
       if (disposed) return;
-      const runtimeId = focusedLiveRuntimeId();
+      const focusedRuntime = focusedLiveRuntime();
+      const runtimeId = focusedRuntime?.runtimeId ?? null;
       const nextActive = runtimeId
         ? liveSurfaceRuntime.getRuntimeTarget(runtimeId)?.kind === "browser"
         : false;
-      if (active === nextActive) return;
+      const owner = focusedRuntime?.owner;
+      if (active === nextActive && owner === lastOwner) return;
       active = nextActive;
-      void setBrowserSurfaceShortcutActive(nextActive).catch(() => undefined);
+      lastOwner = owner;
+      void setBrowserSurfaceShortcutActive(nextActive, owner).catch(() => undefined);
     };
     const queueScopeSync = () => queueMicrotask(syncScope);
     document.addEventListener("focusin", queueScopeSync, true);
@@ -141,7 +156,6 @@ export function DesktopBrowserLinkBridge() {
       disposed = true;
       document.removeEventListener("focusin", queueScopeSync, true);
       document.removeEventListener("focusout", queueScopeSync, true);
-      if (!active) return;
       void setBrowserSurfaceShortcutActive(false).catch(() => undefined);
     };
   }, [liveSurfaceRuntime]);
