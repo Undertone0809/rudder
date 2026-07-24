@@ -15,6 +15,7 @@ let chatList: any[];
 let agentList: any[];
 let projectList: any[];
 let customGroupList: any[];
+let savedViewPage: any;
 let queryOptions: Array<{ queryKey?: unknown; enabled?: boolean }>;
 let localStorageValues: Record<string, string>;
 let activeGeneratingChatIds: Set<string>;
@@ -36,6 +37,7 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "agents") return { data: agentList };
     if (queryKey[0] === "projects") return { data: projectList };
     if (queryKey[0] === "messenger" && queryKey[2] === "groups") return { data: { groups: customGroupList } };
+    if (queryKey[0] === "messenger" && queryKey[2] === "saved-views") return { data: savedViewPage };
     return { data: chatList };
   },
 }));
@@ -167,6 +169,16 @@ describe("MessengerContextSidebar", () => {
       },
     ];
     customGroupList = [];
+    savedViewPage = {
+      items: [],
+      pageInfo: {
+        limit: 50,
+        offset: 0,
+        total: 0,
+        hasMore: false,
+        nextOffset: null,
+      },
+    };
     projectList = [];
     agentList = [
       {
@@ -828,6 +840,149 @@ describe("MessengerContextSidebar", () => {
     expect(selectedHtml).toContain('data-active="true"');
     expect(selectedHtml).toContain('aria-current="page"');
   });
+
+  it("renders independently listed ungrouped Saved Views as top-level rows", () => {
+    localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "custom" });
+    localStorageValues["rudder.messengerDefaultThreadOrder:org-1:anonymous"] = JSON.stringify([
+      "saved-view:saved-loose",
+      "chat:chat-1",
+    ]);
+    savedViewPage = {
+      items: [
+        {
+          id: "saved-grouped",
+          orgId: "org-1",
+          userId: "local-board",
+          targetKind: "browser",
+          targetPayload: {
+            kind: "browser",
+            tabId: "tab-grouped",
+            url: "https://example.com/grouped",
+            viewInstanceId: "view-grouped",
+          },
+          resourceKey: "browser:grouped",
+          instanceId: "view-grouped",
+          canonicalResourceKey: "browser:grouped",
+          clientMutationId: null,
+          title: "Already grouped",
+          subtitle: null,
+          favicon: null,
+          sortOrder: 0,
+          hiddenAt: null,
+          createdAt: "2026-04-11T08:00:00.000Z",
+          updatedAt: "2026-04-11T08:00:00.000Z",
+        },
+        {
+          id: "saved-loose",
+          orgId: "org-1",
+          userId: "local-board",
+          targetKind: "library_file",
+          targetPayload: {
+            kind: "library_file",
+            filePath: "launch.md",
+            viewInstanceId: "view-loose",
+          },
+          resourceKey: "library:launch.md",
+          instanceId: "view-loose",
+          canonicalResourceKey: "library:launch.md",
+          clientMutationId: null,
+          title: "Loose launch notes",
+          subtitle: "launch.md",
+          favicon: null,
+          sortOrder: 1,
+          hiddenAt: null,
+          createdAt: "2026-04-11T08:00:00.000Z",
+          updatedAt: "2026-04-11T08:00:00.000Z",
+        },
+      ],
+      pageInfo: {
+        limit: 50,
+        offset: 0,
+        total: 2,
+        hasMore: false,
+        nextOffset: null,
+      },
+    };
+    customGroupList = [{
+      id: "group-saved",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Grouped",
+      icon: "folder::amber",
+      pinnedAt: null,
+      sortOrder: 0,
+      collapsed: false,
+      createdAt: "2026-04-11T08:00:00.000Z",
+      updatedAt: "2026-04-11T08:00:00.000Z",
+      entries: [{
+        id: "entry-grouped",
+        itemKey: "saved-view:saved-grouped",
+        sortOrder: 0,
+        item: {
+          type: "saved_view",
+          itemKey: "saved-view:saved-grouped",
+          title: "Already grouped",
+          savedView: savedViewPage.items[0],
+        },
+      }],
+    }];
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.match(/Loose launch notes/g)?.length).toBeGreaterThan(0);
+    expect(html.match(/Already grouped/g)?.length).toBeGreaterThan(0);
+    expect(html.indexOf('data-messenger-saved-view-id="saved-loose"'))
+      .toBeLessThan(html.indexOf('data-messenger-thread-key="chat:chat-1"'));
+    expect(html).toContain('data-messenger-saved-view-id="saved-loose"');
+    expect(queryOptions).toContainEqual(expect.objectContaining({
+      queryKey: ["messenger", "org-1", "saved-views", "visible", 50, 0],
+      enabled: true,
+    }));
+  });
+
+  for (const rule of ["project", "agent", "kind", "attention"] as const) {
+    it(`keeps a loose Saved View visible while organizing threads by ${rule}`, () => {
+      localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({
+        "org-1": rule,
+      });
+      savedViewPage = {
+        items: [{
+          id: `saved-loose-${rule}`,
+          orgId: "org-1",
+          userId: "local-board",
+          targetKind: "library_file",
+          targetPayload: {
+            kind: "library_file",
+            filePath: `${rule}.md`,
+            viewInstanceId: `view-${rule}`,
+          },
+          resourceKey: `library:${rule}.md`,
+          instanceId: `view-${rule}`,
+          canonicalResourceKey: `library:${rule}.md`,
+          clientMutationId: null,
+          title: `Loose ${rule} notes`,
+          subtitle: `${rule}.md`,
+          favicon: null,
+          sortOrder: 0,
+          hiddenAt: null,
+          createdAt: "2026-04-11T08:00:00.000Z",
+          updatedAt: "2026-04-11T08:00:00.000Z",
+        }],
+        pageInfo: {
+          limit: 50,
+          offset: 0,
+          total: 1,
+          hasMore: false,
+          nextOffset: null,
+        },
+      };
+
+      const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+      expect(html).toContain(`Loose ${rule} notes`);
+      expect(html).toContain(`data-messenger-saved-view-id="saved-loose-${rule}"`);
+    });
+  }
 
   for (const rule of ["agent", "kind", "attention"] as const) {
     it(`keeps Saved Views in their original groups while ${rule} organizes only threads`, () => {

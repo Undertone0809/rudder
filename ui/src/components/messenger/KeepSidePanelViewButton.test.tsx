@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
+import { queryKeys } from "@/lib/queryKeys";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -274,6 +275,43 @@ describe("KeepSidePanelViewButton mutation intents", () => {
     await clickAndWait(groupButton(groupB.name), 2);
 
     expect(mutationIdAt(1)).not.toBe(mutationIdAt(0));
+  });
+
+  it("keeps a global Side Panel view loose in the Messenger sidebar", async () => {
+    mockKeepSavedView.mockResolvedValue({
+      ...savedViewResult,
+      group: null,
+    });
+    renderButton({
+      contextKey: "organization:global",
+      target: {
+        kind: "library_file",
+        filePath: "docs/spec.md",
+        label: "Spec",
+        viewInstanceId: "file-view-1",
+      },
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host?.textContent).toContain("Messenger sidebar"));
+    });
+    const sidebar = Array.from(host!.querySelectorAll("button"))
+      .find((button) => button.textContent === "Messenger sidebar") as HTMLButtonElement;
+    const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+
+    await clickAndWait(sidebar, 1);
+
+    expect(mockKeepSavedView).toHaveBeenCalledWith(
+      organizationId,
+      expect.objectContaining({ placement: { kind: "loose" } }),
+    );
+    expect(mockPushToast).toHaveBeenCalledWith({
+      title: "Moved to Messenger",
+      body: "Moved to Messenger sidebar.",
+      tone: "success",
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["messenger", organizationId, "saved-views"],
+    });
   });
 
   it("bounds failed intent retention and evicts the oldest retry id", async () => {

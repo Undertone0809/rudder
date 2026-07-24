@@ -673,6 +673,56 @@ describe("MessengerMainWorkbench", () => {
     );
   });
 
+  it("keeps a session Browser loose in the Messenger sidebar", async () => {
+    listCustomGroups.mockResolvedValue({
+      groups: [group("group-a", "Research")],
+    });
+    renderWorkbench();
+    const browser = target("browser", "loose-view") as Extract<
+      MainWorkbenchTarget,
+      { kind: "browser" }
+    >;
+    act(() => controls!.createSessionBrowser(browser));
+    await vi.waitFor(() => expect(listCustomGroups).toHaveBeenCalledWith("org-a"));
+    await act(async () => {
+      host!
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="Keep active Browser in Messenger"]',
+        )
+        ?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Messenger sidebar"));
+    const sidebar = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((option) => option.textContent?.includes("Messenger sidebar"));
+    act(() => sidebar?.click());
+    const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
+    keepSavedView.mockResolvedValue({
+      savedView: savedBrowser(browser, "saved-loose"),
+      group: null,
+    });
+
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="confirm-main-browser-keep"]')
+        ?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(keepSavedView).toHaveBeenCalledWith(
+      "org-a",
+      expect.objectContaining({ placement: { kind: "loose" } }),
+    ));
+    expect(controls!.activeTab?.savedViewId).toBe("saved-loose");
+    expect(navigate).toHaveBeenLastCalledWith(
+      "/messenger/saved/saved-loose",
+      { replace: true },
+    );
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["messenger", "org-a", "saved-views"],
+    });
+  });
+
   it("creates an editable default group before keeping when Messenger has no groups", async () => {
     listCustomGroups.mockResolvedValue({ groups: [] });
     renderWorkbench();

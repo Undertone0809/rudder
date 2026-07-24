@@ -159,6 +159,18 @@ function cacheKeepResult(
     groupsKey,
     (current) => {
       const itemKey = `saved-view:${savedView.id}`;
+      const groups = current?.groups ?? [];
+      if (!group) {
+        return {
+          groups: groups.map((candidate) => ({
+            ...candidate,
+            entries: candidate.entries.filter((entry) => (
+              entry.item.type !== "saved_view"
+              || entry.item.savedView.id !== savedView.id
+            )),
+          })),
+        };
+      }
       const now = savedView.updatedAt ?? new Date();
       const optimisticEntry = {
         id: `optimistic:${itemKey}`,
@@ -176,7 +188,6 @@ function cacheKeepResult(
           savedView,
         },
       };
-      const groups = current?.groups ?? [];
       const existingGroup = groups.find((candidate) => candidate.id === group.id);
       if (existingGroup) {
         return {

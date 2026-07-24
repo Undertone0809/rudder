@@ -350,6 +350,7 @@ function MainLiveSurfacePanel({
 
 const RECENT_SAVED_VIEW_GROUP_KEY_PREFIX =
   "rudder.messengerRecentSavedViewGroup:";
+const LOOSE_MESSENGER_PLACEMENT = "__messenger_sidebar__";
 
 function recentSavedViewGroupId(organizationId: string) {
   try {
@@ -427,6 +428,8 @@ function SessionBrowserKeepControl({
 
   const keepMutation = useMutation({
     mutationFn: async () => {
+      const loosePlacement = !createMode
+        && selectedGroupId === LOOSE_MESSENGER_PLACEMENT;
       let destination: { id: string; name: string } | null = (
         groups.find((group) => group.id === selectedGroupId) ?? null
       );
@@ -444,14 +447,16 @@ function SessionBrowserKeepControl({
           createdGroupsRef.current.set(createKey, destination);
         }
       }
-      if (!destination) throw new Error("Choose a Messenger group.");
-      const intentKey = `${tab.viewInstanceId}\u0000${destination.id}`;
+      if (!destination && !loosePlacement) throw new Error("Choose a Messenger destination.");
+      const intentKey = `${tab.viewInstanceId}\u0000${destination?.id ?? "loose"}`;
       const clientMutationId = mutationIdsRef.current.get(intentKey)
         ?? newClientMutationId();
       mutationIdsRef.current.set(intentKey, clientMutationId);
       const input = savedViewKeepInputFromSidePanelTarget(tab.target, {
         clientMutationId,
-        placement: { kind: "group", groupId: destination.id },
+        placement: destination
+          ? { kind: "group", groupId: destination.id }
+          : { kind: "loose" },
       });
       if (!input) throw new Error("This Browser tab cannot be kept in Messenger.");
       const result = await messengerApi.keepSavedView(organizationId, input);
@@ -464,12 +469,17 @@ function SessionBrowserKeepControl({
         result.savedView,
       );
       workbench.bindSavedView(tab.viewInstanceId, result.savedView.id);
-      rememberSavedViewGroup(organizationId, destination.id);
+      if (destination) rememberSavedViewGroup(organizationId, destination.id);
       setOpen(false);
-      onAnnounce(`Kept in ${result.group.name}.`);
+      onAnnounce(result.group
+        ? `Kept in ${result.group.name}.`
+        : "Kept in Messenger sidebar.");
       navigate(messengerSavedViewRoute(result.savedView.id), { replace: true });
       void queryClient.invalidateQueries({
         queryKey: queryKeys.messenger.customGroups(organizationId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["messenger", organizationId, "saved-views"],
       });
     },
   });
@@ -527,6 +537,23 @@ function SessionBrowserKeepControl({
             </div>
           ) : (
             <div className="space-y-2" role="radiogroup" aria-label="Messenger group">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!createMode && selectedGroupId === LOOSE_MESSENGER_PLACEMENT}
+                className={cn(
+                  "flex w-full items-center rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                  !createMode && selectedGroupId === LOOSE_MESSENGER_PLACEMENT
+                    ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)]"
+                    : "border-border/70 hover:bg-[color:var(--surface-active)]",
+                )}
+                onClick={() => {
+                  setCreateMode(false);
+                  setSelectedGroupId(LOOSE_MESSENGER_PLACEMENT);
+                }}
+              >
+                Messenger sidebar
+              </button>
               {groups.map((group) => (
                 <button
                   key={group.id}
