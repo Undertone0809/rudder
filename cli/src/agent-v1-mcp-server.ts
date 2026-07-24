@@ -24,6 +24,7 @@ export { RUDDER_BROWSER_MCP_SERVER_NAME, RUDDER_MCP_SERVER_NAME };
 const RUDDER_MCP_MAX_TOOL_RESULT_BYTES = 1_000_000;
 const RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES = 16_000_000;
 const RUDDER_MCP_MAX_INLINE_TEXT_BYTES = 32_000;
+const RUDDER_MCP_CHAT_TRANSCRIPT_PROJECTION_BYTES = 850_000;
 const RUDDER_BROWSER_LIVENESS_INTERVAL_MS = 1_000;
 
 type JsonRpcId = string | number | null;
@@ -411,7 +412,9 @@ async function callTool(
     const result = await runRudderCli(materializedArgs, plan.env);
     if (result.exitCode === 0) {
       const text = result.stdout.trim() || "{}";
-      return mcpSuccessFromJsonText(
+      return mcpSuccessForToolJsonText(
+        toolName,
+        args,
         text,
         surface === "browser" ? RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES : RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
       );
@@ -621,6 +624,154 @@ function mcpSuccessFromJsonText(
   const resultBytes = Buffer.byteLength(JSON.stringify(result), "utf8");
   if (resultBytes <= maxResultBytes) return result;
   return mcpResponseTooLarge(resultBytes, maxResultBytes);
+}
+
+function mcpSuccessForToolJsonText(
+  toolName: string,
+  rawArgs: unknown,
+  text: string,
+  maxResultBytes: number,
+): Record<string, unknown> {
+  if (toolName !== "rudder_chat_transcript") {
+    return mcpSuccessFromJsonText(text, maxResultBytes);
+  }
+  const unmodified = mcpSuccessFromJsonText(text, maxResultBytes);
+  if (unmodified.isError !== true) return unmodified;
+  try {
+    const compact = compactChatTranscriptPage(JSON.parse(text) as unknown, rawArgs);
+    return compact
+      ? mcpSuccess(compact, maxResultBytes)
+      : unmodified;
+  } catch {
+    return unmodified;
+  }
+}
+
+function compactChatTranscriptPage(
+  value: unknown,
+  rawArgs: unknown,
+): Record<string, unknown> | null {
+  if (!isRecord(value) || !Array.isArray(value.messages)) return null;
+  const input = isRecord(rawArgs) ? rawArgs : {};
+  const requestedChars = Number(input.maxOutputChars ?? 1_200);
+  const normalizedRequestedChars = Number.isFinite(requestedChars)
+    ? Math.min(10_000, Math.max(80, Math.floor(requestedChars)))
+    : 1_200;
+  const candidateMaxChars = [...new Set([
+    normalizedRequestedChars,
+    600,
+    300,
+    160,
+    80,
+  ].filter((candidate) => candidate <= normalizedRequestedChars))];
+  const page = isRecord(value.page) ? value.page : {};
+
+  for (const maxChars of candidateMaxChars) {
+    const projection = projectChatTranscriptPage(value.messages, page, maxChars, normalizedRequestedChars);
+    if (
+      Buffer.byteLength(JSON.stringify(projection), "utf8")
+      <= RUDDER_MCP_CHAT_TRANSCRIPT_PROJECTION_BYTES
+    ) {
+      return projection;
+    }
+  }
+  return null;
+}
+
+function projectChatTranscriptPage(
+  messageValues: unknown[],
+  page: Record<string, unknown>,
+  maxChars: number,
+  requestedMaxChars: number,
+): Record<string, unknown> {
+  const messages: Array<Record<string, unknown>> = [];
+  let clippedTranscriptEntries = 0;
+
+  for (const messageValue of messageValues) {
+    if (!isRecord(messageValue)) continue;
+    const transcript = Array.isArray(messageValue.transcript) ? messageValue.transcript : [];
+    const message: Record<string, unknown> = {
+      ...pickPrimitiveFields(messageValue, ["id", "role", "kind", "status", "runId", "createdAt"]),
+      ...(typeof messageValue.body === "string" ? { body: clipMcpText(messageValue.body, 220).text } : {}),
+      transcript: [],
+    };
+    const retainedTranscript = message.transcript as Array<Record<string, unknown>>;
+
+    for (const entryValue of transcript) {
+      if (!isRecord(entryValue)) continue;
+      const compactEntry = compactChatTranscriptEntry(entryValue, maxChars);
+      if (compactEntry.clipped) clippedTranscriptEntries += 1;
+      retainedTranscript.push(compactEntry.entry);
+    }
+    messages.push(message);
+  }
+
+  return {
+    messages,
+    page,
+    truncation: {
+      requestedMaxOutputChars: requestedMaxChars,
+      effectiveMaxOutputChars: maxChars,
+      clippedTranscriptEntries,
+      reason: "oversized_transcript_field_preview",
+    },
+  };
+}
+
+function compactChatTranscriptEntry(
+  entry: Record<string, unknown>,
+  maxChars: number,
+): { entry: Record<string, unknown>; clipped: boolean } {
+  const compact: Record<string, unknown> = {};
+  let clipped = false;
+  for (const [key, entryValue] of Object.entries(entry)) {
+    if (typeof entryValue === "string") {
+      const result = clipMcpText(entryValue, maxChars);
+      compact[key] = result.text;
+      clipped ||= result.clipped;
+      continue;
+    }
+    if (
+      entryValue === null
+      || typeof entryValue === "boolean"
+      || typeof entryValue === "number"
+    ) {
+      compact[key] = entryValue;
+      continue;
+    }
+    if (entryValue === undefined) continue;
+    const result = clipMcpText(JSON.stringify(entryValue), maxChars);
+    compact[key] = result.text;
+    clipped ||= result.clipped;
+  }
+  return { entry: compact, clipped };
+}
+
+function pickPrimitiveFields(
+  value: Record<string, unknown>,
+  keys: string[],
+): Record<string, string | number | boolean | null> {
+  const picked: Record<string, string | number | boolean | null> = {};
+  for (const key of keys) {
+    const field = value[key];
+    if (
+      field === null
+      || typeof field === "string"
+      || typeof field === "number"
+      || typeof field === "boolean"
+    ) {
+      picked[key] = field;
+    }
+  }
+  return picked;
+}
+
+function clipMcpText(value: string, maxChars: number): { text: string; clipped: boolean } {
+  if (value.length <= maxChars) return { text: value, clipped: false };
+  return {
+    text: `${value.slice(0, Math.max(0, maxChars - 1))}…`,
+    clipped: true,
+  };
 }
 
 function boundedToolCallRpcResponse(

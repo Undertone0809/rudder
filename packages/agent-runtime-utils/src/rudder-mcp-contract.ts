@@ -278,6 +278,20 @@ export function rudderMcpInputSchemaForCapability(id: string): {
     return { type: "object", additionalProperties: false, properties };
   }
 
+  if (id === "chat.transcript") {
+    return {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        chat: mcpString("Chat conversation id."),
+        chatId: mcpString("Chat conversation id alias."),
+        cursor: mcpString("Stable message cursor returned by the previous page."),
+        limit: mcpNumber("Maximum messages to return, capped by the server."),
+        maxOutputChars: mcpNumber("Preferred maximum characters per field when an oversized transcript needs projection."),
+      },
+    };
+  }
+
   if (id.startsWith("issue.")) {
     add("issue", mcpString("Issue UUID, identifier, or short reference."));
     add("body", mcpString("Direct Markdown body for issue comments or close-out notes."));

@@ -485,6 +485,20 @@ describe("agent-v1 MCP server", () => {
       .toThrow(/unsupported argument/i);
   });
 
+  it("advertises only effective bounded-read arguments for chat transcript", () => {
+    const tool = buildAgentV1McpToolsManifest("agent-v1", { surface: "all" }).tools
+      .find((entry) => entry.name === "rudder_chat_transcript");
+
+    expect(tool?.inputSchema.properties).toMatchObject({
+      chat: expect.any(Object),
+      limit: expect.any(Object),
+      cursor: expect.any(Object),
+      maxOutputChars: expect.any(Object),
+    });
+    expect(tool?.inputSchema.properties).not.toHaveProperty("full");
+    expect(tool?.inputSchema.properties).not.toHaveProperty("limitBytes");
+  });
+
   it("advertises every sampled MCP tool input argument in strict schemas", () => {
     for (const tool of buildAgentV1McpToolsManifest("agent-v1", { surface: "all" }).tools) {
 
@@ -839,6 +853,184 @@ describe("agent-v1 MCP server", () => {
         details: { maxBytes: 1_000_000 },
       },
     });
+  });
+
+  it("returns an oversized chat transcript as a bounded paginated projection", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-chat-transcript-"));
+    try {
+      const shimPath = path.join(tempDir, process.platform === "win32" ? "rudder.cmd" : "rudder");
+      const output = JSON.stringify({
+        messages: [{
+          id: "message-1",
+          role: "assistant",
+          kind: "response",
+          status: "completed",
+          body: "Finished",
+          createdAt: "2026-07-24T00:00:00.000Z",
+          transcript: Array.from({ length: 250 }, (_, index) => ({
+            kind: "tool_result",
+            ts: `2026-07-24T00:00:${String(index % 60).padStart(2, "0")}.000Z`,
+            toolUseId: `tool-${index}`,
+            toolName: "rudder_chat_transcript",
+            content: `entry-${index}-${"X".repeat(20_000)}`,
+            isError: false,
+          })),
+          structuredPayload: {
+            __chatTranscript: [{ content: "Y".repeat(1_000_000) }],
+          },
+        }],
+        page: {
+          cursor: null,
+          nextCursor: "message-1",
+          hasMore: true,
+          limit: 1,
+          order: "newest",
+          returnedMessages: 1,
+          totalMessages: 20,
+        },
+      });
+      if (process.platform === "win32") {
+        await fs.writeFile(shimPath, `@echo off\r\necho ${output.replaceAll('"', '\\"')}\r\n`, "utf8");
+      } else {
+        await fs.writeFile(shimPath, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, "utf8");
+        await fs.chmod(shimPath, 0o755);
+      }
+
+      const response = await runAgentV1McpJsonRpcMessage({
+        jsonrpc: "2.0",
+        id: 32,
+        method: "tools/call",
+        params: {
+          name: "rudder_chat_transcript",
+          arguments: { chat: "chat-1", limit: 1, maxOutputChars: 1200 },
+        },
+      }, buildMcpServerEnv({
+        PATH: tempDir,
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: "runtime-key",
+        RUDDER_MCP_RUDDER_BIN: shimPath,
+      }));
+
+      expect(Buffer.byteLength(JSON.stringify(response), "utf8")).toBeLessThan(1_000_000);
+      const result = response?.result as {
+        isError: boolean;
+        structuredContent: {
+          messages: Array<{
+            transcript: Array<{ content?: string }>;
+            structuredPayload?: unknown;
+          }>;
+          page: { nextCursor: string | null };
+          truncation: { clippedTranscriptEntries: number };
+        };
+      };
+      expect(result.isError, JSON.stringify(result)).toBe(false);
+      expect(result.structuredContent.page.nextCursor).toBe("message-1");
+      expect(result.structuredContent.messages[0]?.structuredPayload).toBeUndefined();
+      expect(result.structuredContent.messages[0]?.transcript).toHaveLength(250);
+      expect(result.structuredContent.messages[0]?.transcript[0]?.content?.length).toBeLessThanOrEqual(1200);
+      expect(result.structuredContent.truncation.clippedTranscriptEntries).toBe(250);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the structured shape of a chat transcript that already fits", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-small-chat-transcript-"));
+    try {
+      const shimPath = path.join(tempDir, process.platform === "win32" ? "rudder.cmd" : "rudder");
+      const output = {
+        messages: [{
+          id: "message-1",
+          role: "assistant",
+          body: "Finished",
+          structuredPayload: { custom: { preserved: true } },
+          transcript: [{
+            kind: "tool_call",
+            input: { nested: ["value"] },
+            errors: ["none"],
+          }],
+        }],
+        page: { nextCursor: null, hasMore: false },
+      };
+      const serialized = JSON.stringify(output);
+      if (process.platform === "win32") {
+        await fs.writeFile(shimPath, `@echo off\r\necho ${serialized.replaceAll('"', '\\"')}\r\n`, "utf8");
+      } else {
+        await fs.writeFile(shimPath, `#!/bin/sh\nprintf '%s\\n' '${serialized}'\n`, "utf8");
+        await fs.chmod(shimPath, 0o755);
+      }
+
+      const response = await runAgentV1McpJsonRpcMessage({
+        jsonrpc: "2.0",
+        id: 33,
+        method: "tools/call",
+        params: {
+          name: "rudder_chat_transcript",
+          arguments: { chat: "chat-1", limit: 1 },
+        },
+      }, buildMcpServerEnv({
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: "runtime-key",
+        RUDDER_MCP_RUDDER_BIN: shimPath,
+      }));
+
+      expect(response?.result).toMatchObject({
+        isError: false,
+        structuredContent: output,
+      });
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the honest bounded error when a complete transcript page cannot fit", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-unprojectable-chat-transcript-"));
+    try {
+      const shimPath = path.join(tempDir, process.platform === "win32" ? "rudder.cmd" : "rudder");
+      const output = JSON.stringify({
+        messages: [{
+          id: "message-1",
+          role: "assistant",
+          transcript: Array.from({ length: 12_000 }, (_, index) => ({
+            kind: "tool_result",
+            toolUseId: `tool-${index}`,
+            content: "X".repeat(80),
+          })),
+        }],
+        page: { nextCursor: null, hasMore: false },
+      });
+      if (process.platform === "win32") {
+        await fs.writeFile(shimPath, `@echo off\r\necho ${output.replaceAll('"', '\\"')}\r\n`, "utf8");
+      } else {
+        await fs.writeFile(shimPath, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, "utf8");
+        await fs.chmod(shimPath, 0o755);
+      }
+
+      const response = await runAgentV1McpJsonRpcMessage({
+        jsonrpc: "2.0",
+        id: 34,
+        method: "tools/call",
+        params: {
+          name: "rudder_chat_transcript",
+          arguments: { chat: "chat-1", limit: 1, maxOutputChars: 80 },
+        },
+      }, buildMcpServerEnv({
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: "runtime-key",
+        RUDDER_MCP_RUDDER_BIN: shimPath,
+      }));
+
+      expect(Buffer.byteLength(JSON.stringify(response), "utf8")).toBeLessThan(10_000);
+      expect(response?.result).toMatchObject({
+        isError: true,
+        structuredContent: {
+          code: "rudder_mcp_response_too_large",
+          details: { maxBytes: 1_000_000 },
+        },
+      });
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("executes core MCP tools through the runtime API context without shelling out to rudder", async () => {
