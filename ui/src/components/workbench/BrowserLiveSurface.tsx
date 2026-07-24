@@ -482,12 +482,15 @@ export function BrowserLiveSurface({
 
   return (
     <div
-      className="flex min-h-full flex-col"
+      className="flex min-h-full flex-col bg-[color:var(--surface-elevated)]"
       data-testid={active ? "chat-side-panel-browser-view" : "chat-side-panel-browser-view-hidden"}
       data-browser-tab-id={target.tabId}
       data-active={active ? "true" : "false"}
     >
-      <div className="flex shrink-0 items-center gap-1 border-b border-[color:var(--border-soft)] bg-[color:var(--surface-panel)] px-2 py-2">
+      <div
+        className="flex shrink-0 items-center gap-1 border-b border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2 py-2"
+        data-testid="chat-side-panel-browser-toolbar"
+      >
         <Button
           type="button"
           variant="ghost"
@@ -587,7 +590,7 @@ export function BrowserLiveSurface({
               ref: handleWebviewRef,
               src: webviewSrc,
               className: cn(
-                "min-h-[52vh] flex-1 bg-[color:var(--surface-panel)]",
+                "min-h-[52vh] flex-1 bg-[color:var(--surface-elevated)]",
                 loadError && "invisible",
               ),
               "data-testid": active
@@ -603,7 +606,7 @@ export function BrowserLiveSurface({
               <div
                 role="alert"
                 data-testid="chat-side-panel-browser-error"
-                className="absolute inset-0 flex overflow-y-auto bg-[color:var(--surface-panel)] px-8 py-10"
+                className="absolute inset-0 flex overflow-y-auto bg-[color:var(--surface-elevated)] px-8 py-10"
               >
                 <div className="m-auto w-full max-w-[32rem]">
                   <FileWarning

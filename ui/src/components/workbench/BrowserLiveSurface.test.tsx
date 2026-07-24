@@ -22,6 +22,40 @@ describe("BrowserLiveSurface", () => {
     Reflect.deleteProperty(window, "desktopShell");
   });
 
+  it("uses opaque surface tokens for the Browser frame and toolbar", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          target={{
+            kind: "browser",
+            label: "Example",
+            tabId: "browser-opaque",
+            url: "https://example.com",
+            viewInstanceId: "view-opaque",
+          }}
+          targetKey="browser-tab:browser-opaque"
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={vi.fn()}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-view']")
+      ?.classList.contains("bg-[color:var(--surface-elevated)]")).toBe(true);
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-toolbar']")
+      ?.classList.contains("bg-[color:var(--surface-elevated)]")).toBe(true);
+    expect(container.querySelector("webview")
+      ?.classList.contains("bg-[color:var(--surface-elevated)]")).toBe(true);
+  });
+
   it("routes guest Ctrl+Tab to the current surface owner without recreating the guest", () => {
     container = document.createElement("div");
     document.body.appendChild(container);

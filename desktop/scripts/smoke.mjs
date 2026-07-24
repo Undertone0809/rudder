@@ -3361,7 +3361,13 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         const anchor = panel?.querySelector("[data-testid='messenger-main-live-surface-anchor']");
         const host = Array.from(document.querySelectorAll("[data-testid='live-surface-runtime-host']"))
           .find((candidate) => candidate.getAttribute("data-owner-id")?.startsWith("main:"));
-        if (!root || !tablist || !panel || !anchor || !host) {
+        const browserSurface = host?.querySelector(
+          "[data-testid='chat-side-panel-browser-view']",
+        );
+        const browserToolbar = host?.querySelector(
+          "[data-testid='chat-side-panel-browser-toolbar']",
+        );
+        if (!root || !tablist || !panel || !anchor || !host || !browserSurface || !browserToolbar) {
           throw new Error("Main Workbench full-bleed geometry was unavailable");
         }
         const rect = (element) => {
@@ -3373,8 +3379,21 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
             top: value.top,
           };
         };
+        const backgroundAlpha = (element) => {
+          const canvas = document.createElement("canvas");
+          canvas.width = 1;
+          canvas.height = 1;
+          const context = canvas.getContext("2d", { willReadFrequently: true });
+          if (!context) throw new Error("Browser surface opacity probe was unavailable");
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = getComputedStyle(element).backgroundColor;
+          context.fillRect(0, 0, 1, 1);
+          return context.getImageData(0, 0, 1, 1).data[3];
+        };
         return {
           anchor: rect(anchor),
+          browserSurfaceAlpha: backgroundAlpha(browserSurface),
+          browserToolbarAlpha: backgroundAlpha(browserToolbar),
           host: rect(host),
           nestedCardCount: root.querySelectorAll(".workspace-main-card").length,
           panel: rect(panel),
@@ -3391,6 +3410,12 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         `Main Workbench must not add an inner rounded frame (received ${fullBleed.rootBorderRadius})`,
       );
       assert.equal(fullBleed.rootPadding, "0px", "Main Workbench must not inset the Browser surface");
+      for (const [surface, alpha] of [
+        ["Browser surface", fullBleed.browserSurfaceAlpha],
+        ["Browser toolbar", fullBleed.browserToolbarAlpha],
+      ]) {
+        assert.equal(alpha, 255, `${surface} must be opaque`);
+      }
       assert.ok(withinTwoPixels(fullBleed.panel.left, fullBleed.root.left));
       assert.ok(withinTwoPixels(fullBleed.panel.right, fullBleed.root.right));
       assert.ok(withinTwoPixels(fullBleed.panel.bottom, fullBleed.root.bottom));
