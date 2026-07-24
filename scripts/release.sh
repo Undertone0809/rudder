@@ -204,7 +204,7 @@ if [ "$channel" = "stable" ]; then
 fi
 
 if [ "$channel" = "canary" ] && [ -f "$NOTES_FILE" ]; then
-  release_info "  ✓ Stable release notes already exist at $NOTES_FILE"
+  release_info "  ✓ Stable release notes already exist at $NOTES_FILE" >&2
 fi
 
 if git_local_tag_exists "$tag_name" || git_remote_tag_exists "$tag_name" "$PUBLISH_REMOTE"; then
