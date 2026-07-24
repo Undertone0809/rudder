@@ -322,13 +322,7 @@ export function organizationSkillService(
   ) {
     const sourceKind = asString(skill.metadata?.sourceKind);
     if (isBundledRudderSourceKind(sourceKind)) return persist(skill);
-    const installed = {
-      ...skill,
-      metadata: {
-        ...(skill.metadata ?? {}),
-        installationVersion: ORGANIZATION_SKILL_INSTALLATION_VERSION,
-      },
-    };
+    const installed = markImportedSkillInstalled(skill);
     const files = await readImportedSkillFiles(installed);
     return withSkillMutationLock(orgId, installed.key, () =>
       replaceInstalledSkillDirectory(
@@ -337,6 +331,88 @@ export function organizationSkillService(
         files,
         () => persist(installed),
       ));
+  }
+
+  function markImportedSkillInstalled(skill: ImportedSkill): ImportedSkill {
+    return {
+      ...skill,
+      metadata: {
+        ...(skill.metadata ?? {}),
+        installationVersion: ORGANIZATION_SKILL_INSTALLATION_VERSION,
+      },
+    };
+  }
+
+  function hasUnchangedInstallationSource(
+    current: OrganizationSkill,
+    snapshot: OrganizationSkill,
+  ) {
+    return current.sourceType === snapshot.sourceType
+      && current.sourceLocator === snapshot.sourceLocator
+      && current.sourceRef === snapshot.sourceRef
+      && getSkillMeta(current).installationVersion
+      === getSkillMeta(snapshot).installationVersion
+      && current.updatedAt.getTime() === snapshot.updatedAt.getTime();
+  }
+
+  async function resolveCurrentSkillDirectory(skill: OrganizationSkill) {
+    const directory = normalizeSkillDirectory(skill);
+    if (
+      directory
+      && (await fs.stat(path.join(directory, "SKILL.md")).catch(() => null))?.isFile()
+    ) {
+      return directory;
+    }
+    return null;
+  }
+
+  async function assertDirectLocalSourceIsUnmanaged(orgId: string, skill: ImportedSkill) {
+    const sourcePath = skill.packageDir ?? skill.sourceLocator;
+    if (!sourcePath) throw unprocessable("Local skill source path is missing.");
+    const sourceDirectory = path.basename(sourcePath).toLowerCase() === "skill.md"
+      ? path.dirname(sourcePath)
+      : sourcePath;
+    const managedInstalledRoot = path.resolve(resolveManagedSkillsRoot(orgId), "__installed__");
+    const [resolvedSource, resolvedManagedRoot] = await Promise.all([
+      fs.realpath(path.resolve(sourceDirectory)).catch(() => path.resolve(sourceDirectory)),
+      fs.realpath(managedInstalledRoot).catch(() => managedInstalledRoot),
+    ]);
+    const relative = path.relative(resolvedManagedRoot, resolvedSource);
+    if (!relative || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+      throw unprocessable(
+        "Managed organization skill installations cannot be imported as direct local sources.",
+      );
+    }
+  }
+
+  async function upsertDirectLocalSkill(
+    orgId: string,
+    skill: ImportedSkill,
+  ): Promise<OrganizationSkill> {
+    return withSkillMutationLock(orgId, skill.key, async () => {
+      await assertDirectLocalSourceIsUnmanaged(orgId, skill);
+      const existing = await getByKey(orgId, skill.key);
+      if (
+        existing
+        && isBundledRudderSourceKind(asString(getSkillMeta(existing).sourceKind))
+      ) {
+        return existing;
+      }
+
+      const [persisted] = await upsertImportedSkills(orgId, [skill]);
+      if (!persisted) throw notFound("Failed to persist organization skill");
+
+      // The database transition must succeed before retiring the managed copy so
+      // a failed local-path upsert leaves the previous installation runnable.
+      if (
+        existing
+        && getSkillMeta(existing).installationVersion
+        === ORGANIZATION_SKILL_INSTALLATION_VERSION
+      ) {
+        await removeInstalledSkillDirectory(orgId, existing);
+      }
+      return persisted;
+    });
   }
 
   async function installAndUpsertImportedSkills(orgId: string, skills: ImportedSkill[]) {
@@ -351,9 +427,7 @@ export function organizationSkillService(
         continue;
       }
       if (skill.sourceType === "local_path") {
-        const [persisted] = await upsertImportedSkills(orgId, [skill]);
-        if (!persisted) throw notFound("Failed to persist organization skill");
-        out.push(persisted);
+        out.push(await upsertDirectLocalSkill(orgId, skill));
         continue;
       }
       out.push(await installImportedSkill(
@@ -1439,19 +1513,31 @@ export function organizationSkillService(
     const installation = (async () => {
       const target = resolveInstalledSkillDirectory(orgId, skill.key, skill.slug);
       if ((await fs.stat(path.join(target, "SKILL.md")).catch(() => null))?.isFile()) {
-        if (getSkillMeta(skill).installationVersion !== ORGANIZATION_SKILL_INSTALLATION_VERSION) {
-          await db
-            .update(organizationSkills)
-            .set({
-              metadata: {
-                ...(skill.metadata ?? {}),
-                installationVersion: ORGANIZATION_SKILL_INSTALLATION_VERSION,
-              },
-              updatedAt: new Date(),
-            })
-            .where(eq(organizationSkills.id, skill.id));
-        }
-        return target;
+        return withSkillMutationLock(orgId, skill.key, async () => {
+          const current = await getById(skill.id);
+          if (!current) throw notFound(`Skill ${skill.key} no longer exists.`);
+          if (!hasUnchangedInstallationSource(current, skill)) {
+            const currentDirectory = await resolveCurrentSkillDirectory(current);
+            if (currentDirectory) return currentDirectory;
+            throw conflict(`Skill ${skill.key} changed while installation was prepared.`);
+          }
+          if (
+            getSkillMeta(current).installationVersion
+            !== ORGANIZATION_SKILL_INSTALLATION_VERSION
+          ) {
+            await db
+              .update(organizationSkills)
+              .set({
+                metadata: {
+                  ...(current.metadata ?? {}),
+                  installationVersion: ORGANIZATION_SKILL_INSTALLATION_VERSION,
+                },
+                updatedAt: new Date(),
+              })
+              .where(eq(organizationSkills.id, current.id));
+          }
+          return target;
+        });
       }
 
       let imported: ImportedSkill | null = null;
@@ -1512,42 +1598,54 @@ export function organizationSkillService(
         throw unprocessable(`Skill ${skill.key} could not be installed from its source.`);
       }
 
-      return installImportedSkill(
-        orgId,
-        {
-          ...imported,
-          key: skill.key,
-          slug: skill.slug,
-          sourceType: skill.sourceType,
-          sourceLocator: skill.sourceLocator,
-          sourceRef: skill.sourceRef ?? imported.sourceRef,
-          metadata: {
-            ...(skill.metadata ?? {}),
-            ...(imported.metadata ?? {}),
-            sourceKind: asString(skill.metadata?.sourceKind)
-              ?? asString(imported.metadata?.sourceKind),
-            trackingRef: asString(skill.metadata?.trackingRef)
-              ?? asString(imported.metadata?.trackingRef),
+      const installed = markImportedSkillInstalled({
+        ...imported,
+        key: skill.key,
+        slug: skill.slug,
+        sourceType: skill.sourceType,
+        sourceLocator: skill.sourceLocator,
+        sourceRef: skill.sourceRef ?? imported.sourceRef,
+        metadata: {
+          ...(skill.metadata ?? {}),
+          ...(imported.metadata ?? {}),
+          sourceKind: asString(skill.metadata?.sourceKind)
+            ?? asString(imported.metadata?.sourceKind),
+          trackingRef: asString(skill.metadata?.trackingRef)
+            ?? asString(imported.metadata?.trackingRef),
+        },
+      });
+      const files = await readImportedSkillFiles(installed);
+      return withSkillMutationLock(orgId, skill.key, async () => {
+        const current = await getById(skill.id);
+        if (!current) throw notFound(`Skill ${skill.key} no longer exists.`);
+        if (!hasUnchangedInstallationSource(current, skill)) {
+          const currentDirectory = await resolveCurrentSkillDirectory(current);
+          if (currentDirectory) return currentDirectory;
+          throw conflict(`Skill ${skill.key} changed while installation was prepared.`);
+        }
+        return replaceInstalledSkillDirectory(
+          orgId,
+          installed,
+          files,
+          async () => {
+            await db
+              .update(organizationSkills)
+              .set({
+                name: installed.name,
+                description: installed.description,
+                markdown: installed.markdown,
+                sourceRef: installed.sourceRef,
+                trustLevel: installed.trustLevel,
+                compatibility: installed.compatibility,
+                fileInventory: serializeFileInventory(installed.fileInventory),
+                metadata: installed.metadata,
+                updatedAt: new Date(),
+              })
+              .where(eq(organizationSkills.id, skill.id));
+            return resolveInstalledSkillDirectory(orgId, skill.key, skill.slug);
           },
-        },
-        async (installed) => {
-          await db
-            .update(organizationSkills)
-            .set({
-              name: installed.name,
-              description: installed.description,
-              markdown: installed.markdown,
-              sourceRef: installed.sourceRef,
-              trustLevel: installed.trustLevel,
-              compatibility: installed.compatibility,
-              fileInventory: serializeFileInventory(installed.fileInventory),
-              metadata: installed.metadata,
-              updatedAt: new Date(),
-            })
-            .where(eq(organizationSkills.id, skill.id));
-          return resolveInstalledSkillDirectory(orgId, skill.key, skill.slug);
-        },
-      );
+        );
+      });
     })();
 
     skillInstallationPromises.set(lockKey, installation);
