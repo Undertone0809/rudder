@@ -33,6 +33,11 @@ const FINAL_BODY = [
   "",
   "- list target alpha",
   "- list target beta",
+  "",
+  "para-memory-files",
+  "rudder-docs",
+  "skill-creator",
+  "visualize browser",
 ].join("\n");
 const FIRST_PROCESS_TEXT = "可见 Thinking 过程：先核对数据与用户约束。";
 const SECOND_PROCESS_TEXT = "第二个 Thinking 区块：再比较稳定证据。";
@@ -358,7 +363,13 @@ async function expectMarkerNearSelection(
   expect(sourceBox).toBeTruthy();
   const markerCenterY = markerBox!.y + markerBox!.height / 2;
   const endpointCenterY = selection.endpoint.y + selection.endpoint.height / 2;
-  expect(Math.abs(markerBox!.x - selection.endpoint.right)).toBeLessThanOrEqual(96);
+  const overlapsSelection = (
+    markerBox!.x < selection.bounds.right
+    && markerBox!.x + markerBox!.width > selection.bounds.x
+    && markerBox!.y < selection.bounds.bottom
+    && markerBox!.y + markerBox!.height > selection.bounds.y
+  );
+  expect(overlapsSelection).toBe(false);
   expect(Math.abs(markerCenterY - endpointCenterY)).toBeLessThanOrEqual(48);
   expect(markerCenterY).toBeGreaterThanOrEqual(sourceBox!.y - 8);
   expect(markerCenterY).toBeLessThanOrEqual(sourceBox!.y + sourceBox!.height + 8);
@@ -749,6 +760,88 @@ test.describe("Chat response annotations", () => {
     await card.getByRole("button", { name: "Delete annotation 1" }).click();
     await expect(draftAnnotationChip(page, 1)).toHaveCount(0);
     await expect(finalSource.getByTestId("chat-response-annotation-marker")).toHaveCount(0);
+  });
+
+  test("opens only the activated draft, floats details upward, keeps markers clear, and sends a soft-break partial selection", async ({ page }, testInfo) => {
+    const seeded = await seedAnnotationChat(
+      page,
+      `Response-Annotation-Draft-Interaction-${Date.now()}`,
+    );
+    const finalSource = annotationSource(page, {
+      messageId: seeded.assistantMessageId,
+      surface: "assistant_body",
+    });
+
+    await selectVisibleText(page, finalSource, "Rudder docs");
+    await addSelectionToChat(page);
+    const secondSelection = await selectVisibleText(page, finalSource, "skill-creato");
+    await addSelectionToChat(page);
+    await expect(draftAnnotationChip(page, 2)).toBeVisible();
+
+    const secondMarker = finalSource
+      .getByTestId("chat-response-annotation-marker")
+      .filter({ hasText: "2" });
+    await expect(secondMarker).toBeVisible();
+    const markerBox = await secondMarker.boundingBox();
+    expect(markerBox).toBeTruthy();
+    const markerOverlapsSelection = !(
+      markerBox!.x + markerBox!.width <= secondSelection.bounds.x
+      || markerBox!.x >= secondSelection.bounds.right
+      || markerBox!.y + markerBox!.height <= secondSelection.bounds.y
+      || markerBox!.y >= secondSelection.bounds.bottom
+    );
+    expect(markerOverlapsSelection).toBe(false);
+
+    await secondMarker.click();
+    const editor = page.getByTestId("chat-response-annotation-editor");
+    await expect(editor).toBeVisible();
+    await expect(editor).toContainText("2. Selected text:");
+    await expect(editor).toContainText("skill-creato");
+    await expect(editor).not.toContainText("Rudder docs");
+    await expect(page.getByTestId("chat-response-annotation-card")).toHaveCount(0);
+    const attachmentAction = editor.locator("label[aria-label='Add images or files']");
+    await expect(attachmentAction).toHaveText("");
+    await page.screenshot({
+      path: `/tmp/rudder-response-annotations-${testInfo.workerIndex}-selected-only.png`,
+      fullPage: false,
+      animations: "disabled",
+    });
+    await editor.getByPlaceholder("Add an optional comment…").fill("Only edit annotation two.");
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(editor).toHaveCount(0);
+
+    const composerLayout = page.getByTestId("chat-composer-layout");
+    const composerBefore = await composerLayout.boundingBox();
+    expect(composerBefore).toBeTruthy();
+    await draftAnnotationChip(page, 2).click();
+    const draftPopover = page.getByTestId("chat-response-annotations-draft-popover");
+    await expect(draftPopover).toBeVisible();
+    await expect(draftPopover).toHaveAttribute("data-side", "top");
+    await expect(page.getByTestId("chat-response-annotation-card")).toContainText(
+      "Only edit annotation two.",
+    );
+    const composerAfter = await composerLayout.boundingBox();
+    expect(composerAfter).toBeTruthy();
+    expect(Math.abs(composerAfter!.height - composerBefore!.height)).toBeLessThanOrEqual(1);
+    await page.screenshot({
+      path: `/tmp/rudder-response-annotations-${testInfo.workerIndex}-draft-popover.png`,
+      fullPage: false,
+      animations: "disabled",
+    });
+    await page.keyboard.press("Escape");
+    await expect(draftPopover).toHaveCount(0);
+
+    const streamRequest = page.waitForRequest((request) => (
+      request.method() === "POST"
+      && request.url().includes(`/api/chats/${seeded.conversationId}/messages/stream`)
+    ));
+    await page.getByRole("button", { name: "Send" }).click();
+    await streamRequest;
+    await expect(page.getByText("Failed to send message")).toHaveCount(0);
+    const sentTurn = page.getByTestId("chat-user-message-turn").last();
+    await expect(sentTurn.getByRole("button", { name: "Show 2 annotations" })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test("persists Process provenance and restores its exact source after reload", async ({ page }, testInfo) => {
@@ -1468,7 +1561,7 @@ test.describe("Chat response annotations", () => {
     await expect(composer(page)).toHaveText("Keep this unfinished main-chat draft");
 
     await panel.getByRole("button", { name: "Show 1 annotation" }).click();
-    const provisionalCard = panel.getByTestId("chat-response-annotation-card");
+    const provisionalCard = page.getByTestId("chat-response-annotation-card");
     await expect(provisionalCard).toBeVisible();
     await provisionalCard.hover();
     await provisionalCard.getByRole("button", { name: "Edit annotation 1" }).click();

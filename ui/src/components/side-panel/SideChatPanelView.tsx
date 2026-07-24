@@ -8,8 +8,7 @@ import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import {
-  EditableResponseAnnotationsCard,
-  ResponseAnnotationCountChip,
+  DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
 import type { ChatStreamDraftState } from "@/context/ChatGenerationContext";
@@ -89,7 +88,6 @@ export function SideChatPanelView({
   const [annotationsExpanded, setAnnotationsExpanded] = useState(false);
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const editingAnnotationAnchorRef = useRef<HTMLButtonElement | null>(null);
-  const annotationDetailsSurfaceRef = useRef<HTMLDivElement | null>(null);
   const annotationDetailsChipRef = useRef<HTMLButtonElement | null>(null);
   const closeRequestedRef = useRef(false);
   const createPromiseRef = useRef<Promise<ChatConversation> | null>(null);
@@ -134,31 +132,6 @@ export function SideChatPanelView({
     const timer = window.setInterval(() => setNow(new Date()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (!annotationsExpanded || editingAnnotationId) return;
-    const closeDetails = (restoreFocus: boolean) => {
-      setAnnotationsExpanded(false);
-      if (restoreFocus) annotationDetailsChipRef.current?.focus();
-    };
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (annotationDetailsSurfaceRef.current?.contains(target)) return;
-      closeDetails(false);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      closeDetails(true);
-    };
-    document.addEventListener("click", handleClick);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("click", handleClick);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [annotationsExpanded, editingAnnotationId]);
 
   const sourceConversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(organizationId, target.sourceConversationId),
@@ -477,36 +450,36 @@ export function SideChatPanelView({
           <div className="chat-composer mx-auto w-full max-w-4xl rounded-[var(--radius-lg)] p-3">
             {annotationState.annotations.length > 0 ? (
               <div
-                ref={annotationDetailsSurfaceRef}
                 className="mb-3 flex flex-col items-start gap-2"
               >
-                <ResponseAnnotationCountChip
-                  count={annotationState.annotations.length}
-                  expanded={annotationsExpanded}
+                <DraftResponseAnnotationsPopover
+                  annotations={annotationState.annotations}
+                  pendingFilesByAnnotationId={annotationState.pendingFilesByAnnotationId}
+                  open={annotationsExpanded}
                   buttonRef={annotationDetailsChipRef}
-                  onToggle={() => setAnnotationsExpanded((current) => !current)}
+                  onOpenChange={(open) => {
+                    setAnnotationsExpanded(open);
+                    if (open) setEditingAnnotationId(null);
+                  }}
                   onClear={() => {
                     dispatchAnnotation({ type: "clear" });
                     setAnnotationsExpanded(false);
                     setEditingAnnotationId(null);
                   }}
+                  onEdit={(annotation) => {
+                    editingAnnotationAnchorRef.current = annotationDetailsChipRef.current;
+                    setEditingAnnotationId(annotation.id);
+                  }}
+                  onDelete={(annotationId) => {
+                    dispatchAnnotation({ type: "delete", id: annotationId });
+                    if (annotationState.annotations.length === 1) {
+                      setAnnotationsExpanded(false);
+                    }
+                    setEditingAnnotationId((current) => (
+                      current === annotationId ? null : current
+                    ));
+                  }}
                 />
-                {annotationsExpanded ? (
-                  <EditableResponseAnnotationsCard
-                    annotations={annotationState.annotations}
-                    pendingFilesByAnnotationId={annotationState.pendingFilesByAnnotationId}
-                    onEdit={(annotation, anchor) => {
-                      editingAnnotationAnchorRef.current = anchor;
-                      setEditingAnnotationId(annotation.id);
-                    }}
-                    onDelete={(annotationId) => {
-                      dispatchAnnotation({ type: "delete", id: annotationId });
-                      setEditingAnnotationId((current) => (
-                        current === annotationId ? null : current
-                      ));
-                    }}
-                  />
-                ) : null}
                 {editingAnnotationId ? (() => {
                   const annotation = annotationState.annotations.find(
                     (candidate) => candidate.id === editingAnnotationId,

@@ -477,6 +477,47 @@ describe("MarkdownBody", () => {
     expect(spanning?.selectedText).not.toContain("Tooltip-only");
   });
 
+  it("maps a partial selection in a soft-break skill list to the exact raw source range", () => {
+    const source = [
+      "para-memory-files",
+      "rudder-docs",
+      "skill-creator",
+      "visualize",
+      "browser",
+    ].join("\n");
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const sourceRoot = container.querySelector<HTMLElement>(".rudder-markdown")!;
+    sourceRoot.setAttribute(CHAT_ANNOTATION_SOURCE_ATTRIBUTE, "assistant:skill-list");
+    sourceRoot.setAttribute(CHAT_ANNOTATION_BLOCK_ATTRIBUTE, "skill-list");
+    const paragraphText = sourceRoot.querySelector("p")!.firstChild!;
+    const rendered = paragraphText.textContent!;
+    const renderedStart = rendered.indexOf("skill-creator");
+    const selectedText = "skill-creato";
+    const range = document.createRange();
+    range.setStart(paragraphText, renderedStart);
+    range.setEnd(paragraphText, renderedStart + selectedText.length);
+
+    const result = resolveChatAnnotationRange({
+      range,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+
+    expect(result).toMatchObject({
+      selectedText,
+      start: source.indexOf(selectedText),
+      end: source.indexOf(selectedText) + selectedText.length,
+    });
+  });
+
   it("renders a file-type icon for local file links with source locations", () => {
     const container = render(
       <ThemeProvider>

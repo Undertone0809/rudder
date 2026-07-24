@@ -5,11 +5,13 @@ import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DraftResponseAnnotationsPopover,
   EditableResponseAnnotationsCard,
   ResponseAnnotationCountChip,
   ResponseAnnotationEditor,
   ResponseAnnotationMarker,
   SentResponseAnnotationsCard,
+  avoidResponseAnnotationMarkerCollisions,
   placeResponseAnnotationMarker,
 } from "./ResponseAnnotations";
 
@@ -89,7 +91,10 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount());
+  document.querySelectorAll("[data-testid='chat-response-annotation-editor-exit']")
+    .forEach((element) => element.remove());
   host.remove();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -138,13 +143,80 @@ describe("response annotation components", () => {
     expect(marker.getAttribute("data-annotation-id")).toBe(annotation.id);
   });
 
-  it("places a multi-line selection marker beside its final line", () => {
+  it("places a selection marker after the complete visual line instead of over following text", () => {
     expect(placeResponseAnnotationMarker(
       { left: 220, right: 300, top: 160, bottom: 180, width: 80, height: 20 },
       { left: 50, right: 650, top: 100, bottom: 500, width: 600, height: 400 },
+      { viewportWidth: 1_000, markerSize: 28, gap: 6, padding: 8 },
     )).toEqual({
       left: 256,
       top: 60,
+    });
+  });
+
+  it("moves a selection marker before the complete visual line when its right side would clip", () => {
+    expect(placeResponseAnnotationMarker(
+      { left: 620, right: 660, top: 160, bottom: 180, width: 40, height: 20 },
+      { left: 50, right: 650, top: 100, bottom: 500, width: 600, height: 400 },
+      { viewportWidth: 670, markerSize: 28, gap: 6, padding: 8 },
+    )).toEqual({
+      left: 536,
+      top: 60,
+    });
+  });
+
+  it("keeps a narrow-screen marker inside the viewport when neither side gutter fits", () => {
+    expect(placeResponseAnnotationMarker(
+      { left: 10, right: 382, top: 160, bottom: 180, width: 372, height: 20 },
+      { left: 8, right: 382, top: 100, bottom: 500, width: 374, height: 400 },
+      { viewportWidth: 390, markerSize: 44, gap: 6, padding: 8 },
+    )).toEqual({
+      left: 330,
+      top: 86,
+    });
+  });
+
+  it("moves a narrow-screen marker past following text when no side gutter fits", () => {
+    expect(placeResponseAnnotationMarker(
+      { left: 10, right: 382, top: 160, bottom: 180, width: 372, height: 20 },
+      { left: 8, right: 382, top: 100, bottom: 500, width: 374, height: 400 },
+      {
+        viewportWidth: 390,
+        markerSize: 44,
+        gap: 6,
+        padding: 8,
+        textRects: [
+          { left: 10, right: 382, top: 182, bottom: 202, width: 372, height: 20 },
+          { left: 10, right: 382, top: 204, bottom: 224, width: 372, height: 20 },
+        ],
+      },
+    )).toEqual({
+      left: 330,
+      top: 130,
+    });
+  });
+
+  it("spreads same-line markers horizontally before falling back to another row", () => {
+    expect(avoidResponseAnnotationMarkerCollisions([
+      { id: "annotation-2", left: 256, top: 60 },
+      { id: "annotation-1", left: 256, top: 60 },
+      { id: "annotation-3", left: 256, top: 120 },
+    ], 28, 2, { minLeft: -42, maxLeft: 316 })).toEqual({
+      "annotation-1": { left: 256, top: 60 },
+      "annotation-2": { left: 286, top: 60 },
+      "annotation-3": { left: 256, top: 120 },
+    });
+  });
+
+  it("keeps collision-shifted narrow-screen markers clear of following text", () => {
+    expect(avoidResponseAnnotationMarkerCollisions([
+      { id: "annotation-1", left: 330, top: 86, direction: -1 },
+      { id: "annotation-2", left: 330, top: 86, direction: -1 },
+    ], 44, 2, { minLeft: 0, maxLeft: 330 }, [
+      { left: 2, right: 322, top: 82, bottom: 102, width: 320, height: 20 },
+    ])).toEqual({
+      "annotation-1": { left: 330, top: 86 },
+      "annotation-2": { left: 330, top: 132 },
     });
   });
 
@@ -167,6 +239,12 @@ describe("response annotation components", () => {
     expect(host.textContent).toContain("2. Selected text:");
     expect(host.textContent).toContain(annotation.selectedText);
     expect(host.textContent).toContain("screenshot.png");
+    const filePicker = host.querySelector<HTMLLabelElement>(
+      "label[aria-label='Add images or files']",
+    );
+    expect(filePicker).not.toBeNull();
+    expect(filePicker?.textContent?.trim()).toBe("");
+    expect(filePicker?.getAttribute("title")).toBe("Add images or files");
     const textarea = host.querySelector("textarea")!;
     act(() => {
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
@@ -208,6 +286,146 @@ describe("response annotation components", () => {
     click(pencil);
     expect(onEdit).toHaveBeenCalledWith(annotation, pencil);
     expect(pencil.dataset.annotationId).toBe(annotation.id);
+  });
+
+  it("opens draft details above the composer without mounting the card in composer layout", () => {
+    const secondAnnotation: ChatInlineAnnotation = {
+      ...annotation,
+      id: "10000000-0000-4000-8000-000000000002",
+      selectedText: "A second draft quote.",
+      start: 50,
+      end: 71,
+      attachmentIds: [],
+    };
+    const onOpenChange = vi.fn();
+    const onEdit = vi.fn();
+    render(
+      <DraftResponseAnnotationsPopover
+        annotations={[annotation, secondAnnotation]}
+        pendingFilesByAnnotationId={{}}
+        open={false}
+        onOpenChange={onOpenChange}
+        onClear={vi.fn()}
+        onEdit={onEdit}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    click(host.querySelector("[aria-label='Show 2 annotations']")!);
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+
+    render(
+      <DraftResponseAnnotationsPopover
+        annotations={[annotation, secondAnnotation]}
+        pendingFilesByAnnotationId={{}}
+        open
+        onOpenChange={onOpenChange}
+        onClear={vi.fn()}
+        onEdit={onEdit}
+        onDelete={vi.fn()}
+      />,
+    );
+    const card = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-card']",
+    )!;
+    const popover = card.closest<HTMLElement>(
+      "[data-testid='chat-response-annotations-draft-popover']",
+    )!;
+    expect(card).not.toBeNull();
+    expect(host.contains(card)).toBe(false);
+    expect(card.closest("[data-side='top']")).not.toBeNull();
+    expect(popover.className).toContain("overflow-y-auto");
+    expect(popover.className).toContain("--radix-popover-content-available-height");
+
+    click(card.querySelector("[aria-label='Edit annotation 2']")!);
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    expect(onEdit).toHaveBeenCalledWith(secondAnnotation);
+  });
+
+  it("animates the single editor out before completing Cancel", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    const onCancel = vi.fn();
+    render(
+      <ResponseAnnotationEditor
+        annotation={annotation}
+        ordinal={1}
+        pendingFiles={[]}
+        onSave={vi.fn()}
+        onCancel={onCancel}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    const editor = host.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-editor']",
+    )!;
+    click(Array.from(editor.querySelectorAll("button")).find(
+      (button) => button.textContent === "Cancel",
+    )!);
+    expect(editor.dataset.state).toBe("closed");
+    expect(onCancel).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+    expect(onCancel).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it("commits Save immediately even when exit motion is enabled", () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    const onSave = vi.fn();
+    render(
+      <ResponseAnnotationEditor
+        annotation={annotation}
+        ordinal={1}
+        pendingFiles={[]}
+        onSave={onSave}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    click(Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === "Save",
+    )!);
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(document.body.querySelector(
+      "[data-testid='chat-response-annotation-editor-exit']",
+    )?.getAttribute("data-state")).toBe("closed");
+  });
+
+  it("commits Delete immediately while preserving an exit snapshot", () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    const onDelete = vi.fn();
+    render(
+      <ResponseAnnotationEditor
+        annotation={annotation}
+        ordinal={1}
+        pendingFiles={[]}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+
+    click(host.querySelector("[aria-label='Delete annotation']")!);
+    expect(onDelete).toHaveBeenCalledOnce();
+    expect(document.body.querySelector(
+      "[data-testid='chat-response-annotation-editor-exit']",
+    )?.getAttribute("data-state")).toBe("closed");
   });
 
   it("keeps file and comment edits local when the editor is cancelled", () => {
