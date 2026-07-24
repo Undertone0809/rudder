@@ -35,6 +35,7 @@ related_tests:
 related_plans:
   - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
   - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
+  - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
 edit_policy: user_confirmed_only
 ---
 
@@ -74,6 +75,15 @@ Product model:
   live under `RUDDER_ORG_SKILLS_DIR`, require an authorized organization Skill
   Library import, and are enabled separately for the intended agents. Global or
   provider-native discovery alone is not Rudder runtime enablement.
+- Every non-bundled organization skill is an editable local installation,
+  including skills imported from GitHub, skills.sh, URLs, community presets, or
+  other remote sources. Remote provenance is retained for display and explicit
+  update checks, but ordinary listing, editing, Chat loading, and Agent Runs
+  read the installed organization copy without contacting or regenerating the
+  upstream source.
+- Rudder-bundled and capability-bundled skills remain read-only projections of
+  their Rudder-owned source. They are the only organization-library skills that
+  the server may reject as non-editable.
 - `visualize` uses `CHAT.INLINE.VISUAL.001` for custom declarative Chat visuals.
   Its authoring contract is a provider-neutral Rudder message envelope, never a
   provider filesystem directory, iframe, attachment id, or provider-named
@@ -122,14 +132,20 @@ Flow:
 
 1. Rudder resolves always-bundled and capability-bundled skills from current
    instance capability state.
-2. Organization skill library is seeded, reconciled, and scanned.
+2. Organization skill library is seeded, reconciled, and scanned. Installing or
+   explicitly updating a remote skill writes its complete validated file tree
+   to a stable organization-managed directory by atomic replacement. A legacy
+   remote row without a local source is migrated once, under an
+   organization/skill lock, before its first edit or runtime use.
    Reconciliation removes retired rows and enabled associations only when their
    stored provenance identifies them as Rudder-bundled.
 3. Agent skill snapshot is built from all supported sources.
 4. Desired selection is validated against available/always-enabled entries.
 5. Runtime skill sync/materialization prepares the runtime-side skill surface
    from the Rudder-resolved selected, always-bundled, and active
-   capability-bundled set only.
+   capability-bundled set only. It reuses each stable installed source path and
+   must not redownload, delete, or reconstruct an organization skill on every
+   invocation.
 6. Instruction loading exposes desired/realized skill facts to the adapter.
 7. Metadata-first/native hosts expose the skill description for intent matching
    before the agent reads the body or references. Prompt-injected hosts may put
@@ -140,6 +156,12 @@ Flow:
 Invariants:
 
 - Bundled Rudder skills are not disabled by normal optional-skill toggles.
+- Non-bundled organization skills are editable after installation. Ordinary
+  reads and runs must preserve local edits; only an explicit update operation
+  may replace the installed copy from its recorded upstream source.
+- A failed install, update, or legacy migration must preserve the last complete
+  local copy and must not expose a partial tree. Imported paths must remain
+  inside the managed skill directory.
 - The bundled `skill-creator` package must retain the resources referenced by
   its workflow, including evaluation, review, grading, compatibility, and
   packaging support; a metadata-only placeholder does not satisfy the bundled

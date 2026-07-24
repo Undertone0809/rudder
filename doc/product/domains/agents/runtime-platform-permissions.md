@@ -38,6 +38,7 @@ related_plans:
   - doc/plans/2026-06-26-local-runtime-operator-home-default.md
   - doc/plans/2026-07-12-built-in-browser.md
   - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
+  - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
 edit_policy: user_confirmed_only
 ---
 
@@ -182,7 +183,13 @@ dynamic client secrets, or organization secret identifiers.
    Rudder sets or removes `RUDDER_BROWSER_ENABLED` from trusted run context
    after user environment merging; agent or user config cannot override it.
 
-4. Rudder materializes runtime skills using an adapter-supported mechanism:
+4. Rudder resolves selected runtime skills to stable installed source
+   directories. A normal invocation may validate a missing legacy installation,
+   but it must not destructively rebuild, rewrite, or redownload an already
+   installed organization skill. Chat list/detail loading resolves skill
+   metadata only and does not perform filesystem or network materialization.
+
+5. Rudder exposes those installed sources using an adapter-supported mechanism:
    native provider config, symlink, directory junction, copied directory,
    prompt-injected skill text, or another explicit strategy. Materialization is
    a runtime implementation detail, but the product result is that selected
@@ -190,17 +197,17 @@ dynamic client secrets, or organization secret identifiers.
    adapter mechanism must not broaden the selected set with provider-native,
    operator-home, project, global, or stale managed skills.
 
-5. Before provider execution, Rudder prunes, disables, isolates, or ignores
+6. Before provider execution, Rudder prunes, disables, isolates, or ignores
    stale Rudder-managed and provider-native skills that are not in the current
    selected set.
 
-6. When materialization depends on filesystem indirection, Rudder must choose a
+7. When materialization depends on filesystem indirection, Rudder must choose a
    platform-safe method. POSIX symlinks are acceptable on macOS/Linux. Windows
    directory symlinks must not be the only path for ordinary users because they
    may require Developer Mode or elevation; junction or copy fallback is the
    expected durable strategy for directory skill materialization.
 
-7. Rudder must not copy, symlink, or recreate broad operator-home credential
+8. Rudder must not copy, symlink, or recreate broad operator-home credential
    and tooling entries into adapter-managed runtime state by default. Entries
    such as `.git-credentials`, `.npmrc`, `.npm`, `.ssh`, `.config/gh`,
    `.docker`, `.kube`, and `.vscode` remain in the operator home and are
@@ -210,29 +217,29 @@ dynamic client secrets, or organization secret identifiers.
    symlinks or empty placeholders from adapter-managed runtime state when it
    prepares that state.
 
-8. Narrow provider-native auth/session materialization remains allowed when an
+9. Narrow provider-native auth/session materialization remains allowed when an
    adapter needs provider-specific state outside child `HOME`, such as
    Claude/Anthropic auth directories, Gemini auth files, OpenCode cache/session
    state, or Pi profile files. This must stay adapter-specific and must not
    become a broad local CLI/tooling bridge.
 
-9. If a platform limitation is recoverable, Rudder records the substitution or
+10. If a platform limitation is recoverable, Rudder records the substitution or
    skip in logs, command notes, adapter metadata, or skill sync evidence. The
    run may continue when the selected skill/credential behavior still matches
    the product contract.
 
-10. If the limitation prevents required runtime startup, workspace access,
+11. If the limitation prevents required runtime startup, workspace access,
    credential access, or skill availability, Rudder fails before or during
    adapter invocation with a clear error code/message that tells the operator
    what permission, path, login, or configuration needs repair.
 
-11. Provider OAuth access tokens, refresh tokens, client secrets, PKCE
+12. Provider OAuth access tokens, refresh tokens, client secrets, PKCE
     verifiers, and temporary dynamic-client metadata stay in encrypted
     organization secrets. They are never written into prompts, tool arguments,
     adapter config, command lines, child environment variables, or audit
     outcomes.
 
-12. Runtime adapters receive a provider-neutral, run-scoped external MCP proxy
+13. Runtime adapters receive a provider-neutral, run-scoped external MCP proxy
     binding containing only binding id, proxy server name, explicit tool
     allowlist policy, required behavior, startup timeout, and tool timeout. The
     fixed Rudder proxy URL and run-owned authorization are derived outside the
@@ -240,14 +247,14 @@ dynamic client secrets, or organization secret identifiers.
     organization, agent, run, connection, binding, and enabled tools; it does
     not become the provider OAuth identity.
 
-13. Arbitrary custom STDIO execution is permitted only in `local_trusted`.
+14. Arbitrary custom STDIO execution is permitted only in `local_trusted`.
     Authenticated deployments require instance-administrator allowlists for
     commands, executable paths, working directories, and environment variable
     names. Sensitive environment values remain server-side encrypted; allowed
     safe values and environment references must not broaden inherited host
     environment access.
 
-14. Custom Streamable HTTP permits public HTTPS targets by default. HTTP,
+15. Custom Streamable HTTP permits public HTTPS targets by default. HTTP,
     loopback, private-network, redirect, and OAuth metadata targets require
     deployment-administrator allowlists. Resolution and redirect handling must
     resist DNS rebinding, and authorization, cookie, proxy authorization, API
@@ -258,7 +265,7 @@ dynamic client secrets, or organization secret identifiers.
     Authorization header, Bearer environment, and direct Bearer sources are
     mutually exclusive.
 
-15. Every discovery and dispatch revalidates the current deployment boundary.
+16. Every discovery and dispatch revalidates the current deployment boundary.
     Required connections fail the run with safe actionable evidence when
     unavailable; optional connections may be omitted or reported without
     exposing credentials or target-internal response data.

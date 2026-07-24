@@ -34,6 +34,7 @@ related_tests:
   - server/src/__tests__/pi-local-execute.test.ts
 related_plans:
   - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
+  - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
 edit_policy: user_confirmed_only
 ---
 
@@ -155,8 +156,12 @@ at the issue execution boundary, not to generic chat, review, or heartbeat work.
 1. Before adapter invocation, Rudder resolves the agent runtime config.
    Secret-backed config values are resolved for the agent organization. Enabled
    skills are resolved for the exact agent, organization, runtime type, and
-   resolved config, then materialized as runtime skill entries in the adapter
-   config. Adapters receive this selected set as input; they must not add
+   resolved config, then mapped to their stable installed sources as runtime
+   skill entries in the adapter config. The shared preparation path ensures a
+   missing legacy installation once at actual run startup; metadata-only Chat
+   descriptors do not perform that work. Claude, Codex, Cursor, Gemini,
+   OpenCode, and Pi all receive this same resolved installed set as input and
+   must not add
    provider-native, operator-home, project, global, or adapter-home skills that
    Rudder did not resolve as enabled or always-enabled for the invocation.
 

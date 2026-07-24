@@ -29,6 +29,8 @@ related_tests:
   - server/src/__tests__/heartbeat-workspace-preflight.test.ts
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/agent-run-conversation-grouping.spec.ts
+related_plans:
+  - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
 edit_policy: user_confirmed_only
 ---
 
@@ -222,10 +224,19 @@ Flow:
    model-generation failure: `chat_adapter_failed`,
    `phase: "model_generation"`, `action: "retry"`, and retryable by default.
    Messenger may show a Retry action for that failed assistant response.
-11. Each runtime-backed turn has one durable generation attempt and one fenced
-   runtime-control owner. Steer and Stop actions target the expected generation,
-   attempt epoch, and control version rather than whichever process is current
-   when the request eventually arrives.
+    A failure while preparing an installed skill or runtime file before the
+    adapter starts is distinct from a missing/broken provider runtime:
+    `chat_runtime_preparation_failed`, `phase: "runtime_boot"`,
+    `action: "retry"`. Rudder surfaces only a sanitized skill identity and the
+    canonical `SKILL.md` filename when known; it never derives arbitrary
+    filenames, paths, query values, or credentials from raw exception text.
+    After the operator repairs the local skill, Retry creates a new generation.
+11. Each runtime-backed turn starts as an ownerless pending generation while
+   Rudder performs legitimate run preparation. The fenced runtime-control
+   owner, attempt epoch, control version, and lease are established only when
+   the adapter attempt actually takes control. Steer and Stop actions target
+   that expected generation and attempt rather than whichever process is
+   current when the request eventually arrives.
 12. A Steer accepted by a native interactive runtime is submitted to that same
     provider turn. When native Steer is unavailable, Rudder interrupts the old
     attempt and starts one server-owned feedback continuation only after the old
@@ -271,6 +282,11 @@ Invariants:
 - A control action is idempotent by durable action ID. Retrying the same exact
   Stop or Steer must resolve the original action; it must not target a newer
   attempt or create a second continuation.
+- Stale-owner recovery applies only to a generation that has entered
+  lease-managed starting/running execution. It must not reclaim an ownerless
+  generation during valid preprocessing, even when preparation exceeds the
+  lease duration. Retrying a terminal `control_lost` generation creates a new
+  generation and control record.
 - Browser closure and server restart must not strand accepted Steer feedback.
   Provider-acceptance ambiguity remains explicit and must not trigger blind
   duplicate delivery.
