@@ -654,5 +654,4 @@ export const zhCN: Messages = {
   "chat.annotations.couldNotAdd": "无法添加批注",
   "chat.annotations.added": "已添加批注",
   "chat.annotations.removed": "已移除批注",
-  "chat.annotations.moreDetailsPrompt": "请详细解释这段内容。",
 };

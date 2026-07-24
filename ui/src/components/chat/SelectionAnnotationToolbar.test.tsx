@@ -65,7 +65,6 @@ describe("selection annotation toolbar", () => {
 
   it("renders in a portal and supports arrow keys, activation, Escape, and focus return", () => {
     const onAddToChat = vi.fn();
-    const onMoreDetails = vi.fn();
     const onAskInSideChat = vi.fn();
     const onDismiss = vi.fn();
     const focusReturn = document.createElement("button");
@@ -78,7 +77,6 @@ describe("selection annotation toolbar", () => {
           open
           anchorRect={{ left: 40, right: 140, top: 100, bottom: 120, width: 100, height: 20 }}
           onAddToChat={onAddToChat}
-          onMoreDetails={onMoreDetails}
           onAskInSideChat={onAskInSideChat}
           onDismiss={onDismiss}
           onReturnFocus={onReturnFocus}
@@ -92,7 +90,6 @@ describe("selection annotation toolbar", () => {
     const buttons = Array.from(toolbar.querySelectorAll("button"));
     expect(buttons.map((button) => button.textContent)).toEqual([
       "Add to chat",
-      "More details",
       "Ask in side chat",
     ]);
     expect(document.activeElement).toBe(buttons[0]);
@@ -105,7 +102,7 @@ describe("selection annotation toolbar", () => {
     act(() => {
       buttons[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
-    expect(onMoreDetails).toHaveBeenCalledOnce();
+    expect(onAskInSideChat).toHaveBeenCalledOnce();
 
     act(() => {
       toolbar.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -124,7 +121,6 @@ describe("selection annotation toolbar", () => {
           open
           anchorRect={{ left: 40, right: 140, top: 100, bottom: 120, width: 100, height: 20 }}
           onAddToChat={vi.fn()}
-          onMoreDetails={vi.fn()}
           onAskInSideChat={vi.fn()}
           onDismiss={vi.fn()}
         />,
@@ -143,7 +139,6 @@ describe("selection annotation toolbar", () => {
           open
           anchorRect={{ left: 40, right: 140, top: 100, bottom: 120, width: 100, height: 20 }}
           onAddToChat={vi.fn()}
-          onMoreDetails={vi.fn()}
           onAskInSideChat={vi.fn()}
           askInSideChatDisabled
           onDismiss={vi.fn()}
@@ -183,7 +178,6 @@ describe("selection annotation toolbar", () => {
           anchorRect={{ left: 260, right: 300, top: 100, bottom: 120, width: 40, height: 20 }}
           getAnchorRect={getAnchorRect}
           onAddToChat={vi.fn()}
-          onMoreDetails={vi.fn()}
           onAskInSideChat={vi.fn()}
           onDismiss={onDismiss}
         />,

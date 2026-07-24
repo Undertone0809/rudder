@@ -17,14 +17,12 @@ export type SelectionAnnotationRect = Pick<
 
 export type SelectionAnnotationToolbarLabels = {
   addToChat: string;
-  moreDetails: string;
   askInSideChat: string;
   toolbarLabel: string;
 };
 
 const DEFAULT_LABELS: SelectionAnnotationToolbarLabels = {
   addToChat: "Add to chat",
-  moreDetails: "More details",
   askInSideChat: "Ask in side chat",
   toolbarLabel: "Response annotation actions",
 };
@@ -80,7 +78,6 @@ export function SelectionAnnotationToolbar({
   boundaryRect,
   getBoundaryRect,
   onAddToChat,
-  onMoreDetails,
   onAskInSideChat,
   askInSideChatDisabled = false,
   onDismiss,
@@ -96,7 +93,6 @@ export function SelectionAnnotationToolbar({
   boundaryRect?: SelectionAnnotationRect | null;
   getBoundaryRect?: () => SelectionAnnotationRect | null;
   onAddToChat: () => void;
-  onMoreDetails: () => void;
   onAskInSideChat: () => void;
   askInSideChatDisabled?: boolean;
   onDismiss: () => void;
@@ -115,9 +111,8 @@ export function SelectionAnnotationToolbar({
   }));
   const actions = useMemo(() => [
     { label: labels.addToChat, run: onAddToChat, disabled: false },
-    { label: labels.moreDetails, run: onMoreDetails, disabled: false },
     { label: labels.askInSideChat, run: onAskInSideChat, disabled: askInSideChatDisabled },
-  ], [askInSideChatDisabled, labels, onAddToChat, onAskInSideChat, onMoreDetails]);
+  ], [askInSideChatDisabled, labels, onAddToChat, onAskInSideChat]);
   const placement = placeSelectionAnnotationToolbar(
     liveAnchorRect,
     toolbarSize,
