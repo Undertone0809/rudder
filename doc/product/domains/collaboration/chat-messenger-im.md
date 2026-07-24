@@ -5,6 +5,7 @@ status: active
 coverage: detailed
 contract_ids:
   - CHAT.LIFECYCLE.001
+  - CHAT.RESPONSE.ANNOTATION.001
   - CHAT.INLINE.VISUAL.001
   - CHAT.TITLE.GENERATION.001
   - CHAT.FORK.001
@@ -35,6 +36,8 @@ related_code:
   - packages/db/src/schema/agent_integrations.ts
   - packages/shared/src/constants.ts
   - packages/shared/src/types/chat.ts
+  - packages/shared/src/validators/chat.ts
+  - packages/shared/src/chat-transcript-provenance.ts
   - packages/shared/src/project-mentions.ts
   - packages/shared/src/chat-work-manifest.ts
   - packages/shared/src/browser-shortcuts.ts
@@ -45,6 +48,8 @@ related_code:
   - server/src/services/chats.ts
   - server/src/services/chat-work-manifest.ts
   - server/src/services/chat-agent-runs.ts
+  - server/src/services/chat-assistant.helpers.ts
+  - server/src/services/chat-inline-annotations.ts
   - server/src/services/chat-steer-messages.ts
   - server/src/services/side-chats.ts
   - server/src/services/messenger.ts
@@ -57,6 +62,7 @@ related_code:
   - server/src/services/integrations/feishu/event-verifier.ts
   - ui/src/index.css
   - ui/src/components/MarkdownBody.tsx
+  - ui/src/lib/chat-pending-attachments.ts
   - ui/src/api/websiteMetadata.ts
   - ui/src/lib/source-badge.ts
   - ui/src/lib/browser-side-panel.ts
@@ -116,6 +122,9 @@ related_tests:
   - packages/shared/src/browser-shortcuts.test.ts
   - ui/src/components/MilkdownMarkdownEditor.test.ts
   - ui/src/components/MarkdownBody.test.tsx
+  - packages/shared/src/chat-transcript-provenance.test.ts
+  - server/src/services/chat-assistant.annotations.test.ts
+  - server/src/services/chat-inline-annotations.test.ts
   - ui/src/lib/side-panel-targets.test.ts
   - ui/src/lib/side-chat.test.ts
   - ui/src/context/SidePanelContext.test.tsx
@@ -152,6 +161,7 @@ related_tests:
   - tests/e2e/chat-work-manifest.spec.ts
   - tests/e2e/chat-composer-at-mentions.spec.ts
   - tests/e2e/chat-transcript-internal-events.spec.ts
+  - tests/e2e/chat-response-annotations.spec.ts
   - tests/e2e/agent-detail-feishu-integration.spec.ts
   - tests/e2e/feishu-source-badges.spec.ts
   - desktop/scripts/smoke.mjs
@@ -188,6 +198,10 @@ Product model:
   API, CLI, MCP, automation, and IM entry points.
 - Messages have role, status, body, attachments, rich references, structured
   payloads, and optional run attribution.
+- A user message may carry response annotations under
+  `CHAT.RESPONSE.ANNOTATION.001`. An annotation-only message is valid in an
+  existing Chat, and Queue, Steer, retry, and edit branching preserve the
+  annotation evidence with the same durability as the message body.
 - Completed assistant messages may own scriptless inline visual presentation
   under `CHAT.INLINE.VISUAL.001`. Its backing asset and trusted placement mapping
   are internal message state, not a normal attachment, Library artifact, or work
@@ -201,6 +215,10 @@ Product model:
   navigation collapses matching runs with the same normalized conversation
   identity into one entry, while individual attempts remain available through
   the run detail's `Chat Replies` evidence.
+- A run-backed failed assistant message exposes `Open run` for that exact
+  message attempt, independent of the conversation's newest run. Chat omits the
+  action when either run attribution or agent identity is unavailable, so it
+  does not render a dead Agent Run link.
 - Chat and issues are parallel ways to move tasks forward. Chat organizes work
   through an ongoing conversation; issues add explicit status, ownership,
   priority, dependencies, and review structure.
@@ -247,9 +265,10 @@ Product model:
   Stop that response first; the edit or retry must never be converted into a
   Queue row or presented as Steer feedback.
 - Queued follow-ups preserve the queued body and composer context until they are
-  delivered. Operators can edit or delete ordinary queued follow-ups while they
-  remain queued. The server, rather than the open browser, owns claiming and
-  delivering eligible follow-ups.
+  delivered, including response annotations and their annotation-owned files.
+  Operators can edit or delete ordinary queued follow-ups while they remain
+  queued. The server, rather than the open browser, owns claiming and delivering
+  eligible follow-ups.
 - Steer is a durable operator command, not an optimistic queue label. If the
   active runtime attempt supports native steering, Rudder submits the feedback
   to that same provider turn. Otherwise Rudder interrupts the current attempt
@@ -264,8 +283,11 @@ Product model:
   the owning generation's Work Transcript, at the durable generation-event
   boundary where the operator sent it. Runtime evidence emitted before Steer
   stays before it, later reasoning and tools stay after it, and the final
-  assistant response follows the Work Transcript. The live, completed, and
-  reloaded projections must preserve that same ordering and message identity.
+  assistant response follows the Work Transcript. Even inside the collapsible
+  Work Transcript, the Steer interjection uses the same right-aligned user
+  bubble edge as an ordinary sent message. The live, completed, and reloaded
+  projections must preserve that same ordering, alignment, and message
+  identity.
 - Steer that is scheduled as a fallback continuation did not enter the old
   provider turn. It remains the same durable message but is presented between
   the old run and the new continuation, never inside the old Work Transcript.
@@ -324,6 +346,9 @@ Flow:
 8. The operator can open the conversation menu to inspect its newest linked
    Agent Run, then use `Chat Replies` to move between distinct attempts without
    expanding duplicate conversation entries in the Agent Runs navigation.
+   A run-backed failed assistant message instead opens that message's exact
+   Agent Run directly; retryable failures keep this action alongside Retry, and
+   failures without complete run and agent attribution expose no run action.
 9. Chat can continue executing the task conversationally or create/link an
    issue, automation, or approval when the operator asks for that additional
    structure. The assistant must not emit an issue proposal merely because the
@@ -357,11 +382,16 @@ Flow:
    the composer as soon as that user message is visible, even while the new
    assistant reply is still running. Delivery does not depend on the
    originating page remaining open.
-16. If the current reply is stopped, fails, or is otherwise not completed,
-   ordinary queued follow-ups stay parked and are not silently flushed. The
-   operator may explicitly Steer retained feedback; Rudder then persists a
-   continuation, waits for the prior owner to terminate, and starts that
-   continuation without requiring the feedback to be resent.
+16. If the operator Stops the current reply, the stopped generation remains
+   visibly `Stopped`, including when it was stopped before producing body or
+   transcript output, and the server-owned queue worker automatically delivers
+   the next ordinary queued follow-up as a distinct subsequent turn after the
+   Stop reaches its verified terminal boundary. If the current reply fails,
+   loses control, or ends without verified Stop/completion evidence, ordinary
+   queued follow-ups stay parked. The operator may explicitly Steer retained
+   feedback; Rudder then persists a continuation, waits for the prior owner to
+   terminate, and starts that continuation without requiring the feedback to
+   be resent.
 
 Invariants:
 
@@ -429,9 +459,11 @@ Invariants:
   Queue creation, editing, cancellation, claiming, release, and steering
   endpoints must enforce the same conversation access and local mutation rules
   as normal chat sends.
-- Queue ordering must be deterministic by stored position and creation time.
-  Idempotency keys must not allow the same queued item id to be reused with a
-  different payload.
+- Queue ordering must be deterministic by stored position and creation time. A
+  locked or concurrently inspected head item blocks later eligible items in the
+  same conversation; worker concurrency must never let a later Queue message
+  leapfrog it. Idempotency keys must not allow the same queued item id to be
+  reused with a different payload.
 - An ordinary queued follow-up must not become a visible user message until it
   is claimed and delivered through the normal chat send path. Explicit Steer is
   the exception: accepting its durable control action must materialize exactly
@@ -452,9 +484,13 @@ Invariants:
   details, or reloading must not move, hide, duplicate, or reorder that Steer.
   Ordering is anchored by generation sequence / transcript-entry count, not by
   client or message wall-clock timestamps.
-- Stopped or failed replies leave ordinary queued follow-ups parked. Rudder
-  must not silently flush old queued work after an interrupted run. A retained
-  row changes this rule only when the operator explicitly chooses Steer.
+- A verified operator Stop advances the next ordinary queued follow-up through
+  the server-owned worker as a distinct turn without changing the stopped
+  generation's visible `Stopped` result. Failed, control-lost, aborted, or
+  unverified replies leave ordinary queued follow-ups parked; Rudder must not
+  silently flush queued work without completion or verified operator-Stop
+  evidence. A retained row changes this rule only when the operator explicitly
+  chooses Steer.
 - Steering is fenced to the expected generation, runtime attempt, and control
   version. A stale request resolves through its durable action identity; it
   must not steer a newer attempt, lose feedback, or create a duplicate
@@ -475,7 +511,8 @@ Invariants:
   once. The selected-agent candidate wins so the composer preserves the
   agent-specific enabled-skill boundary and metadata.
 - Work-manifest reconciliation must not read hidden reasoning, transcript tool
-  payloads, stdout, or stderr as user-visible Sources or References.
+  payloads, stdout, stderr, or response-annotation payloads as user-visible
+  Sources or References.
 - Project-scoped recent-conversation rows must remain visually scan-friendly at
   rest: separators span the list width and rows do not carry rounded corners or
   inset margins until the operator hovers that row.
@@ -525,19 +562,23 @@ Evidence:
   without manufacturing terminal evidence.
 - Chat concurrent-streaming E2E covers queueing a follow-up during an active
   stream, editing the queued body, native same-turn Codex Steer, fallback
-  continuation, immediate Stop, server-owned Stop-then-Steer delivery, retained
-  ordinary follow-ups after a stopped reply, removal of the linked Queue row
-  while its delivered turn is still running, and one durable native-Steer
-  interjection that survives reload without duplication. Focused UI tests
-  distinguish linked in-flight rows from linked rows recovered to `queued` or
-  `failed_actionable`. The focused UI tests and native-Steer E2E also verify the
-  production-shaped ordering `reasoning A -> Steer -> reasoning/tool B -> final
-  response` while streaming, after final persistence, during historical message
-  edit replacement, and after reload; fallback continuation remains outside the
-  old run.
+  continuation, immediate Stop, automatic ordered Queue advancement after a
+  verified operator Stop, removal of the linked Queue row while its delivered
+  turn is still running, and one durable native-Steer interjection that survives
+  reload without duplication. Service tests cover locked-head ordering and
+  parked ordinary follow-ups after failed, aborted, control-lost, or unverified
+  replies. Focused UI tests distinguish linked in-flight rows from linked rows
+  recovered to `queued` or `failed_actionable`. The focused UI tests and
+  native-Steer E2E also verify the production-shaped ordering `reasoning A ->
+  Steer -> reasoning/tool B -> final response` while streaming, after final
+  persistence, during historical message edit replacement, and after reload;
+  fallback continuation remains outside the old run.
 - Chat route and UI tests cover queue snapshots, active-generation reporting,
   queued follow-up editing/cancellation/claiming, hidden delivered rows,
   retained parked rows, and Feishu-bound queue mutation rejection.
+- Shared, route, UI, and Chat response-annotation E2E tests cover
+  annotation-only messages, Queue and Steer preservation, immutable historical
+  evidence, failure recovery, and annotation-owned image/file attachments.
 - Chat empty-state UI and E2E coverage verify aligned tabs/Project context,
   the selected Project icon/clear-action swap, the locked-conversation icon,
   full-width square resting rows, and inset rounded hover emphasis for recent
@@ -545,6 +586,386 @@ Evidence:
 - Chat prompt-flow UI, motion-contract, and E2E coverage verify compact starters,
   the two-page transition lock, reduced-motion behavior, context preservation,
   editable prompt completion, retained hidden DOM, and the existing-chat boundary.
+
+## CHAT.RESPONSE.ANNOTATION.001
+
+## Contract Summary
+
+Rudder lets an operator quote a precise selection from a stable assistant
+answer or already-loaded, operator-visible Process prose and attach that quote
+to a Chat message. Each annotation may include an optional operator comment and
+its own images or files. Draft annotations remain editable; after Send they are
+immutable, message-owned evidence that Queue, Steer, retry, edit branching,
+Fork, and Side Chat preserve.
+
+## Intent / User Job
+
+An operator can point to the exact part of a long answer or visible work
+transcript that needs clarification, correction, or follow-up without manually
+copying context into the composer or losing the relationship to its source.
+
+## Why / Design Reasoning
+
+- Plain copy/paste loses source identity, makes several quoted passages hard to
+  distinguish, and cannot return the operator to the original evidence.
+- Process prose can be useful quoted context, but it remains Run evidence. A
+  deliberate user selection must not silently promote Thinking into an
+  assistant final answer or system instruction.
+- Annotation comments and files belong to an individual quote. Keeping that
+  ownership explicit prevents an image or document from becoming ambiguous
+  generic message context.
+- Stable hashes, canonical source offsets, bounded surrounding context, and
+  generation-event provenance detect stale or fabricated anchors without
+  storing a second mutable copy of the source.
+- The user message owns the immutable sent snapshot. A separate annotation
+  table would introduce an independently mutable lifecycle that this workflow
+  does not need.
+
+## Actors / Objects / State
+
+- Board operator: creates, comments on, attaches files to, removes, inspects,
+  and sends annotations in a Chat the operator can access.
+- Annotation draft: an ordered, mutable item with a client id, exact selected
+  text snapshot, optional comment, source anchor, and zero or more pending
+  image/file attachments.
+- Canonical annotation: a typed `ChatInlineAnnotation` stored in the owning user
+  message's structured payload. It contains `id`, `selectedText`, nullable
+  `comment`, `sourceConversationId`, `sourceMessageId`, `surface`,
+  `sourceHash`, source `start`/`end`, bounded `prefix`/`suffix`, and canonical
+  annotation attachment ids.
+- Assistant-body source: one stable `completed`, `stopped`, or `failed`
+  assistant message. Its hash and offsets address the canonical Markdown
+  source while `selectedText` preserves the exact rendered text the operator
+  saw; Markdown links, inline code, lists, CJK text, and selections spanning
+  visible paragraphs remain supported.
+- Process source: one visible assistant/thinking prose transcript block from a
+  terminal generation. In addition to the common anchor it stores
+  `transcriptKind`, `generationId`, and inclusive
+  `generationSeqStart`/`generationSeqEnd`. Generation event sequence is source
+  identity; transcript-array index and wall-clock timestamp are not.
+- Annotation attachment: an ordinary governed Chat asset and
+  `chat_attachment`, but assigned to exactly one annotation and owned by the
+  same organization, conversation, and user message as its annotation. Before
+  a queued message is materialized, its upload may exist only as a bounded,
+  server-owned staged asset reference.
+- Draft annotation set: at most ten ordered annotations associated with one
+  organization and conversation composer. Its markers are numbered by current
+  order.
+- Sent annotation set: the immutable canonical snapshot on one user message.
+  Its count chip, quoted text, comments, files, source status, and source-jump
+  behavior remain inspectable after reload.
+
+## Entry Points / Inputs
+
+- A mouse, touch, or keyboard text selection contained within one eligible
+  assistant body or one eligible visible Process transcript block.
+- `Add to chat` and `More details` on every eligible selection. `Ask in side
+  chat` is additionally available when the owning assistant message satisfies
+  the completed-message anchor required by `CHAT.SIDE.CHAT.001`.
+- The annotation editor's optional comment field plus image/file add and remove
+  actions.
+- Existing Chat JSON, stream, multipart, Queue, and Steer message admission
+  paths.
+- Historical user-message edit/retry, conversation Fork, and Side Chat first
+  Send.
+
+## Product Logic Flow
+
+1. The operator completes a non-empty selection in one eligible source. Rudder
+   maps the rendered range to one canonical source anchor and rejects a range
+   that crosses messages, transcript blocks, user/system messages, hidden
+   content, raw tool output, stdout/stderr, an inline visual, or an iframe.
+   Markdown rendering preserves raw-source position metadata through
+   normalization, mention-label resolution, and visual-piece splitting; the
+   selected snapshot preserves visible paragraph/list/line-break boundaries
+   while offsets and hashes continue to address the persisted raw source.
+2. Rudder shows a portal-based selection toolbar positioned with flip/shift
+   collision handling. `Add to chat` adds only the annotation. `More details`
+   adds it and inserts the localized equivalent of “Please explain this in more
+   detail” at the current main-composer cursor without sending.
+3. For a completed assistant anchor, `Ask in side chat` places the same
+   annotation in a provisional Side Chat draft and leaves the main Chat draft
+   unchanged. The action is unavailable for a stopped or failed source because
+   those messages are not valid Side Chat anchors. Opening the draft creates no
+   conversation; first Send follows `CHAT.SIDE.CHAT.001`.
+4. Adding the same source surface and canonical range to the same draft is
+   idempotent. New distinct annotations append in order and immediately render
+   an accent marker at the source. Deleting an item renumbers the remaining
+   markers.
+5. The composer renders an `N annotations` chip. Expanding it shows an ordered
+   list of Selected text, optional User comment, and annotation-owned files.
+   Draft rows expose edit and delete actions. Collapsing the details keeps the
+   draft unchanged. Activating the chip's explicit Clear/X control clears all
+   annotations and their draft-only files but preserves the message body and
+   unrelated composer attachments.
+6. Marker or edit activation opens an anchored editor with the selection
+   snapshot, text comment input, image/file add and remove controls, Delete,
+   Cancel, and Save. Cancel restores the prior draft item; Save commits the
+   local draft changes without sending.
+7. An existing Chat message may be sent with an empty body when it has at least
+   one annotation. If both body and annotations are empty, normal validation
+   rejects Send. A direct first-message Chat create still requires its normal
+   non-empty first message because no eligible in-conversation source exists.
+8. The client serializes a versioned draft by organization and conversation.
+   It reads legacy string-only drafts as body-only drafts. Draft annotation
+   metadata survives reload; pending local files follow the governed pending
+   attachment lifecycle and never serialize file bytes into browser storage.
+9. On admission, the server validates organization and conversation access,
+   the source message and Side Chat lineage, eligible surface and terminal
+   status, source hash, range, surrounding context, generation sequence
+   provenance, annotation limits, and every file reference. A source or file
+   from another organization, conversation, user message, or annotation is
+   rejected without revealing its content.
+10. Multipart input refers to newly uploaded annotation files by bounded request
+    indexes. Queue uses private staged asset references, never client-supplied
+    persisted staging ids. On message materialization Rudder creates
+    organization- and message-scoped attachment rows, replaces temporary
+    references with canonical attachment ids, and commits the message,
+    attachment ownership, annotation payload, Queue/Steer linkage, and activity
+    evidence atomically. Failed admission cleans up unowned staged uploads.
+11. A successful send clears the matching draft only after server
+    acknowledgement. A network, upload, runtime-admission, or server validation
+    failure retains body, ordinary attachments, annotations, comments, and
+    annotation files for correction or retry.
+12. The assistant prompt receives annotations as an ordered, bounded
+    user-authored quote section. Selected text is explicitly untrusted quoted
+    context, not a system/developer instruction. Operator comments retain their
+    user origin, and annotation attachment metadata preserves which files
+    belong to which quote. Process text remains Run evidence under
+    `RUN.RESULT.001`; prompt projection does not turn it into assistant final
+    body.
+13. After Send, the user message renders a read-only count chip above the
+   message. Its card shows Selected text, optional User comment, and
+   annotation-owned files without edit/delete controls or duplicate generic
+   attachment tiles. Editing that historical user message creates a new turn
+   variant carrying the annotation semantic snapshots unchanged while remapping
+   attachment ids to the new user message; retry, queued delivery, and Steer
+   reuse the same evidence.
+14. Expanding historical annotations temporarily restores their numbered source
+    markers. Selecting a card item reveals eligible collapsed Process details,
+    scrolls to the source, and briefly highlights it. If the immutable snapshot
+    remains readable but its source cannot be loaded or verified, the card says
+    it cannot be located and does not fabricate a marker.
+15. Fork copies annotation snapshots with copied user messages, remaps source
+    message ids to the child copies, and creates child-owned annotation
+    attachment rows. Side Chat validates the owning completed assistant anchor
+    and uses the exact selected snapshot in its preview and first user message.
+    Work Manifest, automatic learning, and artifact discovery ignore annotation
+    payloads.
+
+## Decision Table
+
+| Case | Conditions | Product result | Must not happen | Evidence |
+| --- | --- | --- | --- | --- |
+| Stable final-answer selection | One completed/stopped/failed assistant body; one valid range | Add one ordered annotation and source marker; expose Side Chat only for a completed owning assistant message | Select a user/system message, cross-message range, streaming content, or create a Side Chat from a stopped/failed anchor | UI, service, and E2E tests |
+| Visible Process selection | Loaded visible assistant/thinking prose; terminal generation; one provenance range | Add one process annotation with generation sequence identity | Use transcript index/timestamp, hidden reasoning, tool payload, stdout/stderr, or lifecycle events | Provenance, service, UI, and E2E tests |
+| Comment and files | Draft annotation is editable and uploads satisfy Chat file policy | Save optional comment and annotation-owned images/files | Attach a foreign asset, duplicate the file as a generic message tile, or log its contents | Multipart, ownership, UI, and E2E tests |
+| More details | Eligible selection; main composer available | Add the annotation and insert localized detail request at the cursor | Send automatically or replace existing draft text | UI and E2E tests |
+| Annotation-only Send | Existing Chat; body empty; at least one valid annotation | Persist and run one normal user turn | Reject solely for empty body or create an empty first Chat | Shared, route, and E2E tests |
+| Duplicate selection | Same source surface and canonical range already in draft | Keep one item and one marker | Add duplicate payloads or skip numbering | UI tests |
+| Send failure | Upload, validation, admission, or network failure | Preserve the complete draft and surface the failure | Clear comments/files or leave unowned staged assets | Route, UI, and E2E tests |
+| Queue or Steer | Active generation; valid annotated follow-up/control message | Preserve annotations/files through materialization and exactly one visible user message | Lose evidence, expose staged ids, or duplicate a Steer message | Queue/Steer service and E2E tests |
+| Historical edit/retry | Sent annotated user message | Carry immutable annotations and remapped attachments into the new turn variant/retry | Mutate the old snapshot or silently drop a file | Service, UI, and E2E tests |
+| Fork | Copied range includes source and owning user message | Remap source-message and attachment ids to child-owned copies | Retain foreign mutable attachment ownership or claim copied Run/output ownership | Fork service and E2E tests |
+| Side Chat | Exact selection belongs to the validated completed assistant anchor | Stage client-only; persist once on first Send with exact quote/files | Mutate the parent draft or create a Side Chat merely by selecting | Side Chat service, UI, and E2E tests |
+| Historical source unavailable | Snapshot is valid but source is absent, collapsed evidence cannot load, or variant differs | Show immutable snapshot with cannot-locate state | Re-anchor to a different answer variant or invent source text | UI and E2E tests |
+
+## Actor-Visible Input
+
+- The toolbar uses the labels `Add to chat`, `More details`, and
+  `Ask in side chat`.
+- Desktop controls use the normal 32–36 CSS-pixel Rudder control rhythm. Coarse
+  pointer controls have at least a 44 CSS-pixel target.
+- Toolbar, marker, chip, list, and editor are keyboard operable. `Escape`
+  dismisses the active surface, arrow keys move within the toolbar, and
+  Enter/Space activates the focused command. Focus returns to the selection,
+  marker, or composer that opened it.
+- The editor accepts text comments plus the same governed image/file types and
+  size limits as normal Chat attachments. It shows pending/upload failure and
+  removal state per file.
+- Selection, toolbar, count changes, deletion, source-unavailable state, and
+  upload failure have appropriate labels or polite live announcements. Reduced
+  motion preserves the same state changes without movement-dependent meaning.
+
+## Operator-Visible Output
+
+- Draft source text shows ordered accent markers; the composer shows one compact
+  count chip and, when expanded, the ordered annotation details.
+- Each detail distinguishes Selected text from User comment and displays its own
+  image/file attachments.
+- Sent user messages retain the read-only chip and card after reload. Annotation
+  attachments open through normal governed Chat image/file inspection.
+- Source navigation expands Process evidence when required, scrolls to the
+  matching source, and uses a brief non-essential highlight.
+- Narrow Chat and an open Side Panel use collision-aware placement without
+  clipping the toolbar/editor or covering the active composer action.
+
+## Persisted Evidence
+
+- No new annotation database table is created.
+- `chat_messages.structuredPayload.inlineAnnotations` stores the normalized
+  ordered annotation snapshots. Canonical attachment ids point only to
+  `chat_attachments` owned by that same user message.
+- Queue payloads preserve typed annotations plus private staged asset
+  references until one message is materialized. Steer, retry, edit variants,
+  and Fork preserve or remap that same typed evidence.
+- Draft storage is a client-side versioned organization/conversation object;
+  legacy body-only string drafts remain readable.
+- Activity and diagnostic logs record only annotation count and source ids
+  needed for audit. They never copy selected text, operator comments, visible
+  Thinking, attachment contents, or temporary file paths.
+
+## Limits
+
+- At most 10 annotations per user message.
+- At most 4,000 characters of selected text per annotation.
+- At most 2,000 characters of operator comment per annotation.
+- At most 16,000 characters across all selected text and comments in one user
+  message.
+- Prefix and suffix anchor context are each bounded to 160 characters.
+- One annotation set references at most 10 total annotation-owned attachments,
+  additionally subject to ordinary Chat file count, byte-size, and type policy.
+- Server prompt projection and rendered previews remain independently bounded;
+  truncation must not alter the persisted immutable snapshot.
+
+## Canonical Scenarios
+
+1. Explain two passages with supporting screenshots:
+   - Trigger: select two final-answer ranges, choose Add to chat, comment on each,
+     and attach one screenshot to each annotation.
+   - Expected state/action: two numbered markers and one `2 annotations` chip;
+     annotation-only Send persists two quoted contexts and two message-owned
+     image attachments.
+   - Visible output: immutable sent card with each screenshot under its own
+     quote, then source jump/highlight after reload.
+   - Evidence: shared/service/UI tests and response-annotation E2E.
+2. Ask about visible Thinking:
+   - Trigger: expand completed Process details, select meaningful thinking prose,
+     and choose More details.
+   - Expected state/action: provenance uses generation sequence, and the
+     localized detail request appears in the composer.
+   - Visible output: Process marker plus composer annotation preview; prompt
+     labels the excerpt as a user quote rather than instructions.
+   - Evidence: generation-provenance, prompt, UI, and E2E tests.
+3. Queue then Steer:
+   - Trigger: submit an annotated follow-up with a file during an active answer,
+     then choose Steer.
+   - Expected state/action: the server preserves one staged asset set and
+     materializes exactly one visible annotated user message.
+   - Visible output: Queue count remains inspectable until delivery; sent
+     annotation survives reload without duplicate message/file tiles.
+   - Evidence: Queue/Steer service and E2E tests.
+4. Focused Side Chat:
+   - Trigger: select an assistant passage, choose Ask in side chat, attach a
+     document, and Send.
+   - Expected state/action: parent draft remains unchanged; first Send creates
+     one hidden Side Chat with exact quote, comment/file, and validated lineage.
+   - Visible output: selected-answer preview and normal Side Chat response.
+   - Evidence: Side Chat service and E2E tests.
+
+## Invariants / Non-Goals
+
+- Only an explicit operator selection creates an annotation. Rudder does not
+  infer annotations from copied text or model output.
+- Streaming/growing content is not eligible in V1. Stable
+  completed/stopped/failed assistant content and terminal, loaded, visible
+  Process prose are the only selectable sources.
+- Hidden reasoning, tool request/response payloads, raw logs, stdout/stderr,
+  lifecycle events, system/user messages, inline-visual iframes, and
+  cross-message/block ranges are never valid sources.
+- Canonical identity uses source hashes, offsets, bounded context, and generation
+  event sequence where applicable. Transcript array indexes and timestamps are
+  not identities.
+- Sent annotations are immutable snapshots. A refreshed answer or later variant
+  never silently re-anchors them, and a historical user-message edit cannot
+  change or remove the original annotation set.
+- Annotation files cannot be borrowed across organization, conversation,
+  message, draft, or annotation boundaries. Public request payloads cannot
+  claim server-owned staged asset ids.
+- Selected text is user-quoted context, not trusted instructions. It cannot
+  override system/developer policy merely because it came from assistant or
+  Process output.
+- Annotation payloads and files do not become Work Manifest items, automatic
+  learning input, artifacts, or assistant final body merely by being attached
+  to a user message.
+- V1 has no collaborative annotation thread, reaction, reply, resolved state,
+  server-side annotation search, automatic re-anchoring, or audio comment
+  recording.
+
+## Drift Boundaries
+
+Changes to eligible sources, source identity, data limits, annotation file
+ownership, draft/sent mutability, selection actions, Queue/Steer/edit/retry
+durability, Side Chat/Fork mapping, prompt trust boundaries, source navigation,
+logging redaction, or Manifest/learning/artifact exclusion require updating this
+contract. Visual token tuning that preserves the documented interaction,
+accessibility, and responsive outcomes does not.
+
+## Traceability
+
+Related contracts:
+
+- `CHAT.LIFECYCLE.001`
+- `CHAT.FORK.001`
+- `CHAT.SIDE.CHAT.001`
+- `CHAT.THREAD.MANIFEST.001`
+- `RUN.RESULT.001`
+- `RUN.CHAT.AGENT.001`
+- `LEARNING.PROMOTION.001`
+
+Related plan:
+
+- `doc/plans/2026-07-23-chat-response-annotations.md`
+
+Related code:
+
+- `packages/shared/src/types/chat.ts`
+- `packages/shared/src/validators/chat.ts`
+- `packages/shared/src/chat-transcript-provenance.ts`
+- `server/src/services/chat-inline-annotations.ts`
+- `server/src/services/chat-assistant.annotations.ts`
+- `server/src/services/chat-assistant.helpers.ts`
+- `server/src/services/chat-generation-provenance.ts`
+- `server/src/services/chat-generation-protocol.ts`
+- `server/src/services/chats.annotation-persistence.ts`
+- `server/src/services/chats.ts`
+- `server/src/routes/chats.annotation-routes.ts`
+- `server/src/routes/chats.ts`
+- `server/src/routes/chats.stream-routes.ts`
+- `server/src/services/side-chats.ts`
+- `ui/src/api/chats.ts`
+- `ui/src/components/chat/ResponseAnnotations.tsx`
+- `ui/src/components/chat/SelectionAnnotationToolbar.tsx`
+- `ui/src/components/MarkdownBody.tsx`
+- `ui/src/components/transcript/RunTranscriptView.chat.tsx`
+- `ui/src/lib/chat-draft-storage.ts`
+- `ui/src/lib/chat-response-annotation-selection.ts`
+- `ui/src/lib/chat-response-annotations.ts`
+- `ui/src/pages/Chat.messages.tsx`
+- `ui/src/pages/Chat.tsx`
+
+Related tests:
+
+- `packages/shared/src/chat-transcript-provenance.test.ts`
+- `packages/shared/src/validators/chat.test.ts`
+- `server/src/services/chat-inline-annotations.test.ts`
+- `server/src/services/chat-assistant.annotations.test.ts`
+- `server/src/services/chat-generation-protocol.test.ts`
+- `server/src/__tests__/chat-routes.test.ts`
+- `server/src/__tests__/messenger-service.test.ts`
+- `ui/src/components/chat/ResponseAnnotations.test.tsx`
+- `ui/src/components/chat/SelectionAnnotationToolbar.test.tsx`
+- `ui/src/components/MarkdownBody.test.tsx`
+- `ui/src/components/transcript/RunTranscriptView.test.tsx`
+- `ui/src/lib/chat-draft-storage.test.ts`
+- `ui/src/lib/chat-response-annotation-selection.test.ts`
+- `ui/src/lib/chat-response-annotations.test.ts`
+- `ui/src/pages/Chat.messages.test.tsx`
+- `tests/e2e/chat-response-annotations.spec.ts`
+
+Known gaps:
+
+- None for the V1 contract.
 
 ## CHAT.INLINE.VISUAL.001
 
@@ -1077,6 +1498,10 @@ Product model:
 - Refreshing a completed assistant answer is not a conversation fork. It creates
   another variant inside the same chat turn, while `Fork` / `Fork from here`
   create separate conversations with lineage.
+- Response annotations copied with a user message remain immutable snapshots
+  under `CHAT.RESPONSE.ANNOTATION.001`. The child receives remapped source
+  message ids and child-owned annotation attachment rows rather than retaining
+  mutable ownership in the source conversation.
 
 Flow:
 
@@ -1088,12 +1513,16 @@ Flow:
    `(2)`.
 3. Rudder copies context links and messages up to the requested fork point. If
    no source message is supplied, it copies through the latest eligible message.
-4. Rudder writes a system message in the child conversation naming the fork
+4. For every copied response annotation, Rudder maps the source-message anchor
+   to the corresponding child message, copies its annotation-owned files, and
+   rewrites attachment ids to child-owned rows without assigning copied Run or
+   Output provenance.
+5. Rudder writes a system message in the child conversation naming the fork
    source.
-5. When the source is Feishu-bound, Rudder leaves the Feishu binding on the
+6. When the source is Feishu-bound, Rudder leaves the Feishu binding on the
    source conversation only. The fork has no provider source metadata or
    outbound Feishu binding.
-6. Rudder ensures the fork-family Messenger custom group contains the root and
+7. Rudder ensures the fork-family Messenger custom group contains the root and
    forked conversations, then navigates the operator to the child conversation.
 
 Invariants:
@@ -1119,6 +1548,10 @@ Invariants:
   Server-owned inline visual presentation is the narrow exception: the copied
   child message receives its own attachment row and trusted mapping to the
   governed immutable asset, without Run or Work Output provenance.
+- Annotation-owned attachments are the other narrow exception because the
+  copied immutable annotation would otherwise point outside the child. They
+  receive child message attachment rows and remapped ids but do not become
+  ordinary copied attachments, Outputs, or new Run evidence.
 - Nested forks must not produce duplicate fork-family custom groups.
 - Forking must not attempt to put the root conversation in multiple custom
   groups; preexisting root group membership is the fork-family grouping anchor.
@@ -1139,7 +1572,8 @@ Evidence:
   activity logging.
 - Messenger service tests cover message-level copy bounds and nested fork group
   reuse, concurrent and nested title allocation, manual numeric suffixes, and
-  the title-length boundary.
+  the title-length boundary, plus annotation source-message and attachment-id
+  remapping.
 - Chat message/UI tests cover the message-level fork action.
 - Chat fork E2E covers the visible fork workflow, copied-message boundary,
   `(2)` naming, and numbered-title stability with Fast Intelligence configured
@@ -1183,8 +1617,10 @@ before the exploration proves useful.
   organization and the creating user.
 - A provisional `side_chat` Side Panel target contains the source conversation,
   optional completed assistant-message anchor, source preview, and an
-  owner-scoped client mutation id. It has no persisted conversation id before
-  the first Send.
+  owner-scoped client mutation id. When opened from
+  `CHAT.RESPONSE.ANNOTATION.001`, it also owns the exact selected annotation
+  draft, comment, and pending annotation files while leaving the main Chat
+  composer unchanged. It has no persisted conversation id before the first Send.
 - A persisted Side Chat is a `chat_conversations` row with
   `conversationKind=side_chat`, source lineage, `messengerVisible`, lifecycle
   state, expiry/keep timestamps, the client mutation id, and a bounded
@@ -1200,6 +1636,7 @@ before the exploration proves useful.
 
 - Type `/side` in a normal Rudder Chat composer and select the composer command.
 - Choose `Open Side Chat` on a completed assistant message.
+- Choose `Ask in side chat` on an eligible response selection.
 - Choose `Side Chat` from the Side Panel empty/add-target surface.
 - First Send posts the exact source assistant message plus the provisional
   mutation id to `POST /api/chats/:sourceId/side-chats`, then uses the normal
@@ -1217,10 +1654,14 @@ before the exploration proves useful.
    Chat stays mounted and its draft, transcript, scroll, and active generation
    remain untouched.
 3. On first Send, the server validates organization access, operator ownership,
-   and a completed assistant-message anchor. Creation is idempotent for the
-   organization, owner, and client mutation id. The persisted title snapshots
-   the direct source title with the `Side chat from: ` prefix and stays within
-   the 200-character Chat title limit.
+   and a completed assistant-message anchor. When the provisional draft
+   contains response annotations, their source conversation, owning assistant
+   message, source anchors, and files must satisfy
+   `CHAT.RESPONSE.ANNOTATION.001`; the exact quote is used in the preview and
+   first user message. Creation is idempotent for the organization, owner, and
+   client mutation id. The persisted title snapshots the direct source title
+   with the `Side chat from: ` prefix and stays within the 200-character Chat
+   title limit.
 4. The server copies source context links, messages, and message attachments
    through the anchor. Copied messages do not acquire new run, approval, turn,
    or output ownership. A boundary system event records the Side Chat source.
@@ -1261,7 +1702,7 @@ before the exploration proves useful.
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
 | Provisional open | Valid normal Chat; completed assistant anchor available | Open one unsaved Side Panel target | Create a conversation before first Send or change parent state | Side Chat E2E entry screenshots |
-| First Send | Owner and organization match; anchor is completed; mutation id is new or an identical retry | Create exactly one hidden active Side Chat with the bounded direct-source title snapshot and start the ordinary Chat runtime flow | Duplicate records, copy messages after the anchor, expose the thread in Messenger, or run automatic title generation | Service, route, and E2E tests |
+| First Send | Owner and organization match; anchor is completed; annotations, if any, resolve to that lineage; mutation id is new or an identical retry | Create exactly one hidden active Side Chat with the bounded direct-source title snapshot, exact quoted context/files, and ordinary Chat runtime flow | Duplicate records, mutate the parent draft, copy messages after the anchor, expose the thread in Messenger, or run automatic title generation | Service, route, and E2E tests |
 | Active follow-up | Owner matches and expiry is in the future | Persist the message and refresh expiry to two hours | Let another user send or silently retain the old expiry | Service and route tests |
 | Close provisional | No persisted conversation id | Discard the client draft and close the tab | Create or retain a server record | UI and E2E tests |
 | Close persisted | Hidden Side Chat belongs to operator | Cancel any live generation, delete the temporary conversation, and close the tab | Leave a hidden recoverable thread or delete a kept Messenger Chat | Service, route, and E2E tests |
@@ -1317,6 +1758,8 @@ before the exploration proves useful.
   source-title snapshot.
 - Copied source messages and attachments preserve the bounded context through
   the anchor. The `side_chat_started` system event records the source boundary.
+  The first user message owns any response-annotation snapshots and remapped
+  annotation attachment rows.
 - Normal `chat_messages`, `chat_generations`, Agent Runs, transcripts, and cost
   evidence record executed follow-ups.
 - Activity entries record `chat.side_chat_created`,
@@ -1358,6 +1801,9 @@ before the exploration proves useful.
 
 - A Side Chat never mutates the parent Chat's draft, transcript, scroll,
   selected branch, or active generation.
+- Merely selecting `Ask in side chat` never persists a conversation or uploads a
+  client-claimable staged asset. Annotation text/comments/files remain
+  provisional until first Send succeeds.
 - A hidden Side Chat never appears in ordinary Chat or Messenger discovery,
   unread counts, recent results, search, or custom groups.
 - Expiry is terminal and read-only. An expired temporary Side Chat can only be
@@ -1407,6 +1853,7 @@ Related tests:
 - `ui/src/lib/side-panel-targets.test.ts`
 - `ui/src/pages/Chat.messages.test.tsx`
 - `tests/e2e/chat-side-chat.spec.ts`
+- `tests/e2e/chat-response-annotations.spec.ts`
 
 Known gaps:
 
@@ -1602,6 +2049,10 @@ them through `CONTEXT.RESOURCES.001`.
 - Chat conversation: organization-scoped thread and optional Project context.
 - Chat message: active, non-superseded user or assistant visible body, optional
   Run id, replying Agent id, and attachments.
+- Response annotation: message-owned quoted context under
+  `CHAT.RESPONSE.ANNOTATION.001`. Its selected text, comment, source link, and
+  annotation-owned files remain inspectable in the message but are excluded
+  from Work manifest candidate extraction.
 - Manifest item: category, target type/key, title, URL or internal locator,
   status, source role, message/Run/Agent/user provenance, Project id, metadata,
   and timestamps.
@@ -1611,8 +2062,15 @@ them through `CONTEXT.RESOURCES.001`.
   is presentation state and is excluded.
 - Source: user attachment, user-provided URL or Library reference, or a Project
   Context Resource eligible for a project-scoped Chat Run.
-- Reference: deduplicated external HTTP(S) website in a visible user or assistant
-  message that is not promoted by the category precedence rules.
+- Reference: deduplicated external HTTP(S) website or typed Rudder entity
+  reference in a visible user or assistant message that is not promoted by the
+  category precedence rules. A normal Chat reference uses the referenced
+  conversation's current title when that conversation can be resolved inside
+  the same organization. Side Chats are deliberately excluded because their
+  titles are owner-private while manifest rows are conversation-scoped shared
+  state. Unresolved, invalid, Side Chat, or cross-organization targets retain
+  their visible message label, or the safe generic `Chat` label when the
+  message provides no usable label.
 
 ## Entry Points / Inputs
 
@@ -1620,9 +2078,13 @@ them through `CONTEXT.RESOURCES.001`.
 - User message bodies and user-created Chat attachments.
 - Completed assistant message bodies, Run attribution, replying Agent identity,
   and Agent-created Chat attachments.
+- Typed Rudder entity references in visible user and assistant message bodies,
+  including `chat://` conversation targets.
 - `library-entry://` and `library-file://` references in visible message bodies.
 - The Chat's explicit Project context and that Project's attached resources.
 - Chat edit, refresh/variant, fork, attachment, and message supersession state.
+- Response-annotation payload and attachment ownership, used only to exclude
+  those private quote-supporting files from manifest classification.
 
 ## Product Logic Flow
 
@@ -1630,8 +2092,9 @@ them through `CONTEXT.RESOURCES.001`.
 2. Rudder verifies Chat access through the same organization boundary as normal
    Chat reads.
 3. Reconciliation reads active, non-superseded user and assistant messages and
-   their attachments. Transcript entries, reasoning, tool results, stdout, and
-   stderr are excluded.
+   their attachments. Transcript entries, reasoning, tool results, stdout,
+   stderr, response-annotation text/comments, and annotation-owned attachments
+   are excluded.
 4. User attachments, user Library references, and user HTTP(S) links become
    Source candidates. Agent-created ordinary attachments become Output
    candidates. Before classification, Rudder validates and excludes only
@@ -1644,18 +2107,26 @@ them through `CONTEXT.RESOURCES.001`.
 6. When the Chat has explicit Project context and a project-scoped assistant Run,
    attached Project Context Resources become Source candidates because they were
    eligible for that run.
-7. Rudder canonicalizes target keys, removes URL fragments/default ports,
+7. Before persistence, Chat reference candidates with UUID-like conversation
+   ids are resolved in one organization-scoped lookup that excludes Side Chats.
+   A same-organization normal conversation's current stored title replaces
+   stale, empty, or generic link text. Missing, malformed, Side Chat, or
+   cross-organization targets are not disclosed and keep the visible message
+   label or generic `Chat` fallback. Reconciliation refreshes the persisted
+   manifest title after a referenced normal Chat is renamed and overwrites any
+   previously persisted Side Chat title with the safe message-derived label.
+8. Rudder canonicalizes target keys, removes URL fragments/default ports,
    deduplicates candidates, and applies `output > source > reference` so one
    target appears once in its strongest supported category.
-8. Reconciliation removes stale derived Sources/References from superseded or
+9. Reconciliation removes stale derived Sources/References from superseded or
    edited visible messages, but it does not silently delete a durable Output
    merely because the message that announced it was refreshed. A historical row
    now proven to be trusted inline visual presentation is removed because it was
    never production evidence.
-9. The API returns the current Chat sections. It may continue returning a
+10. The API returns the current Chat sections. It may continue returning a
    Project id/count as compatibility metadata, but Chat does not render it or
    include it in the visible category count.
-10. When at least one current-thread item exists, wide Chat renders the compact
+11. When at least one current-thread item exists, wide Chat renders the compact
     shelf. Its fixed top row renders the first non-empty category in
     `Outputs > Sources > References` order as a normal category header, with
     the same icon, label, count, height, background, and typography used by
@@ -1670,7 +2141,7 @@ them through `CONTEXT.RESOURCES.001`.
     `32rem` (512 CSS pixels) on normal viewports, shrink to the available
     viewport allowance when necessary, and keep longer lists internally
     scrollable.
-11. Opening an image attachment uses the application-level image preview shared
+12. Opening an image attachment uses the application-level image preview shared
     with Chat message and Markdown images. The overlay exposes an explicit close
     control plus copy/download actions, closes on `Escape`, and does not create a
     Browser Side Panel tab. Non-image attachments keep their normal file-open
@@ -1687,7 +2158,10 @@ them through `CONTEXT.RESOURCES.001`.
 | Agent creates ordinary HTML | No valid trusted same-message inline visual mapping | One normal Output | HTML extension alone must not hide the artifact | Manifest regression tests |
 | Agent links a produced Library artifact | Assistant message has a Run id and `artifacts/...` Library target | One Output that opens through Library Side Panel | A normal external link must not satisfy this rule | Extraction/service tests |
 | Agent recommends a website | Visible assistant HTTP(S) link with no production evidence | One Reference | Rudder must not claim the website was created by the Run | Extraction/service tests |
+| Message references another normal Chat | Visible `chat://` target resolves to a normal conversation in the same organization | The Reference uses the target conversation's current complete title and refreshes after rename; the compact row visually truncates it to one line while preserving the complete title for hover and accessibility | Stale link text must not replace the stored title, long text must not widen the shelf, and title lookup must not cross organization boundaries | Service, component, and Chat Work Manifest E2E |
+| Chat reference cannot be resolved safely | Target id is malformed, missing, a Side Chat in any lifecycle state, or belongs to another organization | Keep the visible message label, or generic `Chat` when none is usable, plus normal typed target metadata; reconciliation repairs any previously hydrated Side Chat title | Rudder must not load or persist the private or cross-organization conversation title | Service tests |
 | Link appears in tool history only | URL exists only in transcript, reasoning, stdout, or stderr | No manifest item | Tool exploration must not pollute the visible manifest | Service tests |
+| Link or file supports an annotation | URL exists only inside selected text/comment, or attachment id is owned by a response annotation | No manifest item | Quoted context or its supporting file must not become a Source, Reference, or Output | Annotation/manifest regression tests |
 | Answer is refreshed or edited | Prior message becomes superseded | Stale derived References disappear; durable Outputs remain inspectable | Refresh must not erase a real artifact | Service tests |
 | Chat is forked | Copied historical assistant rows have no producing Run id | Sources can be re-derived; copied rows do not gain Output ownership | Fork must not claim the source thread's Outputs as newly produced | Fork/service tests |
 | Chat has a linked Project | Other Project conversations contain manifest rows | Current rows stay unchanged; other-conversation rows are omitted from Chat | Project membership must not import other conversations into the current Chat manifest | API and E2E |
@@ -1701,8 +2175,11 @@ them through `CONTEXT.RESOURCES.001`.
 The operator sees the selected Chat, its normal transcript/composer, and a
 category-led files-and-links shelf containing only the current thread's
 Outputs, Sources, and References. Each row exposes a readable title and type
-icon. Website rows expose the normalized URL and website icon instead of a
-generic link icon or redundant `From Agent` origin label.
+icon. Normal Chat Reference rows expose the current same-organization
+conversation title; the complete title remains the row's text, hover title,
+and accessible name while compact layout applies a one-line ellipsis. Website
+rows expose the normalized URL and website icon instead of a generic link icon
+or redundant `From Agent` origin label.
 
 ## Operator-Visible Output
 
@@ -1716,6 +2193,10 @@ generic link icon or redundant `From Agent` origin label.
   placement for the first section must not imply a higher level.
 - Actions: the shelf provides open and source-message navigation, but no add or
   create icon.
+- Normal Chat References: use the current same-organization conversation
+  title, keep the complete title accessible, and constrain long visible labels
+  to a one-line ellipsis without widening the compact shelf. Side Chat titles
+  are never hydrated into this shared projection.
 - Empty state: no shelf, count, trigger, or reserved rail is rendered.
 - Error state: a compact, category-neutral files-and-links error remains visible
   so retrieval failure is not mistaken for confirmed absence.
@@ -1740,7 +2221,10 @@ generic link icon or redundant `From Agent` origin label.
 category, target identity, title/URL, status, source role, message id, Run id,
 Agent/user provenance, metadata, and timestamps. Chat messages, attachments,
 context links, and Project resource attachments remain the source evidence used
-to reconcile the projection.
+to reconcile the projection. For normal Chat References, reconciliation
+persists the latest safely resolved full title; visual truncation does not
+shorten the stored value. Side Chat titles are not persisted into manifest
+rows.
 
 ## Canonical Scenarios
 
@@ -1769,10 +2253,23 @@ to reconcile the projection.
    - Expected state/action: no manifest item is created.
    - Visible output: no change to the manifest shelf.
    - Evidence: exclusion test.
+5. Long renamed normal Chat reference:
+   - Trigger: a visible message references a same-organization normal Chat,
+     then that target conversation receives a newer long title.
+   - Expected state/action: reconciliation replaces stale link text and the
+     previous manifest title with the current conversation title.
+   - Visible output: the row remains one compact ellipsized line while hover and
+     accessibility expose the complete title; opening the row targets the same
+     Chat.
+   - Evidence: manifest service, component, and real Chat Work Manifest E2E.
 
 ## Invariants / Non-Goals
 
 - Organization access is enforced before reconciliation or listing.
+- Chat Reference title lookup is organization-scoped and excludes Side Chats in
+  every lifecycle state under `CHAT.SIDE.CHAT.001`; an unresolved, malformed,
+  private, or cross-organization target must not disclose or persist the target
+  conversation's stored title.
 - Project membership does not import work from other conversations into the
   current Chat manifest.
 - One target appears once per conversation under its strongest supported
@@ -1780,6 +2277,9 @@ to reconcile the projection.
 - Outputs require structured production evidence and persist across answer
   refreshes unless explicitly hidden/archived by a future governed flow.
 - Manifest References are not automatically attached to Project Context.
+- Response annotations and their files are message evidence, not Work manifest
+  Sources, References, or Outputs. They are also excluded from automatic
+  learning and artifact discovery under `CHAT.RESPONSE.ANNOTATION.001`.
 - Image attachment inspection is an application overlay, not Browser
   navigation. Closing it preserves the Chat route, manifest shelf, and Side Panel
   state.
@@ -1792,10 +2292,11 @@ to reconcile the projection.
 
 Update this contract when categories, production evidence, reconciliation,
 Project membership isolation, provenance, visible category hierarchy,
-responsive visibility, or item-open behavior changes. Parser implementation,
-row-limit constants, icon choices, compatibility metadata, and query batching
-may change without a contract edit when the visible semantics and invariants
-remain intact.
+responsive visibility, internal-reference label resolution, accessible
+truncation, or item-open behavior changes. Parser implementation, row-limit
+constants, icon choices, compatibility metadata, and query batching may change
+without a contract edit when the visible semantics and invariants remain
+intact.
 
 ## Traceability
 
@@ -1825,6 +2326,7 @@ Related tests:
 - `ui/src/lib/image-actions.test.ts`
 - `tests/e2e/chat-work-manifest.spec.ts`
 - `tests/e2e/chat-work-manifest-image-preview.spec.ts`
+- `tests/e2e/chat-response-annotations.spec.ts`
 
 Known gaps:
 
@@ -1975,9 +2477,18 @@ Product model:
   The Side Panel preserves the operator's draft until a conditional write
   succeeds or the operator chooses the latest server version.
 - Eligible Browser, automation, Library document, Library entry, Library file,
-  and Library directory targets can be added to Messenger Saved Views. Adding a
-  target is a persistence action only: it must not navigate, close or hide the
-  panel, change tab order, or switch the active Side Panel tab.
+  Library directory, and Desktop Local App targets can be moved into Messenger.
+  The action freezes the active target's exact `viewInstanceId`, persists its
+  Saved View placement, and transfers that same working instance into the
+  Messenger Main Workbench. It is not a copy or a route-only reopen.
+- A successful move detaches only the exact source tab after the Main Workbench
+  has claimed its live surface. Sibling Side Panel tabs keep their order and
+  runtime state; the right neighbor becomes active when present, otherwise the
+  left neighbor. The Side Panel closes only when the moved tab was its final
+  tab.
+- Moving from a stable Chat or Issue atomically creates or reuses that work
+  item's custom group and places both the host row and Saved View there. A
+  global Side Panel target requires the operator to choose an existing group.
 
 Flow:
 
@@ -2060,14 +2571,17 @@ Flow:
     precondition. When the server reports a conflict, the panel pauses autosave,
     keeps the draft visible, and offers `Keep mine` or `Use latest`; an older
     in-flight response must not override the operator's conflict decision.
-21. When the operator adds an eligible active target to Saved Views, Rudder
-    persists its typed descriptor under `MESSENGER.SAVED.VIEWS.001` and confirms
-    the mutation in place without changing the current route, panel visibility,
-    tabs, or active target.
-22. Selecting `/messenger/saved-views/:id` asks the shared Side Panel controller
-    to open or focus the saved target. A saved Browser target reuses the original
-    live guest only while that guest exists; after restart, reset, or explicit
-    tab close it opens a new Browser target from the last persisted URL.
+21. When the operator moves an eligible active target to Messenger, Rudder
+    freezes its exact source context, `viewInstanceId`, and revision; performs
+    the idempotent group-only keep mutation under
+    `MESSENGER.SAVED.VIEWS.001`; stages the Main tab; navigates to
+    `/messenger/saved/:id`; and waits for the Main anchor to claim the same live
+    surface before detaching the source tab.
+22. A server failure leaves the source tab and Messenger directory unchanged.
+    An uncertain response keeps the source and retries with the same mutation
+    identity. If the server committed but the Main host claim fails, the Saved
+    View and source tab both remain with a retry action; Rudder must not delete
+    the durable row or create a replacement runtime.
 23. Selecting a structured transcript file action opens or focuses a local-file
     tab keyed by its resolved absolute path. Desktop canonicalizes and validates
     the target through its preview bridge before returning bounded text or binary
@@ -2163,10 +2677,12 @@ Invariants:
 - Browser tabs must use the dedicated persistent Browser partition and its
   sandbox, protocol, popup, permission, and download policy. They must not share
   the Rudder UI/API session partition or gain Node/application privileges.
-- Each Side Panel context may hold at most eight Browser tabs. At capacity, an
-  ordinary Rudder link reuses the active Browser tab or the first Browser tab;
-  explicit new-tab and popup requests are discarded. Desktop also accepts at
-  most eight Browser popup requests in a rolling ten-second window.
+- Side and Main Workbench share at most eight live operator Browser guests per
+  organization. A live transfer does not increase that count and must still
+  succeed at capacity. New, popup, and cold-open requests at capacity fail
+  visibly without silently reusing or evicting an unrelated exact tab. Desktop
+  also accepts at most eight Browser popup requests in a rolling ten-second
+  window.
 - Browser profile data is shared across organizations in one local instance,
   but Side Panel tab/session state continues to follow this contract's active
   work-item rules. Disabling Agent Browser access preserves operator Browser
@@ -2176,12 +2692,22 @@ Invariants:
   workspace with only a narrow resize affordance between them. It must not leave
   a broad blank gutter that visually separates the panel from the current work
   surface.
+- A visible Browser runtime surface must clip its toolbar and page content to
+  all four shared workspace-radius corners in both docked and expanded Side
+  Panel states. The Browser must not expose square toolbar or page corners
+  against the surrounding desktop shell, and resizing or transferring the
+  exact guest must preserve that boundary without remounting it.
 - Desktop Side Panel geometry must preserve a fixed right edge while opening,
   expanding, restoring, or closing. Its left edge, the divider, and the current
   work-surface width must move monotonically in the requested direction. The
   main work surface must remain visually present until the expanded panel has
-  covered or displaced it; reduced-motion mode may move directly to the same
-  final geometry.
+  covered or displaced it. Once expanded, the main work surface remains mounted
+  to preserve the current route and render identity, while the stable panel host
+  preserves Browser guest identity. The main work surface is inert,
+  accessibility-hidden, fully visually hidden, and contributes no painted
+  border or layout remnant beside the panel. Restoring or closing the Side Panel
+  makes the main work surface visible and interactive again. Reduced-motion mode
+  may move directly to the same final geometry.
 - While a desktop Side Panel is closing, its mounted content remains clipped by
   the shrinking host instead of disappearing before the host reaches zero. The
   host becomes inert as soon as closing begins, and keyboard focus returns to
@@ -2196,10 +2722,12 @@ Invariants:
 - The panel should not show a generic full-page footer as the primary action for
   every target. Full-page navigation may remain a secondary object toolbar
   action, but the panel's job is adjacent work.
-- Saving, hiding, restoring, or deleting a Saved View must not close or mutate
-  the corresponding Side Panel target when that target is already open. Saved
-  View lifecycle and directory placement are owned by
-  `MESSENGER.SAVED.VIEWS.001`, not by Side Panel tab lifecycle.
+- Saved View persistence alone does not authorize runtime disposal. Promotion
+  detaches the exact source tab only after the Main host owns the same runtime;
+  failure before that boundary keeps the source intact. Removing a Saved View
+  later unbinds durable placement without closing its open Main tab. Saved View
+  lifecycle and directory placement remain owned by
+  `MESSENGER.SAVED.VIEWS.001`.
 
 Evidence:
 
@@ -2213,6 +2741,9 @@ Evidence:
   assignee metadata, issue and automation compact views, Library previews,
   close-tab keyboard shortcuts, final-tab panel closure, and browser placeholder
   behavior.
+- Promotion reducer, component, E2E, and packaged Desktop smoke cover exact-tab
+  transfer, sibling preservation, neighboring selection, delayed source detach,
+  Browser/Local App guest continuity, and claim-failure recovery.
 - Chat attachment/side-panel tests and Side Panel E2E cover inline PDF rendering,
   complete Library path hover text, and full-Library navigation from the file
   `Open` menu.
@@ -2290,8 +2821,8 @@ Flow:
    so starter work does not appear as new unread attention.
 4. Opening a thread clears relevant read markers when appropriate.
 5. Actions such as pin/archive/delete route to the owning chat/thread behavior.
-6. Messenger merges Saved Views into their fixed section or custom-group
-   placement without sending them through read-marker or attention aggregation.
+6. Messenger merges Saved Views into custom groups only, without sending them
+   through read-marker or attention aggregation.
 7. Failed-run origin hydration starts from a redacted allowlist and restores
    source entity IDs and navigation only after the source row is verified in
    the current organization.
@@ -2305,7 +2836,7 @@ Invariants:
   until later issue activity occurs after the seed read marker.
 - A Saved View must not have unread state, unread count, attention state,
   mark-read or mark-unread actions, or a fabricated latest-message/activity
-  timestamp. Saving, opening, hiding, restoring, regrouping, or deleting it must
+  timestamp. Saving, opening, moving, restoring, regrouping, or deleting it must
   not change Messenger attention badges.
 - Failed-run payloads must never expose raw `contextSnapshot` data, secrets, or
   entity IDs copied from a deleted, missing, or cross-organization source.
@@ -2365,8 +2896,8 @@ Evidence:
 Why:
 
 - Operators use Messenger custom groups to keep related chat, issue, approval,
-  and synthetic attention rows together without changing the owning domain's
-  lifecycle.
+  synthetic attention, and durable Saved View rows together without changing
+  the owning domain's lifecycle.
 - Group membership must not make a thread feel like a second-class item. A
   grouped row is still the same Messenger item for navigation, unread state,
   pin ordering, and attention semantics.
@@ -2387,6 +2918,10 @@ Product model:
   section over hydrated directory items. Most members are thread summaries, but
   Saved Views may be mixed into the same group without becoming threads or
   owning-domain state.
+- Every visible Saved View belongs to exactly one custom group. Messenger has
+  no fixed `Saved` section and does not render a loose Saved View row. Saving
+  from a Chat or Issue creates or reuses that host's group atomically; saving
+  from a global context requires an existing group chosen by the operator.
 - A Messenger member can belong to at most one custom group per operator.
   Moving a member into a group removes its previous custom group membership for
   that operator.
@@ -2404,10 +2939,6 @@ Product model:
   attention count temporarily drops to zero. The visible hydrated member may be
   absent while the row is empty, but the group must not silently lose the
   membership.
-- Hiding a Saved View removes its row from the visible group but preserves its
-  group membership and group-local order. Restoring it returns it to that
-  position when the group still exists; deleting it removes both the saved
-  record and its custom-group membership.
 - Onboarding may create or reuse an operator-scoped `Getting Started` custom
   group and add seeded starter issue threads such as `issue:<id>` to it.
 - Custom group titles can be explicit operator titles or Fast
@@ -2422,8 +2953,11 @@ Flow:
    custom-group directory while keeping the preference value compatible with
    existing local state.
 2. The operator creates a custom group, moves a Messenger item into a group, or
-   drags an item between groups. Onboarding seed may also create the
-   `Getting Started` group for starter work.
+   drags an item between groups. Saved Views use the same pointer and keyboard
+   sortable model as Chat and Issue rows. Dropping a Saved View on an ungrouped
+   Chat or Issue atomically creates or reuses the host group and adds both
+   items. Onboarding seed may also create the `Getting Started` group for
+   starter work.
 3. Rudder writes the operator-scoped membership using the item's stable
    Messenger directory key.
 4. When drag/drop merges loose members into a new group, Rudder sends the
@@ -2452,6 +2986,9 @@ Flow:
    restores it on reload without moving the group across the pin boundary.
    `Project` preserves the persisted group order but does not expose group drag
    handles or support group reordering.
+10. Saved View group order and Main Workbench tab order are independent.
+    Reordering or moving a Messenger row does not move, close, focus, or
+    reassign the corresponding Main tab or live runtime.
 
 Invariants:
 
@@ -2493,16 +3030,20 @@ Invariants:
 - Progressive disclosure inside a Project-organized custom group is local to
   the hydrated group. `Show more` reveals additional loaded group members and
   must not request an unrelated global Messenger thread page.
-- Removing an item from a group returns that item to the loose Messenger
-  directory with its existing read/unread and attention state intact.
+- Removing a thread-backed item from a group returns it to the loose Messenger
+  directory with its existing read/unread and attention state intact. A Saved
+  View cannot become loose and must instead move to another group or be removed.
 - A mixed group may contain both thread-backed members and Saved Views. Saved
-  View rows preserve their Saved View route, target kind, title, hidden state,
-  and manual order, but must not inherit unread badges, attention state,
-  mark-read actions, or latest-message ordering from neighboring threads.
-- Hiding and restoring a Saved View preserves its custom-group membership and
-  order. Deleting a Saved View removes its membership but must not delete or
-  close the owning automation, Library object, Browser guest, or active Side
-  Panel target.
+  View rows preserve their Saved View route, target kind, title, and manual
+  order, but must not inherit unread badges, attention state, mark-read actions,
+  or latest-message ordering from neighboring threads.
+- A Saved View must not be dropped into a loose directory position. Moving it
+  between groups changes only membership and group-local order; dropping it on
+  an eligible ungrouped Chat or Issue uses the atomic create/reuse-group path.
+  An invalid target rebounds without creating an orphan Saved View.
+- Deleting a Saved View removes its membership but must not delete or close the
+  owning automation, Library object, Browser guest, Local App process, or active
+  Main Workbench tab.
 - Automatic group title generation must not run for menu-created groups or for
   moving a member into an existing group.
 - Group title generation uses only directory-item display titles, including
@@ -2524,7 +3065,8 @@ Evidence:
   drag/drop auto-title requests, group title regeneration actions, and
   title-generation motion states. They also cover atomic Project placement,
   non-sortable Project groups, persisted collapse state, and group-local
-  progressive disclosure.
+  progressive disclosure, plus Saved View pointer/keyboard movement,
+  cross-group ordering, atomic Chat/Issue grouping, and invalid-drop rollback.
 - Messenger route tests cover Fast Intelligence group title generation,
   fallback-on-merge failure, manual regeneration, and no mutation when
   regenerated output is unusable.
@@ -2544,17 +3086,19 @@ Evidence:
 
 ### Contract Summary
 
-Messenger Saved Views durably place eligible Browser, Automation, and Library
-Side Panel targets in the operator's Messenger directory without turning those
-targets into message threads. The same saved item can remain in the fixed
-`Saved` section or move into a custom group, while opening it continues work in
-the adjacent Side Panel workbench.
+Messenger Saved Views durably place exact Browser, Automation, Library, and
+Desktop Local App working instances inside custom groups without turning them
+into message threads. A Saved View row opens or focuses its instance in the
+Messenger Main Workbench. Moving a live Side Panel target transfers that same
+instance into Main; it does not reopen a copy in Side.
 
 ### Intent / User Job
 
-- An operator can keep a useful Side Panel target, organize it next to chats
-  and issues, and return to it later without losing the current work at save
-  time or receiving false unread and attention signals.
+- An operator can move one useful Side Panel tab into Messenger, keep working
+  with it in Main, organize its durable entry next to the related Chat or Issue,
+  and return later without receiving false unread or attention signals.
+- Main can hold multiple mixed Browser, Automation, Library, and Local App tabs,
+  including session-only tabs that have not been kept in Messenger.
 
 ### Why / Design Reasoning
 
@@ -2562,51 +3106,54 @@ the adjacent Side Panel workbench.
   after the session-scoped tab state ends.
 - Reusing message-thread semantics would create false unread, attention, and
   recency signals for objects that have no message stream.
-- Target identity, not display URL or label, controls deduplication. This keeps
-  two independent Browser tabs saveable even when they show the same URL while
-  preventing repeated Add on one tab or durable resource from creating noise.
-- Browser continuity is deliberately best effort: a stable application-level
-  guest preserves live state while it exists, while the persisted URL and
-  Browser partition provide an honest recovery boundary after disposal.
+- A durable row, a current Main tab, and a physical runtime have related but
+  distinct lifecycles. Removing the row must not close the tab, and closing the
+  tab must not delete the row.
+- Exact `viewInstanceId` identity, not URL, path, label, canonical resource, or
+  Saved View id, controls live-instance deduplication. Two independent tabs may
+  show the same resource and remain independently saveable.
+- Live continuity is exact while the runtime exists. Cold recovery after close,
+  crash, reset, or restart is intentionally weaker and must not claim to
+  restore Browser history, form state, scroll, POST state, or in-page memory.
 
 ### Actors / Objects / State
 
 - A Saved View is an organization-scoped, operator-scoped durable pointer to an
-  eligible Side Panel target. Supported targets are Browser, Automation,
-  Library document, Library entry, Library file, and Library directory.
+  eligible exact target. Supported targets are Browser, Automation, Library
+  document, Library entry, Library file, Library directory, and Desktop Local
+  App.
 - A Saved View stores a stable id, display label, typed target descriptor,
-  hidden state, manual order, and target-specific fallback data. It does not
-  own the underlying automation, Library object, Browser guest, or Side Panel
-  tab.
+  exact `viewInstanceId`, and target-specific fallback data. It does not own the
+  underlying automation, Library object, Browser guest, Local App process, or
+  Main tab.
 - A Saved View is a Messenger directory item, not a message thread. It has no
   transcript, unread state, attention state, mark-read behavior, or synthetic
   latest-message/activity time.
-- Messenger reserves a fixed `Saved` section immediately below `New chat`.
-  Visible Saved Views that are not assigned to a custom group render there in
-  manual order; grouped Saved Views render in their custom group without a
-  duplicate row in the fixed section.
-- A Saved View uses `/messenger/saved-views/:id` as its stable Messenger route.
-  Selecting or directly loading that route opens or focuses the saved target in
-  the global Side Panel through the normal target controller and forces that
-  panel to the expanded workspace width while the Messenger sidebar remains
-  visible.
-- Hidden Saved Views are absent from the normal directory but remain available
-  from explicit hidden-item management. Restore returns a record to its
-  preserved group and order when that group still exists; otherwise it returns
-  to its preserved position in the fixed `Saved` section.
-- A saved Browser target keeps a best-effort association with its original
-  Browser target identity. The live guest is reusable only while that original
-  guest still exists. Restart, Browser/Side Panel reset, Browser-data reset, or
-  explicit close ends the live association.
-- Browser fallback opens the last persisted eligible URL as a fresh target in
-  the dedicated Browser partition. It may use partition cookies that still
-  exist, but it does not restore history stacks, scroll/form state, POST state,
-  or in-page application memory. Browser-data reset may also clear cookies.
+- Every visible Saved View belongs to exactly one custom group. Messenger has
+  no fixed `Saved` section, loose Saved row, or normal hidden-item manager.
+- A Saved View uses `/messenger/saved/:id` as its stable route. Selecting or
+  directly loading that route opens or focuses the exact live Main tab when it
+  exists, otherwise hydrates a Main tab from durable fallback data. It never
+  opens the target back into Side.
+- `/messenger/workbench` represents a Main session with no durable active
+  target, such as an active session-only Browser tab. With no Main tabs it
+  returns to `/messenger`.
+- A `MainWorkbenchTab` is organization-scoped session state keyed by
+  `viewInstanceId`. Its optional Saved binding can be added or removed without
+  replacing the tab.
+- Browser and Local App guests, editable Library sessions, and embedded work
+  surfaces live in an application-level runtime layer with one current host
+  lease: Side, transferring, Main, parked, crashed, or disposed. Side and Main
+  provide visual anchors; route changes do not create a replacement runtime.
+- A saved Browser fallback opens the last persisted eligible URL in the
+  dedicated Browser partition only after the original guest is gone. A Local
+  App fallback never starts a service and follows `DESKTOP.LOCAL.APPS.001`.
 - The persisted record includes `targetKind`, a validated typed
   `targetPayload`, `title`, `subtitle`, optional `favicon`, fixed-section
-  `sortOrder`, `hiddenAt`, and created/updated timestamps. Browser payloads keep
-  the live `tabId` identity plus fallback URL. Automation and Library payloads
-  keep their owning resource identity.
+  compatibility fields, and created/updated timestamps. Browser payloads keep
+  exact instance identity plus fallback URL. Automation and Library payloads
+  keep resource and instance identity. Local App payloads keep only opaque
+  installation, binding, app, and instance identity.
 - Custom-group membership keeps the existing `thread_key` database column as
   an opaque item key; Saved Views use `saved-view:<id>`.
 - Generic group API fields are canonical. Every hydrated member returns
@@ -2617,10 +3164,14 @@ the adjacent Side Panel workbench.
 
 ### Entry Points / Inputs
 
-- `Add to Messenger` on an eligible active Side Panel target.
-- Messenger Saved and Hidden row actions: Open, Move to group, Hide, Restore,
-  Remove, and manual reorder.
-- Direct navigation to `/messenger/saved-views/:id`.
+- `Move to Messenger` on an eligible active Side Panel target.
+- `Keep in Messenger` on an eligible session-only Main Browser tab.
+- Messenger Saved View row actions: Open, Move to group, Remove from Messenger,
+  and group-local reorder.
+- Main tab actions: focus, whole-tab pointer/keyboard reorder, close, create
+  Browser tab, Browser Keep, Remove, and target-specific controls. A Local App
+  tab exposes project settings from its hover/focus More menu.
+- Direct navigation to `/messenger/saved/:id` or `/messenger/workbench`.
 - Organization-scoped Saved View list/create/get/update/reorder/delete APIs and
   generic custom-group item APIs.
 - Browser main-frame/in-page navigation, title, and
@@ -2628,62 +3179,96 @@ the adjacent Side Panel workbench.
 
 ### Product Logic Flow
 
-1. From an eligible active Side Panel target, the operator chooses
-   `Add to Messenger`.
-2. Rudder validates the target descriptor, persists the Saved View for the
-   current organization and operator, and confirms success in place. Add does
-   not navigate, close or hide the panel, reorder tabs, or switch the active
-   tab.
-3. Messenger lists the record in the fixed `Saved` section or its custom group,
-   without adding it to message activity or attention aggregation.
-4. Selecting the row navigates to `/messenger/saved-views/:id`, loads the
-   scoped record, and asks the Side Panel to open or focus its target.
-5. For Browser, Rudder focuses the original guest when it is still alive.
-   Otherwise it opens a fresh Browser target from the last persisted URL under
-   the existing Browser profile and navigation policies.
-6. Hide removes the row from the visible directory while preserving Saved View
-   and group order. Restore makes it visible at the preserved placement.
-7. Delete removes the Saved View record and all custom-group membership. An
-   already open or active Side Panel target remains open and unchanged.
+1. From an eligible active Side target, the operator chooses
+   `Move to Messenger`. Rudder freezes the exact source context,
+   `viewInstanceId`, and source revision and marks only that tab as moving.
+2. One idempotent keep mutation validates the descriptor and atomically places
+   it. A stable Chat or Issue creates or reuses its group and adds both host and
+   Saved View exactly once. A global source requires an operator-selected
+   existing group.
+3. Rudder writes the returned group and Saved View into the local directory
+   cache, stages the Main tab, preserves the displayed source Side context, and
+   navigates to `/messenger/saved/:id`.
+4. After the target Main anchor is ready, the runtime layer transfers its unique
+   host lease from Side to Main. Only after a successful claim does Rudder
+   detach the exact source tab and focus Main. Sibling Side tabs remain in their
+   previous order and state.
+5. A server failure leaves no row and no transfer. A timeout or uncertain
+   response retains the source and retries with the same mutation id. A
+   committed row plus failed Main claim retains both source and row and offers
+   `Retry move`; Rudder does not compensate by deleting the row or create a
+   second guest.
+6. Selecting a Saved View row focuses its live Main tab by exact
+   `viewInstanceId`, or cold-hydrates a Main tab when no live instance exists.
+   The mixed Main tab strip remains visible even with one tab.
+7. `+` and the focused Browser new-tab shortcut create a session-only Browser
+   tab in Main. Keeping that tab requires explicit group confirmation; a recent
+   group may be preselected but is not silently committed.
+8. `Remove from Messenger` deletes the durable Saved View and membership,
+   unbinds the open Main tab, and replaces the route with
+   `/messenger/workbench`. The exact Main instance remains session-only.
+9. `Close tab` disposes that Main instance but leaves its Saved View row.
+   Selecting the row later cold-hydrates a new instance under the target's
+   honest recovery boundary.
+10. Accepted Browser title, favicon, and URL events update fallback metadata
+    from the runtime layer after promotion. Browser rows render only title or
+    domain plus favicon/Web fallback and never show the URL.
 
 ### Decision Table
 
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
-| First Browser Add | Eligible nonblank live `tabId` has no Saved View | Create one record and show `In Messenger` | Navigate, close, switch tabs, or dedupe by URL | Service, UI, Desktop E2E |
-| Repeated Browser Add | Same live `tabId` already has a record | Reuse the record; restore it when hidden | Create a duplicate record | Service and UI tests |
-| Same URL, different tabs | Distinct live `tabId` values show one URL | Create distinct records | Collapse them by URL | Service and Desktop E2E |
-| Durable resource Add | Same Automation or Library resource identity exists | Reuse the record; restore it when hidden | Duplicate by label/path formatting | Service tests |
-| Hidden grouped item | Saved View is hidden while membership exists | Omit it from normal rows and preserve membership/order | Treat membership as stale or delete it | Service and E2E |
+| First exact move | Eligible live `viewInstanceId` has no Saved View | Atomically place it, claim Main, then detach that source tab | Detach before claim, copy the runtime, or disturb siblings | Reducer, E2E, packaged Desktop |
+| Repeated exact move | Same `viewInstanceId` already has a row | Bind and focus the existing row/Main tab | Duplicate the row or move it to another group implicitly | Service and UI tests |
+| Same URL/resource, different instances | Distinct `viewInstanceId` values show one URL or resource | Keep distinct rows and Main tabs | Collapse them by URL, path, or canonical resource key | Service and Desktop E2E |
+| Server failure | Keep transaction returns a definite failure | Keep source unchanged and create no placement | Navigate or detach the source | Service and promotion tests |
+| Main claim failure | Keep committed but exact runtime cannot claim Main | Keep source and row; expose retry | Delete the row or construct another guest | Promotion tests |
 | Underlying resource unavailable | Library/Automation lookup is missing, forbidden, or deleted | Keep the row and show unavailable | Auto-delete or cross-scope hydrate | Route/UI/E2E |
-| Browser guest alive | Original runtime still owns the saved `tabId` | Show the same guest and `webContentsId` | Remount/reparent or create a second guest | Packaged Desktop E2E |
-| Browser guest gone | Original tab closed, LRU-evicted, reset, or app restarted | Open a fresh guest at last persisted eligible URL | Claim history/form/scroll recovery | Packaged Desktop E2E |
+| Browser guest alive | Original runtime still owns the exact instance | Transfer/focus the same guest and `webContentsId` | Remount, DOM-reparent, or create a second guest | Packaged Desktop smoke |
+| Browser guest gone | Original tab closed, reset, crashed, or app restarted | Open a fresh guest at last persisted eligible URL | Claim history/form/scroll recovery | Route/UI/Desktop tests |
+| Capacity during live move | Side plus Main already own eight live Browser guests | Move succeeds because ownership transfers without increasing count | Reject move, evict another exact tab, or create guest nine | Reducer and packaged Desktop |
+| Capacity during cold open | Eight unrelated live Browser guests already exist | Keep row and show recoverable capacity state | Reuse or evict another exact tab silently | Reducer and UI tests |
+| Remove while open | Saved binding and live Main tab both exist | Delete row/membership; retain exact session-only tab | Close guest, stop Local App, or lose editor state | UI/E2E/Desktop |
+| Close while saved | Live Main tab has a Saved binding | Dispose tab; keep row for later cold open | Delete durable membership | UI/E2E |
 | Web/mobile Browser open | No Electron guest capability | Keep the row and ask to open in Rudder Desktop | Drop the record or fake a guest | UI E2E |
 
 ### Actor-Visible Input
 
-- Browser shows the action in the address bar before New tab. Automation and
-  Library show it at the right of the target header. The visible states are
-  `Add to Messenger`, `In Messenger`, and `Restore in Messenger`; a blank
-  Browser tab is not saveable.
-- Messenger shows visible ungrouped records under `Saved`, grouped records in
-  their group, and a `Hidden (n)` manager when hidden records exist.
+- Eligible Side surfaces expose `Move to Messenger`; eligible session-only Main
+  Browser tabs expose `Keep in Messenger`; a blank Browser tab is not durable.
+- Messenger shows Saved Views only inside custom groups. Rows share Chat/Issue
+  density, focus, actions, drag handle, pointer DnD, and keyboard DnD behavior.
+- A Saved View row is selected only while the current Messenger route is
+  `/messenger/saved/:id` for that row. A live or active Main Workbench tab
+  retained behind Chat, Issue, or another Messenger route must not leave the
+  Saved View row selected.
+- Main exposes one WAI-ARIA mixed tab strip with roving keyboard focus,
+  left/right/home/end navigation, close, whole-tab reorder, and `+` for a
+  Browser tab. Pointer reorder uses the tab surface itself rather than a
+  separate drag-handle button.
 
 ### Operator-Visible Output
 
-- Add confirms in place without route, panel, active-tab, or tab-count changes.
-- Each row shows favicon or type icon, title, and domain/path/automation
-  subtitle, plus Move, Hide, and Remove actions.
-- Missing Library/Automation targets show an unavailable state. Browser rows on
-  web/mobile say to open them in Rudder Desktop; Library/Automation remain
-  usable there.
+- Successful promotion announces `Moved to <group>`, focuses the exact Main tab,
+  and removes only that tab from Side.
+- Main Browser and Local App surfaces fill the Main content directly beneath
+  the mixed tab strip. They must not be wrapped in another card, inset frame,
+  rounded inner shell, or second Browser tab strip. The Main shell and tab
+  strip use a theme-appropriate masked surface instead of exposing the
+  wallpaper transparently, preserve the shared outer workspace radius, and
+  clip the live Browser toolbar and page content at all four outer corners.
+- Browser rows show a legal favicon or generic Web/Globe icon and title/domain,
+  never the URL. Library, Automation, and Local App rows use their type icons.
+- Missing or device-local targets show an explicit unavailable/retry state in
+  the Main tab. Browser rows on web/mobile remain movable/removable and ask for
+  Rudder Desktop.
 - Saved View rows never show unread, attention, mark-read, or latest-message
   time UI.
 
 ### Persisted Evidence
 
 - `messenger_saved_views` must store the scoped typed target, presentation and
-  recovery metadata, fixed-section order, hidden state, and timestamps.
+  recovery metadata, compatibility fields, and timestamps.
 - `messenger_custom_group_entries.thread_key` must store the opaque
   `saved-view:<id>` membership and group-local order.
 - Each Saved View mutation must emit an organization-scoped, operator-attributed
@@ -2692,31 +3277,35 @@ the adjacent Side Panel workbench.
   throttled. The newest accepted main-frame or in-page URL wins; pending
   recovery metadata is flushed before deliberate tab/reset disposal when
   possible.
+- Main tabs, host leases, Browser `webContentsId`, Local App PID/generation/URL,
+  editor selections, and runtime markers are session/device state and must not
+  enter the Saved View database payload.
 
 ### Canonical Scenarios
 
-1. Save and resume a live Browser guest:
-   - Trigger: Save Browser page A, navigate to B, fill a form, then open its
-     Messenger row while the original tab remains live.
-   - Expected state/action: The same runtime guest remains mounted while the
-     global Side Panel expands beside the Messenger sidebar and can navigate
-     back.
-   - Visible output: Messenger sidebar remains visible; page and in-memory state
-     remain.
-   - Evidence: Stable `webContentsId`, history, form, and scroll Desktop E2E.
+1. Move Browser B while Side holds A/B/C:
+   - Trigger: Fill a form and scroll B, then choose `Move to Messenger`.
+   - Expected state/action: B's exact runtime lease transfers to Main; A and C
+     stay in Side and C becomes active.
+   - Visible output: Full-bleed Browser Main content plus durable grouped row;
+     history, form, scroll, zoom, and `webContentsId` remain.
+   - Evidence: Promotion E2E and packaged Desktop smoke.
 2. Recover after restart:
-   - Trigger: Save a Browser target, navigate again, then restart/reset.
+   - Trigger: Keep a Browser target, navigate again, then restart/reset.
    - Expected state/action: Create a new guest at the newest persisted eligible
      URL using the persistent Browser partition.
    - Visible output: Current page and available cookie login restore; no claim
      about history/form/scroll.
    - Evidence: Packaged restart/reset E2E.
-3. Hide and restore a grouped Library target:
-   - Trigger: Move a saved file into a mixed group, hide it, then restore it.
-   - Expected state/action: Membership and group-local order survive.
-   - Visible output: Row disappears while hidden and returns to its exact group.
-   - Evidence: Service and Messenger E2E.
-4. Open an inaccessible Automation target:
+3. Remove and close independently:
+   - Trigger: Remove an open Saved View, then keep another view and close only
+     its Main tab.
+   - Expected state/action: Remove leaves the first exact tab session-only;
+     Close leaves the second durable row for cold reopen.
+   - Visible output: `/messenger/workbench` for the session-only tab and a
+     grouped row for the closed saved tab.
+   - Evidence: Main Workbench unit, Messenger E2E, and Desktop smoke.
+4. Open an inaccessible Automation or device-local target:
    - Trigger: The owning resource is deleted or becomes inaccessible.
    - Expected state/action: Retain the Saved View but deny target hydration.
    - Visible output: Actionable unavailable state with no attention badge.
@@ -2727,10 +3316,11 @@ the adjacent Side Panel workbench.
 - All Saved View reads, mutations, routes, target hydration, and group
   membership are organization-scoped and operator-scoped. A stored descriptor
   never grants access to an underlying object.
-- Only Browser, Automation, Library document, Library entry, Library file, and
-  Library directory Side Panel targets are saveable under this contract.
-- Add, hide, restore, and delete do not implicitly navigate away from the
-  current work, close the Side Panel, or change its active tab or target.
+- Only Browser, Automation, Library document, Library entry, Library file,
+  Library directory, and Desktop Local App exact targets are saveable under
+  this contract.
+- Every visible Saved View has one custom-group membership. There is no fixed
+  Saved section, normal hidden manager, or loose Saved View placement.
 - Missing, deleted, or inaccessible underlying targets produce an actionable
   unavailable state; they must not be silently redirected or hydrated across an
   organization boundary.
@@ -2738,64 +3328,75 @@ the adjacent Side Panel workbench.
   write rules. Automation targets retain `AUTOMATION.*` lifecycle rules.
   Browser targets retain the dedicated Browser partition and all sandbox,
   protocol, popup, permission, download, file, and Rudder-app-origin rules.
-- Browser live reuse is best effort and depends on the original guest identity,
-  not only URL equality. Fallback from the last URL must not claim recovery of
-  ephemeral browsing state.
-- The Browser guest remains mounted in an application-level runtime while live
-  view anchors move between normal and expanded Side Panel workspaces.
-- Hide preserves Saved View custom-group membership and ordering. Delete
-  removes the saved record and membership but never deletes the underlying
-  object or closes an active Side Panel target.
+  Local Apps retain `DESKTOP.LOCAL.APPS.001`.
+- A live runtime has exactly one host lease. Side-to-Main transfer changes the
+  lease without creating, remounting, DOM-reparenting, or disposing the
+  physical guest/editor session.
+- Main Workbench tab order and Messenger group order are independent.
+- Remove deletes durable binding only; Close disposes the current Main
+  instance only. Neither action stops a Local App process.
 - Saved Views never participate in unread/attention counts, mark-read APIs, or
   latest-message ordering, including when mixed into a custom group.
 - Issue, Chat, Side Chat, placeholder, and blank Browser targets are not
   saveable because Issue and Chat already have Messenger identity or no durable
   target exists.
-- Live guest retention is capped at eight; least-recently-used inactive guest
-  eviction preserves Saved View records. Restart recovery does not promise
-  history, form state, scroll, POST state, or in-page memory.
+- Side and Main share at most eight live operator Browser guests per
+  organization. Live transfer does not increase the count and cannot be blocked
+  by capacity. New or cold-open guests at capacity fail visibly; Rudder does not
+  silently reuse or evict an unrelated exact tab.
+- Restart, renderer crash, explicit tab close, and Browser reset may create a
+  new `webContentsId`. Cold recovery promises only the last eligible URL and
+  profile, not history, form state, scroll, POST state, or in-page memory.
 
 ### Drift Boundaries
 
-- Adding a target kind, changing deduplication identity, Saved/Hidden placement,
+- Adding a target kind, changing deduplication identity, group-only placement,
   group membership semantics, attention exclusion, live guest ownership,
-  recovery guarantees, or web/mobile behavior requires updating this contract.
-- Component names, query-cache layout, throttle duration, row styling, and the
-  internal activity payload may change without a contract update when visible
-  behavior and persisted evidence stay equivalent.
+  Main/Side transfer, Remove/Close semantics, recovery guarantees, capacity, or
+  web/mobile behavior requires updating this contract.
+- Component names, query-cache layout, throttle duration, row styling, exact
+  masked-surface color, and the internal activity payload may change without a
+  contract update when visible behavior and persisted evidence stay
+  equivalent.
 
 ### Traceability
 
 Related plans:
 
 - `doc/plans/2026-07-20-messenger-saved-views.md`
+- `doc/plans/2026-07-23-messenger-work-packages-local-apps.md`
+- `doc/plans/2026-07-23-messenger-main-workbench-promotion.md`
 
-Current implementation foundation:
+Related code:
 
 - `packages/db/src/schema/messenger_saved_views.ts`
 - `packages/shared/src/types/messenger.ts`
 - `packages/shared/src/validators/messenger.ts`
 - `server/src/routes/messenger.ts`
 - `server/src/services/messenger-saved-views.ts`
-
-Remaining UI and Desktop runtime surfaces to be extended:
-
+- `ui/src/context/MainWorkbenchContext.tsx`
+- `ui/src/context/LiveSurfaceRuntimeContext.tsx`
+- `ui/src/context/SavedViewPromotionContext.tsx`
+- `ui/src/context/SidePanelContext.tsx`
+- `ui/src/components/workbench/MessengerMainWorkbench.tsx`
 - `ui/src/components/MessengerContextSidebar.tsx`
-- `ui/src/pages/Messenger.tsx`
 - `ui/src/pages/Chat.side-panel.tsx`
-
-Current related tests to be extended:
-
-- `server/src/__tests__/messenger-routes.test.ts`
-- `ui/src/components/MessengerContextSidebar.test.tsx`
-- `ui/src/pages/Messenger.test.tsx`
+- `ui/src/pages/MessengerSavedViewWorkspace.tsx`
 - `desktop/scripts/smoke.mjs`
 
-Known gaps:
+Related tests:
 
-- The approved schema, Saved View service, application-level Browser runtime,
-  and dedicated Saved View E2E do not exist at contract approval time. They
-  must be implemented and added to registry traceability before hand-off.
+- `server/src/__tests__/messenger-routes.test.ts`
+- `server/src/__tests__/messenger-service.test.ts`
+- `ui/src/lib/main-workbench-state.test.ts`
+- `ui/src/context/MainWorkbenchContext.test.tsx`
+- `ui/src/context/LiveSurfaceRuntimeContext.test.tsx`
+- `ui/src/context/SavedViewPromotionContext.test.tsx`
+- `ui/src/components/workbench/MessengerMainWorkbench.test.tsx`
+- `ui/src/components/MessengerContextSidebar.test.tsx`
+- `tests/e2e/messenger-saved-views.spec.ts`
+- `tests/e2e/messenger-local-apps.spec.ts`
+- `desktop/scripts/smoke.mjs`
 
 ## IM.FEISHU.001
 

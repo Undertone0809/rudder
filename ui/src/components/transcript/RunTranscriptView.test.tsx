@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { normalizeTranscript, resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget, RunTranscriptView } from "./RunTranscriptView";
-import { filterChatAssistantTranscriptEntries, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
+import { filterChatAssistantTranscriptEntries, getTranscriptMcpBrandIcon, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo } from "./RunTranscriptView.semantic";
 import { getTranscriptAgentAvatarImageSrc } from "./TranscriptAgentAvatarIcon";
@@ -66,6 +66,95 @@ describe("transcript file target resolution", () => {
 });
 
 describe("RunTranscriptView", () => {
+  it("exposes each persisted process prose projection as one provenance-backed annotation source", () => {
+    const entries = [
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:00.000Z",
+        text: "Inspecting the edge case.",
+        generationId: "30000000-0000-4000-8000-000000000001",
+        generationSeqStart: 4,
+        generationSeqEnd: 6,
+      },
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:01.000Z",
+        text: "Checking another path.",
+        generationId: "30000000-0000-4000-8000-000000000001",
+        generationSeqStart: 8,
+        generationSeqEnd: 8,
+      },
+    ] as unknown as TranscriptEntry[];
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={entries}
+          annotationSource={{
+            sourceConversationId: "10000000-0000-4000-8000-000000000001",
+            sourceMessageId: "20000000-0000-4000-8000-000000000001",
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(countOccurrences(html, 'data-annotation-surface="process_transcript"')).toBe(2);
+    expect(html).toContain('data-transcript-kind="thinking"');
+    expect(html).toContain('data-generation-seq-start="4"');
+    expect(html).toContain('data-generation-seq-end="6"');
+  });
+
+  it("coalesces only contiguous same-generation process deltas and expands their provenance", () => {
+    const blocks = normalizeTranscript([
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:00.000Z",
+        text: "First ",
+        delta: true,
+        generationId: "generation-a",
+        generationSeqStart: 4,
+        generationSeqEnd: 4,
+      },
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:01.000Z",
+        text: "second",
+        delta: true,
+        generationId: "generation-a",
+        generationSeqStart: 5,
+        generationSeqEnd: 5,
+      },
+      {
+        kind: "thinking",
+        ts: "2026-07-23T00:00:02.000Z",
+        text: "gap",
+        delta: true,
+        generationId: "generation-a",
+        generationSeqStart: 7,
+        generationSeqEnd: 7,
+      },
+    ] as unknown as TranscriptEntry[], false);
+
+    expect(blocks).toMatchObject([
+      {
+        type: "thinking",
+        text: "First second",
+        generationId: "generation-a",
+        generationSeqStart: 4,
+        generationSeqEnd: 5,
+      },
+      {
+        type: "thinking",
+        text: "gap",
+        generationId: "generation-a",
+        generationSeqStart: 7,
+        generationSeqEnd: 7,
+      },
+    ]);
+  });
+
   it("recognizes only local file targets for transcript links", () => {
     expect(resolveTranscriptLocalFileTarget("/Users/zeeland/work/result.md")).toBe("/Users/zeeland/work/result.md");
     expect(resolveTranscriptLocalFileTarget("file:///Users/zeeland/work/result%20copy.md")).toBe("/Users/zeeland/work/result copy.md");
@@ -371,7 +460,8 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("<strong>world</strong>");
+    expect(html).toContain('data-markdown-source-start="6" data-markdown-source-end="15"');
+    expect(html).toContain(">world</strong>");
     expect(html).toContain(">first</li>");
     expect(html).toContain(">second</li>");
   });
@@ -886,7 +976,8 @@ describe("RunTranscriptView", () => {
 
     expect(html).not.toContain("Expand thinking");
     expect(html).not.toContain("Collapse thinking");
-    expect(html).toContain("<strong>Planning the response</strong>");
+    expect(html).toContain('data-markdown-source-start="0" data-markdown-source-end="25"');
+    expect(html).toContain(">Planning the response</strong>");
     expect(html).toContain("Final planning checkpoint remains visible inline.");
   });
 
@@ -1197,7 +1288,7 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("space-y-1.5");
     expect(html).toContain("Tool");
     const rowClass = classValueForText(html, "Tool");
-    const wrapperClass = html.match(/<div class="([^"]*)" title="[^"]*"><button[^>]*>[\s\S]*?Tool/)?.[1] ?? "";
+    const wrapperClass = html.match(/<div class="(py-[^"]*)" title="[^"]*">[\s\S]*?Tool/)?.[1] ?? "";
     expect(wrapperClass.split(" ")).toContain("py-0.5");
     expect(wrapperClass.split(" ")).not.toContain("py-1");
     expect(wrapperClass.split(" ")).not.toContain("py-1.5");
@@ -2463,7 +2554,7 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Web searched &quot;codex transcript web search keywords&quot;");
   });
 
-  it("renders MCP server, tool, and argument details in transcript summaries", () => {
+  it("keeps MCP summaries human-readable and hides server and argument details until expanded", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <RunTranscriptView
@@ -2492,9 +2583,89 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Called fetch_pr via github");
-    expect(html).toContain("repo_full_name openai/codex");
-    expect(html).toContain("pr_number 123");
+    expect(html).toContain("Call fetch PR");
+    expect(html).toContain("/brands/github-logo.svg");
+    expect(html).toContain("dark:invert");
+    expect(html).not.toContain("Called fetch_pr via github");
+    expect(html).not.toContain("repo_full_name");
+    expect(html).not.toContain("openai/codex");
+    expect(html).not.toContain("pr_number");
+    expect(html).not.toContain("MCP · GitHub");
+    expect(html).toContain("aria-labelledby=");
+    expect(html).toContain("Expand tool details:");
+  });
+
+  it("uses exact MCP server aliases before applying a branded icon", () => {
+    expect(getTranscriptMcpBrandIcon("rudder-tools")?.label).toBe("Rudder");
+    expect(getTranscriptMcpBrandIcon("github-mcp")?.label).toBe("GitHub");
+    expect(getTranscriptMcpBrandIcon("not-rudder-official")).toBeNull();
+    expect(getTranscriptMcpBrandIcon("github-enterprise")).toBeNull();
+  });
+
+  it("falls back to the generic MCP icon for unknown and near-match servers", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "mcp__not-rudder-official__rudder_chat_transcript",
+              toolUseId: "mcp-near-match-1",
+              input: { chatId: "chat-1" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "mcp-near-match-1",
+              content: "transcript",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('data-transcript-action-icon="mcp"');
+    expect(html).not.toContain("/rudder-logo.png");
+  });
+
+  it("uses the Rudder logo and concise copy for Rudder MCP calls", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "mcp__rudder-tools__rudder_chat_transcript",
+              toolUseId: "mcp-rudder-1",
+              input: {
+                full: true,
+                chatId: "eeb73ad1-e000-4dce-9d47-23106fa36bbc",
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "mcp-rudder-1",
+              content: "transcript",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Call Rudder chat transcript");
+    expect(html).toContain("/rudder-logo.png");
+    expect(html).not.toContain("rudder-tools");
+    expect(html).not.toContain("eeb73ad1-e000-4dce-9d47-23106fa36bbc");
+    expect(html).not.toContain("full true");
   });
 
   it("renders Codex spawn agent tool payloads as readable transcript summaries", () => {
@@ -2919,7 +3090,7 @@ describe("RunTranscriptView", () => {
             {
               kind: "tool_call",
               ts: "2026-03-12T00:00:16.000Z",
-              name: "mcp__github__fetch_issue",
+              name: "mcp__example__fetch_issue",
               toolUseId: "mcp-1",
               input: { repo_full_name: "rudder/rudder", issue_number: 126 },
             },

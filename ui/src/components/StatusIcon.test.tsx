@@ -78,6 +78,13 @@ describe("StatusIcon", () => {
     expect(icon?.querySelector("[fill='currentColor']")).toBeFalsy();
   });
 
+  it("keeps the canonical status color on the glyph inside icon-styling containers", () => {
+    const container = renderStatusIcon(<StatusIcon status="done" />);
+    const glyph = container.querySelector('[data-status="done"] svg');
+
+    expect(glyph?.classList.contains("text-current")).toBe(true);
+  });
+
   it("selects a status from the quiet status menu", () => {
     const onChange = vi.fn();
     const container = renderStatusIcon(<StatusIcon status="todo" onChange={onChange} showLabel />);

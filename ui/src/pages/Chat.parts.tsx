@@ -635,6 +635,17 @@ export type ChatBranchPreview = { chatTurnId: string; turnVariant: number };
 
 export type ChatAgentRunTarget = { runId: string; agentId: string };
 
+export function resolveChatMessageAgentRunTarget(
+  message: Pick<ChatMessage, "runId" | "replyingAgentId">,
+  conversation: Pick<ChatConversation, "chatRuntime" | "preferredAgentId">,
+): ChatAgentRunTarget | null {
+  if (!message.runId) return null;
+  const agentId = message.replyingAgentId
+    ?? conversation.chatRuntime.runtimeAgentId
+    ?? conversation.preferredAgentId;
+  return agentId ? { runId: message.runId, agentId } : null;
+}
+
 export function resolveLatestChatAgentRunTarget(
   messages: readonly ChatMessage[],
   conversation: Pick<ChatConversation, "chatRuntime" | "preferredAgentId">,
@@ -646,11 +657,9 @@ export function resolveLatestChatAgentRunTarget(
       latestMessage = message;
     }
   }
-  if (!latestMessage?.runId) return null;
-  const agentId = latestMessage.replyingAgentId
-    ?? conversation.chatRuntime.runtimeAgentId
-    ?? conversation.preferredAgentId;
-  return agentId ? { runId: latestMessage.runId, agentId } : null;
+  return latestMessage
+    ? resolveChatMessageAgentRunTarget(latestMessage, conversation)
+    : null;
 }
 
 export function ChatAgentRunMenuItem({
@@ -1418,6 +1427,27 @@ export function assistantStateLabel(state: ChatStreamDraftState | ChatMessage["s
   if (state === "failed") return "Failed";
   if (state === "interrupted") return "Interrupted";
   return null;
+}
+
+const STEER_FALLBACK_TERMINAL_REASONS = new Set([
+  "steer_fallback",
+  "steer_fallback_unverified",
+]);
+const STOPPED_REPLY_PLACEHOLDER = "Chat run stopped before a final reply. Continue the conversation to resume from the preserved context.";
+
+export function isSteerFallbackChatMessage(message: Pick<ChatMessage, "role" | "generationTerminalReason">) {
+  return message.role === "assistant"
+    && STEER_FALLBACK_TERMINAL_REASONS.has(message.generationTerminalReason ?? "");
+}
+
+export function displayedChatMessageState(message: Pick<ChatMessage, "role" | "status" | "generationTerminalReason">) {
+  return isSteerFallbackChatMessage(message) ? "completed" as const : message.status;
+}
+
+export function shouldHideSteerFallbackAssistantBubble(
+  message: Pick<ChatMessage, "role" | "body" | "generationTerminalReason">,
+) {
+  return isSteerFallbackChatMessage(message) && message.body.trim() === STOPPED_REPLY_PLACEHOLDER;
 }
 
 export function statusChipClassName(state: ChatStreamDraftState | ChatMessage["status"]) {

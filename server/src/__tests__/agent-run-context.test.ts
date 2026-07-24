@@ -35,6 +35,7 @@ const mockResolveAdapterConfigForRuntime = vi.fn();
 const mockGetEnabledSkillKeysForAgent = vi.fn();
 const mockListRealizedSkillEntriesForAgent = vi.fn();
 const mockListRuntimeToolsForAgent = vi.fn();
+const mockListManagedRuntimeBindings = vi.fn();
 const mockGetBrowserSettings = vi.fn();
 
 vi.mock("../services/secrets.js", () => ({
@@ -59,6 +60,12 @@ vi.mock("../services/instance-settings.js", () => ({
 vi.mock("../services/integrations/custom-integrations.js", () => ({
   customIntegrationService: () => ({
     listRuntimeToolsForAgent: mockListRuntimeToolsForAgent,
+  }),
+}));
+
+vi.mock("../services/mcp/managed-bindings.js", () => ({
+  managedMcpBindingService: () => ({
+    listRuntimeBindings: mockListManagedRuntimeBindings,
   }),
 }));
 
@@ -122,6 +129,7 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
 
   beforeEach(() => {
     mockGetBrowserSettings.mockResolvedValue({ enabled: true, openLinksIn: "built_in" });
+    mockListManagedRuntimeBindings.mockResolvedValue([]);
   });
 
   afterEach(async () => {
@@ -129,6 +137,7 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     mockGetEnabledSkillKeysForAgent.mockReset();
     mockListRealizedSkillEntriesForAgent.mockReset();
     mockListRuntimeToolsForAgent.mockReset();
+    mockListManagedRuntimeBindings.mockReset();
     mockGetBrowserSettings.mockReset();
     if (originalRudderHome === undefined) delete process.env.RUDDER_HOME;
     else process.env.RUDDER_HOME = originalRudderHome;
@@ -189,6 +198,129 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     expect(disabled.runtimeSkillEntries.map((entry) => entry.key)).toEqual([
       rudderSkillEntry.key,
     ]);
+  });
+
+  it("injects only live provider-neutral managed MCP bindings into runtime config", async () => {
+    mockResolveAdapterConfigForRuntime.mockResolvedValue({
+      config: {
+        managedExternalMcpBindings: [{
+          bindingId: "attacker-controlled",
+          provider: "supabase",
+          accessToken: "must-not-survive",
+        }],
+      },
+      secretKeys: new Set<string>(),
+    });
+    mockGetEnabledSkillKeysForAgent.mockResolvedValue([]);
+    mockListRealizedSkillEntriesForAgent.mockResolvedValue([]);
+    mockListManagedRuntimeBindings.mockResolvedValue([{
+      bindingId: "22222222-2222-4222-8222-222222222222",
+      serverName: "team-tools",
+      toolPolicy: {
+        mode: "allowlist",
+        allowedToolNames: ["external.team-tools.search"],
+      },
+      required: true,
+      startupTimeoutMs: 10_000,
+      toolTimeoutMs: 60_000,
+    }]);
+
+    const prepared = await agentRunContextService({} as any).prepareRuntimeConfig({
+      scene: "heartbeat",
+      agent: {
+        id: "11111111-1111-4111-8111-111111111111",
+        orgId: "33333333-3333-4333-8333-333333333333",
+        name: "Builder",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+    });
+
+    expect(prepared.runtimeConfig.managedExternalMcpBindings).toEqual([{
+      bindingId: "22222222-2222-4222-8222-222222222222",
+      serverName: "team-tools",
+      toolPolicy: {
+        mode: "allowlist",
+        allowedToolNames: ["external.team-tools.search"],
+      },
+      required: true,
+      startupTimeoutMs: 10_000,
+      toolTimeoutMs: 60_000,
+    }]);
+    expect(JSON.stringify(prepared.runtimeConfig.managedExternalMcpBindings))
+      .not.toMatch(/provider|accessToken|connectionId|credential|url/iu);
+    expect(mockListManagedRuntimeBindings).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      "11111111-1111-4111-8111-111111111111",
+    );
+  });
+
+  it("materializes missing runtime skills by default and supports side-effect-free descriptor reads", async () => {
+    mockResolveAdapterConfigForRuntime.mockResolvedValue({
+      config: { model: "gpt-5.4" },
+      secretKeys: new Set<string>(),
+    });
+    mockGetEnabledSkillKeysForAgent.mockResolvedValue(["org/build-advisor"]);
+    mockListRealizedSkillEntriesForAgent.mockResolvedValue([]);
+    const agent = {
+      id: "agent-1",
+      orgId: "organization-1",
+      name: "Builder",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "gpt-5.4" },
+    };
+    const svc = agentRunContextService({} as any);
+
+    await svc.prepareRuntimeConfig({ scene: "chat", agent });
+    await svc.prepareRuntimeConfig({
+      scene: "chat",
+      agent,
+      materializeMissingRuntimeSkills: false,
+    });
+
+    expect(mockListRealizedSkillEntriesForAgent).toHaveBeenNthCalledWith(
+      1,
+      "organization-1",
+      "agent-1",
+      "codex_local",
+      { model: "gpt-5.4" },
+      ["org/build-advisor"],
+      { materializeMissing: true },
+    );
+    expect(mockListRealizedSkillEntriesForAgent).toHaveBeenNthCalledWith(
+      2,
+      "organization-1",
+      "agent-1",
+      "codex_local",
+      { model: "gpt-5.4" },
+      ["org/build-advisor"],
+      { materializeMissing: false },
+    );
+  });
+
+  it("fails runtime preparation when a required managed MCP binding is unavailable", async () => {
+    mockResolveAdapterConfigForRuntime.mockResolvedValue({
+      config: {},
+      secretKeys: new Set<string>(),
+    });
+    mockGetEnabledSkillKeysForAgent.mockResolvedValue([]);
+    mockListRealizedSkillEntriesForAgent.mockResolvedValue([]);
+    mockListManagedRuntimeBindings.mockRejectedValue(
+      new Error("Required managed MCP connection supabase-main is unavailable"),
+    );
+
+    await expect(agentRunContextService({} as any).prepareRuntimeConfig({
+      scene: "heartbeat",
+      agent: {
+        id: "11111111-1111-4111-8111-111111111111",
+        orgId: "33333333-3333-4333-8333-333333333333",
+        name: "Builder",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+    })).rejects.toThrow(
+      "Required managed MCP connection supabase-main is unavailable",
+    );
   });
 
   it.each([

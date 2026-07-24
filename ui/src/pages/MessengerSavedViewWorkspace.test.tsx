@@ -1,37 +1,43 @@
 // @vitest-environment jsdom
 
-import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
-import type { DesktopLocalAppDefinition } from "@/lib/desktop-shell";
-import { sidePanelTargetKey } from "@/lib/side-panel-targets";
+import { LiveSurfaceRuntimeProvider } from "@/context/LiveSurfaceRuntimeContext";
+import { MainWorkbenchProvider } from "@/context/MainWorkbenchContext";
+import type { MainWorkbenchState } from "@/lib/main-workbench-state";
 import type { MessengerSavedView } from "@rudderhq/shared";
-import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  notifyManager,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { MessengerSavedViewWorkspace } from "./MessengerSavedViewWorkspace";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+  .IS_REACT_ACT_ENVIRONMENT = true;
 
 const getSavedView = vi.hoisted(() => vi.fn());
-vi.mock("@/api/messenger", () => ({ messengerApi: { getSavedView } }));
-
-const definition: DesktopLocalAppDefinition = {
-  id: "definition-a",
-  desktopInstallationId: "installation-a",
-  appPublicId: "public-a",
-  localBindingId: "binding-a",
-  title: "MKT dashboard",
-  executable: "/opt/homebrew/bin/npm",
-  argv: ["run", "dev"],
-  cwd: "/Users/zeeland/projects/uranus/rudder/mkt/dashboard",
-  inheritedEnvNames: [],
-  readiness: { path: "/api/health", timeoutMs: 30_000 },
-  openPath: "/outreach",
-  trustFingerprint: "fingerprint-a",
-  approvedFingerprint: "fingerprint-a",
-  createdAt: "2026-07-23T00:00:00.000Z",
-  updatedAt: "2026-07-23T00:00:00.000Z",
-};
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("@/api/messenger", () => ({
+  messengerApi: {
+    getSavedView,
+    listCustomGroups: vi.fn().mockResolvedValue({ groups: [] }),
+  },
+}));
+vi.mock("@/lib/router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/router")>()),
+  useNavigate: () => navigate,
+}));
 
 const savedView: MessengerSavedView = {
   id: "saved-a",
@@ -75,13 +81,9 @@ const savedBrowserView: MessengerSavedView = {
   subtitle: "https://example.com/saved",
 };
 
-const list = vi.fn();
-const status = vi.fn();
-const start = vi.fn();
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let client: QueryClient | null = null;
-let sidePanelControls: ReturnType<typeof useSidePanel> | null = null;
 
 beforeAll(() => {
   notifyManager.setNotifyFunction((callback) => act(callback));
@@ -90,12 +92,6 @@ beforeAll(() => {
 afterAll(() => {
   notifyManager.setNotifyFunction((callback) => callback());
 });
-
-function Probe() {
-  const sidePanel = useSidePanel();
-  sidePanelControls = sidePanel;
-  return <output data-testid="target">{JSON.stringify(sidePanel.tabs[0] ?? null)}</output>;
-}
 
 async function waitForAct(assertion: () => void) {
   await vi.waitFor(async () => {
@@ -106,22 +102,27 @@ async function waitForAct(assertion: () => void) {
   });
 }
 
-async function renderWorkspace() {
-  Object.defineProperty(window, "desktopShell", {
-    configurable: true,
-    value: { localApps: { supported: true, list, status, start } },
-  });
+async function renderWorkspace(
+  initialState?: MainWorkbenchState,
+  savedViewId = "saved-a",
+) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   await act(async () => {
     root!.render(
       <QueryClientProvider client={client!}>
-        <SidePanelProvider>
-          <MessengerSavedViewWorkspace organizationId="org-a" savedViewId="saved-a" />
-          <Probe />
-        </SidePanelProvider>
+        <LiveSurfaceRuntimeProvider>
+          <MainWorkbenchProvider initialState={initialState}>
+            <MessengerSavedViewWorkspace
+              organizationId="org-a"
+              savedViewId={savedViewId}
+            />
+          </MainWorkbenchProvider>
+        </LiveSurfaceRuntimeProvider>
       </QueryClientProvider>,
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -130,9 +131,7 @@ async function renderWorkspace() {
 
 beforeEach(() => {
   getSavedView.mockReset().mockResolvedValue(savedView);
-  list.mockReset().mockResolvedValue([definition]);
-  status.mockReset().mockResolvedValue({ status: "stopped", generation: null });
-  start.mockReset();
+  navigate.mockReset();
 });
 
 afterEach(() => {
@@ -140,95 +139,290 @@ afterEach(() => {
   client?.clear();
   root = null;
   client = null;
-  sidePanelControls = null;
   host?.remove();
   host = null;
   Reflect.deleteProperty(window, "desktopShell");
 });
 
-describe("MessengerSavedViewWorkspace Local Apps", () => {
-  it("matches all opaque fields and checks status without auto-starting before opening", async () => {
-    await renderWorkspace();
-    await waitForAct(() => expect(host?.querySelector('[data-testid="target"]')?.textContent).toContain('"kind":"local_app"'));
-
-    expect(list).toHaveBeenCalledTimes(1);
-    expect(status).toHaveBeenCalledWith("definition-a");
-    expect(start).not.toHaveBeenCalled();
-    expect(host?.querySelector('[data-testid="target"]')?.textContent).toContain('"viewInstanceId":"view-a"');
-  });
-
-  it("keeps another installation unavailable without probing or starting its binding", async () => {
-    getSavedView.mockResolvedValue({
-      ...savedView,
-      targetPayload: { ...savedView.targetPayload, desktopInstallationId: "installation-other" },
+describe("MessengerSavedViewWorkspace", () => {
+  it("opens the exact Local App instance in Main without probing or starting it", async () => {
+    const localApps = {
+      supported: true,
+      list: vi.fn(),
+      status: vi.fn(),
+      start: vi.fn(),
+    };
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { localApps },
     });
     await renderWorkspace();
-    await waitForAct(() => expect(host?.querySelector('[data-testid="messenger-saved-view-unavailable"]')).not.toBeNull());
 
-    expect(status).not.toHaveBeenCalled();
-    expect(start).not.toHaveBeenCalled();
-    expect(host?.querySelector('[data-testid="target"]')?.textContent).toBe("null");
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).not.toBeNull());
+    expect(localApps.list).not.toHaveBeenCalled();
+    expect(localApps.status).not.toHaveBeenCalled();
+    expect(localApps.start).not.toHaveBeenCalled();
   });
 
-  it("shows a retryable local status failure and opens after retry succeeds", async () => {
-    status.mockRejectedValueOnce(new Error("Desktop bridge unavailable"))
-      .mockResolvedValueOnce({ status: "stopped", generation: null });
+  it("does not reopen a Saved View after the user closes its Main tab", async () => {
     await renderWorkspace();
-    await waitForAct(() => expect(host?.querySelector('[data-testid="messenger-saved-view-error"]')?.textContent).toContain("Desktop bridge unavailable"));
-    expect(start).not.toHaveBeenCalled();
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).not.toBeNull());
 
     await act(async () => {
-      Array.from(host!.querySelectorAll("button")).find((button) => button.textContent?.includes("Retry"))?.click();
+      host
+        ?.querySelector<HTMLButtonElement>(
+          '[aria-label="Close MKT dashboard tab"]',
+        )
+        ?.click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    await waitForAct(() => expect(host?.querySelector('[data-testid="target"]')?.textContent).toContain('"kind":"local_app"'));
-    expect(status).toHaveBeenCalledTimes(2);
-    expect(start).not.toHaveBeenCalled();
+
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).toBeNull());
+    expect(navigate).toHaveBeenLastCalledWith("/messenger", { replace: true });
   });
 
-  it("explains Browser capacity and restores the Saved View after a tab closes", async () => {
-    let resolveSavedView!: (value: MessengerSavedView) => void;
-    getSavedView.mockReturnValue(new Promise<MessengerSavedView>((resolve) => {
-      resolveSavedView = resolve;
-    }));
+  it("keeps a binding from another installation as an isolated Main tab", async () => {
+    getSavedView.mockResolvedValue({
+      ...savedView,
+      targetPayload: {
+        ...savedView.targetPayload,
+        desktopInstallationId: "installation-other",
+      },
+    });
     await renderWorkspace();
 
-    act(() => {
-      for (let index = 0; index < 8; index += 1) {
-        sidePanelControls!.openTarget({
-          kind: "browser",
-          tabId: `physical-${index}`,
-          url: `https://example.com/physical-${index}`,
-          label: `Physical ${index}`,
-        });
-      }
-    });
-    await act(async () => {
-      resolveSavedView(savedBrowserView);
-    });
-    await waitForAct(() => expect(host?.querySelector('[data-testid="messenger-saved-view-capacity-error"]')).not.toBeNull());
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).not.toBeNull());
+    expect(host?.querySelector(
+      '[data-testid="messenger-saved-view-unavailable"]',
+    )).toBeNull();
+  });
 
-    expect(sidePanelControls!.tabs).toHaveLength(8);
-    expect(sidePanelControls!.tabs).not.toContainEqual(expect.objectContaining({
-      viewInstanceId: "saved-browser-instance",
-    }));
+  it("keeps Saved View loading failures inside Main and retries them", async () => {
+    getSavedView
+      .mockRejectedValueOnce(new Error("Saved View unavailable"))
+      .mockResolvedValueOnce(savedView);
+    await renderWorkspace();
+    await waitForAct(() => expect(
+      host?.querySelector('[data-testid="messenger-saved-view-error"]')
+        ?.textContent,
+    ).toContain("Saved View unavailable"));
 
-    act(() => {
-      sidePanelControls!.closeTarget(sidePanelTargetKey(sidePanelControls!.tabs[7]!));
-    });
     await act(async () => {
       Array.from(host!.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("Retry opening"))
+        .find((button) => button.textContent?.includes("Retry"))
         ?.click();
     });
-    await waitForAct(() => expect(host?.querySelector('[data-testid="messenger-saved-view-workspace"]')).not.toBeNull());
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).not.toBeNull());
+  });
 
-    expect(sidePanelControls!.tabs).toHaveLength(8);
-    expect(sidePanelControls!.tabs).toContainEqual(expect.objectContaining({
-      kind: "browser",
-      tabId: "saved-browser-tab",
-      viewInstanceId: "saved-browser-instance",
-      savedViewRecovery: expect.objectContaining({ id: "saved-browser-a" }),
-    }));
+  it("shows a recoverable capacity state for a cold Browser reopen", async () => {
+    getSavedView.mockResolvedValue(savedBrowserView);
+    const runtimesById = Object.fromEntries(
+      Array.from({ length: 8 }, (_, index) => {
+        const viewInstanceId = `view-${index}`;
+        const target = {
+          kind: "browser" as const,
+          tabId: `tab-${index}`,
+          url: `https://example.com/${index}`,
+          label: `Browser ${index}`,
+          viewInstanceId,
+        };
+        return [
+          `runtime-${index}`,
+          {
+            id: `runtime-${index}`,
+            organizationId: "org-a",
+            viewInstanceId,
+            targetKind: "browser" as const,
+            target,
+            host: { kind: "main" as const, organizationId: "org-a" },
+          },
+        ];
+      }),
+    );
+    await renderWorkspace(
+      {
+        organizations: {
+          "org-a": {
+            activeViewInstanceId: null,
+            tabOrder: [],
+            tabsByViewInstanceId: {},
+            runtimesById,
+            promotionsById: {},
+          },
+        },
+      },
+      "saved-browser-a",
+    );
+
+    await waitForAct(() => expect(
+      host?.querySelector(
+        '[data-testid="messenger-saved-view-capacity-error"]',
+      ),
+    ).not.toBeNull());
+    expect(host?.querySelector(
+      '[data-view-instance-id="saved-browser-instance"]',
+    )).toBeNull();
+  });
+
+  it.each([
+    "claim_failed",
+    "commit_unknown",
+    "server_failed",
+    "pending",
+    "reconciling",
+    "claiming",
+    "detaching",
+  ] as const)(
+    "does not cold-open a retained %s promotion source as a duplicate Main tab",
+    async (status) => {
+      const sourceTarget = {
+        kind: "local_app" as const,
+        desktopInstallationId: "installation-a",
+        appPublicId: "public-a",
+        localBindingId: "binding-a",
+        label: "MKT dashboard",
+        viewInstanceId: "view-a",
+      };
+      const promotion = {
+        id: "promotion-a",
+        organizationId: "org-a",
+        clientMutationId: "mutation-a",
+        status,
+        source: {
+          viewInstanceId: "view-a",
+          savedViewId: status === "pending"
+              || status === "server_failed"
+              || status === "commit_unknown"
+            ? null
+            : "saved-a",
+          sourceRevision: 2,
+          target: sourceTarget,
+          originContextKey: "chat:chat-a",
+          runtimeId: "runtime-a",
+        },
+        ...(status === "claim_failed"
+          || status === "claiming"
+          || status === "detaching"
+          ? { savedViewId: "saved-a" }
+          : {}),
+        ...(status === "claim_failed"
+          || status === "commit_unknown"
+          || status === "server_failed"
+          ? { error: "retry required" }
+          : {}),
+        ...(status === "detaching"
+          ? { rollback: { activeViewInstanceId: null, tab: null } }
+          : {}),
+      };
+      await renderWorkspace({
+        organizations: {
+          "org-a": {
+            activeViewInstanceId: null,
+            tabOrder: [],
+            tabsByViewInstanceId: {},
+            // Hydration must be guarded by the retained attempt itself rather
+            // than relying on a coincidental runtime-host conflict.
+            runtimesById: {},
+            promotionsById: {
+              "promotion-a": promotion,
+            },
+          },
+        },
+      } as MainWorkbenchState);
+
+      await waitForAct(() => expect(getSavedView).toHaveBeenCalled());
+      expect(host?.querySelector('[data-view-instance-id="view-a"]'))
+        .toBeNull();
+    },
+  );
+
+  it("does not let a retained promotion for another exact instance block hydration", async () => {
+    await renderWorkspace({
+      organizations: {
+        "org-a": {
+          activeViewInstanceId: null,
+          tabOrder: [],
+          tabsByViewInstanceId: {},
+          runtimesById: {},
+          promotionsById: {
+            "promotion-other": {
+              id: "promotion-other",
+              organizationId: "org-a",
+              clientMutationId: "mutation-other",
+              status: "pending",
+              source: {
+                viewInstanceId: "view-other",
+                savedViewId: null,
+                sourceRevision: 1,
+                target: {
+                  kind: "local_app",
+                  desktopInstallationId: "installation-a",
+                  appPublicId: "public-other",
+                  localBindingId: "binding-other",
+                  label: "Other app",
+                  viewInstanceId: "view-other",
+                },
+                originContextKey: "chat:chat-a",
+                runtimeId: "runtime-other",
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).not.toBeNull());
+  });
+
+  it("does not let the same view id from another target kind block hydration", async () => {
+    await renderWorkspace({
+      organizations: {
+        "org-a": {
+          activeViewInstanceId: null,
+          tabOrder: [],
+          tabsByViewInstanceId: {},
+          runtimesById: {},
+          promotionsById: {
+            "promotion-browser": {
+              id: "promotion-browser",
+              organizationId: "org-a",
+              clientMutationId: "mutation-browser",
+              status: "pending",
+              source: {
+                viewInstanceId: "view-a",
+                savedViewId: null,
+                sourceRevision: 1,
+                target: {
+                  kind: "browser",
+                  tabId: "tab-a",
+                  url: "https://example.com",
+                  label: "Example",
+                  viewInstanceId: "view-a",
+                },
+                originContextKey: "chat:chat-a",
+                runtimeId: "runtime-browser",
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await waitForAct(() => expect(
+      host?.querySelector('[data-view-instance-id="view-a"]'),
+    ).not.toBeNull());
   });
 });

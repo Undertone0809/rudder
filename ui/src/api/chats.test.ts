@@ -1,4 +1,10 @@
-import type { ChatConversation, ChatMessage, ChatRuntimeDescriptor, ChatStreamEvent } from "@rudderhq/shared";
+import type {
+  ChatConversation,
+  ChatInlineAnnotationInput,
+  ChatMessage,
+  ChatRuntimeDescriptor,
+  ChatStreamEvent,
+} from "@rudderhq/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { chatsApi } from "./chats";
 
@@ -6,7 +12,40 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("chat message history API", () => {
+  it("scopes message history requests to the selected organization", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("[]", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(chatsApi.listMessages("org-1", "chat-1", {
+      includeTranscript: false,
+    })).resolves.toEqual([]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/chats/chat-1/messages?orgId=org-1&includeTranscript=false",
+      expect.objectContaining({ credentials: "include" }),
+    );
+  });
+});
+
 describe("atomic chat draft API", () => {
+  const inlineAnnotation: ChatInlineAnnotationInput = {
+    id: "00000000-0000-4000-8000-000000000001",
+    selectedText: "quoted answer",
+    comment: "Explain this",
+    sourceConversationId: "00000000-0000-4000-8000-000000000002",
+    sourceMessageId: "00000000-0000-4000-8000-000000000003",
+    surface: "assistant_body",
+    sourceHash: "a".repeat(64),
+    start: 4,
+    end: 17,
+    prefix: "the ",
+    suffix: " next",
+  };
+
   it("preflights a draft without creating a conversation", async () => {
     const descriptor: ChatRuntimeDescriptor = {
       sourceType: "unconfigured",
@@ -113,7 +152,7 @@ describe("atomic chat draft API", () => {
     });
 
     const [, request] = fetchMock.mock.calls[0]!;
-    expect(request?.headers).toBeUndefined();
+    expect(new Headers(request?.headers).has("Content-Type")).toBe(false);
     expect(request?.body).toBeInstanceOf(FormData);
     const form = request?.body as FormData;
     expect(form.get("body")).toBe("Inspect the evidence");
@@ -124,5 +163,107 @@ describe("atomic chat draft API", () => {
       { entityType: "issue", entityId: "issue-1" },
     ]));
     expect(form.getAll("files")).toEqual([attachment]);
+  });
+
+  it("sends an annotation-only turn as JSON", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("", {
+      status: 200,
+      headers: { "Content-Type": "application/x-ndjson" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await chatsApi.sendMessageStream("chat-1", "", {
+      inlineAnnotations: [inlineAnnotation],
+      onEvent: vi.fn(),
+    });
+
+    const [, request] = fetchMock.mock.calls[0]!;
+    expect(new Headers(request?.headers).get("Content-Type")).toBe("application/json");
+    expect(JSON.parse(String(request?.body))).toEqual({
+      body: "",
+      inlineAnnotations: [inlineAnnotation],
+    });
+  });
+
+  it("keeps regular and annotation-owned file indexes aligned in multipart turns", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("", {
+      status: 200,
+      headers: { "Content-Type": "application/x-ndjson" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const regularFile = new File(["prompt"], "prompt.txt", { type: "text/plain" });
+    const annotationFile = new File(["proof"], "proof.png", { type: "image/png" });
+    const annotationWithFile: ChatInlineAnnotationInput = {
+      ...inlineAnnotation,
+      attachmentFileIndexes: [1],
+    };
+
+    await chatsApi.sendMessageStream("chat-1", "Review this", {
+      files: [regularFile, annotationFile],
+      inlineAnnotations: [annotationWithFile],
+      onEvent: vi.fn(),
+    });
+
+    const [, request] = fetchMock.mock.calls[0]!;
+    expect(request?.headers).toBeUndefined();
+    expect(request?.body).toBeInstanceOf(FormData);
+    const form = request?.body as FormData;
+    expect(form.get("body")).toBe("Review this");
+    expect(form.get("inlineAnnotations")).toBe(JSON.stringify([annotationWithFile]));
+    expect(form.getAll("files")).toEqual([regularFile, annotationFile]);
+  });
+
+  it("creates an annotation-only queued message with annotation-owned files", async () => {
+    const queuedMessage = {
+      id: "queue-1",
+      conversationId: "chat-1",
+      payload: {
+        body: "",
+        inlineAnnotations: [{ ...inlineAnnotation, attachmentIds: [] }],
+      },
+    };
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify(queuedMessage),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const annotationFile = new File(["proof"], "proof.png", { type: "image/png" });
+    const annotationWithFile: ChatInlineAnnotationInput = {
+      ...inlineAnnotation,
+      attachmentFileIndexes: [0],
+    };
+
+    await chatsApi.createQueuedMessage("chat-1", {
+      clientMutationId: "ui:queue-1",
+      expectedGenerationId: "00000000-0000-4000-8000-000000000004",
+      payload: {
+        body: "",
+        inlineAnnotations: [annotationWithFile],
+        attachmentIds: [],
+        skillRefs: [],
+      },
+    }, {
+      files: [annotationFile],
+    });
+
+    const [url, request] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/chats/chat-1/queue");
+    expect(new Headers(request?.headers).has("Content-Type")).toBe(false);
+    expect(request?.body).toBeInstanceOf(FormData);
+    const form = request?.body as FormData;
+    expect(form.get("clientMutationId")).toBe("ui:queue-1");
+    expect(form.get("expectedGenerationId")).toBe(
+      "00000000-0000-4000-8000-000000000004",
+    );
+    expect(JSON.parse(String(form.get("payload")))).toEqual({
+      body: "",
+      inlineAnnotations: [annotationWithFile],
+      attachmentIds: [],
+      skillRefs: [],
+    });
+    expect(form.getAll("files")).toEqual([annotationFile]);
   });
 });

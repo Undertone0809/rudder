@@ -50,6 +50,11 @@ export const en = {
   "browser.links.description": "This preference is independent of Browser access for Agents.",
   "browser.links.builtIn": "Rudder Built-in Browser",
   "browser.links.default": "Default browser",
+  "browser.onboarding.title": "Browse without leaving Rudder",
+  "browser.onboarding.description":
+    "Rudder starts with its Built-in Browser for web links. You can choose the Built-in Browser or your default browser under Settings → Desktop app → Browser.",
+  "browser.onboarding.settings": "Browser settings",
+  "browser.onboarding.dismiss": "Got it",
   "browser.data.title": "Browsing data",
   "browser.data.description": "Manage the instance-wide Browser profile.",
   "browser.data.trustDisclosure":
@@ -693,6 +698,12 @@ export const en = {
   "heartbeats.timerState": "Timer heartbeat state",
   "heartbeats.on": "On",
   "heartbeats.off": "Off",
+  "chat.annotations.selectionUnavailable": "Selection is no longer available",
+  "chat.annotations.selectionUnavailableBody": "Select the response text again and retry.",
+  "chat.annotations.couldNotAdd": "Could not add annotation",
+  "chat.annotations.added": "Annotation added",
+  "chat.annotations.removed": "Annotation removed",
+  "chat.annotations.moreDetailsPrompt": "Please explain this passage in more detail.",
 } as const;
 
 export type TranslationKey = keyof typeof en;

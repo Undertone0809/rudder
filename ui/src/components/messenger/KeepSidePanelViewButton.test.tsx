@@ -14,6 +14,9 @@ const mockListCustomGroups = vi.hoisted(() => vi.fn());
 const mockUpdateSavedView = vi.hoisted(() => vi.fn());
 const mockIssueGet = vi.hoisted(() => vi.fn());
 const mockPushToast = vi.hoisted(() => vi.fn());
+const mockGetMoveState = vi.hoisted(() => vi.fn());
+const mockPromote = vi.hoisted(() => vi.fn());
+const mockRetryPromotion = vi.hoisted(() => vi.fn());
 
 vi.mock("@/api/issues", () => ({
   issuesApi: { get: mockIssueGet },
@@ -29,6 +32,15 @@ vi.mock("@/api/messenger", () => ({
 
 vi.mock("@/context/ToastContext", () => ({
   useToast: () => ({ pushToast: mockPushToast }),
+}));
+
+vi.mock("@/context/SavedViewPromotionContext", () => ({
+  useOptionalSavedViewPromotion: () => ({
+    getMoveState: mockGetMoveState,
+    isMoving: () => false,
+    promote: mockPromote,
+    retry: mockRetryPromotion,
+  }),
 }));
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
@@ -123,6 +135,16 @@ beforeEach(() => {
   mockUpdateSavedView.mockReset();
   mockIssueGet.mockReset();
   mockPushToast.mockReset();
+  mockGetMoveState.mockReset().mockReturnValue({
+    error: null,
+    promotionId: null,
+    retryable: false,
+    status: "idle",
+  });
+  mockPromote.mockReset().mockImplementation((request) => (
+    mockKeepSavedView(request.organizationId, request.input)
+  ));
+  mockRetryPromotion.mockReset();
   mockListCustomGroups.mockResolvedValue({ groups: [groupA, groupB] });
 });
 
@@ -309,6 +331,87 @@ describe("KeepSidePanelViewButton mutation intents", () => {
       await vi.waitFor(() => expect(mockIssueGet).toHaveBeenCalledTimes(2));
       await vi.waitFor(() => expect(keepButton().disabled).toBe(false));
     });
+  });
+
+  it("shows and invokes the retained move retry instead of starting a new keep", async () => {
+    mockGetMoveState.mockReturnValue({
+      error: "Keep response timed out",
+      promotionId: "promotion-a",
+      retryable: true,
+      status: "commit_unknown",
+    });
+    mockRetryPromotion.mockResolvedValue(savedViewResult);
+    renderButton({
+      contextKey: `chat:${chatId}`,
+      target: {
+        kind: "library_file",
+        filePath: "docs/spec.md",
+        label: "Spec",
+        viewInstanceId: "file-view-1",
+      },
+    });
+
+    expect(keepButton().textContent).toContain("Retry move");
+    await act(async () => {
+      keepButton().click();
+      await vi.waitFor(() => expect(mockRetryPromotion).toHaveBeenCalledWith(
+        organizationId,
+        `chat:${chatId}`,
+        expect.objectContaining({ viewInstanceId: "file-view-1" }),
+      ));
+    });
+    expect(mockPromote).not.toHaveBeenCalled();
+  });
+
+  it("retires the original mutation intent after a retained retry succeeds", async () => {
+    let retryable = false;
+    let firstMutationId: string | null = null;
+    mockGetMoveState.mockImplementation(() => ({
+      clientMutationId: retryable ? firstMutationId : null,
+      error: retryable ? "Keep response timed out" : null,
+      promotionId: retryable ? "promotion-a" : null,
+      retryable,
+      status: retryable ? "commit_unknown" : "idle",
+    }));
+    mockPromote.mockImplementation((request) => {
+      if (!firstMutationId) {
+        firstMutationId = request.input.clientMutationId;
+        retryable = true;
+        return Promise.reject(new Error("Keep response timed out"));
+      }
+      return Promise.resolve(savedViewResult);
+    });
+    mockRetryPromotion.mockImplementation(() => {
+      retryable = false;
+      return Promise.resolve(savedViewResult);
+    });
+    renderButton({
+      contextKey: `chat:${chatId}`,
+      target: {
+        kind: "library_file",
+        filePath: "docs/spec.md",
+        label: "Spec",
+        viewInstanceId: "file-view-1",
+      },
+    });
+
+    await act(async () => {
+      keepButton().click();
+      await vi.waitFor(() => expect(keepButton().textContent)
+        .toContain("Retry move"));
+    });
+    await act(async () => {
+      keepButton().click();
+      await vi.waitFor(() => expect(mockRetryPromotion).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(keepButton().textContent).toContain("Keep"));
+    });
+    await act(async () => {
+      keepButton().click();
+      await vi.waitFor(() => expect(mockPromote).toHaveBeenCalledTimes(2));
+    });
+
+    expect(mockPromote.mock.calls[1]?.[0].input.clientMutationId)
+      .not.toBe(firstMutationId);
   });
 
   it("shows group loading failure separately from an empty group list and can retry", async () => {

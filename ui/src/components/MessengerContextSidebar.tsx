@@ -20,7 +20,10 @@ import {
   splitCustomGroupIconValue,
   type CustomGroupColor,
 } from "@/components/messenger/MessengerCustomGroupVisuals";
-import { MessengerSavedViewRow } from "@/components/messenger/MessengerSavedViewRow";
+import {
+  MessengerSavedViewRow,
+  savedViewDisplayTitle,
+} from "@/components/messenger/MessengerSavedViewRow";
 import {
   ChatThreadRow,
   conversationDisplayTitle,
@@ -47,7 +50,11 @@ import {
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
+import {
+  useMainWorkbench,
+} from "@/context/MainWorkbenchContext";
 import { useOrganization } from "@/context/OrganizationContext";
+import { useOptionalSavedViewPromotion } from "@/context/SavedViewPromotionContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useToast } from "@/context/ToastContext";
 import { resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
@@ -88,6 +95,7 @@ import {
   removeMessengerSavedViewFromCustomGroupsCache,
   renameMessengerChatInCache,
 } from "@/lib/messenger-query-cache";
+import { messengerSavedViewRoute } from "@/lib/messenger-saved-views";
 import { messengerThreadKindLabel } from "@/lib/messenger-thread-labels";
 import {
   chatConversationForThreadSummary,
@@ -132,6 +140,7 @@ import { cn } from "@/lib/utils";
 import {
   closestCenter,
   DndContext,
+  KeyboardSensor,
   MeasuringFrequency,
   MeasuringStrategy,
   PointerSensor,
@@ -139,12 +148,20 @@ import {
   rectIntersection,
   useSensor,
   useSensors,
+  type Announcements,
   type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
+  type ScreenReaderInstructions,
 } from "@dnd-kit/core";
-import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { buildChatMentionHref, type Agent, type ChatConversation, type MessengerCustomGroupHydratedEntry, type MessengerCustomGroupHydratedSavedViewEntry, type MessengerCustomGroupHydratedThreadEntry, type MessengerCustomGroupWithEntries, type MessengerThreadSummary, type Project } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -177,6 +194,19 @@ function isSavedViewCustomGroupEntry(
   entry: MessengerCustomGroupHydratedEntry,
 ): entry is MessengerCustomGroupHydratedSavedViewEntry {
   return entry.item.type === "saved_view";
+}
+
+function customGroupEntryItemKey(entry: MessengerCustomGroupHydratedEntry) {
+  if (entry.itemKey?.trim()) return entry.itemKey;
+  if (isThreadCustomGroupEntry(entry)) return entry.threadKey;
+  return entry.item.itemKey;
+}
+
+function messengerSidebarEntryItemKey(row: HTMLElement) {
+  if (row.dataset.messengerSavedViewId) {
+    return `saved-view:${row.dataset.messengerSavedViewId}`;
+  }
+  return row.dataset.messengerThreadKey ?? null;
 }
 
 type CustomGroupEditorState = { mode: "create"; threadKey?: string };
@@ -448,10 +478,12 @@ function SortableThreadSection({
 function SortableCustomThreadEntry({
   id,
   insertionPlacement,
+  disabled = false,
   children,
 }: {
   id: string;
   insertionPlacement?: MessengerInsertionPlacement;
+  disabled?: boolean;
   children: (
     dragHandleProps: SortableDragHandleProps,
     dragging: boolean,
@@ -464,7 +496,7 @@ function SortableCustomThreadEntry({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id });
+  } = useSortable({ id, disabled });
   const { measureNow, measuredRect, setMeasuredNodeRef } = useMeasuredSortableNode(setNodeRef);
 
   useEffect(() => {
@@ -534,6 +566,8 @@ export function MessengerContextSidebar() {
     readSplitIssueNotifications(selectedOrganizationId),
   );
   const model = useMessengerModel({ splitIssues: splitIssueNotifications });
+  const mainWorkbench = useMainWorkbench();
+  const savedViewPromotion = useOptionalSavedViewPromotion();
   const { isMobile, setSidebarOpen } = useSidebar();
   const { confirm } = useDialog();
   const {
@@ -556,6 +590,11 @@ export function MessengerContextSidebar() {
   const handledUnreadScrollRequestIdRef = useRef(0);
   const unreadLoadMoreRequestRef = useRef<{ requestId: number; loadedCount: number } | null>(null);
   const unreadCustomGroupExpansionRequestIdsRef = useRef<Map<string, number>>(new Map());
+  const pendingSavedViewPlacementItemKeysRef = useRef(new Set<string>());
+  const [
+    pendingSavedViewPlacementItemKeys,
+    setPendingSavedViewPlacementItemKeys,
+  ] = useState<Set<string>>(() => new Set());
   const customGroupIconUpdateQueuesRef = useRef<Record<string, Promise<void>>>({});
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -579,6 +618,10 @@ export function MessengerContextSidebar() {
   const collapsedGroupOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const collapsedGroupOpenTargetRef = useRef<string | null>(null);
   const selectedReadEmphasisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentOrganizationIdRef = useRef(model.selectedOrganizationId);
+  const relativePathRef = useRef(relativePath);
+  currentOrganizationIdRef.current = model.selectedOrganizationId;
+  relativePathRef.current = relativePath;
   const [unreadScrollRequestId, setUnreadScrollRequestId] = useState(0);
   const [threadOrganizationRule, setThreadOrganizationRule] = useState<ThreadOrganizationRule>(() =>
     readThreadOrganizationRule(model.selectedOrganizationId),
@@ -626,6 +669,9 @@ export function MessengerContextSidebar() {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 5 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
 
@@ -1002,29 +1048,146 @@ export function MessengerContextSidebar() {
     }
     return map;
   }, [customGroups, effectiveThreadOrganizationRule, organizedThreadSections]);
+  const customEntryGroupByItemKey = useMemo(() => {
+    const map = new Map(customEntryGroupByThreadKey);
+    for (const group of customGroups) {
+      for (const entry of group.entries) {
+        map.set(customGroupEntryItemKey(entry), group.id);
+      }
+    }
+    return map;
+  }, [customEntryGroupByThreadKey, customGroups]);
+  const savedViewEntryByItemKey = useMemo(() => {
+    const map = new Map<string, {
+      entry: MessengerCustomGroupHydratedSavedViewEntry;
+      groupId: string;
+    }>();
+    for (const group of customGroups) {
+      for (const entry of group.entries) {
+        if (!isSavedViewCustomGroupEntry(entry)) continue;
+        map.set(customGroupEntryItemKey(entry), { entry, groupId: group.id });
+      }
+    }
+    return map;
+  }, [customGroups]);
+  const messengerDndAccessibility = useMemo(() => {
+    const itemLabel = (id: string) => {
+      const savedView = savedViewEntryByItemKey.get(id);
+      if (savedView) {
+        return `Saved View ${savedViewDisplayTitle(savedView.entry)}`;
+      }
+      const group = customGroupBySectionKey.get(id);
+      if (group) return `Messenger group ${group.name}`;
+      return "Messenger item";
+    };
+    const destinationLabel = (id: string | null) => {
+      if (!id) return "the Messenger list";
+      const groupId = customGroupIdFromSectionKey(id)
+        ?? customEntryGroupByItemKey.get(id)
+        ?? null;
+      const group = groupId
+        ? customGroups.find((candidate) => candidate.id === groupId)
+        : null;
+      return group ? `Messenger group ${group.name}` : "a Messenger item";
+    };
+    const savedViewDropValidity = (
+      activeId: string,
+      overId: string | null,
+    ): "busy" | "invalid" | "valid" => {
+      const activeSavedView = savedViewEntryByItemKey.get(activeId);
+      if (!activeSavedView) {
+        return overId && overId !== activeId ? "valid" : "invalid";
+      }
+      if (pendingSavedViewPlacementItemKeys.has(activeId)) return "busy";
+      if (!overId || overId === activeId) return "invalid";
+      const overSectionGroupId = customGroupIdFromSectionKey(overId);
+      if (overSectionGroupId) {
+        return overSectionGroupId === activeSavedView.groupId
+          ? "invalid"
+          : "valid";
+      }
+      if (customEntryGroupByItemKey.has(overId)) {
+        if (customEntryGroupByItemKey.get(overId) !== null) return "valid";
+        const looseThreadKind = flattenThreadSectionEntries(
+          organizedThreadSections,
+        ).find(
+          (entry) => entry.thread.threadKey === overId,
+        )?.thread.kind;
+        return looseThreadKind === "chat" || looseThreadKind === "issues"
+          ? "valid"
+          : "invalid";
+      }
+      return "invalid";
+    };
+    const announcements: Announcements = {
+      onDragStart: ({ active }) => (
+        `Picked up ${itemLabel(String(active.id))}.`
+      ),
+      onDragOver: ({ active, over }) => (
+        `Moving ${itemLabel(String(active.id))} over ${destinationLabel(
+          over ? String(over.id) : null,
+        )}.`
+      ),
+      onDragEnd: ({ active, over }) => {
+        const activeId = String(active.id);
+        const validity = savedViewDropValidity(
+          activeId,
+          over ? String(over.id) : null,
+        );
+        if (validity === "busy") {
+          return `${itemLabel(activeId)} already has a move in progress.`;
+        }
+        if (validity === "invalid") {
+          return `Move canceled for ${itemLabel(activeId)}. That is not a valid destination.`;
+        }
+        return `Move requested for ${itemLabel(activeId)}. Messenger will announce when the server saves the change.`;
+      },
+      onDragCancel: ({ active }) => (
+        `Move canceled for ${itemLabel(String(active.id))}.`
+      ),
+    };
+    const screenReaderInstructions: ScreenReaderInstructions = {
+      draggable: "Press Space to pick up a Messenger item. Use the arrow keys to choose a destination, then press Space again to request the move. Press Escape to cancel.",
+    };
+    return { announcements, screenReaderInstructions };
+  }, [
+    customEntryGroupByItemKey,
+    customGroupBySectionKey,
+    customGroups,
+    organizedThreadSections,
+    pendingSavedViewPlacementItemKeys,
+    savedViewEntryByItemKey,
+  ]);
   const renderedThreadCount = useMemo(() => (
     flattenThreadSectionEntries(organizedThreadSections).length
   ), [organizedThreadSections]);
   const shouldAutoLoadMoreThreadSummaries = renderedThreadCount < MESSENGER_AUTO_LOAD_RENDERED_THREAD_LIMIT;
   const resolveCustomDragIntent = useCallback((activeId: string, overId: string | null): MessengerDragIntent => {
     if (effectiveThreadOrganizationRule !== "custom" || !overId || activeId === overId) return null;
-    const activeIsThread = customEntryGroupByThreadKey.has(activeId);
-    if (!activeIsThread) {
+    const activeIsEntry = customEntryGroupByItemKey.has(activeId);
+    if (!activeIsEntry) {
       return customGroupIdFromSectionKey(activeId) && customGroupIdFromSectionKey(overId)
         ? "reorder-group"
         : null;
     }
-    const activeGroupId = customEntryGroupByThreadKey.get(activeId) ?? null;
-    const overEntryGroupId = customEntryGroupByThreadKey.has(overId)
-      ? customEntryGroupByThreadKey.get(overId) ?? null
+    const activeGroupId = customEntryGroupByItemKey.get(activeId) ?? null;
+    const overEntryGroupId = customEntryGroupByItemKey.has(overId)
+      ? customEntryGroupByItemKey.get(overId) ?? null
       : undefined;
     const overGroupId = customGroupIdFromSectionKey(overId) ?? overEntryGroupId;
+    if (savedViewEntryByItemKey.has(activeId) && overEntryGroupId === null) {
+      return "move-into-group";
+    }
     if (activeGroupId && overEntryGroupId === null) return "move-out-of-group";
     if (overGroupId && activeGroupId !== overGroupId) return "move-into-group";
     if (activeGroupId && overEntryGroupId && activeGroupId === overEntryGroupId) return "reorder-entry";
     if (activeGroupId === null && overEntryGroupId === null) return "reorder-entry";
     return null;
-  }, [customEntryGroupByThreadKey, effectiveThreadOrganizationRule]);
+  }, [
+    customEntryGroupByItemKey,
+    effectiveThreadOrganizationRule,
+    savedViewEntryByItemKey,
+  ]);
   const unreadThreadTargets = useMemo<UnreadThreadTarget[]>(() => {
     const targets: UnreadThreadTarget[] = [];
     const isManaged = isManagedThreadGroupRule(effectiveThreadOrganizationRule);
@@ -1086,6 +1249,8 @@ export function MessengerContextSidebar() {
     if (route.kind === "system") return route.threadKind;
     return null;
   }, [route, visibleThreadSummaries]);
+  const activeSavedViewId =
+    route.kind === "saved_view" ? route.savedViewId : null;
   const sortableThreadSectionKeys = useMemo(() => (
     organizedThreadSections
       .filter((section) => effectiveThreadOrganizationRule !== "custom" || section.key !== "custom:pinned")
@@ -1208,6 +1373,22 @@ export function MessengerContextSidebar() {
     }
   };
 
+  const beginSavedViewPlacement = useCallback((itemKey: string) => {
+    if (pendingSavedViewPlacementItemKeysRef.current.has(itemKey)) return false;
+    pendingSavedViewPlacementItemKeysRef.current.add(itemKey);
+    setPendingSavedViewPlacementItemKeys(
+      new Set(pendingSavedViewPlacementItemKeysRef.current),
+    );
+    return true;
+  }, []);
+
+  const finishSavedViewPlacement = useCallback((itemKey: string) => {
+    pendingSavedViewPlacementItemKeysRef.current.delete(itemKey);
+    setPendingSavedViewPlacementItemKeys(
+      new Set(pendingSavedViewPlacementItemKeysRef.current),
+    );
+  }, []);
+
   const refreshCustomGroups = async () => {
     if (!model.selectedOrganizationId) return;
     await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.customGroups(model.selectedOrganizationId) });
@@ -1291,6 +1472,46 @@ export function MessengerContextSidebar() {
     onSuccess: refreshCustomGroups,
   });
 
+  const reorderSavedViewMutation = useMutation({
+    mutationFn: ({
+      groupId,
+      itemKey: _itemKey,
+      itemKeys,
+      organizationId,
+    }: {
+      groupId: string;
+      itemKey: string;
+      itemKeys: string[];
+      organizationId: string;
+    }) => {
+      return messengerApi.reorderCustomGroupEntries(
+        organizationId,
+        groupId,
+        itemKeys,
+      );
+    },
+    onSuccess: async (_data, { organizationId }) => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.messenger.customGroups(organizationId),
+      });
+      pushToast({
+        title: "Saved View moved",
+        body: "The Messenger group order was updated.",
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Could not move Saved View",
+        body: error instanceof Error ? error.message : "Try again.",
+        tone: "error",
+      });
+    },
+    onSettled: (_data, _error, { itemKey }) => {
+      finishSavedViewPlacement(itemKey);
+    },
+  });
+
   const assignCustomGroupEntryMutation = useMutation({
     mutationFn: ({ groupId, threadKey }: { groupId: string; threadKey: string }) => {
       if (!model.selectedOrganizationId) throw new Error("Organization is required to move a Messenger thread");
@@ -1311,11 +1532,31 @@ export function MessengerContextSidebar() {
   });
 
   const moveSavedViewMutation = useMutation({
-    mutationFn: ({ groupId, itemKey }: { groupId: string; itemKey: string }) => {
-      if (!model.selectedOrganizationId) throw new Error("Organization is required to move a Saved View");
-      return messengerApi.assignCustomGroupEntry(model.selectedOrganizationId, groupId, itemKey);
+    mutationFn: ({
+      groupId,
+      itemKey,
+      organizationId,
+    }: {
+      groupId: string;
+      itemKey: string;
+      organizationId: string;
+    }) => {
+      return messengerApi.assignCustomGroupEntry(
+        organizationId,
+        groupId,
+        itemKey,
+      );
     },
-    onSuccess: refreshCustomGroups,
+    onSuccess: async (_data, { organizationId }) => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.messenger.customGroups(organizationId),
+      });
+      pushToast({
+        title: "Saved View moved",
+        body: "The Messenger group was updated.",
+        tone: "success",
+      });
+    },
     onError: (error) => {
       pushToast({
         title: "Could not move Saved View",
@@ -1323,27 +1564,237 @@ export function MessengerContextSidebar() {
         tone: "error",
       });
     },
-  });
-
-  const removeSavedViewMutation = useMutation({
-    mutationFn: async (savedViewId: string) => {
-      const organizationId = model.selectedOrganizationId;
-      if (!organizationId) throw new Error("Organization is required to remove a Saved View");
-      await messengerApi.deleteSavedView(organizationId, savedViewId);
-      return { organizationId, savedViewId };
+    onSettled: (_data, _error, { itemKey }) => {
+      finishSavedViewPlacement(itemKey);
     },
-    onSuccess: async ({ organizationId, savedViewId }) => {
-      removeMessengerSavedViewFromCustomGroupsCache(queryClient, organizationId, savedViewId);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.customGroups(organizationId) });
+  });
+  const requestMoveSavedView = useCallback((
+    groupId: string,
+    itemKey: string,
+  ) => {
+    const organizationId = model.selectedOrganizationId;
+    if (!organizationId || !beginSavedViewPlacement(itemKey)) return;
+    moveSavedViewMutation.mutate({
+      groupId,
+      itemKey,
+      organizationId,
+    });
+  }, [
+    beginSavedViewPlacement,
+    model.selectedOrganizationId,
+    moveSavedViewMutation,
+  ]);
+
+  const createGroupForSavedViewMutation = useMutation({
+    mutationFn: ({
+      anchorItemKey,
+      itemKeys,
+      name,
+      organizationId,
+      savedViewItemKey: _savedViewItemKey,
+    }: {
+      anchorItemKey: string;
+      itemKeys: string[];
+      name: string;
+      organizationId: string;
+      savedViewItemKey: string;
+    }) => {
+      return messengerApi.createCustomGroupWithEntries(
+        organizationId,
+        {
+          anchorItemKey,
+          autoGenerateName: false,
+          itemKeys,
+          name,
+        },
+      );
+    },
+    onSuccess: async (_data, { organizationId }) => {
+      writeThreadOrganizationRule(organizationId, "latest");
+      if (currentOrganizationIdRef.current === organizationId) {
+        setThreadOrganizationRule("latest");
+      }
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.messenger.customGroups(organizationId),
+      });
+      pushToast({
+        title: "Saved View grouped",
+        body: "Created or reused the Chat or Issue group.",
+        tone: "success",
+      });
     },
     onError: (error) => {
       pushToast({
-        title: "Could not remove Saved View",
+        title: "Could not group Saved View",
         body: error instanceof Error ? error.message : "Try again.",
         tone: "error",
       });
     },
+    onSettled: (_data, _error, { savedViewItemKey }) => {
+      finishSavedViewPlacement(savedViewItemKey);
+    },
   });
+
+  const rememberAdjacentSavedViewFocus = useCallback((savedViewId: string) => {
+    const rows = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        "[data-messenger-thread-key],[data-messenger-saved-view-id]",
+      ),
+    );
+    const currentIndex = rows.findIndex(
+      (row) => row.dataset.messengerSavedViewId === savedViewId,
+    );
+    if (currentIndex === -1) return null;
+    const adjacent = rows[currentIndex + 1] ?? rows[currentIndex - 1] ?? null;
+    return adjacent
+      ? messengerSidebarEntryItemKey(adjacent)
+      : null;
+  }, []);
+
+  const completeSavedViewRemoval = useCallback(async ({
+    focusItemKey,
+    organizationId,
+    savedViewId,
+  }: {
+    focusItemKey: string | null;
+    organizationId: string;
+    savedViewId: string;
+  }) => {
+    savedViewPromotion?.finalizeSavedViewRemoval(
+      organizationId,
+      savedViewId,
+    );
+    const organizationState =
+      mainWorkbench.getState().organizations[organizationId];
+    for (const tab of Object.values(
+      organizationState?.tabsByViewInstanceId ?? {},
+    )) {
+      if (tab.savedViewId !== savedViewId) continue;
+      mainWorkbench.unbindSavedViewForOrganization(
+        organizationId,
+        tab.viewInstanceId,
+        savedViewId,
+      );
+    }
+    if (
+      currentOrganizationIdRef.current === organizationId
+      && relativePathRef.current === messengerSavedViewRoute(savedViewId)
+    ) {
+      navigate("/messenger/workbench", { replace: true });
+    }
+    removeMessengerSavedViewFromCustomGroupsCache(
+      queryClient,
+      organizationId,
+      savedViewId,
+    );
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.messenger.customGroups(organizationId),
+    });
+    if (
+      focusItemKey
+      && currentOrganizationIdRef.current === organizationId
+    ) {
+      const adjacentRow = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "[data-messenger-thread-key],[data-messenger-saved-view-id]",
+        ),
+      ).find(
+        (row) => messengerSidebarEntryItemKey(row) === focusItemKey,
+      );
+      (
+        adjacentRow?.querySelector<HTMLElement>("a[href]")
+        ?? adjacentRow?.querySelector<HTMLElement>("button,[tabindex]")
+        ?? adjacentRow
+      )?.focus();
+    }
+    pushToast({
+      title: "Removed from Messenger",
+      body: "The open Main tab remains available for this session.",
+      tone: "success",
+    });
+  }, [
+    mainWorkbench,
+    navigate,
+    pushToast,
+    queryClient,
+    savedViewPromotion,
+  ]);
+
+  const removeSavedViewMutation = useMutation({
+    mutationFn: async ({
+      organizationId,
+      savedViewId,
+      focusItemKey,
+    }: {
+      organizationId: string;
+      savedViewId: string;
+      focusItemKey: string | null;
+    }) => {
+      await messengerApi.deleteSavedView(organizationId, savedViewId);
+      return { focusItemKey, organizationId, savedViewId };
+    },
+    onMutate: ({ organizationId, savedViewId }) => {
+      savedViewPromotion?.setSavedViewRemovalPending(
+        organizationId,
+        savedViewId,
+        true,
+      );
+    },
+    onSuccess: completeSavedViewRemoval,
+    onError: async (
+      error,
+      { focusItemKey, organizationId, savedViewId },
+    ) => {
+      let removed = error instanceof ApiError && error.status === 404;
+      let confirmedPresent = false;
+      if (!removed) {
+        try {
+          await messengerApi.getSavedView(organizationId, savedViewId);
+          confirmedPresent = true;
+        } catch (reconcileError) {
+          removed = reconcileError instanceof ApiError
+            && reconcileError.status === 404;
+        }
+      }
+      if (removed) {
+        await completeSavedViewRemoval({
+          focusItemKey,
+          organizationId,
+          savedViewId,
+        });
+        return;
+      }
+      if (confirmedPresent) {
+        savedViewPromotion?.setSavedViewRemovalPending(
+          organizationId,
+          savedViewId,
+          false,
+        );
+      }
+      pushToast({
+        title: confirmedPresent
+          ? "Could not remove Saved View"
+          : "Could not confirm Saved View removal",
+        body: confirmedPresent
+          ? error instanceof Error ? error.message : "Try again."
+          : "The move remains paused. Retry Remove to reconcile it.",
+        tone: "error",
+      });
+    },
+  });
+  const requestRemoveSavedView = useCallback((savedViewId: string) => {
+    const organizationId = model.selectedOrganizationId;
+    if (!organizationId) return;
+    removeSavedViewMutation.mutate({
+      focusItemKey: rememberAdjacentSavedViewFocus(savedViewId),
+      organizationId,
+      savedViewId,
+    });
+  }, [
+    model.selectedOrganizationId,
+    rememberAdjacentSavedViewFocus,
+    removeSavedViewMutation,
+  ]);
 
   const handleThreadSectionDragOver = useCallback((event: DragOverEvent) => {
     const overId = event.over ? String(event.over.id) : null;
@@ -1357,7 +1808,9 @@ export function MessengerContextSidebar() {
       return;
     }
 
-    const overGroupId = customGroupIdFromSectionKey(overId) ?? customEntryGroupByThreadKey.get(overId) ?? null;
+    const overGroupId = customGroupIdFromSectionKey(overId)
+      ?? customEntryGroupByItemKey.get(overId)
+      ?? null;
     const group = overGroupId ? customGroups.find((candidate) => candidate.id === overGroupId) : null;
     if (!group?.collapsed) {
       clearCollapsedGroupOpenTimer();
@@ -1371,7 +1824,7 @@ export function MessengerContextSidebar() {
       collapsedGroupOpenTargetRef.current = null;
       updateCustomGroupMutation.mutate({ groupId: group.id, data: { collapsed: false } });
     }, 500);
-  }, [clearCollapsedGroupOpenTimer, customEntryGroupByThreadKey, customGroups, effectiveThreadOrganizationRule, resolveCustomDragIntent, updateCustomGroupMutation, updateDragIntent, updateDragOverId]);
+  }, [clearCollapsedGroupOpenTimer, customEntryGroupByItemKey, customGroups, effectiveThreadOrganizationRule, resolveCustomDragIntent, updateCustomGroupMutation, updateDragIntent, updateDragOverId]);
 
   const handleThreadGroupToggle = (groupKey: string) => {
     const group = customGroupBySectionKey.get(groupKey);
@@ -1399,10 +1852,86 @@ export function MessengerContextSidebar() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     if (!isManagedThreadGroupRule(effectiveThreadOrganizationRule)) return;
+    const dragOrganizationId = model.selectedOrganizationId;
+    if (!dragOrganizationId) return;
 
     if (effectiveThreadOrganizationRule === "custom") {
       const activeThreadKey = String(active.id);
       const overThreadKey = String(over.id);
+      const activeSavedView = savedViewEntryByItemKey.get(activeThreadKey) ?? null;
+      if (activeSavedView) {
+        const overSectionGroupId = customGroupIdFromSectionKey(overThreadKey);
+        const overHasEntryGroup = customEntryGroupByItemKey.has(overThreadKey);
+        const overEntryGroupId = overHasEntryGroup
+          ? customEntryGroupByItemKey.get(overThreadKey) ?? null
+          : undefined;
+        const overGroupId = overSectionGroupId ?? overEntryGroupId;
+
+        if (
+          overEntryGroupId === null
+          && customEntryGroupByThreadKey.has(overThreadKey)
+        ) {
+          const looseThread = flattenThreadSectionEntries(
+            organizedThreadSections,
+          ).find((entry) => entry.thread.threadKey === overThreadKey);
+          if (
+            looseThread
+            && (
+              looseThread.thread.kind === "chat"
+              || looseThread.thread.kind === "issues"
+            )
+            && beginSavedViewPlacement(activeThreadKey)
+          ) {
+            createGroupForSavedViewMutation.mutate({
+              anchorItemKey: overThreadKey,
+              itemKeys: [overThreadKey, activeThreadKey],
+              name: looseThread.thread.title.trim() || "New group",
+              organizationId: dragOrganizationId,
+              savedViewItemKey: activeThreadKey,
+            });
+          }
+          return;
+        }
+
+        if (
+          overGroupId
+          && overGroupId !== activeSavedView.groupId
+          && beginSavedViewPlacement(activeThreadKey)
+        ) {
+          moveSavedViewMutation.mutate({
+            groupId: overGroupId,
+            itemKey: activeThreadKey,
+            organizationId: dragOrganizationId,
+          });
+          return;
+        }
+
+        if (overGroupId === activeSavedView.groupId) {
+          const group = customGroups.find(
+            (candidate) => candidate.id === activeSavedView.groupId,
+          );
+          const itemKeys = group?.entries
+            .slice()
+            .sort((left, right) => left.sortOrder - right.sortOrder)
+            .map(customGroupEntryItemKey) ?? [];
+          const oldIndex = itemKeys.indexOf(activeThreadKey);
+          const newIndex = itemKeys.indexOf(overThreadKey);
+          if (
+            oldIndex !== -1
+            && newIndex !== -1
+            && oldIndex !== newIndex
+            && beginSavedViewPlacement(activeThreadKey)
+          ) {
+            reorderSavedViewMutation.mutate({
+              groupId: activeSavedView.groupId,
+              itemKey: activeThreadKey,
+              itemKeys: arrayMove(itemKeys, oldIndex, newIndex),
+              organizationId: dragOrganizationId,
+            });
+          }
+        }
+        return;
+      }
       const topLevelSectionKeys = organizedThreadSections
         .filter((section) => section.key !== "custom:pinned")
         .map((section) => section.key);
@@ -1528,7 +2057,7 @@ export function MessengerContextSidebar() {
         const itemKeys = group?.entries
           .slice()
           .sort((left, right) => left.sortOrder - right.sortOrder)
-          .map((entry) => entry.itemKey) ?? [];
+          .map(customGroupEntryItemKey) ?? [];
         const oldIndex = itemKeys.indexOf(activeThreadKey);
         const newIndex = itemKeys.indexOf(overThreadKey);
         if (oldIndex !== -1 && newIndex !== -1) {
@@ -1589,7 +2118,7 @@ export function MessengerContextSidebar() {
     if (projectOrderStorageKey) {
       writeProjectOrder(projectOrderStorageKey, nextProjectOrderIds);
     }
-  }, [assignCustomGroupEntryMutation, customEntryGroupByThreadKey, customGroups, defaultThreadOrderKeys, defaultThreadOrderStorageKey, effectiveThreadOrganizationRule, messengerThreadGroupOrderStorageKey, organizedThreadSections, projectOrderIds, projectOrderStorageKey, removeCustomGroupEntryMutation, reorderCustomGroupEntriesMutation, reorderCustomGroupsMutation, resetThreadDragState]);
+  }, [assignCustomGroupEntryMutation, beginSavedViewPlacement, createGroupForSavedViewMutation, customEntryGroupByItemKey, customEntryGroupByThreadKey, customGroups, defaultThreadOrderKeys, defaultThreadOrderStorageKey, effectiveThreadOrganizationRule, messengerThreadGroupOrderStorageKey, model.selectedOrganizationId, moveSavedViewMutation, organizedThreadSections, projectOrderIds, projectOrderStorageKey, removeCustomGroupEntryMutation, reorderCustomGroupEntriesMutation, reorderCustomGroupsMutation, reorderSavedViewMutation, resetThreadDragState, savedViewEntryByItemKey]);
 
   const handleShowMoreThreadSection = (section: OrganizedThreadSection, visibleCount: number) => {
     if (visibleCount < section.entries.length) {
@@ -1896,8 +2425,14 @@ export function MessengerContextSidebar() {
     const customGroupTitleGenerating = Boolean(customGroup && generatingGroupTitleIds.has(customGroup.id));
     const displayedCustomGroup = customGroup;
     const collapsed = customGroup ? customGroup.collapsed : isManagedSection && collapsedThreadGroupKeys.has(section.key);
-    const draggingEntryGroupId = draggingThreadId ? customEntryGroupByThreadKey.get(draggingThreadId) : undefined;
-    const dragOverThisSection = dragOverId === section.key || section.entries.some((entry) => entry.thread.threadKey === dragOverId);
+    const draggingEntryGroupId = draggingThreadId
+      ? customEntryGroupByItemKey.get(draggingThreadId)
+      : undefined;
+    const dragOverThisSection = dragOverId === section.key
+      || section.entries.some((entry) => entry.thread.threadKey === dragOverId)
+      || Boolean(customGroup?.entries.some(
+        (entry) => customGroupEntryItemKey(entry) === dragOverId,
+      ));
     const isMoveIntoGroupTarget = effectiveThreadOrganizationRule === "custom"
       && Boolean(displayedCustomGroup)
       && Boolean(draggingThreadId)
@@ -1965,7 +2500,7 @@ export function MessengerContextSidebar() {
     const hideSectionHeading = isPinnedCustomSection;
     const canSortCustomEntries = effectiveThreadOrganizationRule === "custom"
       && (Boolean(customGroup) || isPinnedCustomSection || isLoosePinnedCustomSection)
-      && visibleEntries.length > 0;
+      && (customGroup ? customGroup.entries.length > 0 : visibleEntries.length > 0);
     const canDragStandaloneCustomEntry = effectiveThreadOrganizationRule === "custom"
       && !customGroup
       && (section.label === null || isPinnedCustomSection)
@@ -2015,16 +2550,43 @@ export function MessengerContextSidebar() {
     const renderedEntryNodes = customGroup
       ? orderedCustomEntries.map((entry) => {
         if (isSavedViewCustomGroupEntry(entry)) {
-          return (
+          const itemKey = customGroupEntryItemKey(entry);
+          const placementPending =
+            pendingSavedViewPlacementItemKeys.has(itemKey);
+          const row = (
             <MessengerSavedViewRow
-              key={entry.itemKey}
+              active={activeSavedViewId === entry.item.savedView.id}
               currentGroupId={customGroup.id}
+              density={threadDensity}
               entry={entry}
               groups={customGroups}
-              onMove={(groupId, itemKey) => moveSavedViewMutation.mutate({ groupId, itemKey })}
-              onRemove={(savedViewId) => removeSavedViewMutation.mutate(savedViewId)}
+              onMove={requestMoveSavedView}
+              onRemove={requestRemoveSavedView}
+              placementPending={placementPending}
             />
           );
+          return canSortCustomEntries ? (
+            <SortableCustomThreadEntry
+              key={itemKey}
+              id={itemKey}
+              disabled={placementPending}
+            >
+              {(savedDragHandleProps, dragging) => (
+                <MessengerSavedViewRow
+                  active={activeSavedViewId === entry.item.savedView.id}
+                  currentGroupId={customGroup.id}
+                  density={threadDensity}
+                  dragHandleProps={savedDragHandleProps}
+                  dragging={dragging}
+                  entry={entry}
+                  groups={customGroups}
+                  onMove={requestMoveSavedView}
+                  onRemove={requestRemoveSavedView}
+                  placementPending={placementPending}
+                />
+              )}
+            </SortableCustomThreadEntry>
+          ) : <div key={itemKey}>{row}</div>;
         }
         const visibleEntry = visibleEntryByThreadKey.get(entry.threadKey);
         return visibleEntry ? renderVisibleThreadEntry(visibleEntry) : null;
@@ -2032,7 +2594,9 @@ export function MessengerContextSidebar() {
       : visibleEntries.map(renderVisibleThreadEntry);
     const renderedEntries = canSortCustomEntries ? (
       <SortableContext
-        items={visibleEntries.map((entry) => entry.thread.threadKey)}
+        items={customGroup
+          ? orderedCustomEntries.map(customGroupEntryItemKey)
+          : visibleEntries.map((entry) => entry.thread.threadKey)}
         strategy={verticalListSortingStrategy}
       >
         {renderedEntryNodes}
@@ -2910,6 +3474,7 @@ export function MessengerContextSidebar() {
         {isManagedThreadGroupRule(effectiveThreadOrganizationRule) ? (
           <>
             <DndContext
+              accessibility={messengerDndAccessibility}
               sensors={sensors}
               collisionDetection={messengerThreadCollisionDetection}
               measuring={MESSENGER_THREAD_DND_MEASURING}

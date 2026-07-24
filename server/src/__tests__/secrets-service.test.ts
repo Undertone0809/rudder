@@ -13,6 +13,7 @@ async function createFakeDb(secretValue = "resolved-secret") {
     orgId: "org-1",
     name: "ANTHROPIC_API_KEY",
     provider: "local_encrypted",
+    purpose: "user_managed",
     externalRef: null,
     latestVersion: 1,
   };

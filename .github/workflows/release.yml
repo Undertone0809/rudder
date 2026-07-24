@@ -20,6 +20,11 @@ on:
         required: false
         default: ""
         type: string
+      confirm_docs:
+        description: "For a real stable publish, enter PUBLISH DOCS only after explicit docs.rudderhq.dev deployment approval"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -46,7 +51,10 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
         env:
           CONFIRM_STABLE: ${{ inputs.confirm_stable }}
-        run: test "$CONFIRM_STABLE" = "PUBLISH STABLE"
+          CONFIRM_DOCS: ${{ inputs.confirm_docs }}
+        run: |
+          test "$CONFIRM_STABLE" = "PUBLISH STABLE"
+          test "$CONFIRM_DOCS" = "PUBLISH DOCS"
 
       - name: Require release repository safeguards
         if: github.event_name == 'workflow_dispatch'
@@ -54,7 +62,7 @@ jobs:
           RELEASE_SAFEGUARDS_CONFIGURED: ${{ vars.RELEASE_SAFEGUARDS_CONFIGURED }}
         run: |
           if [ "$RELEASE_SAFEGUARDS_CONFIGURED" != "true" ]; then
-            echo "Configure npm-stable reviewers, main protection, and Actions PR creation, then set RELEASE_SAFEGUARDS_CONFIGURED=true." >&2
+            echo "Configure npm-stable reviewers, main protection with the release-workflow push path, and Actions workflow permissions, then set RELEASE_SAFEGUARDS_CONFIGURED=true." >&2
             exit 1
           fi
 
@@ -315,16 +323,31 @@ jobs:
             --remote origin \
             --stable-version "${{ steps.publish.outputs.version }}"
 
-  next-release-base:
-    name: Propose next release base
+  stable-docs:
+    name: Publish stable changelog to docs production
     needs:
       - preflight
       - stable
     if: needs.stable.result == 'success'
     permissions:
+      contents: write
+    uses: ./.github/workflows/docs-production.yml
+    with:
+      source_ref: v${{ needs.stable.outputs.version }}
+      tag_name: docs/release/v${{ needs.stable.outputs.version }}
+      release_docs_approved: true
+    secrets: inherit
+
+  next-release-base:
+    name: Advance next release base
+    needs:
+      - preflight
+      - stable
+      - stable-docs
+    if: needs.stable.result == 'success' && needs.stable-docs.result == 'success'
+    permissions:
       actions: write
       contents: write
-      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -337,17 +360,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Create next patch version pull request
+      - name: Advance main to the next patch version
         id: next-release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           node scripts/prepare-next-release.mjs \
-            --stable-version "${{ needs.stable.outputs.version }}" \
-            --repo "$GITHUB_REPOSITORY"
+            --stable-version "${{ needs.stable.outputs.version }}"
 
-      - name: Start CI for next release base
-        if: steps.next-release.outputs.action == 'created' || steps.next-release.outputs.action == 'existing'
+      - name: Start CI for the advanced release base
+        if: steps.next-release.outputs.action == 'updated' || steps.next-release.outputs.action == 'ready'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -356,7 +376,8 @@ jobs:
             -f source_sha="${{ steps.next-release.outputs.head_sha }}"
           {
             echo "### Next release base"
-            echo "PR: ${{ steps.next-release.outputs.pull_request_url }}"
+            echo "Version: ${{ steps.next-release.outputs.version }}"
+            echo "Commit: ${{ steps.next-release.outputs.head_sha }}"
             echo "Trusted CI dispatched for ${{ steps.next-release.outputs.head_sha }}."
           } >> "$GITHUB_STEP_SUMMARY"
 

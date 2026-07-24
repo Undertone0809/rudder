@@ -41,13 +41,20 @@ export function decideVersionHandoff(currentVersion, stableVersion) {
     );
   }
   if (comparison > 0) {
+    if (currentVersion === nextVersion) {
+      return {
+        action: "ready",
+        nextVersion,
+        reason: `main already advanced to ${currentVersion}`,
+      };
+    }
     return {
       action: "skip",
       nextVersion,
       reason: `main already advanced to ${currentVersion}`,
     };
   }
-  return { action: "create", nextVersion };
+  return { action: "update", nextVersion };
 }
 
 function run(command, args, { capture = false, env = {} } = {}) {
@@ -65,7 +72,6 @@ function parseArgs(argv) {
     base: "main",
     dryRun: false,
     remote: "origin",
-    repository: process.env.GITHUB_REPOSITORY ?? "",
     stableVersion: "",
   };
 
@@ -78,7 +84,6 @@ function parseArgs(argv) {
     const key = {
       "--base": "base",
       "--remote": "remote",
-      "--repo": "repository",
       "--stable-version": "stableVersion",
     }[arg];
     if (!key || !argv[index + 1]) {
@@ -89,9 +94,6 @@ function parseArgs(argv) {
   }
 
   parseStableVersion(options.stableVersion);
-  if (!options.repository && !options.dryRun) {
-    throw new Error("--repo or GITHUB_REPOSITORY is required when creating the pull request");
-  }
   return options;
 }
 
@@ -110,69 +112,31 @@ function readWorkspaceVersion() {
   return versions[0];
 }
 
-function findOpenPullRequest(repository, branch) {
-  const result = run("gh", [
-    "pr", "list",
-    "--repo", repository,
-    "--head", branch,
-    "--state", "open",
-    "--json", "url,baseRefName,headRefName,headRefOid",
-  ], { capture: true });
-  const pullRequests = JSON.parse(result || "[]");
-  return pullRequests[0] ?? null;
-}
-
-function readWorkspaceVersionAtRevision(revision) {
-  const packageDirs = run("node", ["scripts/release-package-map.mjs", "list"], { capture: true })
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => line.split("\t")[0]);
-  const versions = [...new Set(packageDirs.map((packageDir) => {
-    const manifest = JSON.parse(run("git", ["show", `${revision}:${packageDir}/package.json`], { capture: true }));
-    return manifest.version;
-  }))];
-  if (versions.length !== 1) {
-    throw new Error(`existing next-release branch has mismatched public package versions: ${versions.join(", ")}`);
-  }
-  return versions[0];
-}
-
-function validateExistingPullRequest(pullRequest, options, branch, nextVersion) {
-  if (pullRequest.baseRefName !== options.base || pullRequest.headRefName !== branch) {
-    throw new Error(`existing pull request ${pullRequest.url} does not target ${options.base} from ${branch}`);
-  }
-
-  const remoteRef = `refs/remotes/${options.remote}/${branch}`;
-  run("git", [
-    "fetch",
-    options.remote,
-    `+refs/heads/${branch}:${remoteRef}`,
-  ]);
-  const remoteOid = run("git", ["rev-parse", remoteRef], { capture: true });
-  if (remoteOid !== pullRequest.headRefOid) {
-    throw new Error(`existing pull request ${pullRequest.url} head does not match ${options.remote}/${branch}`);
-  }
-
-  const ancestry = spawnSync(
-    "git",
-    ["merge-base", "--is-ancestor", `${options.remote}/${options.base}`, remoteOid],
-    { cwd: repoRoot, stdio: "ignore" },
-  );
-  if (ancestry.status !== 0) {
-    throw new Error(`existing pull request ${pullRequest.url} is not based on current ${options.remote}/${options.base}`);
-  }
-
-  const branchVersion = readWorkspaceVersionAtRevision(remoteOid);
-  if (branchVersion !== nextVersion) {
-    throw new Error(
-      `existing pull request ${pullRequest.url} has version ${branchVersion}, expected ${nextVersion}`,
-    );
-  }
-}
-
 function writeActionOutput(name, value) {
   if (!process.env.GITHUB_OUTPUT) return;
   appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+}
+
+function fetchBase(options) {
+  run("git", [
+    "fetch",
+    options.remote,
+    "--prune",
+    `+refs/heads/${options.base}:refs/remotes/${options.remote}/${options.base}`,
+  ]);
+}
+
+function pushBase(options) {
+  return spawnSync(
+    "git",
+    ["push", "--porcelain", options.remote, `HEAD:refs/heads/${options.base}`],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
 }
 
 function main() {
@@ -185,83 +149,68 @@ function main() {
   let shouldRestoreCheckout = true;
 
   try {
-    run("git", [
-      "fetch",
-      options.remote,
-      "--prune",
-      `+refs/heads/${options.base}:refs/remotes/${options.remote}/${options.base}`,
-    ]);
-    run("git", ["checkout", "--detach", `${options.remote}/${options.base}`]);
-
-    const currentVersion = readWorkspaceVersion();
-    const decision = decideVersionHandoff(currentVersion, options.stableVersion);
-    if (decision.action === "skip") {
-      writeActionOutput("action", "skip");
-      console.log(`Next release base not needed: ${decision.reason}.`);
-      return;
-    }
-
-    const branch = `automation/release-v${decision.nextVersion}`;
-    writeActionOutput("branch", branch);
-    writeActionOutput("version", decision.nextVersion);
-    if (!options.dryRun) {
-      const existingPullRequest = findOpenPullRequest(options.repository, branch);
-      if (existingPullRequest) {
-        validateExistingPullRequest(existingPullRequest, options, branch, decision.nextVersion);
-        writeActionOutput("action", "existing");
-        writeActionOutput("head_sha", existingPullRequest.headRefOid);
-        writeActionOutput("pull_request_url", existingPullRequest.url);
-        console.log(`Next release base pull request already exists: ${existingPullRequest.url}`);
+    if (options.dryRun) {
+      fetchBase(options);
+      run("git", ["checkout", "--detach", `${options.remote}/${options.base}`]);
+      const currentVersion = readWorkspaceVersion();
+      const decision = decideVersionHandoff(currentVersion, options.stableVersion);
+      if (decision.action !== "update") {
+        writeActionOutput("action", decision.action);
+        writeActionOutput("version", decision.nextVersion);
+        console.log(`Next release base not needed: ${decision.reason}.`);
         return;
       }
-    }
-
-    if (options.dryRun) {
       writeActionOutput("action", "dry-run");
+      writeActionOutput("version", decision.nextVersion);
       console.log(
-        `Would create ${branch} from ${options.remote}/${options.base}, bump `
-        + `${currentVersion} -> ${decision.nextVersion}, and open a pull request.`,
+        `Would bump ${options.remote}/${options.base} from `
+        + `${currentVersion} -> ${decision.nextVersion} and push the release-maintenance commit directly.`,
       );
       return;
     }
 
-    run("git", ["checkout", "-B", branch, `${options.remote}/${options.base}`]);
-    shouldRestoreCheckout = false;
-    run("node", ["scripts/release-package-map.mjs", "set-version", decision.nextVersion]);
-    run("git", ["add", "-u"]);
-    run("git", ["commit", "-m", `chore(release): start v${decision.nextVersion}`]);
+    const maxPushAttempts = 3;
+    for (let attempt = 1; attempt <= maxPushAttempts; attempt += 1) {
+      fetchBase(options);
+      run("git", ["checkout", "-B", options.base, `${options.remote}/${options.base}`]);
+      shouldRestoreCheckout = false;
 
-    const remoteBranch = run(
-      "git",
-      ["ls-remote", "--heads", options.remote, `refs/heads/${branch}`],
-      { capture: true },
-    );
-    const pushArgs = [options.remote, `HEAD:refs/heads/${branch}`];
-    if (remoteBranch) {
-      const remoteOid = remoteBranch.split(/\s+/)[0];
-      pushArgs.unshift(`--force-with-lease=refs/heads/${branch}:${remoteOid}`);
+      const currentVersion = readWorkspaceVersion();
+      const decision = decideVersionHandoff(currentVersion, options.stableVersion);
+      writeActionOutput("version", decision.nextVersion);
+      if (decision.action !== "update") {
+        writeActionOutput("action", decision.action);
+        if (decision.action === "ready") {
+          writeActionOutput("head_sha", run("git", ["rev-parse", "HEAD"], { capture: true }));
+        }
+        console.log(`Next release base not needed: ${decision.reason}.`);
+        return;
+      }
+
+      run("node", ["scripts/release-package-map.mjs", "set-version", decision.nextVersion]);
+      run("git", ["add", "-u"]);
+      run("git", ["commit", "-m", `chore(release): start v${decision.nextVersion} [skip release]`]);
+
+      const headSha = run("git", ["rev-parse", "HEAD"], { capture: true });
+      const push = pushBase(options);
+      if (push.status === 0) {
+        writeActionOutput("action", "updated");
+        writeActionOutput("head_sha", headSha);
+        console.log(`Advanced ${options.remote}/${options.base} to ${decision.nextVersion} at ${headSha}.`);
+        return;
+      }
+
+      const pushError = `${push.stderr || ""}\n${push.stdout || ""}`.trim();
+      if (attempt === maxPushAttempts) {
+        throw new Error(
+          `could not advance ${options.remote}/${options.base} after ${maxPushAttempts} attempts: ${pushError}`,
+        );
+      }
+      console.warn(
+        `Push attempt ${attempt} did not advance ${options.remote}/${options.base}; `
+        + "refetching before retry.",
+      );
     }
-    run("git", ["push", ...pushArgs]);
-
-    const pullRequestUrl = run("gh", [
-      "pr", "create",
-      "--repo", options.repository,
-      "--base", options.base,
-      "--head", branch,
-      "--title", `chore(release): start v${decision.nextVersion}`,
-      "--body",
-      [
-        `Automated follow-up to stable v${options.stableVersion}.`,
-        "",
-        `Advances the committed public package base to ${decision.nextVersion} so subsequent main-branch canaries can publish without reusing an already released stable version.`,
-        "",
-        "This pull request does not publish a release.",
-      ].join("\n"),
-    ], { capture: true });
-    writeActionOutput("action", "created");
-    writeActionOutput("head_sha", run("git", ["rev-parse", "HEAD"], { capture: true }));
-    writeActionOutput("pull_request_url", pullRequestUrl);
-    console.log(`Created next release base pull request: ${pullRequestUrl}`);
   } finally {
     if (shouldRestoreCheckout) restoreOriginalCheckout();
   }

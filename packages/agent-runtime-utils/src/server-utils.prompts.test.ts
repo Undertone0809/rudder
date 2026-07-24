@@ -176,6 +176,86 @@ describe("server-utils prompt contracts", () => {
     expect(rendered).toContain("Before doing issue-scoped execution as the assignee");
   });
 
+  it.each(["in_review", "done", "cancelled"])(
+    "lets the current assignee handle an explicit mention while preserving %s",
+    (status) => {
+      const issue = {
+        id: `issue-assignee-${status}`,
+        title: "Continue explicit assignee work",
+        status,
+        priority: "medium",
+        description: "The lifecycle state must not revoke explicit work authority.",
+      };
+      const comment = {
+        id: `comment-assignee-${status}`,
+        authorKind: "user",
+        authorLabel: "Zeeland",
+        body: "Please merge the prepared change into local main.",
+      };
+      const context = {
+        wakeReason: "issue_comment_mentioned",
+        wakeSource: "comment.mention",
+        relationship: "assignee",
+        issue,
+        comment,
+      };
+
+      const rendered = renderTemplate(selectPromptTemplate(undefined, context), {
+        agent: { id: "agent-assignee", name: "Noah" },
+        context,
+        issue,
+        comment,
+      });
+
+      expect(rendered).toContain("You were mentioned in a comment and your attention is needed.");
+      expect(rendered).toContain("You are the issue's current assignee");
+      expect(rendered).toContain("do not check out the issue");
+      expect(rendered).toContain("preserve its current status");
+      expect(rendered).not.toContain("Before doing issue-scoped execution as the assignee");
+      expect(rendered).not.toContain("If checkout returns `409`");
+    },
+  );
+
+  it.each(["in_review", "done", "cancelled"])(
+    "lets the current reviewer handle an ordinary explicit mention while preserving %s",
+    (status) => {
+      const issue = {
+        id: `issue-reviewer-${status}`,
+        title: "Continue explicit reviewer work",
+        status,
+        priority: "medium",
+        description: "An ordinary mention is not a formal review route.",
+      };
+      const comment = {
+        id: `comment-reviewer-${status}`,
+        authorKind: "user",
+        authorLabel: "Zeeland",
+        body: "Please verify the local merge result.",
+      };
+      const context = {
+        wakeReason: "issue_comment_mentioned",
+        wakeSource: "comment.mention",
+        relationship: "reviewer",
+        issue,
+        comment,
+      };
+
+      const rendered = renderTemplate(selectPromptTemplate(undefined, context), {
+        agent: { id: "agent-reviewer", name: "Kepler" },
+        context,
+        issue,
+        comment,
+      });
+
+      expect(rendered).toContain("You were mentioned in a comment and your attention is needed.");
+      expect(rendered).toContain("You are the issue's current reviewer");
+      expect(rendered).toContain("do not check out the issue");
+      expect(rendered).toContain("preserve its current status");
+      expect(rendered).not.toContain("You have been asked to review an issue.");
+      expect(rendered).not.toContain("Before doing issue-scoped execution as the assignee");
+    },
+  );
+
   it("injects the non-assignee comment wake boundary into shared runtime instructions", () => {
     expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("If a comment wakes you on an issue not assigned to you");
     expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("including user-owned or unassigned issues");
@@ -223,7 +303,6 @@ describe("server-utils prompt contracts", () => {
   it("injects the checkout conflict rail only into assignee-capable issue scenes", () => {
     const assigneeCapableTemplates = [
       ISSUE_ASSIGN_PROMPT_TEMPLATE,
-      COMMENT_MENTION_PROMPT_TEMPLATE,
       ISSUE_COMMENTED_PROMPT_TEMPLATE,
       ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE,
       ISSUE_RECOVERY_PROMPT_TEMPLATE,
@@ -234,6 +313,14 @@ describe("server-utils prompt contracts", () => {
       expect(template).toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
       expect(template).toContain("If checkout returns `409`, do not retry");
     }
+
+    const collaboratorMention = selectPromptTemplate(undefined, {
+      wakeSource: "comment.mention",
+      wakeReason: "issue_comment_mentioned",
+      relationship: "collaborator",
+    });
+    expect(COMMENT_MENTION_PROMPT_TEMPLATE).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
+    expect(collaboratorMention).toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
 
     expect(ISSUE_REVIEW_PROMPT_TEMPLATE).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);
     expect(ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE).not.toContain(ISSUE_ASSIGNEE_EXECUTION_RAIL);

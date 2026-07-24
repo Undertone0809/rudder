@@ -18,14 +18,20 @@ export {
   agentSkillEnableSchema, agentSkillEntrySchema, agentSkillOriginSchema, agentSkillSnapshotSchema, agentSkillSourceClassSchema, agentSkillStateSchema, agentSkillSyncModeSchema, agentSkillSyncSchema, type AgentSkillEnable, type AgentSkillSync
 } from "./adapter-skills.js";
 export {
+  MAX_CHAT_INLINE_ANNOTATIONS,
+  MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS,
+  MAX_CHAT_INLINE_ANNOTATION_COMMENT_LENGTH,
+  MAX_CHAT_INLINE_ANNOTATION_CONTEXT_LENGTH,
+  MAX_CHAT_INLINE_ANNOTATION_SELECTED_TEXT_LENGTH,
+  MAX_CHAT_INLINE_ANNOTATION_TOTAL_TEXT_LENGTH,
   addChatMessageSchema,
   appendChatGenerationEventSchema,
   assignMessengerCustomGroupEntrySchema,
   cancelChatQueuedMessageSchema,
   chatAskUserOptionSchema,
   chatAskUserQuestionSchema, chatAskUserRequestFromStructuredPayload, chatAskUserRequestSchema, chatAutomationCreateFromStructuredPayload, chatAutomationCreateSchema, chatClientCheckpointSchema, chatContextEntityTypeSchema, chatControlActionKindSchema, chatControlDispositionSchema, chatConversationStatusSchema,
-  chatDraftSchema, chatGenerationControlStateSchema, chatGenerationEventKindSchema, chatGenerationStatusSchema, chatIssueCreationModeSchema, chatIssueProposalFromStructuredPayload, chatMessageKindSchema, chatMessageRoleSchema, chatOperationProposalSchema, chatProviderControlDispositionSchema, chatQueueDeliveryIntentSchema, chatQueuedMessagePayloadSchema, chatQueuedMessageStatusSchema, chatRichReferenceSchema, chatRichReferencesFromStructuredPayload, chatRichReferencesSchema, chatTerminalOutboxStatusSchema, convertChatToIssueSchema, createChatAttachmentMetadataSchema, createChatContextLinkSchema,
-  createChatConversationSchema, createChatFirstTurnSchema, createChatQueuedMessageSchema, createMessengerCustomGroupSchema, createMessengerCustomGroupWithEntriesSchema, createSideChatSchema, forkChatConversationSchema, reorderMessengerCustomGroupEntriesSchema, reorderMessengerCustomGroupsSchema, resolveChatOperationProposalSchema, sanitizeChatStructuredPayload, setChatProjectContextSchema,
+  chatDraftSchema, chatGenerationControlStateSchema, chatGenerationEventKindSchema, chatGenerationStatusSchema, chatInlineAnnotationInputSchema, chatInlineAnnotationSchema, chatInlineAnnotationsFromStructuredPayload, chatInlineAnnotationsInputSchema, chatInlineAnnotationsSchema, chatIssueCreationModeSchema, chatIssueProposalFromStructuredPayload, chatMessageKindSchema, chatMessageRoleSchema, chatOperationProposalSchema, chatProviderControlDispositionSchema, chatQueueDeliveryIntentSchema, chatQueuedMessagePayloadSchema, chatQueuedMessageStatusSchema, chatRichReferenceSchema, chatRichReferencesFromStructuredPayload, chatRichReferencesSchema, chatTerminalOutboxStatusSchema, convertChatToIssueSchema, createChatAttachmentMetadataSchema, createChatContextLinkSchema,
+  createChatConversationSchema, createChatFirstTurnSchema, createChatQueuedMessageSchema, createMessengerCustomGroupSchema, createMessengerCustomGroupWithEntriesSchema, createSideChatSchema, forkChatConversationSchema, normalizeChatInlineAnnotations, reorderMessengerCustomGroupEntriesSchema, reorderMessengerCustomGroupsSchema, resolveChatOperationProposalSchema, sanitizeChatStructuredPayload, setChatProjectContextSchema,
   steerChatQueuedMessageSchema,
   stopChatGenerationSchema,
   updateChatConversationSchema,
@@ -144,6 +150,39 @@ export {
   type CreateCustomIntegrationToolCall,
   type UpdateCustomIntegrationBinding
 } from "./custom-integration.js";
+
+export {
+  createMcpConnectionSchema,
+  managedExternalMcpBindingSchema,
+  managedExternalMcpBindingsSchema, mcpAgentBindingSchema,
+  mcpAgentBindingStatusSchema, mcpAgentConnectionSummarySchema, mcpConnectionAccessModeSchema,
+  mcpConnectionMergedConfigSchema,
+  mcpConnectionMutationConfigSchema,
+  mcpConnectionProviderSchema,
+  mcpConnectionSafeConfigSchema,
+  mcpConnectionSecretsMutationSchema,
+  mcpConnectionStatusSchema,
+  mcpConnectionSummarySchema,
+  mcpConnectionTransportSchema,
+  mcpDiscoveredToolSchema,
+  mcpExternalScopeOptionSchema,
+  mcpLegacyManualSafeConfigSchema,
+  mcpOAuthCallbackSchema,
+  mcpOAuthGrantStatusSchema,
+  mcpOAuthGrantSummarySchema,
+  mcpOAuthStartResponseSchema,
+  mcpOAuthStartSchema,
+  mcpProviderCatalogEntrySchema,
+  mcpProviderCatalogSchema,
+  mcpScopeSelectionSchema,
+  mcpStdioSafeConfigSchema,
+  mcpStreamableHttpSafeConfigSchema,
+  updateMcpAgentBindingSchema, updateMcpConnectionSchema, upsertMcpAgentBindingSchema, type CreateMcpConnection,
+  type McpOAuthCallback,
+  type McpOAuthStart,
+  type McpScopeSelection, type UpdateMcpAgentBinding,
+  type UpdateMcpConnection, type UpsertMcpAgentBinding
+} from "./mcp.js";
 
 export {
   executionWorkspaceStatusSchema, runWorkspaceStatusSchema, updateExecutionWorkspaceSchema, updateRunWorkspaceSchema, type UpdateExecutionWorkspace, type UpdateRunWorkspace

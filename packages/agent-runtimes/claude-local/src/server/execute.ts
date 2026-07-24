@@ -4,6 +4,7 @@ import {
   RUDDER_MCP_SERVER_NAME,
   applyRudderBrowserCapabilityEnv,
   pickRudderMcpManagedEnv,
+  preflightManagedExternalMcpBindings,
   resolveOrganizationStorageKey,
   rudderBrowserMcpRuntimeMetadata,
   rudderMcpRuntimeMetadata,
@@ -207,6 +208,7 @@ export async function resolveRudderMcpServerConfigs(
   managedEnv: RudderMcpManagedEnv = {},
   verifiedCommand?: RudderMcpCliCommand,
   verifiedBrowserCommand?: RudderMcpCliCommand,
+  runtimeConfig: unknown = {},
 ): Promise<Record<string, Record<string, unknown>>> {
   const configs: Record<string, Record<string, unknown>> = {
     [RUDDER_MCP_SERVER_NAME]: await resolveRudderMcpServerConfig(managedEnv, verifiedCommand),
@@ -221,7 +223,30 @@ export async function resolveRudderMcpServerConfigs(
       ...(Object.keys(env).length > 0 ? { env } : {}),
     };
   }
+  Object.assign(
+    configs,
+    await resolveManagedExternalClaudeMcpConfigs(runtimeConfig, managedEnv),
+  );
   return configs;
+}
+
+export async function resolveManagedExternalClaudeMcpConfigs(
+  runtimeConfig: unknown,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): Promise<Record<string, Record<string, unknown>>> {
+  return Object.fromEntries(
+    (await preflightManagedExternalMcpBindings(runtimeConfig, env)).map((binding) => [
+      binding.serverName,
+      {
+        type: "http",
+        url: binding.proxyUrl,
+        headers: {
+          Authorization: `Bearer \${${binding.bearerTokenEnvVar}}`,
+        },
+        timeout: binding.toolTimeoutMs,
+      },
+    ]),
+  );
 }
 
 async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: string): Promise<string> {
@@ -248,6 +273,7 @@ async function writeManagedClaudeMcpConfig(
   managedEnv: RudderMcpManagedEnv = {},
   verifiedCommand?: RudderMcpCliCommand,
   verifiedBrowserCommand?: RudderMcpCliCommand,
+  runtimeConfig: unknown = {},
 ): Promise<string> {
   const configPath = path.join(targetHome, ".claude", "rudder-mcp.json");
   await writePrivateJsonFile(configPath, {
@@ -255,6 +281,7 @@ async function writeManagedClaudeMcpConfig(
       managedEnv,
       verifiedCommand,
       verifiedBrowserCommand,
+      runtimeConfig,
     ),
   });
   return configPath;
@@ -593,6 +620,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     pickRudderMcpManagedEnv(env),
     rudderMcpCommand,
     browserMcpCommand ?? undefined,
+    input.config,
   );
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;

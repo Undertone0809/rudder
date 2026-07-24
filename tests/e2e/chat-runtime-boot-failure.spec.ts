@@ -22,7 +22,7 @@ async function createBrokenChatAgent(page: Page, orgId: string) {
     },
   });
   expect(agentRes.ok()).toBe(true);
-  return agentRes.json() as Promise<{ id: string; name: string }>;
+  return agentRes.json() as Promise<{ id: string; name: string; urlKey: string }>;
 }
 
 test("chat runtime boot failures are non-retryable in the real chat UI", async ({ page }) => {
@@ -40,9 +40,10 @@ test("chat runtime boot failures are non-retryable in the real chat UI", async (
   await expect(composer).toBeVisible({ timeout: 15_000 });
   await composer.fill("Trigger the broken runtime");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/[^/?#]+$`), {
+  await expect(page).toHaveURL(/\/[^/]+\/messenger\/chat\/[^/?#]+$/, {
     timeout: 15_000,
   });
+  const organizationPath = new URL(page.url()).pathname.split("/")[1];
   const chatId = new URL(page.url()).pathname.split("/").pop();
   expect(chatId).toBeTruthy();
 
@@ -55,6 +56,8 @@ test("chat runtime boot failures are non-retryable in the real chat UI", async (
   const messagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
   expect(messagesRes.ok()).toBe(true);
   const messages = await messagesRes.json() as Array<{
+    runId: string | null;
+    replyingAgentId: string | null;
     role: string;
     status: string;
     structuredPayload: {
@@ -69,6 +72,8 @@ test("chat runtime boot failures are non-retryable in the real chat UI", async (
   }>;
   const assistantMessage = messages.find((message) => message.role === "assistant");
   expect(assistantMessage).toMatchObject({
+    runId: expect.any(String),
+    replyingAgentId: agent.id,
     status: "failed",
     structuredPayload: {
       recoverableFailure: {
@@ -80,4 +85,16 @@ test("chat runtime boot failures are non-retryable in the real chat UI", async (
       },
     },
   });
+
+  const runId = assistantMessage?.runId;
+  expect(runId).toBeTruthy();
+  const openRun = failedAssistant.getByRole("link", { name: "Open run" });
+  await expect(openRun).toHaveAttribute(
+    "href",
+    `/${organizationPath}/agents/${agent.urlKey}/runs/${runId}`,
+  );
+  await openRun.click();
+  await expect(page).toHaveURL(new RegExp(
+    `/${organizationPath}/agents/${agent.urlKey}/runs/${runId}(?:[?#]|$)`,
+  ));
 });

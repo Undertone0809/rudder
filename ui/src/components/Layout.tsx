@@ -4,7 +4,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { CalendarWorkspaceProvider } from "@/context/CalendarWorkspaceContext";
 import { useI18n } from "@/context/I18nContext";
 import { MarkdownMentionsProvider } from "@/context/MarkdownMentionsContext";
-import { useSidePanel } from "@/context/SidePanelContext";
+import {
+  useSidePanel,
+  type DisplayedSidePanelContextHold,
+} from "@/context/SidePanelContext";
 import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, PanelLeft, PanelRight, Settings, X } from "lucide-react";
@@ -378,6 +381,7 @@ export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
   if (/^\/automations(?:\/|$)/.test(relativePath)) return true;
   if (/^\/chat(?:\/|$)/.test(relativePath)) return true;
   if (/^\/messenger\/chat(?:\/|$)/.test(relativePath)) return true;
+  if (/^\/messenger\/(?:workbench|saved)(?:\/|$)/.test(relativePath)) return true;
   return relativePath === "/messenger";
 }
 
@@ -409,6 +413,27 @@ export function resolveSidePanelRouteContextKey(
 ): string {
   return resolveSidePanelContextKey(relativePath)
     ?? (organizationId ? `organization:${organizationId}:global` : "global");
+}
+
+export function resolveDisplayedSidePanelContext(
+  relativePath: string,
+  organizationId: string | null | undefined,
+  hold: DisplayedSidePanelContextHold | null,
+): { contextKey: string; preserveHold: boolean } {
+  const routeContextKey = resolveSidePanelRouteContextKey(relativePath, organizationId);
+  const isWorkbenchRoute = /^\/messenger\/(?:workbench(?:\/|$)|saved\/[^/]+(?:\/|$))/.test(
+    relativePath.split("?")[0]?.split("#")[0] ?? relativePath,
+  );
+  const isHoldableContext = hold?.contextKey.startsWith("chat:")
+    || hold?.contextKey.startsWith("issue:");
+  if (
+    (isWorkbenchRoute || routeContextKey === hold?.contextKey)
+    && isHoldableContext
+    && hold?.organizationId === organizationId
+  ) {
+    return { contextKey: hold!.contextKey, preserveHold: true };
+  }
+  return { contextKey: routeContextKey, preserveHold: false };
 }
 
 function getCurrentViewportWidth(): number | null {
@@ -742,13 +767,13 @@ function DesktopSidePanelSlot({
   return (
     <>
       <span ref={workspaceAnchorRef} className="hidden" aria-hidden="true" />
-      {!panelVisible ? <div key="trigger" className="group absolute inset-y-1 right-0 z-20 w-7" data-testid="side-panel-hover-edge">
+      {!panelVisible ? <div key="trigger" className="group absolute inset-y-1 right-0 z-20 w-1" data-testid="side-panel-hover-edge">
         <Button
           type="button"
           variant="outline"
           size="icon"
           data-testid="global-side-panel-trigger"
-          className="absolute right-[3px] top-1/2 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+          className="pointer-events-none absolute right-[3px] top-1/2 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground opacity-0 shadow-[var(--shadow-sm)] transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 hover:bg-[color:var(--surface-active)] hover:text-foreground"
           onClick={sidePanel.showPanel}
           aria-label="Open Side Panel"
           title="Open Side Panel"
@@ -833,12 +858,19 @@ function DesktopSidePanelSlot({
   );
 }
 
-function SidePanelRouteContextBinder({ contextKey }: { contextKey: string }) {
-  const { setContextKey } = useSidePanel();
+function SidePanelRouteContextBinder({
+  contextKey,
+  preserveHold,
+}: {
+  contextKey: string;
+  preserveHold: boolean;
+}) {
+  const { clearDisplayedContextHold, setContextKey } = useSidePanel();
 
   useLayoutEffect(() => {
+    if (!preserveHold) clearDisplayedContextHold();
     setContextKey(contextKey);
-  }, [contextKey, setContextKey]);
+  }, [clearDisplayedContextHold, contextKey, preserveHold, setContextKey]);
 
   return null;
 }
@@ -855,7 +887,11 @@ export function Layout() {
     openProductTour,
   } = useDialog();
   const { togglePanelVisible } = usePanel();
-  const { contextKey: sidePanelContextKey, open: sidePanelOpen } = useSidePanel();
+  const {
+    contextKey: sidePanelContextKey,
+    displayedContextHold,
+    open: sidePanelOpen,
+  } = useSidePanel();
   const {
     organizations,
     loading: organizationsLoading,
@@ -949,11 +985,12 @@ export function Layout() {
       organizationPrefix: orgPrefix,
     });
   }, [organizations, orgPrefix]);
-  const routeSidePanelContextKey = resolveSidePanelRouteContextKey(
+  const displayedSidePanelContext = resolveDisplayedSidePanelContext(
     relativeBoardPath,
     matchedOrganization?.id,
+    displayedContextHold,
   );
-  const sidePanelContextReady = sidePanelContextKey === routeSidePanelContextKey;
+  const sidePanelContextReady = sidePanelContextKey === displayedSidePanelContext.contextKey;
   const sidePanelOrganizationId = sidePanelContextReady ? matchedOrganization?.id : null;
   const desktopSidePanelContentInactive = sidePanelContextReady
     && sidePanelOpen
@@ -1424,7 +1461,10 @@ export function Layout() {
       <WorktreeBanner />
       <DevRestartBanner devServer={health?.devServer} />
       <MarkdownMentionsProvider>
-      <SidePanelRouteContextBinder contextKey={routeSidePanelContextKey} />
+      <SidePanelRouteContextBinder
+        contextKey={displayedSidePanelContext.contextKey}
+        preserveHold={displayedSidePanelContext.preserveHold}
+      />
       <CalendarWorkspaceProvider>
       <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "flex overflow-hidden")}>
         {isMobile && sidebarOpen && (
@@ -1620,7 +1660,8 @@ export function Layout() {
                           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
                           "workspace-main-card",
                           useFramelessWorkspaceMain && "workspace-main-card--frameless",
-                          desktopSidePanelContentInactive && "pointer-events-none",
+                          desktopSidePanelContentInactive
+                            && "pointer-events-none border-0 [box-shadow:none]",
                         )}
                       >
                         {!useFramelessWorkspaceMain ? (

@@ -1233,25 +1233,37 @@
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  html.desktop-shell-macos .workspace-shell {
+
+  .messenger-main-workbench-surface {
     background:
       linear-gradient(
         180deg,
-        rgb(249 247 244 / 0.08) 0%,
-        rgb(243 239 234 / 0.03) 100%
+        color-mix(in oklab, var(--surface-shell) 94%, transparent),
+        color-mix(in oklab, var(--surface-shell) 88%, transparent)
       );
+    -webkit-backdrop-filter: blur(18px) saturate(116%);
+    backdrop-filter: blur(18px) saturate(116%);
+  }
+
+  html.dark.desktop-shell-macos .messenger-main-workbench-surface {
+    background:
+      linear-gradient(
+        180deg,
+        rgb(31 34 37 / 0.9) 0%,
+        rgb(24 27 30 / 0.86) 100%
+      );
+    -webkit-backdrop-filter: blur(20px) saturate(124%);
+    backdrop-filter: blur(20px) saturate(124%);
+  }
+  html.desktop-shell-macos .workspace-shell {
+    background: transparent;
     border: 0;
     box-shadow: none;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
   html.dark.desktop-shell-macos .workspace-shell {
-    background:
-      linear-gradient(
-        180deg,
-        rgb(16 17 20 / 0.12) 0%,
-        rgb(12 13 16 / 0.08) 100%
-      );
+    background: transparent;
     border: 0;
     box-shadow: none;
     -webkit-backdrop-filter: none;
@@ -1380,47 +1392,22 @@
     background: var(--desktop-content-surface-light);
   }
 
+  .chat-load-error-offset {
+    margin-top: 1.5rem;
+  }
+
+  .chat-conversation-loading-offset {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+  }
+
   .dark .workspace-context-header,
   .dark .workspace-main-header {
     background: var(--desktop-content-surface-dark);
   }
 
-  html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"]) {
-    background:
-      linear-gradient(
-        180deg,
-        transparent 0,
-        transparent 2.75rem,
-        var(--desktop-content-surface-light) 2.75rem,
-        var(--desktop-content-surface-light) 100%
-      );
-  }
-
-  html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"]) {
-    background:
-      linear-gradient(
-        180deg,
-        transparent 0,
-        transparent 2.75rem,
-        var(--desktop-content-surface-dark) 2.75rem,
-        var(--desktop-content-surface-dark) 100%
-      );
-  }
-
-  html.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"] {
-    background: color-mix(in oklab, var(--desktop-content-surface-light) 58%, transparent);
-    border-bottom-color: color-mix(in oklab, var(--desktop-content-border-light) 64%, transparent);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.48);
-    -webkit-backdrop-filter: blur(24px) saturate(124%);
-    backdrop-filter: blur(24px) saturate(124%);
-  }
-
-  html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"] {
-    background: color-mix(in oklab, var(--desktop-content-surface-dark) 54%, transparent);
-    border-bottom-color: color-mix(in oklab, var(--desktop-content-border-dark) 58%, transparent);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
-    -webkit-backdrop-filter: blur(24px) saturate(136%);
-    backdrop-filter: blur(24px) saturate(136%);
+  .chat-messages-scroll-content {
+    padding-top: 1rem;
   }
 
   .workspace-column-resizer {

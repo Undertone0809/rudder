@@ -101,6 +101,8 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
         dedupeKey: "https://example.com/reused-link",
       })}>Open routed link</button>
       <button type="button" onClick={() => sidePanel.openTargetForContext("chat:a", issueTarget)}>Open issue for A</button>
+      <button type="button" onClick={() => sidePanel.holdDisplayedContext("org-a", "chat:a")}>Hold chat A</button>
+      <button type="button" onClick={sidePanel.clearDisplayedContextHold}>Clear hold</button>
       <button type="button" onClick={sidePanel.openEmpty}>Open empty</button>
       <button type="button" onClick={sidePanel.hidePanel}>Hide</button>
       <button type="button" onClick={() => sidePanel.activeKey && sidePanel.closeTarget(sidePanel.activeKey)}>Close active</button>
@@ -111,6 +113,7 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
       <span data-testid="tab-keys">{sidePanel.tabs.map(sidePanelTargetKey).join(",")}</span>
       <span data-testid="tab-urls">{sidePanel.tabs.map((target) => target.kind === "browser" ? target.url : "").join(",")}</span>
       <span data-testid="view-instance-ids">{sidePanel.tabs.map((target) => "viewInstanceId" in target ? target.viewInstanceId ?? "" : "").join(",")}</span>
+      <span data-testid="held-context">{sidePanel.displayedContextHold ? `${sidePanel.displayedContextHold.organizationId}:${sidePanel.displayedContextHold.contextKey}` : ""}</span>
     </div>
   );
 }
@@ -235,6 +238,179 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "tab-count")).toBe("0");
   });
 
+  it("detaches the exact active middle tab and selects its right neighbor without requesting close", () => {
+    const closeRequest = vi.fn();
+    ({ container, root } = renderSidePanelProvider(closeRequest));
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    for (const tabId of ["a", "b", "c"]) {
+      act(() => sidePanelControls!.openTarget({
+        kind: "browser",
+        url: `https://example.com/${tabId}`,
+        label: tabId.toUpperCase(),
+        tabId,
+      }));
+    }
+    act(() => sidePanelControls!.setActiveKey("browser-tab:b"));
+    const revision = sidePanelControls!.getTargetRevisionForContext("chat:a", "browser-tab:b");
+    expect(revision).not.toBeNull();
+
+    let result: unknown;
+    act(() => {
+      result = sidePanelControls!.detachTargetForContext("chat:a", "browser-tab:b", revision!);
+    });
+
+    expect(result).toMatchObject({
+      detached: true,
+      target: { kind: "browser", tabId: "b" },
+    });
+    expect(sidePanelControls!.tabs.map(sidePanelTargetKey)).toEqual([
+      "browser-tab:a",
+      "browser-tab:c",
+    ]);
+    expect(sidePanelControls!.activeKey).toBe("browser-tab:c");
+    expect(sidePanelControls!.open).toBe(true);
+    expect(closeRequest).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale exact detach after that target was replaced", () => {
+    ({ container, root } = renderSidePanelProvider());
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    act(() => sidePanelControls!.openTarget({
+      kind: "browser",
+      url: "https://example.com/original",
+      label: "Original",
+      tabId: "browser-a",
+    }));
+    const key = "browser-tab:browser-a";
+    const revision = sidePanelControls!.getTargetRevisionForContext("chat:a", key);
+    expect(revision).not.toBeNull();
+    act(() => sidePanelControls!.replaceTargetForContext("chat:a", key, {
+      kind: "browser",
+      url: "https://example.com/changed",
+      label: "Changed",
+      tabId: "browser-a",
+    }));
+
+    let result: unknown;
+    act(() => {
+      result = sidePanelControls!.detachTargetForContext("chat:a", key, revision!);
+    });
+
+    expect(result).toEqual({
+      detached: false,
+      reason: "revision_mismatch",
+      revision: (revision ?? 0) + 1,
+    });
+    expect(sidePanelControls!.tabs).toHaveLength(1);
+    expect(sidePanelControls!.tabs[0]).toMatchObject({
+      kind: "browser",
+      url: "https://example.com/changed",
+    });
+  });
+
+  it("rejects an exact detach when the caller did not capture a revision", () => {
+    ({ container, root } = renderSidePanelProvider());
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    act(() => sidePanelControls!.openTarget({
+      kind: "browser",
+      url: "https://example.com/revision-required",
+      label: "Revision required",
+      tabId: "browser-revision-required",
+    }));
+    const key = "browser-tab:browser-revision-required";
+    const detachWithoutRevision = sidePanelControls!.detachTargetForContext as (
+      contextKey: string,
+      exactKey: string,
+    ) => unknown;
+
+    let result: unknown;
+    act(() => {
+      result = detachWithoutRevision("chat:a", key);
+    });
+
+    expect(result).toEqual({
+      detached: false,
+      reason: "revision_mismatch",
+      revision: 0,
+    });
+    expect(sidePanelControls!.tabs).toHaveLength(1);
+  });
+
+  it("does not let an old revision detach a later tab that reused the same exact key", () => {
+    ({ container, root } = renderSidePanelProvider());
+    const target: SidePanelTarget = {
+      kind: "browser",
+      url: "https://example.com/reused",
+      label: "Reused",
+      tabId: "browser-reused",
+    };
+    const key = "browser-tab:browser-reused";
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    act(() => sidePanelControls!.openTarget(target));
+    const firstRevision = sidePanelControls!.getTargetRevisionForContext("chat:a", key);
+    expect(firstRevision).not.toBeNull();
+    act(() => {
+      sidePanelControls!.detachTargetForContext("chat:a", key, firstRevision!);
+      sidePanelControls!.openTargetForContext("chat:a", target);
+    });
+
+    let staleResult: unknown;
+    act(() => {
+      staleResult = sidePanelControls!.detachTargetForContext("chat:a", key, firstRevision!);
+    });
+
+    expect(staleResult).toEqual({
+      detached: false,
+      reason: "revision_mismatch",
+      revision: (firstRevision ?? 0) + 1,
+    });
+    expect(sidePanelControls!.tabs).toHaveLength(1);
+  });
+
+  it("detaches a non-current context without changing the displayed context", () => {
+    ({ container, root } = renderSidePanelProvider());
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    act(() => sidePanelControls!.openTarget({
+      kind: "browser",
+      url: "https://example.com/a",
+      label: "A",
+      tabId: "a",
+    }));
+    const revision = sidePanelControls!.getTargetRevisionForContext("chat:a", "browser-tab:a");
+    expect(revision).not.toBeNull();
+    act(() => sidePanelControls!.setContextKey("chat:b"));
+    act(() => sidePanelControls!.openTarget(issueTarget));
+
+    act(() => {
+      sidePanelControls!.detachTargetForContext("chat:a", "browser-tab:a", revision!);
+    });
+
+    expect(sidePanelControls!.contextKey).toBe("chat:b");
+    expect(sidePanelControls!.open).toBe(true);
+    expect(sidePanelControls!.activeKey).toBe("issue:issue-1:");
+    expect(sidePanelControls!.tabs.map(sidePanelTargetKey)).toEqual(["issue:issue-1:"]);
+
+    act(() => sidePanelControls!.setContextKey("chat:a"));
+    expect(sidePanelControls!.open).toBe(false);
+    expect(sidePanelControls!.tabs).toHaveLength(0);
+  });
+
+  it("holds a displayed source context until explicit hide or clear", () => {
+    ({ container, root } = renderSidePanelProvider());
+
+    click(container, "Chat A");
+    click(container, "Open issue");
+    click(container, "Hold chat A");
+    expect(text(container, "held-context")).toBe("org-a:chat:a");
+
+    click(container, "Hide");
+    expect(text(container, "held-context")).toBe("");
+
+    click(container, "Hold chat A");
+    click(container, "Clear hold");
+    expect(text(container, "held-context")).toBe("");
+  });
+
   it("focuses a canonical file normally but creates a distinct explicit instance", () => {
     ({ container, root } = renderSidePanelProvider());
 
@@ -346,6 +522,41 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "open")).toBe("false");
     expect(text(container, "active-key")).toBe("");
     expect(text(container, "tab-count")).toBe("0");
+  });
+
+  it("does not steal Command+W or the Desktop accelerator from a Main runtime", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const { desktopShell } = stubDesktopShell();
+    ({ container, root } = renderSidePanelProvider());
+    click(container, "Chat A");
+    click(container, "Open issue");
+
+    const mainHost = document.createElement("div");
+    mainHost.dataset.testid = "live-surface-runtime-host";
+    mainHost.dataset.ownerId = "main:org-a:view-a";
+    const mainInput = document.createElement("input");
+    mainHost.appendChild(mainInput);
+    document.body.appendChild(mainHost);
+    await act(async () => {
+      mainInput.focus();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(desktopShell.setSidePanelCloseShortcutActive)
+      .toHaveBeenLastCalledWith(false);
+
+    const shortcut = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "w",
+      metaKey: true,
+    });
+    act(() => mainInput.dispatchEvent(shortcut));
+
+    expect(shortcut.defaultPrevented).toBe(false);
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "tab-count")).toBe("1");
+    mainHost.remove();
   });
 
   it("does not intercept the non-platform close-tab modifier", () => {
@@ -475,7 +686,37 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "tab-keys")).not.toContain("browser-tab:browser-9");
   });
 
-  it("reuses the active Browser tab for an ordinary routed link at capacity", () => {
+  it("shares the Side Browser limit across retained Chat and Issue contexts", () => {
+    ({ container, root } = renderSidePanelProvider());
+
+    act(() => {
+      for (let index = 1; index <= 8; index += 1) {
+        const contextKey = index <= 4 ? "chat:a" : "issue:b";
+        expect(sidePanelControls?.openTargetForContext(contextKey, {
+          kind: "browser",
+          label: `Browser ${index}`,
+          tabId: `browser-${index}`,
+          url: `https://example.com/${index}`,
+        })).toEqual({ admitted: true });
+      }
+    });
+
+    let overflow: ReturnType<NonNullable<typeof sidePanelControls>["openTargetForContext"]>
+      | undefined;
+    act(() => {
+      overflow = sidePanelControls?.openTargetForContext("chat:c", {
+        kind: "browser",
+        label: "Browser 9",
+        tabId: "browser-9",
+        url: "https://example.com/9",
+      });
+    });
+    expect(overflow).toEqual({ admitted: false, reason: "browser_capacity" });
+    act(() => sidePanelControls?.setContextKey("chat:c"));
+    expect(text(container, "tab-count")).toBe("0");
+  });
+
+  it("rejects an unrelated ordinary routed link at capacity without reusing an exact tab", () => {
     ({ container, root } = renderSidePanelProvider());
 
     click(container, "Open many browsers");
@@ -483,8 +724,8 @@ describe("SidePanelProvider context visibility", () => {
 
     expect(text(container, "tab-count")).toBe("8");
     expect(text(container, "active-key")).toBe("browser-tab:browser-8");
-    expect(text(container, "tab-urls")).toContain("https://example.com/reused-link");
-    expect(text(container, "tab-urls")).not.toContain("https://example.com/8,");
+    expect(text(container, "tab-urls")).not.toContain("https://example.com/reused-link");
+    expect(text(container, "tab-urls")).toContain("https://example.com/8");
   });
 
   it("preserves one Browser logical identity and Saved recovery when a routed link dedupes", () => {
@@ -538,7 +779,7 @@ describe("SidePanelProvider context visibility", () => {
     });
   });
 
-  it("keeps Saved metadata attached to the reused active Browser identity at capacity", () => {
+  it("keeps the active Saved Browser unchanged when an unrelated routed link is rejected at capacity", () => {
     ({ container, root } = renderSidePanelProvider());
     for (let index = 1; index <= 7; index += 1) {
       act(() => sidePanelControls!.openTarget({
@@ -569,22 +810,26 @@ describe("SidePanelProvider context visibility", () => {
         },
       },
     }));
-    act(() => sidePanelControls!.openTarget({
-      kind: "browser",
-      url: "https://example.com/capacity-navigation",
-      label: "Capacity navigation",
-      tabId: "discarded-physical",
-      dedupeKey: "https://example.com/capacity-navigation",
-    }));
+    let openResult: ReturnType<NonNullable<typeof sidePanelControls>["openTarget"]> | undefined;
+    act(() => {
+      openResult = sidePanelControls!.openTarget({
+        kind: "browser",
+        url: "https://example.com/capacity-navigation",
+        label: "Capacity navigation",
+        tabId: "discarded-physical",
+        dedupeKey: "https://example.com/capacity-navigation",
+      });
+    });
 
+    expect(openResult).toEqual({ admitted: false, reason: "browser_capacity" });
     expect(sidePanelControls!.tabs).toHaveLength(8);
     expect(sidePanelControls!.activeKey).toBe("browser-tab:physical-active");
     expect(sidePanelControls!.tabs.at(-1)).toMatchObject({
       kind: "browser",
       tabId: "physical-active",
       viewInstanceId: "instance-active",
-      url: "https://example.com/capacity-navigation",
-      label: "Capacity navigation",
+      url: "https://saved.example/old",
+      label: "Saved old",
       savedViewRecovery: { id: "saved-active" },
     });
   });

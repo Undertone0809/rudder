@@ -1435,6 +1435,87 @@ describe("issueService.list participantAgentId", () => {
     expect(cleared?.reviewerUserId).toBeNull();
   });
 
+  it("atomically rejects stale agent relationship and review-state updates", async () => {
+    const orgId = randomUUID();
+    const formerAgentId = randomUUID();
+    const currentAgentId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Atomic Agent Authorization Org",
+      urlKey: deriveOrganizationUrlKey("Atomic Agent Authorization Org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values([
+      {
+        id: formerAgentId,
+        orgId,
+        name: "Former Agent",
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: currentAgentId,
+        orgId,
+        name: "Current Agent",
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+
+    const reassignedIssue = await svc.create(orgId, {
+      title: "Relationship changes before mutation",
+      status: "done",
+      priority: "medium",
+      assigneeAgentId: formerAgentId,
+    });
+    await svc.update(reassignedIssue.id, { assigneeAgentId: currentAgentId });
+    await expect(
+      svc.update(
+        reassignedIssue.id,
+        { status: "todo" },
+        {
+          agentId: formerAgentId,
+          relationship: "assignee_or_reviewer",
+        },
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "Issue relationship or review state changed before update",
+    });
+
+    const reviewIssue = await svc.create(orgId, {
+      title: "Review state changes before decision",
+      status: "in_review",
+      priority: "medium",
+      reviewerAgentId: formerAgentId,
+    });
+    await svc.update(reviewIssue.id, { status: "todo" });
+    await expect(
+      svc.update(
+        reviewIssue.id,
+        { status: "done" },
+        {
+          agentId: formerAgentId,
+          relationship: "reviewer",
+          requireReviewableStatus: true,
+        },
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "Issue relationship or review state changed before update",
+    });
+  });
+
   it("requires agent-created issues to select labels once an organization has five labels", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

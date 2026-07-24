@@ -382,22 +382,31 @@ On macOS and Windows, `start` prefers the layered `shell` asset when the release
 publishes one. Shell assets keep the Electron shell and packaged desktop CLI,
 but load the server from the already prepared `~/.rudder/runtimes/<version>`
 cache instead of carrying the full packaged server on every Desktop update. The
-shell asset is eligible when the exact versioned runtime cache has been prepared.
+shell asset is eligible when the exact versioned runtime cache and Rudder-managed
+shared PostgreSQL 18.4 payload have been prepared. An operator-owned external
+`RUDDER_POSTGRES_BIN_DIR` does not make a shell asset eligible because Finder,
+the Windows Start Menu, and other later launches may not inherit that environment
+override.
 If the shell asset is missing, unchecked, or cannot be downloaded, `start` falls
 back to the full portable asset.
 Launching a shell asset directly without the matching runtime cache is not a
 supported install path; rerun `rudder start` so the CLI can prepare the runtime
 cache first, or install the full portable asset.
 
-Desktop assets do not bundle a PostgreSQL runtime by default. Local database
-startup uses an explicit operator-provided `RUDDER_POSTGRES_BIN_DIR` first, then
-the server runtime's npm-backed embedded PostgreSQL dependency. This keeps app
-downloads smaller and leaves database runtime ownership with the CLI/server
-runtime cache instead of the Electron shell. For a targeted escape hatch,
-setting `RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME=1` during staging prepares a
-PostgreSQL 18.4 payload under `desktop/.packaged/postgres-18.4/`; that explicit
-mode fails when `initdb`, `pg_ctl`, or `postgres` are missing, or when
-`postgres --version` is not PostgreSQL 18.4.
+Desktop shell assets do not bundle a PostgreSQL runtime. Full portable assets
+keep a bootstrap PostgreSQL payload for offline first install and recovery, while
+normal versioned runtimes reuse the shared managed payload instead of copying
+that bootstrap into each runtime directory. Local database startup uses an
+explicit operator-provided `RUDDER_POSTGRES_BIN_DIR` first, then the verified payload at
+`~/.rudder/runtime-payloads/postgres-18.4/<platform>-<arch>/`, and finally the
+server runtime's npm-backed embedded PostgreSQL dependency as a compatibility
+fallback. Each `~/.rudder/runtimes/<version>/postgres-18.4` path is a symlink or
+Windows junction to that shared payload, preserving older CLI and App rollback
+paths without storing another runtime-cache copy. For targeted staging,
+setting `RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME=1` prepares the full portable
+bootstrap payload under `desktop/.packaged/postgres-18.4/`; that explicit mode
+fails when `initdb`, `pg_ctl`, or `postgres` are missing, or when
+any of those binaries is not PostgreSQL 18.4.
 `desktop/scripts/stage-server.mjs` runs `pnpm deploy` with the legacy deploy
 config scoped to that child process so pnpm 10+ and 11+ can still package the
 server from a workspace that does not use injected workspace packages.
@@ -408,6 +417,15 @@ After a successful start or update, Rudder prunes old Desktop asset cache
 entries while protecting the just-resolved asset and one recent previous asset.
 The asset cache is reconstructable from GitHub Releases and is separate from
 installed app files and instance data.
+PostgreSQL payload cleanup is separately gated on a successful shared-payload
+cold start and `/api/health`. Live runtime descriptors protect payloads they
+still reference. A cross-process lifecycle lock serializes packaged runtime
+resolution and descriptor publication with cleanup, while each runtime's
+install lock protects metadata, compatibility-link, and fallback-package
+changes. Incomplete runtime directories are removed only after a grace period
+and only when no install lock or live descriptor protects them. Payload
+retention keeps PostgreSQL 18.4, one recent previous PostgreSQL version for 14
+days, and every version referenced by a live runtime.
 The current Desktop channel is an unsigned portable alpha; signed/notarized
 installer distribution can be restored after Apple and Windows code signing are
 available.
@@ -441,6 +459,15 @@ refreshes that run's identity, keeps retrying failed inspections, and allows the
 same force-stop escalation without restarting the update. Settings > About can
 show the same update session as a denser phase-by-phase diagnostic panel for
 debugging or validation.
+
+Desktop-selected `RUDDER_POSTGRES_BIN_DIR` values are internal runtime wiring,
+not operator configuration. Paths inside either the app resources or Rudder's
+versioned runtime cache are treated as managed, including values inherited from
+older shells that predate the managed marker. The updater preserves a complete
+managed payload so it can stage the target runtime cache, clears an incomplete
+managed value, and the restarted shell selects the matching target payload.
+Explicit operator-provided PostgreSQL paths outside Desktop-managed resources
+remain unchanged.
 
 This is a layered asset replacement path, not a binary-delta patcher. Fresh
 installs still download the server runtime and a Desktop app, but routine

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { chatConversations, chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
@@ -10,6 +10,25 @@ const AVATAR_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAvElEQVR4nOXOMQEAIAzAsCqZTiTiisnIwZE/nbnvZ+mAlg5o6YCWDmjpgJYOaOmAlg5o6YCWDmjpgJYOaOmAlg5o6YCWDmjpgJYOaOmAlg5o6YCWDmjpgJYOaOmAlg5o6YCWDmjpgJYOaOmAlg5o6YCWDmjpgJYOaOmAlg5o6YCWDmjpgJYOaOmAlg5o6YCWDmjpgJYOaOmAlg5o6YCWDmjpgJYOaOmAlg5o6YCWDmjpgJYOaOmAlg5o6YCWDmjpgJYOaOmAlg5o6YC2eEHSLFdn2uQAAAAASUVORK5CYII=",
   "base64",
 );
+
+async function seedLayoutChat(input: {
+  orgId: string;
+  title: string;
+  summary?: string;
+  preferredAgentId?: string;
+}) {
+  const id = randomUUID();
+  await e2eDb.insert(chatConversations).values({
+    id,
+    orgId: input.orgId,
+    title: input.title,
+    summary: input.summary ?? null,
+    preferredAgentId: input.preferredAgentId ?? null,
+    issueCreationMode: "manual_approval",
+    planMode: false,
+  });
+  return { id };
+}
 
 async function expectDirectImageAvatar(page: Page) {
   const assistantMessage = page.getByTestId("chat-assistant-message").last();
@@ -105,16 +124,11 @@ test.describe("Chat message layout", () => {
     });
     expect(uploadRes.ok()).toBe(true);
 
-    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
-      data: {
-        title: "Image avatar chat",
-        preferredAgentId: chatAgent.id,
-        issueCreationMode: "manual_approval",
-        planMode: false,
-      },
+    const chat = await seedLayoutChat({
+      orgId: organization.id,
+      title: "Image avatar chat",
+      preferredAgentId: chatAgent.id,
     });
-    expect(chatRes.ok()).toBe(true);
-    const chat = await chatRes.json();
 
     await e2eDb.insert(chatMessages).values({
       id: randomUUID(),
@@ -159,16 +173,11 @@ test.describe("Chat message layout", () => {
     const organization = await orgRes.json();
     await createE2EChatAgent(page.request, organization.id, { name: "Code Block Agent" });
 
-    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
-      data: {
-        title: "Code copy chat",
-        summary: "Regression coverage for code-block copy controls.",
-        issueCreationMode: "manual_approval",
-        planMode: false,
-      },
+    const chat = await seedLayoutChat({
+      orgId: organization.id,
+      title: "Code copy chat",
+      summary: "Regression coverage for code-block copy controls.",
     });
-    expect(chatRes.ok()).toBe(true);
-    const chat = await chatRes.json();
 
     await e2eDb.insert(chatMessages).values({
       id: randomUUID(),
@@ -218,7 +227,7 @@ test.describe("Chat message layout", () => {
     );
   });
 
-  test("collapses long assistant messages behind an expandable preview", async ({ page }) => {
+  test("keeps long assistant messages fully readable without a disclosure toggle", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
 
     const orgRes = await page.request.post("/api/orgs", {
@@ -230,16 +239,11 @@ test.describe("Chat message layout", () => {
     const organization = await orgRes.json();
     await createE2EChatAgent(page.request, organization.id, { name: "Long Message Agent" });
 
-    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
-      data: {
-        title: "Long message preview chat",
-        summary: "Regression coverage for long message previews.",
-        issueCreationMode: "manual_approval",
-        planMode: false,
-      },
+    const chat = await seedLayoutChat({
+      orgId: organization.id,
+      title: "Long message preview chat",
+      summary: "Regression coverage for long message previews.",
     });
-    expect(chatRes.ok()).toBe(true);
-    const chat = await chatRes.json();
 
     await e2eDb.insert(chatMessages).values({
       id: randomUUID(),
@@ -268,25 +272,15 @@ test.describe("Chat message layout", () => {
 
     const assistantMessage = page.getByTestId("chat-assistant-message").last();
     const longBody = assistantMessage.getByTestId("chat-long-message-body").last();
-    const toggle = assistantMessage.getByTestId("chat-long-message-toggle").last();
 
     await expect(assistantMessage).toContainText("Long response paragraph 1", { timeout: 15_000 });
-    await expect(toggle).toBeVisible();
-    await expect(toggle).toContainText("Show more");
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
-
-    const collapsedHeight = await longBody.evaluate((node) => node.getBoundingClientRect().height);
-    expect(collapsedHeight).toBeLessThanOrEqual(396);
+    await expect(assistantMessage).toContainText("Long response paragraph 55");
+    await expect(assistantMessage.getByTestId("chat-long-message-toggle")).toHaveCount(0);
+    const renderedHeight = await longBody.evaluate((node) => node.getBoundingClientRect().height);
+    expect(renderedHeight).toBeGreaterThan(396);
     await page.screenshot({
-      path: `/tmp/rudder-zst244-long-message-collapsed.png`,
+      path: "/tmp/rudder-zst244-long-message-expanded.png",
       fullPage: true,
     });
-
-    await toggle.click();
-
-    await expect(toggle).toContainText("Show less");
-    await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await expect.poll(async () => longBody.evaluate((node) => node.getBoundingClientRect().height))
-      .toBeGreaterThan(collapsedHeight + 120);
   });
 });

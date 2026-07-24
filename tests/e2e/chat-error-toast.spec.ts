@@ -77,7 +77,6 @@ test.describe("Chat error recovery", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
     await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${chatAgent.id}`);
-
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await expect(composer).toBeVisible({ timeout: 15_000 });
     await composer.fill("Ask me which topic to explore");
@@ -170,6 +169,7 @@ test.describe("Chat error recovery", () => {
     }, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${chatAgent.id}`);
+    const organizationPath = new URL(page.url()).pathname.split("/")[1];
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await expect(composer).toBeVisible({ timeout: 15_000 });
@@ -189,6 +189,8 @@ test.describe("Chat error recovery", () => {
     const failedMessagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
     expect(failedMessagesRes.ok()).toBe(true);
     const failedMessages = await failedMessagesRes.json() as Array<{
+      runId: string | null;
+      replyingAgentId: string | null;
       role: string;
       status: string;
       structuredPayload?: {
@@ -202,6 +204,8 @@ test.describe("Chat error recovery", () => {
     }>;
     const failedAssistant = failedMessages.find((message) => message.role === "assistant");
     expect(failedAssistant).toMatchObject({
+      runId: expect.any(String),
+      replyingAgentId: chatAgent.id,
       status: "failed",
       structuredPayload: {
         recoverableFailure: {
@@ -212,6 +216,13 @@ test.describe("Chat error recovery", () => {
         },
       },
     });
+    const failedRunId = failedAssistant?.runId;
+    expect(failedRunId).toBeTruthy();
+    await expect(failedMessage.getByRole("link", { name: "Open run" })).toHaveAttribute(
+      "href",
+      `/${organizationPath}/agents/${chatAgent.urlKey}/runs/${failedRunId}`,
+    );
+    await expect(failedMessage.getByRole("button", { name: "Retry" })).toBeVisible();
 
     await failedMessage.getByRole("button", { name: "Retry" }).click();
 

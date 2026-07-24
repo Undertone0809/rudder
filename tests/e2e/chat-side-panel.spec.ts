@@ -1801,7 +1801,7 @@ test.describe("Chat Side Panel", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
   });
 
-  test("keeps the main workspace mounted but inert while the Side Panel is expanded", async ({ page }) => {
+  test("keeps the main workspace mounted but fully hidden and inert while the Side Panel is expanded", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Global-Side-Panel-Expanded-${Date.now()}`,
@@ -1837,7 +1837,10 @@ test.describe("Chat Side Panel", () => {
     await expect(mainWorkspace).toBeAttached();
     await expect(mainWorkspace).toHaveAttribute("aria-hidden", "true");
     await expect(mainWorkspace).toHaveAttribute("inert", "");
-    expect((await mainWorkspace.boundingBox())?.width ?? 0).toBeLessThanOrEqual(2);
+    await expect(mainWorkspace).toHaveCSS("border-left-width", "0px");
+    await expect(mainWorkspace).toHaveCSS("border-right-width", "0px");
+    await expect(mainWorkspace).toHaveCSS("box-shadow", "none");
+    expect((await mainWorkspace.boundingBox())?.width ?? 0).toBeLessThanOrEqual(0.5);
 
     const workspaceStackBox = await page.getByTestId("workspace-main-panel-stack").boundingBox();
     const expandedSidePanelBox = await sidePanel.boundingBox();
@@ -1856,6 +1859,8 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("aria-hidden", "true");
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-left-width", "1px");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-right-width", "1px");
 
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
@@ -1879,6 +1884,8 @@ test.describe("Chat Side Panel", () => {
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("aria-hidden", "true");
     await expect(page.getByTestId("workspace-main-card")).not.toHaveAttribute("inert", "");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-left-width", "1px");
+    await expect(page.getByTestId("workspace-main-card")).toHaveCSS("border-right-width", "1px");
   });
 
   test("keeps resize continuous through the 2:1 auto-expand boundary", async ({ page }) => {
@@ -2009,17 +2016,19 @@ test.describe("Chat Side Panel", () => {
         await expect(page.getByTestId("side-panel-resize-shield")).toHaveCount(0);
         await expect(main).toHaveAttribute("aria-hidden", "true");
         await expect(main).toHaveAttribute("inert", "");
+        await expect(main).toHaveCSS("border-left-width", "0px");
+        await expect(main).toHaveCSS("border-right-width", "0px");
+        await expect.poll(async () => (await main.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
+          .toBeLessThanOrEqual(0.5);
         await expect.poll(async () => {
-          const [stackBox, panelBox, mainBox] = await Promise.all([
+          const [stackBox, panelBox] = await Promise.all([
             page.getByTestId("workspace-main-panel-stack").boundingBox(),
             sidePanel.boundingBox(),
-            main.boundingBox(),
           ]);
-          if (!stackBox || !panelBox || !mainBox) return Number.POSITIVE_INFINITY;
+          if (!stackBox || !panelBox) return Number.POSITIVE_INFINITY;
           return Math.max(
             Math.abs(panelBox.x - stackBox.x),
             Math.abs((panelBox.x + panelBox.width) - (stackBox.x + stackBox.width)),
-            mainBox.width,
           );
         }).toBeLessThanOrEqual(2);
 
@@ -2029,21 +2038,15 @@ test.describe("Chat Side Panel", () => {
     }
   });
 
-  test("keeps desktop chat controls clear of interrupted messages beside the Side Panel", async ({ page }) => {
-    await installBrowserDesktopStub(page);
-    const browserSettings = await page.request.patch("/api/instance/settings/browser", {
-      data: { enabled: true, openLinksIn: "built_in" },
-    });
-    expect(browserSettings.ok(), await browserSettings.text()).toBe(true);
-
+  test("keeps desktop chat usable beside the Side Panel without a toolbar clearance strip", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
-        name: `Chat-Toolbar-Clearance-${Date.now()}`,
+        name: `Chat-No-Clearance-${Date.now()}`,
         issuePrefix: `CTC${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
       },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
     await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -2051,6 +2054,7 @@ test.describe("Chat Side Panel", () => {
         title: "Interrupted chat beside Browser",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Keep desktop chat controls readable while the transcript scrolls." },
       },
     });
     expect(chatRes.ok(), await chatRes.text()).toBe(true);
@@ -2063,7 +2067,13 @@ test.describe("Chat Side Panel", () => {
       role: "assistant",
       kind: "message",
       status: "interrupted",
-      body: "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.",
+      body: [
+        "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.",
+        ...Array.from(
+          { length: 32 },
+          (_, index) => `Preserved transcript line ${index + 1} remains visible while scrolling in desktop chat.`,
+        ),
+      ].join("\n\n"),
       structuredPayload: null,
       replyingAgentId: null,
       chatTurnId: randomUUID(),
@@ -2074,46 +2084,76 @@ test.describe("Chat Side Panel", () => {
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.goto(`/${organization.urlKey}/messenger/chat/${chat.id}`);
 
     await page.getByRole("button", { name: "Collapse workspace sidebar" }).click();
     await expect(page.getByRole("button", { name: "Open Messenger sidebar" })).toBeVisible();
     await page.getByTestId("chat-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
-    await sidePanel.getByRole("button", { name: /Browser/ }).click();
-    await expect(sidePanel.getByTestId("chat-side-panel-browser-view")).toBeVisible();
 
-    const toolbarClearance = page.getByTestId("chat-desktop-toolbar-clearance");
     const openSidebarButton = page.getByRole("button", { name: "Open Messenger sidebar" });
     const chatActionsButton = page.getByTestId("chat-actions-trigger");
     const assistantMessage = page.getByTestId("chat-assistant-message");
-    await expect(toolbarClearance).toBeVisible();
+    const transcriptLine = assistantMessage.getByText(
+      "Preserved transcript line 1 remains visible while scrolling in desktop chat.",
+      { exact: true },
+    );
+    const scrollRegion = page.getByTestId("chat-messages-scroll-region");
+    await expect(page.getByTestId("chat-desktop-toolbar-clearance")).toHaveCount(0);
     await expect(chatActionsButton).toBeVisible();
     await expect(assistantMessage).toContainText("Chat run interrupted before a final reply.");
+    await expect(transcriptLine).toBeVisible();
+    await scrollRegion.evaluate((element) => {
+      element.scrollTop = 0;
+    });
 
-    const [toolbarBox, openSidebarBox, chatActionsBox, messageBox, scrollRegionBox] = await Promise.all([
-      toolbarClearance.boundingBox(),
-      openSidebarButton.boundingBox(),
-      chatActionsButton.boundingBox(),
-      assistantMessage.boundingBox(),
-      page.getByTestId("chat-messages-scroll-region").boundingBox(),
-    ]);
-    expect(toolbarBox).not.toBeNull();
+    const [openSidebarBox, chatActionsBox, messageBox, transcriptLineBox, scrollRegionBox, mainCardBox] =
+      await Promise.all([
+        openSidebarButton.boundingBox(),
+        chatActionsButton.boundingBox(),
+        assistantMessage.boundingBox(),
+        transcriptLine.boundingBox(),
+        scrollRegion.boundingBox(),
+        page.getByTestId("chat-main-workspace-card").boundingBox(),
+      ]);
     expect(openSidebarBox).not.toBeNull();
     expect(chatActionsBox).not.toBeNull();
     expect(messageBox).not.toBeNull();
+    expect(transcriptLineBox).not.toBeNull();
     expect(scrollRegionBox).not.toBeNull();
+    expect(mainCardBox).not.toBeNull();
 
-    const toolbarBottom = toolbarBox!.y + toolbarBox!.height;
-    expect(openSidebarBox!.y + openSidebarBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
-    expect(chatActionsBox!.y + chatActionsBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
-    expect(scrollRegionBox!.y).toBeGreaterThanOrEqual(toolbarBottom - 1);
-    expect(messageBox!.y).toBeGreaterThanOrEqual(toolbarBottom - 1);
+    expect(openSidebarBox!.y).toBeGreaterThanOrEqual(mainCardBox!.y);
+    expect(chatActionsBox!.y).toBeGreaterThanOrEqual(mainCardBox!.y);
+    expect(scrollRegionBox!.y).toBeGreaterThanOrEqual(mainCardBox!.y);
+    expect(messageBox!.y).toBeGreaterThanOrEqual(scrollRegionBox!.y);
+    const controlsMessageOverlapWidth = Math.max(
+      0,
+      Math.min(chatActionsBox!.x + chatActionsBox!.width, messageBox!.x + messageBox!.width)
+        - Math.max(chatActionsBox!.x, messageBox!.x),
+    );
+    const controlsMessageOverlapHeight = Math.max(
+      0,
+      Math.min(chatActionsBox!.y + chatActionsBox!.height, messageBox!.y + messageBox!.height)
+        - Math.max(chatActionsBox!.y, messageBox!.y),
+    );
+    expect(controlsMessageOverlapWidth * controlsMessageOverlapHeight).toBe(0);
+
+    const scrollAmount = Math.max(1, transcriptLineBox!.y - (scrollRegionBox!.y + 10));
+    await scrollRegion.evaluate((element, nextScrollTop) => {
+      element.scrollTop = nextScrollTop;
+      element.dispatchEvent(new Event("scroll"));
+    }, scrollAmount);
+    await expect.poll(() => scrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    const scrolledTranscriptLineBox = await transcriptLine.boundingBox();
+    expect(scrolledTranscriptLineBox).not.toBeNull();
+    expect(scrolledTranscriptLineBox!.y).toBeLessThan(transcriptLineBox!.y);
 
     await page.screenshot({
-      path: "/tmp/rudder-chat-toolbar-clearance-with-side-panel.png",
+      path: "/tmp/rudder-chat-without-toolbar-clearance.png",
       fullPage: true,
     });
   });

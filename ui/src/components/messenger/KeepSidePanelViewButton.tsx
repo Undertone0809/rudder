@@ -1,5 +1,6 @@
 import { issuesApi } from "@/api/issues";
 import { messengerApi } from "@/api/messenger";
+import { useOptionalSavedViewPromotion } from "@/context/SavedViewPromotionContext";
 import { useToast } from "@/context/ToastContext";
 import {
   savedViewKeepInputFromSidePanelTarget,
@@ -11,8 +12,9 @@ import {
   sidePanelTargetSupportsSavedView,
   type SidePanelTarget,
 } from "@/lib/side-panel-targets";
+import type { MessengerCustomGroupHydratedSavedViewEntry } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookmarkPlus, Check, Loader2 } from "lucide-react";
+import { BookmarkPlus, Check, Loader2, RotateCw } from "lucide-react";
 import { useRef } from "react";
 import {
   DropdownMenu,
@@ -69,6 +71,12 @@ function retireCompletedIntent(cache: Map<string, string>, intentKey: string, mu
   if (cache.get(intentKey) === mutationId) cache.delete(intentKey);
 }
 
+function retireCompletedMutationId(cache: Map<string, string>, mutationId: string) {
+  for (const [intentKey, retainedMutationId] of cache) {
+    if (retainedMutationId === mutationId) cache.delete(intentKey);
+  }
+}
+
 export function KeepSidePanelViewButton({
   contextKey,
   organizationId,
@@ -79,6 +87,7 @@ export function KeepSidePanelViewButton({
   target: SidePanelTarget | null;
 }) {
   const { pushToast } = useToast();
+  const savedViewPromotion = useOptionalSavedViewPromotion();
   const queryClient = useQueryClient();
   const mutationIdsRef = useRef(new Map<string, string>());
   const eligible = Boolean(target && sidePanelTargetSupportsSavedView(target)
@@ -95,7 +104,7 @@ export function KeepSidePanelViewButton({
   const groupsQuery = useQuery({
     queryKey: queryKeys.messenger.customGroups(organizationId ?? "__none__"),
     queryFn: () => messengerApi.listCustomGroups(organizationId!),
-    enabled: eligible && Boolean(organizationId) && (!anchorPlacement || target?.kind === "browser"),
+    enabled: eligible && Boolean(organizationId),
   });
   const groups = groupsQuery.data?.groups ?? [];
   const targetInstanceId = target && sidePanelTargetSupportsSavedView(target)
@@ -104,7 +113,9 @@ export function KeepSidePanelViewButton({
       : target.viewInstanceId ?? null
     : null;
   const existingSavedViewEntry = targetInstanceId && target && sidePanelTargetSupportsSavedView(target)
-    ? groups.flatMap((group) => group.entries).find((entry) => (
+    ? groups.flatMap((group) => group.entries).find((
+      entry,
+    ): entry is MessengerCustomGroupHydratedSavedViewEntry => (
       entry.item.type === "saved_view"
       && entry.item.savedView.targetPayload.kind === target.kind
       && entry.item.savedView.targetPayload.viewInstanceId === targetInstanceId
@@ -113,10 +124,26 @@ export function KeepSidePanelViewButton({
   const existingSavedViewGroup = existingSavedViewEntry
     ? groups.find((group) => group.entries.some((entry) => entry.id === existingSavedViewEntry.id)) ?? null
     : null;
+  const promotionMoveState = savedViewPromotion && organizationId && target
+    ? savedViewPromotion.getMoveState(organizationId, contextKey, target)
+    : null;
 
   const keepMutation = useMutation({
     mutationFn: async (groupId: string | null) => {
       if (!organizationId || !target) throw new Error("Organization and Side Panel target are required");
+      if (savedViewPromotion && promotionMoveState?.retryable) {
+        const result = await savedViewPromotion.retry(
+          organizationId,
+          contextKey,
+          target,
+        );
+        return {
+          clientMutationId: null,
+          completedRetryMutationId: promotionMoveState.clientMutationId,
+          intentKey: null,
+          result,
+        };
+      }
       const placement = savedViewPlacementForSidePanelContext(
         contextKey,
         hostIssueQuery.data?.id ?? null,
@@ -134,21 +161,61 @@ export function KeepSidePanelViewButton({
       if (!intent) throw new Error("This Side Panel view cannot be kept in Messenger.");
       const intentKey = keepIntentKey(intent);
       const clientMutationId = mutationIdForIntent(mutationIdsRef.current, intentKey);
-      const result = await messengerApi.keepSavedView(organizationId, { ...intent, clientMutationId });
-      return { clientMutationId, intentKey, result };
+      const requestInput = { ...intent, clientMutationId };
+      const existingResult = existingSavedViewEntry && existingSavedViewGroup
+        ? {
+            savedView: existingSavedViewEntry.item.savedView,
+            group: {
+              id: existingSavedViewGroup.id,
+              name: existingSavedViewGroup.name,
+            },
+          }
+        : null;
+      const result = savedViewPromotion
+        ? await savedViewPromotion.promote({
+            contextKey,
+            input: requestInput,
+            organizationId,
+            target,
+            existingResult,
+          })
+        : await messengerApi.keepSavedView(organizationId, requestInput);
+      return {
+        clientMutationId,
+        completedRetryMutationId: null,
+        intentKey,
+        result,
+      };
     },
-    onSuccess: async ({ clientMutationId, intentKey, result }) => {
-      retireCompletedIntent(mutationIdsRef.current, intentKey, clientMutationId);
+    onSuccess: async ({
+      clientMutationId,
+      completedRetryMutationId,
+      intentKey,
+      result,
+    }) => {
+      if (intentKey && clientMutationId) {
+        retireCompletedIntent(
+          mutationIdsRef.current,
+          intentKey,
+          clientMutationId,
+        );
+      }
+      if (completedRetryMutationId) {
+        retireCompletedMutationId(
+          mutationIdsRef.current,
+          completedRetryMutationId,
+        );
+      }
       await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.customGroups(organizationId ?? "__none__") });
       pushToast({
-        title: "Kept in Messenger",
-        body: `Added to ${result.group.name}.`,
+        title: "Moved to Messenger",
+        body: `Moved to ${result.group.name}.`,
         tone: "success",
       });
     },
     onError: (error) => {
       pushToast({
-        title: "Could not keep this view",
+        title: "Could not move this view",
         body: error instanceof Error ? error.message : "Try again.",
         tone: "error",
       });
@@ -160,9 +227,28 @@ export function KeepSidePanelViewButton({
   const buttonClass = "inline-flex h-7 items-center justify-center gap-1 rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
   const icon = keepMutation.isPending || waitingForIssue
     ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+    : promotionMoveState?.retryable
+      ? <RotateCw className="h-3.5 w-3.5" aria-hidden />
     : keepMutation.isSuccess
       ? <Check className="h-3.5 w-3.5" aria-hidden />
       : <BookmarkPlus className="h-3.5 w-3.5" aria-hidden />;
+
+  if (promotionMoveState?.retryable) {
+    return (
+      <button
+        type="button"
+        data-testid="chat-side-panel-keep-in-messenger"
+        aria-label="Retry move to Messenger"
+        title={promotionMoveState.error ?? "Retry move to Messenger"}
+        className={buttonClass}
+        disabled={keepMutation.isPending}
+        onClick={() => keepMutation.mutate(null)}
+      >
+        {icon}
+        <span>Retry move</span>
+      </button>
+    );
+  }
 
   if (anchorPlacement) {
     if (hostIssueRef && hostIssueQuery.isError) {
@@ -190,7 +276,12 @@ export function KeepSidePanelViewButton({
         onClick={() => keepMutation.mutate(null)}
       >
         {icon}
-        <span className="hidden min-[1180px]:inline">Keep</span>
+        <span className={promotionMoveState?.retryable
+          ? "inline"
+          : "hidden min-[1180px]:inline"}
+        >
+          {promotionMoveState?.retryable ? "Retry move" : "Keep"}
+        </span>
       </button>
     );
   }
@@ -224,8 +315,11 @@ export function KeepSidePanelViewButton({
             </DropdownMenuItem>
           </>
         ) : existingSavedViewGroup ? (
-          <DropdownMenuItem disabled className="whitespace-normal text-xs leading-5">
-            Already kept in {existingSavedViewGroup.name}. Use the Saved View row menu to move or remove it.
+          <DropdownMenuItem
+            className="whitespace-normal text-xs leading-5"
+            onClick={() => keepMutation.mutate(existingSavedViewGroup.id)}
+          >
+            Move existing view from {existingSavedViewGroup.name} to Main
           </DropdownMenuItem>
         ) : groups.length > 0 ? groups.map((group) => (
           <DropdownMenuItem key={group.id} onClick={() => keepMutation.mutate(group.id)}>

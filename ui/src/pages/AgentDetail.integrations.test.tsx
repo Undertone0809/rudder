@@ -295,7 +295,8 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).not.toContain("rudder-tools");
     expect(container.textContent).not.toContain("runtime-managed auth");
     expect(container.textContent).toContain("Custom API");
-    expect(container.textContent).toContain("MCP Server");
+    expect(container.textContent).not.toContain("MCP Server");
+    expect(container.textContent).toContain("Managed MCP connections");
     expect(container.textContent).toContain("Feishu / Lark");
     expect(container.textContent).toContain("Not configured");
     expect(container.textContent).toContain("Set up");

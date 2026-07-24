@@ -22,10 +22,19 @@ async function waitFor<T>(read: () => T | null, timeoutMs = 2_000): Promise<T> {
   throw new Error("Timed out waiting for fake App Server state");
 }
 
+async function readProtocolRequests(capturePath: string): Promise<Array<Record<string, unknown>>> {
+  const content = await fs.readFile(capturePath, "utf8");
+  return content
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-chat-"));
   fakeCodex = path.join(root, "fake-codex.mjs");
   await fs.writeFile(fakeCodex, `#!/usr/bin/env node
+import fs from "node:fs";
 import readline from "node:readline";
 
 const threadId = "thread-app-1";
@@ -55,9 +64,33 @@ const finish = (status = "completed") => {
   } });
 };
 
+if (process.env.RUDDER_TEST_APP_SERVER_STDERR) {
+  process.stderr.write("real stderr before\\n");
+  process.stderr.write("  in-process app-server event stream lag");
+  process.stderr.write("ged; dropped 42 events\\n");
+  process.stderr.write("real stderr after\\n");
+}
+if (process.env.RUDDER_TEST_APP_SERVER_TRAILING_STDERR) {
+  process.stderr.write("trailing real stderr");
+  process.stderr.write("\\n in-process app-server event stream lagged; dropped 7 events");
+}
+if (process.env.RUDDER_TEST_APP_SERVER_MIXED_STDERR) {
+  process.stderr.write("auth failed: in-process app-server event stream lagged; dropped 9 events\\n");
+}
+
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   const message = JSON.parse(line);
+  if (
+    process.env.RUDDER_TEST_PROTOCOL_CAPTURE_PATH
+    && ["thread/start", "thread/resume", "turn/start"].includes(message.method)
+  ) {
+    fs.appendFileSync(
+      process.env.RUDDER_TEST_PROTOCOL_CAPTURE_PATH,
+      JSON.stringify(message) + "\\n",
+      "utf8",
+    );
+  }
   if (message.method === "initialized") return;
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake", platformFamily: "unix", platformOs: "macos" } });
@@ -202,6 +235,9 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "turn/steer") {
+    if (process.env.RUDDER_TEST_STEER_CAPTURE_PATH) {
+      fs.writeFileSync(process.env.RUDDER_TEST_STEER_CAPTURE_PATH, JSON.stringify(message));
+    }
     send({ id: message.id, result: { turnId } });
     finish("completed");
     return;
@@ -223,6 +259,96 @@ afterEach(async () => {
 });
 
 describe("executeCodexAppServerChat", () => {
+  it("propagates a read-only sandbox to new and resumed threads and their turns", async () => {
+    const capturePath = path.join(root, "protocol.ndjson");
+    const executeWithSession = (sessionId: string | null) => executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Inspect and plan",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: "read-only",
+      imagePaths: [],
+      sessionId,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    await expect(executeWithSession(null)).resolves.toMatchObject({ exitCode: 0, resumed: false });
+    await expect(executeWithSession("thread-app-1")).resolves.toMatchObject({ exitCode: 0, resumed: true });
+
+    const requests = await readProtocolRequests(capturePath);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        method: "thread/start",
+        params: expect.objectContaining({ sandbox: "read-only" }),
+      }),
+      expect.objectContaining({
+        method: "turn/start",
+        params: expect.objectContaining({ sandboxPolicy: { type: "readOnly" } }),
+      }),
+      expect.objectContaining({
+        method: "thread/resume",
+        params: expect.objectContaining({ sandbox: "read-only" }),
+      }),
+      expect.objectContaining({
+        method: "turn/start",
+        params: expect.objectContaining({ sandboxPolicy: { type: "readOnly" } }),
+      }),
+    ]);
+  });
+
+  it("keeps danger-full-access precedence over a structured read-only sandbox", async () => {
+    const capturePath = path.join(root, "protocol.ndjson");
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Implement the approved change",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      sandboxMode: "read-only",
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const requests = await readProtocolRequests(capturePath);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        method: "thread/start",
+        params: expect.objectContaining({
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+        }),
+      }),
+      expect.objectContaining({
+        method: "turn/start",
+        params: expect.objectContaining({
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "dangerFullAccess" },
+        }),
+      }),
+    ]);
+  });
+
   it("does not emit provider user-message lifecycle items", async () => {
     const result = await executeCodexAppServerChat({
       command: fakeCodex,
@@ -247,6 +373,92 @@ describe("executeCodexAppServerChat", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toContain('\"type\":\"userMessage\"');
     expect(result.stdout).toContain('\"type\":\"command_execution\"');
+  });
+
+  it("hides split app-server lag diagnostics while preserving adjacent stderr", async () => {
+    const stderrLines: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_APP_SERVER_STDERR: "1",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+      } as Record<string, string>,
+      prompt: "Initial request",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stderr") stderrLines.push(chunk);
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(stderrLines.join("")).toContain("real stderr before");
+    expect(stderrLines.join("")).toContain("real stderr after");
+    expect(stderrLines.join("")).not.toContain("app-server event stream lagged");
+    expect(result.stderr).toContain("app-server event stream lagged");
+  });
+
+  it("flushes trailing real stderr and suppresses an unterminated lag diagnostic", async () => {
+    const stderrLines: string[] = [];
+    await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_APP_SERVER_TRAILING_STDERR: "1",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+      } as Record<string, string>,
+      prompt: "Initial request",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stderr") stderrLines.push(chunk);
+      }),
+    });
+
+    expect(stderrLines.join("")).toContain("trailing real stderr");
+    expect(stderrLines.join("")).not.toContain("app-server event stream lagged");
+  });
+
+  it("keeps mixed stderr lines that merely contain the lag diagnostic", async () => {
+    const stderrLines: string[] = [];
+    await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_APP_SERVER_MIXED_STDERR: "1",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+      } as Record<string, string>,
+      prompt: "Initial request",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stderr") stderrLines.push(chunk);
+      }),
+    });
+
+    expect(stderrLines.join("")).toContain("auth failed: in-process app-server event stream lagged; dropped 9 events");
   });
 
   it("attaches the trusted runtime cwd to command transcript entries", async () => {
@@ -443,6 +655,9 @@ describe("executeCodexAppServerChat", () => {
   it("publishes a native same-turn Steer handle and returns per-turn usage", async () => {
     let handle: AgentRuntimeControlHandle | null = null;
     const stdoutLines: string[] = [];
+    const steerCapturePath = path.join(root, "steer-request.json");
+    const steerImagePath = path.join(root, "steer-image.png");
+    await fs.writeFile(steerImagePath, "image");
     const handleLease: AgentRuntimeControlHandleLease = {
       isCurrent: () => true,
       release: vi.fn(async () => handle?.dispose()),
@@ -450,7 +665,11 @@ describe("executeCodexAppServerChat", () => {
     const execution = executeCodexAppServerChat({
       command: fakeCodex,
       cwd: root,
-      env: { ...process.env, PATH: process.env.PATH ?? "" } as Record<string, string>,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_STEER_CAPTURE_PATH: steerCapturePath,
+      } as Record<string, string>,
       prompt: "Initial request",
       model: "gpt-test",
       modelReasoningEffort: "high",
@@ -474,11 +693,23 @@ describe("executeCodexAppServerChat", () => {
     });
     const activeHandle = await waitFor(() => handle);
 
-    const steerResult = await activeHandle.steer({
+    const steerFeedback = {
       text: "Change direction",
       clientMessageId: "client-control-1",
-    });
+      media: [{
+        source: "chat_attachment" as const,
+        attachmentId: "attachment-1",
+        assetId: "asset-1",
+        name: "steer-image.png",
+        originalFilename: "steer-image.png",
+        contentType: "image/png",
+        byteSize: 5,
+        localPath: steerImagePath,
+      }],
+    };
+    const steerResult = await activeHandle.steer(steerFeedback);
     const result = await execution;
+    const steerRequest = JSON.parse(await fs.readFile(steerCapturePath, "utf8"));
 
     expect(steerResult).toEqual({
       disposition: "accepted_current",
@@ -494,6 +725,10 @@ describe("executeCodexAppServerChat", () => {
       usage: { inputTokens: 4, cachedInputTokens: 1, outputTokens: 5 },
     });
     expect(result.stdout).toContain('"type":"turn.completed"');
+    expect(steerRequest.params.input).toEqual([
+      { type: "text", text: "Change direction", text_elements: [] },
+      { type: "localImage", path: steerImagePath },
+    ]);
     const assistantEntries = stdoutLines
       .filter((line) => line.includes('"type":"item.completed"'))
       .flatMap((line) => parseCodexStdoutLine(line, "2026-07-16T00:00:00.000Z"))

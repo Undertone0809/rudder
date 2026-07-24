@@ -200,6 +200,69 @@ describe("chatWorkManifestService", () => {
     expect(manifest.sources.filter((item) => item.url === "https://example.com/report")).toHaveLength(1);
   });
 
+  it("excludes annotation-owned attachments and quoted annotation content from work sources", async () => {
+    const { orgId, conversationId } = await seedBase("Annotations");
+    const messageId = randomUUID();
+    await db.insert(chatMessages).values({
+      id: messageId,
+      orgId,
+      conversationId,
+      role: "user",
+      body: "Please review the selected response.",
+    });
+    const [annotationAsset, ordinaryAsset] = await db.insert(assets).values([
+      {
+        orgId,
+        provider: "local",
+        objectKey: `annotation-${randomUUID()}`,
+        contentType: "text/plain",
+        byteSize: 12,
+        sha256: randomUUID(),
+        originalFilename: "annotation-context.txt",
+        createdByUserId: "operator",
+      },
+      {
+        orgId,
+        provider: "local",
+        objectKey: `ordinary-${randomUUID()}`,
+        contentType: "text/plain",
+        byteSize: 12,
+        sha256: randomUUID(),
+        originalFilename: "ordinary-source.txt",
+        createdByUserId: "operator",
+      },
+    ]).returning();
+    const [annotationAttachment] = await db.insert(chatAttachments).values([
+      { orgId, conversationId, messageId, assetId: annotationAsset!.id },
+      { orgId, conversationId, messageId, assetId: ordinaryAsset!.id },
+    ]).returning();
+    await db.update(chatMessages).set({
+      structuredPayload: {
+        inlineAnnotations: [{
+          id: randomUUID(),
+          surface: "assistant_body",
+          selectedText: "https://quoted.example/private",
+          comment: "[private](library-file://file?p=private.md)",
+          sourceConversationId: conversationId,
+          sourceMessageId: randomUUID(),
+          sourceHash: "a".repeat(64),
+          start: 0,
+          end: 5,
+          prefix: "",
+          suffix: "",
+          attachmentIds: [annotationAttachment!.id],
+        }],
+      },
+    }).where(eq(chatMessages.id, messageId));
+
+    await svc.reconcileConversation(conversationId);
+    const manifest = await svc.getConversationManifest(conversationId);
+
+    expect(manifest.sources.map((item) => item.title)).toEqual(["ordinary-source.txt"]);
+    expect(manifest.sources.some((item) => item.url?.includes("quoted.example"))).toBe(false);
+    expect(manifest.sources.some((item) => item.title === "private")).toBe(false);
+  });
+
   it("excludes trusted message-owned inline visuals and removes historical misclassified outputs", async () => {
     const { orgId, agentId, conversationId } = await seedBase("InlineVisual");
     const messageId = randomUUID();
@@ -317,6 +380,35 @@ describe("chatWorkManifestService", () => {
 
   it("includes visible Rudder entity links in references", async () => {
     const { orgId, conversationId } = await seedBase("References");
+    const referencedConversationId = randomUUID();
+    const referencedConversationTitle = "Original referenced chat title that is much longer than the compact manifest row";
+    const renamedConversationTitle = "Renamed referenced chat title that remains much longer than the compact manifest row";
+    await db.insert(chatConversations).values({
+      id: referencedConversationId,
+      orgId,
+      title: referencedConversationTitle,
+    });
+    const privateSideChatId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: privateSideChatId,
+      orgId,
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      title: "Another user's private Side Chat title",
+      createdByUserId: "other-user",
+    });
+    const keptSideChatId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: keptSideChatId,
+      orgId,
+      conversationKind: "side_chat",
+      messengerVisible: true,
+      sideChatState: "kept",
+      title: "A kept but still owner-private Side Chat title",
+      createdByUserId: "other-user",
+    });
+    const crossOrganizationConversation = await seedBase("Cross organization");
     await db.insert(chatMessages).values({
       orgId,
       conversationId,
@@ -324,24 +416,79 @@ describe("chatWorkManifestService", () => {
       body: [
         "[Issue](issue://issue-1?r=REF-1)",
         "[Automation](automation://automation-1?t=Daily%20report)",
-        "[Chat](chat://chat-1?messageId=message-1)",
+        `[Stale referenced title](chat://${referencedConversationId}?messageId=message-1)`,
+        `[](chat://${privateSideChatId})`,
+        `[](chat://${keptSideChatId})`,
+        `[](chat://${crossOrganizationConversation.conversationId})`,
+        "[](chat://chat-123)",
       ].join(" "),
     });
 
     await svc.reconcileConversation(conversationId);
     const manifest = await svc.getConversationManifest(conversationId);
+    const referencedChat = manifest.references.find((item) =>
+      item.metadata?.conversationId === referencedConversationId
+    );
 
     expect(manifest.references.map((item) => item.targetType)).toEqual([
       "issue",
       "automation",
       "chat_conversation",
+      "chat_conversation",
+      "chat_conversation",
+      "chat_conversation",
+      "chat_conversation",
     ]);
-    expect(manifest.references.map((item) => item.title)).toEqual(["Issue", "Automation", "Chat"]);
+    expect(manifest.references.map((item) => item.title)).toEqual([
+      "Issue",
+      "Automation",
+      referencedConversationTitle,
+      "Chat",
+      "Chat",
+      "Chat",
+      "Chat",
+    ]);
     expect(manifest.references.map((item) => item.metadata)).toEqual([
       { issueId: "issue-1", ref: "REF-1", commentId: null },
       { automationId: "automation-1" },
-      { conversationId: "chat-1", messageId: "message-1" },
+      { conversationId: referencedConversationId, messageId: "message-1" },
+      { conversationId: privateSideChatId, messageId: null },
+      { conversationId: keptSideChatId, messageId: null },
+      { conversationId: crossOrganizationConversation.conversationId, messageId: null },
+      { conversationId: "chat-123", messageId: null },
     ]);
+
+    const privateSideChat = manifest.references.find((item) =>
+      item.metadata?.conversationId === privateSideChatId
+    );
+    expect(privateSideChat).toMatchObject({ title: "Chat" });
+    if (!privateSideChat) throw new Error("Expected private Side Chat manifest reference");
+    await db.update(chatWorkManifestItems)
+      .set({ title: "Previously persisted private Side Chat title" })
+      .where(eq(chatWorkManifestItems.id, privateSideChat.id));
+    await svc.reconcileConversation(conversationId);
+    const repairedManifest = await svc.getConversationManifest(conversationId);
+    expect(repairedManifest.references.find((item) =>
+      item.metadata?.conversationId === privateSideChatId
+    )).toMatchObject({
+      id: privateSideChat.id,
+      title: "Chat",
+    });
+
+    await db.update(chatConversations)
+      .set({ title: renamedConversationTitle })
+      .where(eq(chatConversations.id, referencedConversationId));
+    await svc.reconcileConversation(conversationId);
+    const renamedManifest = await svc.getConversationManifest(conversationId);
+    const renamedReferencedChats = renamedManifest.references.filter((item) =>
+      item.metadata?.conversationId === referencedConversationId
+    );
+
+    expect(renamedReferencedChats).toHaveLength(1);
+    expect(renamedReferencedChats[0]).toMatchObject({
+      id: referencedChat?.id,
+      title: renamedConversationTitle,
+    });
   });
 
   it("keeps project resources in the project roll-up and enforces organization boundaries", async () => {

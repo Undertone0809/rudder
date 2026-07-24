@@ -49,6 +49,7 @@ function formatRunOccurrenceForTest(date: Date, now: Date) {
 
 test.describe("Run transcript detail", () => {
   test("renders detail transcripts as readable progress chunks with collapsed grouped tool activity", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "dark" });
     const organization = await createOrganization(page, `Run-Detail-${Date.now()}`);
 
     await page.goto("/");
@@ -64,32 +65,97 @@ test.describe("Run transcript detail", () => {
     await page.getByRole("button", { name: "Show settled state" }).click();
     await expect(page.getByRole("button", { name: "Show streaming state" })).toBeVisible({ timeout: 15_000 });
 
-    const firstProgressChunk = page.getByRole("button", { name: /Expand tool activity group 1/ }).filter({ hasText: "Explored 2 files" });
+    const firstProgressChunk = page.getByRole("button", { name: /Expand tool activity group 1/ }).filter({ hasText: "Read 2 files" });
     await expect(firstProgressChunk).toHaveCount(1);
     await expect(page.getByText("Model turn", { exact: false })).toHaveCount(0);
     await expect(page.getByText("Read", { exact: true })).toHaveCount(0);
     await expect(page.getByText("doc/product/GOAL.md", { exact: true })).toHaveCount(0);
     await expect(page.getByText("doc/archive/SPEC-implementation.md", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Marked PAP-473 done", { exact: false })).toBeVisible();
-    await expect(page.getByText("added review summary comment", { exact: false })).toBeVisible();
+    await expect(page.getByText("added file-backed comment", { exact: false })).toBeVisible();
     await expect(page.getByText("Ran rudder issue done", { exact: false })).toHaveCount(0);
 
     await firstProgressChunk.click();
     await expect(page.getByText("Read doc/product/GOAL.md", { exact: false })).toBeVisible();
     await expect(page.getByText("Read doc/archive/SPEC-implementation.md", { exact: false })).toBeVisible();
 
-    const externalToolGroup = page.getByRole("button", { name: /Expand tool activity group 2/ }).filter({ hasText: "2 searches, used 1 tool" });
+    const externalToolGroup = page.getByRole("button", { name: /Expand tool activity group 2/ }).filter({ hasText: "Searched 2 times, used 2 tools" });
     await expect(externalToolGroup).toHaveCount(1);
     await externalToolGroup.click();
     await expect(page.getByText("Web searched \"transcript UI rendering examples\"", { exact: false })).toBeVisible();
-    await expect(page.getByText("Called fetch_pr via github", { exact: false })).toBeVisible();
-    await expect(page.getByText("repo_full_name Undertone0809/rudder", { exact: false })).toBeVisible();
+    const githubMcpRow = page.getByRole("button", { name: /tool details: Call fetch PR/ });
+    const rudderMcpRow = page.getByRole("button", { name: /tool details: Call Rudder chat transcript/ });
+    await expect(githubMcpRow).toHaveCount(1);
+    await expect(rudderMcpRow).toHaveCount(1);
+    await expect(githubMcpRow).toHaveAccessibleName("Expand tool details: Call fetch PR");
+    await expect(rudderMcpRow).toHaveAccessibleName("Expand tool details: Call Rudder chat transcript");
+    await expect(githubMcpRow.locator('img[src="/brands/github-logo.svg"]')).toBeVisible();
+    await expect(rudderMcpRow.locator('img[src="/rudder-logo.png"]')).toBeVisible();
 
-    const skillUseRow = page.getByRole("button", { name: /Expand tool details/ }).filter({ hasText: "Use flomo-local-api skill" });
-    await expect(skillUseRow).toHaveCount(1);
+    const expandedExternalToolGroup = page.getByRole("button", { name: /Collapse tool activity group 2/ });
+    const groupIconBox = await expandedExternalToolGroup.locator('[data-transcript-action-summary-icon="true"]').boundingBox();
+    const githubIconBox = await githubMcpRow.locator('[data-transcript-action-icon-slot="true"]').boundingBox();
+    expect(groupIconBox).not.toBeNull();
+    expect(githubIconBox).not.toBeNull();
+    expect(Math.abs((groupIconBox?.x ?? 0) - (githubIconBox?.x ?? 0))).toBeLessThanOrEqual(1);
+
+    await expect(page.getByText("repo_full_name Undertone0809/rudder", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("eeb73ad1-e000-4dce-9d47-23106fa36bbc", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("rudder-tools", { exact: false })).toHaveCount(0);
+
+    const rudderDisclosure = rudderMcpRow.locator('[data-transcript-action-row-disclosure="true"]');
+    await expect(rudderDisclosure).toHaveCSS("opacity", "0");
+    await rudderMcpRow.hover();
+    await expect(rudderDisclosure).toHaveCSS("opacity", "1");
+    const rudderDuration = rudderMcpRow.locator("[data-transcript-action-duration='true']");
+    const durationBox = await rudderDuration.boundingBox();
+    const disclosureBox = await rudderDisclosure.boundingBox();
+    expect(durationBox).not.toBeNull();
+    expect(disclosureBox).not.toBeNull();
+    expect(Math.abs(
+      ((durationBox?.y ?? 0) + (durationBox?.height ?? 0) / 2)
+      - ((disclosureBox?.y ?? 0) + (disclosureBox?.height ?? 0) / 2),
+    )).toBeLessThanOrEqual(1);
+    await page.mouse.move(0, 0);
+    await expect(rudderDisclosure).toHaveCSS("opacity", "0");
+
+    await githubMcpRow.focus();
+    await page.keyboard.press("Tab");
+    await expect(rudderMcpRow).toBeFocused();
+    await expect(rudderDisclosure).toHaveCSS("opacity", "1");
+    await rudderMcpRow.blur();
+    await page.mouse.move(0, 0);
+    await expect(rudderDisclosure).toHaveCSS("opacity", "0");
+
+    await page.screenshot({
+      path: "/tmp/rudder-run-transcript-mcp-idle.png",
+      fullPage: true,
+    });
+    await rudderMcpRow.hover();
+    await page.screenshot({
+      path: "/tmp/rudder-run-transcript-mcp-hover.png",
+      fullPage: true,
+    });
+
+    await githubMcpRow.click();
+    await expect(page.getByText("Undertone0809/rudder", { exact: false })).toBeVisible();
+    await expect(page.getByText("Transcript renderer discussion", { exact: false })).toBeVisible();
+    await rudderMcpRow.click();
+    await expect(page.getByText("eeb73ad1-e000-4dce-9d47-23106fa36bbc", { exact: false })).toBeVisible();
+    await expect(page.getByText("Transcript loaded", { exact: false })).toBeVisible();
+    await expect(page.getByText("rudder-tools", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("structuredContent", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("_meta", { exact: false })).toHaveCount(0);
+    await page.mouse.move(0, 0);
+    await rudderMcpRow.blur();
+    await expect(rudderDisclosure).toHaveCSS("opacity", "0");
+
+    const skillSummary = page.getByTitle("/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
+    await expect(skillSummary).toBeVisible();
+    const skillUseRow = page.getByRole("button", { name: /tool details: Use flomo-local-api skill/ });
+    await expect(skillUseRow).toHaveCount(0);
     await expect(page.getByText("/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md", { exact: false })).toHaveCount(0);
-    await skillUseRow.click();
-    await expect(page.getByText("/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md", { exact: false })).toBeVisible();
+    await expect(skillSummary.locator("xpath=..").locator("[data-transcript-action-row-disclosure='true']")).toHaveCount(0);
 
     await expect(page.getByText("Agent memory updated", { exact: false })).toBeVisible();
     await expect(page.getByText("Gabriel updated stable memory instructions.", { exact: false })).toBeVisible();
@@ -412,6 +478,22 @@ test.describe("Run transcript detail", () => {
       createdAt: new Date("2026-06-26T06:15:55.226Z"),
       updatedAt: new Date("2026-06-26T06:16:31.946Z"),
     });
+    await e2eDb.insert(heartbeatRunEvents).values({
+      orgId: organization.id,
+      runId,
+      agentId: agent.id,
+      seq: 100,
+      eventType: "transcript.entry",
+      stream: "system",
+      level: "info",
+      message: "chat transcript entry",
+      payload: {
+        kind: "assistant",
+        text: "Partial assistant output preserved before the recoverable failure.",
+        ts: "2026-06-26T06:16:30.946Z",
+      },
+      createdAt: new Date("2026-06-26T06:16:30.946Z"),
+    });
 
     await page.addInitScript((orgId: string) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
@@ -424,9 +506,12 @@ test.describe("Run transcript detail", () => {
     await expect(summaryCard.getByText("Run failed")).toBeVisible({ timeout: 15_000 });
     await expect(summaryCard.getByText(userMessage)).toBeVisible();
     await expect(summaryCard.getByText("The run hit a system-level execution problem.", { exact: false })).toHaveCount(0);
+    await expect(detailPane.getByText("Transcript", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(detailPane.getByRole("button", { name: "Raw" })).toBeVisible();
+    await expect(detailPane.getByText("Failure details", { exact: true })).toHaveCount(0);
 
     const listPane = page.getByTestId("agent-runs-list-pane");
-    await expect(listPane.getByText("The assistant finished without a final Rudder reply", { exact: false })).toBeVisible();
+    await expect(listPane.getByText("The run hit a system-level execution problem.", { exact: false })).toBeVisible();
   });
 
   test("does not promote stderr excerpts for failed or successful run detail pages", async ({ page }) => {

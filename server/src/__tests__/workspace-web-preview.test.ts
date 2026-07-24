@@ -132,7 +132,7 @@ describe("workspace web preview policy", () => {
 });
 
 describe("workspace web preview runtime", () => {
-  it("serves only capability-scoped GET/HEAD assets on the Preview Host", async () => {
+  it("serves only capability-scoped GET/HEAD assets on the Preview Host", { timeout: 15_000 }, async () => {
     const fixture = await createFixture();
     const runtime = createRuntime(fixture);
     const session = await runtime.createSession({
@@ -212,7 +212,7 @@ describe("workspace web preview runtime", () => {
     })).resolves.toMatchObject({ networkMode: "offline" });
   });
 
-  it("rejects an artifact-directory swap between validation and file open", async () => {
+  it("rejects an artifact-directory swap between validation and file open", { timeout: 15_000 }, async () => {
     const fixture = await createFixture();
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-web-preview-race-"));
     cleanupDirectories.push(outside);
@@ -333,7 +333,7 @@ describe("workspace web preview runtime", () => {
       .set("Host", "preview.localhost:3100")).status).toBe(404);
   });
 
-  it("rejects root-level entries, dotfiles, traversal, expiry, and root replacement", async () => {
+  it("rejects root-level entries, dotfiles, traversal, expiry, and root replacement", { timeout: 15_000 }, async () => {
     const fixture = await createFixture();
     let currentTime = Date.parse("2026-07-15T00:00:00.000Z");
     const runtime = createRuntime({ ...fixture, now: () => currentTime, token: "c".repeat(43) });

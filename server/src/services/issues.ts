@@ -933,7 +933,16 @@ export function issueService(db: Db) {
       });
     },
 
-    update: async (id: string, data: Partial<typeof issues.$inferInsert> & { labelIds?: string[] }) => {
+    update: async (
+      id: string,
+      data: Partial<typeof issues.$inferInsert> & { labelIds?: string[] },
+      authorization?: {
+        agentId: string;
+        runId?: string | null;
+        relationship: "assignee_or_reviewer" | "reviewer";
+        requireReviewableStatus?: boolean;
+      },
+    ) => {
       const existing = await db
         .select()
         .from(issues)
@@ -1041,13 +1050,47 @@ export function issueService(db: Db) {
           goalId: issueData.goalId,
           defaultGoalId: defaultCompanyGoal?.id ?? null,
         });
+        const relationshipCondition = authorization
+          ? authorization.relationship === "reviewer"
+            ? eq(issues.reviewerAgentId, authorization.agentId)
+            : or(
+                eq(issues.reviewerAgentId, authorization.agentId),
+                and(
+                  eq(issues.assigneeAgentId, authorization.agentId),
+                  or(
+                    ne(issues.status, "in_progress"),
+                    authorization.runId
+                      ? and(
+                          eq(issues.status, "in_progress"),
+                          eq(issues.checkoutRunId, authorization.runId),
+                        )
+                      : sql`false`,
+                  ),
+                ),
+              )
+          : undefined;
+        const authorizationCondition = relationshipCondition && authorization?.requireReviewableStatus
+          ? and(relationshipCondition, inArray(issues.status, ["in_review", "blocked"]))
+          : relationshipCondition;
         const updated = await tx
           .update(issues)
           .set(patch)
-          .where(eq(issues.id, id))
+          .where(
+            authorizationCondition
+              ? and(eq(issues.id, id), authorizationCondition)
+              : eq(issues.id, id),
+          )
           .returning()
           .then((rows) => rows[0] ?? null);
-        if (!updated) return null;
+        if (!updated) {
+          if (authorization) {
+            throw conflict("Issue relationship or review state changed before update", {
+              issueId: id,
+              agentId: authorization.agentId,
+            });
+          }
+          return null;
+        }
         if (nextLabelIds !== undefined) {
           await syncIssueLabels(updated.id, existing.orgId, nextLabelIds, tx);
         }

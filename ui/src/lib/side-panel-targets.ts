@@ -1,5 +1,6 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import { parseMentionChipHref } from "@/lib/mention-chips";
+import type { ChatInlineAnnotationInput } from "@rudderhq/shared";
 
 export type SidePanelTarget =
   | {
@@ -40,6 +41,7 @@ export type SidePanelTarget =
       sourceConversationId: string;
       sourceMessageId: string | null;
       sourcePreview: string | null;
+      inlineAnnotations?: ChatInlineAnnotationInput[];
       conversationId: string | null;
       clientMutationId: string;
       label: string;

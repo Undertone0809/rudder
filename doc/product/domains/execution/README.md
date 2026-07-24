@@ -24,12 +24,16 @@ edit_policy: user_confirmed_only
 - Runtime invocation and adapter results.
 - Run logs, transcripts, usage, sessions, and finalization.
 - Issue execution locks and deferred wake promotion.
+- Desktop Local App definition review, safe local process execution,
+  attestation, lifecycle, and exact live-guest continuity.
 
 ## Does Not Own
 
 - Issue status rules. See `ISSUE.STATE.001`.
 - Who should be assigned or reviewed. See `ROUTING.*`.
 - Stable instruction authorship. See `AGENT.INSTRUCTIONS.001`.
+- Messenger Saved View placement and Main Workbench binding. See
+  `MESSENGER.SAVED.VIEWS.001`.
 
 ## Contract Index
 
@@ -45,3 +49,6 @@ edit_policy: user_confirmed_only
   release/promote correctly.
 - `RUN.RESULT.001`: transcripts, usage, logs, sessions, and result metadata are
   persisted for inspection.
+- `DESKTOP.LOCAL.APPS.001`: Desktop runs only explicitly reviewed local
+  development services, keeps executable authority installation-local, and
+  preserves exact runtime identity across Side-to-Main transfer.

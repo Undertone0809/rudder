@@ -17,6 +17,7 @@ import {
   installCanonicalDesktopMcp,
   installVersionMismatchedDesktopMcp,
   readMcpToolNames,
+  readRepositoryCliVersion,
 } from "./local-runtime-browser-mismatch-helpers";
 import {
   clearInheritedGitIdentityEnv,
@@ -459,7 +460,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
         serverName: "rudder-tools",
         toolCount: 69,
         provenance: "repo",
-        version: "0.5.1",
+        version: await readRepositoryCliVersion(),
         fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface; Rudder tools are injected through a managed Pi extension.",
       });
       expect(rudderNativeTools).toEqual({

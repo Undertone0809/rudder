@@ -38,6 +38,7 @@ type BrowserSessionPolicyTarget = {
 };
 
 export type BrowserGuest = {
+  id?: number;
   session?: unknown;
   isDestroyed(): boolean;
   close(options?: { waitForBeforeUnload?: boolean }): void;
@@ -215,7 +216,7 @@ export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, op
   getRudderAppOrigins(): string[];
   isBrowserAvailable(): boolean;
   registerGuest(guest: BrowserGuest): void;
-  openBrowserPopup?(url: string): void;
+  openBrowserPopup?(url: string, sourceWebContentsId: number): void;
   resolveLocalAppBootstrap?(url: string, partition: string): boolean;
   prepareLocalAppPartition?(partition: string): void;
   isLocalAppGuest?(guest: BrowserGuest): boolean;
@@ -271,9 +272,13 @@ export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, op
 
     options.registerGuest(guest);
     guest.setWindowOpenHandler(({ url }) => {
+      const sourceWebContentsId = guest.id;
       if (options.isBrowserAvailable()
-        && isAllowedBrowserNavigationUrl(url, options.getRudderAppOrigins())) {
-        setImmediate(() => options.openBrowserPopup?.(url));
+        && isAllowedBrowserNavigationUrl(url, options.getRudderAppOrigins())
+        && typeof sourceWebContentsId === "number"
+        && Number.isSafeInteger(sourceWebContentsId)
+        && sourceWebContentsId > 0) {
+        setImmediate(() => options.openBrowserPopup?.(url, sourceWebContentsId));
       }
       return { action: "deny" };
     });

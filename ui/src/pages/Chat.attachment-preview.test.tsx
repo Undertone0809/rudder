@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 
 import { ApiError } from "@/api/client";
+import { DesktopBrowserLinkBridge } from "@/components/DesktopBrowserLinkBridge";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { ImagePreviewProvider } from "@/context/ImagePreviewContext";
+import {
+  LiveSurfaceRuntimeLayer,
+  LiveSurfaceRuntimeProvider,
+} from "@/context/LiveSurfaceRuntimeContext";
 import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
@@ -14,7 +19,8 @@ import {
 import {
   readPendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
-import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type BrowserShortcutAction, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
+import type { DesktopBrowserShortcutRequest } from "@/lib/desktop-shell";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -25,6 +31,28 @@ import { ChatSidePanel } from "./Chat.side-panel";
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
+
+const nativeGetBoundingClientRect =
+  HTMLElement.prototype.getBoundingClientRect;
+
+function makeLiveSurfaceAnchorsVisible() {
+  HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.hasAttribute("data-owner-id")) {
+      return {
+        bottom: 800,
+        height: 720,
+        left: 0,
+        right: 1_200,
+        top: 80,
+        width: 1_200,
+        x: 0,
+        y: 80,
+        toJSON: () => ({}),
+      };
+    }
+    return nativeGetBoundingClientRect.call(this);
+  };
+}
 
 const PREVIEW_IMAGE_SRC =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='320' viewBox='0 0 480 320'%3E%3Crect width='480' height='320' fill='%232f80ed'/%3E%3Ctext x='240' y='168' fill='white' font-size='34' font-family='Arial' text-anchor='middle'%3EPreview%3C/text%3E%3C/svg%3E";
@@ -58,6 +86,7 @@ const mockState = vi.hoisted(() => ({
   automationRuns: {} as Record<string, AutomationRunSummary[]>,
   projects: [] as Project[],
   routeBase: "/messenger/chat",
+  locationState: null as unknown,
   workspaceDirectories: {} as Record<string, { directoryPath: string; entries: OrganizationWorkspaceFileEntry[] }>,
   workspaceFiles: {} as Record<string, { rootPath?: string | null; filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; message?: string | null; truncated: boolean }>,
   queueSnapshot: {
@@ -109,9 +138,12 @@ const mockState = vi.hoisted(() => ({
   stopMessageStream: vi.fn(),
   streamDrafts: {} as Record<string, ChatStreamDraft>,
   intelligenceProfiles: [] as Array<{ id: string; orgId: string; purpose: string; status: string }>,
-  browserShortcutListener: null as ((action: BrowserShortcutAction) => void) | null,
+  browserShortcutListener: null as ((request: DesktopBrowserShortcutRequest) => void) | null,
   openPath: vi.fn(),
   previewLocalFile: vi.fn(),
+  savedViewPromotionDiscard: vi.fn(),
+  savedViewPromotionEnabled: false,
+  savedViewPromotionIsMoving: false,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -380,6 +412,7 @@ vi.mock("@/lib/router", () => ({
     search: "",
     hash: "",
     key: "chat",
+    state: mockState.locationState,
   }),
   useNavigate: () => mockState.navigate,
   useParams: () => (mockState.conversationId ? { conversationId: mockState.conversationId } : {}),
@@ -395,11 +428,15 @@ vi.mock("react-router-dom", () => ({
     search: "",
     hash: "",
     key: "chat",
+    state: mockState.locationState,
   }),
   useNavigate: () => mockState.navigate,
 }));
 
 vi.mock("@/context/OrganizationContext", () => ({
+  useOptionalOrganization: () => ({
+    selectedOrganizationId: "org-1",
+  }),
   useOrganization: () => ({
     selectedOrganizationId: "org-1",
     selectedOrganization: { id: "org-1", name: "Rudder", issuePrefix: "RUD", urlKey: "rudder" },
@@ -423,6 +460,26 @@ vi.mock("@/context/BreadcrumbContext", () => ({
 vi.mock("@/context/ToastContext", () => ({
   useOptionalToast: () => null,
   useToast: () => ({ pushToast: mockState.pushToast }),
+}));
+
+vi.mock("@/context/SavedViewPromotionContext", () => ({
+  useOptionalSavedViewPromotion: () => (
+    mockState.savedViewPromotionEnabled
+      ? {
+          discard: mockState.savedViewPromotionDiscard,
+          getMoveState: () => ({
+            clientMutationId: null,
+            error: null,
+            promotionId: null,
+            retryable: false,
+            status: "idle",
+          }),
+          isMoving: () => mockState.savedViewPromotionIsMoving,
+          promote: vi.fn(),
+          retry: vi.fn(),
+        }
+      : null
+  ),
 }));
 
 vi.mock("@/context/DialogContext", () => ({
@@ -736,6 +793,21 @@ function message(overrides: Partial<ChatMessage>): ChatMessage {
     ...overrides,
   };
 }
+
+const persistedResponseAnnotation = {
+  id: "30000000-0000-4000-8000-000000000001",
+  selectedText: "Only failed deliveries show Retry.",
+  comment: "Please verify this.",
+  sourceConversationId: "10000000-0000-4000-8000-000000000001",
+  sourceMessageId: "20000000-0000-4000-8000-000000000001",
+  surface: "assistant_body" as const,
+  sourceHash: "a".repeat(64),
+  start: 20,
+  end: 54,
+  prefix: "successful. ",
+  suffix: " Continue.",
+  attachmentIds: [],
+};
 
 function issue(overrides: Partial<Issue> = {}): Issue {
   return {
@@ -1158,7 +1230,13 @@ function installLocalStorageMock() {
   });
 }
 
-function renderChat({ expanded = false }: { expanded?: boolean } = {}) {
+function renderChat({
+  expanded = false,
+  stableRuntime = false,
+}: {
+  expanded?: boolean;
+  stableRuntime?: boolean;
+} = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -1171,11 +1249,12 @@ function renderChat({ expanded = false }: { expanded?: boolean } = {}) {
   };
 
   const render = (targetRoot: Root) => {
-    targetRoot.render(
+    const content = (
       <ThemeProvider>
         <ImagePreviewProvider>
           <SidePanelProvider>
             <SidePanelTestContextBinder />
+            {stableRuntime ? <DesktopBrowserLinkBridge /> : null}
             <Chat />
             <ChatSidePanel
               selectedOrganizationId="org-1"
@@ -1184,7 +1263,17 @@ function renderChat({ expanded = false }: { expanded?: boolean } = {}) {
             />
           </SidePanelProvider>
         </ImagePreviewProvider>
-      </ThemeProvider>,
+      </ThemeProvider>
+    );
+    targetRoot.render(
+      stableRuntime
+        ? (
+            <LiveSurfaceRuntimeProvider>
+              {content}
+              <LiveSurfaceRuntimeLayer />
+            </LiveSurfaceRuntimeProvider>
+          )
+        : content,
     );
   };
 
@@ -1374,6 +1463,9 @@ beforeEach(() => {
   });
   resetChatPendingAttachmentsForTests();
   mockState.conversationId = "chat-1";
+  mockState.savedViewPromotionDiscard.mockReset();
+  mockState.savedViewPromotionEnabled = false;
+  mockState.savedViewPromotionIsMoving = false;
   mockState.openPath.mockReset();
   mockState.previewLocalFile.mockReset();
   mockState.failAgents = false;
@@ -1392,6 +1484,7 @@ beforeEach(() => {
     }),
   ];
   mockState.routeBase = "/messenger/chat";
+  mockState.locationState = null;
   mockState.workspaceDirectories = {};
   mockState.workspaceFiles = {};
   mockState.updateWorkspaceFile.mockReset();
@@ -1550,7 +1643,7 @@ beforeEach(() => {
       forceOpenExternal: vi.fn(async () => undefined),
       setSidePanelCloseShortcutActive: vi.fn(async () => undefined),
       setBrowserSurfaceShortcutActive: vi.fn(async () => undefined),
-      onBrowserShortcut: vi.fn((listener: (action: BrowserShortcutAction) => void) => {
+      onBrowserShortcut: vi.fn((listener: (request: DesktopBrowserShortcutRequest) => void) => {
         mockState.browserShortcutListener = listener;
         return () => {
           if (mockState.browserShortcutListener === listener) mockState.browserShortcutListener = null;
@@ -1568,6 +1661,7 @@ afterEach(() => {
   cleanupFn = null;
   delete (window as typeof window & { desktopShell?: unknown }).desktopShell;
   document.body.innerHTML = "";
+  HTMLElement.prototype.getBoundingClientRect = nativeGetBoundingClientRect;
   vi.unstubAllGlobals();
 });
 
@@ -1750,6 +1844,54 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(0);
+  });
+
+  it("abandons a terminal Saved View promotion before closing its retained Side source", async () => {
+    mockState.savedViewPromotionEnabled = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+    mockState.savedViewPromotionDiscard.mockImplementation(() => {
+      expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']"))
+        .toHaveLength(1);
+      return true;
+    });
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "browser",
+                tabId: "retained-tab",
+                viewInstanceId: "retained-view",
+                url: "https://example.com/retained",
+                label: "Retained view",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='chat-side-panel-tab-close']",
+      )?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.savedViewPromotionDiscard).toHaveBeenCalledWith(
+      "org-1",
+      expect.any(String),
+      expect.objectContaining({ viewInstanceId: "retained-view" }),
+    );
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']"))
+      .toHaveLength(0);
   });
 
   it("explains why a draft Side Chat cannot move to Messenger", async () => {
@@ -4160,6 +4302,104 @@ describe("Chat Side Panel link handling", () => {
     expect(tabs.at(-1)?.textContent).toContain("New tab");
   });
 
+  it("keeps each Browser webview DOM node across tab switches and Side Panel hide/show", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "browser-webview-identity", body: "Keep both Browser guests alive." })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]')?.click();
+      await Promise.resolve();
+    });
+    const browserOption = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-testid='chat-side-panel'] button"),
+    ).find((candidate) => candidate.textContent?.includes("Browser"));
+    await act(async () => {
+      browserOption?.click();
+      await Promise.resolve();
+    });
+
+    const firstAddress = container.querySelector<HTMLInputElement>(
+      "[data-testid='chat-side-panel-browser-view'] input[aria-label='Browser URL']",
+    );
+    await act(async () => {
+      firstAddress!.value = "localhost:4173/browser-one";
+      firstAddress!.dispatchEvent(new Event("input", { bubbles: true }));
+      firstAddress!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    const firstWebview = container.querySelector<HTMLElement>(
+      "[data-testid='chat-side-panel-browser-webview']",
+    );
+    const firstTabId = firstWebview?.dataset.browserTabId;
+    expect(firstWebview).not.toBeNull();
+    expect(firstTabId).toBeTruthy();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Open new browser tab"]')?.click();
+      await Promise.resolve();
+    });
+    const secondAddress = container.querySelector<HTMLInputElement>(
+      "[data-testid='chat-side-panel-browser-view'] input[aria-label='Browser URL']",
+    );
+    await act(async () => {
+      secondAddress!.value = "example.org/browser-two";
+      secondAddress!.dispatchEvent(new Event("input", { bubbles: true }));
+      secondAddress!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    const secondWebview = container.querySelector<HTMLElement>(
+      "[data-testid='chat-side-panel-browser-webview']",
+    );
+    const secondTabId = secondWebview?.dataset.browserTabId;
+    expect(secondWebview).not.toBeNull();
+    expect(secondWebview).not.toBe(firstWebview);
+    expect(secondTabId).toBeTruthy();
+    expect(secondTabId).not.toBe(firstTabId);
+    expect(container.querySelector(`webview[data-browser-tab-id="${firstTabId}"]`)).toBe(firstWebview);
+
+    let browserTabs = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-testid='chat-side-panel-tab']"),
+    );
+    await act(async () => {
+      browserTabs[0]?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(firstWebview);
+    expect(container.querySelector(`webview[data-browser-tab-id="${secondTabId}"]`)).toBe(secondWebview);
+
+    browserTabs = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-testid='chat-side-panel-tab']"),
+    );
+    await act(async () => {
+      browserTabs[1]?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(secondWebview);
+    expect(container.querySelector(`webview[data-browser-tab-id="${firstTabId}"]`)).toBe(firstWebview);
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-testid='chat-side-panel-collapse']")?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-trigger']")).not.toBeNull();
+    expect(container.querySelector(`webview[data-browser-tab-id="${firstTabId}"]`)).toBe(firstWebview);
+    expect(container.querySelector(`webview[data-browser-tab-id="${secondTabId}"]`)).toBe(secondWebview);
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-testid='chat-side-panel-trigger']")?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-webview']")).toBe(secondWebview);
+    expect(container.querySelector(`webview[data-browser-tab-id="${firstTabId}"]`)).toBe(firstWebview);
+    expect(container.querySelector(`webview[data-browser-tab-id="${secondTabId}"]`)).toBe(secondWebview);
+  });
+
   it("does not call Electron webview APIs before dom-ready in the browser target", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "browser-side-panel-message", body: "Open the browser panel." })],
@@ -4420,12 +4660,21 @@ describe("Chat Side Panel link handling", () => {
     expect(dnsErrorState?.textContent).not.toContain("refused to connect");
   });
 
-  it("routes focused Desktop Browser shortcuts to the active ready webview", async () => {
+  it("activates Desktop Browser shortcuts when the stable runtime address bar has focus", async () => {
+    makeLiveSurfaceAnchorsVisible();
     mockState.messagesByChatId = {
-      "chat-1": [message({ id: "browser-shortcut-actions", body: "Use Browser shortcuts." })],
+      "chat-1": [message({ id: "stable-browser-shortcut-scope", body: "Use Browser shortcuts." })],
     };
+    const desktopShell = (window as typeof window & {
+      desktopShell?: {
+        setBrowserSurfaceShortcutActive?: (active: boolean) => Promise<void>;
+      };
+    }).desktopShell;
+    const setBrowserSurfaceShortcutActive = vi.mocked(
+      desktopShell!.setBrowserSurfaceShortcutActive!,
+    );
 
-    const { container } = renderChat();
+    const { container } = renderChat({ stableRuntime: true });
     await act(async () => {
       await Promise.resolve();
     });
@@ -4433,118 +4682,31 @@ describe("Chat Side Panel link handling", () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]')?.click();
       await Promise.resolve();
     });
-
-    let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    const browserOption = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']")!;
+    const browserOption = Array.from(sidePanel.querySelectorAll<HTMLButtonElement>("button")).find(
       (candidate) => candidate.textContent?.includes("Browser"),
     );
+    expect(browserOption).not.toBeUndefined();
     await act(async () => {
       browserOption?.click();
       await Promise.resolve();
-    });
-
-    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]')!;
-    await act(async () => {
-      urlInput.value = "localhost:4173/browser-fixture";
-      urlInput.dispatchEvent(new Event("input", { bubbles: true }));
-      urlInput.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await Promise.resolve();
     });
 
-    const webview = container.querySelector<HTMLElement & {
-      canGoBack?: () => boolean;
-      canGoForward?: () => boolean;
-      getURL?: () => string;
-      goBack?: () => void;
-      goForward?: () => void;
-      reload?: () => void;
-      reloadIgnoringCache?: () => void;
-      setZoomFactor?: (factor: number) => void;
-    }>("[data-testid='chat-side-panel-browser-webview']")!;
-    const reload = vi.fn();
-    const reloadIgnoringCache = vi.fn();
-    const goBack = vi.fn();
-    const goForward = vi.fn();
-    const setZoomFactor = vi.fn();
-    Object.assign(webview, {
-      canGoBack: () => true,
-      canGoForward: () => true,
-      getURL: () => "http://localhost:4173/browser-fixture",
-      goBack,
-      goForward,
-      reload,
-      reloadIgnoringCache,
-      setZoomFactor,
-    });
+    const runtimeHost = container.querySelector<HTMLElement>(
+      "[data-testid='live-surface-runtime-host'][data-target-kind='browser']",
+    );
+    expect(runtimeHost).not.toBeNull();
+    const urlInput = runtimeHost!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]')!;
+    expect(sidePanel.contains(urlInput)).toBe(false);
+
     await act(async () => {
-      webview.dispatchEvent(new Event("dom-ready"));
       urlInput.focus();
       await Promise.resolve();
-    });
-
-    expect(mockState.browserShortcutListener).not.toBeNull();
-    await act(async () => {
-      mockState.browserShortcutListener?.("reload");
-      mockState.browserShortcutListener?.("reload_ignoring_cache");
-      mockState.browserShortcutListener?.("go_back");
-      mockState.browserShortcutListener?.("go_forward");
-      mockState.browserShortcutListener?.("zoom_in");
       await Promise.resolve();
     });
 
-    expect(reload).toHaveBeenCalledTimes(1);
-    expect(reloadIgnoringCache).toHaveBeenCalledTimes(1);
-    expect(goBack).toHaveBeenCalledTimes(1);
-    expect(goForward).toHaveBeenCalledTimes(1);
-    expect(setZoomFactor).toHaveBeenLastCalledWith(1.1);
-    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-zoom']")?.textContent).toBe("110%");
-
-    await act(async () => {
-      mockState.browserShortcutListener?.("zoom_out");
-      mockState.browserShortcutListener?.("zoom_reset");
-      await Promise.resolve();
-    });
-    expect(setZoomFactor).toHaveBeenLastCalledWith(1);
-    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-zoom']")).toBeNull();
-
-    const focusTarget = sidePanel!.querySelector<HTMLButtonElement>('button[aria-label="Open new browser tab"]')!;
-    focusTarget.focus();
-    urlInput.setSelectionRange(0, 0);
-    await act(async () => {
-      mockState.browserShortcutListener?.("focus_location");
-      await Promise.resolve();
-    });
-    expect(document.activeElement).toBe(urlInput);
-    expect(urlInput.selectionStart).toBe(0);
-    expect(urlInput.selectionEnd).toBe(urlInput.value.length);
-
-    const outsideButton = document.createElement("button");
-    document.body.appendChild(outsideButton);
-    outsideButton.focus();
-    await act(async () => {
-      mockState.browserShortcutListener?.("reload");
-      await Promise.resolve();
-    });
-    expect(reload).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      focusTarget.focus();
-      mockState.browserShortcutListener?.("new_tab");
-      await Promise.resolve();
-    });
-    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
-    const activeBlankAddress = container.querySelector<HTMLInputElement>(
-      "[data-testid='chat-side-panel-browser-view'] input[aria-label='Browser URL']",
-    )!;
-    activeBlankAddress.focus();
-    await act(async () => {
-      mockState.browserShortcutListener?.("reload");
-      mockState.browserShortcutListener?.("zoom_in");
-      await Promise.resolve();
-    });
-    expect(reload).toHaveBeenCalledTimes(1);
-    expect(setZoomFactor).toHaveBeenCalledTimes(3);
+    expect(setBrowserSurfaceShortcutActive).toHaveBeenLastCalledWith(true);
   });
 
   it("hides Browser entry points outside the Desktop Browser capability", async () => {
@@ -4565,13 +4727,14 @@ describe("Chat Side Panel link handling", () => {
     expect(Array.from(sidePanel!.querySelectorAll("button")).some((button) => button.textContent?.includes("Browser"))).toBe(false);
   });
 
-  it("closes the active Browser side panel tab when the webview receives Command+W", async () => {
+  it("closes the active Browser side panel tab when its stable runtime receives Command+W", async () => {
+    makeLiveSurfaceAnchorsVisible();
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "browser-side-panel-shortcut-message", body: "Open the browser panel." })],
     };
 
-    const { container } = renderChat();
+    const { container } = renderChat({ stableRuntime: true });
     await act(async () => {
       await Promise.resolve();
     });
@@ -4589,31 +4752,30 @@ describe("Chat Side Panel link handling", () => {
     await act(async () => {
       browserOption?.click();
       await Promise.resolve();
+      await Promise.resolve();
     });
 
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
-    const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
+    const runtimeHost = container.querySelector<HTMLElement>(
+      "[data-testid='live-surface-runtime-host'][data-target-kind='browser']",
+    );
+    expect(runtimeHost).not.toBeNull();
+    const urlInput = runtimeHost!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
     await act(async () => {
-      urlInput!.value = "localhost:4173/browser-fixture";
-      urlInput!.dispatchEvent(new Event("input", { bubbles: true }));
-      urlInput!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      urlInput!.focus();
+      await Promise.resolve();
       await Promise.resolve();
     });
 
-    const webview = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-browser-webview']");
-    expect(webview).not.toBeNull();
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(1);
 
-    const shortcut = new Event("before-input-event", { bubbles: true, cancelable: true }) as Event & {
-      input?: { key: string; meta: boolean };
-    };
-    shortcut.input = { key: "w", meta: true };
     await act(async () => {
-      webview!.dispatchEvent(shortcut);
+      mockState.browserShortcutListener?.({
+        action: "close_tab",
+      });
       await Promise.resolve();
     });
 
-    expect(shortcut.defaultPrevented).toBe(true);
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(0);
     expect(container.querySelector("[data-testid='chat-side-panel']")).toBeNull();
   });
@@ -4830,14 +4992,30 @@ describe("Chat route loading", () => {
   it("shows a target conversation loading state instead of the new-chat empty state", () => {
     mockState.conversationId = "chat-loading";
     mockState.conversations = [];
-    mockState.messagesByChatId = {};
+    mockState.messagesByChatId = {
+      "chat-loading": [
+        message({
+          id: "history-user",
+          conversationId: "chat-loading",
+          role: "user",
+          body: "Loaded user history before descriptor resolution.",
+        }),
+        message({
+          id: "history-assistant",
+          conversationId: "chat-loading",
+          role: "assistant",
+          body: "Loaded assistant history before descriptor resolution.",
+        }),
+      ],
+    };
     mockState.pendingChatDetailIds = new Set(["chat-loading"]);
 
     const { container } = renderChat();
 
     expect(container.querySelector("[data-testid='chat-conversation-loading-state']")).not.toBeNull();
-    expect(container.querySelectorAll("[data-slot='skeleton']")).toHaveLength(5);
-    expect(container.querySelector(".chat-message-user")).not.toBeNull();
+    expect(mockState.queryKeys).toContainEqual(["chats", "org-1", "messages", "chat-loading"]);
+    expect(container.textContent).toContain("Loaded user history before descriptor resolution.");
+    expect(container.textContent).toContain("Loaded assistant history before descriptor resolution.");
     expect(container.querySelector("[data-testid='chat-composer-toolbar']")).toBeNull();
     expect(container.querySelector("[data-testid='chat-empty-state-tabs']")).toBeNull();
     expect(container.textContent).not.toContain("Scope a new feature");
@@ -5609,19 +5787,19 @@ describe("Chat streaming controls", () => {
     await clickEnabledButtonByAriaLabel(container, "Queue");
 
     expect(mockState.createQueuedMessage).toHaveBeenCalledTimes(1);
-    expect(mockState.createQueuedMessage).toHaveBeenCalledWith("chat-1", expect.objectContaining({
-      expectedGenerationId: "generation-1",
-      payload: expect.objectContaining({
-        body: "Add this after the current reply.",
-        metadata: { source: "chat_composer" },
+    expect(mockState.createQueuedMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.objectContaining({
+        expectedGenerationId: "generation-1",
+        payload: expect.objectContaining({
+          body: "Add this after the current reply.",
+          metadata: { source: "chat_composer" },
+        }),
       }),
-    }));
+      { files: [] },
+    );
     expect(mockState.sendMessageStream).not.toHaveBeenCalled();
-    expect(mockState.pushToast).toHaveBeenCalledWith({
-      title: "Queued",
-      body: "Added to Queue.",
-      tone: "info",
-    });
+    expect(mockState.pushToast).not.toHaveBeenCalled();
   });
 
   it("edits the original turn directly when a stale generation id is already terminal", async () => {
@@ -5655,6 +5833,89 @@ describe("Chat streaming controls", () => {
       expect.objectContaining({ editUserMessageId: "user-message-1" }),
     );
     expect(mockState.createQueuedMessage).not.toHaveBeenCalled();
+  });
+
+  it("preserves persisted annotations while editing a non-empty user turn", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "user-message-annotated",
+        body: "Please draft a plan.",
+        chatTurnId: "turn-annotated",
+        structuredPayload: { inlineAnnotations: [persistedResponseAnnotation] },
+      })],
+    };
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Edit message");
+    const inlineEditor = container.querySelector<HTMLElement>(
+      "[data-testid='chat-inline-message-editor']",
+    );
+    expect(inlineEditor).not.toBeNull();
+    await clickEnabledButton(inlineEditor!, "Send");
+
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    expect(mockState.sendMessageStream).toHaveBeenCalledWith(
+      "chat-1",
+      "Please draft a plan.",
+      expect.objectContaining({
+        editUserMessageId: "user-message-annotated",
+        inlineAnnotations: [persistedResponseAnnotation],
+      }),
+    );
+  });
+
+  it("allows editing and retrying an annotation-only user turn", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "user-message-annotation-only",
+          body: "",
+          chatTurnId: "turn-annotation-only",
+          structuredPayload: { inlineAnnotations: [persistedResponseAnnotation] },
+        }),
+        message({
+          id: "assistant-message-annotation-only",
+          role: "assistant",
+          body: "The response failed.",
+          status: "failed",
+          chatTurnId: "turn-annotation-only",
+          createdAt: new Date("2026-05-12T09:01:01.000Z"),
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    await clickEnabledButtonByAriaLabel(container, "Edit message");
+    const inlineEditor = container.querySelector<HTMLElement>(
+      "[data-testid='chat-inline-message-editor']",
+    )!;
+    const sendButton = Array.from(inlineEditor.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.trim() === "Send");
+    expect(sendButton?.disabled).toBe(false);
+    await clickEnabledButton(inlineEditor, "Send");
+
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    expect(mockState.sendMessageStream).toHaveBeenLastCalledWith(
+      "chat-1",
+      "",
+      expect.objectContaining({
+        editUserMessageId: "user-message-annotation-only",
+        inlineAnnotations: [persistedResponseAnnotation],
+      }),
+    );
+
+    mockState.sendMessageStream.mockClear();
+    const retried = renderChat();
+    await clickEnabledButton(retried.container, "Retry");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    expect(mockState.sendMessageStream).toHaveBeenLastCalledWith(
+      "chat-1",
+      "",
+      expect.objectContaining({
+        editUserMessageId: "user-message-annotation-only",
+        inlineAnnotations: [persistedResponseAnnotation],
+      }),
+    );
   });
 
   it("keeps an original-turn edit out of Queue while the current response is active", async () => {
@@ -5751,7 +6012,8 @@ describe("Chat streaming controls", () => {
     const { container } = renderChat();
     const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
 
-    expect(queueItem?.textContent).toContain("Running");
+    expect(queueItem?.textContent).toContain("Sending…");
+    expect(queueItem?.textContent).not.toContain("Running");
     expect(queueItem?.textContent).toContain("Already delivering");
     expect(queueItem?.querySelector("button[aria-label='Edit queued message']")).toBeNull();
     expect(queueItem?.querySelector("button[aria-label='Delete queued message']")).toBeNull();
@@ -5795,10 +6057,7 @@ describe("Chat streaming controls", () => {
     expect(container.textContent).toContain("Continue with the next step.");
   });
 
-  it.each([
-    ["queued", "Still queued"],
-    ["failed_actionable", "Needs attention"],
-  ] as const)("keeps a linked Queue message visible when delivery returns to %s", (status, label) => {
+  it("projects Queue delivery states without exposing internal delivery detail", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-2", body: "Delivery needs operator attention." })],
     };
@@ -5806,9 +6065,8 @@ describe("Chat streaming controls", () => {
       activeGenerationId: null,
       items: [
         queuedMessage({
-          status,
-          sourceMessageId: "user-message-2",
-          deliveredMessageId: "user-message-2",
+          id: "queued-row",
+          status: "queued",
           lastDeliveryReason: "queued_continuation_failed",
           payload: {
             body: "Delivery needs operator attention.",
@@ -5821,14 +6079,47 @@ describe("Chat streaming controls", () => {
             metadata: null,
           },
         }),
+        queuedMessage({
+          id: "sending-row",
+          status: "acceptance_unknown",
+          deliveryIntent: "steer",
+          deliveryDisposition: "acceptance_unknown",
+          payload: { body: "Wait for confirmation", attachmentIds: [], projectId: null, skillRefs: [], accessMode: null, model: null, effort: null, metadata: null },
+        }),
+        queuedMessage({
+          id: "failed-row",
+          status: "failed_actionable",
+          deliveryIntent: "steer",
+          deliveryDisposition: "failed_actionable",
+          payload: { body: "Try delivery again", attachmentIds: [], projectId: null, skillRefs: [], accessMode: null, model: null, effort: null, metadata: null },
+        }),
+        queuedMessage({
+          id: "stale-delivered-row",
+          status: "failed_actionable",
+          deliveryIntent: "steer",
+          deliveryDisposition: "failed_actionable",
+          deliveredMessageId: "user-message-2",
+          payload: { body: "Already delivered despite stale state", attachmentIds: [], projectId: null, skillRefs: [], accessMode: null, model: null, effort: null, metadata: null },
+        }),
       ],
     });
 
     const { container } = renderChat();
-    const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
+    const queueItems = [...container.querySelectorAll("[data-testid='chat-running-queue-item']")];
+    const queuedRow = queueItems.find((item) => item.textContent?.includes("Delivery needs operator attention."));
+    const sendingRow = queueItems.find((item) => item.textContent?.includes("Wait for confirmation"));
+    const failedRow = queueItems.find((item) => item.textContent?.includes("Try delivery again"));
 
-    expect(queueItem?.textContent).toContain("Delivery needs operator attention.");
-    expect(queueItem?.textContent).toContain(label);
+    expect(queuedRow?.textContent).toContain("Queued");
+    expect(queuedRow?.textContent).not.toContain("Still queued");
+    expect(queuedRow?.textContent).toContain("Steer");
+    expect(queuedRow?.querySelector("button[aria-label='Edit queued message']")).not.toBeNull();
+    expect(queuedRow?.querySelector("button[aria-label='Delete queued message']")).not.toBeNull();
+    expect(sendingRow?.textContent).toContain("Sending…");
+    expect(sendingRow?.textContent).not.toMatch(/Delivery unconfirmed|Needs attention|Need attention/);
+    expect(failedRow?.textContent).toContain("Couldn't send");
+    expect(failedRow?.textContent).toContain("Retry");
+    expect(container.textContent).not.toContain("Already delivered despite stale state");
   });
 
   it("hides linked fallback Steer feedback while its continuation is running", () => {
@@ -5949,7 +6240,7 @@ describe("Chat streaming controls", () => {
     });
   });
 
-  it("sends durable Steer identity and reports same-run delivery without an unsupported warning", async () => {
+  it("sends durable Steer identity without a delivery toast", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
@@ -6026,13 +6317,7 @@ describe("Chat streaming controls", () => {
         renderedBodyHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       },
     );
-    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Delivered to current run",
-      tone: "success",
-    }));
-    expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({
-      body: expect.stringContaining("cannot accept mid-run steering"),
-    }));
+    expect(mockState.pushToast).not.toHaveBeenCalled();
   });
 
   it("keeps accepted Steer feedback at its Work Transcript timestamp when the response completes", () => {
@@ -6115,6 +6400,8 @@ describe("Chat streaming controls", () => {
       const embeddedSteer = container.querySelector<HTMLElement>("[data-testid='chat-transcript-steer-message']");
       expect(embeddedSteer).not.toBeNull();
       expect(embeddedSteer!.textContent).toContain(steerUserMessage.body);
+      expect(embeddedSteer!.closest("[data-testid='chat-transcript-item']")?.firstElementChild?.classList)
+        .not.toContain("max-w-3xl");
       expect([...container.querySelectorAll("[data-testid='chat-user-message-bubble']")]
         .filter((bubble) => bubble.textContent?.includes(steerUserMessage.body))).toHaveLength(1);
       expect(text.indexOf(transcriptBeforeSteer.text)).toBeLessThan(text.indexOf(steerUserMessage.body));
@@ -6346,9 +6633,7 @@ describe("Chat streaming controls", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Feedback confirmation pending",
-    }));
+    expect(mockState.pushToast).not.toHaveBeenCalled();
 
     expect(container.textContent).not.toContain("Steer");
     await act(async () => {
@@ -6370,10 +6655,11 @@ describe("Chat streaming controls", () => {
     });
   });
 
-  it("reports actionable Steer failure instead of an in-progress success", async () => {
+  it("offers Retry for a confirmed pre-delivery Steer failure without an active generation", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
+    const failedControlActionId = "20000000-0000-4000-8000-000000000001";
     const item = queuedMessage({ id: "queue-steer-failed" });
     mockState.queueSnapshot = queueSnapshot({ items: [item] });
     mockState.steerQueuedMessage.mockResolvedValueOnce({
@@ -6381,21 +6667,39 @@ describe("Chat streaming controls", () => {
       disposition: "failed_actionable",
       controlActionId: "20000000-0000-4000-8000-000000000002",
       activeGenerationId: null,
-      item: queuedMessage({ ...item, status: "failed_actionable", deliveryIntent: "steer", deliveryDisposition: "failed_actionable" }),
+      item: queuedMessage({ ...item, status: "failed_actionable", controlActionId: failedControlActionId, deliveryIntent: "steer", deliveryDisposition: "failed_actionable" }),
       queueVersion: 2,
       transcriptEventId: null,
     });
+    mockState.steerQueuedMessage.mockResolvedValueOnce({
+      result: "scheduled_next",
+      disposition: "continuation_pending",
+      controlActionId: "20000000-0000-4000-8000-000000000003",
+      activeGenerationId: null,
+      item: queuedMessage({ ...item, status: "continuation_pending", deliveryIntent: "steer", deliveryDisposition: "continuation_pending" }),
+      queueVersion: 3,
+      transcriptEventId: null,
+    });
 
-    const { container } = renderChat();
+    const { container, rerender } = renderChat();
     await clickEnabledButton(container, "Steer");
 
-    await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Feedback needs attention",
-      tone: "error",
-    })));
+    await vi.waitFor(() => expect(mockState.setQueryData).toHaveBeenCalledTimes(2));
+    const failedItemUpdater = mockState.setQueryData.mock.calls.at(-1)?.[1] as (
+      current: ChatQueueSnapshot,
+    ) => ChatQueueSnapshot;
+    mockState.queueSnapshot = failedItemUpdater(mockState.queueSnapshot);
+    rerender();
+    await vi.waitFor(() => expect(container.textContent).toContain("Couldn't send"));
+    expect(container.textContent).toContain("Retry");
+    expect(mockState.pushToast).not.toHaveBeenCalled();
+    await clickEnabledButton(container, "Retry");
+    expect(mockState.steerQueuedMessage).toHaveBeenCalledTimes(2);
+    expect(mockState.steerQueuedMessage.mock.calls[1]?.[2]).not.toHaveProperty("expectedActiveGenerationId");
+    expect(mockState.steerQueuedMessage.mock.calls[1]?.[2]?.controlActionId).not.toBe(failedControlActionId);
   });
 
-  it("renders accepted Steer feedback as delivered instead of still queued", () => {
+  it("hides accepted Steer feedback from Queue", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
@@ -6413,10 +6717,7 @@ describe("Chat streaming controls", () => {
     });
 
     const { container } = renderChat();
-    const queueItem = container.querySelector("[data-testid='chat-running-queue-item']");
-
-    expect(queueItem?.textContent).toContain("Delivered to current run");
-    expect(queueItem?.textContent).not.toContain("Still queued");
+    expect(container.querySelector("[data-testid='chat-running-queue']")).toBeNull();
   });
 
   it("offers Steer for retained Queue messages after Stop so feedback resumes server-side", () => {
@@ -6449,7 +6750,7 @@ describe("Chat streaming controls", () => {
     const queue = container.querySelector("[data-testid='chat-running-queue']");
     expect(queue?.textContent).toContain("Queue");
     expect(queue?.textContent?.toLowerCase()).not.toContain("follow-up");
-    expect(queueItem?.textContent).toContain("Still queued");
+    expect(queueItem?.textContent).toContain("Queued");
     expect(queueItem?.textContent).toContain("Continue from the interrupted chat run.");
     expect(queueItem?.textContent).toContain("Steer");
     expect(queueItem?.querySelector("button[aria-label='Edit queued message']")).not.toBeNull();
@@ -6489,6 +6790,103 @@ describe("Chat streaming controls", () => {
 
     expect(container.querySelector("[data-testid='chat-running-queue']")).toBeNull();
     expect(container.textContent).not.toContain("Already delivered");
+  });
+});
+
+describe("historical response annotation source navigation", () => {
+  const parentConversationId = "10000000-0000-4000-8000-000000000101";
+  const sideConversationId = "10000000-0000-4000-8000-000000000102";
+  const sourceMessageId = "20000000-0000-4000-8000-000000000101";
+  const selectedText = "Only failed deliveries show Retry.";
+  const historicalAnnotation = {
+    ...persistedResponseAnnotation,
+    sourceConversationId: parentConversationId,
+    sourceMessageId,
+    selectedText,
+    start: 0,
+    end: selectedText.length,
+    prefix: "",
+    suffix: "",
+  };
+
+  it("navigates a kept Side Chat annotation back to its parent source message", async () => {
+    mockState.conversationId = sideConversationId;
+    mockState.conversations = [
+      chat({ id: parentConversationId, title: "Parent chat" }),
+      chat({
+        id: sideConversationId,
+        title: "Kept Side Chat",
+        conversationKind: "side_chat",
+        sideChatState: "kept",
+        forkedFromConversationId: parentConversationId,
+      }),
+    ];
+    mockState.messagesByChatId = {
+      [sideConversationId]: [message({
+        id: "20000000-0000-4000-8000-000000000102",
+        conversationId: sideConversationId,
+        body: "Why does this happen?",
+        structuredPayload: { inlineAnnotations: [historicalAnnotation] },
+      })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        '[aria-label="Show 1 annotation"]',
+      )?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.trim() === "Show source")
+        ?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.navigate).toHaveBeenCalledWith(
+      {
+        pathname: `/chat/${parentConversationId}`,
+        search: `?messageId=${encodeURIComponent(sourceMessageId)}`,
+      },
+      {
+        state: {
+          chatResponseAnnotationSource: {
+            annotation: historicalAnnotation,
+            ordinal: 1,
+          },
+        },
+      },
+    );
+  });
+
+  it("restores the exact marker after arriving in the parent conversation", async () => {
+    mockState.conversationId = parentConversationId;
+    mockState.conversations = [
+      chat({ id: parentConversationId, title: "Parent chat" }),
+    ];
+    mockState.messagesByChatId = {
+      [parentConversationId]: [message({
+        id: sourceMessageId,
+        conversationId: parentConversationId,
+        role: "assistant",
+        body: selectedText,
+        status: "completed",
+      })],
+    };
+    mockState.locationState = {
+      chatResponseAnnotationSource: {
+        annotation: historicalAnnotation,
+        ordinal: 1,
+      },
+    };
+
+    renderChat();
+
+    await vi.waitFor(() => expect(scrollIntoViewMock).toHaveBeenCalled());
+    expect(document.body.querySelector(
+      `[data-message-id="${sourceMessageId}"][data-annotation-surface="assistant_body"]`,
+    )?.classList.contains("chat-message-jump-highlight")).toBe(true);
   });
 });
 
@@ -7445,6 +7843,100 @@ describe("Atomic new-chat drafts", () => {
     expect(container.textContent).toContain("failure-context.txt");
     expect(container.querySelector("[data-testid='chat-project-selector']")?.textContent).toContain("Rudder mkt");
     expect(mockState.navigate).not.toHaveBeenCalled();
+  });
+
+  it("restores an existing-chat draft before slow failure reconciliation finishes", async () => {
+    const attachment = new File(["recovery context"], "recovery-context.txt", {
+      type: "text/plain",
+    });
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "existing-user-message", body: "Existing turn." })],
+    };
+    updateChatPendingAttachmentsForScope(
+      resolveChatPendingAttachmentScopeKey("org-1", "chat-1"),
+      () => [attachment],
+    );
+    let releaseRefresh!: () => void;
+    const blockedRefresh = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    mockState.invalidateQueries.mockImplementation(() => blockedRefresh);
+    mockState.sendMessageStream.mockRejectedValueOnce(
+      new ApiError("Source annotation was rejected", 422, null),
+    );
+
+    const { container } = renderChat();
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Composer draft']",
+    );
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(editor, "Keep this existing-chat draft.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+
+    await vi.waitFor(() => {
+      expect(editor?.value).toBe("Keep this existing-chat draft.");
+      expect(container.textContent).toContain("recovery-context.txt");
+      expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Failed to send message",
+        body: "Source annotation was rejected",
+        tone: "error",
+      }));
+    });
+
+    releaseRefresh();
+    await act(async () => {
+      await Promise.resolve();
+    });
+  });
+
+  it("does not restore an existing-chat draft when a pre-ack stream error identifies the committed user message", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "existing-user-message", body: "Existing turn." })],
+    };
+    mockState.sendMessageStream.mockImplementationOnce(async (
+      _chatId: string,
+      _body: string,
+      options: { onEvent: (event: ChatStreamEvent) => void | Promise<void> },
+    ) => {
+      await options.onEvent({
+        type: "error",
+        error: "The saved message could not be hydrated.",
+        messageId: "committed-user-message",
+      });
+    });
+
+    const { container } = renderChat();
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Composer draft']",
+    );
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(editor, "Do not send this twice.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => {
+      expect(editor?.value).toBe("");
+      expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: "The saved message could not be hydrated.",
+        tone: "error",
+      }));
+    });
   });
 
   it("commits the first-turn UI only after the acknowledgement", async () => {

@@ -26,6 +26,65 @@ import {
 } from "./runtime-kernel/model-fallback.js";
 export * from "./chat-assistant.helpers.js";
 
+function chatRuntimePreparationStreamError(error: unknown) {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const safeContextSource = rawMessage.replace(/[?#][^\s]*/g, "");
+  const skillMatch = safeContextSource.match(
+    /\borganization skill\s+["'`]?([a-z0-9][a-z0-9._-]{0,127})/i,
+  );
+  const skill = skillMatch?.[1]?.replace(/[.,:;]+$/, "") || null;
+  const file = /(?:^|[/\\])SKILL\.md(?=$|[\s"'`:),])/i.test(safeContextSource)
+    ? "SKILL.md"
+    : null;
+  const context = skill
+    ? `organization skill "${skill}"${file ? ` file "${file}"` : ""}`
+    : file
+      ? `runtime file "${file}"`
+      : "the configured runtime skills and files";
+  const userMessage = skill
+    ? `Could not prepare organization skill "${skill}"${file ? ` file "${file}"` : ""}. Check that its installed files are available, then retry.`
+    : file
+      ? `Could not prepare runtime file "${file}". Check that the file is available, then retry.`
+      : "Could not prepare the configured runtime skills or files. Check the agent runtime and skill configuration, then retry.";
+  return new ChatAssistantStreamError(
+    `Chat runtime preparation failed for ${context}`,
+    "",
+    [],
+    {
+      errorCode: "chat_runtime_preparation_failed",
+      userMessage,
+      retryable: true,
+      failurePhase: "runtime_boot",
+      action: "retry",
+    },
+  );
+}
+
+function chatRuntimeAvailabilityStreamError(errorMessage?: string | null) {
+  const candidate = errorMessage?.trim() ?? "";
+  const safeKnownMessage = (
+    candidate === "Choose a chat agent before sending messages."
+    || candidate === "The selected chat agent is unavailable. Choose another agent before sending messages."
+    || candidate === "The selected agent runtime is not registered with Rudder Chat."
+    || candidate === "The current user has not configured a chat model yet."
+    || /^Unknown chat adapter type: [a-z0-9_-]+$/i.test(candidate)
+  )
+    ? candidate
+    : "The assistant runtime is not configured or available. Check the selected agent runtime, then retry.";
+  return new ChatAssistantStreamError(
+    safeKnownMessage,
+    "",
+    [],
+    {
+      errorCode: "chat_runtime_boot_failed",
+      userMessage: safeKnownMessage,
+      retryable: false,
+      failurePhase: "runtime_boot",
+      action: "repair_runtime",
+    },
+  );
+}
+
 function combineChatUsage(
   primary: { inputTokens: number; outputTokens: number; cachedInputTokens?: number } | null | undefined,
   repair: { inputTokens: number; outputTokens: number; cachedInputTokens?: number } | null | undefined,
@@ -51,10 +110,14 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     conversation: Pick<ChatConversation, "id" | "orgId" | "preferredAgentId" | "primaryIssueId" | "contextLinks" | "planMode">;
     contextLinks: ChatContextLink[];
     materializeManagedInstructions?: boolean;
+    materializeMissingRuntimeSkills?: boolean;
   }) {
     const runtimeSource = await resolveConversationRuntime(
       input.conversation,
-      { materializeManagedInstructions: input.materializeManagedInstructions },
+      {
+        materializeManagedInstructions: input.materializeManagedInstructions,
+        materializeMissingRuntimeSkills: input.materializeMissingRuntimeSkills,
+      },
     );
     if (!runtimeSource.descriptor.available) {
       return {
@@ -135,7 +198,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   async function resolveAgentRuntime(
     orgId: string,
     agentId: string,
-    options?: { materializeManagedInstructions?: boolean },
+    options?: {
+      materializeManagedInstructions?: boolean;
+      materializeMissingRuntimeSkills?: boolean;
+    },
   ): Promise<ResolvedChatRuntimeSource | null> {
     const agent = await agentsSvc.getInternalById(agentId);
     if (!agent || agent.orgId !== orgId || agent.status === "terminated") {
@@ -217,6 +283,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       : agentAdapterConfig;
     const { runtimeConfig, runtimeSkillEntries } = await runContextSvc.prepareRuntimeConfig({
       scene: "chat",
+      materializeMissingRuntimeSkills: options?.materializeMissingRuntimeSkills !== false,
       agent: {
         id: agent.id,
         orgId: agent.orgId,
@@ -254,7 +321,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
   async function resolveConversationRuntime(
     conversation: Pick<ChatConversation, "orgId" | "preferredAgentId">,
-    options?: { materializeManagedInstructions?: boolean },
+    options?: {
+      materializeManagedInstructions?: boolean;
+      materializeMissingRuntimeSkills?: boolean;
+    },
   ) {
     if (conversation.preferredAgentId) {
       const agentRuntime = await resolveAgentRuntime(
@@ -275,7 +345,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   }
 
   async function enrichConversation<T extends ChatConversation>(conversation: T): Promise<T> {
-    const resolved = await resolveConversationRuntime(conversation);
+    const resolved = await resolveConversationRuntime(conversation, {
+      materializeMissingRuntimeSkills: false,
+    });
     return {
       ...conversation,
       chatRuntime: resolved.descriptor,
@@ -285,7 +357,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   async function enrichConversations<T extends ChatConversation>(conversations: T[]): Promise<T[]> {
     return enrichConversationRuntimeDescriptors(
       conversations,
-      async (conversation) => (await resolveConversationRuntime(conversation)).descriptor,
+      async (conversation) => (await resolveConversationRuntime(conversation, {
+        materializeMissingRuntimeSkills: false,
+      })).descriptor,
     );
   }
 
@@ -296,9 +370,14 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       conversation: input.conversation,
       contextLinks: input.contextLinks,
       materializeManagedInstructions: true,
+      materializeMissingRuntimeSkills: true,
+    }).catch((error) => {
+      throw chatRuntimePreparationStreamError(error);
     });
     if (resolvedInvocation.availabilityError) {
-      throw new Error(resolvedInvocation.availabilityError);
+      throw chatRuntimeAvailabilityStreamError(
+        resolvedInvocation.availabilityError,
+      );
     }
     const {
       runtimeSource,
@@ -315,7 +394,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       !runtimeSource.agentRuntimeType ||
       !runtimeSource.descriptor.runtimeAgentId
     ) {
-      throw new Error("Chat runtime is not configured");
+      throw chatRuntimeAvailabilityStreamError();
     }
     const runtimeAgentType = runtimeSource.agentRuntimeType;
     const runtimeAgentId = runtimeSource.descriptor.runtimeAgentId;
@@ -1130,6 +1209,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       const resolved = await resolveChatInvocation({
         conversation,
         contextLinks: Array.isArray(conversation.contextLinks) ? conversation.contextLinks : [],
+        materializeMissingRuntimeSkills: false,
       });
       return resolved.runtimeSource.descriptor.available && !resolved.availabilityError
         ? {
@@ -1159,6 +1239,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           planMode: input.planMode ?? false,
         },
         contextLinks,
+        materializeMissingRuntimeSkills: false,
       });
       return resolved.runtimeSource.descriptor.available && !resolved.availabilityError
         ? { ...resolved.runtimeSource.descriptor, available: true as const }

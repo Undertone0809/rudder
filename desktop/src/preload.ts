@@ -266,9 +266,36 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:set-side-panel-close-shortcut-active", Boolean(active)) as Promise<void>,
   setBrowserSurfaceShortcutActive: (active: boolean) =>
     ipcRenderer.invoke("desktop:set-browser-surface-shortcut-active", Boolean(active)) as Promise<void>,
-  onBrowserShortcut: (listener: (action: DesktopBrowserShortcutAction) => void) => {
-    const wrapped = (_event: IpcRendererEvent, action: unknown) => {
-      if (isDesktopBrowserShortcutAction(action)) listener(action);
+  onBrowserShortcut: (
+    listener: (request: {
+      action: DesktopBrowserOwnerShortcutAction;
+      sourceWebContentsId?: number;
+    }) => void,
+  ) => {
+    const wrapped = (_event: IpcRendererEvent, request: unknown) => {
+      if (
+        !request
+        || typeof request !== "object"
+        || (
+          !isDesktopBrowserShortcutAction(
+            (request as { action?: unknown }).action,
+          )
+          && (request as { action?: unknown }).action !== "close_tab"
+        )
+      ) return;
+      const sourceWebContentsId =
+        (request as { sourceWebContentsId?: unknown }).sourceWebContentsId;
+      if (
+        sourceWebContentsId !== undefined
+        && (
+          !Number.isSafeInteger(sourceWebContentsId)
+          || Number(sourceWebContentsId) <= 0
+        )
+      ) return;
+      listener(request as {
+        action: DesktopBrowserOwnerShortcutAction;
+        sourceWebContentsId?: number;
+      });
     };
     ipcRenderer.on("desktop:browser-shortcut", wrapped);
     return () => {
@@ -300,9 +327,33 @@ contextBridge.exposeInMainWorld("desktopShell", {
   sendFeedback: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
   openExternal: (target: string) => ipcRenderer.invoke("desktop:open-external", target) as Promise<void>,
   forceOpenExternal: (target: string) => ipcRenderer.invoke("desktop:force-open-external", target) as Promise<void>,
-  onOpenWebLink: (listener: (request: { url: string; source: "link" | "browser_popup" }) => void) => {
-    const wrapped = (_event: IpcRendererEvent, request: { url: string; source: "link" | "browser_popup" }) => {
-      listener(request);
+  onOpenWebLink: (listener: (request: {
+    url: string;
+    source: "link" | "browser_popup";
+    sourceWebContentsId?: number;
+  }) => void) => {
+    const wrapped = (_event: IpcRendererEvent, request: unknown) => {
+      if (
+        !request
+        || typeof request !== "object"
+        || typeof (request as { url?: unknown }).url !== "string"
+        || !["link", "browser_popup"].includes(
+          String((request as { source?: unknown }).source),
+        )
+      ) return;
+      const typedRequest = request as {
+        url: string;
+        source: "link" | "browser_popup";
+        sourceWebContentsId?: number;
+      };
+      if (
+        typedRequest.source === "browser_popup"
+        && (
+          !Number.isSafeInteger(typedRequest.sourceWebContentsId)
+          || Number(typedRequest.sourceWebContentsId) <= 0
+        )
+      ) return;
+      listener(typedRequest);
     };
     ipcRenderer.on("desktop:open-web-link", wrapped);
     return () => {
@@ -384,7 +435,10 @@ declare global {
       setDeferredUpdatePromptReady(ready: boolean): Promise<void>;
       setSidePanelCloseShortcutActive(active: boolean): Promise<void>;
       setBrowserSurfaceShortcutActive(active: boolean): Promise<void>;
-      onBrowserShortcut(listener: (action: DesktopBrowserShortcutAction) => void): () => void;
+      onBrowserShortcut(listener: (request: {
+        action: DesktopBrowserOwnerShortcutAction;
+        sourceWebContentsId?: number;
+      }) => void): () => void;
       onCloseSidePanelActiveTab(listener: () => void): () => void;
       onDeferredUpdatePrompt(listener: (prompt: DesktopDeferredUpdatePrompt) => void): () => void;
       respondDeferredUpdatePrompt(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
@@ -392,7 +446,11 @@ declare global {
       sendFeedback(): Promise<void>;
       openExternal(target: string): Promise<void>;
       forceOpenExternal(target: string): Promise<void>;
-      onOpenWebLink(listener: (request: { url: string; source: "link" | "browser_popup" }) => void): () => void;
+      onOpenWebLink(listener: (request: {
+        url: string;
+        source: "link" | "browser_popup";
+        sourceWebContentsId?: number;
+      }) => void): () => void;
       openNotificationSettings(): Promise<OpenNotificationSettingsResult>;
       setBadgeCount(count: number): Promise<void>;
       showNotification(payload: DesktopInboxNotificationPayload): Promise<void>;
@@ -419,3 +477,6 @@ declare global {
     };
   }
 }
+type DesktopBrowserOwnerShortcutAction =
+  | DesktopBrowserShortcutAction
+  | "close_tab";

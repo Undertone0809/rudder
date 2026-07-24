@@ -16,15 +16,28 @@ import {
   chatQueuedMessages,
   organizations
 } from "@rudderhq/db";
-import { sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatProviderControlDisposition, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
+import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { conflict, notFound, unprocessable } from "../errors.js";
+import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 import { chatGenerationProtocolService } from "./chat-generation-protocol.js";
+import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
+import {
+  hydrateQueuedMessage,
+  materializeQueuedUserMessage,
+  normalizeQueuedMessagePayload,
+  QUEUED_ANNOTATION_ASSETS_KEY,
+  queuedAnnotationAssetState,
+  queuedMessageMutationFingerprint,
+  withQueuedAnnotationAssetState,
+  type StagedQueuedAnnotationAttachment,
+} from "./chat-queued-message-materialization.js";
+import { createChatAnnotationMessagePersistence } from "./chats.annotation-persistence.js";
 import {
   ACTIVE_CHAT_GENERATION_STATUSES,
   CHAT_GENERATION_CONTROL_LEASE_MS,
@@ -57,7 +70,7 @@ import {
   withPersistedTranscript,
 } from "./chats.helpers.js";
 import {
-  copyForkInlineVisualMessages,
+  copyForkChatMessages,
   listRecentUserChatMessages,
   updateTrustedInlineVisualMappings,
 } from "./chats.inline-visual-persistence.js";
@@ -78,6 +91,8 @@ type ApprovalRow = typeof approvals.$inferSelect;
 
 const CHAT_TITLE_MAX_LENGTH = 200;
 
+class InvalidQueueDeliveryActionLinkError extends Error {}
+
 export type { ChatServerQueueClaim } from "./chats.types.js";
 
 export function chatService(db: Db) {
@@ -88,6 +103,7 @@ export function chatService(db: Db) {
   const issueApprovalsSvc = issueApprovalService(db);
   const organizationsSvc = organizationService(db);
   const agentsSvc = agentService(db);
+  const addUserChatMessage = createChatAnnotationMessagePersistence(db, getMessage);
 
   async function ensureConversationUserStates(rows: ConversationRow[], userId: string) {
     if (rows.length === 0) return;
@@ -620,33 +636,6 @@ export function chatService(db: Db) {
     return isPostgresError(error, "23505");
   }
 
-  function normalizeQueuedPayload(payload: Record<string, unknown>): ChatQueuedMessagePayload {
-    return {
-      body: String(payload.body ?? ""),
-      attachmentIds: Array.isArray(payload.attachmentIds)
-        ? payload.attachmentIds.filter((id): id is string => typeof id === "string")
-        : [],
-      projectId: typeof payload.projectId === "string" ? payload.projectId : null,
-      skillRefs: Array.isArray(payload.skillRefs)
-        ? payload.skillRefs.filter((ref): ref is string => typeof ref === "string")
-        : [],
-      accessMode: typeof payload.accessMode === "string" ? payload.accessMode : null,
-      model: typeof payload.model === "string" ? payload.model : null,
-      effort: typeof payload.effort === "string" ? payload.effort : null,
-      metadata:
-        payload.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
-          ? payload.metadata as Record<string, unknown>
-          : null,
-    };
-  }
-
-  function hydrateQueuedMessage(row: ChatQueuedMessageRow): ChatQueuedMessage {
-    return {
-      ...row,
-      payload: normalizeQueuedPayload(row.payload),
-    };
-  }
-
   async function createGeneration(orgId: string, conversationId: string): Promise<ChatGenerationRow> {
     const now = new Date();
     const [row] = await db
@@ -655,8 +644,8 @@ export function chatService(db: Db) {
         orgId,
         conversationId,
         status: "active",
-        controlOwnerToken: randomUUID(),
-        controlLeaseExpiresAt: new Date(now.getTime() + CHAT_GENERATION_CONTROL_LEASE_MS),
+        controlOwnerToken: null,
+        controlLeaseExpiresAt: null,
         startedAt: now,
         createdAt: now,
         updatedAt: now,
@@ -802,6 +791,7 @@ export function chatService(db: Db) {
 
   async function listQueuedMessages(conversationId: string) {
     await reclaimStaleQueuedMessageClaims(conversationId);
+    await reconcileDeliveredQueuedMessages({ conversationId });
     const rows = await db
       .select()
       .from(chatQueuedMessages)
@@ -1175,6 +1165,10 @@ export function chatService(db: Db) {
     generation: ChatGenerationRow | null;
     idempotent: boolean;
   }> {
+    await reconcileDeliveredQueuedMessages({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+    });
     return db.transaction(async (tx) => {
       const existingAction = await tx
         .select()
@@ -1250,12 +1244,37 @@ export function chatService(db: Db) {
             eq(chatQueuedMessages.id, input.itemId),
             eq(chatQueuedMessages.orgId, input.orgId),
             eq(chatQueuedMessages.conversationId, input.conversationId),
-            inArray(chatQueuedMessages.status, ["queued", "steer_pending"]),
+            inArray(chatQueuedMessages.status, ["queued", "steer_pending", "failed_actionable"]),
           ),
         )
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (!item) throw conflict("Queued feedback is no longer steerable");
+
+      if (item.status === "failed_actionable") {
+        const failedAction = item.controlActionId
+          ? await tx
+            .select()
+            .from(chatControlActions)
+            .where(and(
+              eq(chatControlActions.id, item.controlActionId),
+              eq(chatControlActions.orgId, input.orgId),
+              eq(chatControlActions.actionKind, "steer"),
+            ))
+            .limit(1)
+            .then((rows) => rows[0] ?? null)
+          : null;
+        const confirmedPreDeliveryFailure = Boolean(
+          failedAction
+          && ["not_sent", "rejected"].includes(failedAction.providerDisposition ?? "not_sent")
+          && !item.sourceMessageId
+          && !item.deliveredMessageId
+          && !item.continuationMessageId,
+        );
+        if (!confirmedPreDeliveryFailure) {
+          throw conflict("Queued feedback delivery is not safely retryable");
+        }
+      }
 
       if (item.status === "steer_pending") {
         const boundAction = item.controlActionId
@@ -1798,25 +1817,28 @@ export function chatService(db: Db) {
     });
   }
 
-  async function createQueuedMessage(input: {
+  async function createQueuedMessageWithStagedAttachments(input: {
     orgId: string;
     conversationId: string;
     clientMutationId: string;
     payload: ChatQueuedMessagePayload;
     expectedGenerationId?: string | null;
     requestActor?: ChatQueueRequestActor | null;
+    stagedAttachments: readonly StagedQueuedAnnotationAttachment[];
+    attachmentFileIndexesByAnnotationId: ReadonlyMap<string, readonly number[]>;
   }) {
-    const payload = {
-      ...input.payload,
-      body: input.payload.body.trim(),
-      attachmentIds: input.payload.attachmentIds ?? [],
-      skillRefs: input.payload.skillRefs ?? [],
-      projectId: input.payload.projectId ?? null,
-      accessMode: input.payload.accessMode ?? null,
-      model: input.payload.model ?? null,
-      effort: input.payload.effort ?? null,
-      metadata: input.payload.metadata ?? null,
-    };
+    if ((input.payload.attachmentIds?.length ?? 0) > 0) {
+      throw unprocessable("Queued messages cannot reference client-provided attachment ids");
+    }
+    const payload = normalizeQueuedMessagePayload(input.payload as unknown as Record<string, unknown>);
+    if (!payload.body.trim() && (payload.inlineAnnotations?.length ?? 0) === 0) {
+      throw unprocessable("Queued message body or at least one inline annotation is required");
+    }
+    const fingerprint = queuedMessageMutationFingerprint({
+      payload,
+      stagedAttachments: input.stagedAttachments,
+      attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+    });
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         return await db.transaction(async (tx) => {
@@ -1825,6 +1847,7 @@ export function chatService(db: Db) {
             .from(chatQueuedMessages)
             .where(
               and(
+                eq(chatQueuedMessages.orgId, input.orgId),
                 eq(chatQueuedMessages.conversationId, input.conversationId),
                 eq(chatQueuedMessages.clientMutationId, input.clientMutationId),
               ),
@@ -1832,18 +1855,65 @@ export function chatService(db: Db) {
             .limit(1)
             .then((rows) => rows[0] ?? null);
           if (existing) {
-            if (JSON.stringify(existing.payload) !== JSON.stringify(payload)) {
+            const existingPrivateState = queuedAnnotationAssetState(existing.payload);
+            const existingFingerprint = existingPrivateState?.fingerprint
+              ?? queuedMessageMutationFingerprint({
+                payload: normalizeQueuedMessagePayload(existing.payload),
+                stagedAttachments: [],
+                attachmentFileIndexesByAnnotationId: new Map(),
+              });
+            if (existingFingerprint !== fingerprint) {
               throw conflict("Queued message idempotency key reused with a different payload");
             }
-            return hydrateQueuedMessage(existing);
+            return {
+              item: hydrateQueuedMessage(existing),
+              accepted: false,
+              cleanupAttachments: [...input.stagedAttachments],
+            };
           }
 
+          await validateCanonicalChatInlineAnnotations(tx, {
+            orgId: input.orgId,
+            conversationId: input.conversationId,
+            annotations: payload.inlineAnnotations ?? [],
+            uploadedFileCount: input.stagedAttachments.length,
+            attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+          });
+          const assetIds: string[] = [];
+          for (const attachment of input.stagedAttachments) {
+            const [asset] = await tx
+              .insert(assets)
+              .values({
+                orgId: input.orgId,
+                provider: attachment.provider,
+                objectKey: attachment.objectKey,
+                contentType: attachment.contentType,
+                byteSize: attachment.byteSize,
+                sha256: attachment.sha256,
+                originalFilename: attachment.originalFilename,
+                createdByAgentId: attachment.createdByAgentId,
+                createdByUserId: attachment.createdByUserId,
+              })
+              .returning({ id: assets.id });
+            if (!asset) throw new Error("Failed to stage queued annotation asset");
+            assetIds.push(asset.id);
+          }
+          const persistedPayload = withQueuedAnnotationAssetState({
+            payload,
+            fingerprint,
+            assetIds,
+            stagedAttachments: input.stagedAttachments,
+            attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+          });
           const [positionRow] = await tx
             .select({
               nextPosition: sql<number>`coalesce(max(${chatQueuedMessages.position}), 0) + 1`,
             })
             .from(chatQueuedMessages)
-            .where(eq(chatQueuedMessages.conversationId, input.conversationId));
+            .where(and(
+              eq(chatQueuedMessages.orgId, input.orgId),
+              eq(chatQueuedMessages.conversationId, input.conversationId),
+            ));
           const [row] = await tx
             .insert(chatQueuedMessages)
             .values({
@@ -1851,13 +1921,17 @@ export function chatService(db: Db) {
               conversationId: input.conversationId,
               clientMutationId: input.clientMutationId,
               position: Number(positionRow?.nextPosition ?? 1),
-              payload,
+              payload: persistedPayload,
               requestActor: input.requestActor ?? null,
               expectedGenerationId: input.expectedGenerationId ?? null,
             })
             .returning();
           if (!row) throw new Error("Failed to create queued chat message");
-          return hydrateQueuedMessage(row);
+          return {
+            item: hydrateQueuedMessage(row),
+            accepted: true,
+            cleanupAttachments: [] as StagedQueuedAnnotationAttachment[],
+          };
         });
       } catch (error) {
         if (attempt < 2 && isQueuePositionConflict(error)) continue;
@@ -1867,68 +1941,305 @@ export function chatService(db: Db) {
     throw new Error("Failed to create queued chat message");
   }
 
+  async function createQueuedMessage(input: {
+    orgId: string;
+    conversationId: string;
+    clientMutationId: string;
+    payload: ChatQueuedMessagePayload;
+    expectedGenerationId?: string | null;
+    requestActor?: ChatQueueRequestActor | null;
+  }) {
+    const result = await createQueuedMessageWithStagedAttachments({
+      ...input,
+      stagedAttachments: [],
+      attachmentFileIndexesByAnnotationId: new Map(),
+    });
+    return result.item;
+  }
+
+  async function queuedAssetCleanupRows(
+    tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+    orgId: string,
+    payload: Record<string, unknown>,
+  ) {
+    const state = queuedAnnotationAssetState(payload);
+    if (!state || state.attachments.length === 0) return [];
+    const rows = await tx
+      .select()
+      .from(assets)
+      .where(and(
+        eq(assets.orgId, orgId),
+        inArray(assets.id, state.attachments.map((attachment) => attachment.assetId)),
+      ))
+      .for("share");
+    if (rows.length !== state.attachments.length) {
+      throw unprocessable("Queued annotation assets are incomplete");
+    }
+    return rows.map((asset) => ({
+      assetId: asset.id,
+      provider: asset.provider,
+      objectKey: asset.objectKey,
+      contentType: asset.contentType,
+      byteSize: asset.byteSize,
+      sha256: asset.sha256,
+      originalFilename: asset.originalFilename,
+      createdByAgentId: asset.createdByAgentId,
+      createdByUserId: asset.createdByUserId,
+    }));
+  }
+
+  async function updateQueuedMessageWithStagedAttachments(input: {
+    orgId: string;
+    conversationId: string;
+    itemId: string;
+    version: number;
+    payload: ChatQueuedMessagePayload;
+    stagedAttachments: readonly StagedQueuedAnnotationAttachment[];
+    attachmentFileIndexesByAnnotationId: ReadonlyMap<string, readonly number[]>;
+  }) {
+    if ((input.payload.attachmentIds?.length ?? 0) > 0) {
+      throw unprocessable("Queued messages cannot reference client-provided attachment ids");
+    }
+    if (input.stagedAttachments.length > 0 && input.payload.inlineAnnotations === undefined) {
+      throw unprocessable("Queued annotation files require an explicit annotation replacement");
+    }
+    return db.transaction(async (tx) => {
+      const current = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(
+          eq(chatQueuedMessages.orgId, input.orgId),
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.version, input.version),
+          eq(chatQueuedMessages.status, "queued"),
+          isNull(chatQueuedMessages.cancelledAt),
+        ))
+        .limit(1)
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!current) throw conflict("Queued message was changed or is no longer editable");
+      const currentPayload = normalizeQueuedMessagePayload(current.payload);
+      const payload = normalizeQueuedMessagePayload({
+        ...input.payload,
+        inlineAnnotations: input.payload.inlineAnnotations === undefined
+          ? currentPayload.inlineAnnotations
+          : input.payload.inlineAnnotations,
+      });
+      if (!payload.body.trim() && (payload.inlineAnnotations?.length ?? 0) === 0) {
+        throw unprocessable("Queued message body or at least one inline annotation is required");
+      }
+      const replacingAnnotations = input.payload.inlineAnnotations !== undefined;
+      if (replacingAnnotations && current.sourceMessageId) {
+        throw unprocessable("Sent annotation snapshots are immutable across queued message edits");
+      }
+      const currentPrivateState = queuedAnnotationAssetState(current.payload);
+      const currentAttachmentFileIndexesByAnnotationId = new Map<string, number[]>();
+      for (const attachment of currentPrivateState?.attachments ?? []) {
+        const indexes = currentAttachmentFileIndexesByAnnotationId.get(attachment.annotationId);
+        if (indexes) indexes.push(attachment.fileIndex);
+        else currentAttachmentFileIndexesByAnnotationId.set(attachment.annotationId, [attachment.fileIndex]);
+      }
+      await validateCanonicalChatInlineAnnotations(tx, {
+        orgId: input.orgId,
+        conversationId: input.conversationId,
+        annotations: payload.inlineAnnotations ?? [],
+        uploadedFileCount: replacingAnnotations
+          ? input.stagedAttachments.length
+          : currentPrivateState?.attachments.length ?? 0,
+        attachmentFileIndexesByAnnotationId: replacingAnnotations
+          ? input.attachmentFileIndexesByAnnotationId
+          : currentAttachmentFileIndexesByAnnotationId,
+        editUserMessageId: replacingAnnotations ? null : current.sourceMessageId,
+      });
+      const cleanupAttachments = replacingAnnotations
+        ? await queuedAssetCleanupRows(tx, input.orgId, current.payload)
+        : [];
+      let persistedPayload: Record<string, unknown> = payload;
+      if (replacingAnnotations) {
+        const fingerprint = queuedMessageMutationFingerprint({
+          payload,
+          stagedAttachments: input.stagedAttachments,
+          attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+        });
+        const assetIds: string[] = [];
+        for (const attachment of input.stagedAttachments) {
+          const [asset] = await tx
+            .insert(assets)
+            .values({
+              orgId: input.orgId,
+              provider: attachment.provider,
+              objectKey: attachment.objectKey,
+              contentType: attachment.contentType,
+              byteSize: attachment.byteSize,
+              sha256: attachment.sha256,
+              originalFilename: attachment.originalFilename,
+              createdByAgentId: attachment.createdByAgentId,
+              createdByUserId: attachment.createdByUserId,
+            })
+            .returning({ id: assets.id });
+          if (!asset) throw new Error("Failed to stage replacement queued annotation asset");
+          assetIds.push(asset.id);
+        }
+        persistedPayload = withQueuedAnnotationAssetState({
+          payload,
+          fingerprint,
+          assetIds,
+          stagedAttachments: input.stagedAttachments,
+          attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
+        });
+      } else if (currentPrivateState) {
+        persistedPayload = {
+          ...payload,
+          [QUEUED_ANNOTATION_ASSETS_KEY]: current.payload[QUEUED_ANNOTATION_ASSETS_KEY],
+        };
+      }
+      const now = new Date();
+      const [row] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          payload: persistedPayload,
+          version: input.version + 1,
+          lastDeliveryReason: current.sourceMessageId
+            ? current.lastDeliveryReason
+            : null,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatQueuedMessages.orgId, input.orgId),
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.version, input.version),
+          eq(chatQueuedMessages.status, "queued"),
+          isNull(chatQueuedMessages.cancelledAt),
+        ))
+        .returning();
+      if (!row) throw conflict("Queued message was changed or is no longer editable");
+      if (current.sourceMessageId) {
+        const [updatedMessage] = await tx
+          .update(chatMessages)
+          .set({ body: payload.body, updatedAt: now })
+          .where(and(
+            eq(chatMessages.id, current.sourceMessageId),
+            eq(chatMessages.orgId, input.orgId),
+            eq(chatMessages.conversationId, input.conversationId),
+            eq(chatMessages.role, "user"),
+            isNull(chatMessages.supersededAt),
+          ))
+          .returning({ id: chatMessages.id });
+        if (!updatedMessage) {
+          throw conflict("Materialized queued message changed while its prose was edited");
+        }
+      }
+      return { item: hydrateQueuedMessage(row), cleanupAttachments };
+    });
+  }
+
   async function updateQueuedMessage(input: {
+    orgId: string;
     conversationId: string;
     itemId: string;
     version: number;
     payload: ChatQueuedMessagePayload;
   }) {
-    const now = new Date();
-    const [row] = await db
-      .update(chatQueuedMessages)
-      .set({
-        payload: {
-          ...input.payload,
-          body: input.payload.body.trim(),
-          attachmentIds: input.payload.attachmentIds ?? [],
-          skillRefs: input.payload.skillRefs ?? [],
-          projectId: input.payload.projectId ?? null,
-          accessMode: input.payload.accessMode ?? null,
-          model: input.payload.model ?? null,
-          effort: input.payload.effort ?? null,
-          metadata: input.payload.metadata ?? null,
-        },
-        version: input.version + 1,
-        lastDeliveryReason: null,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(chatQueuedMessages.conversationId, input.conversationId),
-          eq(chatQueuedMessages.id, input.itemId),
-          eq(chatQueuedMessages.version, input.version),
-          eq(chatQueuedMessages.status, "queued"),
-        ),
-      )
-      .returning();
-    if (!row) throw conflict("Queued message was changed or is no longer editable");
-    return hydrateQueuedMessage(row);
+    const result = await updateQueuedMessageWithStagedAttachments({
+      ...input,
+      stagedAttachments: [],
+      attachmentFileIndexesByAnnotationId: new Map(),
+    });
+    return result.item;
   }
 
-  async function cancelQueuedMessage(input: {
+  async function cancelQueuedMessageWithStagedAttachments(input: {
+    orgId: string;
     conversationId: string;
     itemId: string;
     version?: number | null;
   }) {
-    const now = new Date();
-    const conditions = [
-      eq(chatQueuedMessages.conversationId, input.conversationId),
-      eq(chatQueuedMessages.id, input.itemId),
-      eq(chatQueuedMessages.status, "queued"),
-    ];
-    if (input.version) conditions.push(eq(chatQueuedMessages.version, input.version));
-    const [row] = await db
-      .update(chatQueuedMessages)
-      .set({
-        status: "cancelled",
-        version: sql`${chatQueuedMessages.version} + 1`,
-        cancelledAt: now,
-        updatedAt: now,
-      })
-      .where(and(...conditions))
-      .returning();
-    if (!row) throw conflict("Queued message was changed or is no longer cancellable");
-    return hydrateQueuedMessage(row);
+    return db.transaction(async (tx) => {
+      const conditions = [
+        eq(chatQueuedMessages.orgId, input.orgId),
+        eq(chatQueuedMessages.conversationId, input.conversationId),
+        eq(chatQueuedMessages.id, input.itemId),
+        eq(chatQueuedMessages.status, "queued"),
+        isNull(chatQueuedMessages.cancelledAt),
+      ];
+      if (input.version) conditions.push(eq(chatQueuedMessages.version, input.version));
+      const current = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(...conditions))
+        .limit(1)
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+      if (!current) throw conflict("Queued message was changed or is no longer cancellable");
+      const cleanupAttachments = await queuedAssetCleanupRows(tx, input.orgId, current.payload);
+      const now = new Date();
+      const [row] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          payload: normalizeQueuedMessagePayload(current.payload),
+          status: "cancelled",
+          version: sql`${chatQueuedMessages.version} + 1`,
+          cancelledAt: now,
+          updatedAt: now,
+        })
+        .where(and(
+          ...conditions,
+          eq(chatQueuedMessages.version, current.version),
+        ))
+        .returning();
+      if (!row) throw conflict("Queued message was changed or is no longer cancellable");
+      return { item: hydrateQueuedMessage(row), cleanupAttachments };
+    });
+  }
+
+  async function cancelQueuedMessage(input: {
+    orgId: string;
+    conversationId: string;
+    itemId: string;
+    version?: number | null;
+  }) {
+    const result = await cancelQueuedMessageWithStagedAttachments(input);
+    return result.item;
+  }
+
+  async function finalizeQueuedAnnotationAssetCleanup(input: {
+    orgId: string;
+    assetIds: readonly string[];
+  }) {
+    if (input.assetIds.length === 0) return [];
+    return db.transaction(async (tx) => {
+      const linkedRows = await tx
+        .select({ assetId: chatAttachments.assetId })
+        .from(chatAttachments)
+        .where(and(
+          eq(chatAttachments.orgId, input.orgId),
+          inArray(chatAttachments.assetId, [...input.assetIds]),
+        ));
+      const linkedIds = new Set(linkedRows.map((row) => row.assetId));
+      const queueRows = await tx
+        .select({ payload: chatQueuedMessages.payload })
+        .from(chatQueuedMessages)
+        .where(eq(chatQueuedMessages.orgId, input.orgId));
+      const referencedIds = new Set(
+        queueRows.flatMap((row) =>
+          queuedAnnotationAssetState(row.payload)?.attachments.map((attachment) => attachment.assetId) ?? []
+        ),
+      );
+      const safeIds = [...new Set(input.assetIds)].filter(
+        (assetId) => !linkedIds.has(assetId) && !referencedIds.has(assetId),
+      );
+      if (safeIds.length === 0) return [];
+      const deleted = await tx
+        .delete(assets)
+        .where(and(
+          eq(assets.orgId, input.orgId),
+          inArray(assets.id, safeIds),
+        ))
+        .returning({ id: assets.id });
+      return deleted.map((row) => row.id);
+    });
   }
 
   async function scheduleSteerContinuation(input: {
@@ -2093,212 +2404,269 @@ export function chatService(db: Db) {
     leaseMs: number;
     now?: Date;
   }): Promise<ChatServerQueueClaim | null> {
+    await reconcileDeliveredQueuedMessages({ limit: 25 });
     const now = input.now ?? new Date();
     const leaseExpiresAt = new Date(now.getTime() + input.leaseMs);
     return db.transaction(async (tx) => {
       const batchSize = 25;
       let scanOffset = 0;
+      const claimableQueuePredicate = and(
+        inArray(chatQueuedMessages.status, ["continuation_pending", "steer_pending", "queued"]),
+        isNull(chatQueuedMessages.cancelledAt),
+        sql`jsonb_typeof(${chatQueuedMessages.requestActor}) = 'object'`,
+        or(
+          isNull(chatQueuedMessages.deliveryLeaseExpiresAt),
+          lt(chatQueuedMessages.deliveryLeaseExpiresAt, now),
+        ),
+        sql`(${chatQueuedMessages.status} <> 'steer_pending' or coalesce((
+          select steer_action.provider_disposition
+          from ${chatControlActions} as steer_action
+          where steer_action.id = ${chatQueuedMessages.controlActionId}
+          limit 1
+        ), 'not_sent') in ('not_sent', 'rejected'))`,
+      );
+      const claimableQueuePriority = sql<number>`case
+        when ${chatQueuedMessages.status} = 'continuation_pending' then 0
+        when ${chatQueuedMessages.status} = 'steer_pending' then 1
+        else 2
+      end`;
       while (true) {
         const candidates = await tx
-        .select()
-        .from(chatQueuedMessages)
-        .where(and(
-          inArray(chatQueuedMessages.status, ["continuation_pending", "steer_pending", "queued"]),
-          isNull(chatQueuedMessages.cancelledAt),
-          sql`jsonb_typeof(${chatQueuedMessages.requestActor}) = 'object'`,
-          or(
-            isNull(chatQueuedMessages.deliveryLeaseExpiresAt),
-            lt(chatQueuedMessages.deliveryLeaseExpiresAt, now),
-          ),
-          sql`(${chatQueuedMessages.status} <> 'steer_pending' or coalesce((
-            select steer_action.provider_disposition
-            from ${chatControlActions} as steer_action
-            where steer_action.id = ${chatQueuedMessages.controlActionId}
-            limit 1
-          ), 'not_sent') in ('not_sent', 'rejected'))`,
-        ))
-        .orderBy(
-          sql`case
-            when ${chatQueuedMessages.status} = 'continuation_pending' then 0
-            when ${chatQueuedMessages.status} = 'steer_pending' then 1
-            else 2
-          end`,
-          asc(chatQueuedMessages.position),
-          asc(chatQueuedMessages.createdAt),
-        )
-        .limit(batchSize)
-        .offset(scanOffset)
-        .for("update", { skipLocked: true });
-
-      for (const candidate of candidates) {
-        if (!candidate.requestActor || typeof candidate.requestActor !== "object" || Array.isArray(candidate.requestActor)) {
-          continue;
-        }
-        const latestGeneration = await tx
           .select()
-          .from(chatGenerations)
-          .where(and(
-            eq(chatGenerations.orgId, candidate.orgId),
-            eq(chatGenerations.conversationId, candidate.conversationId),
-          ))
-          .orderBy(desc(chatGenerations.startedAt), desc(chatGenerations.createdAt))
-          .limit(1)
-          .then((rows) => rows[0] ?? null);
-        const isSteer = candidate.deliveryIntent === "steer"
-          || candidate.status === "steer_pending"
-          || candidate.status === "continuation_pending";
-        if (
-          latestGeneration
-          && ACTIVE_CHAT_GENERATION_STATUSES.some((status) => status === latestGeneration.status)
-        ) {
-          continue;
-        }
-        if (
-          candidate.status === "queued"
-          && latestGeneration
-          && latestGeneration.status !== "completed"
-        ) {
-          continue;
-        }
-        if (
-          isSteer
-          && latestGeneration
-          && ["failed", "control_lost", "interrupted_unverified"].includes(latestGeneration.status)
-        ) {
-          await tx
+          .from(chatQueuedMessages)
+          .where(claimableQueuePredicate)
+          .orderBy(
+            claimableQueuePriority,
+            asc(chatQueuedMessages.position),
+            asc(chatQueuedMessages.createdAt),
+          )
+          .limit(batchSize)
+          .offset(scanOffset)
+          .for("update", { skipLocked: true });
+
+        let retainedCandidateCount = 0;
+        for (const candidate of candidates) {
+          if (!candidate.requestActor || typeof candidate.requestActor !== "object" || Array.isArray(candidate.requestActor)) {
+            retainedCandidateCount += 1;
+            continue;
+          }
+          const [conversationHead] = await tx
+            .select({ id: chatQueuedMessages.id })
+            .from(chatQueuedMessages)
+            .where(and(
+              claimableQueuePredicate,
+              eq(chatQueuedMessages.orgId, candidate.orgId),
+              eq(chatQueuedMessages.conversationId, candidate.conversationId),
+            ))
+            .orderBy(
+              claimableQueuePriority,
+              asc(chatQueuedMessages.position),
+              asc(chatQueuedMessages.createdAt),
+            )
+            .limit(1);
+          if (!conversationHead || conversationHead.id !== candidate.id) {
+            retainedCandidateCount += 1;
+            continue;
+          }
+          const latestGeneration = await tx
+            .select()
+            .from(chatGenerations)
+            .where(and(
+              eq(chatGenerations.orgId, candidate.orgId),
+              eq(chatGenerations.conversationId, candidate.conversationId),
+            ))
+            .orderBy(desc(chatGenerations.startedAt), desc(chatGenerations.createdAt))
+            .limit(1)
+            .then((rows) => rows[0] ?? null);
+          const isSteer = candidate.deliveryIntent === "steer"
+            || candidate.status === "steer_pending"
+            || candidate.status === "continuation_pending";
+          if (
+            latestGeneration
+            && ACTIVE_CHAT_GENERATION_STATUSES.some((status) => status === latestGeneration.status)
+          ) {
+            retainedCandidateCount += 1;
+            continue;
+          }
+          if (
+            candidate.status === "queued"
+            && latestGeneration
+            && latestGeneration.status !== "completed"
+            && !(
+              (
+                latestGeneration.status === "stopped"
+                && latestGeneration.terminalReason === "operator_stop"
+              )
+              || (
+                candidate.continuationMessageId
+                && latestGeneration.status === "aborted"
+                && latestGeneration.terminalReason === candidate.lastDeliveryReason
+              )
+            )
+          ) {
+            retainedCandidateCount += 1;
+            continue;
+          }
+          if (
+            isSteer
+            && latestGeneration
+            && ["failed", "control_lost", "interrupted_unverified"].includes(latestGeneration.status)
+          ) {
+            await tx
+              .update(chatQueuedMessages)
+              .set({
+                status: "failed_actionable",
+                deliveryDisposition: "failed_actionable",
+                reconciliationReason: `prior_generation_${latestGeneration.status}`,
+                lastDeliveryReason: `prior_generation_${latestGeneration.status}`,
+                updatedAt: now,
+                version: sql`${chatQueuedMessages.version} + 1`,
+              })
+              .where(eq(chatQueuedMessages.id, candidate.id));
+            if (candidate.controlActionId) {
+              await tx
+                .update(chatControlActions)
+                .set({
+                  localDisposition: "failed_actionable",
+                  lastError: `prior_generation_${latestGeneration.status}`,
+                  resolvedAt: now,
+                  updatedAt: now,
+                })
+                .where(eq(chatControlActions.id, candidate.controlActionId));
+            }
+            continue;
+          }
+
+          let materialized;
+          try {
+            materialized = await materializeQueuedUserMessage(tx, {
+              orgId: candidate.orgId,
+              conversationId: candidate.conversationId,
+              item: candidate,
+              now,
+              expectedStatuses: [candidate.status],
+              structuredPayload: isSteer
+                ? {
+                  source: "steer",
+                  targetGenerationId: candidate.activeGenerationId ?? candidate.expectedGenerationId,
+                  queueItemId: candidate.id,
+                  controlActionId: candidate.controlActionId,
+                  deliveryDisposition: candidate.deliveryDisposition,
+                }
+                : { source: "queue", queueItemId: candidate.id },
+            });
+          } catch (error) {
+            if (!(error instanceof HttpError) || error.status !== 422) throw error;
+            const validationFailureReason = "queued_message_validation_failed";
+            await tx
+              .update(chatQueuedMessages)
+              .set({
+                status: "failed_actionable",
+                deliveryDisposition: "failed_actionable",
+                reconciliationReason: validationFailureReason,
+                lastDeliveryReason: validationFailureReason,
+                updatedAt: now,
+                version: sql`${chatQueuedMessages.version} + 1`,
+              })
+              .where(and(
+                eq(chatQueuedMessages.id, candidate.id),
+                eq(chatQueuedMessages.orgId, candidate.orgId),
+                eq(chatQueuedMessages.conversationId, candidate.conversationId),
+                eq(chatQueuedMessages.status, candidate.status),
+                eq(chatQueuedMessages.version, candidate.version),
+                isNull(chatQueuedMessages.cancelledAt),
+              ));
+            if (candidate.controlActionId) {
+              await tx
+                .update(chatControlActions)
+                .set({
+                  localDisposition: "failed_actionable",
+                  lastError: validationFailureReason,
+                  resolvedAt: now,
+                  updatedAt: now,
+                })
+                .where(and(
+                  eq(chatControlActions.id, candidate.controlActionId),
+                  eq(chatControlActions.orgId, candidate.orgId),
+                ));
+            }
+            continue;
+          }
+
+          const materializedItem = materialized.item;
+          const userMessageId = materialized.message.id;
+          const generationId = randomUUID();
+          const leaseToken = randomUUID();
+          const leaseEpoch = materializedItem.deliveryLeaseEpoch + 1;
+          await tx.insert(chatGenerations).values({
+            id: generationId,
+            orgId: candidate.orgId,
+            conversationId: candidate.conversationId,
+            status: "active",
+            attemptEpoch: 0,
+            controlVersion: 0,
+            controlState: "unregistered",
+            controlOwnerToken: null,
+            controlLeaseExpiresAt: null,
+            startedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          const [claimed] = await tx
             .update(chatQueuedMessages)
             .set({
-              status: "failed_actionable",
-              deliveryDisposition: "failed_actionable",
-              reconciliationReason: `prior_generation_${latestGeneration.status}`,
-              lastDeliveryReason: `prior_generation_${latestGeneration.status}`,
-              updatedAt: now,
+              status: isSteer ? "running_next" : "dequeue_claimed",
+              deliveryDisposition: isSteer ? "running_next" : null,
+              continuationGenerationId: generationId,
+              continuationMessageId: userMessageId,
+              sourceMessageId: userMessageId,
+              deliveredMessageId: userMessageId,
+              deliveryLeaseToken: leaseToken,
+              deliveryLeaseEpoch: leaseEpoch,
+              deliveryLeaseOwner: input.workerId,
+              deliveryLeaseExpiresAt: leaseExpiresAt,
+              dequeuedAt: now,
+              deliveryAttempts: sql`${chatQueuedMessages.deliveryAttempts} + 1`,
+              lastAttemptAt: now,
+              lastDeliveryReason: null,
+              reconciliationReason: "server_claimed",
               version: sql`${chatQueuedMessages.version} + 1`,
+              updatedAt: now,
             })
-            .where(eq(chatQueuedMessages.id, candidate.id));
+            .where(and(
+              eq(chatQueuedMessages.id, candidate.id),
+              eq(chatQueuedMessages.orgId, candidate.orgId),
+              eq(chatQueuedMessages.conversationId, candidate.conversationId),
+              eq(chatQueuedMessages.status, candidate.status),
+              eq(chatQueuedMessages.version, materializedItem.version),
+              isNull(chatQueuedMessages.cancelledAt),
+            ))
+            .returning();
+          if (!claimed) throw conflict("Queued continuation changed while being claimed");
           if (candidate.controlActionId) {
             await tx
               .update(chatControlActions)
               .set({
-                localDisposition: "failed_actionable",
-                lastError: `prior_generation_${latestGeneration.status}`,
-                resolvedAt: now,
+                localDisposition: "running_next",
+                resolvedAt: null,
                 updatedAt: now,
               })
-              .where(eq(chatControlActions.id, candidate.controlActionId));
+              .where(and(
+                eq(chatControlActions.id, candidate.controlActionId),
+                eq(chatControlActions.orgId, candidate.orgId),
+              ));
           }
-          continue;
+          return {
+            item: hydrateQueuedMessage(claimed),
+            generationId,
+            userMessageId,
+            leaseToken,
+            leaseEpoch,
+          };
         }
-
-        const generationId = randomUUID();
-        const leaseToken = randomUUID();
-        const leaseEpoch = candidate.deliveryLeaseEpoch + 1;
-        await tx.insert(chatGenerations).values({
-          id: generationId,
-          orgId: candidate.orgId,
-          conversationId: candidate.conversationId,
-          status: "active",
-          attemptEpoch: 0,
-          controlVersion: 0,
-          controlState: "unregistered",
-          controlOwnerToken: leaseToken,
-          controlLeaseExpiresAt: new Date(now.getTime() + CHAT_GENERATION_CONTROL_LEASE_MS),
-          startedAt: now,
-          createdAt: now,
-          updatedAt: now,
-        });
-
-        let userMessageId = candidate.continuationMessageId;
-        if (userMessageId) {
-          const existingMessage = await tx
-            .select({ id: chatMessages.id })
-            .from(chatMessages)
-            .where(and(
-              eq(chatMessages.id, userMessageId),
-              eq(chatMessages.orgId, candidate.orgId),
-              eq(chatMessages.conversationId, candidate.conversationId),
-              eq(chatMessages.role, "user"),
-            ))
-            .limit(1)
-            .then((rows) => rows[0] ?? null);
-          if (!existingMessage) userMessageId = null;
-        }
-        if (!userMessageId) {
-          userMessageId = randomUUID();
-          await tx.insert(chatMessages).values({
-            id: userMessageId,
-            orgId: candidate.orgId,
-            conversationId: candidate.conversationId,
-            role: "user",
-            kind: "message",
-            status: "completed",
-            body: normalizeQueuedPayload(candidate.payload).body,
-            structuredPayload: null,
-            chatTurnId: randomUUID(),
-            turnVariant: 0,
-            createdAt: now,
-            updatedAt: now,
-          });
-          await tx
-            .update(chatConversations)
-            .set({ lastMessageAt: now, updatedAt: now })
-            .where(and(
-              eq(chatConversations.id, candidate.conversationId),
-              eq(chatConversations.orgId, candidate.orgId),
-            ));
-        }
-
-        const [claimed] = await tx
-          .update(chatQueuedMessages)
-          .set({
-            status: isSteer ? "running_next" : "dequeue_claimed",
-            deliveryDisposition: isSteer ? "running_next" : null,
-            continuationGenerationId: generationId,
-            continuationMessageId: userMessageId,
-            sourceMessageId: userMessageId,
-            deliveredMessageId: userMessageId,
-            deliveryLeaseToken: leaseToken,
-            deliveryLeaseEpoch: leaseEpoch,
-            deliveryLeaseOwner: input.workerId,
-            deliveryLeaseExpiresAt: leaseExpiresAt,
-            dequeuedAt: now,
-            deliveryAttempts: sql`${chatQueuedMessages.deliveryAttempts} + 1`,
-            lastAttemptAt: now,
-            lastDeliveryReason: null,
-            reconciliationReason: "server_claimed",
-            version: sql`${chatQueuedMessages.version} + 1`,
-            updatedAt: now,
-          })
-          .where(and(
-            eq(chatQueuedMessages.id, candidate.id),
-            eq(chatQueuedMessages.version, candidate.version),
-            isNull(chatQueuedMessages.cancelledAt),
-          ))
-          .returning();
-        if (!claimed) throw conflict("Queued continuation changed while being claimed");
-        if (candidate.controlActionId) {
-          await tx
-            .update(chatControlActions)
-            .set({
-              localDisposition: "running_next",
-              resolvedAt: null,
-              updatedAt: now,
-            })
-            .where(and(
-              eq(chatControlActions.id, candidate.controlActionId),
-              eq(chatControlActions.orgId, candidate.orgId),
-            ));
-        }
-        return {
-          item: hydrateQueuedMessage(claimed),
-          generationId,
-          userMessageId,
-          leaseToken,
-          leaseEpoch,
-        };
-      }
         if (candidates.length < batchSize) return null;
-        scanOffset += candidates.length;
+        scanOffset += retainedCandidateCount;
       }
     });
   }
@@ -2328,6 +2696,84 @@ export function chatService(db: Db) {
       ))
       .returning({ id: chatQueuedMessages.id });
     return Boolean(row);
+  }
+
+  async function acknowledgeServerQueuedMessageDelivery(input: {
+    itemId: string;
+    generationId: string;
+    leaseToken: string;
+    leaseEpoch: number;
+  }) {
+    const now = new Date();
+    return db.transaction(async (tx) => {
+      const item = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.continuationGenerationId, input.generationId),
+          eq(chatQueuedMessages.deliveryLeaseToken, input.leaseToken),
+          eq(chatQueuedMessages.deliveryLeaseEpoch, input.leaseEpoch),
+          inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
+          isNull(chatQueuedMessages.cancelledAt),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!item || !item.deliveredMessageId) return null;
+      const deliveredMessage = await tx
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(and(
+          eq(chatMessages.id, item.deliveredMessageId),
+          eq(chatMessages.orgId, item.orgId),
+          eq(chatMessages.conversationId, item.conversationId),
+          eq(chatMessages.role, "user"),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!deliveredMessage) return null;
+      const isSteer = item.deliveryIntent === "steer" || item.status === "running_next";
+      const nextStatus = isSteer ? "delivered" : "completed";
+      const nextDisposition = isSteer ? "delivered" : null;
+      const [updated] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: nextStatus,
+          deliveryDisposition: nextDisposition,
+          deliveryLeaseToken: null,
+          deliveryLeaseOwner: null,
+          deliveryLeaseExpiresAt: null,
+          lastDeliveryReason: null,
+          reconciliationReason: null,
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatQueuedMessages.id, item.id),
+          eq(chatQueuedMessages.version, item.version),
+        ))
+        .returning();
+      if (!updated) return null;
+      if (item.controlActionId) {
+        const [updatedAction] = await tx
+          .update(chatControlActions)
+          .set({
+            localDisposition: "delivered",
+            lastError: null,
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(and(
+            eq(chatControlActions.id, item.controlActionId),
+            eq(chatControlActions.orgId, item.orgId),
+          ))
+          .returning({ id: chatControlActions.id });
+        if (!updatedAction) {
+          throw new InvalidQueueDeliveryActionLinkError();
+        }
+      }
+      return hydrateQueuedMessage(updated);
+    });
   }
 
   async function completeServerQueuedMessageDelivery(input: {
@@ -2502,6 +2948,7 @@ export function chatService(db: Db) {
   }
 
   async function recoverExpiredServerQueueClaims(now = new Date()) {
+    await reconcileDeliveredQueuedMessages({ limit: 25 });
     const expired = await db
       .select({
         id: chatQueuedMessages.id,
@@ -2685,7 +3132,7 @@ export function chatService(db: Db) {
     if (!row || row.status !== "dequeue_claimed") {
       throw conflict("Queued message is not claimed for delivery");
     }
-    const payload = normalizeQueuedPayload(row.payload);
+    const payload = normalizeQueuedMessagePayload(row.payload);
     if (payload.body.trim() !== input.body.trim()) {
       throw conflict("Queued message body no longer matches claimed payload");
     }
@@ -2701,9 +3148,11 @@ export function chatService(db: Db) {
     const [row] = await db
       .update(chatQueuedMessages)
       .set({
-        status: "running",
+        status: "completed",
         sourceMessageId: input.sourceMessageId,
         deliveredMessageId: input.sourceMessageId,
+        lastDeliveryReason: null,
+        reconciliationReason: null,
         version: sql`${chatQueuedMessages.version} + 1`,
         updatedAt: now,
       })
@@ -2717,6 +3166,140 @@ export function chatService(db: Db) {
       .returning();
     if (!row) throw conflict("Queued message is no longer deliverable");
     return hydrateQueuedMessage(row);
+  }
+
+  async function reconcileDeliveredQueuedMessages(input: {
+    orgId?: string;
+    conversationId?: string;
+    limit?: number;
+  } = {}) {
+    const candidates = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(and(
+        inArray(chatQueuedMessages.status, [
+          "dequeue_claimed",
+          "running",
+          "running_next",
+          "failed",
+          "failed_actionable",
+        ]),
+        isNull(chatQueuedMessages.cancelledAt),
+        ...(input.orgId ? [eq(chatQueuedMessages.orgId, input.orgId)] : []),
+        ...(input.conversationId ? [eq(chatQueuedMessages.conversationId, input.conversationId)] : []),
+      ))
+      .orderBy(asc(chatQueuedMessages.updatedAt), asc(chatQueuedMessages.id))
+      .limit(input.limit ?? 100);
+    const generationIds = [...new Set(candidates
+      .map((item) => item.continuationGenerationId)
+      .filter((id): id is string => Boolean(id)))];
+    const generations = generationIds.length === 0
+      ? []
+      : await db
+        .select({ id: chatGenerations.id, status: chatGenerations.status })
+        .from(chatGenerations)
+        .where(inArray(chatGenerations.id, generationIds));
+    const terminalGenerationIds = new Set(generations
+      .filter((generation) => !ACTIVE_CHAT_GENERATION_STATUSES.includes(
+        generation.status as (typeof ACTIVE_CHAT_GENERATION_STATUSES)[number],
+      ))
+      .map((generation) => generation.id));
+    const repairableCandidates = candidates.filter((item) => {
+      const hasNoServerClaimIdentity = !item.deliveryLeaseToken
+        && !item.continuationGenerationId
+        && item.deliveryLeaseEpoch === 0;
+      const terminalServerClaimReleased = !item.deliveryLeaseToken
+        && !item.deliveryLeaseOwner
+        && !item.deliveryLeaseExpiresAt
+        && Boolean(item.continuationGenerationId && terminalGenerationIds.has(item.continuationGenerationId));
+      return hasNoServerClaimIdentity || Boolean(
+        terminalServerClaimReleased,
+      );
+    });
+    const evidenceMessageIds = [...new Set(repairableCandidates.flatMap((item) => [
+      item.deliveredMessageId,
+      item.sourceMessageId,
+      item.continuationMessageId,
+    ]).filter((id): id is string => Boolean(id)))];
+    if (evidenceMessageIds.length === 0) return 0;
+    const messages = await db
+      .select({
+        id: chatMessages.id,
+        orgId: chatMessages.orgId,
+        conversationId: chatMessages.conversationId,
+        role: chatMessages.role,
+      })
+      .from(chatMessages)
+      .where(inArray(chatMessages.id, evidenceMessageIds));
+    const messageById = new Map(messages.map((message) => [message.id, message]));
+    const now = new Date();
+    let reconciled = 0;
+    for (const item of repairableCandidates) {
+      const evidence = [item.deliveredMessageId, item.sourceMessageId, item.continuationMessageId]
+        .map((id) => id ? messageById.get(id) : null)
+        .find((message) => Boolean(
+          message
+          && message.role === "user"
+          && message.orgId === item.orgId
+          && message.conversationId === item.conversationId,
+        ));
+      if (!evidence) continue;
+      const isSteer = item.deliveryIntent === "steer" || item.status === "running_next";
+      const nextStatus = isSteer ? "delivered" : "completed";
+      const nextDisposition = isSteer ? "delivered" : null;
+      let reconciledItem: boolean;
+      try {
+        reconciledItem = await db.transaction(async (tx) => {
+          const [updated] = await tx
+            .update(chatQueuedMessages)
+            .set({
+              status: nextStatus,
+              deliveryDisposition: nextDisposition,
+              sourceMessageId: evidence.id,
+              deliveredMessageId: evidence.id,
+              continuationMessageId: evidence.id,
+              deliveryLeaseToken: null,
+              deliveryLeaseOwner: null,
+              deliveryLeaseExpiresAt: null,
+              lastDeliveryReason: null,
+              reconciliationReason: "durable_delivery_evidence",
+              version: sql`${chatQueuedMessages.version} + 1`,
+              updatedAt: now,
+            })
+            .where(and(
+              eq(chatQueuedMessages.id, item.id),
+              eq(chatQueuedMessages.version, item.version),
+              isNull(chatQueuedMessages.cancelledAt),
+            ))
+            .returning({ id: chatQueuedMessages.id });
+          if (!updated) return false;
+          if (item.controlActionId) {
+            const [updatedAction] = await tx
+              .update(chatControlActions)
+              .set({
+                localDisposition: "delivered",
+                lastError: null,
+                resolvedAt: now,
+                updatedAt: now,
+              })
+              .where(and(
+                eq(chatControlActions.id, item.controlActionId),
+                eq(chatControlActions.orgId, item.orgId),
+              ))
+              .returning({ id: chatControlActions.id });
+            if (!updatedAction) {
+              throw new InvalidQueueDeliveryActionLinkError();
+            }
+          }
+          return true;
+        });
+      } catch (error) {
+        if (error instanceof InvalidQueueDeliveryActionLinkError) continue;
+        throw error;
+      }
+      if (reconciledItem) reconciled += 1;
+    }
+    return reconciled;
   }
 
   async function markQueuedMessageDeliveryTerminal(input: {
@@ -2761,10 +3344,20 @@ export function chatService(db: Db) {
           .select({
             assistantMessageId: chatGenerationEvents.assistantMessageId,
             generationId: chatGenerationEvents.generationId,
+            generationCreatedAt: chatGenerations.createdAt,
+            eventRecordedAt: chatGenerationEvents.recordedAt,
           })
           .from(chatGenerationEvents)
-          .where(inArray(chatGenerationEvents.assistantMessageId, assistantMessageIds))
-          .orderBy(desc(chatGenerationEvents.generationSeq))
+          .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
+          .where(and(
+            inArray(chatGenerationEvents.assistantMessageId, assistantMessageIds),
+            inArray(chatGenerationEvents.orgId, [...new Set(rows.map((row) => row.orgId))]),
+          ))
+          .orderBy(
+            desc(chatGenerations.createdAt),
+            desc(chatGenerationEvents.recordedAt),
+            desc(chatGenerationEvents.generationSeq),
+          )
         : Promise.resolve([]),
       nativeSteerMessageIds.length > 0
         ? db
@@ -2782,14 +3375,32 @@ export function chatService(db: Db) {
           ))
         : Promise.resolve([]),
     ]);
+    const generationIds = [...new Set(generationMessageRows.map((row) => row.generationId))];
+    const generationsById = generationIds.length === 0
+      ? new Map<string, { orgId: string; conversationId: string; terminalReason: string | null }>()
+      : new Map((await db
+        .select({
+          id: chatGenerations.id,
+          orgId: chatGenerations.orgId,
+          conversationId: chatGenerations.conversationId,
+          terminalReason: chatGenerations.terminalReason,
+        })
+        .from(chatGenerations)
+        .where(and(
+          inArray(chatGenerations.id, generationIds),
+          inArray(chatGenerations.orgId, [...new Set(rows.map((row) => row.orgId))]),
+        )))
+        .map((generation) => [generation.id, generation]));
+    const messageById = new Map(rows.map((row) => [row.id, row]));
     const generationIdByAssistantMessageId = new Map<string, string>();
     for (const generationMessageRow of generationMessageRows) {
-      if (!generationMessageRow.assistantMessageId) continue;
-      if (generationIdByAssistantMessageId.has(generationMessageRow.assistantMessageId)) continue;
-      generationIdByAssistantMessageId.set(
-        generationMessageRow.assistantMessageId,
-        generationMessageRow.generationId,
-      );
+      const assistantMessageId = generationMessageRow.assistantMessageId;
+      if (!assistantMessageId || generationIdByAssistantMessageId.has(assistantMessageId)) continue;
+      const message = messageById.get(assistantMessageId);
+      const generation = generationsById.get(generationMessageRow.generationId);
+      if (!message || !generation) continue;
+      if (generation.orgId !== message.orgId || generation.conversationId !== message.conversationId) continue;
+      generationIdByAssistantMessageId.set(assistantMessageId, generationMessageRow.generationId);
     }
     const steerDispositionByMessageId = new Map<string, string>();
     for (const queueRow of linkedSteerQueueRows) {
@@ -2836,6 +3447,100 @@ export function chatService(db: Db) {
         const generationId = generationIdByAssistantMessageId.get(messageId);
         return Boolean(generationId && nativeSteerTargetGenerationIds.has(generationId));
       });
+    const assistantGenerationIds = [
+      ...new Set(generationIdByAssistantMessageId.values()),
+    ];
+    const assistantGenerationPairs = [...generationIdByAssistantMessageId].map(
+      ([assistantMessageId, generationId]) => ({ assistantMessageId, generationId }),
+    );
+    const selectedGenerationEventCondition = assistantGenerationPairs.length > 0
+      ? or(...assistantGenerationPairs.map(({ assistantMessageId, generationId }) => and(
+        eq(chatGenerationEvents.assistantMessageId, assistantMessageId),
+        eq(chatGenerationEvents.generationId, generationId),
+      )))
+      : undefined;
+    const generationIdsNeedingFullTranscript = includeTranscript
+      ? assistantGenerationIds
+      : [...nativeSteerTargetGenerationIds].filter((generationId) =>
+        assistantGenerationIds.includes(generationId));
+    const assistantMessageIdsNeedingFullTranscript = assistantGenerationPairs
+      .filter(({ generationId }) => generationIdsNeedingFullTranscript.includes(generationId))
+      .map(({ assistantMessageId }) => assistantMessageId);
+    const transcriptByAssistantMessageId = new Map<string, ChatStreamTranscriptEntry[]>();
+    if (generationIdsNeedingFullTranscript.length > 0) {
+      const transcriptEventRows = await db
+        .select({
+          assistantMessageId: chatGenerationEvents.assistantMessageId,
+          generationId: chatGenerationEvents.generationId,
+          generationSeq: chatGenerationEvents.generationSeq,
+          payload: chatGenerationEvents.payload,
+        })
+        .from(chatGenerationEvents)
+        .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
+        .where(and(
+          selectedGenerationEventCondition,
+          inArray(chatGenerationEvents.assistantMessageId, assistantMessageIdsNeedingFullTranscript),
+          eq(chatGenerationEvents.eventKind, "transcript"),
+          or(
+            isNull(chatGenerations.acceptedThroughSeq),
+            lte(chatGenerationEvents.generationSeq, chatGenerations.acceptedThroughSeq),
+          ),
+        ))
+        .orderBy(
+          asc(chatGenerationEvents.generationId),
+          asc(chatGenerationEvents.generationSeq),
+        );
+      for (const eventRow of transcriptEventRows) {
+        if (!eventRow.assistantMessageId) continue;
+        const entry = eventRow.payload.entry;
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+        const provenancedEntry = withChatTranscriptGenerationProvenance(
+          entry as ChatStreamTranscriptEntry,
+          {
+            generationId: eventRow.generationId,
+            generationSeq: eventRow.generationSeq,
+          },
+        );
+        const transcript = transcriptByAssistantMessageId.get(eventRow.assistantMessageId);
+        if (transcript) transcript.push(provenancedEntry);
+        else transcriptByAssistantMessageId.set(
+          eventRow.assistantMessageId,
+          [provenancedEntry],
+        );
+      }
+    }
+    const transcriptSummaryByAssistantMessageId = new Map<
+      string,
+      MessageHydrationRow["transcriptSummary"]
+    >();
+    if (!includeTranscript && assistantGenerationPairs.length > 0) {
+      const summaryRows = await db
+        .select({
+          assistantMessageId: chatGenerationEvents.assistantMessageId,
+          entryCount: sql<number>`count(*)`,
+          startedAt: sql<string | null>`min(${chatGenerationEvents.payload}->'entry'->>'ts')`,
+          endedAt: sql<string | null>`max(${chatGenerationEvents.payload}->'entry'->>'ts')`,
+        })
+        .from(chatGenerationEvents)
+        .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
+        .where(and(
+          selectedGenerationEventCondition,
+          eq(chatGenerationEvents.eventKind, "transcript"),
+          or(
+            isNull(chatGenerations.acceptedThroughSeq),
+            lte(chatGenerationEvents.generationSeq, chatGenerations.acceptedThroughSeq),
+          ),
+        ))
+        .groupBy(chatGenerationEvents.assistantMessageId);
+      for (const summaryRow of summaryRows) {
+        if (!summaryRow.assistantMessageId) continue;
+        transcriptSummaryByAssistantMessageId.set(summaryRow.assistantMessageId, {
+          entryCount: Number(summaryRow.entryCount),
+          startedAt: summaryRow.startedAt,
+          endedAt: summaryRow.endedAt,
+        });
+      }
+    }
     const nativeSteerTranscriptPayloadByMessageId = new Map<string, Record<string, unknown> | null>();
     if (nativeSteerAssistantMessageIds.length > 0) {
       const transcriptPayloadRows = await db
@@ -2858,14 +3563,20 @@ export function chatService(db: Db) {
       const includeRowTranscript = includeTranscript
         || Boolean(generationId && nativeSteerTargetGenerationIds.has(generationId));
       const transcriptPayload = nativeSteerTranscriptPayloadByMessageId.get(row.id) ?? row.structuredPayload;
-      const transcript = includeRowTranscript ? chatTranscriptFromPayload(transcriptPayload) : [];
+      const ledgerTranscript = transcriptByAssistantMessageId.get(row.id);
+      const transcript = includeRowTranscript
+        ? ledgerTranscript?.length
+          ? ledgerTranscript
+          : chatTranscriptFromPayload(transcriptPayload)
+        : [];
       const transcriptSummary = includeRowTranscript
         ? chatTranscriptSummaryFromEntries(transcript)
-        : row.transcriptSummary ?? null;
+        : transcriptSummaryByAssistantMessageId.get(row.id) ?? row.transcriptSummary ?? null;
       const structuredPayload = effectiveStructuredPayload(row);
       return {
         ...row,
         generationId,
+        generationTerminalReason: generationId ? (generationsById.get(generationId)?.terminalReason ?? null) : null,
         structuredPayload: stripChatMetadataFromPayload(structuredPayload),
         transcript: includeRowTranscript ? transcript : undefined,
         transcriptSummary,
@@ -3207,10 +3918,10 @@ export function chatService(db: Db) {
       const forkMessages = input.sourceMessageId
         ? messagesToCopy.slice(0, messagesToCopy.findIndex((message) => message.id === input.sourceMessageId) + 1)
         : messagesToCopy;
-      await copyForkInlineVisualMessages({
+      await copyForkChatMessages({
         tx,
         messages: forkMessages,
-        sourceConversationId: source.id,
+        sourceConversation: source,
         targetConversationId: child.id,
         orgId: input.orgId,
       });
@@ -3536,13 +4247,63 @@ export function chatService(db: Db) {
         .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
+      const generation = await db
+        .select({
+          generationId: chatGenerationEvents.generationId,
+          acceptedThroughSeq: chatGenerations.acceptedThroughSeq,
+        })
+        .from(chatGenerationEvents)
+        .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
+        .where(eq(chatGenerationEvents.assistantMessageId, messageId))
+        .orderBy(
+          desc(chatGenerations.createdAt),
+          desc(chatGenerationEvents.recordedAt),
+          desc(chatGenerationEvents.generationSeq),
+        )
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      const transcript = generation
+        ? await db
+          .select({
+            generationId: chatGenerationEvents.generationId,
+            generationSeq: chatGenerationEvents.generationSeq,
+            payload: chatGenerationEvents.payload,
+          })
+          .from(chatGenerationEvents)
+          .where(and(
+            eq(chatGenerationEvents.generationId, generation.generationId),
+            eq(chatGenerationEvents.assistantMessageId, messageId),
+            eq(chatGenerationEvents.eventKind, "transcript"),
+            generation.acceptedThroughSeq === null
+              ? undefined
+              : lte(chatGenerationEvents.generationSeq, generation.acceptedThroughSeq),
+          ))
+          .orderBy(asc(chatGenerationEvents.generationSeq))
+          .then((events) => events.flatMap((event) => {
+            const entry = event.payload.entry;
+            return entry && typeof entry === "object" && !Array.isArray(entry)
+              ? [withChatTranscriptGenerationProvenance(
+                  entry as ChatStreamTranscriptEntry,
+                  {
+                    generationId: event.generationId,
+                    generationSeq: event.generationSeq,
+                  },
+                )]
+              : [];
+          }))
+        : [];
       return {
         messageId: row.id,
-        transcript: chatTranscriptFromPayload(row.structuredPayload),
+        transcript: transcript.length > 0
+          ? transcript
+          : chatTranscriptFromPayload(row.structuredPayload),
       };
   }
 
-  async function getMessage(conversationId: string, messageId: string) {
+  async function getMessage(
+    conversationId: string,
+    messageId: string,
+  ): Promise<ChatMessage | null> {
       const row = await db
         .select()
         .from(chatMessages)
@@ -3550,124 +4311,7 @@ export function chatService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
       const [hydrated] = await hydrateMessages([row]);
-      return hydrated ?? null;
-  }
-
-  async function assignLegacyTurnChainForUserMessage(target: MessageRow) {
-    const turnId = randomUUID();
-    const now = new Date();
-    await db
-      .update(chatMessages)
-      .set({ chatTurnId: turnId, turnVariant: 0, updatedAt: now })
-      .where(eq(chatMessages.id, target.id));
-    const following = await db
-      .select()
-      .from(chatMessages)
-      .where(
-        and(eq(chatMessages.conversationId, target.conversationId), gt(chatMessages.createdAt, target.createdAt)),
-      )
-      .orderBy(chatMessages.createdAt);
-    for (const row of following) {
-      if (row.role === "user") break;
-      await db
-        .update(chatMessages)
-        .set({ chatTurnId: turnId, turnVariant: 0, updatedAt: now })
-        .where(eq(chatMessages.id, row.id));
-    }
-  }
-
-  async function supersedeActiveMessagesFrom(conversationId: string, fromCreatedAt: Date) {
-    const now = new Date();
-    await db
-      .update(chatMessages)
-      .set({ supersededAt: now, updatedAt: now })
-      .where(
-        and(
-          eq(chatMessages.conversationId, conversationId),
-          isNull(chatMessages.supersededAt),
-          gte(chatMessages.createdAt, fromCreatedAt),
-        ),
-      );
-  }
-
-  async function copyMessageAttachments(sourceMessageId: string, targetMessageId: string) {
-    const sourceAttachments = await db
-      .select()
-      .from(chatAttachments)
-      .where(eq(chatAttachments.messageId, sourceMessageId))
-      .orderBy(chatAttachments.createdAt);
-    if (sourceAttachments.length === 0) return;
-
-    await db
-      .insert(chatAttachments)
-      .values(
-        sourceAttachments.map((attachment) => ({
-          orgId: attachment.orgId,
-          conversationId: attachment.conversationId,
-          messageId: targetMessageId,
-          assetId: attachment.assetId,
-        })),
-      );
-  }
-
-  async function addUserChatMessage(
-    conversationId: string,
-    orgId: string,
-    body: string,
-    editUserMessageId?: string | null,
-    options: { structuredPayload?: Record<string, unknown> | null } = {},
-  ) {
-    if (editUserMessageId) {
-      let [target] = await db
-        .select()
-        .from(chatMessages)
-        .where(and(eq(chatMessages.id, editUserMessageId), eq(chatMessages.conversationId, conversationId)))
-        .limit(1);
-      if (!target) {
-        throw notFound("Chat message not found");
-      }
-      if (target.role !== "user" || target.kind !== "message") {
-        throw unprocessable("Only plain user messages can be edited");
-      }
-      if (target.supersededAt) {
-        throw unprocessable("Cannot edit a superseded message");
-      }
-      if (!target.chatTurnId) {
-        await assignLegacyTurnChainForUserMessage(target);
-        [target] = await db
-          .select()
-          .from(chatMessages)
-          .where(eq(chatMessages.id, editUserMessageId))
-          .limit(1);
-        if (!target?.chatTurnId) {
-          throw new Error("Failed to assign chat turn metadata");
-        }
-      }
-      await supersedeActiveMessagesFrom(conversationId, target.createdAt);
-      const turnId = target.chatTurnId!;
-      const nextVariant = target.turnVariant + 1;
-      const editedMessage = await addMessage(conversationId, {
-        orgId,
-        role: "user",
-        kind: "message",
-        body,
-        chatTurnId: turnId,
-        turnVariant: nextVariant,
-      });
-      await copyMessageAttachments(target.id, editedMessage.id);
-      return (await getMessage(conversationId, editedMessage.id)) ?? editedMessage;
-    }
-
-    const turnId = randomUUID();
-    return addMessage(conversationId, {
-      orgId,
-      role: "user",
-      kind: "message",
-      body,
-      structuredPayload: options.structuredPayload ?? null,
-      chatTurnId: turnId,
-      turnVariant: 0,
-    });
+      return hydrated ? hydrated as ChatMessage : null;
   }
 
   async function addMessage(
@@ -4536,8 +5180,12 @@ export function chatService(db: Db) {
     getQueueSnapshot,
     listQueuedMessages,
     createQueuedMessage,
+    createQueuedMessageWithStagedAttachments,
     updateQueuedMessage,
+    updateQueuedMessageWithStagedAttachments,
     cancelQueuedMessage,
+    cancelQueuedMessageWithStagedAttachments,
+    finalizeQueuedAnnotationAssetCleanup,
     scheduleSteerContinuation,
     markQueuedMessageSteerFallback,
     beginSteerControlAction,
@@ -4546,6 +5194,7 @@ export function chatService(db: Db) {
     resolveSteerControlAction,
     claimNextServerQueuedMessage,
     renewServerQueuedMessageClaim,
+    acknowledgeServerQueuedMessageDelivery,
     completeServerQueuedMessageDelivery,
     releaseServerQueuedMessageClaim,
     recoverExpiredServerQueueClaims,
@@ -4558,6 +5207,7 @@ export function chatService(db: Db) {
     getMessageTranscript,
     addMessage,
     updateMessage,
+    updateMessageStructuredPayload,
     updateMessageInternalInlineVisuals,
     markInterruptedStreamingMessages,
     addUserChatMessage,

@@ -15,6 +15,8 @@ related_tests:
   - server/src/__tests__/issue-lifecycle-routes.test.ts
   - tests/e2e/issue-comment-mentions.spec.ts
   - tests/e2e/issue-comment-mention-boundary.spec.ts
+related_plans:
+  - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
 edit_policy: user_confirmed_only
 ---
 
@@ -38,6 +40,11 @@ Behavior:
   `issue_reopened_via_comment`, not `issue_comment_mentioned`.
 - Comments may wake mentioned agents with reason `issue_comment_mentioned` and
   wake source `comment.mention`.
+- Each mention wake records whether the target is the issue's current
+  `assignee`, current `reviewer`, or a `collaborator`.
+- A current-assignee or current-reviewer mention is an explicit work request in
+  every lifecycle state. It is serialized by the issue execution lease and
+  does not implicitly change issue status or ownership.
 - Editing a comment wakes only agents whose explicit wake mentions were added
   by that edit. Mentions preserved from the previous body are not re-enqueued,
   and removed mentions do not wake an agent.
@@ -101,7 +108,8 @@ Flow:
    eligible to wake and was not mentioned by the author, Rudder appends a wake
    mention for the assignee to the persisted comment before enqueueing.
 5. Mention wake uses `issue_comment_mentioned` and is scoped to the source
-   comment by `wakeCommentId`.
+   comment by `wakeCommentId`. Its context records the target's current issue
+   relationship.
 6. Self-wakes are skipped so an agent does not immediately wake because of its
    own comment.
 7. Per-comment target wakes are merged before heartbeat wakeup is called.
@@ -109,6 +117,12 @@ Flow:
 Invariants:
 
 - A mention wake does not automatically reassign the issue.
+- A current-assignee or current-reviewer mention can execute regardless of
+  issue status, including `in_review`, `done`, and `cancelled`; status changes
+  occur only when the request or normal workflow explicitly asks for one.
+- Relationship-authorized mention work uses the issue execution lease.
+  Non-owner collaborator mentions retain the narrow collaboration path and do
+  not gain issue ownership.
 - A plain issue comment does not wake the assignee unless the assignee is also
   a wake-mentioned target.
 - A reopen comment that auto-appends the assignee mention still records the

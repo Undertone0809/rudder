@@ -73,9 +73,11 @@ control, session reuse, transcripts, or cost metadata that another adapter does
 not. Rudder must show those differences instead of implying provider parity.
 
 The highest-risk boundary is authority. A runtime tool can act only with the
-organization, Agent, Run, and permission context Rudder supplies. Tool
-availability does not bypass assignment, checkout, approval, budget, or
-workspace rules.
+organization, Agent, Run, and permission context Rudder supplies. Current
+assignee/reviewer relationship plus an explicit request can authorize
+status-independent Issue work. Rudder serializes that Run through the Issue
+execution lease; the lease is not another permission gate. Tool availability
+does not bypass relationship, Run, approval, budget, or workspace rules.
 
 For exact runtime choices, see [Runtime types](/reference/runtime-types). To set
 one up, follow [Configure an Agent runtime](/how-to/configure-agent-runtime).

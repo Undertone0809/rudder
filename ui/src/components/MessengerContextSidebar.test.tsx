@@ -19,6 +19,13 @@ let queryOptions: Array<{ queryKey?: unknown; enabled?: boolean }>;
 let localStorageValues: Record<string, string>;
 let activeGeneratingChatIds: Set<string>;
 
+vi.mock("@/context/MainWorkbenchContext", () => ({
+  useMainWorkbench: () => ({
+    getState: () => ({ organizations: {} }),
+    unbindSavedViewForOrganization: vi.fn(),
+  }),
+}));
+
 vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useQueryClient: () => ({ invalidateQueries }),
@@ -717,6 +724,7 @@ describe("MessengerContextSidebar", () => {
 
   it("renders Saved Views only inside their custom group without unread or a fixed Saved section", () => {
     localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "custom" });
+    messengerRoute = { kind: "chat", conversationId: "chat-later" };
     const laterThread = {
       threadKey: "chat:chat-later",
       kind: "chat" as const,
@@ -805,9 +813,20 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain("Market dashboard");
     expect(html.indexOf("Market dashboard")).toBeLessThan(html.indexOf("Later grouped chat"));
     expect(html).toContain('data-testid="messenger-saved-view-entry-saved"');
+    expect(html).toContain('data-active="false"');
+    expect(html).not.toContain('aria-current="page"');
     expect(html).not.toContain('data-testid="messenger-saved-views-section"');
     expect(html).not.toContain("unread-badge");
     expect(html).not.toContain("Hide");
+
+    messengerRoute = {
+      kind: "saved_view",
+      savedViewId: "30000000-0000-4000-8000-000000000001",
+    };
+    const selectedHtml = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(selectedHtml).toContain('data-active="true"');
+    expect(selectedHtml).toContain('aria-current="page"');
   });
 
   for (const rule of ["agent", "kind", "attention"] as const) {

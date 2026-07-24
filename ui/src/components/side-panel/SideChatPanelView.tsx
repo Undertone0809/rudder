@@ -7,15 +7,32 @@ import { AgentIcon } from "@/components/AgentIconPicker";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
+import {
+  EditableResponseAnnotationsCard,
+  ResponseAnnotationCountChip,
+  ResponseAnnotationEditor,
+} from "@/components/chat/ResponseAnnotations";
 import type { ChatStreamDraftState } from "@/context/ChatGenerationContext";
+import {
+  canSubmitChatResponseAnnotations,
+  createChatResponseAnnotationState,
+  responseAnnotationReducer,
+  serializeChatResponseAnnotations,
+  validateChatResponseAnnotationReplacement,
+} from "@/lib/chat-response-annotations";
 import { queryKeys } from "@/lib/queryKeys";
 import { latestSideChatAnchor, sideChatConversationMessages, sideChatIsReadOnly } from "@/lib/side-chat";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { AssistantDraftItem, ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
-import type { Agent, ChatConversation, ChatMessage } from "@rudderhq/shared";
+import type {
+  Agent,
+  ChatConversation,
+  ChatInlineAnnotation,
+  ChatMessage,
+} from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, CirclePlus, Clock3, Folder, Loader2, Plus } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
 
@@ -50,11 +67,13 @@ export function SideChatPanelView({
   target,
   onRegisterCloseHandler,
   onReplaceTarget,
+  onSelectResponseAnnotation,
 }: {
   organizationId: string;
   target: SideChatTarget;
   onRegisterCloseHandler: (clientMutationId: string, handler: (() => Promise<string | null>) | null) => void;
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
+  onSelectResponseAnnotation: (annotation: ChatInlineAnnotation, ordinal: number) => void;
 }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState("");
@@ -62,6 +81,16 @@ export function SideChatPanelView({
   const [sendError, setSendError] = useState<string | null>(null);
   const [stream, setStream] = useState<SideChatStream | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const [annotationState, dispatchAnnotation] = useReducer(
+    responseAnnotationReducer,
+    target.inlineAnnotations ?? [],
+    createChatResponseAnnotationState,
+  );
+  const [annotationsExpanded, setAnnotationsExpanded] = useState(false);
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const editingAnnotationAnchorRef = useRef<HTMLButtonElement | null>(null);
+  const annotationDetailsSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const annotationDetailsChipRef = useRef<HTMLButtonElement | null>(null);
   const closeRequestedRef = useRef(false);
   const createPromiseRef = useRef<Promise<ChatConversation> | null>(null);
   const conversationIdRef = useRef(target.conversationId);
@@ -106,13 +135,38 @@ export function SideChatPanelView({
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (!annotationsExpanded || editingAnnotationId) return;
+    const closeDetails = (restoreFocus: boolean) => {
+      setAnnotationsExpanded(false);
+      if (restoreFocus) annotationDetailsChipRef.current?.focus();
+    };
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (annotationDetailsSurfaceRef.current?.contains(target)) return;
+      closeDetails(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeDetails(true);
+    };
+    document.addEventListener("click", handleClick);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("click", handleClick);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [annotationsExpanded, editingAnnotationId]);
+
   const sourceConversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(organizationId, target.sourceConversationId),
     queryFn: () => chatsApi.get(target.sourceConversationId),
   });
   const sourceMessagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(organizationId, target.sourceConversationId),
-    queryFn: () => chatsApi.listMessages(target.sourceConversationId),
+    queryFn: () => chatsApi.listMessages(organizationId, target.sourceConversationId),
     enabled: !target.sourceMessageId || !target.sourcePreview,
   });
   const sourceMessages = sourceMessagesQuery.data ?? [];
@@ -132,7 +186,11 @@ export function SideChatPanelView({
   });
   const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(organizationId, target.conversationId ?? "__side-chat-draft__"),
-    queryFn: () => chatsApi.listMessages(target.conversationId!, { includeTranscript: true }),
+    queryFn: () => chatsApi.listMessages(
+      organizationId,
+      target.conversationId!,
+      { includeTranscript: true },
+    ),
     enabled: Boolean(target.conversationId),
   });
   const agentsQuery = useQuery({
@@ -178,8 +236,15 @@ export function SideChatPanelView({
 
   const handleSend = async () => {
     const body = draft.trim();
-    if (!body || sending || readOnly || !sourceMessageId) return;
+    if (
+      !canSubmitChatResponseAnnotations(body, annotationState)
+      || sending
+      || readOnly
+      || !sourceMessageId
+    ) return;
+    const serializedAnnotations = serializeChatResponseAnnotations(annotationState);
     const createdAt = new Date();
+    let acknowledged = false;
     setSending(true);
     setSendError(null);
     setDraft("");
@@ -190,8 +255,8 @@ export function SideChatPanelView({
       state: "streaming",
       transcript: [],
     });
+    let conversationId = target.conversationId;
     try {
-      let conversationId = target.conversationId;
       if (!conversationId) {
         const createPromise = chatsApi.createSideChat(target.sourceConversationId, {
           sourceMessageId,
@@ -223,8 +288,26 @@ export function SideChatPanelView({
       streamAbortControllerRef.current = abortController;
       await chatsApi.sendMessageStream(conversationId, body, {
         signal: abortController.signal,
+        files: serializedAnnotations.files,
+        inlineAnnotations: serializedAnnotations.inlineAnnotations,
         onEvent: async (event) => {
-          if (event.type === "ack") appendMessage(conversationId!, event.userMessage);
+          if (event.type === "ack") {
+            acknowledged = true;
+            appendMessage(conversationId!, event.userMessage);
+            dispatchAnnotation({ type: "clear" });
+            setAnnotationsExpanded(false);
+            setEditingAnnotationId(null);
+            onReplaceTarget(
+              sidePanelTargetKey({ ...target, conversationId }),
+              {
+                ...target,
+                sourceMessageId,
+                sourcePreview,
+                conversationId,
+                inlineAnnotations: [],
+              },
+            );
+          }
           if (event.type === "assistant_delta") {
             setStream((current) => current ? { ...current, body: `${current.body}${event.delta}` } : current);
           }
@@ -243,7 +326,25 @@ export function SideChatPanelView({
             for (const message of event.messages) appendMessage(conversationId!, message);
             setStream(null);
           }
-          if (event.type === "error") throw new Error(event.error);
+          if (event.type === "error") {
+            if (!acknowledged && event.messageId) {
+              acknowledged = true;
+              dispatchAnnotation({ type: "clear" });
+              setAnnotationsExpanded(false);
+              setEditingAnnotationId(null);
+              onReplaceTarget(
+                sidePanelTargetKey({ ...target, conversationId }),
+                {
+                  ...target,
+                  sourceMessageId,
+                  sourcePreview,
+                  conversationId,
+                  inlineAnnotations: [],
+                },
+              );
+            }
+            throw new Error(event.error);
+          }
         },
       });
       await Promise.all([
@@ -252,7 +353,17 @@ export function SideChatPanelView({
       ]);
     } catch (error) {
       if (closeRequestedRef.current) return;
-      setDraft((current) => current || body);
+      if (!acknowledged) setDraft((current) => current || body);
+      if (acknowledged && conversationId) {
+        await Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.chats.detail(organizationId, conversationId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.chats.messages(organizationId, conversationId),
+          }),
+        ]).catch(() => undefined);
+      }
       setStream((current) => current ? { ...current, state: "failed" } : current);
       setSendError(error instanceof Error ? error.message : "Could not send this message.");
     } finally {
@@ -305,6 +416,7 @@ export function SideChatPanelView({
                     <StreamTranscriptItem
                       entries={transcript}
                       state={message.status}
+                      generationTerminalReason={message.generationTerminalReason}
                       streamStartedAt={new Date(message.createdAt)}
                       streamEndedAt={new Date(message.updatedAt)}
                       assistantMessageBody={message.body}
@@ -327,6 +439,7 @@ export function SideChatPanelView({
                     actionPending={false}
                     onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}
                     onOpenFile={noop}
+                    onSelectResponseAnnotation={onSelectResponseAnnotation}
                     skillReferences={EMPTY_SKILL_REFERENCES}
                   />
                 </div>
@@ -362,6 +475,90 @@ export function SideChatPanelView({
       {!readOnly ? (
         <div className="shrink-0 px-4 pb-4" data-testid="side-chat-composer">
           <div className="chat-composer mx-auto w-full max-w-4xl rounded-[var(--radius-lg)] p-3">
+            {annotationState.annotations.length > 0 ? (
+              <div
+                ref={annotationDetailsSurfaceRef}
+                className="mb-3 flex flex-col items-start gap-2"
+              >
+                <ResponseAnnotationCountChip
+                  count={annotationState.annotations.length}
+                  expanded={annotationsExpanded}
+                  buttonRef={annotationDetailsChipRef}
+                  onToggle={() => setAnnotationsExpanded((current) => !current)}
+                  onClear={() => {
+                    dispatchAnnotation({ type: "clear" });
+                    setAnnotationsExpanded(false);
+                    setEditingAnnotationId(null);
+                  }}
+                />
+                {annotationsExpanded ? (
+                  <EditableResponseAnnotationsCard
+                    annotations={annotationState.annotations}
+                    pendingFilesByAnnotationId={annotationState.pendingFilesByAnnotationId}
+                    onEdit={(annotation, anchor) => {
+                      editingAnnotationAnchorRef.current = anchor;
+                      setEditingAnnotationId(annotation.id);
+                    }}
+                    onDelete={(annotationId) => {
+                      dispatchAnnotation({ type: "delete", id: annotationId });
+                      setEditingAnnotationId((current) => (
+                        current === annotationId ? null : current
+                      ));
+                    }}
+                  />
+                ) : null}
+                {editingAnnotationId ? (() => {
+                  const annotation = annotationState.annotations.find(
+                    (candidate) => candidate.id === editingAnnotationId,
+                  );
+                  if (!annotation) return null;
+                  const editorAnchor = editingAnnotationAnchorRef.current;
+                  const editorBoundary = editorAnchor?.closest<HTMLElement>(
+                    '[data-testid="side-chat-panel-view"]',
+                  ) ?? null;
+                  return (
+                    <ResponseAnnotationEditor
+                      annotation={annotation}
+                      ordinal={annotation.ordinal}
+                      pendingFiles={annotationState.pendingFilesByAnnotationId[annotation.id] ?? []}
+                      anchorRect={editorAnchor?.getBoundingClientRect() ?? null}
+                      getAnchorRect={() => (
+                        editorAnchor?.isConnected ? editorAnchor.getBoundingClientRect() : null
+                      )}
+                      boundaryRect={editorBoundary?.getBoundingClientRect() ?? null}
+                      getBoundaryRect={() => (
+                        editorBoundary?.isConnected ? editorBoundary.getBoundingClientRect() : null
+                      )}
+                      returnFocusRef={editingAnnotationAnchorRef}
+                      validateSave={(changes) => validateChatResponseAnnotationReplacement(
+                        annotationState,
+                        annotation.id,
+                        {
+                          comment: changes.comment,
+                          attachmentIds: changes.attachmentIds,
+                          files: changes.pendingFiles,
+                        },
+                      )}
+                      onSave={({ comment, pendingFiles, attachmentIds }) => {
+                        dispatchAnnotation({
+                          type: "replaceDraft",
+                          id: annotation.id,
+                          comment,
+                          attachmentIds,
+                          files: pendingFiles,
+                        });
+                        setEditingAnnotationId(null);
+                      }}
+                      onCancel={() => setEditingAnnotationId(null)}
+                      onDelete={() => {
+                        dispatchAnnotation({ type: "delete", id: annotation.id });
+                        setEditingAnnotationId(null);
+                      }}
+                    />
+                  );
+                })() : null}
+              </div>
+            ) : null}
             <MarkdownEditor
               value={draft}
               onChange={setDraft}
@@ -392,7 +589,11 @@ export function SideChatPanelView({
                 type="button"
                 aria-label="Send Side Chat message"
                 className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:cursor-not-allowed disabled:opacity-45"
-                disabled={!draft.trim() || sending || noAnchor}
+                disabled={
+                  !canSubmitChatResponseAnnotations(draft, annotationState)
+                  || sending
+                  || noAnchor
+                }
                 onClick={() => void handleSend()}
               >
                 {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}

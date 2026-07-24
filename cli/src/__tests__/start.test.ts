@@ -1,11 +1,11 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { access, chmod, cp, mkdir, mkdtemp, readFile, readlink, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, cp, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Writable } from "node:stream";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   assertChecksumMatch,
@@ -117,8 +117,23 @@ async function writeFakePostgresRuntime(root: string): Promise<string> {
   await chmod(postgresPath, 0o755);
   await writeFile(path.join(root, "pgsql", "lib", "libpq.5.dylib"), "runtime lib", "utf8");
   await writeFile(path.join(root, "pgsql", "share", "postgresql", "postgres.bki"), "postgres template", "utf8");
-  await writeFile(path.join(root, "pgsql", "share", "postgresql", "postgres.description"), "postgres description", "utf8");
+  await writeFile(path.join(root, "pgsql", "share", "postgresql", "postgresql.conf.sample"), "postgres config template", "utf8");
   return binDir;
+}
+
+async function expectRuntimePostgresCompatibilityLink(
+  compatibilityRoot: string,
+  sharedRoot: string,
+): Promise<void> {
+  expect((await lstat(compatibilityRoot)).isSymbolicLink()).toBe(true);
+  expect(await realpath(compatibilityRoot)).toBe(await realpath(sharedRoot));
+  if (process.platform === "win32") {
+    expect(path.resolve(await readlink(compatibilityRoot))).toBe(path.resolve(sharedRoot));
+  } else {
+    expect(await readlink(compatibilityRoot)).toBe(
+      path.relative(path.dirname(compatibilityRoot), sharedRoot),
+    );
+  }
 }
 
 async function writeRuntimeCacheEntry(
@@ -816,7 +831,25 @@ describe("desktop start command helpers", () => {
     expect(runtimeSupportsDesktopShellAssets("0.3.1", {
       packageSpec: "@rudderhq/server@0.3.1",
       postgresPayloadBinDir: "/tmp/rudder/postgres-18.4/linux-x64/bin",
+      postgresRuntime: {
+        version: "18.4",
+        platform: "linux",
+        arch: "x64",
+        binDir: "/tmp/rudder/postgres-18.4/linux-x64/bin",
+        scope: "shared",
+      },
     })).toBe(true);
+    expect(runtimeSupportsDesktopShellAssets("0.3.1", {
+      packageSpec: "@rudderhq/server@0.3.1",
+      postgresPayloadBinDir: "/opt/postgres/18.4/bin",
+      postgresRuntime: {
+        version: "18.4",
+        platform: "linux",
+        arch: "x64",
+        binDir: "/opt/postgres/18.4/bin",
+        scope: "external",
+      },
+    })).toBe(false);
   });
 
   it("falls back to the full desktop asset when shell is not checksummed", () => {
@@ -1806,6 +1839,60 @@ describe("runtime install helpers", () => {
     }
   });
 
+  it("accepts a cache hit without embedded PostgreSQL after the shared 18.4 payload is verified", async () => {
+    const platformPackage = currentEmbeddedPostgresPlatformPackage();
+    if (!platformPackage) return;
+
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-shared-platform-cache-test."));
+    try {
+      const cacheDir = resolveRuntimeCacheDir("1.2.3", root);
+      const packageDir = path.join(cacheDir, "node_modules", "@rudderhq", "server");
+      const embeddedDir = path.join(cacheDir, "node_modules", "embedded-postgres");
+      const sourceBinDir = await writeFakePostgresRuntime(path.join(root, "source"));
+      const sharedBinDir = resolveSharedRuntimePostgresPayloadBinDir(root);
+      await mkdir(path.dirname(sharedBinDir), { recursive: true });
+      await cp(path.dirname(sourceBinDir), path.dirname(sharedBinDir), { recursive: true });
+      await mkdir(packageDir, { recursive: true });
+      await mkdir(embeddedDir, { recursive: true });
+      await writeFile(path.join(cacheDir, "package.json"), JSON.stringify({ private: true }), "utf8");
+      await writeFile(path.join(packageDir, "package.json"), JSON.stringify({ name: "@rudderhq/server", version: "1.2.3" }), "utf8");
+      await writeFile(path.join(embeddedDir, "package.json"), JSON.stringify({
+        name: "embedded-postgres",
+        version: "18.1.0-beta.16",
+        optionalDependencies: { [platformPackage]: "18.1.0-beta.16" },
+      }), "utf8");
+      await writeFile(path.join(cacheDir, RUNTIME_METADATA_FILE), JSON.stringify({
+        version: 1,
+        packageName: "@rudderhq/server",
+        packageVersion: "1.2.3",
+        installedAt: "now",
+        postgresRuntime: {
+          version: "18.4",
+          platform: process.platform,
+          arch: process.arch,
+          binDir: sharedBinDir,
+          scope: "shared",
+        },
+      }), "utf8");
+      const spawnSyncImpl = vi.fn();
+
+      await expect(ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+        preparePostgresPayload: true,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        pruneRuntimeCache: false,
+      })).resolves.toMatchObject({
+        status: "hit",
+        postgresPayloadBinDir: sharedBinDir,
+      });
+      expect(spawnSyncImpl).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("includes npm output and retry command when runtime installation fails", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-fail-test."));
     try {
@@ -1862,8 +1949,19 @@ describe("runtime install helpers", () => {
   it("stages a complete PostgreSQL payload for layered Desktop shell assets", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-postgres-payload-test."));
     const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
     try {
       process.env.RUDDER_POSTGRES_BIN_DIR = await writeFakePostgresRuntime(root);
+      process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = process.env.RUDDER_POSTGRES_BIN_DIR;
+      const otherPlatformMarker = path.join(
+        root,
+        "runtime-payloads",
+        "postgres-18.4",
+        "other-platform",
+        "marker",
+      );
+      await mkdir(path.dirname(otherPlatformMarker), { recursive: true });
+      await writeFile(otherPlatformMarker, "preserve");
       const spawnSyncImpl = vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" }));
 
       const result = await ensureRuntimeInstalled({
@@ -1874,16 +1972,146 @@ describe("runtime install helpers", () => {
         preparePostgresPayload: true,
       });
 
-      const payloadBinDir = resolveRuntimePostgresPayloadBinDir(result.cacheDir);
+      const payloadBinDir = resolveSharedRuntimePostgresPayloadBinDir(root);
+      const compatibilityBinDir = resolveRuntimePostgresPayloadBinDir(result.cacheDir);
       expect(result.postgresPayloadBinDir).toBe(payloadBinDir);
       await expect(access(path.join(payloadBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"))).resolves.toBeUndefined();
       await expect(access(path.join(payloadBinDir, "..", "share", "postgresql", "postgres.bki"))).resolves.toBeUndefined();
-      await expect(access(path.join(payloadBinDir, "..", "share", "postgresql", "postgres.description"))).resolves.toBeUndefined();
+      await expect(access(path.join(payloadBinDir, "..", "share", "postgresql", "postgresql.conf.sample"))).resolves.toBeUndefined();
+      await expect(access(path.join(compatibilityBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"))).resolves.toBeUndefined();
+      await expect(readFile(otherPlatformMarker, "utf8")).resolves.toBe("preserve");
+      await expectRuntimePostgresCompatibilityLink(
+        path.join(result.cacheDir, "postgres-18.4"),
+        path.join(root, "runtime-payloads", "postgres-18.4"),
+      );
+      expect(await readRuntimeInstallMetadata(result.cacheDir)).toMatchObject({
+        postgresRuntime: {
+          version: "18.4",
+          platform: process.platform,
+          arch: process.arch,
+          binDir: payloadBinDir,
+          scope: "shared",
+        },
+      });
     } finally {
       if (previousPostgresBinDir === undefined) {
         delete process.env.RUDDER_POSTGRES_BIN_DIR;
       } else {
         process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      }
+      if (previousManagedPostgresBinDir === undefined) {
+        delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      } else {
+        process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not replace a legacy payload used by a live descriptor without PostgreSQL metadata", async () => {
+    if (process.platform === "win32") return;
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-live-legacy-postgres-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    try {
+      delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      const sourceBinDir = await writeFakePostgresRuntime(path.join(root, "source"));
+      const sharedBinDir = resolveSharedRuntimePostgresPayloadBinDir(root);
+      await mkdir(path.dirname(sharedBinDir), { recursive: true });
+      await cp(path.dirname(sourceBinDir), path.dirname(sharedBinDir), { recursive: true });
+
+      const cacheDir = resolveRuntimeCacheDir("1.2.3", root);
+      writeRuntimePackageSync(cacheDir, "@rudderhq/server", "1.2.3");
+      const compatibilityRoot = path.join(cacheDir, "postgres-18.4");
+      await cp(path.join(root, "source", "pgsql"), path.join(
+        compatibilityRoot,
+        `${process.platform}-${process.arch}`,
+      ), { recursive: true });
+      const descriptorDir = path.join(root, "instances", "legacy", "runtime");
+      await mkdir(descriptorDir, { recursive: true });
+      await writeFile(path.join(descriptorDir, "server.json"), JSON.stringify({
+        instanceId: "legacy",
+        pid: process.pid,
+        version: "1.2.3",
+      }));
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })) as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      });
+
+      expect(result.postgresPayloadBinDir).toBe(sharedBinDir);
+      expect((await lstat(compatibilityRoot)).isDirectory()).toBe(true);
+    } finally {
+      if (previousPostgresBinDir === undefined) {
+        delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      } else {
+        process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not repair a shared payload through a compatibility link used by a live runtime", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-live-shared-link-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+    try {
+      delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      const sharedSourceBinDir = await writeFakePostgresRuntime(path.join(root, "shared-source"));
+      const sharedBinDir = resolveSharedRuntimePostgresPayloadBinDir(root);
+      await mkdir(path.dirname(sharedBinDir), { recursive: true });
+      await cp(path.dirname(sharedSourceBinDir), path.dirname(sharedBinDir), { recursive: true });
+      const liveMarker = path.join(sharedBinDir, "live-generation");
+      await writeFile(liveMarker, "keep");
+      await rm(path.join(sharedBinDir, "..", "share", "postgresql", "postgresql.conf.sample"));
+
+      const liveRuntimeDir = resolveRuntimeCacheDir("1.2.3", root);
+      await mkdir(liveRuntimeDir, { recursive: true });
+      const compatibilityRoot = path.join(liveRuntimeDir, "postgres-18.4");
+      const sharedRoot = path.join(root, "runtime-payloads", "postgres-18.4");
+      await symlink(
+        process.platform === "win32"
+          ? sharedRoot
+          : path.relative(path.dirname(compatibilityRoot), sharedRoot),
+        compatibilityRoot,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      const descriptorDir = path.join(root, "instances", "live", "runtime");
+      await mkdir(descriptorDir, { recursive: true });
+      await writeFile(path.join(descriptorDir, "server.json"), JSON.stringify({
+        instanceId: "live",
+        pid: process.pid,
+        version: "1.2.3",
+        postgresBinDir: resolveRuntimePostgresPayloadBinDir(liveRuntimeDir),
+      }));
+
+      const legacySourceDir = resolveRuntimeCacheDir("legacy-source", root);
+      const repairSourceBinDir = await writeFakePostgresRuntime(path.join(root, "repair-source"));
+      const legacyBinDir = resolveRuntimePostgresPayloadBinDir(legacySourceDir);
+      await mkdir(path.dirname(legacyBinDir), { recursive: true });
+      await cp(path.dirname(repairSourceBinDir), path.dirname(legacyBinDir), { recursive: true });
+
+      await expect(ensureRuntimeInstalled({
+        version: "1.2.4",
+        homeDir: root,
+        spawnSyncImpl: vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" })) as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      })).rejects.toThrow("Refusing to replace a damaged shared PostgreSQL payload");
+      await expect(readFile(liveMarker, "utf8")).resolves.toBe("keep");
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      if (previousManagedPostgresBinDir === undefined) {
+        delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      } else {
+        process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
       }
       await rm(root, { recursive: true, force: true });
     }
@@ -1908,16 +2136,359 @@ describe("runtime install helpers", () => {
         preparePostgresPayload: true,
       });
 
-      const payloadBinDir = resolveRuntimePostgresPayloadBinDir(result.cacheDir);
+      const payloadBinDir = resolveSharedRuntimePostgresPayloadBinDir(root);
       expect(result.postgresPayloadBinDir).toBe(payloadBinDir);
-      expect(result.output).toContain("staged PostgreSQL 18.4 runtime payload");
+      expect(result.output).not.toContain("staged PostgreSQL 18.4 runtime payload");
       await expect(access(path.join(payloadBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"))).resolves.toBeUndefined();
       await expect(access(path.join(payloadBinDir, "..", "share", "postgresql", "postgres.bki"))).resolves.toBeUndefined();
+      await expectRuntimePostgresCompatibilityLink(
+        path.join(result.cacheDir, "postgres-18.4"),
+        path.join(root, "runtime-payloads", "postgres-18.4"),
+      );
     } finally {
       if (previousPostgresBinDir === undefined) {
         delete process.env.RUDDER_POSTGRES_BIN_DIR;
       } else {
         process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shares one PostgreSQL payload across consecutive Rudder runtime versions", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-shared-postgres-versions-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+    try {
+      process.env.RUDDER_POSTGRES_BIN_DIR = await writeFakePostgresRuntime(path.join(root, "source"));
+      process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = process.env.RUDDER_POSTGRES_BIN_DIR;
+      const spawnSyncImpl = vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" }));
+
+      const first = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      });
+      delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      const second = await ensureRuntimeInstalled({
+        version: "1.2.4",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      });
+
+      const sharedBinDir = resolveSharedRuntimePostgresPayloadBinDir(root);
+      expect(first.postgresPayloadBinDir).toBe(sharedBinDir);
+      expect(second.postgresPayloadBinDir).toBe(sharedBinDir);
+      await expectRuntimePostgresCompatibilityLink(
+        path.join(first.cacheDir, "postgres-18.4"),
+        path.join(root, "runtime-payloads", "postgres-18.4"),
+      );
+      await expectRuntimePostgresCompatibilityLink(
+        path.join(second.cacheDir, "postgres-18.4"),
+        path.join(root, "runtime-payloads", "postgres-18.4"),
+      );
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      if (previousManagedPostgresBinDir === undefined) {
+        delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      } else {
+        process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes concurrent shared payload preparation and leaves no partial state", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-concurrent-shared-postgres-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+    try {
+      process.env.RUDDER_POSTGRES_BIN_DIR = await writeFakePostgresRuntime(path.join(root, "source"));
+      process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = process.env.RUDDER_POSTGRES_BIN_DIR;
+      const install = (version: string) => ensureRuntimeInstalled({
+        version,
+        homeDir: root,
+        spawnSyncImpl: vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" })) as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      });
+
+      const [first, second] = await Promise.all([install("1.2.3"), install("1.2.4")]);
+      const sharedBinDir = resolveSharedRuntimePostgresPayloadBinDir(root);
+      expect(first.postgresPayloadBinDir).toBe(sharedBinDir);
+      expect(second.postgresPayloadBinDir).toBe(sharedBinDir);
+      await expect(access(path.join(sharedBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"))).resolves.toBeUndefined();
+      const payloadEntries = await readdir(path.join(root, "runtime-payloads"), { recursive: true });
+      expect(payloadEntries.some((entry) => entry.includes(".tmp-") || entry.endsWith(".lock"))).toBe(false);
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      if (previousManagedPostgresBinDir === undefined) delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers an interrupted shared payload publish and removes stale generations", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-recover-shared-postgres-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+    try {
+      process.env.RUDDER_POSTGRES_BIN_DIR = await writeFakePostgresRuntime(path.join(root, "source"));
+      process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = process.env.RUDDER_POSTGRES_BIN_DIR;
+      const install = (version: string) => ensureRuntimeInstalled({
+        version,
+        homeDir: root,
+        spawnSyncImpl: vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" })) as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      });
+      await install("1.2.3");
+
+      const sharedBinDir = resolveSharedRuntimePostgresPayloadBinDir(root);
+      const sharedPlatformRoot = path.dirname(sharedBinDir);
+      const previousRoot = `${sharedPlatformRoot}.previous-crash`;
+      const temporaryRoot = `${sharedPlatformRoot}.tmp-crash`;
+      await cp(sharedPlatformRoot, previousRoot, { recursive: true });
+      await writeFile(path.join(previousRoot, "restored-marker"), "restored");
+      await rm(path.join(sharedPlatformRoot, "share", "postgresql", "postgresql.conf.sample"));
+      await mkdir(temporaryRoot, { recursive: true });
+      await writeFile(path.join(temporaryRoot, "stale-marker"), "stale");
+
+      await install("1.2.4");
+
+      await expect(readFile(path.join(sharedPlatformRoot, "restored-marker"), "utf8")).resolves.toBe("restored");
+      await expect(access(previousRoot)).rejects.toThrow();
+      await expect(access(temporaryRoot)).rejects.toThrow();
+
+      const healthyPreviousRoot = `${sharedPlatformRoot}.previous-after-publish`;
+      const staleDownloadRoot = path.join(
+        root,
+        "runtime-payloads",
+        ".downloads",
+        "postgres-18.4-crashed",
+      );
+      await cp(sharedPlatformRoot, healthyPreviousRoot, { recursive: true });
+      await mkdir(staleDownloadRoot, { recursive: true });
+      await writeFile(path.join(staleDownloadRoot, "archive.part"), "partial");
+
+      await install("1.2.5");
+
+      await expect(access(healthyPreviousRoot)).rejects.toThrow();
+      await expect(access(staleDownloadRoot)).rejects.toThrow();
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      if (previousManagedPostgresBinDir === undefined) delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("migrates a valid legacy runtime payload when no PostgreSQL override is inherited", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-legacy-postgres-scan-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+    try {
+      delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      const legacyCacheDir = resolveRuntimeCacheDir("1.2.2", root);
+      const legacyBinDir = resolveRuntimePostgresPayloadBinDir(legacyCacheDir);
+      const sourceBinDir = await writeFakePostgresRuntime(path.join(root, "legacy-source"));
+      await mkdir(path.dirname(legacyBinDir), { recursive: true });
+      await cp(path.dirname(sourceBinDir), path.dirname(legacyBinDir), { recursive: true });
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" })) as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      });
+
+      expect(result.postgresPayloadBinDir).toBe(resolveSharedRuntimePostgresPayloadBinDir(root));
+      await expectRuntimePostgresCompatibilityLink(
+        path.join(result.cacheDir, "postgres-18.4"),
+        path.join(root, "runtime-payloads", "postgres-18.4"),
+      );
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      if (previousManagedPostgresBinDir === undefined) delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("downloads PostgreSQL 18.4 once when no managed payload exists", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-download-postgres-test."));
+    const archiveSource = path.join(root, "archive-source");
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+    const previousArchiveUrl = process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL;
+    try {
+      delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      await writeFakePostgresRuntime(archiveSource);
+      const archivePath = path.join(root, "postgresql-18.4.zip");
+      const archiveResult = spawnSync("tar", ["-cf", archivePath, "pgsql"], {
+        cwd: archiveSource,
+        encoding: "utf8",
+      });
+      expect(archiveResult.status).toBe(0);
+      process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL = pathToFileURL(archivePath).href;
+      const install = (version: string) => ensureRuntimeInstalled({
+        version,
+        homeDir: path.join(root, "home"),
+        spawnSyncImpl: vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" })) as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      });
+
+      const first = await install("1.2.3");
+      await rm(archivePath, { force: true });
+      const second = await install("1.2.4");
+
+      expect(first.postgresPayloadBinDir).toBe(second.postgresPayloadBinDir);
+      await expect(access(first.postgresPayloadBinDir!)).resolves.toBeUndefined();
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      if (previousManagedPostgresBinDir === undefined) delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
+      if (previousArchiveUrl === undefined) delete process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL;
+      else process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL = previousArchiveUrl;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the embedded PostgreSQL fallback until packaged health verification", async () => {
+    const platformPackage = currentEmbeddedPostgresPlatformPackage();
+    if (!platformPackage) return;
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-selective-platform-cleanup-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+    try {
+      process.env.RUDDER_POSTGRES_BIN_DIR = await writeFakePostgresRuntime(path.join(root, "source"));
+      process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = process.env.RUDDER_POSTGRES_BIN_DIR;
+      const spawnSyncImpl = vi.fn((_command, args: string[]) => {
+        const prefixIndex = args.indexOf("--prefix");
+        const cacheDir = args[prefixIndex + 1];
+        writeRuntimePackageSync(cacheDir, "@rudderhq/server", "1.2.3");
+        writeRuntimePackageSync(cacheDir, "embedded-postgres", "18.1.0-beta.16");
+        writeRuntimePackageSync(cacheDir, platformPackage, "18.1.0-beta.16");
+        writeRuntimePackageSync(cacheDir, "@img/sharp-darwin-arm64", "0.34.0");
+        return { status: 0, stdout: "added runtime", stderr: "" };
+      });
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      });
+
+      await expect(access(path.join(result.cacheDir, "node_modules", ...platformPackage.split("/"), "package.json"))).resolves.toBeUndefined();
+      await expect(access(path.join(result.cacheDir, "node_modules", "@img", "sharp-darwin-arm64", "package.json"))).resolves.toBeUndefined();
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      if (previousManagedPostgresBinDir === undefined) delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps an explicit operator PostgreSQL path external to managed caches", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-external-postgres-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+    try {
+      const externalBinDir = await writeFakePostgresRuntime(path.join(root, "external"));
+      process.env.RUDDER_POSTGRES_BIN_DIR = externalBinDir;
+      delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: path.join(root, "home"),
+        spawnSyncImpl: vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" })) as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      });
+
+      expect(result.postgresPayloadBinDir).toBe(externalBinDir);
+      await expect(access(path.join(root, "home", "runtime-payloads", "postgres-18.4"))).rejects.toThrow();
+      await expect(access(path.join(result.cacheDir, "postgres-18.4"))).rejects.toThrow();
+      expect(await readRuntimeInstallMetadata(result.cacheDir)).toMatchObject({
+        postgresRuntime: {
+          version: "18.4",
+          binDir: externalBinDir,
+          scope: "external",
+        },
+      });
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      if (previousManagedPostgresBinDir === undefined) {
+        delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      } else {
+        process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps an operator PostgreSQL path under runtimes external unless it has the managed layout", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-nested-external-postgres-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+    try {
+      const homeDir = path.join(root, "home");
+      const externalBinDir = await writeFakePostgresRuntime(
+        path.join(homeDir, "runtimes", "operator-owned-pg"),
+      );
+      process.env.RUDDER_POSTGRES_BIN_DIR = externalBinDir;
+      delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir,
+        spawnSyncImpl: vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" })) as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      });
+
+      expect(result.postgresPayloadBinDir).toBe(externalBinDir);
+      await expect(access(path.join(homeDir, "runtime-payloads", "postgres-18.4"))).rejects.toThrow();
+      expect(await readRuntimeInstallMetadata(result.cacheDir)).toMatchObject({
+        postgresRuntime: {
+          binDir: externalBinDir,
+          scope: "external",
+        },
+      });
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      if (previousManagedPostgresBinDir === undefined) {
+        delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      } else {
+        process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
       }
       await rm(root, { recursive: true, force: true });
     }
@@ -2167,6 +2738,50 @@ describe("runtime install helpers", () => {
       expect(result.packageSpec).toBe("@rudderhq/server@latest");
       expect(result.cacheDir).toBe(fallbackCacheDir);
       expect(spawnSyncImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes concurrent exact-version misses through the shared latest cache", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-concurrent-fallback-test."));
+    try {
+      let latestInstallCount = 0;
+      const spawnSyncImpl = vi.fn((_command, args: string[]) => {
+        const packageSpec = args.at(-1);
+        if (packageSpec !== "@rudderhq/server@latest") {
+          return {
+            status: 1,
+            stdout: "",
+            stderr: `npm error code ETARGET\nNo matching version found for ${packageSpec}.`,
+          };
+        }
+        latestInstallCount += 1;
+        const cacheDir = args[args.indexOf("--prefix") + 1];
+        writeRuntimePackageSync(cacheDir, "@rudderhq/server", "9.9.9");
+        return { status: 0, stdout: "added latest runtime", stderr: "" };
+      });
+
+      const [first, second] = await Promise.all([
+        ensureRuntimeInstalled({
+          version: "1.2.3-missing",
+          homeDir: root,
+          spawnSyncImpl: spawnSyncImpl as never,
+          pruneRuntimeCache: false,
+        }),
+        ensureRuntimeInstalled({
+          version: "1.2.4-missing",
+          homeDir: root,
+          spawnSyncImpl: spawnSyncImpl as never,
+          pruneRuntimeCache: false,
+        }),
+      ]);
+
+      expect(latestInstallCount).toBe(1);
+      expect([first.status, second.status].sort()).toEqual(["hit", "installed"]);
+      expect(first.cacheDir).toBe(resolveRuntimeCacheDir("latest", root));
+      expect(second.cacheDir).toBe(resolveRuntimeCacheDir("latest", root));
+      await expect(access(`${resolveRuntimeCacheDir("latest", root)}.install.lock`)).rejects.toThrow();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

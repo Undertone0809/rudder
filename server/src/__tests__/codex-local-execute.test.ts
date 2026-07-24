@@ -157,6 +157,16 @@ const writeInlineVisual = (threadId) => {
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   const message = JSON.parse(line);
+  if (
+    process.env.RUDDER_TEST_PROTOCOL_CAPTURE_PATH
+    && ["thread/start", "thread/resume", "turn/start"].includes(message.method)
+  ) {
+    fs.appendFileSync(
+      process.env.RUDDER_TEST_PROTOCOL_CAPTURE_PATH,
+      JSON.stringify(message) + "\\n",
+      "utf8",
+    );
+  }
   if (message.method === "initialized") return;
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake", platformFamily: "unix", platformOs: "macos" } });
@@ -253,6 +263,12 @@ async function writeBenignStderrCodexCommand(commandPath: string): Promise<void>
 process.stdin.resume();
 process.stdin.on("end", () => {
   process.stderr.write("2026-04-13T09:25:56.430513Z  WARN codex_core::shell_snapshot: Failed to delete shell snapshot at \\"/Users/test/.codex/shell_snapshots/019d8629-6e4c-7381-8538-7f93b18408cc.tmp-1776072355418943000\\": Os { code: 2, kind: NotFound, message: \\"No such file or directory\\" }\\n");
+  process.stderr.write("real stderr before\\n");
+  process.stderr.write("  in-process app-server event stream lag");
+  process.stderr.write("ged; dropped 42 events\\n");
+  process.stderr.write("x".repeat(70 * 1024));
+  process.stderr.write("real stderr after");
+  process.stderr.write("\\nauth failed: in-process app-server event stream lagged; dropped 9 events\\n");
   console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
   console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
   console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
@@ -507,6 +523,14 @@ type LogEntry = {
   chunk: string;
 };
 
+async function readProtocolRequests(capturePath: string): Promise<Array<Record<string, unknown>>> {
+  const content = await fs.readFile(capturePath, "utf8");
+  return content
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 function managedCodexHomePath(input: {
   rudderHome: string;
   instanceId?: string;
@@ -629,6 +653,158 @@ describe("codex execute", { timeout: 20_000 }, () => {
       const argv = JSON.parse(await fs.readFile(capturePath, "utf8")) as string[];
       expect(argv).toContain("app-server");
       expect(argv).not.toContain("exec");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["-s read-only", ["-s", "read-only"]],
+    ["--sandbox read-only", ["--sandbox", "read-only"]],
+    ["--sandbox=read-only", ["--sandbox=read-only"]],
+  ])("keeps the standard Codex chat on native App Server with %s", async (_label, extraArgs) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-server-read-only-"));
+    const workspace = path.join(root, "workspace");
+    const binDir = path.join(root, "bin");
+    const commandPath = path.join(binDir, "codex");
+    const capturePath = path.join(root, "capture.json");
+    const protocolCapturePath = path.join(root, "protocol.ndjson");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(binDir, { recursive: true });
+    await writeFakeCodexAppServerCommand(commandPath);
+
+    let controlCapabilities: AgentRuntimeControlHandle["capabilities"] | null = null;
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const result = await execute({
+        runId: "run-chat-app-server-read-only",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: "codex",
+          cwd: workspace,
+          env: {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+            RUDDER_TEST_PROTOCOL_CAPTURE_PATH: protocolCapturePath,
+          },
+          promptTemplate: "Inspect and plan.",
+          extraArgs,
+        },
+        context: {
+          rudderScene: "chat",
+          chatMode: true,
+        },
+        controlAttempt: {
+          attemptEpoch: 1,
+          ownerToken: "read-only-owner",
+          async register(handle) {
+            controlCapabilities = handle.capabilities;
+            return {
+              isCurrent: () => true,
+              async release() {},
+            };
+          },
+          async complete() {},
+        },
+        onLog: async () => undefined,
+      });
+
+      expect(result).toMatchObject({
+        exitCode: 0,
+        summary: "hello",
+        resultJson: { transport: "codex_app_server" },
+      });
+      expect(controlCapabilities).toEqual({ steer: "native", interrupt: "native" });
+      const argv = JSON.parse(await fs.readFile(capturePath, "utf8")) as string[];
+      expect(argv).toContain("app-server");
+      expect(argv).not.toContain("exec");
+      const requests = await readProtocolRequests(protocolCapturePath);
+      expect(requests).toEqual([
+        expect.objectContaining({
+          method: "thread/start",
+          params: expect.objectContaining({ sandbox: "read-only" }),
+        }),
+        expect.objectContaining({
+          method: "turn/start",
+          params: expect.objectContaining({ sandboxPolicy: { type: "readOnly" } }),
+        }),
+      ]);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["unsupported custom CLI args", { extraArgs: ["--profile", "custom"] }],
+    ["a non-read-only sandbox", { extraArgs: ["--sandbox", "workspace-write"] }],
+    ["explicit App Server disablement", { chatAppServerEnabled: false }],
+  ])("keeps codex exec fallback for %s", async (_label, configOverride) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-server-fallback-"));
+    const workspace = path.join(root, "workspace");
+    const binDir = path.join(root, "bin");
+    const commandPath = path.join(binDir, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(binDir, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const result = await execute({
+        runId: "run-chat-app-server-fallback",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: "codex",
+          cwd: workspace,
+          env: {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Reply in chat.",
+          ...configOverride,
+        },
+        context: {
+          rudderScene: "chat",
+          chatMode: true,
+        },
+        onLog: async () => undefined,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.resultJson).not.toMatchObject({ transport: "codex_app_server" });
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.argv).toContain("exec");
+      expect(capture.argv).not.toContain("app-server");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -3124,10 +3300,14 @@ describe("codex execute", { timeout: 20_000 }, () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
-      expect(result.resultJson).toMatchObject({
-        stderr: "",
-      });
-      expect(logs.some((entry) => entry.stream === "stderr")).toBe(false);
+      expect(result.resultJson?.stderr).toContain("real stderr before");
+      expect(result.resultJson?.stderr).toContain("real stderr after");
+      expect(result.resultJson?.stderr).not.toMatch(/^\s*in-process app-server event stream lagged; dropped \d+ events\s*$/m);
+      expect(result.resultJson?.stderr).toContain("auth failed: in-process app-server event stream lagged; dropped 9 events");
+      expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("real stderr before"))).toBe(true);
+      expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("real stderr after"))).toBe(true);
+      expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("auth failed: in-process"))).toBe(true);
+      expect(logs.filter((entry) => entry.stream === "stderr").every((entry) => entry.chunk.length <= 64 * 1024)).toBe(true);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

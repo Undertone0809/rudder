@@ -45,6 +45,47 @@ export interface ChatAttachment {
   contentPath: string;
 }
 
+export type ChatInlineAnnotationSurface = "assistant_body" | "process_transcript";
+export type ChatInlineAnnotationTranscriptKind = "thinking" | "assistant";
+
+interface ChatInlineAnnotationBase {
+  id: string;
+  selectedText: string;
+  comment?: string | null;
+  sourceConversationId: string;
+  sourceMessageId: string;
+  sourceHash: string;
+  start: number;
+  end: number;
+  prefix: string;
+  suffix: string;
+}
+
+type ChatInlineAnnotationProvenance =
+  | {
+    surface: "assistant_body";
+    transcriptKind?: never;
+    generationId?: never;
+    generationSeqStart?: never;
+    generationSeqEnd?: never;
+  }
+  | {
+    surface: "process_transcript";
+    transcriptKind: ChatInlineAnnotationTranscriptKind;
+    generationId: string;
+    generationSeqStart: number;
+    generationSeqEnd: number;
+  };
+
+export type ChatInlineAnnotation = ChatInlineAnnotationBase & ChatInlineAnnotationProvenance & {
+  attachmentIds: string[];
+};
+
+export type ChatInlineAnnotationInput = ChatInlineAnnotationBase & ChatInlineAnnotationProvenance & {
+  attachmentIds?: string[];
+  attachmentFileIndexes?: number[];
+};
+
 export interface ChatPrimaryIssueSummary {
   id: string;
   identifier: string | null;
@@ -188,6 +229,7 @@ export type ChatSteerResult =
 export interface ChatQueuedMessagePayload {
   body: string;
   attachmentIds?: string[];
+  inlineAnnotations?: ChatInlineAnnotation[];
   projectId?: string | null;
   skillRefs?: string[];
   accessMode?: string | null;
@@ -205,6 +247,7 @@ export interface ChatQueuedMessage {
   version: number;
   clientMutationId: string;
   payload: ChatQueuedMessagePayload;
+  annotationCount?: number;
   requestActor?: ChatQueueRequestActor | null;
   deliveryIntent: ChatQueueDeliveryIntent;
   deliveryDisposition: ChatControlDisposition | null;
@@ -420,6 +463,8 @@ export interface ChatMessage {
   runId?: string | null;
   /** Chat generation that owns this assistant message and its Work Transcript. */
   generationId?: string | null;
+  /** Terminal reason of the owning generation, when the message belongs to one. */
+  generationTerminalReason?: string | null;
   /** Agent whose runtime produced this assistant message. */
   replyingAgentId: string | null;
   /** Groups user+assistant rows for one logical turn; new variant on edit/regenerate. */
@@ -532,9 +577,21 @@ export interface ChatOperationProposalDecision {
   decidedAt: string | null;
 }
 
+export interface ChatTranscriptGenerationProvenance {
+  generationId: string;
+  generationSeqStart: number;
+  generationSeqEnd: number;
+}
+
+export type ChatStreamTranscriptTextEntry = {
+  kind: "assistant" | "thinking";
+  ts: string;
+  text: string;
+  delta?: boolean;
+} & Partial<ChatTranscriptGenerationProvenance>;
+
 export type ChatStreamTranscriptEntry =
-  | { kind: "assistant"; ts: string; text: string; delta?: boolean }
-  | { kind: "thinking"; ts: string; text: string; delta?: boolean }
+  | ChatStreamTranscriptTextEntry
   | { kind: "user"; ts: string; text: string }
   | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string }
   | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean }
@@ -594,6 +651,11 @@ export interface ChatStreamFinalEvent {
 export interface ChatStreamErrorEvent {
   type: "error";
   error: string;
+  /**
+   * Durable message associated with the failure. Before the stream's ack event,
+   * this is the committed user message receipt; after ack it identifies the
+   * persisted failed assistant message.
+   */
   messageId?: string | null;
 }
 

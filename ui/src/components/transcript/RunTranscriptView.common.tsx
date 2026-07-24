@@ -1,3 +1,9 @@
+import {
+  isInternalChatTranscriptLifecycleEntry,
+  type ChatInlineAnnotation,
+  type ChatInlineAnnotationInput,
+  type ChatMessage,
+} from "@rudderhq/shared";
 import type { LucideIcon } from "lucide-react";
 import {
   Boxes,
@@ -113,6 +119,35 @@ export interface RunTranscriptViewProps {
   onOpenFile?: (targetPath: string, label: string) => void;
   /** Inspect a spawned Codex sub-agent in the read-only Side Panel. */
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  /** Stable owning assistant message for selectable persisted Process prose. */
+  annotationSource?: TranscriptAnnotationSourceContext;
+  /** Read-only annotations attached to user Steer messages embedded in Process. */
+  sentAnnotationContext?: TranscriptSentAnnotationContext;
+}
+
+export interface TranscriptAnnotationSourceContext {
+  sourceConversationId: string;
+  sourceMessageId: string;
+  annotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
+  onActivateAnnotation?: (
+    annotationId: string,
+    anchor: HTMLButtonElement,
+  ) => void;
+}
+
+export interface TranscriptSentAnnotationContext {
+  onSelect?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+  onExpandedChange?: (
+    annotations: ChatInlineAnnotation[],
+    expanded: boolean,
+  ) => void;
+  unlocatableAnnotationId?: string | null;
+}
+
+export interface TranscriptGenerationProvenance {
+  generationId: string;
+  generationSeqStart: number;
+  generationSeqEnd: number;
 }
 
 export interface TranscriptAgentInspection {
@@ -134,16 +169,17 @@ export type TranscriptBlock =
       source?: "steer";
       messageId?: string;
       controlActionId?: string;
+      steerMessage?: ChatMessage;
       ts: string;
       text: string;
       streaming: boolean;
-    }
+    } & Partial<TranscriptGenerationProvenance>
   | {
       type: "thinking";
       ts: string;
       text: string;
       streaming: boolean;
-    }
+    } & Partial<TranscriptGenerationProvenance>
   | {
       type: "tool";
       ts: string;
@@ -346,11 +382,7 @@ export function compactWhitespace(value: string): string {
 
 export function isInternalTranscriptLifecycleEntry(entry: TranscriptEntry): boolean {
   if (entry.kind !== "system") return false;
-  const text = compactWhitespace(entry.text).toLowerCase();
-  return text === "reasoning started"
-    || text === "reasoning completed"
-    || /^item (?:started|completed): reasoning(?:\s+\([^)]*\))?$/.test(text)
-    || /^item (?:started|completed): user[_-]?message(?:\s+\([^)]*\))?$/.test(text);
+  return isInternalChatTranscriptLifecycleEntry(entry);
 }
 
 export function isTurnStartedText(value: string): boolean {

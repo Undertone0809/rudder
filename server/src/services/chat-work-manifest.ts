@@ -11,8 +11,10 @@ import {
   type Db,
 } from "@rudderhq/db";
 import {
+  chatInlineAnnotationsFromStructuredPayload,
   chatInlineVisualMappingsFromStructuredPayload,
   extractVisibleChatWorkTargets,
+  isUuidLike,
   normalizeChatWorkExternalUrl,
   preferChatWorkManifestCategory,
   rudderInlineVisualMappingsFromStructuredPayload,
@@ -21,7 +23,7 @@ import {
   type ChatWorkManifestResponse,
   type ChatWorkManifestTargetType,
 } from "@rudderhq/shared";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 
 type ManifestCandidate = {
   orgId: string;
@@ -153,6 +155,10 @@ export function chatWorkManifestService(db: Db) {
     const candidates = new Map<string, ManifestCandidate>();
     for (const message of visibleMessages) {
       const role = message.role as "user" | "assistant";
+      const annotationAttachmentIds = new Set(
+        chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)
+          .flatMap((annotation) => annotation.attachmentIds),
+      );
       for (const target of extractVisibleChatWorkTargets(message.body)) {
         const output = role === "assistant" && Boolean(message.runId) &&
           (target.targetType === "library_entry" || target.targetType === "library_file") &&
@@ -180,6 +186,7 @@ export function chatWorkManifestService(db: Db) {
         });
       }
       for (const attachment of attachmentsByMessage.get(message.id) ?? []) {
+        if (annotationAttachmentIds.has(attachment.attachmentId)) continue;
         if (inlineVisualTargetKeys.has(`asset:${attachment.assetId}`)) continue;
         const output = role === "assistant" && Boolean(attachment.createdByAgentId);
         mergeCandidate(candidates, {
@@ -252,6 +259,39 @@ export function chatWorkManifestService(db: Db) {
             },
           });
         }
+      }
+    }
+
+    const referencedConversationIds = [...new Set(
+      [...candidates.values()]
+        .filter((candidate) => candidate.targetType === "chat_conversation")
+        .map((candidate) => typeof candidate.metadata?.conversationId === "string"
+          ? candidate.metadata.conversationId.trim()
+          : "")
+        .filter((referencedConversationId) => isUuidLike(referencedConversationId)),
+    )];
+    if (referencedConversationIds.length > 0) {
+      const referencedConversations = await db
+        .select({ id: chatConversations.id, title: chatConversations.title })
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.orgId, conversation.orgId),
+          ne(chatConversations.conversationKind, "side_chat"),
+          inArray(chatConversations.id, referencedConversationIds),
+        ));
+      const referencedConversationTitles = new Map(
+        referencedConversations.map((referencedConversation) => [
+          referencedConversation.id,
+          referencedConversation.title,
+        ]),
+      );
+      for (const candidate of candidates.values()) {
+        if (candidate.targetType !== "chat_conversation") continue;
+        const referencedConversationId = typeof candidate.metadata?.conversationId === "string"
+          ? candidate.metadata.conversationId.trim()
+          : "";
+        const referencedConversationTitle = referencedConversationTitles.get(referencedConversationId);
+        if (referencedConversationTitle?.trim()) candidate.title = referencedConversationTitle;
       }
     }
 

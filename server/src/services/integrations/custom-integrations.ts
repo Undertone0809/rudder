@@ -65,15 +65,23 @@ function toIntegration(row: CustomIntegrationRow): CustomIntegration {
 }
 
 function toTool(row: CustomIntegrationToolRow): CustomIntegrationTool {
+  if (!row.integrationId) {
+    throw new Error("Legacy custom integration tool is missing its integration ID");
+  }
   return {
     ...row,
+    integrationId: row.integrationId,
     status: row.status as CustomIntegrationTool["status"],
   };
 }
 
 function toBinding(row: AgentCustomIntegrationBindingRow): AgentCustomIntegrationBinding {
+  if (!row.integrationId) {
+    throw new Error("Legacy custom integration binding is missing its integration ID");
+  }
   return {
     ...row,
+    integrationId: row.integrationId,
     status: row.status as AgentCustomIntegrationBinding["status"],
   };
 }
@@ -171,9 +179,11 @@ export function customIntegrationService(db: Db) {
       : [];
     const toolsByIntegration = new Map<string, CustomIntegrationToolRow[]>();
     toolRows.forEach((tool) => {
-      const list = toolsByIntegration.get(tool.integrationId) ?? [];
+      const integrationId = tool.integrationId;
+      if (!integrationId) return;
+      const list = toolsByIntegration.get(integrationId) ?? [];
       list.push(tool);
-      toolsByIntegration.set(tool.integrationId, list);
+      toolsByIntegration.set(integrationId, list);
     });
     return rows.map((row) => summarizeCustomIntegration(
       row.integration,

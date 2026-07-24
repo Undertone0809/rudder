@@ -72,9 +72,11 @@ import {
   type PostUpdateReloadMarker,
 } from "./post-update-reload.js";
 import {
-  resolveDesktopPostgresBinDir,
-  resolvePreferredDesktopPostgresBinDir,
-  RUDDER_POSTGRES_BIN_DIR_ENV,
+  acquireDesktopPostgresLifecycleLock,
+  captureDesktopPostgresEnvironment,
+  finalizeSharedPostgresRuntime,
+  reconcilePackagedDesktopPostgresBinDir,
+  restoreDesktopPostgresEnvironment,
 } from "./postgres-runtime.js";
 import {
   markReleaseNotesShown,
@@ -690,14 +692,7 @@ function applyDesktopEnvironment(): LocalEnvProfile {
   process.env.SERVE_UI = "true";
   process.env.RUDDER_UI_DEV_MIDDLEWARE = "false";
   process.env.RUDDER_OPEN_ON_LISTEN = "false";
-  const postgresBinDir = resolvePreferredDesktopPostgresBinDir({
-    isPackaged: app.isPackaged,
-    resourcesPath: process.resourcesPath,
-    externalRuntimeCacheDir: externalServerRuntimeCacheDir,
-  });
-  if (postgresBinDir) {
-    process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = postgresBinDir;
-  }
+  if (app.isPackaged) reconcilePackagedDesktopPostgresBinDir(process.resourcesPath, externalServerRuntimeCacheDir);
   return profile;
 }
 
@@ -842,11 +837,19 @@ function collectRudderAppOrigins(...additionalOrigins: Array<string | null | und
   );
 }
 
-function routeDesktopWebLink(url: string, source: "link" | "browser_popup"): void {
+function routeDesktopWebLink(
+  url: string,
+  source: "link" | "browser_popup",
+  sourceWebContentsId?: number,
+): void {
   if (source === "browser_popup" && !acceptBrowserPopup()) return;
   const renderer = getCurrentMainRenderer();
   if (renderer?.getURL().startsWith("http")) {
-    renderer.send("desktop:open-web-link", { url, source });
+    renderer.send("desktop:open-web-link", {
+      url,
+      source,
+      ...(sourceWebContentsId ? { sourceWebContentsId } : {}),
+    });
     return;
   }
   shell.openExternal(url).catch((error) => {
@@ -1200,14 +1203,24 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
 }
 
 function handleSidePanelCloseShortcutInput(webContents: WebContents, event: Electron.Event, input: Electron.Input): void {
+  const operatorBrowserGuest = operatorBrowserShortcutWebContents.has(webContents);
   const route = resolveProtectedDesktopShortcutRoute(input, {
     sidePanelCloseActive: sidePanelCloseShortcutActive,
     browserSurfaceActive: browserSurfaceShortcutActive
       && Boolean(mainWindow && !mainWindow.isDestroyed() && webContents === mainWindow.webContents),
-    operatorBrowserGuest: operatorBrowserShortcutWebContents.has(webContents),
+    operatorBrowserGuest,
   });
   if (!route) return;
   event.preventDefault();
+  if (route.kind === "close_browser_owner_tab") {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("desktop:browser-shortcut", {
+        action: "close_tab",
+        sourceWebContentsId: webContents.id,
+      });
+    }
+    return;
+  }
   if (route.kind === "close_side_panel_tab") {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("desktop:close-side-panel-active-tab");
@@ -1217,7 +1230,12 @@ function handleSidePanelCloseShortcutInput(webContents: WebContents, event: Elec
     return;
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("desktop:browser-shortcut", route.action);
+    mainWindow.webContents.send("desktop:browser-shortcut", {
+      action: route.action,
+      ...(operatorBrowserGuest
+        ? { sourceWebContentsId: webContents.id }
+        : {}),
+    });
   }
 }
 
@@ -1274,7 +1292,9 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
         browserGuestRegistry.register(guest);
         operatorBrowserShortcutWebContents.add(guest as WebContents);
       },
-      openBrowserPopup: (url) => routeDesktopWebLink(url, "browser_popup"),
+      openBrowserPopup: (url, sourceWebContentsId) => (
+        routeDesktopWebLink(url, "browser_popup", sourceWebContentsId)
+      ),
       resolveLocalAppBootstrap: (url, partition) =>
         localAppsRuntime?.isAttestedBootstrap(url, partition) ?? false,
       prepareLocalAppPartition,
@@ -1669,6 +1689,7 @@ function serverRuntimeOptions(): StartServerOptions {
 async function startLocalRudder(): Promise<void> {
   if (startInFlight) return startInFlight;
   startInFlight = (async () => {
+    let releasePostgresLifecycleLock: (() => Promise<void>) | null = null;
     startupAttemptCount += 1;
     const attempt = startupAttemptCount;
     const profile = resolveDesktopLocalEnvProfile();
@@ -1693,6 +1714,13 @@ async function startLocalRudder(): Promise<void> {
 
     try {
       await stopLocalRudder();
+      if (app.isPackaged) {
+        releasePostgresLifecycleLock = await acquireDesktopPostgresLifecycleLock();
+        reconcilePackagedDesktopPostgresBinDir(
+          process.resourcesPath,
+          externalServerRuntimeCacheDir,
+        );
+      }
       const serverModule = await importServerModule();
       updateBootState({
         stage: "config",
@@ -1704,6 +1732,29 @@ async function startLocalRudder(): Promise<void> {
         takeoverOnVersionMismatch: true,
         ...serverRuntimeOptions(),
       });
+      if (releasePostgresLifecycleLock) {
+        await releasePostgresLifecycleLock();
+        releasePostgresLifecycleLock = null;
+      }
+      if (app.isPackaged) {
+        try {
+          const healthUrl = new URL("/api/health", serverHandle.apiUrl);
+          const healthResponse = await fetch(healthUrl);
+          if (!healthResponse.ok) {
+            throw new Error(`health check returned ${healthResponse.status}`);
+          }
+          const cleanup = await finalizeSharedPostgresRuntime({
+            expectedInstanceId: serverHandle.runtime.instanceId,
+            expectedVersion: serverHandle.runtime.version,
+          });
+          console.info("[rudder-desktop] finalized shared PostgreSQL runtime", cleanup);
+        } catch (error) {
+          console.warn(
+            "[rudder-desktop] shared PostgreSQL runtime cleanup deferred until a verified shared cold start",
+            error,
+          );
+        }
+      }
       try {
         await requireBrowserRuntimeLifecycle().connect(serverHandle.apiUrl);
       } catch (error) {
@@ -1762,6 +1813,9 @@ async function startLocalRudder(): Promise<void> {
         paths: serverHandle?.instancePaths ?? currentBootState.paths,
       });
     } finally {
+      if (releasePostgresLifecycleLock) {
+        await releasePostgresLifecycleLock();
+      }
       startInFlight = null;
     }
   })();
@@ -1780,10 +1834,8 @@ async function importServerModule(): Promise<ServerModule> {
       onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
     });
     if (externalRuntime) {
-      const previousPostgresBinDir = process.env[RUDDER_POSTGRES_BIN_DIR_ENV];
-      const hasExplicitPostgresBinDir = Boolean(previousPostgresBinDir?.trim());
-      const postgresBinDir = hasExplicitPostgresBinDir ? null : resolveDesktopPostgresBinDir(externalRuntime.cacheDir);
-      if (postgresBinDir) process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = postgresBinDir;
+      const previousPostgresEnvironment = captureDesktopPostgresEnvironment();
+      reconcilePackagedDesktopPostgresBinDir(process.resourcesPath, externalRuntime.cacheDir);
       console.info("[rudder-desktop] loading server runtime from shared cache", {
         entrypoint: externalRuntime.entrypoint,
       });
@@ -1792,12 +1844,9 @@ async function importServerModule(): Promise<ServerModule> {
         externalServerRuntimeCacheDir = externalRuntime.cacheDir;
         return mod;
       } catch (error) {
-        if (previousPostgresBinDir === undefined) {
-          delete process.env[RUDDER_POSTGRES_BIN_DIR_ENV];
-        } else {
-          process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = previousPostgresBinDir;
-        }
+        restoreDesktopPostgresEnvironment(previousPostgresEnvironment);
         externalServerRuntimeCacheDir = null;
+        reconcilePackagedDesktopPostgresBinDir(process.resourcesPath);
         console.warn("[rudder-desktop] failed to load shared server runtime cache, falling back to bundled runtime", error);
       }
     }

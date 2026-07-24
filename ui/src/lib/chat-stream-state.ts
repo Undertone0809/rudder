@@ -15,6 +15,10 @@ export type NativeSteerTranscriptAnchor = {
   controlActionId: string | null;
 };
 
+export type NativeSteerTranscriptEntry = Extract<TranscriptEntry, { kind: "user" }> & {
+  steerMessage: ChatMessage;
+};
+
 function structuredPayloadString(
   payload: Record<string, unknown> | null,
   key: string,
@@ -79,14 +83,16 @@ export function mergeNativeSteerTranscriptEntries(
   for (let entryCount = 0; entryCount <= entries.length; entryCount += 1) {
     if (entryCount > 0) merged.push(entries[entryCount - 1]!);
     for (const anchor of anchorsByEntryCount.get(entryCount) ?? []) {
-      merged.push({
+      const steerEntry: NativeSteerTranscriptEntry = {
         kind: "user",
         source: "steer",
         ts: new Date(anchor.message.createdAt).toISOString(),
         text: anchor.message.body,
         messageId: anchor.message.id,
         controlActionId: anchor.controlActionId ?? undefined,
-      });
+        steerMessage: anchor.message,
+      };
+      merged.push(steerEntry);
     }
   }
   return merged;

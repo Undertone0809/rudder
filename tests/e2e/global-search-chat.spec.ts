@@ -121,16 +121,36 @@ test.describe("Global search results", () => {
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
 
-    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    const doneIssueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
-        title: "Description-only global search target",
+        title: "Done global search target",
         description: "Only this description contains rare-issue-description-token.",
-        status: "in_review",
+        status: "done",
         priority: "medium",
       },
     });
-    expect(issueRes.ok()).toBe(true);
-    const issue = await issueRes.json();
+    expect(doneIssueRes.ok()).toBe(true);
+    const doneIssue = await doneIssueRes.json();
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Global search status verifier",
+        role: "engineer",
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json();
+
+    const progressIssueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "In-progress global search target",
+        description: "Only this description contains rare-issue-description-token.",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agent.id,
+      },
+    });
+    expect(progressIssueRes.ok()).toBe(true);
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -143,13 +163,28 @@ test.describe("Global search results", () => {
     await expect(searchInput).toBeVisible();
     await searchInput.fill("rare-issue-description-token");
 
-    const issueResult = page.getByRole("option", { name: /Description-only global search target/i });
-    await expect(issueResult).toBeVisible({ timeout: 15_000 });
-    await expect(issueResult.locator('[data-slot="issue-status-icon"][data-status="in_review"]')).toBeVisible();
-    await expect(issueResult.locator(".lucide-circle-dot")).toHaveCount(0);
-    await issueResult.click();
+    const doneResult = page.getByRole("option", { name: /Done global search target/i });
+    const progressResult = page.getByRole("option", { name: /In-progress global search target/i });
+    await expect(doneResult).toBeVisible({ timeout: 15_000 });
+    await expect(progressResult).toBeVisible({ timeout: 15_000 });
 
-    await expect(page).toHaveURL(new RegExp(`/issues/${issue.identifier ?? issue.id}$`));
+    const doneIcon = doneResult.locator('[data-slot="issue-status-icon"][data-status="done"]');
+    const progressIcon = progressResult.locator('[data-slot="issue-status-icon"][data-status="in_progress"]');
+    await expect(doneIcon).toHaveClass(/text-green-600/);
+    await expect(progressIcon).toHaveClass(/text-yellow-600/);
+
+    const doneColor = await doneIcon.evaluate((element) => getComputedStyle(element).color);
+    const doneGlyphColor = await doneIcon.locator("svg").evaluate((element) => getComputedStyle(element).color);
+    const progressColor = await progressIcon.evaluate((element) => getComputedStyle(element).color);
+    const progressGlyphColor = await progressIcon.locator("svg").evaluate((element) => getComputedStyle(element).color);
+    expect(doneGlyphColor).toBe(doneColor);
+    expect(progressGlyphColor).toBe(progressColor);
+    expect(doneGlyphColor).not.toBe(progressGlyphColor);
+
+    await expect(doneResult.locator(".lucide-circle-dot")).toHaveCount(0);
+    await doneResult.click();
+
+    await expect(page).toHaveURL(new RegExp(`/issues/${doneIssue.identifier ?? doneIssue.id}$`));
   });
 
   test("finds an organization skill and opens the skill detail", async ({ page }) => {
