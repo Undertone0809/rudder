@@ -27,9 +27,10 @@ Important constraints:
 - stable source commits must have one committed public package version
 - all public packages must share that same stable semver before release
 - canary publishes derive the next prerelease from the committed stable version
-- after publishing stable `X.Y.Z`, the workflow commits the public package
-  version bump directly to `main`, for example `X.Y.Z -> X.Y.(Z+1)`, marks the
-  maintenance commit `[skip release]`, and explicitly dispatches CI for it
+- after publishing stable `X.Y.Z`, the workflow prepares the public package
+  version bump on a protected PR branch, for example `X.Y.Z -> X.Y.(Z+1)`,
+  marks the maintenance commit `[skip release]`, and explicitly dispatches CI
+  for it
 - `./scripts/release.sh canary --print-version` fails if the committed canary
   base already exists as stable npm package `X.Y.Z` or remote git tag `vX.Y.Z`
 
@@ -74,15 +75,14 @@ a plan do not satisfy the production gate. A staging approval is not production
 approval. Agents and automation must not set `dry_run: false`, enter workflow
 confirmation strings, or synthesize a release tag as evidence of approval. The
 operator's explicit authorization must exist before those values are supplied.
-That stable-release authorization also covers the deterministic post-release
-commit that advances `main` to the next patch base; it does not authorize any
-other direct change to `main`.
+That stable-release authorization also covers creating the deterministic
+post-release PR that advances `main` to the next patch base; it does not
+authorize bypassing that PR's review or CI.
 
 The workflow also fails closed unless `npm-stable` has required reviewers,
-`main` is protected for normal changes, and the release workflow has a narrowly
-scoped path to push the generated post-stable version commit and dispatch its
-CI. These repository settings are part of the release gate, not optional
-documentation.
+`main` is protected, and GitHub Actions can create the generated post-stable
+version PR and dispatch its CI. These repository settings are part of the
+release gate, not optional documentation.
 
 Even when an initial request or plan includes production deployment, always
 pause at the production gate after presenting the reviewed source, target,
@@ -197,7 +197,7 @@ Before running stable:
 8. run the workflow with `dry_run: false`, `confirm_stable: PUBLISH STABLE`,
    and `confirm_docs: PUBLISH DOCS`
 9. after stable and the docs deployment are both published, confirm the
-   workflow directly committed the next-patch base to `main` and its explicitly
+   workflow opened the protected next-patch-base PR and its explicitly
    dispatched CI succeeded
 
 Example:
@@ -221,9 +221,10 @@ The workflow:
   the released stable version or older, while preserving the current npm
   `@rudderhq/cli@canary` target if the next-base canary has not been published
   yet
-- commits the next canary/stable base directly to `main` with `[skip release]`
-  and dispatches the trusted CI workflow with the immutable bump SHA, unless
-  `main` already advanced
+- prepares the next canary/stable base on an `automation/release-vX.Y.Z` branch
+  with `[skip release]`, opens a protected pull request, and dispatches the
+  trusted CI workflow with the immutable bump SHA, unless `main` already
+  advanced
 - makes the website changelog deployment a required stable-release surface;
   canary releases never deploy it
 

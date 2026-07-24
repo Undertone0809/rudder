@@ -16,9 +16,10 @@ Repo-side files that depend on this setup:
 The `Release` workflow needs `actions: write` because it inspects exact-source
 CI runs, dispatches `desktop-release.yml`, and starts CI for the generated
 post-stable version commit. It needs `contents: write` to push release tags and
-the version handoff commit. A tag or branch push performed with `GITHUB_TOKEN`
-will not, by itself, trigger a second workflow run, so the workflow dispatches
-handoff CI explicitly.
+the version handoff branch, plus `pull-requests: write` to open the protected
+version handoff PR. A tag or branch push performed with `GITHUB_TOKEN` will not,
+by itself, trigger a second workflow run, so the workflow dispatches handoff CI
+explicitly.
 
 The release preflight requires an operator attestation that the safeguards
 below are configured. The workflow does not silently skip the next-version
@@ -194,17 +195,16 @@ Required rules for release automation:
 2. require status checks to pass before merging
 3. require review from code owners
 4. dismiss stale approvals when new commits are pushed
-5. restrict who can push directly to `main`
-6. allow only the GitHub Actions identity used by `release.yml` to bypass the
-   pull-request rule for its generated `[skip release]` version handoff commit
+5. prevent direct pushes to `main`, including from release automation
+6. allow GitHub Actions to create pull requests so `release.yml` can open its
+   generated `[skip release]` version handoff PR
 
 At minimum, make sure workflow and release script changes cannot land without
 review. The stable preflight stops before executing source-ref release code
 unless all safeguards have been attested.
 
-After required reviewers, `main` protection with the narrow release-workflow
-bypass, and Actions workflow permissions are all configured and manually
-verified, create the repository Actions variable
+After required reviewers, `main` protection, and Actions workflow permissions
+are all configured and manually verified, create the repository Actions variable
 `RELEASE_SAFEGUARDS_CONFIGURED` with value `true`. Manual stable preflight fails
 closed while this variable is missing. The variable is an operator attestation
 because the workflow's scoped `GITHUB_TOKEN` cannot read
@@ -303,7 +303,7 @@ After at least one good canary exists:
 12. confirm the GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets
 13. confirm the Docs production child workflow publishes `docs/release/v0.1.0`
     from the matching `v0.1.0` source and passes public health checks
-14. confirm the workflow commits the next-patch version directly to `main` and
+14. confirm the workflow opens the protected next-patch-version PR and
     dispatches CI for that exact commit, or reports that `main` already advanced
 
 Start-path check:

@@ -546,6 +546,7 @@ describe("applyPendingMigrations", () => {
           "0115_chubby_wraith.sql",
           "0116_dark_skreet.sql",
           "0117_reflective_namora.sql",
+          "0118_flippant_longshot.sql",
         ],
         reason: "pending-migrations",
       });
@@ -683,6 +684,7 @@ describe("applyPendingMigrations", () => {
           "0115_chubby_wraith.sql",
           "0116_dark_skreet.sql",
           "0117_reflective_namora.sql",
+          "0118_flippant_longshot.sql",
         ],
         reason: "pending-migrations",
       });

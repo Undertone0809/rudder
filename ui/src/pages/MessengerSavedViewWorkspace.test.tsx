@@ -145,10 +145,10 @@ afterEach(() => {
 });
 
 describe("MessengerSavedViewWorkspace", () => {
-  it("opens the exact Local App instance in Main without probing or starting it", async () => {
+  it("opens the exact Local App instance in Main without status probing or starting it", async () => {
     const localApps = {
       supported: true,
-      list: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
       status: vi.fn(),
       start: vi.fn(),
     };
@@ -161,7 +161,7 @@ describe("MessengerSavedViewWorkspace", () => {
     await waitForAct(() => expect(
       host?.querySelector('[data-view-instance-id="view-a"]'),
     ).not.toBeNull());
-    expect(localApps.list).not.toHaveBeenCalled();
+    expect(localApps.list).toHaveBeenCalledTimes(1);
     expect(localApps.status).not.toHaveBeenCalled();
     expect(localApps.start).not.toHaveBeenCalled();
   });

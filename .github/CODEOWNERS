@@ -1,12 +1,12 @@
-# Replace @cryppadotta if a different maintainer or team should own release infrastructure.
+# Release and product contracts require review from the independent maintainer account.
 
-.github/** @cryppadotta @devinfoley
-doc/product/** @cryppadotta @devinfoley
-scripts/release*.sh @cryppadotta @devinfoley
-scripts/release-*.mjs @cryppadotta @devinfoley
-scripts/create-github-release.sh @cryppadotta @devinfoley
-scripts/collect-desktop-release-assets.mjs @cryppadotta @devinfoley
-scripts/rollback-latest.sh @cryppadotta @devinfoley
-doc/engineering/RELEASING.md @cryppadotta @devinfoley
-doc/engineering/PUBLISHING.md @cryppadotta @devinfoley
-doc/engineering/RELEASE-AUTOMATION-SETUP.md @cryppadotta @devinfoley
+.github/** @Rudderhq
+doc/product/** @Rudderhq
+scripts/release*.sh @Rudderhq
+scripts/release-*.mjs @Rudderhq
+scripts/create-github-release.sh @Rudderhq
+scripts/collect-desktop-release-assets.mjs @Rudderhq
+scripts/rollback-latest.sh @Rudderhq
+doc/engineering/RELEASING.md @Rudderhq
+doc/engineering/PUBLISHING.md @Rudderhq
+doc/engineering/RELEASE-AUTOMATION-SETUP.md @Rudderhq
