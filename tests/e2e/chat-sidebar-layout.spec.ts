@@ -23,7 +23,7 @@ test.describe("Chat sidebar layout", () => {
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json();
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
     const agent = await createE2EChatAgent(page.request, organization.id, { name: "Error Layout Agent" });
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -51,27 +51,32 @@ test.describe("Chat sidebar layout", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.goto(`/${organization.urlKey}/messenger/chat/${chat.id}`);
 
     const mainCard = page.getByTestId("chat-main-workspace-card");
     const loadError = mainCard.getByTestId("chat-load-error");
     const toolbarButton = mainCard.getByTestId("chat-side-panel-trigger");
-    const toolbarClearance = mainCard.getByTestId("chat-desktop-toolbar-clearance");
     await expect(mainCard).toBeVisible();
     await expect(page.locator("html")).toHaveClass(/\bdesktop-shell-macos\b/);
     await expect(loadError).toHaveText("Internal server error", { timeout: 15_000 });
+    await expect(mainCard.getByTestId("chat-desktop-toolbar-clearance")).toHaveCount(0);
 
     const desktopErrorBox = await loadError.boundingBox();
     const desktopToolbarBox = await toolbarButton.boundingBox();
-    const desktopToolbarClearanceBox = await toolbarClearance.boundingBox();
     expect(desktopErrorBox).not.toBeNull();
     expect(desktopToolbarBox).not.toBeNull();
-    expect(desktopToolbarClearanceBox).not.toBeNull();
-    expect(desktopErrorBox!.y).toBeGreaterThanOrEqual(desktopToolbarBox!.y + desktopToolbarBox!.height);
-    expect(desktopErrorBox!.y).toBeGreaterThanOrEqual(
-      desktopToolbarClearanceBox!.y + desktopToolbarClearanceBox!.height + 23,
+    await expect(loadError).toHaveCSS("margin-top", "24px");
+    const desktopOverlapWidth = Math.max(
+      0,
+      Math.min(desktopErrorBox!.x + desktopErrorBox!.width, desktopToolbarBox!.x + desktopToolbarBox!.width)
+        - Math.max(desktopErrorBox!.x, desktopToolbarBox!.x),
     );
-    await expect(loadError).toHaveCSS("margin-top", "68px");
+    const desktopOverlapHeight = Math.max(
+      0,
+      Math.min(desktopErrorBox!.y + desktopErrorBox!.height, desktopToolbarBox!.y + desktopToolbarBox!.height)
+        - Math.max(desktopErrorBox!.y, desktopToolbarBox!.y),
+    );
+    expect(desktopOverlapWidth * desktopOverlapHeight).toBe(0);
 
     await page.screenshot({
       path: testInfo.outputPath("chat-load-error-position-desktop.png"),

@@ -2038,21 +2038,15 @@ test.describe("Chat Side Panel", () => {
     }
   });
 
-  test("keeps desktop chat controls clear of interrupted messages beside the Side Panel", async ({ page }) => {
-    await installBrowserDesktopStub(page);
-    const browserSettings = await page.request.patch("/api/instance/settings/browser", {
-      data: { enabled: true, openLinksIn: "built_in" },
-    });
-    expect(browserSettings.ok(), await browserSettings.text()).toBe(true);
-
+  test("keeps desktop chat usable beside the Side Panel without a toolbar clearance strip", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
-        name: `Chat-Toolbar-Clearance-${Date.now()}`,
+        name: `Chat-No-Clearance-${Date.now()}`,
         issuePrefix: `CTC${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
       },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
     await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -2060,7 +2054,7 @@ test.describe("Chat Side Panel", () => {
         title: "Interrupted chat beside Browser",
         issueCreationMode: "manual_approval",
         planMode: false,
-        initialMessage: { body: "Keep the desktop toolbar readable while the transcript scrolls beneath it." },
+        initialMessage: { body: "Keep desktop chat controls readable while the transcript scrolls." },
       },
     });
     expect(chatRes.ok(), await chatRes.text()).toBe(true);
@@ -2077,7 +2071,7 @@ test.describe("Chat Side Panel", () => {
         "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.",
         ...Array.from(
           { length: 32 },
-          (_, index) => `Preserved transcript line ${index + 1} remains visible while scrolling beneath the desktop toolbar.`,
+          (_, index) => `Preserved transcript line ${index + 1} remains visible while scrolling in desktop chat.`,
         ),
       ].join("\n\n"),
       structuredPayload: null,
@@ -2092,26 +2086,23 @@ test.describe("Chat Side Panel", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
       window.localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.goto(`/${organization.urlKey}/messenger/chat/${chat.id}`);
 
     await page.getByRole("button", { name: "Collapse workspace sidebar" }).click();
     await expect(page.getByRole("button", { name: "Open Messenger sidebar" })).toBeVisible();
     await page.getByTestId("chat-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
-    await sidePanel.getByRole("button", { name: /Browser/ }).click();
-    await expect(sidePanel.getByTestId("chat-side-panel-browser-view")).toBeVisible();
 
-    const toolbarClearance = page.getByTestId("chat-desktop-toolbar-clearance");
     const openSidebarButton = page.getByRole("button", { name: "Open Messenger sidebar" });
     const chatActionsButton = page.getByTestId("chat-actions-trigger");
     const assistantMessage = page.getByTestId("chat-assistant-message");
     const transcriptLine = assistantMessage.getByText(
-      "Preserved transcript line 1 remains visible while scrolling beneath the desktop toolbar.",
+      "Preserved transcript line 1 remains visible while scrolling in desktop chat.",
       { exact: true },
     );
     const scrollRegion = page.getByTestId("chat-messages-scroll-region");
-    await expect(toolbarClearance).toBeVisible();
+    await expect(page.getByTestId("chat-desktop-toolbar-clearance")).toHaveCount(0);
     await expect(chatActionsButton).toBeVisible();
     await expect(assistantMessage).toContainText("Chat run interrupted before a final reply.");
     await expect(transcriptLine).toBeVisible();
@@ -2119,9 +2110,8 @@ test.describe("Chat Side Panel", () => {
       element.scrollTop = 0;
     });
 
-    const [toolbarBox, openSidebarBox, chatActionsBox, messageBox, transcriptLineBox, scrollRegionBox, mainCardBox] =
+    const [openSidebarBox, chatActionsBox, messageBox, transcriptLineBox, scrollRegionBox, mainCardBox] =
       await Promise.all([
-        toolbarClearance.boundingBox(),
         openSidebarButton.boundingBox(),
         chatActionsButton.boundingBox(),
         assistantMessage.boundingBox(),
@@ -2129,7 +2119,6 @@ test.describe("Chat Side Panel", () => {
         scrollRegion.boundingBox(),
         page.getByTestId("chat-main-workspace-card").boundingBox(),
       ]);
-    expect(toolbarBox).not.toBeNull();
     expect(openSidebarBox).not.toBeNull();
     expect(chatActionsBox).not.toBeNull();
     expect(messageBox).not.toBeNull();
@@ -2137,48 +2126,23 @@ test.describe("Chat Side Panel", () => {
     expect(scrollRegionBox).not.toBeNull();
     expect(mainCardBox).not.toBeNull();
 
-    const toolbarBottom = toolbarBox!.y + toolbarBox!.height;
-    expect(openSidebarBox!.y + openSidebarBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
-    expect(chatActionsBox!.y + chatActionsBox!.height).toBeLessThanOrEqual(toolbarBottom + 1);
-    expect(scrollRegionBox!.y).toBeLessThanOrEqual(toolbarBox!.y + 1);
-    expect(messageBox!.y).toBeGreaterThanOrEqual(toolbarBottom - 1);
+    expect(openSidebarBox!.y).toBeGreaterThanOrEqual(mainCardBox!.y);
+    expect(chatActionsBox!.y).toBeGreaterThanOrEqual(mainCardBox!.y);
+    expect(scrollRegionBox!.y).toBeGreaterThanOrEqual(mainCardBox!.y);
+    expect(messageBox!.y).toBeGreaterThanOrEqual(scrollRegionBox!.y);
+    const controlsMessageOverlapWidth = Math.max(
+      0,
+      Math.min(chatActionsBox!.x + chatActionsBox!.width, messageBox!.x + messageBox!.width)
+        - Math.max(chatActionsBox!.x, messageBox!.x),
+    );
+    const controlsMessageOverlapHeight = Math.max(
+      0,
+      Math.min(chatActionsBox!.y + chatActionsBox!.height, messageBox!.y + messageBox!.height)
+        - Math.max(chatActionsBox!.y, messageBox!.y),
+    );
+    expect(controlsMessageOverlapWidth * controlsMessageOverlapHeight).toBe(0);
 
-    const toolbarStyles = await toolbarClearance.evaluate((element) => {
-      const style = window.getComputedStyle(element);
-      return {
-        backdropFilter: style.backdropFilter || style.webkitBackdropFilter,
-        borderTopLeftRadius: Number.parseFloat(style.borderTopLeftRadius),
-        borderTopRightRadius: Number.parseFloat(style.borderTopRightRadius),
-        backgroundColor: style.backgroundColor,
-        height: Number.parseFloat(style.height),
-        position: style.position,
-        zIndex: style.zIndex,
-      };
-    });
-    const mainCardStyles = await page.getByTestId("chat-main-workspace-card").evaluate((element) => {
-      const style = window.getComputedStyle(element);
-      return {
-        borderLeftWidth: Number.parseFloat(style.borderLeftWidth),
-        borderTopWidth: Number.parseFloat(style.borderTopWidth),
-        borderTopLeftRadius: Number.parseFloat(style.borderTopLeftRadius),
-        borderTopRightRadius: Number.parseFloat(style.borderTopRightRadius),
-      };
-    });
-    expect(toolbarStyles.position).toBe("absolute");
-    expect(toolbarStyles.zIndex).toBe("20");
-    expect(toolbarStyles.backdropFilter).toContain("blur(18px)");
-    expect(toolbarStyles.height).toBe(44);
-    expect(toolbarStyles.borderTopLeftRadius).toBeGreaterThan(0);
-    expect(toolbarStyles.borderTopRightRadius).toBeGreaterThan(0);
-    const toolbarLeftInset = toolbarBox!.x - mainCardBox!.x;
-    const toolbarTopInset = toolbarBox!.y - mainCardBox!.y;
-    expect(toolbarLeftInset).toBeCloseTo(mainCardStyles.borderLeftWidth, 0);
-    expect(toolbarTopInset).toBeCloseTo(mainCardStyles.borderTopWidth, 0);
-    expect(mainCardStyles.borderTopLeftRadius - toolbarStyles.borderTopLeftRadius).toBeCloseTo(toolbarLeftInset, 0);
-    expect(mainCardStyles.borderTopRightRadius - toolbarStyles.borderTopRightRadius).toBeCloseTo(toolbarLeftInset, 0);
-    expect(toolbarBox!.width).toBeCloseTo(mainCardBox!.width - (2 * toolbarLeftInset), 0);
-
-    const scrollAmount = Math.max(1, transcriptLineBox!.y - (toolbarBox!.y + 10));
+    const scrollAmount = Math.max(1, transcriptLineBox!.y - (scrollRegionBox!.y + 10));
     await scrollRegion.evaluate((element, nextScrollTop) => {
       element.scrollTop = nextScrollTop;
       element.dispatchEvent(new Event("scroll"));
@@ -2186,38 +2150,10 @@ test.describe("Chat Side Panel", () => {
     await expect.poll(() => scrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     const scrolledTranscriptLineBox = await transcriptLine.boundingBox();
     expect(scrolledTranscriptLineBox).not.toBeNull();
-    expect(scrolledTranscriptLineBox!.y).toBeLessThan(toolbarBottom - 4);
-    expect(scrolledTranscriptLineBox!.y + scrolledTranscriptLineBox!.height).toBeGreaterThan(toolbarBox!.y + 4);
-    const toolbarCenterHitTarget = await page.evaluate(
-      ({ x, y }) => document.elementFromPoint(x, y)?.getAttribute("data-testid"),
-      {
-        x: toolbarBox!.x + (toolbarBox!.width / 2),
-        y: toolbarBox!.y + (toolbarBox!.height / 2),
-      },
-    );
-    expect(toolbarCenterHitTarget).toBe("chat-desktop-toolbar-clearance");
+    expect(scrolledTranscriptLineBox!.y).toBeLessThan(transcriptLineBox!.y);
 
     await page.screenshot({
-      path: "/tmp/rudder-chat-toolbar-clearance-with-side-panel-dark.png",
-      fullPage: true,
-    });
-
-    await page.evaluate(() => {
-      window.localStorage.setItem("rudder.theme", "light");
-      document.documentElement.classList.remove("dark");
-    });
-    await expect(page.locator("html")).not.toHaveClass(/\bdark\b/);
-    const lightToolbarStyles = await toolbarClearance.evaluate((element) => {
-      const style = window.getComputedStyle(element);
-      return {
-        backdropFilter: style.backdropFilter || style.webkitBackdropFilter,
-        backgroundColor: style.backgroundColor,
-      };
-    });
-    expect(lightToolbarStyles.backdropFilter).toContain("blur(18px)");
-    expect(lightToolbarStyles.backgroundColor).not.toBe(toolbarStyles.backgroundColor);
-    await page.screenshot({
-      path: "/tmp/rudder-chat-toolbar-clearance-with-side-panel-light.png",
+      path: "/tmp/rudder-chat-without-toolbar-clearance.png",
       fullPage: true,
     });
   });
