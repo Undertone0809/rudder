@@ -5,6 +5,10 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const releaseWorkflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
+const docsProductionWorkflow = readFileSync(
+  join(repoRoot, ".github/workflows/docs-production.yml"),
+  "utf8",
+);
 const ciWorkflow = readFileSync(join(repoRoot, ".github/workflows/ci.yml"), "utf8");
 const desktopWorkflow = readFileSync(join(repoRoot, ".github/workflows/desktop-release.yml"), "utf8");
 const releaseScript = readFileSync(join(repoRoot, "scripts/release.sh"), "utf8");
@@ -76,5 +80,28 @@ describe("release workflow latency contracts", () => {
   it("does not rebuild after the local verification gate already built the workspace", () => {
     expect(releaseScript).toContain("workspace_built=true");
     expect(releaseScript).toContain("Reusing workspace build from verification gate");
+  });
+
+  it("makes the localized public changelog a separately approved stable release surface", () => {
+    const stableDocsIndex = releaseWorkflow.indexOf("\n  stable-docs:\n");
+    const nextReleaseIndex = releaseWorkflow.indexOf("\n  next-release-base:\n");
+
+    expect(releaseWorkflow).toContain("confirm_docs:");
+    expect(releaseWorkflow).toContain('test "$CONFIRM_DOCS" = "PUBLISH DOCS"');
+    expect(releaseWorkflow).toContain("name: Publish stable changelog to docs production");
+    expect(releaseWorkflow).toContain("uses: ./.github/workflows/docs-production.yml");
+    expect(releaseWorkflow).toContain("source_ref: v${{ needs.stable.outputs.version }}");
+    expect(releaseWorkflow).toContain("tag_name: docs/release/v${{ needs.stable.outputs.version }}");
+    expect(releaseWorkflow).toContain("release_docs_approved: true");
+    expect(releaseWorkflow).toContain("needs.stable-docs.result == 'success'");
+    expect(stableDocsIndex).toBeGreaterThan(-1);
+    expect(nextReleaseIndex).toBeGreaterThan(stableDocsIndex);
+    expect(releaseScript).toContain("scripts/verify-stable-changelog.mjs");
+
+    expect(docsProductionWorkflow).toContain("workflow_call:");
+    expect(docsProductionWorkflow).toContain("release_docs_approved:");
+    expect(docsProductionWorkflow).toContain("type: boolean");
+    expect(docsProductionWorkflow).toContain('test "$RELEASE_DOCS_APPROVED" = "true"');
+    expect(docsProductionWorkflow).toContain("^docs/release/v[0-9]+");
   });
 });

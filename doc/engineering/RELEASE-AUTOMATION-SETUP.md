@@ -33,6 +33,9 @@ Note:
   dependencies
 - release-specific preflight rejects stale versions and missing notes before
   package installation or build work
+- stable preflight also rejects a missing English or Chinese public changelog
+  entry, and an approved stable invokes the docs-production workflow from the
+  immutable stable tag
 
 ## 1. Merge the Repo Changes First
 
@@ -282,20 +285,25 @@ npx @rudderhq/cli@canary onboard
 After at least one good canary exists:
 
 1. confirm the committed public package version on the source ref is the stable version you want to ship
-2. prepare `releases/v0.1.0.md` on the source commit you want to promote
+2. prepare `releases/v0.1.0.md`, `docs/releases.mdx`, and
+   `docs/zh/releases.mdx` on the source commit you want to promote
 3. open `Actions` -> `Release`
 4. run it with:
    - `source_ref`: the tested commit SHA or canary tag source commit
    - `dry_run`: `true`
 5. confirm the dry-run succeeds
-6. rerun with `dry_run: false`
+6. after explicitly approving the public docs deployment for this source,
+   rerun with `dry_run: false`, `confirm_stable: PUBLISH STABLE`, and
+   `confirm_docs: PUBLISH DOCS`
 7. approve the `npm-stable` environment when prompted
 8. confirm npm `latest` points to the new stable version
 9. confirm git tag `v0.1.0` exists
 10. confirm the GitHub Release was created
 11. confirm `.github/workflows/desktop-release.yml` runs for `v0.1.0`
 12. confirm the GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets
-13. confirm the workflow commits the next-patch version directly to `main` and
+13. confirm the Docs production child workflow publishes `docs/release/v0.1.0`
+    from the matching `v0.1.0` source and passes public health checks
+14. confirm the workflow commits the next-patch version directly to `main` and
     dispatches CI for that exact commit, or reports that `main` already advanced
 
 Start-path check:
@@ -323,6 +331,7 @@ Use this policy going forward:
 - stables are manual and approved
 - only stables get public notes and announcements
 - release notes are committed before stable publish
+- stable docs deploys require their own explicit `PUBLISH DOCS` confirmation
 - rollback uses `npm dist-tag`, not unpublish
 
 ## 14. Troubleshooting
