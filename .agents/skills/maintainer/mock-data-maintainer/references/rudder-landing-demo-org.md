@@ -104,7 +104,8 @@ Use this dataset when the user asks for:
 - a user-facing example of how Rudder coordinates agent work
 
 If the user asks for screenshot capture, seed with this dataset and then use
-`landing-proof-shots-maintainer` to capture full-page app-style screenshots.
+the bundled `scripts/capture-landing-proof-shots.ts` workflow to capture
+full-page app-style screenshots.
 Prefer Desktop-shell captures when the screenshot is meant to prove the
 installed local operator experience. Browser captures are acceptable for
 targeted web-route inspection, but they should not replace Desktop-shell

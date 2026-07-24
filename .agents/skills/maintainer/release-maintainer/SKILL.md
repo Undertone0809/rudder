@@ -49,6 +49,10 @@ cannot be safely inferred.
   narrow direct-push and workflow-dispatch permissions needed for its generated
   post-stable version commit. Do not bypass these checks or treat the
   confirmation string as a substitute for the repository safeguards.
+- Stable preflight must verify matching English and Chinese public changelog
+  entries before expensive work. After stable npm, GitHub Release, and Desktop
+  assets succeed, `release.yml` must promote those committed entries from the
+  immutable `vX.Y.Z` tag through `docs-production.yml`.
 - Stable tags point at the original source commit, not at a generated release
   commit.
 - After a stable `vX.Y.Z` is published and verified, older canary GitHub
@@ -100,10 +104,12 @@ cannot be safely inferred.
   FIFO queue and retains only one pending job; if a queued manual stable is
   superseded by another pending run, report it and rerun that same locked
   stable SHA after the active publish finishes.
-- After a stable publish, the workflow should commit the next-patch base
-  directly to `main` with `[skip release]`. Verify that commit exists (or that
-  `main` was already advanced) and that its explicitly dispatched CI succeeds
-  before calling the version handoff complete.
+- After a stable publish, the matching `stable-docs` job must succeed before
+  the workflow advances the next-patch base. Verify the immutable
+  `docs/release/vX.Y.Z` marker and public changelog before treating the docs or
+  version handoff as complete. A failed docs promotion is a partial release;
+  repair or rerun failed jobs for the same stable version rather than
+  republishing npm.
 - If a normal `main` push is already running while you make release-maintenance
   changes, watch it to completion. It may publish the next canary, and that
   canary still needs npm, tag, Desktop, and Release-title verification. After
@@ -432,17 +438,28 @@ node scripts/release-package-map.mjs list
    The workflow reuses the exact CI result and runs only the fast release
    preflight plus publish-payload preview; it must not repeat the full test
    matrix.
-8. If dry-run passes, rerun with `dry_run: false`, again using the same locked
-   SHA as `source_ref`.
-9. Wait for or request `npm-stable` approval.
-10. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
-   workflow, and assets.
-11. Clean up obsolete canary GitHub Releases and `canary/*` tags for the stable
+8. If dry-run passes, present the immutable source SHA, version, npm/GitHub/
+   Desktop targets, public docs target, completed checks, known failures,
+   migration/data impact, and rollback point. Obtain two fresh approvals:
+   - stable publication for that exact source and version;
+   - production deployment of that exact changelog to `docs.rudderhq.dev`.
+9. Only after both approvals, rerun with the same locked SHA using
+   `dry_run: false`, `confirm_stable: PUBLISH STABLE`, and
+   `confirm_docs: PUBLISH DOCS`. The workflow input strings enforce the
+   approvals; they do not replace them.
+10. Wait for or request `npm-stable` approval.
+11. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
+    workflow, and assets.
+12. Verify the `stable-docs` job promoted the public changelog from the same
+    immutable `vX.Y.Z` tag, the `docs/release/vX.Y.Z` marker exists, and both
+    localized public docs surfaces show that version. Do not rerun npm publish
+    to repair a docs-only failure.
+13. Clean up obsolete canary GitHub Releases and `canary/*` tags for the stable
     base and any older base versions after the stable is proven. Preserve the
     active next-line canary, for example keep `canary/v0.2.6-canary.N` after
     stable `v0.2.5`, and never unpublish npm canary package versions as part of
     this cleanup.
-12. Smoke test:
+14. Smoke test:
 
 ```bash
 npx @rudderhq/cli@latest start --no-open
@@ -451,7 +468,8 @@ rudder start --no-open
 
 The second command is only expected to work after the persistent CLI exists.
 
-13. Confirm the workflow committed `X.Y.(Z+1)` directly to `main` with
+15. After `stable-docs` succeeds, confirm the workflow committed
+    `X.Y.(Z+1)` directly to `main` with
     `[skip release]` and dispatched the trusted CI workflow with its immutable
     head SHA, or reported that `main` already has a newer base.
 

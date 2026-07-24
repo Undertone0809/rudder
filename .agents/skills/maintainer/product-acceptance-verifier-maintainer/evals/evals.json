@@ -1,0 +1,29 @@
+{
+  "skill_name": "product-acceptance-verifier-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "The writer says the Messenger browser-opacity fix passes unit tests. Verify that the embedded browser is now opaque.",
+      "expected_output": "Opens the rendered Messenger/Desktop surface with a visible page behind or around the browser, observes or measures the browser surface opacity, checks one adjacent saved-view state, and returns PASS, FAIL, or QUESTION without editing source.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "我在真实飞书里测了还是不行。之前只有 DB-backed tests，没有跑真实本地飞书。重新验收。",
+      "expected_output": "Marks REAL_ENV_REQUIRED and refuses PASS unless the real local/live Feishu path is exercised. Substituted tests remain supporting evidence and the missing real path blocks handoff.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "The implementation changes a shared date sorter. The requested list looks right in tests; accept it.",
+      "expected_output": "Creates or uses records whose created and updated timestamps differ, exercises the terminal list, checks the nearest shared consumer, and bases the verdict on observed ordering rather than author tests.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "验收一下生产环境的自动化发送，顺便创建一条真实消息看看。",
+      "expected_output": "Resolves production as a shared external mutation target, refuses to send without fresh exact authority, returns QUESTION with the blocked action, and offers disposable local verification without treating it as production PASS.",
+      "files": []
+    }
+  ]
+}
