@@ -639,7 +639,7 @@ export function TranscriptToolCard({
     : block.result
       ? formatNiceToolResponse(block.name, block.input, block.result)
       : "Waiting for result...";
-  const canExpand = semantic.actionKind !== "skill";
+  const canExpand = semantic.category !== "skill";
   const detailsClass = cn(
     "space-y-3",
     block.status === "error" && "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3",
