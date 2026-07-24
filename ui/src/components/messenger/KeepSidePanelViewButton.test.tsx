@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
-import { queryKeys } from "@/lib/queryKeys";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
