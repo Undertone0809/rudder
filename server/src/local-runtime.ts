@@ -16,6 +16,8 @@ export type LocalRuntimeDescriptor = {
   version: string;
   ownerKind: LocalRuntimeOwnerKind;
   startedAt: string;
+  postgresBinDir?: string;
+  postgresRuntimeKey?: string;
 };
 
 export type RuntimeHealthSnapshot = {
@@ -90,6 +92,26 @@ export function resolveLocalRuntimePaths(instanceId = resolveRudderInstanceId())
   };
 }
 
+export function resolveManagedPostgresRuntimeKey(
+  binDir: string,
+  options: {
+    homeDir?: string;
+    platform?: NodeJS.Platform;
+    arch?: NodeJS.Architecture;
+  } = {},
+): string | null {
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  const key = `postgres-18.4/${platform}-${arch}`;
+  const expectedBinDir = path.join(
+    options.homeDir ?? resolveRudderHomeDir(),
+    "runtime-payloads",
+    key,
+    "bin",
+  );
+  return path.resolve(binDir) === path.resolve(expectedBinDir) ? key : null;
+}
+
 function isValidRuntimeDescriptor(value: unknown): value is LocalRuntimeDescriptor {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
@@ -112,7 +134,11 @@ export async function readLocalRuntimeDescriptor(instanceId = resolveRudderInsta
   try {
     const raw = await readFile(descriptorPath, "utf8");
     const parsed = JSON.parse(raw) as unknown;
-    return isValidRuntimeDescriptor(parsed) ? parsed : null;
+    if (!isValidRuntimeDescriptor(parsed)) return null;
+    const descriptor = { ...parsed };
+    if (typeof descriptor.postgresBinDir !== "string") delete descriptor.postgresBinDir;
+    if (typeof descriptor.postgresRuntimeKey !== "string") delete descriptor.postgresRuntimeKey;
+    return descriptor;
   } catch {
     return null;
   }

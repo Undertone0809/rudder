@@ -229,7 +229,16 @@ async function assertPostgresBinDirComplete(sourceBinDir) {
   }
   const templateDir = await resolvePostgresTemplateDir(sourceBinDir);
   const expectedTemplatePath = path.join(sourceBinDir, "..", "share", "postgresql", "postgres.bki");
-  if (!templateDir) missing.push(expectedTemplatePath);
+  if (!templateDir) {
+    missing.push(expectedTemplatePath);
+  } else {
+    const configTemplatePath = path.join(templateDir, "postgresql.conf.sample");
+    try {
+      await fs.access(configTemplatePath);
+    } catch {
+      missing.push(configTemplatePath);
+    }
+  }
   if (missing.length > 0) {
     const hasMissingTemplate = missing.includes(expectedTemplatePath);
     const requirement = hasMissingTemplate
@@ -258,11 +267,18 @@ async function stagePostgresRuntimePayload() {
   }
 
   const { templateDir } = await assertPostgresBinDirComplete(sourceBinDir);
-  const postgresBinary = path.join(sourceBinDir, process.platform === "win32" ? "postgres.exe" : "postgres");
-  const versionResult = await execFileAsync(postgresBinary, ["--version"]);
-  const versionOutput = [versionResult.stdout, versionResult.stderr].filter(Boolean).join("\n");
-  if (!/\bPostgreSQL\)?\s+18\.4\b/i.test(versionOutput)) {
-    throw new Error(`RUDDER_POSTGRES_BIN_DIR must contain PostgreSQL 18.4 binaries; got ${versionOutput.trim() || "unknown version"}`);
+  for (const binary of ["initdb", "pg_ctl", "postgres"]) {
+    const binaryPath = path.join(
+      sourceBinDir,
+      process.platform === "win32" ? `${binary}.exe` : binary,
+    );
+    const versionResult = await execFileAsync(binaryPath, ["--version"]);
+    const versionOutput = [versionResult.stdout, versionResult.stderr].filter(Boolean).join("\n");
+    if (!/\bPostgreSQL\)?\s+18\.4\b/i.test(versionOutput)) {
+      throw new Error(
+        `RUDDER_POSTGRES_BIN_DIR must contain PostgreSQL 18.4 ${binary}; got ${versionOutput.trim() || "unknown version"}`,
+      );
+    }
   }
 
   const targetRuntimeDir = path.join(postgresRuntimeDir, postgresRuntimePlatformSegment());

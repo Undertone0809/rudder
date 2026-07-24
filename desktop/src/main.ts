@@ -72,7 +72,9 @@ import {
   type PostUpdateReloadMarker,
 } from "./post-update-reload.js";
 import {
+  acquireDesktopPostgresLifecycleLock,
   captureDesktopPostgresEnvironment,
+  finalizeSharedPostgresRuntime,
   reconcilePackagedDesktopPostgresBinDir,
   restoreDesktopPostgresEnvironment,
 } from "./postgres-runtime.js";
@@ -1687,6 +1689,7 @@ function serverRuntimeOptions(): StartServerOptions {
 async function startLocalRudder(): Promise<void> {
   if (startInFlight) return startInFlight;
   startInFlight = (async () => {
+    let releasePostgresLifecycleLock: (() => Promise<void>) | null = null;
     startupAttemptCount += 1;
     const attempt = startupAttemptCount;
     const profile = resolveDesktopLocalEnvProfile();
@@ -1711,6 +1714,13 @@ async function startLocalRudder(): Promise<void> {
 
     try {
       await stopLocalRudder();
+      if (app.isPackaged) {
+        releasePostgresLifecycleLock = await acquireDesktopPostgresLifecycleLock();
+        reconcilePackagedDesktopPostgresBinDir(
+          process.resourcesPath,
+          externalServerRuntimeCacheDir,
+        );
+      }
       const serverModule = await importServerModule();
       updateBootState({
         stage: "config",
@@ -1722,6 +1732,29 @@ async function startLocalRudder(): Promise<void> {
         takeoverOnVersionMismatch: true,
         ...serverRuntimeOptions(),
       });
+      if (releasePostgresLifecycleLock) {
+        await releasePostgresLifecycleLock();
+        releasePostgresLifecycleLock = null;
+      }
+      if (app.isPackaged) {
+        try {
+          const healthUrl = new URL("/api/health", serverHandle.apiUrl);
+          const healthResponse = await fetch(healthUrl);
+          if (!healthResponse.ok) {
+            throw new Error(`health check returned ${healthResponse.status}`);
+          }
+          const cleanup = await finalizeSharedPostgresRuntime({
+            expectedInstanceId: serverHandle.runtime.instanceId,
+            expectedVersion: serverHandle.runtime.version,
+          });
+          console.info("[rudder-desktop] finalized shared PostgreSQL runtime", cleanup);
+        } catch (error) {
+          console.warn(
+            "[rudder-desktop] shared PostgreSQL runtime cleanup deferred until a verified shared cold start",
+            error,
+          );
+        }
+      }
       try {
         await requireBrowserRuntimeLifecycle().connect(serverHandle.apiUrl);
       } catch (error) {
@@ -1780,6 +1813,9 @@ async function startLocalRudder(): Promise<void> {
         paths: serverHandle?.instancePaths ?? currentBootState.paths,
       });
     } finally {
+      if (releasePostgresLifecycleLock) {
+        await releasePostgresLifecycleLock();
+      }
       startInFlight = null;
     }
   })();

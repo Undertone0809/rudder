@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { copyFile, cp, mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,8 @@ const cacheRoot = process.env.RUDDER_POSTGRES_RUNTIME_CACHE_DIR
 const runtimeRoot = path.join(cacheRoot, runtimeDirName, `${platform}-${arch}`);
 const binDir = path.join(runtimeRoot, "bin");
 const downloadTimeoutMs = Number.parseInt(process.env.RUDDER_POSTGRES_RUNTIME_DOWNLOAD_TIMEOUT_MS ?? "600000", 10);
+const installLockPath = `${runtimeRoot}.install.lock`;
+const lifecycleLockPath = path.join(cacheRoot, ".postgres-runtime.lifecycle.lock");
 
 function executableName(name) {
   return platform === "win32" ? `${name}.exe` : name;
@@ -48,6 +50,7 @@ async function isCompleteBinDir(candidateBinDir) {
   ]) {
     try {
       await stat(candidatePath);
+      await stat(path.join(path.dirname(candidatePath), "postgresql.conf.sample"));
       return true;
     } catch {
       // Try the next supported PostgreSQL archive layout.
@@ -57,12 +60,70 @@ async function isCompleteBinDir(candidateBinDir) {
 }
 
 function verifyVersion(candidateBinDir) {
-  const postgresBinary = path.join(candidateBinDir, executableName("postgres"));
-  const result = spawnSync(postgresBinary, ["--version"], { encoding: "utf8" });
-  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-  if (result.status !== 0 || !/\bPostgreSQL\)?\s+18\.4\b/i.test(output)) {
-    throw new Error(`unexpected PostgreSQL runtime version at ${postgresBinary}: ${output.trim() || "unknown version"}`);
+  for (const binary of ["initdb", "pg_ctl", "postgres"]) {
+    const binaryPath = path.join(candidateBinDir, executableName(binary));
+    const result = spawnSync(binaryPath, ["--version"], { encoding: "utf8" });
+    const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    if (result.status !== 0 || !/\bPostgreSQL\)?\s+18\.4\b/i.test(output)) {
+      throw new Error(`unexpected PostgreSQL runtime version at ${binaryPath}: ${output.trim() || "unknown version"}`);
+    }
   }
+}
+
+function pidIsRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function acquireFilesystemLock(lockPath) {
+  const lockId = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const ownerPath = path.join(lockPath, "owner.json");
+  const startedAt = Date.now();
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  while (true) {
+    try {
+      await mkdir(lockPath);
+      await writeFile(
+        ownerPath,
+        `${JSON.stringify({ pid: process.pid, lockId, createdAt: new Date().toISOString() })}\n`,
+        "utf8",
+      );
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      try {
+        const owner = JSON.parse(await readFile(ownerPath, "utf8"));
+        if (typeof owner.pid !== "number" || !pidIsRunning(owner.pid)) {
+          await rm(lockPath, { recursive: true, force: true });
+          continue;
+        }
+      } catch {
+        const lockStats = await stat(lockPath).catch(() => null);
+        if (lockStats && Date.now() - lockStats.mtimeMs > 5_000) {
+          await rm(lockPath, { recursive: true, force: true });
+          continue;
+        }
+      }
+      if (Date.now() - startedAt > 30_000) {
+        throw new Error(`timed out waiting for PostgreSQL runtime lock ${lockPath}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  return async () => {
+    try {
+      const owner = JSON.parse(await readFile(ownerPath, "utf8"));
+      if (owner.lockId === lockId) {
+        await rm(lockPath, { recursive: true, force: true });
+      }
+    } catch {
+      // The lock was replaced or already released.
+    }
+  };
 }
 
 async function findBinDir(rootDir) {
@@ -78,6 +139,45 @@ async function findBinDir(rootDir) {
     }
   }
   return null;
+}
+
+async function isUsableRuntimeRoot(candidateRoot) {
+  const candidateBinDir = path.join(candidateRoot, "bin");
+  if (!await isCompleteBinDir(candidateBinDir)) return false;
+  try {
+    verifyVersion(candidateBinDir);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function reconcileInterruptedGenerations() {
+  const parentDir = path.dirname(runtimeRoot);
+  const baseName = path.basename(runtimeRoot);
+  const entries = await readdir(parentDir, { withFileTypes: true }).catch(() => []);
+  const previousRoots = entries
+    .filter((entry) => entry.name.startsWith(`${baseName}.previous-`))
+    .map((entry) => path.join(parentDir, entry.name))
+    .sort()
+    .reverse();
+  const staleWorkDirs = entries
+    .filter((entry) => entry.name.startsWith(`.${baseName}.download-`))
+    .map((entry) => path.join(parentDir, entry.name));
+
+  if (!await isUsableRuntimeRoot(runtimeRoot)) {
+    for (const previousRoot of previousRoots) {
+      if (!await isUsableRuntimeRoot(previousRoot)) continue;
+      await rm(runtimeRoot, { recursive: true, force: true });
+      await rename(previousRoot, runtimeRoot);
+      break;
+    }
+  }
+
+  await Promise.all([
+    ...previousRoots.map((candidate) => rm(candidate, { recursive: true, force: true })),
+    ...staleWorkDirs.map((candidate) => rm(candidate, { recursive: true, force: true })),
+  ]);
 }
 
 async function materializeSymlinks(currentDir) {
@@ -151,55 +251,88 @@ function extractArchive(archivePath, extractDir) {
 }
 
 async function main() {
-  if (await isCompleteBinDir(binDir)) {
-    verifyVersion(binDir);
-    console.log(binDir);
-    return;
+  const releaseLifecycleLock = await acquireFilesystemLock(lifecycleLockPath);
+  try {
+    const releaseInstallLock = await acquireFilesystemLock(installLockPath);
+    try {
+      await reconcileInterruptedGenerations();
+      if (await isCompleteBinDir(binDir)) {
+        verifyVersion(binDir);
+        console.log(binDir);
+        return;
+      }
+      const url = archiveUrl();
+      const workDir = path.join(path.dirname(runtimeRoot), `.${path.basename(runtimeRoot)}.download-${process.pid}`);
+      const archivePath = path.join(workDir, `postgresql-${POSTGRES_VERSION}.zip`);
+      const extractDir = path.join(workDir, "extract");
+      const stagedRuntimeRoot = path.join(workDir, "prepared");
+      const previousRuntimeRoot = `${runtimeRoot}.previous-${process.pid}-${Date.now()}`;
+      await rm(workDir, { recursive: true, force: true });
+      await rm(previousRuntimeRoot, { recursive: true, force: true });
+      await mkdir(extractDir, { recursive: true });
+
+      try {
+        console.error(`[postgres-runtime] downloading PostgreSQL ${POSTGRES_VERSION} runtime for ${platform}-${arch} from ${url}`);
+        console.error(`[postgres-runtime] first download can be several hundred MB; cache target: ${binDir}`);
+        await downloadArchive(url, archivePath);
+        extractArchive(archivePath, extractDir);
+
+        const extractedBinDir = await findBinDir(extractDir);
+        if (!extractedBinDir) {
+          throw new Error(`PostgreSQL ${POSTGRES_VERSION} archive did not contain initdb, pg_ctl, and postgres binaries`);
+        }
+        verifyVersion(extractedBinDir);
+
+        const extractedRuntimeRoot = path.dirname(extractedBinDir);
+        await mkdir(stagedRuntimeRoot, { recursive: true });
+        const copyResult = spawnSync(process.execPath, [
+          "-e",
+          [
+            "const fs = require('node:fs');",
+            "const path = require('node:path');",
+            "for (const name of ['bin', 'lib', 'share']) {",
+            "  const source = path.join(process.argv[1], name);",
+            "  if (fs.existsSync(source)) fs.cpSync(source, path.join(process.argv[2], name), { recursive: true, dereference: true });",
+            "}",
+          ].join(" "),
+          extractedRuntimeRoot,
+          stagedRuntimeRoot,
+        ], { encoding: "utf8" });
+        if (copyResult.status !== 0) {
+          throw new Error(`failed to cache PostgreSQL runtime payload: ${copyResult.stderr || copyResult.stdout}`);
+        }
+        await materializeSymlinks(path.join(stagedRuntimeRoot, "bin"));
+        await materializeSymlinks(path.join(stagedRuntimeRoot, "lib"));
+        await materializeSymlinks(path.join(stagedRuntimeRoot, "share"));
+        if (!await isCompleteBinDir(path.join(stagedRuntimeRoot, "bin"))) {
+          throw new Error("prepared PostgreSQL runtime is incomplete");
+        }
+        verifyVersion(path.join(stagedRuntimeRoot, "bin"));
+
+        let previousMoved = false;
+        try {
+          await rename(runtimeRoot, previousRuntimeRoot);
+          previousMoved = true;
+        } catch (error) {
+          if (error?.code !== "ENOENT") throw error;
+        }
+        try {
+          await rename(stagedRuntimeRoot, runtimeRoot);
+        } catch (error) {
+          if (previousMoved) await rename(previousRuntimeRoot, runtimeRoot);
+          throw error;
+        }
+        await rm(previousRuntimeRoot, { recursive: true, force: true });
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+      console.log(binDir);
+    } finally {
+      await releaseInstallLock();
+    }
+  } finally {
+    await releaseLifecycleLock();
   }
-
-  const url = archiveUrl();
-  const workDir = path.join(path.dirname(runtimeRoot), `.${path.basename(runtimeRoot)}.download-${process.pid}`);
-  const archivePath = path.join(workDir, `postgresql-${POSTGRES_VERSION}.zip`);
-  const extractDir = path.join(workDir, "extract");
-  await rm(workDir, { recursive: true, force: true });
-  await mkdir(extractDir, { recursive: true });
-
-  console.error(`[postgres-runtime] downloading PostgreSQL ${POSTGRES_VERSION} runtime for ${platform}-${arch} from ${url}`);
-  console.error(`[postgres-runtime] first download can be several hundred MB; cache target: ${binDir}`);
-  await downloadArchive(url, archivePath);
-  extractArchive(archivePath, extractDir);
-
-  const extractedBinDir = await findBinDir(extractDir);
-  if (!extractedBinDir) {
-    throw new Error(`PostgreSQL ${POSTGRES_VERSION} archive did not contain initdb, pg_ctl, and postgres binaries`);
-  }
-  verifyVersion(extractedBinDir);
-
-  const extractedRuntimeRoot = path.dirname(extractedBinDir);
-  await rm(runtimeRoot, { recursive: true, force: true });
-  await mkdir(runtimeRoot, { recursive: true });
-  const copyResult = spawnSync(process.execPath, [
-    "-e",
-    [
-      "const fs = require('node:fs');",
-      "const path = require('node:path');",
-      "for (const name of ['bin', 'lib', 'share']) {",
-      "  const source = path.join(process.argv[1], name);",
-      "  if (fs.existsSync(source)) fs.cpSync(source, path.join(process.argv[2], name), { recursive: true, dereference: true });",
-      "}",
-    ].join(" "),
-    extractedRuntimeRoot,
-    runtimeRoot,
-  ], { encoding: "utf8" });
-  if (copyResult.status !== 0) {
-    throw new Error(`failed to cache PostgreSQL runtime payload: ${copyResult.stderr || copyResult.stdout}`);
-  }
-  await materializeSymlinks(path.join(runtimeRoot, "bin"));
-  await materializeSymlinks(path.join(runtimeRoot, "lib"));
-  await materializeSymlinks(path.join(runtimeRoot, "share"));
-  await rm(workDir, { recursive: true, force: true });
-
-  console.log(binDir);
 }
 
 void main().catch((error) => {

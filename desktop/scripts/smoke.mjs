@@ -3,7 +3,7 @@ import electronBinary from "electron";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
-import { access, chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
 import net from "node:net";
@@ -570,8 +570,14 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
   const runtimeServerDir = path.join(runtimeCacheDir, "node_modules", "@rudderhq", "server");
   const postgresRuntimeSegment = `${process.platform}-${process.arch}`;
   const packagedPostgresRuntimeDir = path.join(resourcesDir, "postgres-18.4", postgresRuntimeSegment);
-  const runtimePostgresDir = path.join(runtimeCacheDir, "postgres-18.4", postgresRuntimeSegment);
-  const postgresBinDir = path.join(runtimePostgresDir, "bin");
+  const sharedPostgresRoot = path.join(
+    resolveInstancePaths(userDataDir).rudderHome,
+    "runtime-payloads",
+    "postgres-18.4",
+  );
+  const sharedPostgresPlatformDir = path.join(sharedPostgresRoot, postgresRuntimeSegment);
+  const runtimePostgresRoot = path.join(runtimeCacheDir, "postgres-18.4");
+  const postgresBinDir = path.join(sharedPostgresPlatformDir, "bin");
   const postgresBinDirMarker = path.join(userDataDir, "external-runtime-postgres-bin");
   const packagedCodexAdapterDir = path.join(
     serverPackageDir,
@@ -600,6 +606,13 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
     packageName: "@rudderhq/server",
     packageVersion: serverManifest.version,
     installedAt: new Date(0).toISOString(),
+    postgresRuntime: {
+      version: "18.4",
+      platform: process.platform,
+      arch: process.arch,
+      binDir: postgresBinDir,
+      scope: "shared",
+    },
   })}\n`, "utf8");
   await writeFile(path.join(runtimeServerDir, "package.json"), `${JSON.stringify({
     name: "@rudderhq/server",
@@ -613,10 +626,17 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
     `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(loadedMarker)}, "loaded");\nfs.writeFileSync(${JSON.stringify(postgresBinDirMarker)}, process.env.RUDDER_POSTGRES_BIN_DIR ?? "");\nexport * from ${JSON.stringify(pathToFileURL(serverEntrypoint).href)};\n`,
     "utf8",
   );
-  await mkdir(path.dirname(runtimePostgresDir), { recursive: true });
+  await mkdir(sharedPostgresRoot, { recursive: true });
   await symlink(
     packagedPostgresRuntimeDir,
-    runtimePostgresDir,
+    sharedPostgresPlatformDir,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  await symlink(
+    process.platform === "win32"
+      ? sharedPostgresRoot
+      : path.relative(path.dirname(runtimePostgresRoot), sharedPostgresRoot),
+    runtimePostgresRoot,
     process.platform === "win32" ? "junction" : "dir",
   );
   await symlink(
@@ -641,6 +661,8 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
     loadedMarker,
     postgresBinDir,
     postgresBinDirMarker,
+    runtimePostgresRoot,
+    sharedPostgresRoot,
     runtimeCacheDir,
     serverVersion: serverManifest.version,
     staleMarker,
@@ -4726,8 +4748,34 @@ async function runPostgresRuntimeHandoffScenario(mode) {
     assert.equal(
       (await readFile(packagedRuntime.postgresBinDirMarker, "utf8")).trim(),
       packagedRuntime.postgresBinDir,
-      "packaged Desktop should replace an inherited app-resource PostgreSQL path with the external runtime payload",
+      "packaged Desktop should replace an inherited app-resource PostgreSQL path with the shared runtime payload",
     );
+    const descriptor = JSON.parse(await readFile(
+      resolveInstancePaths(scenarioRoot).runtimeDescriptorPath,
+      "utf8",
+    ));
+    assert.equal(descriptor.postgresBinDir, packagedRuntime.postgresBinDir);
+    assert.equal(
+      descriptor.postgresRuntimeKey,
+      `postgres-18.4/${process.platform}-${process.arch}`,
+    );
+    if (process.platform === "win32") {
+      assert.equal(
+        await realpath(packagedRuntime.runtimePostgresRoot),
+        await realpath(packagedRuntime.sharedPostgresRoot),
+        "runtime compatibility junction should resolve to the shared payload",
+      );
+    } else {
+      assert.equal(
+        (await lstat(packagedRuntime.runtimePostgresRoot)).isSymbolicLink(),
+        true,
+        "runtime compatibility path should remain a symlink on POSIX",
+      );
+      assert.equal(
+        await readlink(packagedRuntime.runtimePostgresRoot),
+        path.join("..", "..", "runtime-payloads", "postgres-18.4"),
+      );
+    }
     await closeDesktop(run.electronApp);
   } catch (error) {
     await closeDesktop(run.electronApp).catch(() => {});

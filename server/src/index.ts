@@ -54,6 +54,7 @@ import {
   removeLocalRuntimeDescriptorIfOwned,
   resolveEffectiveLocalEnvName,
   resolveLocalRuntimePaths,
+  resolveManagedPostgresRuntimeKey,
   resolveRuntimeOwnerKind,
   withRuntimeStartLock,
   writeLocalRuntimeDescriptor,
@@ -1378,6 +1379,12 @@ async function startServerRuntime(
   });
 
   if (runtimeOwnerKind) {
+    const descriptorPostgresBinDir = startupDbInfo.mode === "embedded-postgres"
+      ? startupDbInfo.postgresBinDir
+      : undefined;
+    const postgresRuntimeKey = descriptorPostgresBinDir
+      ? resolveManagedPostgresRuntimeKey(descriptorPostgresBinDir)
+      : null;
     const runtimeDescriptor = {
       instanceId,
       localEnv,
@@ -1387,6 +1394,12 @@ async function startServerRuntime(
       version: serverVersion,
       ownerKind: runtimeOwnerKind,
       startedAt: new Date().toISOString(),
+      ...(descriptorPostgresBinDir
+        ? {
+            postgresBinDir: descriptorPostgresBinDir,
+            ...(postgresRuntimeKey ? { postgresRuntimeKey } : {}),
+          }
+        : {}),
     };
     ownedRuntimeDescriptor = {
       instanceId: runtimeDescriptor.instanceId,
