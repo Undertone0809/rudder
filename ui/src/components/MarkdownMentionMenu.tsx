@@ -180,7 +180,7 @@ export function MarkdownMentionMenu({
       role={containerMenu ? "menu" : "listbox"}
       data-testid="markdown-mention-menu"
       className={cn(
-        "scrollbar-auto-hide fixed z-[70] overflow-y-auto rounded-lg border border-border p-1.5 shadow-lg",
+        "pointer-events-auto scrollbar-auto-hide fixed z-[70] overflow-y-auto rounded-lg border border-border p-1.5 shadow-lg",
         containerMenu
           ? "chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay text-foreground"
           : "bg-popover text-popover-foreground",

@@ -694,6 +694,10 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     const option = document.querySelector<HTMLElement>(
       '[data-testid="markdown-mention-option-library_file:docs/brief.md"]',
     );
+    expect(
+      document.querySelector('[data-testid="markdown-mention-menu"]')
+        ?.classList.contains("pointer-events-auto"),
+    ).toBe(true);
     expect(option).toBeTruthy();
     act(() => {
       option?.dispatchEvent(new MouseEvent("mousedown", {
