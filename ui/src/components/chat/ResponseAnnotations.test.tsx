@@ -150,7 +150,7 @@ describe("response annotation components", () => {
       { viewportWidth: 1_000, markerSize: 28, gap: 6, padding: 8 },
     )).toEqual({
       left: 256,
-      top: 60,
+      top: 56,
     });
   });
 
@@ -161,7 +161,7 @@ describe("response annotation components", () => {
       { viewportWidth: 670, markerSize: 28, gap: 6, padding: 8 },
     )).toEqual({
       left: 536,
-      top: 60,
+      top: 56,
     });
   });
 
@@ -220,7 +220,7 @@ describe("response annotation components", () => {
     });
   });
 
-  it("edits a comment and accepts annotation-owned images and files", () => {
+  it("edits a comment without a visible redundant label and accepts picked or pasted files", () => {
     const onSave = vi.fn();
     const onCancel = vi.fn();
     const pendingImage = new File(["image"], "screenshot.png", { type: "image/png" });
@@ -239,6 +239,7 @@ describe("response annotation components", () => {
     expect(host.textContent).toContain("2. Selected text:");
     expect(host.textContent).toContain(annotation.selectedText);
     expect(host.textContent).toContain("screenshot.png");
+    expect(host.textContent).not.toContain("User comment:");
     const filePicker = host.querySelector<HTMLLabelElement>(
       "label[aria-label='Add images or files']",
     );
@@ -246,6 +247,27 @@ describe("response annotation components", () => {
     expect(filePicker?.textContent?.trim()).toBe("");
     expect(filePicker?.getAttribute("title")).toBe("Add images or files");
     const textarea = host.querySelector("textarea")!;
+    expect(textarea.getAttribute("aria-label")).toBe("Comment");
+    const pastedImage = new File(["pasted"], "pasted-image.png", { type: "image/png" });
+    const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEvent, "clipboardData", {
+      configurable: true,
+      value: { files: [pastedImage] },
+    });
+    act(() => {
+      textarea.dispatchEvent(pasteEvent);
+    });
+    expect(pasteEvent.defaultPrevented).toBe(true);
+    expect(host.textContent).toContain("pasted-image.png");
+    const textPasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(textPasteEvent, "clipboardData", {
+      configurable: true,
+      value: { files: [] },
+    });
+    act(() => {
+      textarea.dispatchEvent(textPasteEvent);
+    });
+    expect(textPasteEvent.defaultPrevented).toBe(false);
     act(() => {
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
       setter?.call(textarea, "Add a concrete example.");
@@ -265,7 +287,7 @@ describe("response annotation components", () => {
     click(Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "Save")!);
     expect(onSave).toHaveBeenCalledWith({
       comment: "Add a concrete example.",
-      pendingFiles: [report],
+      pendingFiles: [pastedImage, report],
       attachmentIds: [],
     });
     expect(onCancel).not.toHaveBeenCalled();
@@ -574,7 +596,7 @@ describe("response annotation components", () => {
     click(host.querySelector("[aria-label='Show 1 annotation']")!);
     expect(document.body.textContent).toContain("1. Selected text:");
     expect(document.body.textContent).toContain(annotation.selectedText);
-    expect(document.body.textContent).toContain("User comment:");
+    expect(document.body.textContent).not.toContain("User comment:");
     expect(document.body.textContent).toContain("When can this happen?");
     expect(document.body.textContent).toContain("failure-notes.pdf");
     expect(document.body.querySelector("textarea")).toBeNull();
