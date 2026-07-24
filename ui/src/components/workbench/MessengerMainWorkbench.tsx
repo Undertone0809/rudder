@@ -1,4 +1,5 @@
 import { messengerApi } from "@/api/messenger";
+import { LocalAppDefinitionReviewDialog } from "@/components/side-panel/LocalAppsPanel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -8,6 +9,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   LiveSurfaceAnchor,
@@ -18,6 +25,14 @@ import {
 import { useOrganizationMainWorkbench } from "@/context/MainWorkbenchContext";
 import { useOptionalToast } from "@/context/ToastContext";
 import { useBrowserSavedViewMetadataPersister } from "@/hooks/useBrowserSavedViewMetadataPersister";
+import {
+  readDesktopShell,
+  type DesktopLocalAppDefinition,
+  type DesktopLocalAppDefinitionDraft,
+} from "@/lib/desktop-shell";
+import {
+  localAppIdentityMatches,
+} from "@/lib/local-apps";
 import type { MainWorkbenchTab, MainWorkbenchTarget } from "@/lib/main-workbench-state";
 import {
   messengerSavedViewRoute,
@@ -38,6 +53,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type KeyboardCodes,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -53,9 +69,10 @@ import {
   FileText,
   Folder,
   Globe2,
-  GripVertical,
   Loader2,
+  MoreHorizontal,
   Plus,
+  Settings2,
   Workflow,
   X,
   type LucideIcon,
@@ -73,6 +90,12 @@ type WorkbenchTabIcon = {
   fallback: LucideIcon;
   label: string;
 };
+
+const workbenchTabKeyboardCodes = {
+  start: ["Space"],
+  cancel: ["Escape"],
+  end: ["Space"],
+} satisfies KeyboardCodes;
 
 function tabIcon(target: MainWorkbenchTarget): WorkbenchTabIcon {
   if (target.kind === "browser") return { fallback: Globe2, label: "Browser" };
@@ -119,6 +142,7 @@ function SortableWorkbenchTab({
   tab,
   onActivate,
   onClose,
+  onLocalAppUpdated,
   onFocus,
   onKeyDown,
 }: {
@@ -130,6 +154,7 @@ function SortableWorkbenchTab({
   tab: MainWorkbenchTab;
   onActivate: () => void;
   onClose: () => void;
+  onLocalAppUpdated: (definition: DesktopLocalAppDefinition) => void;
   onFocus: () => void;
   onKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
 }) {
@@ -159,8 +184,13 @@ function SortableWorkbenchTab({
       style={style}
     >
       <button
-        ref={setTabRef}
+        ref={(node) => {
+          setTabRef(node);
+          sortable.setActivatorNodeRef(node);
+        }}
         type="button"
+        {...sortable.attributes}
+        {...sortable.listeners}
         id={tabDomId(organizationId, tab.viewInstanceId)}
         role="tab"
         aria-controls={panelDomId(organizationId, tab.viewInstanceId)}
@@ -171,7 +201,10 @@ function SortableWorkbenchTab({
         className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-2 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         onClick={onActivate}
         onFocus={onFocus}
-        onKeyDown={onKeyDown}
+        onKeyDown={(event) => {
+          sortable.listeners?.onKeyDown?.(event);
+          if (!event.defaultPrevented) onKeyDown(event);
+        }}
       >
         {favicon ? (
           <img
@@ -190,16 +223,12 @@ function SortableWorkbenchTab({
           </span>
         ) : null}
       </button>
-      <button
-        ref={sortable.setActivatorNodeRef}
-        type="button"
-        aria-label={`Reorder ${tab.target.label} tab`}
-        className="inline-flex h-6 w-5 shrink-0 cursor-grab items-center justify-center rounded-sm opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 active:cursor-grabbing"
-        {...sortable.attributes}
-        {...sortable.listeners}
-      >
-        <GripVertical className="h-3 w-3" aria-hidden />
-      </button>
+      {tab.target.kind === "local_app" ? (
+        <LocalAppTabActions
+          target={tab.target}
+          onUpdated={onLocalAppUpdated}
+        />
+      ) : null}
       <button
         type="button"
         aria-label={`Close ${tab.target.label} tab`}
@@ -214,6 +243,105 @@ function SortableWorkbenchTab({
         <X className="h-3 w-3" aria-hidden />
       </button>
     </div>
+  );
+}
+
+function LocalAppTabActions({
+  target,
+  onUpdated,
+}: {
+  target: Extract<MainWorkbenchTarget, { kind: "local_app" }>;
+  onUpdated: (definition: DesktopLocalAppDefinition) => void;
+}) {
+  const queryClient = useQueryClient();
+  const localApps = readDesktopShell()?.localApps;
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const definitionsQuery = useQuery({
+    queryKey: queryKeys.localApps.definitions,
+    queryFn: () => localApps!.list(),
+    enabled: Boolean(localApps?.supported),
+    staleTime: 1_000,
+  });
+  const definition = definitionsQuery.data?.find(
+    (candidate) => localAppIdentityMatches(candidate, target),
+  ) ?? null;
+  const statusQuery = useQuery({
+    queryKey: queryKeys.localApps.status(target.localBindingId),
+    queryFn: () => localApps!.status(definition!.id),
+    enabled: Boolean(localApps?.supported && definition),
+  });
+  const editable = statusQuery.data?.status === "stopped"
+    || statusQuery.data?.status === "failed";
+  const stopMutation = useMutation({
+    mutationFn: () => localApps!.stop(definition!.id),
+    onSuccess: (nextStatus) => {
+      queryClient.setQueryData(
+        queryKeys.localApps.status(target.localBindingId),
+        nextStatus,
+      );
+    },
+  });
+  const updateMutation = useMutation({
+    mutationFn: (draft: DesktopLocalAppDefinitionDraft) => (
+      localApps!.update(definition!.id, draft)
+    ),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<DesktopLocalAppDefinition[]>(
+        queryKeys.localApps.definitions,
+        (current) => current?.map((candidate) => (
+          candidate.id === updated.id ? updated : candidate
+        )) ?? [updated],
+      );
+      onUpdated(updated);
+      setSettingsOpen(false);
+    },
+  });
+
+  return (
+    <>
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`More options for ${target.label}`}
+            className="inline-flex h-6 w-5 shrink-0 items-center justify-center rounded-sm opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-[color:var(--surface-panel)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <MoreHorizontal className="h-3 w-3" aria-hidden />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem
+            disabled={!definition}
+            onSelect={() => {
+              updateMutation.reset();
+              setSettingsOpen(true);
+            }}
+          >
+            <Settings2 className="h-3.5 w-3.5" aria-hidden />
+            Project settings
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {settingsOpen && definition ? (
+        <LocalAppDefinitionReviewDialog
+          definition={definition}
+          edit
+          editable={editable}
+          error={updateMutation.error ?? stopMutation.error ?? statusQuery.error}
+          open
+          pending={updateMutation.isPending}
+          requestEditPending={stopMutation.isPending}
+          title="Project settings"
+          onCancel={() => {
+            updateMutation.reset();
+            setSettingsOpen(false);
+          }}
+          onRequestEdit={() => stopMutation.mutate()}
+          onSubmit={(draft) => updateMutation.mutate(draft)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -654,7 +782,10 @@ export function MessengerMainWorkbench({
   );
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+      keyboardCodes: workbenchTabKeyboardCodes,
+    }),
   );
 
   const rovingViewInstanceId = focusedViewInstanceId
@@ -877,7 +1008,7 @@ export function MessengerMainWorkbench({
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]",
+        "messenger-main-workbench-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]",
         className,
       )}
       data-testid="messenger-main-workbench"
@@ -911,6 +1042,13 @@ export function MessengerMainWorkbench({
                 tab={tab}
                 onActivate={() => activateTab(tab)}
                 onClose={() => void closeTab(tab)}
+                onLocalAppUpdated={(definition) => {
+                  workbench.updateTarget(
+                    tab.runtimeId,
+                    tab.viewInstanceId,
+                    { ...tab.target, label: definition.title },
+                  );
+                }}
                 onFocus={() => setFocusedViewInstanceId(tab.viewInstanceId)}
                 onKeyDown={(event) => {
                   if (

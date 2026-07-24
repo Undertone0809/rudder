@@ -3168,8 +3168,9 @@ instance into Main; it does not reopen a copy in Side.
 - `Keep in Messenger` on an eligible session-only Main Browser tab.
 - Messenger Saved View row actions: Open, Move to group, Remove from Messenger,
   and group-local reorder.
-- Main tab actions: focus, reorder, close, create Browser tab, Browser Keep,
-  Remove, and target-specific controls.
+- Main tab actions: focus, whole-tab pointer/keyboard reorder, close, create
+  Browser tab, Browser Keep, Remove, and target-specific controls. A Local App
+  tab exposes project settings from its hover/focus More menu.
 - Direct navigation to `/messenger/saved/:id` or `/messenger/workbench`.
 - Organization-scoped Saved View list/create/get/update/reorder/delete APIs and
   generic custom-group item APIs.
@@ -3242,7 +3243,9 @@ instance into Main; it does not reopen a copy in Side.
   retained behind Chat, Issue, or another Messenger route must not leave the
   Saved View row selected.
 - Main exposes one WAI-ARIA mixed tab strip with roving keyboard focus,
-  left/right/home/end navigation, close, reorder, and `+` for a Browser tab.
+  left/right/home/end navigation, close, whole-tab reorder, and `+` for a
+  Browser tab. Pointer reorder uses the tab surface itself rather than a
+  separate drag-handle button.
 
 ### Operator-Visible Output
 
@@ -3250,10 +3253,10 @@ instance into Main; it does not reopen a copy in Side.
   and removes only that tab from Side.
 - Main Browser and Local App surfaces fill the Main content directly beneath
   the mixed tab strip. They must not be wrapped in another card, inset frame,
-  rounded inner shell, or second Browser tab strip. The transparent Main shell
-  and tab strip must still preserve the shared outer workspace radius, and the
-  live Browser host must clip its toolbar and page content at all four outer
-  corners.
+  rounded inner shell, or second Browser tab strip. The Main shell and tab
+  strip use a theme-appropriate masked surface instead of exposing the
+  wallpaper transparently, preserve the shared outer workspace radius, and
+  clip the live Browser toolbar and page content at all four outer corners.
 - Browser rows show a legal favicon or generic Web/Globe icon and title/domain,
   never the URL. Library, Automation, and Local App rows use their type icons.
 - Missing or device-local targets show an explicit unavailable/retry state in
@@ -3351,9 +3354,10 @@ instance into Main; it does not reopen a copy in Side.
   group membership semantics, attention exclusion, live guest ownership,
   Main/Side transfer, Remove/Close semantics, recovery guarantees, capacity, or
   web/mobile behavior requires updating this contract.
-- Component names, query-cache layout, throttle duration, row styling, and the
-  internal activity payload may change without a contract update when visible
-  behavior and persisted evidence stay equivalent.
+- Component names, query-cache layout, throttle duration, row styling, exact
+  masked-surface color, and the internal activity payload may change without a
+  contract update when visible behavior and persisted evidence stay
+  equivalent.
 
 ### Traceability
 
