@@ -3865,7 +3865,7 @@ export function MessengerContextSidebar() {
             </div>
           ))
         )}
-        {savedViewsQuery.data?.pageInfo.hasMore ? (
+        {savedViewsQuery.data?.pageInfo?.hasMore ? (
           <div className="flex min-h-9 items-center justify-center px-3 py-1">
             <button
               type="button"
