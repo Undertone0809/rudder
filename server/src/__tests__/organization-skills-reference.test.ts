@@ -217,7 +217,7 @@ describe("organization skill references", () => {
     expect(skills.find((skill) => skill.slug === "deep-research")).toMatchObject({
       sourceBadge: "community",
       sourceLabel: "Community preset",
-      editable: false,
+      editable: true,
     });
 
     const skillCreator = skills.find((skill) => skill.slug === "skill-creator");
