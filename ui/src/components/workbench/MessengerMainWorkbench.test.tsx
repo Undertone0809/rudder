@@ -94,8 +94,21 @@ vi.mock("@/components/ui/dropdown-menu", async () => {
     setOpen: (open: boolean) => void;
   } | null>(null);
   return {
-    DropdownMenu: ({ children }: { children: ReactNode }) => {
-      const [open, setOpen] = React.useState(false);
+    DropdownMenu: ({
+      children,
+      open: controlledOpen,
+      onOpenChange,
+    }: {
+      children: ReactNode;
+      open?: boolean;
+      onOpenChange?: (open: boolean) => void;
+    }) => {
+      const [uncontrolledOpen, setUncontrolledOpen] = React.useState(false);
+      const open = controlledOpen ?? uncontrolledOpen;
+      const setOpen = (nextOpen: boolean) => {
+        setUncontrolledOpen(nextOpen);
+        onOpenChange?.(nextOpen);
+      };
       return (
         <MenuContext.Provider value={{ open, setOpen }}>
           {children}
@@ -108,12 +121,20 @@ vi.mock("@/components/ui/dropdown-menu", async () => {
     },
     DropdownMenuItem: ({
       children,
+      disabled,
       onSelect,
     }: {
       children: ReactNode;
+      disabled?: boolean;
       onSelect?: () => void;
     }) => (
-      <button type="button" role="menuitem" onClick={onSelect}>
+      <button
+        type="button"
+        role="menuitem"
+        aria-disabled={disabled || undefined}
+        disabled={disabled}
+        onClick={onSelect}
+      >
         {children}
       </button>
     ),
@@ -707,6 +728,8 @@ describe("MessengerMainWorkbench", () => {
   it("opens editable Local App project settings from the hover More menu", async () => {
     renderWorkbench();
     openKinds(["local_app"]);
+    expect(listLocalApps).not.toHaveBeenCalled();
+    expect(statusLocalApp).not.toHaveBeenCalled();
 
     await act(async () => {
       host!
@@ -716,6 +739,13 @@ describe("MessengerMainWorkbench", () => {
         ?.click();
       await Promise.resolve();
     });
+    await vi.waitFor(() => expect(listLocalApps).toHaveBeenCalledOnce());
+    expect(statusLocalApp).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      const item = document.querySelector<HTMLButtonElement>('[role="menuitem"]');
+      expect(item).not.toBeNull();
+      expect(item?.getAttribute("aria-disabled")).not.toBe("true");
+    });
     await act(async () => {
       document
         .querySelector<HTMLButtonElement>('[role="menuitem"]')
@@ -723,6 +753,9 @@ describe("MessengerMainWorkbench", () => {
       await Promise.resolve();
     });
 
+    await vi.waitFor(() => expect(
+      document.querySelector<HTMLElement>('[role="dialog"]'),
+    ).not.toBeNull());
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
     expect(dialog.textContent).toContain("Project settings");
     expect(dialog.querySelector<HTMLInputElement>("#local-app-name")?.value)
@@ -760,6 +793,11 @@ describe("MessengerMainWorkbench", () => {
         )
         ?.click();
       await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      const item = document.querySelector<HTMLButtonElement>('[role="menuitem"]');
+      expect(item).not.toBeNull();
+      expect(item?.getAttribute("aria-disabled")).not.toBe("true");
     });
     await act(async () => {
       document
