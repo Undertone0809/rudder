@@ -268,10 +268,6 @@ describe("BreadcrumbBar", () => {
     expect(scopeMenu?.className).toContain("bg-[color:var(--surface-overlay)]");
     expect(scopeMenu?.className).toContain("z-[70]");
     expect(scopeMenu?.textContent).toContain("Search in");
-    expect(scopeMenu?.className).toContain("liquid-glass-host");
-    expect(
-      scopeMenu?.querySelector("[data-liquid-glass-variant='menu']"),
-    ).not.toBeNull();
     expect(scopeMenu?.textContent).toContain("Title");
     expect(scopeMenu?.textContent).toContain("Description");
     expect(scopeMenu?.textContent).toContain("Comments");
@@ -340,10 +336,6 @@ describe("BreadcrumbBar", () => {
     expect(menu?.className).toContain("relative");
     expect(menu?.className).toContain("xl:-translate-x-[calc(100%+0.5rem)]");
     expect(menu?.className).toContain("xl:w-[26rem]");
-    expect(menu?.className).toContain("liquid-glass-host");
-    expect(
-      menu?.querySelector("[data-liquid-glass-variant='menu']"),
-    ).not.toBeNull();
     expect(menu?.querySelector(".max-h-32")).not.toBeNull();
     expect(menu?.textContent).toContain("ZST-377");
     expect(menu?.textContent).toContain("new issue 时候输入文档持弹窗出来的位置不对");

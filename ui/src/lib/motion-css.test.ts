@@ -15,7 +15,6 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-accordion-content");
     expect(motionCss).toContain(".motion-skeleton");
     expect(motionCss).toContain(".motion-content-reveal");
-    expect(motionCss).toContain("@keyframes rudder-liquid-glass-settle");
   });
 
   it("disables reusable structural motion when reduced motion is requested", () => {

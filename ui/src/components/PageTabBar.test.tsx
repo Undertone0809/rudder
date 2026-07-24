@@ -23,33 +23,6 @@ afterEach(() => {
 });
 
 describe("PageTabBar", () => {
-  it("uses the shared liquid-glass tooltip material", () => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    act(() => {
-      root!.render(
-        <Tabs value="overview">
-          <PageTabBar
-            items={[
-              { value: "overview", label: "Overview", tooltip: "Run overview" },
-            ]}
-            mobileMode="scrollable-tabs"
-            value="overview"
-            onValueChange={() => undefined}
-          />
-        </Tabs>,
-      );
-    });
-
-    const tooltip = container.querySelector<HTMLElement>('[role="tooltip"]');
-    expect(tooltip?.className).toContain("liquid-glass-host");
-    expect(
-      tooltip?.querySelector("[data-liquid-glass-variant='tooltip']"),
-    ).not.toBeNull();
-  });
-
   it("keeps real tab semantics in scrollable mobile mode", () => {
     container = document.createElement("div");
     document.body.appendChild(container);

@@ -1,4 +1,3 @@
-import { LiquidGlassSurface } from "@/components/ui/liquid-glass-surface";
 import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
@@ -80,9 +79,8 @@ export function PageTabBar({
                 <span>{item.label}</span>
                 <span
                   role="tooltip"
-                  className="motion-tooltip liquid-glass-host pointer-events-none invisible absolute top-[calc(100%+0.375rem)] left-1/2 z-20 w-max -translate-x-1/2 rounded-md px-3 py-1.5 text-xs text-white opacity-0 transition-[opacity,visibility] duration-[var(--motion-duration-fast)] group-hover/tab-trigger:visible group-hover/tab-trigger:opacity-100 group-focus-visible/tab-trigger:visible group-focus-visible/tab-trigger:opacity-100 motion-reduce:transition-none"
+                  className="motion-tooltip pointer-events-none invisible absolute top-[calc(100%+0.375rem)] left-1/2 z-20 w-max -translate-x-1/2 rounded-md bg-foreground px-3 py-1.5 text-xs text-background opacity-0 shadow-sm transition-[opacity,visibility] duration-[var(--motion-duration-fast)] group-hover/tab-trigger:visible group-hover/tab-trigger:opacity-100 group-focus-visible/tab-trigger:visible group-focus-visible/tab-trigger:opacity-100 motion-reduce:transition-none"
                 >
-                  <LiquidGlassSurface variant="tooltip" />
                   {item.tooltip}
                 </span>
               </span>

@@ -3,7 +3,6 @@
 import { Tooltip as TooltipPrimitive } from "radix-ui";
 import * as React from "react";
 
-import { LiquidGlassSurface, type LiquidGlassVariant } from "@/components/ui/liquid-glass-surface";
 import { cn } from "@/lib/utils";
 
 function TooltipProvider({
@@ -33,27 +32,23 @@ function TooltipTrigger({
 
 function TooltipContent({
   className,
-  glassVariant = "tooltip",
   sideOffset = 0,
   children,
   ...props
-}: React.ComponentProps<typeof TooltipPrimitive.Content> & {
-  glassVariant?: LiquidGlassVariant
-}) {
+}: React.ComponentProps<typeof TooltipPrimitive.Content>) {
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}
         className={cn(
-          "liquid-glass-host motion-tooltip bg-foreground text-white z-50 w-fit origin-(--radix-tooltip-content-transform-origin) rounded-md border px-3 py-1.5 text-xs text-balance",
+          "motion-tooltip bg-foreground text-background z-50 w-fit origin-(--radix-tooltip-content-transform-origin) rounded-md px-3 py-1.5 text-xs text-balance",
           className
         )}
         {...props}
       >
-        <LiquidGlassSurface variant={glassVariant} />
         {children}
-        <TooltipPrimitive.Arrow className="rudder-tooltip-arrow z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px] bg-[rgb(34_36_37/0.9)] fill-[rgb(34_36_37/0.9)]" />
+        <TooltipPrimitive.Arrow className="rudder-tooltip-arrow bg-foreground fill-foreground z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px]" />
       </TooltipPrimitive.Content>
     </TooltipPrimitive.Portal>
   )
