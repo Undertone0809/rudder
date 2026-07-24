@@ -24,6 +24,10 @@ import {
 } from "./home-paths.js";
 import { resolveEffectiveLocalEnvName } from "./local-runtime.js";
 import { resolveRudderEnvPath } from "./paths.js";
+import {
+  parseMcpDeploymentPolicyEnv,
+  type McpDeploymentAllowlists,
+} from "./services/mcp/security-policy.js";
 
 function loadEnvFileWithoutOverride(filePath: string, blockedKeys?: ReadonlySet<string>): void {
   if (!existsSync(filePath)) return;
@@ -129,6 +133,7 @@ export interface Config {
   heartbeatRunTimeoutMs: number;
   heartbeatRunInactivityTimeoutMs: number;
   companyDeletionEnabled: boolean;
+  mcpDeploymentAllowlists: McpDeploymentAllowlists;
 }
 
 function parsePositiveInt(rawValue: string | undefined): number | null {
@@ -341,6 +346,7 @@ export function loadConfig(): Config {
       : Number.isFinite(heartbeatRunInactivityTimeoutMsRaw)
         ? Math.max(0, heartbeatRunInactivityTimeoutMsRaw)
         : 30 * 60 * 1000;
+  const mcpDeploymentAllowlists = parseMcpDeploymentPolicyEnv(process.env);
 
   return {
     deploymentMode,
@@ -388,5 +394,6 @@ export function loadConfig(): Config {
     heartbeatRunTimeoutMs,
     heartbeatRunInactivityTimeoutMs,
     companyDeletionEnabled,
+    mcpDeploymentAllowlists,
   };
 }

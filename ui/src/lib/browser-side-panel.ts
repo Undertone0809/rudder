@@ -2,6 +2,50 @@ import type { SidePanelTarget } from "./side-panel-targets";
 
 export const BROWSER_SIDE_PANEL_BLANK_URL = "about:blank";
 
+export type BrowserWebviewInputEvent = Event & {
+  input?: {
+    type?: string;
+    key?: string;
+    code?: string;
+    meta?: boolean;
+    control?: boolean;
+    alt?: boolean;
+    shift?: boolean;
+  };
+};
+
+export type BrowserLoadError = { code: string; url: string };
+
+function browserErrorHost(url: string) {
+  try {
+    return new URL(url).hostname || url;
+  } catch {
+    return url;
+  }
+}
+
+export function browserSidePanelErrorContent(error: BrowserLoadError) {
+  const host = browserErrorHost(error.url);
+  if (error.code === "ERR_CONNECTION_REFUSED") {
+    return { summary: `${host} refused to connect.`, suggestions: ["Checking the connection", "Checking the proxy and firewall"] };
+  }
+  if (error.code === "ERR_NAME_NOT_RESOLVED") {
+    return { summary: `${host}'s server IP address could not be found.`, suggestions: ["Checking the address", "Checking the connection"] };
+  }
+  if (error.code === "ERR_TIMED_OUT") {
+    return { summary: `${host} took too long to respond.`, suggestions: ["Checking the connection", "Trying again later"] };
+  }
+  return { summary: `The page at ${host} could not be loaded.`, suggestions: ["Checking the address", "Trying again later"] };
+}
+
+export function isBrowserSidePanelCloseShortcutInput(input: BrowserWebviewInputEvent["input"]) {
+  if (!input || input.type === "keyUp") return false;
+  const isCloseKey = input.key?.toLowerCase() === "w" || input.code === "KeyW";
+  if (!isCloseKey || input.alt || input.shift) return false;
+  const isMac = navigator.platform.toLowerCase().includes("mac");
+  return isMac ? Boolean(input.meta) && !input.control : Boolean(input.control) && !input.meta;
+}
+
 function searchUrl(value: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(value)}`;
 }

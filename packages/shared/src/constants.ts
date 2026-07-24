@@ -371,7 +371,7 @@ export type CustomIntegrationScope = (typeof CUSTOM_INTEGRATION_SCOPES)[number];
 export const CUSTOM_INTEGRATION_STATUSES = ["active", "disabled", "error", "revoked"] as const;
 export type CustomIntegrationStatus = (typeof CUSTOM_INTEGRATION_STATUSES)[number];
 
-export const CUSTOM_INTEGRATION_TOOL_STATUSES = ["active", "disabled", "error"] as const;
+export const CUSTOM_INTEGRATION_TOOL_STATUSES = ["active", "disabled", "error", "removed"] as const;
 export type CustomIntegrationToolStatus = (typeof CUSTOM_INTEGRATION_TOOL_STATUSES)[number];
 
 export const CUSTOM_INTEGRATION_BINDING_STATUSES = ["active", "revoked"] as const;
@@ -379,6 +379,85 @@ export type CustomIntegrationBindingStatus = (typeof CUSTOM_INTEGRATION_BINDING_
 
 export const CUSTOM_INTEGRATION_TOOL_CALL_STATUSES = ["success", "error", "blocked"] as const;
 export type CustomIntegrationToolCallStatus = (typeof CUSTOM_INTEGRATION_TOOL_CALL_STATUSES)[number];
+
+export const MCP_CONNECTION_PROVIDERS = ["supabase", "linear", "notion", "custom"] as const;
+export type McpConnectionProvider = (typeof MCP_CONNECTION_PROVIDERS)[number];
+
+export const MCP_CONNECTION_TRANSPORTS = ["stdio", "streamable_http", "legacy_manual"] as const;
+export type McpConnectionTransport = (typeof MCP_CONNECTION_TRANSPORTS)[number];
+
+export const MCP_CONNECTION_ACCESS_MODES = ["provider_default", "read_only", "read_write"] as const;
+export type McpConnectionAccessMode = (typeof MCP_CONNECTION_ACCESS_MODES)[number];
+
+export const MCP_CONNECTION_STATUSES = [
+  "draft",
+  "authorizing",
+  "selecting_scope",
+  "active",
+  "needs_reauth",
+  "disabled",
+  "revoked",
+  "error",
+] as const;
+export type McpConnectionStatus = (typeof MCP_CONNECTION_STATUSES)[number];
+
+export const MCP_OAUTH_GRANT_STATUSES = ["active", "needs_reauth", "revoked", "error"] as const;
+export type McpOAuthGrantStatus = (typeof MCP_OAUTH_GRANT_STATUSES)[number];
+
+export const MCP_OAUTH_SESSION_STATUSES = ["authorizing", "consumed", "expired", "error"] as const;
+export type McpOAuthSessionStatus = (typeof MCP_OAUTH_SESSION_STATUSES)[number];
+
+export const MCP_AGENT_BINDING_STATUSES = ["active", "disabled", "revoked"] as const;
+export type McpAgentBindingStatus = (typeof MCP_AGENT_BINDING_STATUSES)[number];
+
+export const MCP_OAUTH_SESSION_TTL_MS = 10 * 60 * 1000;
+
+export const MCP_PROVIDER_CATALOG = [
+  {
+    id: "supabase",
+    label: "Supabase",
+    curated: true,
+    requiresOAuth: true,
+    requiresScopeSelection: true,
+    scopeLabel: "Project",
+    transports: ["streamable_http"],
+    accessModes: ["read_only", "read_write"],
+    defaultAccessMode: "read_only",
+  },
+  {
+    id: "linear",
+    label: "Linear",
+    curated: true,
+    requiresOAuth: true,
+    requiresScopeSelection: false,
+    scopeLabel: "Workspace",
+    transports: ["streamable_http"],
+    accessModes: ["read_only", "read_write"],
+    defaultAccessMode: "read_write",
+  },
+  {
+    id: "notion",
+    label: "Notion",
+    curated: true,
+    requiresOAuth: true,
+    requiresScopeSelection: false,
+    scopeLabel: "Workspace",
+    transports: ["streamable_http"],
+    accessModes: ["provider_default"],
+    defaultAccessMode: "provider_default",
+  },
+  {
+    id: "custom",
+    label: "Custom MCP",
+    curated: false,
+    requiresOAuth: false,
+    requiresScopeSelection: false,
+    scopeLabel: "Server",
+    transports: ["stdio", "streamable_http"],
+    accessModes: ["provider_default", "read_only", "read_write"],
+    defaultAccessMode: "provider_default",
+  },
+] as const;
 
 export const CALENDAR_SOURCE_TYPES = ["rudder_local", "google_calendar", "agent_work", "system"] as const;
 export type CalendarSourceType = (typeof CALENDAR_SOURCE_TYPES)[number];
@@ -621,6 +700,13 @@ export const SECRET_PROVIDERS = [
   "vault",
 ] as const;
 export type SecretProvider = (typeof SECRET_PROVIDERS)[number];
+
+export const ORGANIZATION_SECRET_PURPOSES = [
+  "user_managed",
+  "managed_mcp_connection",
+  "managed_mcp_oauth",
+] as const;
+export type OrganizationSecretPurpose = (typeof ORGANIZATION_SECRET_PURPOSES)[number];
 
 export const STORAGE_PROVIDERS = ["local_disk", "s3"] as const;
 export type StorageProvider = (typeof STORAGE_PROVIDERS)[number];

@@ -20,6 +20,7 @@ import type {
   CreateCustomIntegration,
   CustomIntegrationSummary,
   HeartbeatRun,
+  McpAgentConnectionSummary,
   OrganizationSkillCreateRequest,
   UpdateAgentIntegrationSettings,
   UpdateCustomIntegrationBinding,
@@ -174,6 +175,21 @@ export const agentsApi = {
   revokeCustomIntegration: (id: string, integrationId: string, orgId?: string) =>
     api.delete<CustomIntegrationSummary>(
       agentPath(id, orgId, `/custom-integrations/${encodeURIComponent(integrationId)}`),
+    ),
+  listMcpConnections: (id: string, orgId?: string) =>
+    api.get<McpAgentConnectionSummary[]>(agentPath(id, orgId, "/mcp-connections")),
+  updateMcpConnectionBinding: (
+    id: string,
+    connectionId: string,
+    data: { status?: "active" | "disabled" | "revoked"; enabledToolIds?: string[] },
+    orgId?: string,
+  ) => api.put<McpAgentConnectionSummary>(
+    agentPath(id, orgId, `/mcp-connections/${encodeURIComponent(connectionId)}`),
+    data,
+  ),
+  revokeMcpConnectionBinding: (id: string, connectionId: string, orgId?: string) =>
+    api.delete<McpAgentConnectionSummary>(
+      agentPath(id, orgId, `/mcp-connections/${encodeURIComponent(connectionId)}`),
     ),
   listConfigRevisions: (id: string, orgId?: string) =>
     api.get<AgentConfigRevision[]>(agentPath(id, orgId, "/config-revisions")),

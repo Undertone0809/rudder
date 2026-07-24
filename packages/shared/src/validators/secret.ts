@@ -27,14 +27,14 @@ export const createSecretSchema = z.object({
   value: z.string().min(1),
   description: z.string().optional().nullable(),
   externalRef: z.string().optional().nullable(),
-});
+}).strict();
 
 export type CreateSecret = z.infer<typeof createSecretSchema>;
 
 export const rotateSecretSchema = z.object({
   value: z.string().min(1),
   externalRef: z.string().optional().nullable(),
-});
+}).strict();
 
 export type RotateSecret = z.infer<typeof rotateSecretSchema>;
 
@@ -42,6 +42,6 @@ export const updateSecretSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional().nullable(),
   externalRef: z.string().optional().nullable(),
-});
+}).strict();
 
 export type UpdateSecret = z.infer<typeof updateSecretSchema>;

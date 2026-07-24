@@ -23,6 +23,7 @@ import {
 } from "./browser-capability.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { customIntegrationService } from "./integrations/custom-integrations.js";
+import { managedMcpBindingService } from "./mcp/managed-bindings.js";
 import { organizationSkillService } from "./organization-skills.js";
 import { listProjectResourceAttachments } from "./resource-catalog.js";
 import { secretService } from "./secrets.js";
@@ -471,6 +472,7 @@ export function agentRunContextService(
   const instanceSettings = instanceSettingsService(db);
   const secretsSvc = secretService(db);
   const organizationSkills = organizationSkillService(db, { deploymentMode });
+  const managedMcpBindings = managedMcpBindingService(db);
   const startupContextSvc = agentStartupContextService(db);
 
   async function prepareRuntimeConfig(input: {
@@ -486,6 +488,10 @@ export function agentRunContextService(
         baseConfig,
       );
     const browserSettings = await instanceSettings.getBrowser();
+    const managedExternalMcpBindings = await managedMcpBindings.listRuntimeBindings(
+      input.agent.orgId,
+      input.agent.id,
+    );
     const browserCapability = resolveBrowserCapability({
       deploymentMode,
       browserEnabled: browserSettings.enabled,
@@ -532,6 +538,7 @@ export function agentRunContextService(
         paperclipSkillSync: { desiredSkills: desiredRuntimeSkills },
         rudderRuntimeSkills: runtimeSkillEntries,
         paperclipRuntimeSkills: runtimeSkillEntries,
+        managedExternalMcpBindings,
       },
       runtimeSkillEntries,
       secretKeys,
