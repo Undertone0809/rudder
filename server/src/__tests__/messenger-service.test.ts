@@ -10923,7 +10923,7 @@ describe("messengerService and issue follows", () => {
     });
   });
 
-  it("does not silently move a grouped Saved View to loose placement", async () => {
+  it("moves a grouped Saved View to loose placement with a fresh mutation receipt", async () => {
     const orgId = randomUUID();
     const userId = "saved-view-loose-conflict-user";
     await db.insert(organizations).values({
@@ -10945,14 +10945,21 @@ describe("messengerService and issue follows", () => {
       placement: { kind: "group", groupId: group.id },
     });
 
-    await expect(savedViewsSvc.keep(orgId, userId, {
+    const moved = await savedViewsSvc.keep(orgId, userId, {
       target,
       title: "Grouped automation",
       clientMutationId: randomUUID(),
       placement: { kind: "loose" },
-    })).rejects.toMatchObject({ status: 409 });
+    });
+    expect(moved).toMatchObject({
+      savedView: { id: grouped.savedView.id, title: "Grouped automation" },
+      group: null,
+    });
     expect(await db.select().from(messengerCustomGroupEntries)
-      .where(eq(messengerCustomGroupEntries.threadKey, `saved-view:${grouped.savedView.id}`))).toHaveLength(1);
+      .where(eq(messengerCustomGroupEntries.threadKey, `saved-view:${grouped.savedView.id}`))).toEqual([]);
+    expect((await db.select().from(messengerSavedViewMutations)
+      .where(eq(messengerSavedViewMutations.savedViewId, grouped.savedView.id)))
+      .some((receipt) => receipt.groupId === null)).toBe(true);
   });
 
   it("leaves Saved Views loose when membership or their containing group is removed", async () => {

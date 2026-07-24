@@ -524,7 +524,7 @@ test.describe("Messenger Saved Views", () => {
     await expect(savedRow.locator("a")).not.toHaveAttribute("aria-current", "page");
   });
 
-  test("moves a Library Saved View group to sidebar, reorders loose views, and moves it back after reload", async ({ page }) => {
+  test("moves a Library Saved View through loose placement without replacing its active Main runtime", async ({ page }) => {
     const organization = await createOrganization(page.request, "Messenger-Saved-View-Loose-Lifecycle");
     const libraryFilePath = `loose/library-${randomUUID()}.md`;
     const libraryTitle = "Loose library document";
@@ -579,6 +579,14 @@ test.describe("Messenger Saved Views", () => {
       `[data-testid="messenger-main-workbench"] [role="tab"][data-view-instance-id="${libraryViewInstanceId}"]`,
     );
     await expect(libraryMainTab).toBeVisible();
+    await expect(libraryMainTab).toHaveAttribute("aria-selected", "true");
+    const activeLibrarySurface = page.locator(
+      '[data-testid="library-live-surface"][data-surface="workbench"][data-active="true"]',
+    );
+    await expect(activeLibrarySurface).toHaveAttribute("data-target-kind", "library_file");
+    await activeLibrarySurface.evaluate((surface) => {
+      surface.dataset.runtimeIdentity = "preserve-across-placement";
+    });
 
     const groupedDragHandleBox = await groupedLibraryRow
       .getByRole("button", { name: `Drag ${libraryTitle}` })
@@ -603,7 +611,11 @@ test.describe("Messenger Saved Views", () => {
     );
     await expect(looseLibraryRow).toBeVisible();
     await expect(looseBrowserRow).toBeVisible();
-    await expect(libraryMainTab).toBeVisible();
+    await expect(libraryMainTab).toHaveAttribute("aria-selected", "true");
+    await expect(activeLibrarySurface).toHaveAttribute(
+      "data-runtime-identity",
+      "preserve-across-placement",
+    );
     await expect.poll(async () => (
       (await listGroups(page, organization.id)).groups
         .find((candidate) => candidate.id === group.id)
@@ -651,17 +663,6 @@ test.describe("Messenger Saved Views", () => {
         : reorderedBrowserBox!.y < reorderedLibraryBox!.y,
     ).toBe(true);
 
-    await page.reload();
-    await expect(looseLibraryRow).toBeVisible({ timeout: 15_000 });
-    await expect(looseBrowserRow).toBeVisible();
-    const reloadedLibraryBox = await looseLibraryRow.boundingBox();
-    const reloadedBrowserBox = await looseBrowserRow.boundingBox();
-    expect(
-      rowToMoveTitle === libraryTitle
-        ? reloadedLibraryBox!.y < reloadedBrowserBox!.y
-        : reloadedBrowserBox!.y < reloadedLibraryBox!.y,
-    ).toBe(true);
-
     await looseLibraryRow.hover();
     await looseLibraryRow.getByRole("button", {
       name: `Saved View actions for ${libraryTitle}`,
@@ -672,7 +673,11 @@ test.describe("Messenger Saved Views", () => {
       `[data-messenger-saved-view-id="${library.savedView.id}"]`,
     )).toBeVisible();
     await expect(looseBrowserRow).toBeVisible();
-    await expect(libraryMainTab).toBeVisible();
+    await expect(libraryMainTab).toHaveAttribute("aria-selected", "true");
+    await expect(activeLibrarySurface).toHaveAttribute(
+      "data-runtime-identity",
+      "preserve-across-placement",
+    );
 
     await page.reload();
     await expect(groupSection.locator(

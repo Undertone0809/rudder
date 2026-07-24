@@ -474,7 +474,6 @@ export function messengerSavedViewsService(db: Db) {
         }
       }
 
-      if (group) await lockMessengerCustomGroupPlacement(txDb, orgId, userId, group.id);
       const itemKey = existing ? messengerSavedViewItemKey(existing.id) : null;
       const existingMembership = itemKey
         ? await txDb.select({ groupId: messengerCustomGroupEntries.groupId })
@@ -485,8 +484,11 @@ export function messengerSavedViewsService(db: Db) {
             eq(messengerCustomGroupEntries.threadKey, itemKey),
           )).limit(1).then((rows) => rows[0] ?? null)
         : null;
-      if (existingMembership && existingMembership.groupId !== group?.id) {
-        throw conflict("Saved View already belongs to another group; move or remove it first");
+      const affectedGroupIds = [...new Set(
+        [existingMembership?.groupId, group?.id].filter((id): id is string => Boolean(id)),
+      )].sort();
+      for (const affectedGroupId of affectedGroupIds) {
+        await lockMessengerCustomGroupPlacement(txDb, orgId, userId, affectedGroupId);
       }
       if (byMutation) {
         const exactReplay = isDeepStrictEqual(byMutation.targetPayload, target)
@@ -568,7 +570,19 @@ export function messengerSavedViewsService(db: Db) {
       if (action) await logMutation(txDb, orgId, userId, action, savedView, { source: "keep" });
 
       const savedItemKey = messengerSavedViewItemKey(savedView.id);
-      if (group && !existingMembership) {
+      if (existingMembership && existingMembership.groupId !== group?.id) {
+        await txDb.delete(messengerCustomGroupEntries).where(and(
+          eq(messengerCustomGroupEntries.orgId, orgId),
+          eq(messengerCustomGroupEntries.userId, userId),
+          eq(messengerCustomGroupEntries.groupId, existingMembership.groupId),
+          eq(messengerCustomGroupEntries.threadKey, savedItemKey),
+        ));
+        await logMutation(txDb, orgId, userId, "messenger.saved_view_group_removed", savedView, {
+          groupId: existingMembership.groupId,
+          source: "keep",
+        });
+      }
+      if (group && existingMembership?.groupId !== group.id) {
         const [lastEntry] = await txDb.select({ sortOrder: messengerCustomGroupEntries.sortOrder })
           .from(messengerCustomGroupEntries)
           .where(and(
