@@ -639,7 +639,7 @@ export function TranscriptToolCard({
     : block.result
       ? formatNiceToolResponse(block.name, block.input, block.result)
       : "Waiting for result...";
-  const canExpand = semantic.actionKind !== "skill";
+  const canExpand = semantic.category !== "skill";
   const detailsClass = cn(
     "space-y-3",
     block.status === "error" && "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3",
@@ -1044,14 +1044,6 @@ export function TranscriptMemoryUpdateRow({
             </div>
             <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
               {paths.join("\n")}
-            </pre>
-          </div>
-          <div>
-            <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
-              Raw event
-            </div>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
-              {block.rawText}
             </pre>
           </div>
         </div>

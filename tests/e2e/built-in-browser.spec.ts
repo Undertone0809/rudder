@@ -36,6 +36,7 @@ async function installBrowserDesktopStub(page: Page) {
       __rudderBrowserExternalUrls: externalUrls,
       __rudderBrowserEnabledCalls: enabledCalls,
       __rudderBrowserShortcutActiveCalls: shortcutActiveCalls,
+      __rudderBrowserWebLinkListenerReady: () => Boolean(webLinkListener),
       __emitDesktopBrowserShortcut: (action: BrowserShortcutAction) => {
         browserShortcutListener?.({ action });
       },
@@ -140,9 +141,9 @@ test.describe("Built-in Browser", () => {
     const organization = await orgRes.json() as { issuePrefix: string };
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
-    await expect.poll(() => page.evaluate(() => typeof (
-      window as typeof window & { __emitDesktopWebLink?: unknown }
-    ).__emitDesktopWebLink)).toBe("function");
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & { __rudderBrowserWebLinkListenerReady(): boolean }
+    ).__rudderBrowserWebLinkListenerReady())).toBe(true);
     const dashboardUrl = page.url();
 
     await page.evaluate(() => (
@@ -150,6 +151,15 @@ test.describe("Built-in Browser", () => {
     ).__emitDesktopWebLink({ url: "https://example.com/docs", source: "link" }));
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible();
+    const onboarding = page.getByTestId("browser-side-panel-onboarding");
+    await expect(onboarding).toContainText("Rudder starts with its Built-in Browser");
+    await expect(onboarding).toHaveAttribute("role", "status");
+    await expect(onboarding).toContainText("Settings");
+    await onboarding.screenshot({
+      path: "/tmp/rudder-browser-side-panel-onboarding.png",
+    });
+    await onboarding.getByRole("button", { name: "Got it" }).click();
+    await expect(onboarding).toHaveCount(0);
     const browserRuntimeHost = activeSideBrowserHost(page);
     await expect(browserRuntimeHost.getByTestId("chat-side-panel-browser-webview"))
       .toHaveAttribute("src", "https://example.com/docs");
@@ -164,6 +174,7 @@ test.describe("Built-in Browser", () => {
       window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
     ).__emitDesktopWebLink({ url: "https://example.com/docs", source: "link" }));
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(page.getByTestId("browser-side-panel-onboarding")).toHaveCount(0);
 
     await page.evaluate(() => (
       window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
@@ -200,6 +211,32 @@ test.describe("Built-in Browser", () => {
     await expect.poll(() => page.evaluate(() => (
       window as typeof window & { __rudderBrowserExternalUrls: string[] }
     ).__rudderBrowserExternalUrls)).not.toContain("https://example.net/disabled");
+  });
+
+  test("opens the exact Browser settings destination from Side Panel onboarding", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Built-in Browser Onboarding ${Date.now()}`,
+        issuePrefix: `BRO${Date.now().toString().slice(-6)}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { issuePrefix: string };
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & { __rudderBrowserWebLinkListenerReady(): boolean }
+    ).__rudderBrowserWebLinkListenerReady())).toBe(true);
+    await page.evaluate(() => (
+      window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
+    ).__emitDesktopWebLink({ url: "https://example.com/onboarding", source: "link" }));
+
+    const onboarding = page.getByTestId("browser-side-panel-onboarding");
+    await onboarding.getByRole("button", { name: "Browser settings" }).click();
+
+    await expect(page).toHaveURL(/\/instance\/settings\/browser$/);
+    await expect(page.getByTestId("browser-settings-page")).toBeVisible();
+    await expect(onboarding).toHaveCount(0);
   });
 
   test("accepts local absolute file URLs from the Browser address bar", async ({ page }) => {

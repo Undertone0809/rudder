@@ -37,6 +37,16 @@
   animation: rudder-surface-pop-out var(--motion-duration-fast) var(--motion-ease-exit) both;
 }
 
+.motion-surface-pop[data-side="top"]:is([data-state="open"], [data-state="delayed-open"], [data-state="instant-open"]),
+.motion-surface-pop[data-placement="top"]:is([data-state="open"], [data-state="delayed-open"], [data-state="instant-open"]) {
+  animation-name: rudder-surface-pop-in-top;
+}
+
+.motion-surface-pop[data-side="top"][data-state="closed"],
+.motion-surface-pop[data-placement="top"][data-state="closed"] {
+  animation-name: rudder-surface-pop-out-top;
+}
+
 .motion-modal {
   will-change: opacity, scale, filter;
 }
@@ -112,6 +122,15 @@
 
 @keyframes rudder-surface-pop-out {
   to { opacity: 0; filter: blur(1px); transform: translateY(calc(-1 * var(--motion-distance-small))) scale(0.99); }
+}
+
+@keyframes rudder-surface-pop-in-top {
+  from { opacity: 0; filter: blur(var(--motion-blur-soft)); transform: translateY(var(--motion-distance-small)) scale(0.97); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0) scale(1); }
+}
+
+@keyframes rudder-surface-pop-out-top {
+  to { opacity: 0; filter: blur(1px); transform: translateY(var(--motion-distance-small)) scale(0.99); }
 }
 
 @keyframes rudder-modal-in {

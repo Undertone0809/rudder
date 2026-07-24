@@ -8,6 +8,7 @@ export type McpProviderScopeSelection = "none" | "project" | "workspace";
 export interface McpProviderDefinition {
   endpoint: string | null;
   readOnlyEndpoint?: string;
+  oauthOrigins: readonly string[];
   requiresOAuth: boolean;
   scopeSelection: McpProviderScopeSelection;
   defaultAccessMode: McpConnectionAccessMode;
@@ -29,6 +30,7 @@ export interface McpProviderDefinition {
 export const MCP_PROVIDER_REGISTRY = {
   supabase: {
     endpoint: "https://mcp.supabase.com/mcp",
+    oauthOrigins: ["https://mcp.supabase.com", "https://api.supabase.com"],
     requiresOAuth: true,
     scopeSelection: "project",
     defaultAccessMode: "read_only",
@@ -40,6 +42,7 @@ export const MCP_PROVIDER_REGISTRY = {
   linear: {
     endpoint: "https://mcp.linear.app/mcp",
     readOnlyEndpoint: "https://mcp.linear.app/mcp/readonly",
+    oauthOrigins: ["https://mcp.linear.app"],
     requiresOAuth: true,
     scopeSelection: "workspace",
     defaultAccessMode: "read_write",
@@ -51,6 +54,7 @@ export const MCP_PROVIDER_REGISTRY = {
   },
   notion: {
     endpoint: "https://mcp.notion.com/mcp",
+    oauthOrigins: ["https://mcp.notion.com"],
     requiresOAuth: true,
     scopeSelection: "workspace",
     defaultAccessMode: "provider_default",
@@ -62,11 +66,16 @@ export const MCP_PROVIDER_REGISTRY = {
   },
   custom: {
     endpoint: null,
+    oauthOrigins: [],
     requiresOAuth: false,
     scopeSelection: "none",
     defaultAccessMode: "provider_default",
   },
 } as const satisfies Record<McpConnectionProvider, McpProviderDefinition>;
+
+export const MCP_CURATED_OAUTH_ORIGINS = Array.from(new Set(
+  Object.values(MCP_PROVIDER_REGISTRY).flatMap((definition) => definition.oauthOrigins),
+));
 
 export interface ResolvedCuratedMcpEndpoint {
   href: string;

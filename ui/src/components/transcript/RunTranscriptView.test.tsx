@@ -1708,6 +1708,8 @@ describe("RunTranscriptView", () => {
       scope: "stable_instructions",
       summary: "Gabriel updated stable memory instructions.",
       effect: "Effective next run",
+      rawText:
+        "file changes: update /Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/gabriel--abc/instructions/MEMORY.md",
     });
     expect(blocks[1]).toMatchObject({
       type: "event",
@@ -1855,6 +1857,7 @@ describe("RunTranscriptView", () => {
     expect(html).toContain('data-transcript-action-icon="memory"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("$AGENT_HOME/instructions/MEMORY.md");
+    expect(html).not.toContain("Raw event");
     expect(html).not.toContain("file changes: update");
   });
 
@@ -1879,8 +1882,11 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Daily note");
     expect(html).not.toContain(">Failed<");
     expect(html).toContain("permission denied");
+    expect(html).toContain("Failure");
+    expect(html).toContain("Paths");
     expect(html).toContain("$AGENT_HOME/memory/2026-03-12.md");
-    expect(html).toContain("Raw event");
+    expect(html).not.toContain("Raw event");
+    expect(html).not.toContain("memory update failed: update");
     expect(html).toContain('aria-expanded="true"');
   });
 
@@ -2392,6 +2398,8 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Use flomo-local-api skill");
     expect(html).toContain('data-transcript-action-icon="skill"');
     expect(html).not.toContain("Read /Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
+    expect(html).not.toContain("Expand tool details");
+    expect(html).not.toContain("aria-expanded=");
   });
 
   it("summarizes shell reads of SKILL.md as skill use", () => {
@@ -2399,6 +2407,39 @@ describe("RunTranscriptView", () => {
 
     expect(html).toContain("Use flomo-local-api skill");
     expect(html).not.toContain("Read /Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
+    expect(html).not.toContain("Expand command details");
+    expect(html).not.toContain("aria-expanded=");
+  });
+
+  it("keeps skill actions non-expandable in detail transcripts", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="detail"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "Skill",
+              toolUseId: "skill-detail-1",
+              input: { skill: "systematic-debugging" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "skill-detail-1",
+              content: "Loaded skill instructions",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Use systematic-debugging skill");
+    expect(html).not.toContain("Expand tool details");
+    expect(html).not.toContain("aria-expanded=");
   });
 
   it("folds Claude Code skill context user injections into the skill tool card", () => {

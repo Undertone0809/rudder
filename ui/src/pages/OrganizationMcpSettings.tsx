@@ -23,15 +23,16 @@ import {
   Loader2,
   Plus,
   RefreshCw,
-  Server,
   Trash2,
   Wrench,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { managedMcpApi } from "../api/managedMcp";
+import { McpProviderIcon } from "../components/McpProviderIcon";
 import { SettingsGroup, SettingsSection } from "../components/settings/SettingsScaffold";
 import { useToast } from "../context/ToastContext";
+import { readDesktopShell, type DesktopShellApi } from "../lib/desktop-shell";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 
@@ -222,8 +223,43 @@ function statusCopy(status: McpConnectionSummary["status"]) {
   }
 }
 
-function reserveAuthorizationWindow() {
-  const opened = window.open("about:blank", "_blank");
+export interface AuthorizationLauncher {
+  navigate(target: string): Promise<void>;
+  close(): void;
+}
+
+export function canReconnectManagedMcp(status: McpConnectionSummary["status"]): boolean {
+  return [
+    "draft",
+    "authorizing",
+    "needs_reauth",
+    "revoked",
+    "error",
+    "disabled",
+  ].includes(status);
+}
+
+export function reserveAuthorizationLauncher(input: {
+  desktopShell?: Pick<DesktopShellApi, "openExternal" | "forceOpenExternal"> | null;
+  openWindow?: typeof window.open;
+} = {}): AuthorizationLauncher {
+  const desktopShell = input.desktopShell === undefined
+    ? readDesktopShell()
+    : input.desktopShell;
+  if (desktopShell) {
+    return {
+      navigate: async (target) => {
+        if (desktopShell.forceOpenExternal) {
+          await desktopShell.forceOpenExternal(target);
+          return;
+        }
+        await desktopShell.openExternal(target);
+      },
+      close: () => undefined,
+    };
+  }
+
+  const opened = (input.openWindow ?? window.open)("about:blank", "_blank");
   if (!opened) throw new Error("Allow pop-ups for Rudder, then try again");
   try {
     opened.opener = null;
@@ -231,11 +267,12 @@ function reserveAuthorizationWindow() {
     // The reserved same-origin window remains usable even when opener mutation
     // is unavailable in a constrained browser shell.
   }
-  return opened;
-}
-
-function navigateAuthorization(opened: Window, url: string) {
-  opened.location.replace(url);
+  return {
+    navigate: async (target) => {
+      opened.location.replace(target);
+    },
+    close: () => opened.close(),
+  };
 }
 
 export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
@@ -272,9 +309,9 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
     mutationFn: async (input: {
       provider: Exclude<McpConnectionProvider, "custom">;
       accessMode?: McpConnectionAccessMode;
-      authorizationWindow: Window;
+      authorizationLauncher: AuthorizationLauncher;
     }) => {
-      const { provider, authorizationWindow } = input;
+      const { provider, authorizationLauncher } = input;
       const definition = catalogQuery.data?.find((entry) => entry.id === provider);
       if (!definition) throw new Error(`${provider} is not available`);
       try {
@@ -291,10 +328,10 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
           toolTimeoutMs: 60_000,
         });
         const started = await managedMcpApi.startOAuth(orgId, connection.id);
-        navigateAuthorization(authorizationWindow, started.authorizationUrl);
+        await authorizationLauncher.navigate(started.authorizationUrl);
         return connection;
       } catch (error) {
-        authorizationWindow.close();
+        authorizationLauncher.close();
         throw error;
       }
     },
@@ -366,7 +403,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
       createOfficial.mutate({
         provider,
         accessMode,
-        authorizationWindow: reserveAuthorizationWindow(),
+        authorizationLauncher: reserveAuthorizationLauncher(),
       });
     } catch (error) {
       pushToast({
@@ -396,6 +433,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
               <ProviderCard
                 key={provider.id}
                 testId={`mcp-provider-${provider.id}`}
+                provider={provider.id}
                 title={provider.label}
                 description={providerDescription(provider)}
                 actionLabel="Connect"
@@ -413,6 +451,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
           })}
           <ProviderCard
             testId="mcp-provider-custom"
+            provider="custom"
             title="Custom MCP"
             description="Connect a Codex-compatible STDIO or Streamable HTTP MCP server."
             actionLabel="Configure"
@@ -468,6 +507,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
 
 function ProviderCard({
   testId,
+  provider,
   title,
   description,
   actionLabel,
@@ -476,6 +516,7 @@ function ProviderCard({
   onAction,
 }: {
   testId?: string;
+  provider: McpConnectionProvider;
   title: string;
   description: string;
   actionLabel: string;
@@ -489,9 +530,7 @@ function ProviderCard({
       className="flex min-h-36 flex-col justify-between gap-3 rounded-md border border-border bg-background/40 p-3"
     >
       <div className="flex min-w-0 items-start gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
-          <Server className="size-5" />
-        </span>
+        <McpProviderIcon provider={provider} />
         <div className="min-w-0 space-y-1">
           <p className="text-sm font-semibold text-foreground">{title}</p>
           <p className="text-[13px] leading-5 text-muted-foreground">{description}</p>
@@ -559,9 +598,9 @@ function ConnectionRow({
   const runAction = useMutation({
     mutationFn: async (input: {
       action: "reconnect" | "refresh" | "disconnect" | "scope";
-      authorizationWindow?: Window;
+      authorizationLauncher?: AuthorizationLauncher;
     }) => {
-      const { action, authorizationWindow } = input;
+      const { action, authorizationLauncher } = input;
       if (action === "refresh") return managedMcpApi.refreshTools(orgId, connection.id);
       if (action === "disconnect") return managedMcpApi.disconnect(orgId, connection.id);
       if (action === "scope") {
@@ -574,8 +613,8 @@ function ConnectionRow({
       try {
         const result = await managedMcpApi.reconnect(orgId, connection.id);
         if ("authorizationUrl" in result) {
-          if (!authorizationWindow) throw new Error("Authorization window was not reserved");
-          navigateAuthorization(authorizationWindow, result.authorizationUrl);
+          if (!authorizationLauncher) throw new Error("Authorization launcher was not reserved");
+          await authorizationLauncher.navigate(result.authorizationUrl);
         }
         if (connection.provider === "custom") {
           await managedMcpApi.refreshTools(orgId, connection.id);
@@ -583,7 +622,7 @@ function ConnectionRow({
         }
         return result;
       } catch (error) {
-        authorizationWindow?.close();
+        authorizationLauncher?.close();
         throw error;
       }
     },
@@ -607,28 +646,28 @@ function ConnectionRow({
   const updateAccess = useMutation({
     mutationFn: async (input: {
       accessMode: McpConnectionAccessMode;
-      authorizationWindow?: Window;
+      authorizationLauncher?: AuthorizationLauncher;
     }) => {
-      const { accessMode, authorizationWindow } = input;
+      const { accessMode, authorizationLauncher } = input;
       const needsLinearReauthorization = connection.provider === "linear"
         && connection.status === "active"
         && connection.accessMode === "read_only"
         && accessMode === "read_write";
       try {
         if (needsLinearReauthorization) {
-          if (!authorizationWindow) throw new Error("Authorization window was not reserved");
+          if (!authorizationLauncher) throw new Error("Authorization launcher was not reserved");
           await managedMcpApi.disconnect(orgId, connection.id);
           await managedMcpApi.updateAccessMode(orgId, connection.id, accessMode);
           const started = await managedMcpApi.reconnect(orgId, connection.id);
           if (!("authorizationUrl" in started)) {
             throw new Error("Linear reauthorization did not return an authorization URL");
           }
-          navigateAuthorization(authorizationWindow, started.authorizationUrl);
+          await authorizationLauncher.navigate(started.authorizationUrl);
           return started;
         }
         return managedMcpApi.updateAccessMode(orgId, connection.id, accessMode);
       } catch (error) {
-        authorizationWindow?.close();
+        authorizationLauncher?.close();
         throw error;
       }
     },
@@ -645,20 +684,14 @@ function ConnectionRow({
     },
   });
   const [statusLabel, statusTone] = statusCopy(connection.status);
-  const canReconnect = [
-    "draft",
-    "needs_reauth",
-    "revoked",
-    "error",
-    "disabled",
-  ].includes(connection.status);
+  const canReconnect = canReconnectManagedMcp(connection.status);
   const reconnect = () => {
     try {
       runAction.mutate({
         action: "reconnect",
         ...(connection.provider === "custom"
           ? {}
-          : { authorizationWindow: reserveAuthorizationWindow() }),
+          : { authorizationLauncher: reserveAuthorizationLauncher() }),
       });
     } catch (error) {
       pushToast({
@@ -677,7 +710,7 @@ function ConnectionRow({
       updateAccess.mutate({
         accessMode,
         ...(requiresAuthorization
-          ? { authorizationWindow: reserveAuthorizationWindow() }
+          ? { authorizationLauncher: reserveAuthorizationLauncher() }
           : {}),
       });
     } catch (error) {

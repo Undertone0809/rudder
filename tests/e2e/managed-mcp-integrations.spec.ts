@@ -347,6 +347,7 @@ test.describe("Managed MCP integrations", () => {
     await expect(page.getByTestId("organization-mcp-settings")).toBeVisible();
 
     await page.getByTestId("mcp-provider-supabase").getByRole("button", { name: "Connect" }).click();
+    await expect.poll(() => mock.connections.length).toBe(1);
     const supabaseRow = page.getByTestId(`mcp-connection-${mock.connections[0]!.id}`);
     await expect(supabaseRow).toContainText("Choose scope");
     await supabaseRow.getByLabel("Project").selectOption("project-memos");
@@ -355,12 +356,14 @@ test.describe("Managed MCP integrations", () => {
     await expect(supabaseRow).toContainText("project-memos");
 
     await page.getByTestId("mcp-provider-linear").getByRole("button", { name: "Read-only" }).click();
+    await expect.poll(() => mock.connections.length).toBe(2);
     const linearRow = page.getByTestId(`mcp-connection-${mock.connections[1]!.id}`);
     await expect(linearRow).toContainText("read only");
     await linearRow.getByLabel("Access mode for Linear").selectOption("read_write");
     await expect(linearRow).toContainText("read write");
 
     await page.getByTestId("mcp-provider-notion").getByRole("button", { name: "Connect" }).click();
+    await expect.poll(() => mock.connections.length).toBe(3);
     await expect(page.getByTestId(`mcp-connection-${mock.connections[2]!.id}`)).toContainText("workspace-notion");
 
     await page.getByTestId("mcp-provider-custom").getByRole("button", { name: "Configure" }).click();
@@ -394,9 +397,25 @@ test.describe("Managed MCP integrations", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${agent.id}/integrations`, {
       waitUntil: "domcontentloaded",
     });
-    await page.getByRole("button", { name: "Manage" }).click();
+    await expect(page.getByTestId("managed-mcp-provider-supabase")).toContainText("Available");
+    await expect(page.getByTestId("managed-mcp-provider-notion")).toContainText("Available");
+    await expect(page.getByTestId("managed-mcp-provider-linear")).toContainText("Available");
+    await expect(page.getByTestId("managed-mcp-provider-notion")).not.toContainText("Coming soon");
+    await page.getByTestId("managed-mcp-provider-notion")
+      .getByRole("button", { name: "Manage Notion MCP connections" })
+      .click();
     const managedSection = page.getByTestId("agent-managed-mcp-connections");
     await expect(managedSection).toBeVisible();
+    const notionConnection = managedSection.getByTestId(
+      `agent-mcp-connection-${mock.connections[2]!.id}`,
+    );
+    await notionConnection.getByRole("button", { name: "Bind all current tools" }).click();
+    await page.getByRole("button", { name: "Discover" }).click();
+    await expect(page.getByTestId("managed-mcp-provider-notion")).toContainText("Connected");
+    await expect(page.getByTestId("managed-mcp-provider-notion")).toContainText("2 tools enabled");
+    await page.getByTestId("managed-mcp-provider-notion")
+      .getByRole("button", { name: "Manage Notion MCP connections" })
+      .click();
     const connectionCard = managedSection.getByTestId(
       `agent-mcp-connection-${httpConnection.id}`,
     );
@@ -496,7 +515,7 @@ test.describe("Managed MCP integrations", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${agent.id}/integrations`, {
       waitUntil: "domcontentloaded",
     });
-    await page.getByRole("button", { name: "Manage" }).click();
+    await page.getByRole("button", { name: "Manage", exact: true }).click();
     const agentConnection = page.getByTestId(`agent-mcp-connection-${connection.id}`);
     await agentConnection.getByRole("button", { name: "Bind all current tools" }).click();
     await expect(agentConnection.getByText("Tool allowlist")).toBeVisible();

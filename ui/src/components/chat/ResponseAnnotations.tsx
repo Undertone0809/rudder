@@ -1,5 +1,11 @@
 import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+} from "@/components/ui/popover";
+import {
   CHAT_ANNOTATION_IGNORE_ATTRIBUTE,
+  CHAT_ANNOTATION_TEXT_IGNORE_ATTRIBUTE,
   restoreChatAnnotationRange,
 } from "@/lib/chat-response-annotation-selection";
 import { isImageContentType } from "@/lib/image-actions";
@@ -100,10 +106,157 @@ export function placeResponseAnnotationEditor(
 export function placeResponseAnnotationMarker(
   finalLineRect: ResponseAnnotationAnchorRect,
   sourceRootRect: ResponseAnnotationAnchorRect,
+  viewport: {
+    viewportWidth: number;
+    markerSize: number;
+    gap: number;
+    padding: number;
+    textRects?: ResponseAnnotationAnchorRect[];
+  } = {
+    viewportWidth: typeof window === "undefined" ? 1_024 : window.innerWidth,
+    markerSize: 28,
+    gap: 6,
+    padding: 8,
+  },
 ): { left: number; top: number } {
+  const minLeft = viewport.padding - sourceRootRect.left;
+  const maxLeft = viewport.viewportWidth
+    - viewport.padding
+    - viewport.markerSize
+    - sourceRootRect.left;
+  const right = finalLineRect.right - sourceRootRect.left + viewport.gap;
+  const left = finalLineRect.left
+    - sourceRootRect.left
+    - viewport.gap
+    - viewport.markerSize;
+  const top = Math.max(0, finalLineRect.top - sourceRootRect.top);
+  if (right <= maxLeft) return { left: right, top };
+  if (left >= minLeft) return { left, top };
+  const fallbackLeft = Math.min(Math.max(right, minLeft), maxLeft);
+  const fallbackAbsoluteLeft = sourceRootRect.left + fallbackLeft;
+  let fallbackAbsoluteTop = finalLineRect.bottom + viewport.gap;
+  for (;;) {
+    const collision = viewport.textRects?.find((rect) => (
+      fallbackAbsoluteLeft < rect.right
+      && fallbackAbsoluteLeft + viewport.markerSize > rect.left
+      && fallbackAbsoluteTop < rect.bottom
+      && fallbackAbsoluteTop + viewport.markerSize > rect.top
+    ));
+    if (!collision) break;
+    fallbackAbsoluteTop = collision.bottom + viewport.gap;
+  }
   return {
-    left: Math.max(0, finalLineRect.right - sourceRootRect.left + 6),
-    top: Math.max(0, finalLineRect.top - sourceRootRect.top),
+    left: fallbackLeft,
+    top: Math.max(0, fallbackAbsoluteTop - sourceRootRect.top),
+  };
+}
+
+export function avoidResponseAnnotationMarkerCollisions(
+  positions: Array<{ id: string; left: number; top: number; direction?: -1 | 1 }>,
+  markerSize: number,
+  gap: number,
+  bounds: { minLeft: number; maxLeft: number } = {
+    minLeft: Number.NEGATIVE_INFINITY,
+    maxLeft: Number.POSITIVE_INFINITY,
+  },
+  textRects: ResponseAnnotationAnchorRect[] = [],
+) {
+  const placed: Array<{ left: number; top: number }> = [];
+  const result: Record<string, { left: number; top: number }> = {};
+  for (const position of [...positions].sort(
+    (left, right) => left.top - right.top || left.id.localeCompare(right.id),
+  )) {
+    let left = position.left;
+    let top = position.top;
+    const direction = position.direction ?? 1;
+    const findMarkerCollision = () => placed.find((candidate) => (
+      Math.abs(candidate.left - left) < markerSize + gap
+      && Math.abs(candidate.top - top) < markerSize + gap
+    ));
+    const findTextCollision = () => textRects.find((rect) => (
+      left < rect.right
+      && left + markerSize > rect.left
+      && top < rect.bottom
+      && top + markerSize > rect.top
+    ));
+    let markerCollision = findMarkerCollision();
+    let textCollision = findTextCollision();
+    while (markerCollision || textCollision) {
+      const shiftedLeft = left + direction * (markerSize + gap);
+      const shiftedOverlapsText = textRects.some((rect) => (
+        shiftedLeft < rect.right
+        && shiftedLeft + markerSize > rect.left
+        && top < rect.bottom
+        && top + markerSize > rect.top
+      ));
+      if (
+        shiftedLeft >= bounds.minLeft
+        && shiftedLeft <= bounds.maxLeft
+        && !shiftedOverlapsText
+      ) {
+        left = shiftedLeft;
+      } else {
+        left = position.left;
+        top = Math.max(
+          markerCollision ? markerCollision.top + markerSize + gap : top,
+          textCollision ? textCollision.bottom + gap : top,
+        );
+      }
+      markerCollision = findMarkerCollision();
+      textCollision = findTextCollision();
+    }
+    result[position.id] = { left, top };
+    placed.push({ left, top });
+  }
+  return result;
+}
+
+function collectResponseAnnotationTextRects(
+  sourceRoot: HTMLElement,
+): DOMRect[] {
+  const rects: DOMRect[] = [];
+  const walker = document.createTreeWalker(sourceRoot, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    if (
+      !node.textContent
+      || parent?.closest(`[${CHAT_ANNOTATION_IGNORE_ATTRIBUTE}]`)
+      || parent?.closest(`[${CHAT_ANNOTATION_TEXT_IGNORE_ATTRIBUTE}]`)
+    ) {
+      continue;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const nodeRects = typeof range.getClientRects === "function"
+      ? Array.from(range.getClientRects())
+      : [];
+    rects.push(...nodeRects.filter(
+      (rect) => rect.width > 0 && rect.height > 0,
+    ));
+  }
+  return rects;
+}
+
+function completeVisualLineRect(
+  textRects: DOMRect[],
+  anchorRect: ResponseAnnotationAnchorRect,
+): ResponseAnnotationAnchorRect | null {
+  const anchorCenter = anchorRect.top + anchorRect.height / 2;
+  const lineRects = textRects.filter(
+    (rect) => anchorCenter >= rect.top - 1 && anchorCenter <= rect.bottom + 1,
+  );
+  if (lineRects.length === 0) return null;
+  const left = Math.min(...lineRects.map((rect) => rect.left));
+  const right = Math.max(...lineRects.map((rect) => rect.right));
+  const top = Math.min(...lineRects.map((rect) => rect.top));
+  const bottom = Math.max(...lineRects.map((rect) => rect.bottom));
+  return {
+    left,
+    right,
+    top,
+    bottom,
+    width: right - left,
+    height: bottom - top,
   };
 }
 
@@ -224,7 +377,7 @@ export function ResponseAnnotationMarker({
       data-annotation-id={annotationId}
       {...{ [CHAT_ANNOTATION_IGNORE_ATTRIBUTE]: "" }}
       className={cn(
-        "inline-flex h-7 w-7 select-none items-center justify-center rounded-full text-[11px] font-semibold text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11",
+        "motion-content-reveal inline-flex h-7 w-7 select-none items-center justify-center rounded-full text-[11px] font-semibold text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 motion-reduce:animate-none",
         className,
       )}
       aria-label={`Annotation ${ordinal}: ${boundedExcerpt}`}
@@ -263,7 +416,14 @@ export function AnchoredResponseAnnotationMarkers({
       frameId = requestAnimationFrame(() => {
         frameId = null;
         const rootRect = sourceRoot.getBoundingClientRect();
-        const next: Record<string, { left: number; top: number }> = {};
+        const textRects = collectResponseAnnotationTextRects(sourceRoot);
+        const markerSize = window.matchMedia?.("(pointer: coarse)").matches ? 44 : 28;
+        const candidates: Array<{
+          id: string;
+          left: number;
+          top: number;
+          direction: -1 | 1;
+        }> = [];
         for (const annotation of annotations) {
           const range = restoreChatAnnotationRange({
             sourceRoot,
@@ -276,14 +436,41 @@ export function AnchoredResponseAnnotationMarkers({
             ? Array.from(range.getClientRects())
             : [];
           const anchorRect = rects.at(-1) ?? range.getBoundingClientRect();
-          next[annotation.id] = placeResponseAnnotationMarker(anchorRect, rootRect);
+          const lineRect = completeVisualLineRect(textRects, anchorRect) ?? anchorRect;
+          const position = placeResponseAnnotationMarker(lineRect, rootRect, {
+            viewportWidth: window.innerWidth,
+            markerSize,
+            gap: 6,
+            padding: 8,
+            textRects,
+          });
+          candidates.push({
+            id: annotation.id,
+            ...position,
+            direction: position.left >= lineRect.right - rootRect.left ? 1 : -1,
+          });
         }
-        setPositions(next);
+        setPositions(avoidResponseAnnotationMarkerCollisions(
+          candidates,
+          markerSize,
+          2,
+          {
+            minLeft: 8 - rootRect.left,
+            maxLeft: window.innerWidth - 8 - markerSize - rootRect.left,
+          },
+          textRects.map((rect) => ({
+            left: rect.left - rootRect.left,
+            right: rect.right - rootRect.left,
+            top: rect.top - rootRect.top,
+            bottom: rect.bottom - rootRect.top,
+            width: rect.width,
+            height: rect.height,
+          })),
+        ));
       });
     };
     update();
     window.addEventListener("resize", update);
-    document.addEventListener("scroll", update, true);
     const observer = typeof ResizeObserver === "undefined"
       ? null
       : new ResizeObserver(update);
@@ -291,7 +478,6 @@ export function AnchoredResponseAnnotationMarkers({
     return () => {
       if (frameId !== null) cancelAnimationFrame(frameId);
       window.removeEventListener("resize", update);
-      document.removeEventListener("scroll", update, true);
       observer?.disconnect();
     };
   }, [annotations, source, sourceRootRef]);
@@ -434,9 +620,12 @@ export function ResponseAnnotationEditor({
   const [liveAnchorRect, setLiveAnchorRect] = useState(anchorRect ?? null);
   const [liveBoundaryRect, setLiveBoundaryRect] = useState(boundaryRect ?? null);
   const [editorSize, setEditorSize] = useState({ width: 352, height: 320 });
+  const [closing, setClosing] = useState(false);
   const inputId = useId();
   const editorRef = useRef<HTMLElement>(null);
   const commentRef = useRef<HTMLTextAreaElement>(null);
+  const closeActionRef = useRef<(() => void) | null>(null);
+  const closeFallbackTimerRef = useRef<number | null>(null);
   const visibleAttachments = attachments.filter((attachment) => draftAttachmentIds.includes(attachment.id));
   const anchored = Boolean(anchorRect);
   const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
@@ -473,10 +662,78 @@ export function ResponseAnnotationEditor({
     returnFocusRef?.current?.focus();
   }, [returnFocusRef]);
 
+  const completeClose = useCallback(() => {
+    if (closeFallbackTimerRef.current !== null) {
+      window.clearTimeout(closeFallbackTimerRef.current);
+      closeFallbackTimerRef.current = null;
+    }
+    const action = closeActionRef.current;
+    closeActionRef.current = null;
+    action?.();
+  }, []);
+
+  const requestClose = useCallback((action: () => void) => {
+    if (closing || closeActionRef.current) return;
+    if (
+      typeof window.matchMedia !== "function"
+      || window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      action();
+      return;
+    }
+    closeActionRef.current = action;
+    setClosing(true);
+    closeFallbackTimerRef.current = window.setTimeout(completeClose, 250);
+  }, [closing, completeClose]);
+
   const dismiss = useCallback(() => {
-    onCancel();
+    requestClose(() => {
+      onCancel();
+      restoreFocus();
+    });
+  }, [onCancel, requestClose, restoreFocus]);
+
+  const commitWithExitSnapshot = useCallback((action: () => void) => {
+    const editor = editorRef.current;
+    const reduceMotion = (
+      typeof window.matchMedia !== "function"
+      || window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
+    if (!editor || reduceMotion) {
+      action();
+      restoreFocus();
+      return;
+    }
+    const rect = editor.getBoundingClientRect();
+    const snapshot = editor.cloneNode(true) as HTMLElement;
+    snapshot.setAttribute("aria-hidden", "true");
+    snapshot.setAttribute("inert", "");
+    snapshot.dataset.testid = "chat-response-annotation-editor-exit";
+    snapshot.dataset.state = "open";
+    snapshot.style.position = "fixed";
+    snapshot.style.left = `${rect.left}px`;
+    snapshot.style.top = `${rect.top}px`;
+    snapshot.style.width = `${rect.width}px`;
+    snapshot.style.height = `${rect.height}px`;
+    snapshot.style.margin = "0";
+    snapshot.style.pointerEvents = "none";
+    snapshot.style.zIndex = "91";
+    snapshot.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
+    document.body.appendChild(snapshot);
+    void snapshot.offsetWidth;
+    snapshot.dataset.state = "closed";
+    const removeSnapshot = () => snapshot.remove();
+    snapshot.addEventListener("animationend", removeSnapshot, { once: true });
+    window.setTimeout(removeSnapshot, 250);
+    action();
     restoreFocus();
-  }, [onCancel, restoreFocus]);
+  }, [restoreFocus]);
+
+  useEffect(() => () => {
+    if (closeFallbackTimerRef.current !== null) {
+      window.clearTimeout(closeFallbackTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     setLiveAnchorRect(anchorRect ?? null);
@@ -576,8 +833,7 @@ export function ResponseAnnotationEditor({
       return;
     }
     setValidationError(null);
-    onSave(changes);
-    restoreFocus();
+    commitWithExitSnapshot(() => onSave(changes));
   }
 
   const editor = (
@@ -585,9 +841,11 @@ export function ResponseAnnotationEditor({
       ref={editorRef}
       data-testid="chat-response-annotation-editor"
       data-placement={placement?.placement}
+      data-state={closing ? "closed" : "open"}
       className={cn(
-        "w-[min(22rem,calc(100vw-1rem))] rounded-[var(--radius-xl)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] p-4 shadow-[var(--shadow-lg)]",
+        "motion-surface-pop w-[min(22rem,calc(100vw-1rem))] rounded-[var(--radius-xl)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] p-4 shadow-[var(--shadow-lg)]",
         anchored && "fixed z-[90] max-h-[min(36rem,calc(100vh-1rem))] overflow-y-auto overscroll-contain",
+        closing && "pointer-events-none",
         className,
       )}
       style={anchored
@@ -600,6 +858,9 @@ export function ResponseAnnotationEditor({
           }
         : undefined}
       aria-label="Edit annotation"
+      onAnimationEnd={(event) => {
+        if (closing && event.currentTarget === event.target) completeClose();
+      }}
     >
       <AnnotationContent
         annotation={annotation}
@@ -667,6 +928,8 @@ export function ResponseAnnotationEditor({
       ) : null}
       <div className="mt-4 flex items-center gap-2">
         <label
+          aria-label={labels.addFiles}
+          title={labels.addFiles}
           className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/40 [@media(pointer:coarse)]:h-11 motion-reduce:transition-none"
         >
           <input
@@ -677,15 +940,13 @@ export function ResponseAnnotationEditor({
             onChange={handleFiles}
           />
           <Paperclip className="h-3.5 w-3.5" />
-          {labels.addFiles}
         </label>
         <button
           type="button"
           className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 motion-reduce:transition-none"
           aria-label="Delete annotation"
           onClick={() => {
-            onDelete();
-            restoreFocus();
+            commitWithExitSnapshot(onDelete);
           }}
         >
           <Trash2 className="h-4 w-4" />
@@ -778,6 +1039,106 @@ export function EditableResponseAnnotationsCard({
   );
 }
 
+export function DraftResponseAnnotationsPopover({
+  annotations,
+  pendingFilesByAnnotationId,
+  attachments = [],
+  open,
+  onOpenChange,
+  onClear,
+  onEdit,
+  onDelete,
+  buttonRef,
+  labels = DEFAULT_LABELS,
+}: {
+  annotations: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
+  pendingFilesByAnnotationId: Record<string, File[]>;
+  attachments?: ChatAttachment[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onClear: () => void;
+  onEdit: (annotation: ChatInlineAnnotationInput) => void;
+  onDelete: (annotationId: string) => void;
+  buttonRef?: Ref<HTMLButtonElement>;
+  labels?: ResponseAnnotationLabels;
+}) {
+  const controlsId = useId();
+  const internalButtonRef = useRef<HTMLButtonElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const restoreFocusOnCloseRef = useRef(true);
+  const setButtonRef = useCallback((node: HTMLButtonElement | null) => {
+    internalButtonRef.current = node;
+    if (typeof buttonRef === "function") buttonRef(node);
+    else if (buttonRef) buttonRef.current = node;
+  }, [buttonRef]);
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    if (nextOpen) restoreFocusOnCloseRef.current = true;
+    onOpenChange(nextOpen);
+  }, [onOpenChange]);
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverAnchor asChild>
+        <div>
+          <ResponseAnnotationCountChip
+            count={annotations.length}
+            expanded={open}
+            controlsId={controlsId}
+            buttonRef={setButtonRef}
+            onToggle={() => {
+              restoreFocusOnCloseRef.current = true;
+              handleOpenChange(!open);
+            }}
+            onClear={onClear}
+            labels={labels}
+          />
+        </div>
+      </PopoverAnchor>
+      <PopoverContent
+        ref={contentRef}
+        id={controlsId}
+        data-testid="chat-response-annotations-draft-popover"
+        side="top"
+        align="start"
+        sideOffset={8}
+        avoidCollisions={false}
+        className="max-h-[min(32rem,var(--radix-popover-content-available-height))] w-[min(28rem,calc(100vw-1rem))] overflow-y-auto overscroll-contain border-0 bg-transparent p-0 shadow-none"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          requestAnimationFrame(() => {
+            contentRef.current
+              ?.querySelector<HTMLButtonElement>("[aria-label^='Edit annotation']")
+              ?.focus();
+          });
+        }}
+        onPointerDownOutside={() => {
+          restoreFocusOnCloseRef.current = false;
+        }}
+        onEscapeKeyDown={() => {
+          restoreFocusOnCloseRef.current = true;
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (restoreFocusOnCloseRef.current) internalButtonRef.current?.focus();
+          restoreFocusOnCloseRef.current = true;
+        }}
+      >
+        <EditableResponseAnnotationsCard
+          annotations={annotations}
+          pendingFilesByAnnotationId={pendingFilesByAnnotationId}
+          attachments={attachments}
+          labels={labels}
+          onEdit={(annotation) => {
+            restoreFocusOnCloseRef.current = false;
+            handleOpenChange(false);
+            onEdit(annotation);
+          }}
+          onDelete={onDelete}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function SentResponseAnnotationsCard({
   annotations,
   attachments,
@@ -800,12 +1161,12 @@ export function SentResponseAnnotationsCard({
   const annotationsListId = useId();
   const chipAnchorRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLOListElement>(null);
+  const expandedRef = useRef(false);
   const closeDetails = useCallback((restoreFocus: boolean) => {
-    setExpanded((current) => {
-      if (!current) return current;
-      onExpandedChange?.(false);
-      return false;
-    });
+    if (!expandedRef.current) return;
+    expandedRef.current = false;
+    setExpanded(false);
+    onExpandedChange?.(false);
     if (restoreFocus) {
       chipAnchorRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
     }
@@ -899,17 +1260,18 @@ export function SentResponseAnnotationsCard({
           count={annotations.length}
           expanded={expanded}
           controlsId={annotationsListId}
-          onToggle={() => setExpanded((current) => {
-            const next = !current;
+          onToggle={() => {
+            const next = !expandedRef.current;
             if (next) {
               document.dispatchEvent(new CustomEvent(
                 "rudder:sent-response-annotations-opened",
                 { detail: { id: annotationsListId } },
               ));
             }
+            expandedRef.current = next;
+            setExpanded(next);
             onExpandedChange?.(next);
-            return next;
-          })}
+          }}
           labels={labels}
         />
       </div>

@@ -237,7 +237,7 @@ describe("SideChatPanelView response annotations", () => {
     vi.mocked(chatsApi.get).mockImplementation(async (conversationId) => (
       conversationId === sideConversation.id ? sideConversation : sourceConversation
     ));
-    vi.mocked(chatsApi.listMessages).mockImplementation(async (conversationId) => (
+    vi.mocked(chatsApi.listMessages).mockImplementation(async (_organizationId, conversationId) => (
       conversationId === sideConversation.id ? [sideUserMessage] : []
     ));
 
@@ -265,13 +265,13 @@ describe("SideChatPanelView response annotations", () => {
     );
   });
 
-  it("dismisses provisional annotation details with Escape and restores chip focus", () => {
+  it("dismisses provisional annotation details with Escape and restores chip focus", async () => {
     renderView();
     const chip = host.querySelector<HTMLButtonElement>(
       '[aria-label="Show 1 annotation"]',
     )!;
     act(() => chip.click());
-    expect(host.querySelector('[aria-label="Edit annotation 1"]')).not.toBeNull();
+    expect(document.body.querySelector('[aria-label="Edit annotation 1"]')).not.toBeNull();
 
     act(() => {
       document.dispatchEvent(new KeyboardEvent("keydown", {
@@ -280,9 +280,9 @@ describe("SideChatPanelView response annotations", () => {
       }));
     });
 
-    expect(host.querySelector('[aria-label="Edit annotation 1"]')).toBeNull();
+    expect(document.body.querySelector('[aria-label="Edit annotation 1"]')).toBeNull();
     expect(chip.getAttribute("aria-expanded")).toBe("false");
-    expect(document.activeElement).toBe(chip);
+    await vi.waitFor(() => expect(document.activeElement).toBe(chip));
   });
 
   it("keeps the Side Chat provisional until annotation-only Send and owns comment files", async () => {
@@ -313,7 +313,7 @@ describe("SideChatPanelView response annotations", () => {
     act(() => {
       host.querySelector<HTMLButtonElement>('[aria-label="Show 1 annotation"]')?.click();
     });
-    const edit = host.querySelector<HTMLButtonElement>('[aria-label="Edit annotation 1"]');
+    const edit = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit annotation 1"]');
     expect(edit).not.toBeNull();
     act(() => edit?.click());
     const editor = document.body.querySelector(

@@ -12,8 +12,7 @@ import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import {
-  EditableResponseAnnotationsCard,
-  ResponseAnnotationCountChip,
+  DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
 import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
@@ -212,6 +211,8 @@ type PendingChatResponseAnnotationSelection = {
 
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
+  const macDesktopShell = typeof document !== "undefined"
+    && document.documentElement.classList.contains("desktop-shell-macos");
   const { openImagePreview } = useImagePreview(); const {
     abortChatStream,
     sendInFlightByChatId,
@@ -255,7 +256,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const [responseAnnotationsExpanded, setResponseAnnotationsExpanded] = useState(false);
   const [editingResponseAnnotationId, setEditingResponseAnnotationId] = useState<string | null>(null);
   const editingResponseAnnotationAnchorRef = useRef<HTMLButtonElement | null>(null);
-  const draftResponseAnnotationsSurfaceRef = useRef<HTMLDivElement | null>(null);
   const draftResponseAnnotationsChipRef = useRef<HTMLButtonElement | null>(null);
   const [historicalResponseAnnotations, setHistoricalResponseAnnotations] = useState<ChatResponseAnnotationDraft[]>([]);
   const [unlocatableResponseAnnotationId, setUnlocatableResponseAnnotationId] = useState<string | null>(null);
@@ -388,30 +388,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     draftStorageScopeKey,
     responseAnnotationState,
   ]);
-  useEffect(() => {
-    if (!responseAnnotationsExpanded || editingResponseAnnotationId) return;
-    const closeDraftDetails = (restoreFocus: boolean) => {
-      setResponseAnnotationsExpanded(false);
-      if (restoreFocus) draftResponseAnnotationsChipRef.current?.focus();
-    };
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (draftResponseAnnotationsSurfaceRef.current?.contains(target)) return;
-      closeDraftDetails(false);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      closeDraftDetails(true);
-    };
-    document.addEventListener("click", handleClick);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("click", handleClick);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [editingResponseAnnotationId, responseAnnotationsExpanded]);
   useEffect(() => { if (!pendingPrefill) return; if (pendingPrefill === lastAppliedPrefillRef.current) return; if (draft.trim().length > 0) return; lastAppliedPrefillRef.current = pendingPrefill; setDraft(pendingPrefill);
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); const nextSearch = new URLSearchParams(searchParams); nextSearch.delete("prefill");
     navigate( {
@@ -3064,39 +3040,38 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       ) : null}
       {responseAnnotationState.annotations.length > 0 ? (
         <div
-          ref={draftResponseAnnotationsSurfaceRef}
           className="mb-2.5 flex flex-col items-start gap-2"
         >
-          <ResponseAnnotationCountChip
-            count={responseAnnotationState.annotations.length}
-            expanded={responseAnnotationsExpanded}
-            controlsId="chat-response-annotations-draft"
+          <DraftResponseAnnotationsPopover
+            annotations={responseAnnotationState.annotations}
+            pendingFilesByAnnotationId={responseAnnotationState.pendingFilesByAnnotationId}
+            open={responseAnnotationsExpanded}
             buttonRef={draftResponseAnnotationsChipRef}
-            onToggle={() => setResponseAnnotationsExpanded((current) => !current)}
+            onOpenChange={(open) => {
+              setResponseAnnotationsExpanded(open);
+              if (open) setEditingResponseAnnotationId(null);
+            }}
             onClear={() => {
               dispatchResponseAnnotation({ type: "clear" });
               setResponseAnnotationsExpanded(false);
               setEditingResponseAnnotationId(null);
               setResponseAnnotationAnnouncement(t("chat.annotations.removed"));
             }}
+            onEdit={(annotation) => {
+              editingResponseAnnotationAnchorRef.current = draftResponseAnnotationsChipRef.current;
+              setEditingResponseAnnotationId(annotation.id);
+            }}
+            onDelete={(annotationId) => {
+              dispatchResponseAnnotation({ type: "delete", id: annotationId });
+              if (responseAnnotationState.annotations.length === 1) {
+                setResponseAnnotationsExpanded(false);
+              }
+              setEditingResponseAnnotationId((current) => (
+                current === annotationId ? null : current
+              ));
+              setResponseAnnotationAnnouncement(t("chat.annotations.removed"));
+            }}
           />
-          {responseAnnotationsExpanded ? (
-            <EditableResponseAnnotationsCard
-              annotations={responseAnnotationState.annotations}
-              pendingFilesByAnnotationId={responseAnnotationState.pendingFilesByAnnotationId}
-              onEdit={(annotation, anchor) => {
-                editingResponseAnnotationAnchorRef.current = anchor;
-                setEditingResponseAnnotationId(annotation.id);
-              }}
-              onDelete={(annotationId) => {
-                dispatchResponseAnnotation({ type: "delete", id: annotationId });
-                setEditingResponseAnnotationId((current) => (
-                  current === annotationId ? null : current
-                ));
-                setResponseAnnotationAnnouncement(t("chat.annotations.removed"));
-              }}
-            />
-          ) : null}
           {editingResponseAnnotationId ? (() => {
             const annotation = responseAnnotationState.annotations.find(
               (candidate) => candidate.id === editingResponseAnnotationId,
@@ -3375,6 +3350,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           data-testid="chat-main-workspace-card"
           className="workspace-main-card relative flex min-h-0 flex-1 flex-col overflow-hidden md:rounded-[var(--desktop-workspace-radius)]"
         >
+          {conversationId && macDesktopShell ? (
+            <div
+              aria-hidden="true"
+              data-testid="chat-desktop-toolbar-clearance"
+              className="chat-desktop-toolbar-clearance workspace-main-header hidden shrink-0 md:block"
+            />
+          ) : null}
           {loadErrorMessage && conversationId ? (
             <div
               aria-hidden="true"
@@ -3430,7 +3412,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 </div>
               </div>
             </div> ) : selectedConversation ? ( <>
-              <div className="pointer-events-none absolute right-3 top-12 z-30 flex justify-end gap-1.5 md:relative md:right-auto md:top-auto md:h-9 md:shrink-0 md:items-center md:px-3">
+              <div
+                data-testid="chat-desktop-toolbar-actions"
+                className={cn(
+                  "pointer-events-none absolute right-3 top-12 z-30 flex justify-end gap-1.5",
+                  macDesktopShell
+                    ? "md:right-3 md:top-2"
+                    : "md:relative md:right-auto md:top-auto md:h-9 md:shrink-0 md:items-center md:px-3",
+                )}
+              >
                 {workManifestAvailable && !sidePanelOpen ? (
                   <ChatWorkManifestToggle
                     open={workManifestWideOpen}
@@ -3769,10 +3759,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                             sourceMessageId: message.id,
                                             annotations: responseAnnotationsForMessage,
                                             onActivateAnnotation: (annotationId, anchor) => {
-                                              setResponseAnnotationsExpanded(true);
                                               if (responseAnnotationState.annotations.some(
                                                 (annotation) => annotation.id === annotationId,
                                               )) {
+                                                setResponseAnnotationsExpanded(false);
                                                 editingResponseAnnotationAnchorRef.current = anchor;
                                                 setEditingResponseAnnotationId(annotationId);
                                               } else {
@@ -3834,10 +3824,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   })} onOpenFile={openLocalFile} onMarkdownLinkClick={handleChatMarkdownLinkClick}
                                   responseAnnotations={responseAnnotationsForMessage}
                                   onEditResponseAnnotation={(annotationId, anchor) => {
-                                    setResponseAnnotationsExpanded(true);
                                     if (responseAnnotationState.annotations.some(
                                       (annotation) => annotation.id === annotationId,
                                     )) {
+                                      setResponseAnnotationsExpanded(false);
                                       editingResponseAnnotationAnchorRef.current = anchor;
                                       setEditingResponseAnnotationId(annotationId);
                                     } else {

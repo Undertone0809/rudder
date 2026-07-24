@@ -6,6 +6,17 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BrowserLiveSurface } from "./BrowserLiveSurface";
 
+vi.mock("@/context/I18nContext", async () => {
+  const actual = await vi.importActual<typeof import("@/context/I18nContext")>("@/context/I18nContext");
+  return {
+    ...actual,
+    useI18n: () => ({
+      locale: "en",
+      t: (key: import("@/i18n/locales/en").TranslationKey) => actual.translateMessage("en", key),
+    }),
+  };
+});
+
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -19,7 +30,103 @@ describe("BrowserLiveSurface", () => {
     root = null;
     container?.remove();
     container = null;
+    window.localStorage.clear();
+    window.sessionStorage.clear();
     Reflect.deleteProperty(window, "desktopShell");
+  });
+
+  it("introduces the Side Panel Browser once without onboarding the Main Workbench", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const commonProps = {
+      active: true,
+      canOpenNewTab: true,
+      target: {
+        kind: "browser" as const,
+        label: "Example",
+        tabId: "browser-onboarding",
+        url: "https://example.com",
+        viewInstanceId: "view-onboarding",
+      },
+      targetKey: "browser-tab:browser-onboarding",
+      onOpenTarget: vi.fn(),
+      onReplaceTarget: vi.fn(),
+      onCloseTarget: vi.fn(),
+      onRegisterShortcutController: vi.fn(),
+    };
+
+    act(() => {
+      root?.render(<BrowserLiveSurface {...commonProps} surface="workbench" />);
+    });
+    expect(container.querySelector("[data-testid='browser-side-panel-onboarding']")).toBeNull();
+
+    act(() => {
+      root?.render(<BrowserLiveSurface {...commonProps} surface="side_panel" />);
+    });
+    const onboarding = container.querySelector("[data-testid='browser-side-panel-onboarding']");
+    expect(onboarding?.getAttribute("role")).toBe("status");
+    expect(onboarding?.getAttribute("aria-live")).toBe("polite");
+    expect(onboarding?.textContent).toContain("Rudder starts with its Built-in Browser");
+    expect(onboarding?.textContent).toContain("Settings");
+    expect(onboarding?.textContent).toContain("default browser");
+
+    act(() => {
+      onboarding?.querySelector<HTMLButtonElement>("button")?.click();
+    });
+    expect(container.querySelector("[data-testid='browser-side-panel-onboarding']")).toBeNull();
+    expect(window.localStorage.getItem("rudder.browser.side-panel-onboarding.dismissed.v1")).toBe("true");
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          {...commonProps}
+          surface="side_panel"
+          target={{ ...commonProps.target, tabId: "browser-onboarding-next" }}
+          targetKey="browser-tab:browser-onboarding-next"
+        />,
+      );
+    });
+    expect(container.querySelector("[data-testid='browser-side-panel-onboarding']")).toBeNull();
+  });
+
+  it("opens the exact Browser settings destination from onboarding", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const onOpenBrowserSettings = vi.fn();
+
+    act(() => {
+      root?.render(
+        <BrowserLiveSurface
+          active
+          canOpenNewTab
+          surface="side_panel"
+          target={{
+            kind: "browser",
+            label: "Example",
+            tabId: "browser-settings-link",
+            url: "https://example.com",
+            viewInstanceId: "view-settings-link",
+          }}
+          targetKey="browser-tab:browser-settings-link"
+          onOpenBrowserSettings={onOpenBrowserSettings}
+          onOpenTarget={vi.fn()}
+          onReplaceTarget={vi.fn()}
+          onCloseTarget={vi.fn()}
+          onRegisterShortcutController={vi.fn()}
+        />,
+      );
+    });
+
+    const settingsButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Browser settings");
+    expect(settingsButton).toBeDefined();
+    act(() => settingsButton?.click());
+
+    expect(onOpenBrowserSettings).toHaveBeenCalledOnce();
+    expect(container.querySelector("[data-testid='browser-side-panel-onboarding']")).toBeNull();
+    expect(window.localStorage.getItem("rudder.browser.side-panel-onboarding.dismissed.v1")).toBe("true");
   });
 
   it("uses opaque surface tokens for the Browser frame and toolbar", () => {
@@ -32,6 +139,7 @@ describe("BrowserLiveSurface", () => {
         <BrowserLiveSurface
           active
           canOpenNewTab
+          surface="side_panel"
           target={{
             kind: "browser",
             label: "Example",
@@ -70,6 +178,7 @@ describe("BrowserLiveSurface", () => {
         <BrowserLiveSurface
           active
           canOpenNewTab
+          surface="side_panel"
           target={{
             kind: "browser",
             label: "Example",
@@ -121,6 +230,7 @@ describe("BrowserLiveSurface", () => {
         <BrowserLiveSurface
           active
           canOpenNewTab
+          surface="side_panel"
           target={{
             kind: "browser",
             label: "Example",
@@ -166,6 +276,7 @@ describe("BrowserLiveSurface", () => {
         <BrowserLiveSurface
           active
           canOpenNewTab
+          surface="side_panel"
           target={{
             kind: "browser",
             label: "Example",
@@ -213,6 +324,7 @@ describe("BrowserLiveSurface", () => {
         <BrowserLiveSurface
           active
           canOpenNewTab
+          surface="side_panel"
           target={{
             kind: "browser",
             label: "Example",

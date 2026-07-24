@@ -23,6 +23,15 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-skeleton[\s\S]*?animation: none !important/);
   });
 
+  it("moves top-side popovers upward as they open and preserves an exit animation", () => {
+    expect(motionCss).toContain('.motion-surface-pop[data-side="top"]');
+    expect(motionCss).toContain("@keyframes rudder-surface-pop-in-top");
+    expect(motionCss).toContain("@keyframes rudder-surface-pop-out-top");
+    expect(motionCss).toMatch(
+      /@keyframes rudder-surface-pop-in-top[\s\S]*?translateY\(var\(--motion-distance-small\)\)[\s\S]*?translateY\(0\)/,
+    );
+  });
+
   it("defines reduced-motion fallbacks for repeated product motion", () => {
     expect(motionCss).toContain("@media (prefers-reduced-motion: reduce)");
     expect(motionCss).toContain(".motion-live-surface::before");

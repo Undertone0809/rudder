@@ -21,19 +21,18 @@ import type {
   CustomIntegrationKind,
   CustomIntegrationScope,
   CustomIntegrationSummary,
+  McpAgentConnectionSummary,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Braces,
   CalendarDays,
   ExternalLink,
-  FileText,
   FolderOpen,
   Github,
   Inbox,
   KeyRound,
   Loader2,
-  MessageSquareText,
   PlugZap,
   Trash2,
   type LucideIcon,
@@ -41,6 +40,7 @@ import {
 import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { agentsApi } from "../api/agents";
 import { FeishuLogoIcon } from "../components/FeishuLogoIcon";
+import { McpProviderIcon } from "../components/McpProviderIcon";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime } from "../lib/utils";
@@ -52,9 +52,7 @@ type UpcomingIntegrationId =
   | "gmail"
   | "google_calendar"
   | "google_drive"
-  | "notion"
-  | "github"
-  | "linear";
+  | "github";
 
 type IntegrationCategory = "message" | "productivity" | "developer";
 type IntegrationsView = "discover" | "manage";
@@ -103,16 +101,6 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     Icon: FolderOpen,
   },
   {
-    id: "notion",
-    name: "Notion",
-    description: "Search pages, databases, and operating notes.",
-    connectionScope: "Workspace",
-    actionLabel: "Coming soon",
-    category: "productivity",
-    logoSrc: "/brands/notion-logo.svg",
-    Icon: FileText,
-  },
-  {
     id: "github",
     name: "GitHub",
     description: "Clone and inspect repositories during agent runs.",
@@ -122,15 +110,33 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     logoSrc: "/brands/github-logo.svg",
     Icon: Github,
   },
+];
+
+type ManagedMcpProviderDefinition = {
+  id: "supabase" | "notion" | "linear";
+  name: string;
+  description: string;
+  category: Extract<IntegrationCategory, "productivity" | "developer">;
+};
+
+const MANAGED_MCP_PROVIDER_INTEGRATIONS: ManagedMcpProviderDefinition[] = [
+  {
+    id: "notion",
+    name: "Notion",
+    description: "Search pages, databases, and operating notes through organization-managed MCP tools.",
+    category: "productivity",
+  },
+  {
+    id: "supabase",
+    name: "Supabase",
+    description: "Use the organization’s connected Supabase project through explicit MCP tool access.",
+    category: "developer",
+  },
   {
     id: "linear",
     name: "Linear",
-    description: "Link delivery issues and sync engineering work state.",
-    connectionScope: "Developer",
-    actionLabel: "Coming soon",
+    description: "Work with the organization’s Linear workspace through managed MCP tools.",
     category: "developer",
-    logoSrc: "/brands/linear-logo.svg",
-    Icon: MessageSquareText,
   },
 ];
 
@@ -248,8 +254,13 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
     queryFn: () => agentsApi.listCustomIntegrations(agent.id, orgId),
     initialData: [] as CustomIntegrationSummary[],
   });
+  const managedMcpConnectionsQuery = useQuery({
+    queryKey: queryKeys.agents.mcpConnections(agent.id),
+    queryFn: () => agentsApi.listMcpConnections(agent.id, orgId),
+  });
   const integrations = integrationsQuery.data ?? [];
   const customIntegrations = customIntegrationsQuery.data ?? [];
+  const managedMcpConnections = managedMcpConnectionsQuery.data ?? [];
   const rudderTools = agent.rudderTools ?? [];
   const feishuIntegration = integrations.find((integration) => integration.provider === "feishu") ?? null;
   const state = getFeishuIntegrationState(feishuIntegration);
@@ -457,13 +468,6 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                 active={customForm?.kind === "custom_api"}
                 onConfigure={() => setCustomForm(defaultCustomIntegrationForm("custom_api"))}
               />
-              <div className="rounded-md border border-dashed border-border bg-background/30 p-4">
-                <p className="text-sm font-medium text-foreground">Managed MCP connections</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Create Supabase, Linear, Notion, STDIO, or Streamable HTTP connections in
-                  Organization Settings, then bind their tools from Manage.
-                </p>
-              </div>
             </IntegrationCategorySection>
             <IntegrationCategorySection title="Message">
               <FeishuIntegrationCard
@@ -481,6 +485,18 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                 ))}
             </IntegrationCategorySection>
             <IntegrationCategorySection title="Productivity">
+              {MANAGED_MCP_PROVIDER_INTEGRATIONS
+                .filter((integration) => integration.category === "productivity")
+                .map((integration) => (
+                  <ManagedMcpProviderCard
+                    key={integration.id}
+                    integration={integration}
+                    rows={managedMcpConnections}
+                    loading={managedMcpConnectionsQuery.isLoading}
+                    loadFailed={managedMcpConnectionsQuery.isError}
+                    onManage={() => setIntegrationsView("manage")}
+                  />
+                ))}
               {UPCOMING_INTEGRATIONS
                 .filter((integration) => integration.category === "productivity")
                 .map((integration) => (
@@ -491,6 +507,18 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                 ))}
             </IntegrationCategorySection>
             <IntegrationCategorySection title="Developer">
+              {MANAGED_MCP_PROVIDER_INTEGRATIONS
+                .filter((integration) => integration.category === "developer")
+                .map((integration) => (
+                  <ManagedMcpProviderCard
+                    key={integration.id}
+                    integration={integration}
+                    rows={managedMcpConnections}
+                    loading={managedMcpConnectionsQuery.isLoading}
+                    loadFailed={managedMcpConnectionsQuery.isError}
+                    onManage={() => setIntegrationsView("manage")}
+                  />
+                ))}
               {UPCOMING_INTEGRATIONS
                 .filter((integration) => integration.category === "developer")
                 .map((integration) => (
@@ -788,6 +816,83 @@ function UpcomingIntegrationCard({ integration }: UpcomingIntegrationCardProps) 
       </div>
       <IntegrationActionButton variant="outline" size="sm" disabled aria-label={`${integration.name} coming soon`}>
         {integration.actionLabel}
+      </IntegrationActionButton>
+    </div>
+  );
+}
+
+function ManagedMcpProviderCard({
+  integration,
+  rows,
+  loading,
+  loadFailed,
+  onManage,
+}: {
+  integration: ManagedMcpProviderDefinition;
+  rows: McpAgentConnectionSummary[];
+  loading: boolean;
+  loadFailed: boolean;
+  onManage: () => void;
+}) {
+  const providerRows = rows.filter((row) => row.connection.provider === integration.id);
+  const activeBindings = providerRows.filter((row) => row.binding?.status === "active");
+  const enabledToolCount = activeBindings.reduce((count, row) => (
+    count + row.tools.filter((tool) =>
+        tool.enabled
+        && !tool.removedAt
+        && row.binding?.enabledToolIds.includes(tool.id)).length
+  ), 0);
+  const status = loadFailed
+    ? "Unavailable"
+    : activeBindings.length > 0
+    ? "Connected"
+    : providerRows.length > 0
+      ? "Available"
+      : "Not connected";
+  const statusTone = loadFailed
+    ? "border-destructive/25 bg-destructive/10 text-destructive"
+    : activeBindings.length > 0
+    ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+    : providerRows.length > 0
+      ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+      : "border-border bg-muted text-muted-foreground";
+  const details = loadFailed
+    ? "Managed MCP status could not be loaded. Try again from Manage."
+    : activeBindings.length > 0
+    ? `${enabledToolCount} ${enabledToolCount === 1 ? "tool" : "tools"} enabled for this agent`
+    : providerRows.length > 0
+      ? `${providerRows.length} organization ${providerRows.length === 1 ? "connection" : "connections"} ready to bind`
+      : "Connect this provider in Organization Settings, then bind it to this agent.";
+
+  return (
+    <div
+      data-testid={`managed-mcp-provider-${integration.id}`}
+      className="grid gap-3 rounded-md border border-border bg-background/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        <McpProviderIcon provider={integration.id} />
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">{integration.name}</p>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              Organization MCP
+            </span>
+            <span className={cn("rounded-md border px-1.5 py-0.5 text-xs", statusTone)}>
+              {loading ? "Loading" : status}
+            </span>
+          </div>
+          <p className="text-sm text-muted-foreground">{integration.description}</p>
+          {!loading ? <p className="text-xs text-muted-foreground">{details}</p> : null}
+        </div>
+      </div>
+      <IntegrationActionButton
+        variant="outline"
+        size="sm"
+        disabled={loading}
+        onClick={onManage}
+        aria-label={`Manage ${integration.name} MCP connections`}
+      >
+        Manage
       </IntegrationActionButton>
     </div>
   );

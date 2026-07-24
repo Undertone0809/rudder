@@ -445,6 +445,18 @@ export function resolveChatAnnotationRange(
     end ??= renderedSpans[renderedEnd - 1]?.end;
   }
   if (start === undefined || end === undefined || end <= start) return null;
+  // Soft Markdown line breaks render as inter-word spacing inside one paragraph.
+  // A DOM boundary at the first character after that spacing can map back to the
+  // preceding raw newline. Keep the canonical range aligned to what the user
+  // actually selected so server-side rendered-text validation sees the same
+  // leading character.
+  while (
+    start < end
+    && /\p{White_Space}/u.test(input.source[start] ?? "")
+    && !selectedText.startsWith(input.source[start] ?? "")
+  ) {
+    start += 1;
+  }
   const contextLength = Math.min(160, Math.max(0, input.contextLength ?? 160));
   const common = {
     selectedText,

@@ -1,8 +1,75 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildCustomMcpPayload,
+  canReconnectManagedMcp,
   defaultCustomMcpForm,
+  reserveAuthorizationLauncher,
 } from "./OrganizationMcpSettings";
+
+describe("managed MCP authorization launcher", () => {
+  it("uses the existing Desktop external-navigation bridge without opening a popup", async () => {
+    const openExternal = vi.fn(async () => undefined);
+    const forceOpenExternal = vi.fn(async () => undefined);
+    const openWindow = vi.fn<typeof window.open>(() => null);
+    const launcher = reserveAuthorizationLauncher({
+      desktopShell: { openExternal, forceOpenExternal },
+      openWindow,
+    });
+
+    await launcher.navigate("https://oauth.example.test/authorize");
+
+    expect(openWindow).not.toHaveBeenCalled();
+    expect(forceOpenExternal).toHaveBeenCalledWith("https://oauth.example.test/authorize");
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the standard Desktop external-navigation bridge", async () => {
+    const openExternal = vi.fn(async () => undefined);
+    const launcher = reserveAuthorizationLauncher({
+      desktopShell: { openExternal },
+      openWindow: vi.fn<typeof window.open>(() => null),
+    });
+
+    await launcher.navigate("https://oauth.example.test/authorize");
+
+    expect(openExternal).toHaveBeenCalledWith("https://oauth.example.test/authorize");
+  });
+
+  it("keeps synchronous popup reservation for the browser flow", async () => {
+    const replace = vi.fn();
+    const close = vi.fn();
+    const reservedWindow = {
+      opener: null,
+      location: { replace },
+      close,
+    } as unknown as Window;
+    const openWindow = vi.fn<typeof window.open>(() => reservedWindow);
+    const launcher = reserveAuthorizationLauncher({
+      desktopShell: null,
+      openWindow,
+    });
+
+    await launcher.navigate("https://oauth.example.test/authorize");
+    launcher.close();
+
+    expect(openWindow).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(replace).toHaveBeenCalledWith("https://oauth.example.test/authorize");
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("does not create a browser launcher when popup reservation is rejected", async () => {
+    expect(() => reserveAuthorizationLauncher({
+      desktopShell: null,
+      openWindow: () => null,
+    })).toThrow("Allow pop-ups for Rudder, then try again");
+  });
+});
+
+describe("managed MCP authorization recovery", () => {
+  it("allows an authorizing connection to restart OAuth when external navigation failed", () => {
+    expect(canReconnectManagedMcp("authorizing")).toBe(true);
+  });
+});
 
 describe("custom MCP connection form", () => {
   it("stores every literal HTTP header as encrypted credential material", () => {

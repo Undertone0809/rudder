@@ -56,27 +56,24 @@ test.describe("Chat sidebar layout", () => {
     const mainCard = page.getByTestId("chat-main-workspace-card");
     const loadError = mainCard.getByTestId("chat-load-error");
     const toolbarButton = mainCard.getByTestId("chat-side-panel-trigger");
+    const toolbarGlass = mainCard.getByTestId("chat-desktop-toolbar-clearance");
     await expect(mainCard).toBeVisible();
     await expect(page.locator("html")).toHaveClass(/\bdesktop-shell-macos\b/);
     await expect(loadError).toHaveText("Internal server error", { timeout: 15_000 });
-    await expect(mainCard.getByTestId("chat-desktop-toolbar-clearance")).toHaveCount(0);
+    await expect(toolbarGlass).toBeVisible();
+    await expect(toolbarGlass).toHaveCSS("position", "absolute");
+    await expect(toolbarGlass).toHaveCSS("backdrop-filter", /blur\(18px\)/);
 
     const desktopErrorBox = await loadError.boundingBox();
     const desktopToolbarBox = await toolbarButton.boundingBox();
+    const desktopToolbarGlassBox = await toolbarGlass.boundingBox();
     expect(desktopErrorBox).not.toBeNull();
     expect(desktopToolbarBox).not.toBeNull();
-    await expect(loadError).toHaveCSS("margin-top", "24px");
-    const desktopOverlapWidth = Math.max(
-      0,
-      Math.min(desktopErrorBox!.x + desktopErrorBox!.width, desktopToolbarBox!.x + desktopToolbarBox!.width)
-        - Math.max(desktopErrorBox!.x, desktopToolbarBox!.x),
+    expect(desktopToolbarGlassBox).not.toBeNull();
+    expect(desktopErrorBox!.y).toBeGreaterThanOrEqual(
+      desktopToolbarGlassBox!.y + desktopToolbarGlassBox!.height + 23,
     );
-    const desktopOverlapHeight = Math.max(
-      0,
-      Math.min(desktopErrorBox!.y + desktopErrorBox!.height, desktopToolbarBox!.y + desktopToolbarBox!.height)
-        - Math.max(desktopErrorBox!.y, desktopToolbarBox!.y),
-    );
-    expect(desktopOverlapWidth * desktopOverlapHeight).toBe(0);
+    await expect(loadError).toHaveCSS("margin-top", "68px");
 
     await page.screenshot({
       path: testInfo.outputPath("chat-load-error-position-desktop.png"),
@@ -207,5 +204,38 @@ test.describe("Chat sidebar layout", () => {
       path: testInfo.outputPath("chat-sidebar-layout.png"),
       fullPage: true,
     });
+  });
+
+  test("keeps the chat toolbar in flow outside the macOS desktop shell", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Web-Toolbar-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; urlKey: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Web Toolbar Agent" });
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Web toolbar layout",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Verify the ordinary web toolbar layout." },
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.urlKey}/messenger/chat/${chat.id}`);
+
+    await expect(page.locator("html")).not.toHaveClass(/\bdesktop-shell-macos\b/);
+    await expect(page.getByTestId("chat-desktop-toolbar-clearance")).toHaveCount(0);
+    await expect(page.getByTestId("chat-desktop-toolbar-actions")).toHaveCSS("position", "relative");
   });
 });

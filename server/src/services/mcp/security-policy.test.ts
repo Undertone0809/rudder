@@ -227,6 +227,17 @@ describe("managed MCP outbound target policy", () => {
     })).rejects.toThrow(/curated/i);
     expect(lookup).not.toHaveBeenCalled();
   });
+
+  it("accepts a registry-pinned curated origin through a transparent fake-IP DNS proxy", async () => {
+    await expect(resolveMcpHttpTarget("https://mcp.notion.com/mcp", {
+      lookup: async () => [{ address: "198.18.0.42", family: 4 }],
+      allowedOrigins: [],
+      curatedOrigin: "https://mcp.notion.com",
+    })).resolves.toMatchObject({
+      resolvedAddress: "198.18.0.42",
+      tlsServername: "mcp.notion.com",
+    });
+  });
 });
 
 describe("managed MCP header policy", () => {

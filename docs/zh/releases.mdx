@@ -24,6 +24,36 @@ npx @rudderhq/cli@latest start
 操作指南和参考页面为准。今后的发布记录应使用当前导航名称；术语可能有歧义时，
 应链接到对应的权威页面。
 
+## v0.6.0
+
+发布时间：2026-07-25
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.6.0)
+
+### New Features
+
+- 增加持久化 Messenger workbench，可把 saved views 和 Side Panel 内容提升到主工作区，同时保留实时状态与上下文，并支持安全本地 Web 应用和 spawned-subagent 检查。
+- 增加 Chat 与 Side Chat response annotations，让用户可以把反馈锚定到精确的回复区间，并在 queued delivery 中保留。
+- 增加 managed MCP connections，覆盖 OAuth lifecycle management、设置、runtime injection，以及与 provider 无关的 agent 访问。
+- 扩展内置 Browser，增加 Side Panel 引导式 onboarding、独立 Browser MCP runtime、backend-parity tools、下载和只读 DOM references。
+- 增加共享 Library 媒体播放，支持音频与视频 work products。
+
+### Improvements
+
+- 简化首次 onboarding 与 issue 创建，让新用户用更少设置即可开始实际工作。
+- 将默认 agent-run concurrency 提高到八，并改善 run context、failed-run navigation 和 subagent visibility。
+- 恢复内置 Rudder skill-creator 工作流，提供当前指南、compatibility references 和 evaluation tooling。
+- 改善 Messenger saved-view 组织、分组 keep 操作、宽幅 Side Panel 调整，以及导航与提升过程中的 workbench continuity。
+- 通过共享 PostgreSQL payload 改善 Desktop runtime reuse，并加强 update recovery、shutdown 安全性和 stable-release orchestration。
+
+### Bug Fixes
+
+- 修复重复 live transcript deltas、queued-message delivery 竞态、stale composer state，以及隐藏 provider lifecycle details。
+- 修复 Chat runtime-preparation failures、organization-scoped transcript history、严格 prompt matching，以及精确 failed-run recovery links。
+- 修复 organization skill installation、source protection、local materialization 和并发生命周期转换。
+- 修复 Browser credential isolation、managed MCP cleanup、DOM-reference safety、saved-view identity 和 runtime shutdown boundaries。
+- 修复 Desktop local-app listener cleanup 和 recovery、saved-view routing 与 cache eviction、响应式 Issue Detail 与 Library 布局，以及多项跨平台发布回归。
+
 ## v0.5.1
 
 发布时间：2026-07-22
