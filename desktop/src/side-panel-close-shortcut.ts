@@ -25,8 +25,22 @@ export function isSidePanelCloseShortcutInput(
   return Boolean(input.control) && !input.meta;
 }
 
+export function isSidePanelToggleShortcutInput(
+  input: DesktopCloseShortcutInput,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (input.type === "keyUp" || input.alt || input.shift) return false;
+  const key = input.key?.toLowerCase();
+  const isToggleKey = key === "t" || input.code === "KeyT";
+  if (!isToggleKey) return false;
+  if (platform === "darwin") return Boolean(input.meta) && !input.control;
+  return Boolean(input.control) && !input.meta;
+}
+
 export type ProtectedDesktopShortcutRoute =
+  | { kind: "close_browser_owner_tab" }
   | { kind: "close_side_panel_tab" }
+  | { kind: "open_empty_side_panel" }
   | { kind: "browser"; action: DesktopBrowserShortcutAction };
 
 export function resolveProtectedDesktopShortcutRoute(
@@ -35,13 +49,38 @@ export function resolveProtectedDesktopShortcutRoute(
     sidePanelCloseActive: boolean;
     browserSurfaceActive: boolean;
     operatorBrowserGuest: boolean;
+    browserSurfaceOwner?: "main_workbench" | "side_panel" | null;
   },
   platform: NodeJS.Platform = process.platform,
 ): ProtectedDesktopShortcutRoute | null {
-  if (context.sidePanelCloseActive && isSidePanelCloseShortcutInput(input, platform)) {
-    return { kind: "close_side_panel_tab" };
+  if (isSidePanelCloseShortcutInput(input, platform)) {
+    if (context.operatorBrowserGuest) {
+      return { kind: "close_browser_owner_tab" };
+    }
+    if (context.sidePanelCloseActive) {
+      return { kind: "close_side_panel_tab" };
+    }
   }
   const action = resolveDesktopBrowserShortcutInput(input, platform);
+  const isToggleShortcut = isSidePanelToggleShortcutInput(input, platform);
+  if (
+    action
+    && !isToggleShortcut
+    && (context.browserSurfaceActive || context.operatorBrowserGuest)
+  ) {
+    return { kind: "browser", action };
+  }
+  if (
+    action
+    && isToggleShortcut
+    && context.browserSurfaceOwner === "main_workbench"
+    && (context.browserSurfaceActive || context.operatorBrowserGuest)
+  ) {
+    return { kind: "browser", action };
+  }
+  if (isToggleShortcut) {
+    return { kind: "open_empty_side_panel" };
+  }
   if (!action || (!context.browserSurfaceActive && !context.operatorBrowserGuest)) return null;
   return { kind: "browser", action };
 }

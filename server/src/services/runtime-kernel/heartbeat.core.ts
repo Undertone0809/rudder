@@ -242,12 +242,16 @@ export function buildHeartbeatAdapterInvokePayload(input: {
     description: string | null;
   }>;
 }): Record<string, unknown> {
+  const persistentPrompt = sanitizeStartupContextPromptForPersistence(input.meta.prompt);
+  const persistentAgentInstructionStack = sanitizeStartupContextPromptForPersistence(
+    typeof input.meta.agentInstructionStack === "string" ? input.meta.agentInstructionStack : null,
+  );
   const explicitUsedSkills = Array.isArray(input.meta.usedSkills)
     ? input.meta.usedSkills
       .map((entry) => normalizeLoadedSkill(entry))
       .filter((entry): entry is { key: string; label: string } => Boolean(entry))
     : [];
-  const promptRequestedSkills = inferUsedSkillsFromPrompt(input.meta.prompt, input.runtimeSkills);
+  const promptRequestedSkills = inferUsedSkillsFromPrompt(persistentPrompt, input.runtimeSkills);
   const desiredSkills = input.runtimeSkills
     .map((entry) => ({
       key: entry.key,
@@ -285,10 +289,6 @@ export function buildHeartbeatAdapterInvokePayload(input: {
     requestedSkills: promptRequestedSkills,
     loadedSkills: loadedSkillEvidence,
   });
-  const persistentPrompt = sanitizeStartupContextPromptForPersistence(input.meta.prompt);
-  const persistentAgentInstructionStack = sanitizeStartupContextPromptForPersistence(
-    typeof input.meta.agentInstructionStack === "string" ? input.meta.agentInstructionStack : null,
-  );
   const persistentMeta = {
     ...input.meta,
     prompt: persistentPrompt,
@@ -337,7 +337,9 @@ export function buildHeartbeatAdapterInvokePayload(input: {
 
 export function sanitizeStartupContextPromptForPersistence(prompt: string | null | undefined) {
   if (!prompt) return prompt;
-  const redactedPrompt = redactRudderInlineVisualSources(prompt);
+  const redactedPrompt = redactResponseAnnotationPromptSection(
+    redactRudderInlineVisualSources(prompt),
+  );
   const heading = "\n## Recent Rudder Context";
   let start = redactedPrompt.indexOf(heading);
   let headingLength = heading.length;
@@ -362,10 +364,36 @@ export function sanitizeStartupContextPromptForPersistence(prompt: string | null
   return `${redactedPrompt.slice(0, start)}${replacement}${redactedPrompt.slice(nextSection)}`;
 }
 
+function redactResponseAnnotationPromptSection(prompt: string) {
+  const heading = "User-provided response annotations:";
+  const replacement = `${heading}\n[response annotation content redacted for persistence]`;
+  let output = "";
+  let cursor = 0;
+  let searchFrom = 0;
+  let redacted = false;
+  while (searchFrom < prompt.length) {
+    const start = prompt.indexOf(heading, searchFrom);
+    if (start < 0) break;
+    if (start > 0 && prompt[start - 1] !== "\n") {
+      searchFrom = start + heading.length;
+      continue;
+    }
+    const nextSection = prompt.indexOf("\n\n", start + heading.length);
+    const end = nextSection < 0 ? prompt.length : nextSection;
+    output += `${prompt.slice(cursor, start)}${replacement}`;
+    cursor = end;
+    searchFrom = end;
+    redacted = true;
+  }
+  return redacted ? `${output}${prompt.slice(cursor)}` : prompt;
+}
+
 export function sanitizeStartupContextContextForPersistence(context: Record<string, unknown> | null | undefined) {
   if (!context) return context;
   const snapshot = JSON.parse(JSON.stringify(context));
   delete snapshot.rudderResourcesPrompt;
+  delete snapshot.chatPrompt;
+  delete snapshot.chatAttachments;
   if (snapshot.rudderWorkspace && typeof snapshot.rudderWorkspace === "object") {
     delete snapshot.rudderWorkspace.resourcesPrompt;
     delete snapshot.rudderWorkspace.orgResourcesPrompt;

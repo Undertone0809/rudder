@@ -45,6 +45,34 @@ This keeps one authenticated auth stack while still separating low-friction priv
 - explicit public URL required
 - stricter deployment checks and failures in doctor
 
+## Managed MCP Deployment Policy
+
+Managed custom MCP servers use instance-administrator environment allowlists
+for exceptions to the default network and process boundary:
+
+- `RUDDER_MCP_HTTP_ALLOWLIST`: comma-separated exact HTTP(S) origins. Public
+  HTTPS needs no entry; HTTP, loopback, private, link-local, and reserved
+  targets require an exact origin entry. Every DNS answer and redirect target
+  is still validated and the request is connected to a pinned address.
+- `RUDDER_MCP_STDIO_COMMAND_ALLOWLIST`: JSON array of exact argv arrays accepted
+  in `authenticated` mode, for example
+  `[["/opt/mcp/acme","--stdio"],["/usr/local/bin/node","/opt/mcp/server.mjs"]]`.
+  The executable must be absolute, and its real path plus every argument must
+  match one configured entry.
+- `RUDDER_MCP_STDIO_CWD_ALLOWLIST`: comma-separated exact working directories
+  accepted in `authenticated` mode.
+- `RUDDER_MCP_STDIO_ENV_ALLOWLIST`: comma-separated environment variable names
+  that an authenticated managed MCP process may receive. The same allowlist
+  also controls environment names referenced by Custom Streamable HTTP
+  `headersFromEnv` and `bearerTokenEnvVar` settings; organization owners cannot
+  use those settings to read arbitrary deployment environment variables.
+
+`local_trusted` permits custom STDIO commands because it is a single-operator
+host boundary. `authenticated` denies STDIO commands, working directories, and
+environment names unless all requested values are allowlisted. Organization
+owners cannot extend these instance-level lists through a connection payload.
+Legacy SSE is not a managed MCP transport; remote MCP uses Streamable HTTP.
+
 ## 4. Onboarding UX Contract
 
 Default onboarding remains interactive and flagless:

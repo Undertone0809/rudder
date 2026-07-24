@@ -169,6 +169,7 @@ describe("organization portability", () => {
         runtimeConfig: {
           heartbeat: {
             intervalSec: 3600,
+            maxConcurrentRuns: 3,
           },
         },
         budgetMonthlyCents: 0,
@@ -447,6 +448,8 @@ describe("organization portability", () => {
     expect(extension).not.toContain("PATH:");
     expect(extension).not.toContain("requireBoardApprovalForNewAgents: true");
     expect(extension).not.toContain("budgetMonthlyCents: 0");
+    expect(extension).toContain("maxConcurrentRuns: 3");
+    expect(extension).toContain("maxConcurrentRuns: 8");
     expect(extension).toContain("permissions:");
     expect(extension).toContain("canCreateAgents: false");
     expect(exported.warnings).toContain("Agent claudecoder command /Users/dotta/.local/bin/claude was omitted from export because it is system-dependent.");
@@ -2014,9 +2017,84 @@ describe("organization portability", () => {
       runtimeConfig: {
         heartbeat: {
           enabled: false,
+          maxConcurrentRuns: 3,
         },
       },
     });
+    const createdCmo = agentSvc.create.mock.calls.find(([, input]) => input.name === "CMO");
+    expect(createdCmo?.[1]).toMatchObject({
+      runtimeConfig: {
+        heartbeat: {
+          enabled: false,
+          maxConcurrentRuns: 8,
+        },
+      },
+    });
+  });
+
+  it("preserves the legacy concurrency default when rudder/v1 packages omit it", async () => {
+    const portability = organizationPortabilityService({} as any);
+
+    companySvc.create.mockResolvedValue({
+      id: "organization-imported",
+      name: "Imported Rudder",
+    });
+    agentSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({
+      id: `agent-${String(input.name).toLowerCase()}`,
+      name: input.name,
+      agentRuntimeConfig: input.agentRuntimeConfig,
+      runtimeConfig: input.runtimeConfig,
+    }));
+
+    const exported = await portability.exportBundle("organization-1", {
+      include: {
+        organization: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+    const legacyExtension = asTextFile(exported.files[".rudder.yaml"])
+      .split("\n")
+      .filter((line) => !line.includes("maxConcurrentRuns:"))
+      .join("\n");
+
+    agentSvc.list.mockResolvedValue([]);
+
+    await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: {
+          ...exported.files,
+          ".rudder.yaml": legacyExtension,
+        },
+      },
+      include: {
+        organization: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "new_organization",
+        newOrganizationName: "Imported Rudder",
+      },
+      agents: "all",
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    expect(agentSvc.create).toHaveBeenCalledTimes(2);
+    for (const [, input] of agentSvc.create.mock.calls) {
+      expect(input).toMatchObject({
+        runtimeConfig: {
+          heartbeat: {
+            enabled: false,
+            maxConcurrentRuns: 3,
+          },
+        },
+      });
+    }
   });
 
   it("imports only selected files and leaves unchecked organization metadata alone", async () => {
@@ -2092,6 +2170,7 @@ describe("organization portability", () => {
       runtimeConfig: {
         heartbeat: {
           enabled: false,
+          maxConcurrentRuns: 8,
         },
       },
     }));

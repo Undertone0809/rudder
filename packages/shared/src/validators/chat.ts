@@ -12,6 +12,7 @@ import {
   CHAT_MESSAGE_STATUSES,
   ISSUE_STATUSES,
 } from "../constants.js";
+import type { ChatInlineAnnotation, ChatInlineAnnotationInput } from "../types/chat.js";
 
 export const chatConversationStatusSchema = z.enum(CHAT_CONVERSATION_STATUSES);
 export const chatIssueCreationModeSchema = z.enum(CHAT_ISSUE_CREATION_MODES);
@@ -116,6 +117,223 @@ export const chatQueuedMessageStatusSchema = z.enum([
 const chatControlActionIdSchema = z.string().uuid();
 const chatBodyHashSchema = z.string().regex(/^[a-f0-9]{64}$/i, "Expected a SHA-256 body hash");
 
+export const MAX_CHAT_INLINE_ANNOTATIONS = 10;
+export const MAX_CHAT_INLINE_ANNOTATION_SELECTED_TEXT_LENGTH = 4_000;
+export const MAX_CHAT_INLINE_ANNOTATION_COMMENT_LENGTH = 2_000;
+export const MAX_CHAT_INLINE_ANNOTATION_TOTAL_TEXT_LENGTH = 16_000;
+export const MAX_CHAT_INLINE_ANNOTATION_CONTEXT_LENGTH = 160;
+export const MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS = 10;
+
+const chatInlineAnnotationCommentSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  },
+  z.string().max(MAX_CHAT_INLINE_ANNOTATION_COMMENT_LENGTH).nullable().optional(),
+);
+const chatInlineAnnotationSelectedTextSchema = z.string()
+  .min(1)
+  .max(MAX_CHAT_INLINE_ANNOTATION_SELECTED_TEXT_LENGTH)
+  .refine((value) => value.trim().length > 0, "Selected text must not be blank");
+const chatInlineAnnotationSourceHashSchema = z.string()
+  .regex(/^[a-f0-9]{64}$/, "Expected a lowercase SHA-256 source hash");
+
+const chatInlineAnnotationShape = {
+  id: z.string().uuid(),
+  selectedText: chatInlineAnnotationSelectedTextSchema,
+  comment: chatInlineAnnotationCommentSchema,
+  sourceConversationId: z.string().uuid(),
+  sourceMessageId: z.string().uuid(),
+  sourceHash: chatInlineAnnotationSourceHashSchema,
+  start: z.number().int().nonnegative(),
+  end: z.number().int().nonnegative(),
+  prefix: z.string().max(MAX_CHAT_INLINE_ANNOTATION_CONTEXT_LENGTH),
+  suffix: z.string().max(MAX_CHAT_INLINE_ANNOTATION_CONTEXT_LENGTH),
+  attachmentIds: z.array(z.string().uuid()).default([]),
+};
+
+function refineChatInlineAnnotation(
+  annotation: {
+    surface: "assistant_body" | "process_transcript";
+    transcriptKind?: "thinking" | "assistant";
+    generationId?: string;
+    generationSeqStart?: number;
+    generationSeqEnd?: number;
+    start: number;
+    end: number;
+    attachmentIds: string[];
+    attachmentFileIndexes?: number[];
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (annotation.end <= annotation.start) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Annotation end must be greater than start",
+      path: ["end"],
+    });
+  }
+
+  const attachmentIds = new Set<string>();
+  annotation.attachmentIds.forEach((attachmentId, index) => {
+    if (attachmentIds.has(attachmentId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Annotation attachment ids must be unique",
+        path: ["attachmentIds", index],
+      });
+    }
+    attachmentIds.add(attachmentId);
+  });
+  const attachmentFileIndexes = new Set<number>();
+  annotation.attachmentFileIndexes?.forEach((fileIndex, index) => {
+    if (attachmentFileIndexes.has(fileIndex)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Annotation attachment file indexes must be unique",
+        path: ["attachmentFileIndexes", index],
+      });
+    }
+    attachmentFileIndexes.add(fileIndex);
+  });
+
+  if (
+    annotation.surface === "process_transcript"
+    && annotation.generationSeqStart !== undefined
+    && annotation.generationSeqEnd !== undefined
+    && annotation.generationSeqEnd < annotation.generationSeqStart
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Generation sequence end must be greater than or equal to start",
+      path: ["generationSeqEnd"],
+    });
+  }
+}
+
+const chatAssistantInlineAnnotationSchema = z.object({
+  ...chatInlineAnnotationShape,
+  surface: z.literal("assistant_body"),
+}).strict();
+const chatProcessInlineAnnotationSchema = z.object({
+  ...chatInlineAnnotationShape,
+  surface: z.literal("process_transcript"),
+  transcriptKind: z.enum(["thinking", "assistant"]),
+  generationId: z.string().uuid(),
+  generationSeqStart: z.number().int().nonnegative(),
+  generationSeqEnd: z.number().int().nonnegative(),
+}).strict();
+
+export const chatInlineAnnotationSchema = z.discriminatedUnion("surface", [
+  chatAssistantInlineAnnotationSchema,
+  chatProcessInlineAnnotationSchema,
+])
+  .superRefine(refineChatInlineAnnotation);
+
+const chatAssistantInlineAnnotationInputSchema = chatAssistantInlineAnnotationSchema.extend({
+  attachmentFileIndexes: z.array(z.number().int().nonnegative()).optional(),
+}).strict();
+const chatProcessInlineAnnotationInputSchema = chatProcessInlineAnnotationSchema.extend({
+  attachmentFileIndexes: z.array(z.number().int().nonnegative()).optional(),
+}).strict();
+
+export const chatInlineAnnotationInputSchema = z.discriminatedUnion("surface", [
+  chatAssistantInlineAnnotationInputSchema,
+  chatProcessInlineAnnotationInputSchema,
+])
+  .superRefine(refineChatInlineAnnotation);
+
+function createChatInlineAnnotationsSchema<T extends z.ZodTypeAny>(annotationSchema: T) {
+  return z.array(annotationSchema)
+    .max(MAX_CHAT_INLINE_ANNOTATIONS)
+    .superRefine((annotations, ctx) => {
+      let totalTextLength = 0;
+      let attachmentReferenceCount = 0;
+      const annotationIds = new Set<string>();
+      const sourceRanges = new Set<string>();
+      const attachmentIds = new Set<string>();
+      const attachmentFileIndexes = new Set<number>();
+
+      annotations.forEach((annotation, annotationIndex) => {
+        totalTextLength += annotation.selectedText.length + (annotation.comment?.length ?? 0);
+        attachmentReferenceCount += annotation.attachmentIds.length
+          + (annotation.attachmentFileIndexes?.length ?? 0);
+        if (annotationIds.has(annotation.id)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Annotation ids must be unique across the message",
+            path: [annotationIndex, "id"],
+          });
+        }
+        annotationIds.add(annotation.id);
+        const sourceRangeKey = JSON.stringify([
+          annotation.sourceConversationId,
+          annotation.sourceMessageId,
+          annotation.surface,
+          annotation.surface === "process_transcript" ? annotation.transcriptKind : null,
+          annotation.surface === "process_transcript" ? annotation.generationId : null,
+          annotation.surface === "process_transcript" ? annotation.generationSeqStart : null,
+          annotation.surface === "process_transcript" ? annotation.generationSeqEnd : null,
+          annotation.start,
+          annotation.end,
+        ]);
+        if (sourceRanges.has(sourceRangeKey)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Annotation source ranges must be unique across the message",
+            path: [annotationIndex, "start"],
+          });
+        }
+        sourceRanges.add(sourceRangeKey);
+        annotation.attachmentIds.forEach((attachmentId: string, attachmentIndex: number) => {
+          if (attachmentIds.has(attachmentId)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "Annotation attachment ids must be unique across the message",
+              path: [annotationIndex, "attachmentIds", attachmentIndex],
+            });
+          }
+          attachmentIds.add(attachmentId);
+        });
+        annotation.attachmentFileIndexes?.forEach((fileIndex: number, attachmentIndex: number) => {
+          if (attachmentFileIndexes.has(fileIndex)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "Annotation attachment file indexes must be unique across the message",
+              path: [annotationIndex, "attachmentFileIndexes", attachmentIndex],
+            });
+          }
+          attachmentFileIndexes.add(fileIndex);
+        });
+      });
+
+      if (totalTextLength > MAX_CHAT_INLINE_ANNOTATION_TOTAL_TEXT_LENGTH) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Annotation selected text and comments must not exceed ${MAX_CHAT_INLINE_ANNOTATION_TOTAL_TEXT_LENGTH} characters`,
+        });
+      }
+      if (attachmentReferenceCount > MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Annotations must not reference more than ${MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS} attachments`,
+        });
+      }
+    });
+}
+
+export const chatInlineAnnotationsSchema = createChatInlineAnnotationsSchema(chatInlineAnnotationSchema);
+export const chatInlineAnnotationsInputSchema = createChatInlineAnnotationsSchema(chatInlineAnnotationInputSchema);
+
+export function normalizeChatInlineAnnotations(
+  annotations: readonly ChatInlineAnnotationInput[],
+): ChatInlineAnnotation[] {
+  const parsed = chatInlineAnnotationsInputSchema.parse(annotations);
+  const canonical = parsed.map(({ attachmentFileIndexes: _attachmentFileIndexes, ...annotation }) => annotation);
+  return chatInlineAnnotationsSchema.parse(canonical);
+}
+
 export const createChatContextLinkSchema = z.object({
   entityType: chatContextEntityTypeSchema,
   entityId: z.string().min(1),
@@ -168,20 +386,38 @@ export const createSideChatSchema = z.object({
 });
 
 export const addChatMessageSchema = z.object({
-  body: z.string().trim().min(1).max(20000),
+  body: z.string().trim().max(20000).default(""),
+  inlineAnnotations: chatInlineAnnotationsInputSchema.optional(),
   editUserMessageId: z.string().uuid().optional().nullable(),
   queuedMessageId: z.string().uuid().optional().nullable(),
+}).superRefine((value, ctx) => {
+  if (value.body.length === 0 && (value.inlineAnnotations?.length ?? 0) === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Chat message body or at least one inline annotation is required",
+      path: ["body"],
+    });
+  }
 });
 
 export const chatQueuedMessagePayloadSchema = z.object({
-  body: z.string().trim().min(1).max(20000),
+  body: z.string().trim().max(20000).default(""),
   attachmentIds: z.array(z.string().uuid()).optional().default([]),
+  inlineAnnotations: chatInlineAnnotationsInputSchema.optional().default([]),
   projectId: z.string().uuid().optional().nullable(),
   skillRefs: z.array(z.string().trim().min(1).max(240)).optional().default([]),
   accessMode: z.string().trim().min(1).max(120).optional().nullable(),
   model: z.string().trim().min(1).max(120).optional().nullable(),
   effort: z.string().trim().min(1).max(120).optional().nullable(),
   metadata: z.record(z.unknown()).optional().nullable(),
+}).superRefine((value, ctx) => {
+  if (value.body.length === 0 && value.inlineAnnotations.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Queued message body or at least one inline annotation is required",
+      path: ["body"],
+    });
+  }
 });
 
 export const createChatQueuedMessageSchema = z.object({
@@ -190,9 +426,33 @@ export const createChatQueuedMessageSchema = z.object({
   payload: chatQueuedMessagePayloadSchema,
 });
 
+const chatQueuedMessageUpdatePayloadSchema = z.object({
+  body: z.string().trim().max(20000).default(""),
+  attachmentIds: z.array(z.string().uuid()).optional().default([]),
+  inlineAnnotations: chatInlineAnnotationsInputSchema.optional(),
+  projectId: z.string().uuid().optional().nullable(),
+  skillRefs: z.array(z.string().trim().min(1).max(240)).optional().default([]),
+  accessMode: z.string().trim().min(1).max(120).optional().nullable(),
+  model: z.string().trim().min(1).max(120).optional().nullable(),
+  effort: z.string().trim().min(1).max(120).optional().nullable(),
+  metadata: z.record(z.unknown()).optional().nullable(),
+}).superRefine((value, ctx) => {
+  if (
+    value.body.length === 0
+    && value.inlineAnnotations !== undefined
+    && value.inlineAnnotations.length === 0
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Queued message body or at least one inline annotation is required",
+      path: ["body"],
+    });
+  }
+});
+
 export const updateChatQueuedMessageSchema = z.object({
   version: z.number().int().positive(),
-  payload: chatQueuedMessagePayloadSchema,
+  payload: chatQueuedMessageUpdatePayloadSchema,
 });
 
 export const cancelChatQueuedMessageSchema = z.object({
@@ -364,6 +624,13 @@ export function chatRichReferencesFromStructuredPayload(payload: unknown) {
     .slice(0, 5);
 }
 
+export function chatInlineAnnotationsFromStructuredPayload(payload: unknown): ChatInlineAnnotation[] {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+  const rawAnnotations = (payload as Record<string, unknown>).inlineAnnotations;
+  const parsed = chatInlineAnnotationsSchema.safeParse(rawAnnotations);
+  return parsed.success && parsed.data.length > 0 ? parsed.data : [];
+}
+
 export function chatAskUserRequestFromStructuredPayload(payload: unknown) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
   const rawRequest = (payload as Record<string, unknown>).requestUserInput;
@@ -406,6 +673,11 @@ export function sanitizeChatStructuredPayload(payload: Record<string, unknown> |
   const next = { ...payload };
   delete next.inlineVisuals;
   delete next.inlineVisualsV1;
+  delete next.inlineAnnotations;
+  const inlineAnnotations = chatInlineAnnotationsFromStructuredPayload(payload);
+  if (inlineAnnotations.length > 0) {
+    next.inlineAnnotations = inlineAnnotations;
+  }
   const requestUserInput = chatAskUserRequestFromStructuredPayload(payload);
   if (requestUserInput) {
     next.requestUserInput = requestUserInput;
@@ -515,12 +787,21 @@ const messengerItemKeysSchema = z.array(messengerItemKeySchema).min(1).max(50);
 export const createMessengerCustomGroupWithEntriesSchema = createMessengerCustomGroupSchema.extend({
   itemKeys: messengerItemKeysSchema.optional(),
   threadKeys: messengerItemKeysSchema.optional(),
+  anchorItemKey: messengerItemKeySchema.optional(),
   autoGenerateName: z.boolean().optional(),
 }).superRefine((value, ctx) => {
   if (!value.itemKeys && !value.threadKeys) {
     ctx.addIssue({ code: "custom", message: "itemKeys or threadKeys is required", path: ["itemKeys"] });
   } else if (value.itemKeys && value.threadKeys && JSON.stringify(value.itemKeys) !== JSON.stringify(value.threadKeys)) {
     ctx.addIssue({ code: "custom", message: "itemKeys and threadKeys must match", path: ["itemKeys"] });
+  }
+  const itemKeys = value.itemKeys ?? value.threadKeys;
+  if (value.anchorItemKey && itemKeys && !itemKeys.includes(value.anchorItemKey)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "anchorItemKey must be included in itemKeys",
+      path: ["anchorItemKey"],
+    });
   }
 }).transform((value) => ({ ...value, itemKeys: value.itemKeys ?? value.threadKeys! }));
 
@@ -580,7 +861,7 @@ export type ForkChatConversation = z.infer<typeof forkChatConversationSchema>;
 export type CreateSideChat = z.infer<typeof createSideChatSchema>;
 export type SetChatProjectContext = z.infer<typeof setChatProjectContextSchema>;
 export type UpdateChatConversation = z.infer<typeof updateChatConversationSchema>;
-export type AddChatMessage = z.infer<typeof addChatMessageSchema>;
+export type AddChatMessage = z.input<typeof addChatMessageSchema>;
 export type UpdateMessengerThreadUserState = z.infer<typeof updateMessengerThreadUserStateSchema>;
 export type CreateMessengerCustomGroup = z.infer<typeof createMessengerCustomGroupSchema>;
 export type CreateMessengerCustomGroupWithEntries = z.infer<typeof createMessengerCustomGroupWithEntriesSchema>;
@@ -588,9 +869,9 @@ export type UpdateMessengerCustomGroup = z.infer<typeof updateMessengerCustomGro
 export type ReorderMessengerCustomGroups = z.infer<typeof reorderMessengerCustomGroupsSchema>;
 export type AssignMessengerCustomGroupEntry = z.infer<typeof assignMessengerCustomGroupEntrySchema>;
 export type ReorderMessengerCustomGroupEntries = z.infer<typeof reorderMessengerCustomGroupEntriesSchema>;
-export type ChatQueuedMessagePayloadInput = z.infer<typeof chatQueuedMessagePayloadSchema>;
-export type CreateChatQueuedMessage = z.infer<typeof createChatQueuedMessageSchema>;
-export type UpdateChatQueuedMessage = z.infer<typeof updateChatQueuedMessageSchema>;
+export type ChatQueuedMessagePayloadInput = z.input<typeof chatQueuedMessagePayloadSchema>;
+export type CreateChatQueuedMessage = z.input<typeof createChatQueuedMessageSchema>;
+export type UpdateChatQueuedMessage = z.input<typeof updateChatQueuedMessageSchema>;
 export type CancelChatQueuedMessage = z.infer<typeof cancelChatQueuedMessageSchema>;
 export type SteerChatQueuedMessage = z.infer<typeof steerChatQueuedMessageSchema>;
 export type StopChatGeneration = z.infer<typeof stopChatGenerationSchema>;

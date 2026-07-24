@@ -7,7 +7,6 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { Tabs } from "@/components/ui/tabs";
-import { Link } from "@/lib/router";
 import {
   type HeartbeatRun,
   type HeartbeatRunEvent,
@@ -36,7 +35,6 @@ import { RunTranscriptView, type TranscriptMode } from "../components/transcript
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import { shouldPollLiveRunBackfill } from "../lib/live-run-backfill";
 import { queryKeys } from "../lib/queryKeys";
-import { getRunFailureDisplay } from "../lib/run-detail-display";
 import { heartbeatRunEventsToTranscriptEntries, mergeTranscriptEntries } from "../lib/run-detail-events";
 import { cn } from "../lib/utils";
 import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForDisplay, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readScrollMetrics, redactPathText, redactPathValue, RunEventsList, RunLogChunk, runLogChunkDedupeKey, ScrollContainer, scrollToContainerBottom, utf8ByteLength, WorkspaceOperationsSection } from "./AgentDetail.helpers";
@@ -58,7 +56,6 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
   const [isStreamingConnected, setIsStreamingConnected] = useState(false);
   const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("nice");
   const [activeDetailTab, setActiveDetailTab] = useState<RunDetailTab>("transcript");
-  const failureDisplay = getRunFailureDisplay(run);
   const [transcriptModalOpen, setTranscriptModalOpen] = useState(false);
   const [transcriptDialogMotion, setTranscriptDialogMotion] = useState({
     fromX: "0px",
@@ -806,25 +803,6 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
           </div>
         </DialogContent>
       </Dialog>
-
-      {(run.status === "failed" || run.status === "timed_out") && (
-        <div className="rounded-lg border border-red-300 dark:border-red-500/30 bg-red-50 dark:bg-red-950/20 p-3 space-y-2">
-          <div className="text-xs font-medium text-red-700 dark:text-red-300">Failure details</div>
-          {failureDisplay && (
-            <div className="text-xs text-red-600 dark:text-red-200">
-              <span className="text-red-700 dark:text-red-300">{failureDisplay.title}: </span>
-              {redactPathText(failureDisplay.body, censorUsernameInLogs)}
-              {failureDisplay.actionPath && failureDisplay.actionLabel && (
-                <div className="mt-1">
-                  <Link to={failureDisplay.actionPath} className="text-xs font-medium text-red-700 underline dark:text-red-300">
-                    {failureDisplay.actionLabel}
-                  </Link>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
     </div>
   );

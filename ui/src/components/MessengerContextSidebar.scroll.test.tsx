@@ -23,6 +23,18 @@ let intersectionCallback: ((entries: Array<{ isIntersecting: boolean }>) => void
 let intersectionObserverOptions: IntersectionObserverInit | undefined;
 let localStorageValues: Record<string, string>;
 
+vi.mock("@/context/MainWorkbenchContext", () => ({
+  useMainWorkbench: () => ({
+    getState: () => ({ organizations: {} }),
+    unbindSavedViewForOrganization: vi.fn(),
+  }),
+  useOrganizationMainWorkbench: () => ({
+    activeTab: null,
+    tabs: [],
+    unbindSavedView: vi.fn(),
+  }),
+}));
+
 function hydrateCustomGroupFixtures(groups: any[]) {
   return groups.map((group) => ({
     ...group,

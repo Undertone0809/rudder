@@ -16,9 +16,10 @@ Repo-side files that depend on this setup:
 The `Release` workflow needs `actions: write` because it inspects exact-source
 CI runs, dispatches `desktop-release.yml`, and starts CI for the generated
 post-stable version commit. It needs `contents: write` to push release tags and
-the version handoff commit. A tag or branch push performed with `GITHUB_TOKEN`
-will not, by itself, trigger a second workflow run, so the workflow dispatches
-handoff CI explicitly.
+the version handoff branch, plus `pull-requests: write` to open the protected
+version handoff PR. A tag or branch push performed with `GITHUB_TOKEN` will not,
+by itself, trigger a second workflow run, so the workflow dispatches handoff CI
+explicitly.
 
 The release preflight requires an operator attestation that the safeguards
 below are configured. The workflow does not silently skip the next-version
@@ -33,6 +34,9 @@ Note:
   dependencies
 - release-specific preflight rejects stale versions and missing notes before
   package installation or build work
+- stable preflight also rejects a missing English or Chinese public changelog
+  entry, and an approved stable invokes the docs-production workflow from the
+  immutable stable tag
 
 ## 1. Merge the Repo Changes First
 
@@ -191,17 +195,16 @@ Required rules for release automation:
 2. require status checks to pass before merging
 3. require review from code owners
 4. dismiss stale approvals when new commits are pushed
-5. restrict who can push directly to `main`
-6. allow only the GitHub Actions identity used by `release.yml` to bypass the
-   pull-request rule for its generated `[skip release]` version handoff commit
+5. prevent direct pushes to `main`, including from release automation
+6. allow GitHub Actions to create pull requests so `release.yml` can open its
+   generated `[skip release]` version handoff PR
 
 At minimum, make sure workflow and release script changes cannot land without
 review. The stable preflight stops before executing source-ref release code
 unless all safeguards have been attested.
 
-After required reviewers, `main` protection with the narrow release-workflow
-bypass, and Actions workflow permissions are all configured and manually
-verified, create the repository Actions variable
+After required reviewers, `main` protection, and Actions workflow permissions
+are all configured and manually verified, create the repository Actions variable
 `RELEASE_SAFEGUARDS_CONFIGURED` with value `true`. Manual stable preflight fails
 closed while this variable is missing. The variable is an operator attestation
 because the workflow's scoped `GITHUB_TOKEN` cannot read
@@ -282,20 +285,25 @@ npx @rudderhq/cli@canary onboard
 After at least one good canary exists:
 
 1. confirm the committed public package version on the source ref is the stable version you want to ship
-2. prepare `releases/v0.1.0.md` on the source commit you want to promote
+2. prepare `releases/v0.1.0.md`, `docs/releases.mdx`, and
+   `docs/zh/releases.mdx` on the source commit you want to promote
 3. open `Actions` -> `Release`
 4. run it with:
    - `source_ref`: the tested commit SHA or canary tag source commit
    - `dry_run`: `true`
 5. confirm the dry-run succeeds
-6. rerun with `dry_run: false`
+6. after explicitly approving the public docs deployment for this source,
+   rerun with `dry_run: false`, `confirm_stable: PUBLISH STABLE`, and
+   `confirm_docs: PUBLISH DOCS`
 7. approve the `npm-stable` environment when prompted
 8. confirm npm `latest` points to the new stable version
 9. confirm git tag `v0.1.0` exists
 10. confirm the GitHub Release was created
 11. confirm `.github/workflows/desktop-release.yml` runs for `v0.1.0`
 12. confirm the GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets
-13. confirm the workflow commits the next-patch version directly to `main` and
+13. confirm the Docs production child workflow publishes `docs/release/v0.1.0`
+    from the matching `v0.1.0` source and passes public health checks
+14. confirm the workflow opens the protected next-patch-version PR and
     dispatches CI for that exact commit, or reports that `main` already advanced
 
 Start-path check:
@@ -323,6 +331,7 @@ Use this policy going forward:
 - stables are manual and approved
 - only stables get public notes and announcements
 - release notes are committed before stable publish
+- stable docs deploys require their own explicit `PUBLISH DOCS` confirmation
 - rollback uses `npm dist-tag`, not unpublish
 
 ## 14. Troubleshooting

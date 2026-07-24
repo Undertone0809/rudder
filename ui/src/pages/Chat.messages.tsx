@@ -2,6 +2,10 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentMenuLabel, AssigneeLabel } from "@/components/AssigneeLabel";
 import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences";
+import {
+  AnchoredResponseAnnotationMarkers,
+  SentResponseAnnotationsCard,
+} from "@/components/chat/ResponseAnnotations";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { InlineEntitySelector, type InlineEntityOption } from "@/components/InlineEntitySelector";
 import { MarkdownBody, WebsiteLinkIcon, websiteUrlFromMarkdownHref, type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
@@ -41,6 +45,10 @@ import {
   formatChatProcessDuration,
   lastTranscriptAtMs
 } from "@/lib/chat-process-duration";
+import {
+  CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
+  CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+} from "@/lib/chat-response-annotation-selection";
 import { mergeNativeSteerTranscriptEntries } from "@/lib/chat-stream-state";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "@/lib/mention-chips";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
@@ -51,12 +59,15 @@ import { agentUrl, cn, relativeTime } from "@/lib/utils";
 import {
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
+  chatInlineAnnotationsFromStructuredPayload,
   chatInlineVisualMappingsFromStructuredPayload,
   rudderInlineVisualMappingsFromStructuredPayload,
   type Agent,
   type ChatAskUserQuestion,
   type ChatAskUserRequest,
   type ChatConversation,
+  type ChatInlineAnnotation,
+  type ChatInlineAnnotationInput,
   type ChatMessage,
   type ChatOperationProposalDecisionAction
 } from "@rudderhq/shared";
@@ -74,12 +85,12 @@ import {
   Pencil,
   RefreshCcw,
   Repeat,
-  RotateCcw,
   Sparkles
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import { ChatFailedMessageActions } from "./Chat.failed-message-actions";
 import { chatForkSystemMessageParts, readStructuredPayloadString, sideChatStartedSystemMessageParts } from "./Chat.message-system-parts";
-import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, statusChipClassName } from "./Chat.parts";
+import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, shouldHideSteerFallbackAssistantBubble, statusChipClassName } from "./Chat.parts";
 import { ChatInlineVisualContent } from "./ChatInlineVisual";
 
 export { readStructuredPayloadString } from "./Chat.message-system-parts";
@@ -2131,6 +2142,11 @@ export function ChatMessageItem({
   onRefreshAssistantMessage,
   onOpenFile,
   onMarkdownLinkClick,
+  onSelectResponseAnnotation,
+  onResponseAnnotationsExpanded,
+  unlocatableResponseAnnotationId,
+  responseAnnotations = [],
+  onEditResponseAnnotation,
   turnBranchControls,
   skillReferences,
   inlineEdit,
@@ -2164,9 +2180,21 @@ export function ChatMessageItem({
   onRefreshAssistantMessage?: (message: ChatMessage) => void;
   onOpenFile: (targetPath: string) => void;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
+  onSelectResponseAnnotation?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+  onResponseAnnotationsExpanded?: (
+    annotations: ChatInlineAnnotation[],
+    expanded: boolean,
+  ) => void;
+  unlocatableResponseAnnotationId?: string | null;
+  responseAnnotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
+  onEditResponseAnnotation?: (
+    annotationId: string,
+    anchor: HTMLButtonElement,
+  ) => void;
   skillReferences: MarkdownSkillReferencePreview[];
   inlineEdit?: {
     draft: string;
+    canSubmitWithoutBody?: boolean;
     disabled: boolean;
     mentions: MentionOption[];
     surfaceRef: RefObject<HTMLDivElement | null>;
@@ -2183,6 +2211,7 @@ export function ChatMessageItem({
   issueCreatedMessage?: ChatMessage | null;
   turnBranchControls?: ChatTurnBranchControls | null;
 }) {
+  const assistantAnnotationSourceRef = useRef<HTMLDivElement>(null);
   if (message.kind === "issue_proposal" || message.kind === "operation_proposal") {
     return (
       <ProposalCard
@@ -2241,18 +2270,38 @@ export function ChatMessageItem({
   }
 
   const isUser = message.role === "user";
-  const statusLabel = !isUser ? assistantStateLabel(message.status) : null;
+  if (shouldHideSteerFallbackAssistantBubble(message)) return null;
+  const displayedState = displayedChatMessageState(message);
+  const inlineAnnotations = isUser
+    ? chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)
+    : [];
+  const inlineAnnotationAttachmentIds = new Set(
+    inlineAnnotations.flatMap((annotation) => annotation.attachmentIds),
+  );
+  const statusLabel = !isUser ? assistantStateLabel(displayedState) : null;
   const inlineVisualAttachmentIds = new Set([...chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload), ...rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload)].filter((mapping) => mapping.status === "ready").map((mapping) => mapping.attachmentId));
   const visibleMessageAttachments = message.attachments.filter(
-    (attachment) => !inlineVisualAttachmentIds.has(attachment.id),
+    (attachment) => (
+      !inlineVisualAttachmentIds.has(attachment.id)
+      && !inlineAnnotationAttachmentIds.has(attachment.id)
+    ),
   );
   const canContinueInterrupted = Boolean(onContinueInterruptedMessage) && canContinueInterruptedChatMessage(message);
-  const recoverableFailure = message.status === "failed" ? recoverableFailureFromMessage(message) : null;
+  const recoverableFailure = displayedState === "failed" ? recoverableFailureFromMessage(message) : null;
   const canRetryFailed = Boolean(onRetryFailedMessage) && canRetryFailedChatMessage(message);
   const failedMessageTitle = recoverableFailure?.phase === "runtime_boot" || recoverableFailure?.action === "repair_runtime"
     ? "Runtime unavailable"
     : "Response failed";
-  const isEmptyStreamingAssistant = !isUser && message.status === "streaming" && message.body.trim().length === 0;
+  const isEmptyStreamingAssistant = !isUser && displayedState === "streaming" && message.body.trim().length === 0;
+  const canAnnotateAssistantBody = !isUser
+    && message.kind === "message"
+    && !message.supersededAt
+    && message.body.trim().length > 0
+    && (message.status === "completed" || message.status === "stopped" || message.status === "failed");
+  const assistantResponseAnnotations = responseAnnotations.filter((annotation) => (
+    annotation.surface === "assistant_body"
+    && annotation.sourceMessageId === message.id
+  ));
   const canShowAssistantMessageActions = !isUser && message.status !== "stopped";
   const isInlineEditing = isUser && Boolean(inlineEdit);
 
@@ -2267,7 +2316,7 @@ export function ChatMessageItem({
           />
           {statusLabel && !isEmptyStreamingAssistant ? (
             <div className="mb-2 flex items-center gap-2">
-              <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(message.status))}>
+              <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(displayedState))}>
                 {statusLabel}
               </span>
               {canContinueInterrupted ? (
@@ -2281,9 +2330,9 @@ export function ChatMessageItem({
               ) : null}
             </div>
           ) : null}
-          {message.status === "failed" ? (
+          {displayedState === "failed" ? (
             <div
-              className="mb-3 flex max-w-[72ch] items-start gap-3 rounded-[var(--radius-lg)] border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-destructive"
+              className="mb-3 flex max-w-[72ch] flex-wrap items-start gap-3 rounded-[var(--radius-lg)] border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-destructive"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               <div className="min-w-0 flex-1" role="alert" aria-live="assertive">
@@ -2298,16 +2347,13 @@ export function ChatMessageItem({
                   </div>
                 ) : null}
               </div>
-              {canRetryFailed ? (
-                <button
-                  type="button"
-                  className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-destructive/30 bg-background/70 px-2 text-xs font-medium text-destructive transition-colors hover:bg-background"
-                  onClick={() => onRetryFailedMessage?.(message)}
-                >
-                  <RotateCcw className="h-3.5 w-3.5" aria-hidden />
-                  Retry
-                </button>
-              ) : null}
+              <ChatFailedMessageActions
+                message={message}
+                conversation={conversation}
+                agents={agents}
+                canRetry={canRetryFailed}
+                onRetry={onRetryFailedMessage}
+              />
             </div>
           ) : null}
           {isEmptyStreamingAssistant ? (
@@ -2315,13 +2361,30 @@ export function ChatMessageItem({
               <TextDots text="Thinking" className="text-muted-foreground" />
             </div>
           ) : (
-            <ChatLongMessageBody
-              body={message.body}
-              message={message}
-              skillReferences={skillReferences}
-              onMarkdownLinkClick={onMarkdownLinkClick}
-              className="max-w-[72ch] text-[15px] leading-7 text-foreground"
-            />
+            <div
+              ref={assistantAnnotationSourceRef}
+              {...(canAnnotateAssistantBody ? {
+                [CHAT_ANNOTATION_SOURCE_ATTRIBUTE]: `assistant:${message.id}`,
+                [CHAT_ANNOTATION_BLOCK_ATTRIBUTE]: message.id,
+                "data-annotation-surface": "assistant_body",
+                "data-message-id": message.id,
+              } : {})}
+              className="relative"
+            >
+              <ChatLongMessageBody
+                body={message.body}
+                message={message}
+                skillReferences={skillReferences}
+                onMarkdownLinkClick={onMarkdownLinkClick}
+                className="max-w-[72ch] text-[15px] leading-7 text-foreground"
+              />
+              <AnchoredResponseAnnotationMarkers
+                sourceRootRef={assistantAnnotationSourceRef}
+                source={message.body}
+                annotations={assistantResponseAnnotations}
+                onActivate={onEditResponseAnnotation}
+              />
+            </div>
           )}
           <ChatRichReferences message={message} />
           <ChatAttachmentList
@@ -2392,8 +2455,23 @@ export function ChatMessageItem({
   }
 
   return (
-    <div data-testid="chat-user-message" data-message-id={message.id} className="flex justify-end transition-all duration-200">
-      <div className={cn("group flex flex-col items-end text-left", isInlineEditing ? "w-full max-w-full" : "max-w-[82%]")}>
+    <div data-testid="chat-user-message-turn" data-message-id={message.id} className="flex justify-end transition-all duration-200">
+      <div
+        data-testid="chat-user-message"
+        data-message-id={message.id}
+        className={cn("group flex flex-col items-end text-left", isInlineEditing ? "w-full max-w-full" : "max-w-[82%]")}
+      >
+        <SentResponseAnnotationsCard
+          annotations={inlineAnnotations}
+          attachments={message.attachments}
+          onSelect={onSelectResponseAnnotation}
+          onExpandedChange={(expanded) => onResponseAnnotationsExpanded?.(
+            inlineAnnotations,
+            expanded,
+          )}
+          unlocatableAnnotationId={unlocatableResponseAnnotationId}
+          className="mb-2"
+        />
         {isInlineEditing && inlineEdit ? (
           <div
             ref={inlineEdit.surfaceRef}
@@ -2420,10 +2498,10 @@ export function ChatMessageItem({
                 }
               }}
             />
-            {message.attachments.length > 0 ? (
+            {visibleMessageAttachments.length > 0 ? (
               <div className="mt-2">
                 <ChatAttachmentList
-                  attachments={message.attachments}
+                  attachments={visibleMessageAttachments}
                   onOpenFile={onOpenFile}
                 />
               </div>
@@ -2440,7 +2518,13 @@ export function ChatMessageItem({
               <Button
                 type="button"
                 size="sm"
-                disabled={inlineEdit.disabled || inlineEdit.draft.trim().length === 0}
+                disabled={
+                  inlineEdit.disabled
+                  || (
+                    inlineEdit.draft.trim().length === 0
+                    && !inlineEdit.canSubmitWithoutBody
+                  )
+                }
                 onClick={inlineEdit.onSubmit}
               >
                 Send
@@ -2462,14 +2546,14 @@ export function ChatMessageItem({
               className="text-[15px] leading-[1.6]"
             />
             <ChatAttachmentList
-              attachments={message.attachments}
+              attachments={visibleMessageAttachments}
               onOpenFile={onOpenFile}
             />
           </div>
         )}
-        {askUserAnswer && message.attachments.length > 0 ? (
+        {askUserAnswer && visibleMessageAttachments.length > 0 ? (
           <ChatAttachmentList
-            attachments={message.attachments}
+            attachments={visibleMessageAttachments}
             onOpenFile={onOpenFile}
           />
         ) : null}
@@ -2601,19 +2685,22 @@ function transcriptSummaryDurationMs(summary: NonNullable<ChatMessage["transcrip
 export function LazyStreamTranscriptItem({
   summary,
   state,
+  generationTerminalReason,
   loading,
   onLoad,
 }: {
   summary: NonNullable<ChatMessage["transcriptSummary"]>;
   state: ChatStreamDraftState | ChatMessage["status"];
+  generationTerminalReason?: string | null;
   loading?: boolean;
   onLoad: () => void;
 }) {
   const durationMs = transcriptSummaryDurationMs(summary);
+  const displayedState = displayedChatMessageState({ role: "assistant", status: state as ChatMessage["status"], generationTerminalReason });
   const statusHint =
-    state === "failed"
+    displayedState === "failed"
       ? "Stopped with errors"
-      : state === "stopped"
+      : displayedState === "stopped"
         ? "Stopped"
         : "";
 
@@ -2649,26 +2736,49 @@ export function StreamTranscriptItem({
   entries,
   steerMessages = [],
   state,
+  generationTerminalReason,
   streamStartedAt,
   streamEndedAt,
   assistantMessageBody,
   showDeveloperDiagnostics,
+  open,
   defaultOpen = false,
   onOpenChange,
   onOpenFile,
   onOpenAgent,
+  annotationSource,
+  sentAnnotationContext,
 }: {
   entries: TranscriptEntry[];
   steerMessages?: ChatMessage[];
   state: ChatStreamDraftState | ChatMessage["status"];
+  generationTerminalReason?: string | null;
   streamStartedAt: Date;
   streamEndedAt?: Date | null;
   assistantMessageBody?: string | null;
   showDeveloperDiagnostics?: boolean;
+  open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   onOpenFile?: (targetPath: string, label: string) => void;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  annotationSource?: {
+    sourceConversationId: string;
+    sourceMessageId: string;
+    annotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
+    onActivateAnnotation?: (
+      annotationId: string,
+      anchor: HTMLButtonElement,
+    ) => void;
+  };
+  sentAnnotationContext?: {
+    onSelect?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+    onExpandedChange?: (
+      annotations: ChatInlineAnnotation[],
+      expanded: boolean,
+    ) => void;
+    unlocatableAnnotationId?: string | null;
+  };
 }) {
   const timelineEntries = useMemo(
     () => mergeNativeSteerTranscriptEntries(entries, steerMessages),
@@ -2676,7 +2786,10 @@ export function StreamTranscriptItem({
   );
   const streamingActive = state === "streaming" || state === "finalizing";
   const hasSteerInterjection = steerMessages.length > 0;
-  const [processOpen, setProcessOpen] = useState(() => streamingActive || defaultOpen || hasSteerInterjection);
+  const [internalProcessOpen, setInternalProcessOpen] = useState(
+    () => streamingActive || defaultOpen || hasSteerInterjection,
+  );
+  const processOpen = open ?? internalProcessOpen;
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -2686,7 +2799,7 @@ export function StreamTranscriptItem({
   }, [streamingActive]);
 
   useEffect(() => {
-    if (defaultOpen || hasSteerInterjection) setProcessOpen(true);
+    if (defaultOpen || hasSteerInterjection) setInternalProcessOpen(true);
   }, [defaultOpen, hasSteerInterjection]);
 
   const durationMs = useMemo(() => {
@@ -2698,10 +2811,11 @@ export function StreamTranscriptItem({
 
   if (timelineEntries.length === 0) return null;
 
+  const displayedState = displayedChatMessageState({ role: "assistant", status: state as ChatMessage["status"], generationTerminalReason });
   const statusHint =
-    state === "failed"
+    displayedState === "failed"
       ? "Stopped with errors"
-      : state === "stopped"
+      : displayedState === "stopped"
         ? "Stopped"
         : "";
 
@@ -2709,45 +2823,45 @@ export function StreamTranscriptItem({
 
   return (
     <div data-testid="chat-transcript-item" className="flex justify-start transition-all duration-200">
-      <div className="w-full max-w-3xl px-1 py-1">
-        <div className="flex items-center gap-3">
-          <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
-          <button
-            type="button"
-            className={cn(
-              "flex max-w-[min(100%,90%)] shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground transition-colors",
-              streamingActive ? "cursor-default" : "hover:text-foreground",
-            )}
-            disabled={streamingActive}
-            onClick={() => {
-              if (!streamingActive) {
-                setProcessOpen((open) => {
-                  const next = !open;
+      <div className="w-full py-1">
+        <div className="max-w-3xl px-1">
+          <div className="flex items-center gap-3">
+            <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
+            <button
+              type="button"
+              className={cn(
+                "flex max-w-[min(100%,90%)] shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground transition-colors",
+                streamingActive ? "cursor-default" : "hover:text-foreground",
+              )}
+              disabled={streamingActive}
+              onClick={() => {
+                if (!streamingActive) {
+                  const next = !processOpen;
+                  if (open === undefined) setInternalProcessOpen(next);
                   onOpenChange?.(next);
-                  return next;
-                });
-              }
-            }}
-            aria-expanded={showBody}
-          >
-            {streamingActive ? (
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-            ) : null}
-            <span className="whitespace-nowrap">
-              {streamingActive ? "Working" : "Worked"} for {formatChatProcessDuration(durationMs)}
-            </span>
-            {statusHint ? (
-              <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
-            ) : null}
-            {streamingActive ? (
-              <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-            ) : showBody ? (
-              <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-            ) : (
-              <ChevronRight className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
-            )}
-          </button>
-          <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
+                }
+              }}
+              aria-expanded={showBody}
+            >
+              {streamingActive ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+              ) : null}
+              <span className="whitespace-nowrap">
+                {streamingActive ? "Working" : "Worked"} for {formatChatProcessDuration(durationMs)}
+              </span>
+              {statusHint ? (
+                <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
+              ) : null}
+              {streamingActive ? (
+                <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+              ) : showBody ? (
+                <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+              )}
+            </button>
+            <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
+          </div>
         </div>
         {showBody ? (
           <div className="mt-3">
@@ -2762,6 +2876,8 @@ export function StreamTranscriptItem({
               hiddenAssistantMessageText={assistantMessageBody}
               onOpenFile={onOpenFile}
               onOpenAgent={onOpenAgent}
+              annotationSource={annotationSource}
+              sentAnnotationContext={sentAnnotationContext}
             />
           </div>
         ) : null}

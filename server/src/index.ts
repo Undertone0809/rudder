@@ -54,6 +54,7 @@ import {
   removeLocalRuntimeDescriptorIfOwned,
   resolveEffectiveLocalEnvName,
   resolveLocalRuntimePaths,
+  resolveManagedPostgresRuntimeKey,
   resolveRuntimeOwnerKind,
   withRuntimeStartLock,
   writeLocalRuntimeDescriptor,
@@ -79,6 +80,8 @@ import {
   isFeishuLongConnectionEnabled,
 } from "./services/integrations/feishu/runtime-registry.js";
 import { feishuIntegrationRuntimeService } from "./services/integrations/feishu/runtime.js";
+import { startManagedMcpOAuthSessionGc } from "./services/mcp/oauth-session-gc.js";
+import { managedMcpOAuthService } from "./services/mcp/oauth.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { serverVersion } from "./version.js";
@@ -1000,6 +1003,7 @@ async function startServerRuntime(
   const appHandle = await createRudderApp(db as any, {
     uiMode,
     serverPort: listenPort,
+    authPublicBaseUrl: config.authPublicBaseUrl ?? null,
     storageService,
     deploymentMode: config.deploymentMode,
     deploymentExposure: config.deploymentExposure,
@@ -1008,6 +1012,7 @@ async function startServerRuntime(
     workspacePreviewOrigin: config.workspacePreviewOrigin,
     authReady,
     companyDeletionEnabled: config.companyDeletionEnabled,
+    mcpDeploymentAllowlists: config.mcpDeploymentAllowlists,
     instanceId,
     localEnv,
     runtimeOwnerKind,
@@ -1061,6 +1066,26 @@ async function startServerRuntime(
   const ownInterval = (name: string, handle: ReturnType<typeof setInterval>) => {
     supervisor.own(name, () => clearInterval(handle));
   };
+  const managedMcpOAuthSessionGc = startManagedMcpOAuthSessionGc(
+    managedMcpOAuthService(db as any, {
+      deploymentMode: config.deploymentMode,
+      serverPort: listenPort,
+      authPublicBaseUrl: config.authPublicBaseUrl ?? null,
+      allowlists: config.mcpDeploymentAllowlists,
+    }),
+    {
+      onError: (error) => {
+        logger.warn(
+          { errorName: error instanceof Error ? error.name : "UnknownError" },
+          "Managed MCP OAuth session cleanup failed",
+        );
+      },
+    },
+  );
+  supervisor.own(
+    "managed-mcp-oauth-session-gc",
+    () => managedMcpOAuthSessionGc.stop(),
+  );
   const feishuRuntime = feishuIntegrationRuntimeService(db as any, { storage: storageService });
   supervisor.own("feishu-runtime", () => feishuRuntime.stop());
   const feishuLongConnectionEnabled = isFeishuLongConnectionEnabled();
@@ -1378,6 +1403,12 @@ async function startServerRuntime(
   });
 
   if (runtimeOwnerKind) {
+    const descriptorPostgresBinDir = startupDbInfo.mode === "embedded-postgres"
+      ? startupDbInfo.postgresBinDir
+      : undefined;
+    const postgresRuntimeKey = descriptorPostgresBinDir
+      ? resolveManagedPostgresRuntimeKey(descriptorPostgresBinDir)
+      : null;
     const runtimeDescriptor = {
       instanceId,
       localEnv,
@@ -1387,6 +1418,12 @@ async function startServerRuntime(
       version: serverVersion,
       ownerKind: runtimeOwnerKind,
       startedAt: new Date().toISOString(),
+      ...(descriptorPostgresBinDir
+        ? {
+            postgresBinDir: descriptorPostgresBinDir,
+            ...(postgresRuntimeKey ? { postgresRuntimeKey } : {}),
+          }
+        : {}),
     };
     ownedRuntimeDescriptor = {
       instanceId: runtimeDescriptor.instanceId,

@@ -17,6 +17,8 @@ related_tests:
   - server/src/__tests__/agent-inbox-reviewer.test.ts
   - server/src/__tests__/heartbeat-passive-issue-closeout.test.ts
   - tests/e2e/issue-passive-followup.spec.ts
+related_plans:
+  - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
 edit_policy: user_confirmed_only
 ---
 
@@ -44,6 +46,11 @@ Invariants:
 - Reviewer decisions require comment evidence.
 - Assignee completion cannot silently bypass reviewer.
 - Reviewer routing and reviewer decision are separate contracts.
+- An ordinary explicit comment mention of the current reviewer is
+  status-independent work authority, not formal reviewer routing. It must not
+  invent a structured decision requirement or transfer assignee ownership.
+- Structured reviewer decisions remain limited to reviewable states even
+  though the reviewer may perform other explicitly requested work in any state.
 
 Evidence:
 
@@ -111,6 +118,11 @@ Product model:
 
 - Feedback can target issue context, Library docs, skills, workflow docs,
   agent instructions, decisions, eval cases, or no-op.
+- Response annotations under `CHAT.RESPONSE.ANNOTATION.001` are bounded
+  user-authored context for a Chat turn, not automatic feedback records,
+  learning evidence, target artifacts, eval cases, or promotion requests. An
+  operator may later create an explicit learning proposal that cites the sent
+  message through this contract's normal governed path.
 - Promotion requires a human or policy-approved path appropriate to risk.
 - Product Logic Registry updates are governed by `doc/product/GOVERNANCE.md`.
 
@@ -127,6 +139,8 @@ Flow:
 Invariants:
 
 - Feedback is not automatically promoted into durable agent behavior.
+- Response-annotation selected text, comments, and files are never harvested
+  automatically into learning or durable agent behavior.
 - A learning update must cite the evidence that justified it.
 
 Evidence:

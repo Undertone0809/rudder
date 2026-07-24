@@ -72,7 +72,9 @@ import {
   type PostUpdateReloadMarker,
 } from "./post-update-reload.js";
 import {
+  acquireDesktopPostgresLifecycleLock,
   captureDesktopPostgresEnvironment,
+  finalizeSharedPostgresRuntime,
   reconcilePackagedDesktopPostgresBinDir,
   restoreDesktopPostgresEnvironment,
 } from "./postgres-runtime.js";
@@ -90,7 +92,12 @@ import {
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
 } from "./runtime-cache.js";
-import { resolveDesktopSystemPermissions, type DesktopSystemPermissions } from "./system-permissions.js";
+import {
+  isDesktopSystemPermissionId,
+  resolveDesktopSystemPermissions,
+  resolveSystemPermissionSettingsUrl,
+  type DesktopSystemPermissions,
+} from "./system-permissions.js";
 import {
   applyThemePreferenceToNativeTheme,
   resolveAppearanceForThemePreference,
@@ -431,6 +438,7 @@ let currentMainWindowKind: "app" | "boot" = "boot";
 let residentTray: Tray | null = null;
 let sidePanelCloseShortcutActive = false;
 let browserSurfaceShortcutActive = false;
+let browserSurfaceShortcutOwner: "main_workbench" | "side_panel" | null = null;
 let residentControlsAvailable = false;
 let desktopWindowIcon: Electron.NativeImage | null = null;
 let latestPostUpdateReloadMarker: PostUpdateReloadMarker | null = null;
@@ -835,11 +843,19 @@ function collectRudderAppOrigins(...additionalOrigins: Array<string | null | und
   );
 }
 
-function routeDesktopWebLink(url: string, source: "link" | "browser_popup"): void {
+function routeDesktopWebLink(
+  url: string,
+  source: "link" | "browser_popup",
+  sourceWebContentsId?: number,
+): void {
   if (source === "browser_popup" && !acceptBrowserPopup()) return;
   const renderer = getCurrentMainRenderer();
   if (renderer?.getURL().startsWith("http")) {
-    renderer.send("desktop:open-web-link", { url, source });
+    renderer.send("desktop:open-web-link", {
+      url,
+      source,
+      ...(sourceWebContentsId ? { sourceWebContentsId } : {}),
+    });
     return;
   }
   shell.openExternal(url).catch((error) => {
@@ -1193,14 +1209,25 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
 }
 
 function handleSidePanelCloseShortcutInput(webContents: WebContents, event: Electron.Event, input: Electron.Input): void {
+  const operatorBrowserGuest = operatorBrowserShortcutWebContents.has(webContents);
   const route = resolveProtectedDesktopShortcutRoute(input, {
     sidePanelCloseActive: sidePanelCloseShortcutActive,
     browserSurfaceActive: browserSurfaceShortcutActive
       && Boolean(mainWindow && !mainWindow.isDestroyed() && webContents === mainWindow.webContents),
-    operatorBrowserGuest: operatorBrowserShortcutWebContents.has(webContents),
+    operatorBrowserGuest,
+    browserSurfaceOwner: browserSurfaceShortcutOwner,
   });
   if (!route) return;
   event.preventDefault();
+  if (route.kind === "close_browser_owner_tab") {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("desktop:browser-shortcut", {
+        action: "close_tab",
+        sourceWebContentsId: webContents.id,
+      });
+    }
+    return;
+  }
   if (route.kind === "close_side_panel_tab") {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("desktop:close-side-panel-active-tab");
@@ -1209,8 +1236,21 @@ function handleSidePanelCloseShortcutInput(webContents: WebContents, event: Elec
     webContents.send("desktop:close-side-panel-active-tab");
     return;
   }
+  if (route.kind === "open_empty_side_panel") {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("desktop:open-empty-side-panel");
+      return;
+    }
+    webContents.send("desktop:open-empty-side-panel");
+    return;
+  }
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("desktop:browser-shortcut", route.action);
+    mainWindow.webContents.send("desktop:browser-shortcut", {
+      action: route.action,
+      ...(operatorBrowserGuest
+        ? { sourceWebContentsId: webContents.id }
+        : {}),
+    });
   }
 }
 
@@ -1228,6 +1268,7 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
     if (!isMainFrame || isInPlace) return;
     sidePanelCloseShortcutActive = false;
     browserSurfaceShortcutActive = false;
+    browserSurfaceShortcutOwner = null;
   });
 }
 
@@ -1267,7 +1308,9 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
         browserGuestRegistry.register(guest);
         operatorBrowserShortcutWebContents.add(guest as WebContents);
       },
-      openBrowserPopup: (url) => routeDesktopWebLink(url, "browser_popup"),
+      openBrowserPopup: (url, sourceWebContentsId) => (
+        routeDesktopWebLink(url, "browser_popup", sourceWebContentsId)
+      ),
       resolveLocalAppBootstrap: (url, partition) =>
         localAppsRuntime?.isAttestedBootstrap(url, partition) ?? false,
       prepareLocalAppPartition,
@@ -1662,6 +1705,7 @@ function serverRuntimeOptions(): StartServerOptions {
 async function startLocalRudder(): Promise<void> {
   if (startInFlight) return startInFlight;
   startInFlight = (async () => {
+    let releasePostgresLifecycleLock: (() => Promise<void>) | null = null;
     startupAttemptCount += 1;
     const attempt = startupAttemptCount;
     const profile = resolveDesktopLocalEnvProfile();
@@ -1686,6 +1730,13 @@ async function startLocalRudder(): Promise<void> {
 
     try {
       await stopLocalRudder();
+      if (app.isPackaged) {
+        releasePostgresLifecycleLock = await acquireDesktopPostgresLifecycleLock();
+        reconcilePackagedDesktopPostgresBinDir(
+          process.resourcesPath,
+          externalServerRuntimeCacheDir,
+        );
+      }
       const serverModule = await importServerModule();
       updateBootState({
         stage: "config",
@@ -1697,6 +1748,29 @@ async function startLocalRudder(): Promise<void> {
         takeoverOnVersionMismatch: true,
         ...serverRuntimeOptions(),
       });
+      if (releasePostgresLifecycleLock) {
+        await releasePostgresLifecycleLock();
+        releasePostgresLifecycleLock = null;
+      }
+      if (app.isPackaged) {
+        try {
+          const healthUrl = new URL("/api/health", serverHandle.apiUrl);
+          const healthResponse = await fetch(healthUrl);
+          if (!healthResponse.ok) {
+            throw new Error(`health check returned ${healthResponse.status}`);
+          }
+          const cleanup = await finalizeSharedPostgresRuntime({
+            expectedInstanceId: serverHandle.runtime.instanceId,
+            expectedVersion: serverHandle.runtime.version,
+          });
+          console.info("[rudder-desktop] finalized shared PostgreSQL runtime", cleanup);
+        } catch (error) {
+          console.warn(
+            "[rudder-desktop] shared PostgreSQL runtime cleanup deferred until a verified shared cold start",
+            error,
+          );
+        }
+      }
       try {
         await requireBrowserRuntimeLifecycle().connect(serverHandle.apiUrl);
       } catch (error) {
@@ -1755,6 +1829,9 @@ async function startLocalRudder(): Promise<void> {
         paths: serverHandle?.instancePaths ?? currentBootState.paths,
       });
     } finally {
+      if (releasePostgresLifecycleLock) {
+        await releasePostgresLifecycleLock();
+      }
       startInFlight = null;
     }
   })();
@@ -1975,6 +2052,17 @@ function registerIpc(): void {
     if (openError) throw new Error(openError);
   });
   ipcMain.handle("desktop:get-system-permissions", async () => refreshDesktopSystemPermissions());
+  ipcMain.handle("desktop:open-system-permission-settings", async (event, permission: unknown) => {
+    assertCurrentMainFrame(event, "System permission settings");
+    if (!isDesktopSystemPermissionId(permission)) {
+      throw new Error("Unknown system permission settings target.");
+    }
+    const target = resolveSystemPermissionSettingsUrl({ permission });
+    if (!target) {
+      throw new Error("System permission settings are available only on macOS.");
+    }
+    await shell.openExternal(target);
+  });
   ipcMain.handle("desktop:get-app-version", async () => resolveRudderAppVersion());
   ipcMain.handle("desktop:get-release-notes", async (): Promise<DesktopReleaseNotesResult> => {
     const version = resolveRudderAppVersion();
@@ -2086,9 +2174,16 @@ function registerIpc(): void {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
     sidePanelCloseShortcutActive = Boolean(active);
   });
-  ipcMain.handle("desktop:set-browser-surface-shortcut-active", async (event, active: boolean) => {
+  ipcMain.handle("desktop:set-browser-surface-shortcut-active", async (
+    event,
+    active: boolean,
+    owner?: "main_workbench" | "side_panel",
+  ) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
     browserSurfaceShortcutActive = Boolean(active);
+    browserSurfaceShortcutOwner = owner === "main_workbench" || owner === "side_panel"
+      ? owner
+      : null;
   });
   ipcMain.handle("desktop:respond-deferred-update-prompt", async (event, payload: {
     promptId?: string;

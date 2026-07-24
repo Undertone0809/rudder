@@ -43,6 +43,7 @@ type SavedViewCreateInput = {
 type SavedViewUpdateInput = Partial<Omit<SavedViewCreateInput, "target">> & {
   target?: MessengerSavedViewTarget;
   hidden?: false;
+  primaryRailPinned?: boolean;
 };
 type SavedViewKeepInput = SavedViewCreateInput & {
   clientMutationId: string;
@@ -52,11 +53,17 @@ type SavedViewKeepInput = SavedViewCreateInput & {
 export const messengerApi = {
   listSavedViews: (
     orgId: string,
-    options: { visibility?: SavedViewVisibility; limit?: number; offset?: number } = {},
+    options: {
+      visibility?: SavedViewVisibility;
+      limit?: number;
+      offset?: number;
+      primaryRailPinned?: true;
+    } = {},
   ) => {
     const params = new URLSearchParams({ visibility: options.visibility ?? "visible" });
     if (options.limit !== undefined) params.set("limit", String(options.limit));
     if (options.offset !== undefined) params.set("offset", String(options.offset));
+    if (options.primaryRailPinned !== undefined) params.set("primaryRailPinned", String(options.primaryRailPinned));
     return api.get<MessengerSavedViewPage>(`/orgs/${orgId}/messenger/saved-views?${params.toString()}`);
   },
   getSavedView: (orgId: string, savedViewId: string) =>
@@ -119,7 +126,7 @@ export const messengerApi = {
     api.get<MessengerCustomGroupsResponse>(`/orgs/${orgId}/messenger/groups`),
   createCustomGroup: (orgId: string, data: { name: string; icon?: string | null }) =>
     api.post<MessengerCustomGroup>(`/orgs/${orgId}/messenger/groups`, data),
-  createCustomGroupWithEntries: (orgId: string, data: { name: string; icon?: string | null; itemKeys?: string[]; threadKeys?: string[]; autoGenerateName?: boolean }) =>
+  createCustomGroupWithEntries: (orgId: string, data: { name: string; icon?: string | null; itemKeys?: string[]; threadKeys?: string[]; anchorItemKey?: string; autoGenerateName?: boolean }) =>
     api.post<MessengerCustomGroupsResponse>(`/orgs/${orgId}/messenger/groups/merge`, data),
   updateCustomGroup: (orgId: string, groupId: string, data: { name?: string; icon?: string | null; collapsed?: boolean; pinned?: boolean; sortOrder?: number }) =>
     api.patch<MessengerCustomGroup>(`/orgs/${orgId}/messenger/groups/${groupId}`, data),

@@ -12,6 +12,7 @@ import {
   type CodexAppServerNotification,
   type CodexAppServerServerRequestHandler,
 } from "./app-server-client.js";
+import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompleteLines } from "./stderr-filter.js";
 
 const APP_SERVER_INTERRUPT_TIMEOUT_MS = 1_000;
 const APP_SERVER_PROCESS_HARD_DEADLINE_MS = 2_000;
@@ -36,6 +37,7 @@ export interface CodexAppServerChatOptions {
   modelReasoningEffort: string;
   search: boolean;
   bypassApprovalsAndSandbox: boolean;
+  sandboxMode?: "read-only" | null;
   imagePaths: string[];
   sessionId: string | null;
   timeoutSec: number;
@@ -249,11 +251,29 @@ export async function executeCodexAppServerChat(
   if (child.pid) await options.onSpawn?.({ pid: child.pid, startedAt });
 
   let stderr = "";
+  let stderrBuffer = "";
+  const shouldSuppressStderr = createCodexStderrLineFilter();
+  const flushStderr = (force: boolean) => {
+    const { lines, remainder } = splitCompleteLines(stderrBuffer);
+    stderrBuffer = force ? "" : remainder;
+    const completeLines = force ? [...lines, ...(remainder ? [remainder] : [])] : lines;
+    for (const line of completeLines) {
+      if (!shouldSuppressStderr(line)) void options.onLog("stderr", line);
+    }
+  };
   child.stderr?.on("data", (chunk: Buffer | string) => {
     const text = String(chunk);
     stderr = appendBounded(stderr, text);
-    void options.onLog("stderr", text);
+    stderrBuffer += text;
+    if (stderrBuffer.length > CODEX_STDERR_LINE_BUFFER_LIMIT) {
+      const overflow = stderrBuffer.slice(0, stderrBuffer.length - CODEX_STDERR_LINE_BUFFER_LIMIT);
+      stderrBuffer = stderrBuffer.slice(-CODEX_STDERR_LINE_BUFFER_LIMIT);
+      if (!shouldSuppressStderr(overflow)) void options.onLog("stderr", overflow);
+    }
+    flushStderr(false);
   });
+  child.stderr?.once("end", () => flushStderr(true));
+  child.once("close", () => flushStderr(true));
 
   let stdout = "";
   let latestUsage: UsageSummary = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
@@ -518,7 +538,9 @@ export async function executeCodexAppServerChat(
       model: options.model || null,
       cwd: options.cwd,
       approvalPolicy: options.bypassApprovalsAndSandbox ? "never" : null,
-      sandbox: options.bypassApprovalsAndSandbox ? "danger-full-access" : null,
+      sandbox: options.bypassApprovalsAndSandbox
+        ? "danger-full-access"
+        : options.sandboxMode ?? null,
       config: {
         web_search: options.search ? "live" : "disabled",
         skills: { bundled: { enabled: false } },
@@ -559,7 +581,11 @@ export async function executeCodexAppServerChat(
       input,
       cwd: options.cwd,
       approvalPolicy: options.bypassApprovalsAndSandbox ? "never" : null,
-      sandboxPolicy: options.bypassApprovalsAndSandbox ? { type: "dangerFullAccess" } : null,
+      sandboxPolicy: options.bypassApprovalsAndSandbox
+        ? { type: "dangerFullAccess" }
+        : options.sandboxMode === "read-only"
+          ? { type: "readOnly" }
+          : null,
       model: options.model || null,
       effort: options.modelReasoningEffort || null,
     })) ?? {};
@@ -580,7 +606,12 @@ export async function executeCodexAppServerChat(
               threadId: activeThreadId,
               expectedTurnId: activeTurnId,
               clientUserMessageId: feedback.clientMessageId,
-              input: [{ type: "text", text: feedback.text, text_elements: [] }],
+              input: [
+                { type: "text", text: feedback.text, text_elements: [] },
+                ...(feedback.media ?? [])
+                  .filter((attachment) => attachment.contentType.toLowerCase().startsWith("image/"))
+                  .map((attachment) => ({ type: "localImage", path: attachment.localPath })),
+              ],
             }, 5_000));
             const acknowledgedTurnId = asString(response?.turnId);
             if (acknowledgedTurnId !== activeTurnId) {

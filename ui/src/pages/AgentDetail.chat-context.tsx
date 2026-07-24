@@ -88,7 +88,7 @@ export function RunChatContextCard({
   const conversationId = resolveRunChatConversationId(run);
   const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(run.orgId, conversationId ?? "__none__"),
-    queryFn: () => chatsApi.listMessages(conversationId!),
+    queryFn: () => chatsApi.listMessages(run.orgId, conversationId!),
     enabled: Boolean(conversationId),
   });
   const context = useMemo(

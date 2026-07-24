@@ -38,10 +38,16 @@ function createReleaseRepo() {
 
   const repo = join(root, "repo");
   const remote = join(root, "remote.git");
+  mkdirSync(join(repo, "docs", "zh"), { recursive: true });
   mkdirSync(join(repo, "scripts"), { recursive: true });
   mkdirSync(join(repo, "cli"), { recursive: true });
 
-  for (const fileName of ["release.sh", "release-lib.sh", "release-package-map.mjs"]) {
+  for (const fileName of [
+    "release.sh",
+    "release-lib.sh",
+    "release-package-map.mjs",
+    "verify-stable-changelog.mjs",
+  ]) {
     cpSync(join(scriptsDir, fileName), join(repo, "scripts", fileName));
   }
   chmodSync(join(repo, "scripts", "release.sh"), 0o755);
@@ -52,6 +58,20 @@ function createReleaseRepo() {
     name: "@rudderhq/cli",
     version: "0.2.2",
   });
+  const stableChangelog = [
+    "## v0.2.2",
+    "",
+    "[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.2)",
+    "",
+    "### New Features",
+    "",
+    "### Improvements",
+    "",
+    "### Bug Fixes",
+    "",
+  ].join("\n");
+  writeFileSync(join(repo, "docs", "releases.mdx"), stableChangelog);
+  writeFileSync(join(repo, "docs", "zh", "releases.mdx"), stableChangelog);
 
   exec("git", ["init", "--bare", remote], { cwd: root });
   exec("git", ["init"], { cwd: repo });

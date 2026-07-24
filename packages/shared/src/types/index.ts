@@ -56,14 +56,15 @@ export type {
   ChatAskUserRequest, ChatAttachment,
   ChatContextLink, ChatControlAction, ChatControlActionKind, ChatControlDisposition, ChatConversation,
   ChatGeneration, ChatGenerationControlState, ChatGenerationEvent, ChatGenerationEventKind, ChatGenerationStatus,
-  ChatGenerationTerminalOutboxEntry, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
+  ChatGenerationTerminalOutboxEntry, ChatInlineAnnotation, ChatInlineAnnotationInput,
+  ChatInlineAnnotationSurface, ChatInlineAnnotationTranscriptKind, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
   ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatProviderControlDisposition, ChatQueueClaimResponse, ChatQueueDeliveryIntent, ChatQueueRequestActor, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference,
   ChatRichReferenceDisplay,
   ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent,
-  ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTodoItem,
-  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType
+  ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
+  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType
 } from "./chat.js";
 export type { CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent, CostSummary, CostTrendPoint, CostWindowSpendRow } from "./cost.js";
 export type {
@@ -97,6 +98,26 @@ export type {
   LibraryDocumentSummary
 } from "./issue.js";
 export type { LiveEvent } from "./live.js";
+export type {
+  ManagedExternalMcpBinding,
+  ManagedExternalMcpBindings,
+  ManagedExternalMcpToolPolicy,
+  McpAgentBinding,
+  McpAgentConnectionSummary,
+  McpConnectionSafeConfig,
+  McpConnectionSecretsMutation,
+  McpConnectionSummary,
+  McpDiscoveredTool,
+  McpExternalScopeOption,
+  McpExternalScopeSelectionResponse,
+  McpLegacyManualSafeConfig,
+  McpOAuthCallbackResult,
+  McpOAuthGrantSummary,
+  McpOAuthStartResponse,
+  McpProviderCatalogEntry,
+  McpStdioSafeConfig,
+  McpStreamableHttpSafeConfig
+} from "./mcp.js";
 export type {
   IssueFollow,
   IssueFollowEntry, MessengerApprovalThreadItem,

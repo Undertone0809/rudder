@@ -10,11 +10,17 @@ contract_ids:
 related_code:
   - packages/db/src/schema/issues.ts
   - packages/shared/src/agent-run.ts
+  - packages/shared/src/chat-transcript-provenance.ts
+  - server/src/services/chat-assistant.helpers.ts
+  - server/src/services/chat-inline-annotations.ts
   - server/src/services/runtime-kernel/heartbeat.execute.ts
   - server/src/services/runtime-kernel/heartbeat.sessions.ts
   - server/src/services/runtime-kernel/model-fallback.ts
 related_tests:
   - packages/shared/src/agent-run.test.ts
+  - packages/shared/src/chat-transcript-provenance.test.ts
+  - server/src/services/chat-assistant.annotations.test.ts
+  - server/src/services/chat-inline-annotations.test.ts
   - packages/agent-runtime-utils/src/server-utils.test.ts
   - server/src/__tests__/codex-local-execute.test.ts
   - ui/src/pages/AgentDetail.run-filters.test.ts
@@ -23,6 +29,8 @@ related_tests:
   - server/src/__tests__/heartbeat-workspace-preflight.test.ts
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/agent-run-conversation-grouping.spec.ts
+related_plans:
+  - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
 edit_policy: user_confirmed_only
 ---
 
@@ -184,53 +192,72 @@ Why:
 Flow:
 
 1. A user sends a chat message to a runtime-backed agent.
-2. Rudder creates an Agent Run with chat scene and conversation target.
-3. Only one active run should own a conversation turn at a time.
-4. Runtime output must end with the Rudder chat result sentinel. If the primary
+2. If the user message owns response annotations, Rudder projects an ordered,
+   bounded user-quote section under `CHAT.RESPONSE.ANNOTATION.001`. Selected
+   text is explicitly untrusted quoted context rather than system instruction;
+   comments retain operator authorship and annotation file metadata preserves
+   its quote association. Process selections retain generation-event
+   provenance under `RUN.RESULT.001`.
+3. Rudder creates an Agent Run with chat scene and conversation target.
+4. Only one active run should own a conversation turn at a time.
+5. Runtime output must end with the Rudder chat result sentinel. If the primary
    runtime output has useful text but is missing that sentinel, Rudder may run an
    internal same-adapter repair call marked as chat result repair.
-5. For ordinary message results, every registered built-in adapter carries the
+6. For ordinary message results, every registered built-in adapter carries the
    same bounded Chat prompt and normalized final body. When that body contains a
    v1 inline visual under `CHAT.INLINE.VISUAL.001`, Rudder suppresses fragment
    source before any visible transcript/event/result projection and publishes it
    only after successful final-result normalization.
-6. When repair succeeds, Rudder persists the repaired assistant message as the
+7. When repair succeeds, Rudder persists the repaired assistant message as the
    successful chat result, combines primary and repair usage, and records repair
    evidence on the run result.
-7. When repair is not attempted or fails, Rudder records a failed chat result
+8. When repair is not attempted or fails, Rudder records a failed chat result
    with any safe partial body and structured failure metadata.
-8. If the adapter exits before Rudder observes any model-output evidence,
+9. If the adapter exits before Rudder observes any model-output evidence,
    Rudder classifies the failed chat result as a runtime boot failure:
    `chat_runtime_boot_failed`, `phase: "runtime_boot"`,
    `action: "repair_runtime"`, and `retryable: false`. Messenger shows this as
    a runtime-unavailable failure and does not offer an immediate Retry action,
    because the operator needs to fix the runtime command or environment first.
-9. If the adapter fails after Rudder observes model-output evidence but before a
+10. If the adapter fails after Rudder observes model-output evidence but before a
    successful final chat result, Rudder classifies the failed chat result as a
    model-generation failure: `chat_adapter_failed`,
    `phase: "model_generation"`, `action: "retry"`, and retryable by default.
    Messenger may show a Retry action for that failed assistant response.
-10. Each runtime-backed turn has one durable generation attempt and one fenced
-   runtime-control owner. Steer and Stop actions target the expected generation,
-   attempt epoch, and control version rather than whichever process is current
-   when the request eventually arrives.
-11. A Steer accepted by a native interactive runtime is submitted to that same
+    A failure while preparing an installed skill or runtime file before the
+    adapter starts is distinct from a missing/broken provider runtime:
+    `chat_runtime_preparation_failed`, `phase: "runtime_boot"`,
+    `action: "retry"`. Rudder surfaces only a sanitized skill identity and the
+    canonical `SKILL.md` filename when known; it never derives arbitrary
+    filenames, paths, query values, or credentials from raw exception text.
+    After the operator repairs the local skill, Retry creates a new generation.
+11. Each runtime-backed turn starts as an ownerless pending generation while
+   Rudder performs legitimate run preparation. The fenced runtime-control
+   owner, attempt epoch, control version, and lease are established only when
+   the adapter attempt actually takes control. Steer and Stop actions target
+   that expected generation and attempt rather than whichever process is
+   current when the request eventually arrives.
+12. A Steer accepted by a native interactive runtime is submitted to that same
     provider turn. When native Steer is unavailable, Rudder interrupts the old
     attempt and starts one server-owned feedback continuation only after the old
     owner reaches a safe terminal boundary.
-12. If the operator stops an in-flight chat run, Rudder first commits the
+13. If the operator stops an in-flight chat run, Rudder first commits the
     visible-output cutoff and then interrupts the runtime. The stopped message
     may contain only the accepted assistant prefix at that cutoff. Provider
     reasoning, late deltas, final output, and incomplete summaries remain
     diagnostic evidence and cannot change the visible result.
-13. Runtime terminal evidence is projected through a retryable outbox so the
+14. Runtime terminal evidence is projected through a retryable outbox so the
     generation, Agent Run, assistant message, queue item, and control action
     converge. Retry exhaustion must release active ownership and preserve an
     actionable failure rather than blocking later turns indefinitely.
-14. The assistant message stores a reverse link to the run. The conversation
+15. The assistant message stores a reverse link to the run. The conversation
     menu opens the newest linked Agent Run, and Agent Detail Run context links
     back to Messenger. Within a conversation group, `Chat Replies` opens each
     individual attempt without duplicating the group in Agent Runs navigation.
+16. A run-backed failed assistant message can open its exact attributed Agent
+    Run directly, independent of the conversation's newest run. Chat omits
+    the action when it cannot resolve both the message run id and agent
+    identity, so it does not render a dead run link.
 
 Invariants:
 
@@ -239,6 +266,11 @@ Invariants:
 - Chat run audit must preserve conversation and message identity.
 - Internal repair prompts, repair protocol text, and repair transcript logs must
   not be surfaced as normal assistant chat content.
+- Selected annotation text cannot override system/developer policy and must not
+  be interpolated into trusted prompt instructions. Annotation comments and
+  files remain bounded user context; logs and metrics may record annotation
+  counts/source ids but not quoted text, comments, visible Thinking, file
+  contents, or temporary paths.
 - Stopped chat runs must not turn provider reasoning/thinking transcript entries
   or incomplete runtime summaries into user-visible assistant message bodies.
 - Inline visual fragment source is private presentation input. Stop, timeout,
@@ -250,6 +282,11 @@ Invariants:
 - A control action is idempotent by durable action ID. Retrying the same exact
   Stop or Steer must resolve the original action; it must not target a newer
   attempt or create a second continuation.
+- Stale-owner recovery applies only to a generation that has entered
+  lease-managed starting/running execution. It must not reclaim an ownerless
+  generation during valid preprocessing, even when preparation exceeds the
+  lease duration. Retrying a terminal `control_lost` generation creates a new
+  generation and control record.
 - Browser closure and server restart must not strand accepted Steer feedback.
   Provider-acceptance ambiguity remains explicit and must not trigger blind
   duplicate delivery.
@@ -278,6 +315,9 @@ Evidence:
   metadata, stopped-run partial body filtering, runtime boot failure
   classification, retryable model-generation failures, and primary/repair usage
   aggregation.
+- Annotation prompt tests cover ordered bounded quote projection, explicit
+  untrusted/user-quote labeling, comment/file association, prompt-injection
+  containment, and the exclusion of raw annotation payload serialization.
 - Chat route tests cover persisted non-retryable runtime boot failure payloads.
 - Chat generation protocol and route tests cover fenced Steer, immutable Stop
   cutoff, startup Stop, terminal replay, output admission, projector recovery,
@@ -295,6 +335,8 @@ Related code:
 - `server/src/services/chat-agent-runs.ts`
 - `server/src/services/chat-assistant.ts`
 - `server/src/services/chat-assistant.helpers.ts`
+- `server/src/services/chat-inline-annotations.ts`
+- `packages/shared/src/chat-transcript-provenance.ts`
 - `server/src/services/chat-generation-locks.ts`
 - `server/src/services/chat-generation-protocol.ts`
 - `server/src/services/chats.ts`
@@ -308,6 +350,9 @@ Related tests:
 
 - `server/src/__tests__/chat-agent-runs.test.ts`
 - `server/src/__tests__/chat-assistant.test.ts`
+- `server/src/services/chat-assistant.annotations.test.ts`
+- `server/src/services/chat-inline-annotations.test.ts`
+- `packages/shared/src/chat-transcript-provenance.test.ts`
 - `server/src/__tests__/chat-routes.test.ts`
 - `server/src/services/chat-generation-locks.test.ts`
 - `server/src/services/chat-generation-protocol.test.ts`
@@ -317,6 +362,7 @@ Related tests:
 - `tests/e2e/chat-streaming.spec.ts`
 - `tests/e2e/chat-concurrent-streaming.spec.ts`
 - `tests/e2e/chat-options-menu.spec.ts`
+- `tests/e2e/chat-response-annotations.spec.ts`
 - `tests/e2e/agent-run-conversation-grouping.spec.ts`
 
 ## RUN.EXECUTION.001

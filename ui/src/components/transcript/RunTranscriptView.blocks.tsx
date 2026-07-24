@@ -1,22 +1,52 @@
+import {
+  AnchoredResponseAnnotationMarkers,
+  SentResponseAnnotationsCard,
+} from "@/components/chat/ResponseAnnotations";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { chatInlineAnnotationsFromStructuredPayload } from "@rudderhq/shared";
 import {
   Check,
   ChevronRight,
   CircleAlert,
   Copy,
   FileDiff,
+  Images,
   Loader2,
   TerminalSquare,
   User
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useScrollbarActivityRef } from "../../hooks/useScrollbarActivityRef";
+import {
+  CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
+  CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+  registerChatAnnotationSourceText,
+} from "../../lib/chat-response-annotation-selection";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
 import { MarkdownBody } from "../MarkdownBody";
-import { asRecord, compactWhitespace, formatTranscriptDuration, formatTranscriptTimestamp, getTranscriptTimestampTitle, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStack, TranscriptActionIconStatus, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptPresentation, TranscriptToolCardEntry, truncate } from "./RunTranscriptView.common";
+import {
+  asRecord,
+  compactWhitespace,
+  formatTranscriptDuration,
+  formatTranscriptTimestamp,
+  getTranscriptTimestampTitle,
+  TranscriptActionIconCategory,
+  TranscriptActionIconSlot,
+  TranscriptActionIconStack,
+  TranscriptActionIconStatus,
+  TranscriptAnnotationSourceContext,
+  TranscriptBlock,
+  TranscriptDensity,
+  TranscriptMarkdownLinkClickHandler,
+  TranscriptPresentation,
+  TranscriptSentAnnotationContext,
+  TranscriptToolCardEntry,
+  truncate,
+} from "./RunTranscriptView.common";
 import { formatSemanticDigest, getTodoListCompletedCount } from "./RunTranscriptView.normalize";
-import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
+import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
+import { describeToolSemanticInfo, formatCommandTerminalOutput, isCommandTool } from "./RunTranscriptView.semantic";
 import { formatMemoryScopeLabel, stripWrappedShell } from "./RunTranscriptView.shell";
 import { getTranscriptAgentAvatarInfo, TranscriptAgentAvatarIcon } from "./TranscriptAgentAvatarIcon";
 
@@ -43,6 +73,75 @@ async function writeTranscriptClipboardText(text: string) {
   const copied = document.execCommand?.("copy");
   textarea.remove();
   if (!copied) throw new Error("Clipboard write failed.");
+}
+
+function TranscriptAnnotationSource({
+  block,
+  context,
+  transcriptKind,
+  children,
+}: {
+  block: Extract<TranscriptBlock, { type: "message" | "thinking" }>;
+  context?: TranscriptAnnotationSourceContext;
+  transcriptKind: "assistant" | "thinking";
+  children: ReactNode;
+}) {
+  const sourceRootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const sourceRoot = sourceRootRef.current;
+    if (!sourceRoot) return;
+    registerChatAnnotationSourceText(sourceRoot, block.text);
+  }, [block.text]);
+  if (
+    !context
+    || block.streaming
+    || typeof block.generationId !== "string"
+    || !Number.isInteger(block.generationSeqStart)
+    || !Number.isInteger(block.generationSeqEnd)
+  ) {
+    return children;
+  }
+  const annotations = (context.annotations ?? []).filter((annotation) => (
+    annotation.surface === "process_transcript"
+    && annotation.sourceMessageId === context.sourceMessageId
+    && annotation.transcriptKind === transcriptKind
+    && annotation.generationId === block.generationId
+    && annotation.generationSeqStart === block.generationSeqStart
+    && annotation.generationSeqEnd === block.generationSeqEnd
+  ));
+  const blockId = [
+    "process",
+    context.sourceMessageId,
+    block.generationId,
+    block.generationSeqStart,
+    block.generationSeqEnd,
+    transcriptKind,
+  ].join(":");
+  return (
+    <div
+      ref={sourceRootRef}
+      {...{
+        [CHAT_ANNOTATION_SOURCE_ATTRIBUTE]: blockId,
+        [CHAT_ANNOTATION_BLOCK_ATTRIBUTE]: blockId,
+      }}
+      data-annotation-surface="process_transcript"
+      data-message-id={context.sourceMessageId}
+      data-conversation-id={context.sourceConversationId}
+      data-transcript-kind={transcriptKind}
+      data-generation-id={block.generationId}
+      data-generation-seq-start={block.generationSeqStart}
+      data-generation-seq-end={block.generationSeqEnd}
+      className="relative"
+    >
+      {children}
+      <AnchoredResponseAnnotationMarkers
+        sourceRootRef={sourceRootRef}
+        source={block.text}
+        annotations={annotations}
+        onActivate={context.onActivateAnnotation}
+      />
+    </div>
+  );
 }
 
 function formatCommandCopyText(command: string, output: string | null) {
@@ -147,6 +246,8 @@ export function TranscriptMessageBlock({
   className,
   collapsibleSummary = false,
   onMarkdownLinkClick,
+  annotationSource,
+  sentAnnotationContext,
 }: {
   block: Extract<TranscriptBlock, { type: "message" }>;
   density: TranscriptDensity;
@@ -154,28 +255,39 @@ export function TranscriptMessageBlock({
   className?: string;
   collapsibleSummary?: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
+  annotationSource?: TranscriptAnnotationSourceContext;
+  sentAnnotationContext?: TranscriptSentAnnotationContext;
 }) {
   const compact = density === "compact";
   const isUser = block.role === "user";
   const isSteer = block.source === "steer";
   const showRoleLabel = isUser && presentation !== "detail";
   const [open, setOpen] = useState(true);
+  const steerAnnotations = block.steerMessage
+    ? chatInlineAnnotationsFromStructuredPayload(block.steerMessage.structuredPayload)
+    : [];
 
   const body = (
-    <MarkdownBody
-      className={cn(
-        "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-        compact
-          ? "text-xs leading-5 text-foreground/85"
-          : presentation === "detail"
-            ? "text-sm leading-7"
-            : "text-sm",
-        className,
-      )}
-      onLinkClick={onMarkdownLinkClick}
+    <TranscriptAnnotationSource
+      block={block}
+      context={block.role === "assistant" ? annotationSource : undefined}
+      transcriptKind="assistant"
     >
-      {block.text}
-    </MarkdownBody>
+      <MarkdownBody
+        className={cn(
+          "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          compact
+            ? "text-xs leading-5 text-foreground/85"
+            : presentation === "detail"
+              ? "text-sm leading-7"
+              : "text-sm",
+          className,
+        )}
+        onLinkClick={onMarkdownLinkClick}
+      >
+        {block.text}
+      </MarkdownBody>
+    </TranscriptAnnotationSource>
   );
 
   if (isSteer) {
@@ -188,6 +300,19 @@ export function TranscriptMessageBlock({
         title={getTranscriptTimestampTitle(block.ts)}
       >
         <div className="max-w-[min(100%,72ch)] text-right">
+          {block.steerMessage ? (
+            <SentResponseAnnotationsCard
+              annotations={steerAnnotations}
+              attachments={block.steerMessage.attachments}
+              onSelect={sentAnnotationContext?.onSelect}
+              onExpandedChange={(expanded) => sentAnnotationContext?.onExpandedChange?.(
+                steerAnnotations,
+                expanded,
+              )}
+              unlocatableAnnotationId={sentAnnotationContext?.unlocatableAnnotationId}
+              className="mb-2 ml-auto"
+            />
+          ) : null}
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
             Steer
           </div>
@@ -243,12 +368,14 @@ export function TranscriptThinkingBlock({
   className,
   collapsibleSummary = false,
   onMarkdownLinkClick,
+  annotationSource,
 }: {
   block: Extract<TranscriptBlock, { type: "thinking" }>;
   density: TranscriptDensity;
   className?: string;
   collapsibleSummary?: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
+  annotationSource?: TranscriptAnnotationSourceContext;
 }) {
   const [open, setOpen] = useState(() => Boolean(block.streaming));
 
@@ -262,16 +389,22 @@ export function TranscriptThinkingBlock({
   const preview = truncate(previewSource, density === "compact" ? 100 : 160);
 
   const body = (
-    <MarkdownBody
-      className={cn(
-        "italic text-foreground/75 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-        density === "compact" ? "text-[11px] leading-5" : "text-sm leading-6",
-        className,
-      )}
-      onLinkClick={onMarkdownLinkClick}
+    <TranscriptAnnotationSource
+      block={block}
+      context={annotationSource}
+      transcriptKind="thinking"
     >
-      {block.text}
-    </MarkdownBody>
+      <MarkdownBody
+        className={cn(
+          "italic text-foreground/75 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          density === "compact" ? "text-[11px] leading-5" : "text-sm leading-6",
+          className,
+        )}
+        onLinkClick={onMarkdownLinkClick}
+      >
+        {block.text}
+      </MarkdownBody>
+    </TranscriptAnnotationSource>
   );
 
   if (!collapsibleSummary) {
@@ -314,6 +447,8 @@ export function renderTranscriptBlock({
   collapseStdout,
   thinkingClassName,
   onMarkdownLinkClick,
+  annotationSource,
+  sentAnnotationContext,
 }: {
   block: TranscriptBlock;
   index: number;
@@ -322,6 +457,8 @@ export function renderTranscriptBlock({
   collapseStdout: boolean;
   thinkingClassName?: string;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
+  annotationSource?: TranscriptAnnotationSourceContext;
+  sentAnnotationContext?: TranscriptSentAnnotationContext;
 }) {
   return (
     <div
@@ -335,6 +472,8 @@ export function renderTranscriptBlock({
           presentation={presentation}
           collapsibleSummary={presentation === "chat"}
           onMarkdownLinkClick={onMarkdownLinkClick}
+          annotationSource={annotationSource}
+          sentAnnotationContext={sentAnnotationContext}
         />
       )}
       {block.type === "thinking" && (
@@ -343,6 +482,7 @@ export function renderTranscriptBlock({
           density={density}
           className={thinkingClassName}
           onMarkdownLinkClick={onMarkdownLinkClick}
+          annotationSource={annotationSource}
         />
       )}
       {block.type === "tool" && <TranscriptToolCard block={block} density={density} presentation={presentation} />}
@@ -493,12 +633,13 @@ export function TranscriptToolCard({
         : "text-emerald-700 dark:text-emerald-300";
   const duration = formatTranscriptDuration(block.ts, block.endTs);
   const command = getToolCommand(block);
-  const requestText = command ?? (formatToolPayload(block.input) || "<empty>");
+  const requestText = command ?? formatNiceToolRequest(block.name, block.input);
   const responseText = command
     ? formatCommandTerminalOutput(block.result)
     : block.result
-      ? formatToolPayload(block.result)
+      ? formatNiceToolResponse(block.name, block.input, block.result)
       : "Waiting for result...";
+  const canExpand = semantic.category !== "skill";
   const detailsClass = cn(
     "space-y-3",
     block.status === "error" && "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3",
@@ -541,17 +682,19 @@ export function TranscriptToolCard({
             {summary}
           </div>
         </div>
-        <button
-          type="button"
-          className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={open}
-          aria-label={open ? `Collapse ${isCommand ? "command" : "tool"} details` : `Expand ${isCommand ? "command" : "tool"} details`}
-        >
-          <DisclosureChevron open={open} className="h-4 w-4" />
-        </button>
+        {canExpand ? (
+          <button
+            type="button"
+            className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={open}
+            aria-label={open ? `Collapse ${isCommand ? "command" : "tool"} details` : `Expand ${isCommand ? "command" : "tool"} details`}
+          >
+            <DisclosureChevron open={open} className="h-4 w-4" />
+          </button>
+        ) : null}
       </div>
-      {open && (
+      {canExpand && open && (
         <div className="motion-disclosure-enter mt-3">
           {command ? (
             <CommandTerminalDetail command={requestText} output={responseText} status={block.status} />
@@ -697,9 +840,19 @@ export function TranscriptActivityRow({
   block: Extract<TranscriptBlock, { type: "activity" }>;
   density: TranscriptDensity;
 }) {
+  const isImageView = block.name.replace(/[\s_-]+/g, "").toLowerCase() === "imageview";
+
   return (
     <div className="flex items-start gap-2" title={getTranscriptTimestampTitle(block.ts)}>
-      {block.status === "completed" ? (
+      {isImageView ? (
+        <Images
+          className={cn(
+            "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground",
+            block.status === "running" && "animate-pulse text-cyan-600 dark:text-cyan-300",
+          )}
+          aria-hidden
+        />
+      ) : block.status === "completed" ? (
         <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-300" />
       ) : (
         <span className="relative mt-1 flex h-2.5 w-2.5 shrink-0">
@@ -891,14 +1044,6 @@ export function TranscriptMemoryUpdateRow({
             </div>
             <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
               {paths.join("\n")}
-            </pre>
-          </div>
-          <div>
-            <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
-              Raw event
-            </div>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
-              {block.rawText}
             </pre>
           </div>
         </div>

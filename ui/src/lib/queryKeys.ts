@@ -24,6 +24,12 @@ export const queryKeys = {
       ["organizations", orgId, "workspace-backup-files", backupId, directoryPath] as const,
     workspaceBackupFile: (orgId: string, backupId: string, filePath: string) =>
       ["organizations", orgId, "workspace-backup-file", backupId, filePath] as const,
+    mcpProviders: (orgId: string) => ["organizations", orgId, "mcp-providers"] as const,
+    mcpConnections: (orgId: string) => ["organizations", orgId, "mcp-connections"] as const,
+    mcpConnectionTools: (orgId: string, connectionId: string) =>
+      ["organizations", orgId, "mcp-connections", connectionId, "tools"] as const,
+    mcpConnectionScopes: (orgId: string, connectionId: string) =>
+      ["organizations", orgId, "mcp-connections", connectionId, "scopes"] as const,
   },
   organizationSkills: {
     list: (orgId: string) => ["organization-skills", orgId] as const,
@@ -42,6 +48,7 @@ export const queryKeys = {
     skills: (id: string) => ["agents", "skills", id] as const,
     integrations: (id: string) => ["agents", "integrations", id] as const,
     customIntegrations: (id: string) => ["agents", "custom-integrations", id] as const,
+    mcpConnections: (id: string) => ["agents", "mcp-connections", id] as const,
     skillsAnalytics: (id: string) => ["agents", "skills-analytics", id] as const,
     instructionsBundle: (id: string) => ["agents", "instructions-bundle", id] as const,
     instructionsFile: (id: string, relativePath: string) =>
@@ -111,6 +118,8 @@ export const queryKeys = {
     ) => ["messenger", orgId, "saved-views", visibility, limit, offset] as const,
     savedView: (orgId: string, savedViewId: string) =>
       ["messenger", orgId, "saved-views", "detail", savedViewId] as const,
+    primaryRailPins: (orgId: string) =>
+      ["messenger", orgId, "saved-views", "primary-rail-pins"] as const,
     customGroups: (orgId: string) => ["messenger", orgId, "groups"] as const,
     issues: (orgId: string) => ["messenger", orgId, "issues"] as const,
     approvals: (orgId: string) => ["messenger", orgId, "approvals"] as const,

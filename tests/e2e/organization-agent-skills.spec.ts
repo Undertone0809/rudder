@@ -51,6 +51,48 @@ process.stdin.on("end", () => {
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeCodexInstalledSkillContentCaptureStub(
+  commandPath: string,
+  capturePath: string,
+  skillSlug: string,
+) {
+  const script = `#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+
+process.stdin.resume();
+process.stdin.on("end", () => {
+  const skillRoot = path.join(process.env.CODEX_HOME || "", "skills", ${JSON.stringify(skillSlug)});
+  const read = (relativePath) => fs.readFileSync(path.join(skillRoot, relativePath), "utf8");
+  const payload = {
+    skill: read("SKILL.md"),
+    reference: read("references/guide.md"),
+    script: read("scripts/check.mjs"),
+    asset: read("assets/template.txt"),
+  };
+  fs.mkdirSync(path.dirname(${JSON.stringify(capturePath)}), { recursive: true });
+  fs.appendFileSync(${JSON.stringify(capturePath)}, JSON.stringify(payload) + "\\n", "utf8");
+  process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-editable-skill", model: "gpt-5.4" }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "item.completed", item: { id: "msg-1", type: "agent_message", text: "captured editable skill" } }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }) + "\\n");
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function readJsonLines<T>(filePath: string): Promise<T[]> {
+  try {
+    return (await fs.readFile(filePath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as T);
+  } catch {
+    return [];
+  }
+}
+
 async function readNamedSkillSwitchOrder(root: Locator, skillNames: string[]) {
   return await root.locator('[role="switch"]').evaluateAll(
     (nodes, names) =>
@@ -903,5 +945,126 @@ test.describe("Organization and agent skills", () => {
     await expect(
       fs.readFile(path.join(materializedSkillCreator, "eval-viewer", "generate_review.py"), "utf8"),
     ).resolves.toContain("def main");
+  });
+
+  test("reuses a complete editable organization skill and loads local edits on the next run", async ({ page }) => {
+    const suffix = Date.now();
+    const skillSlug = `editable-runtime-${suffix}`;
+    const sourceRoot = path.join(E2E_HOME, "skill-imports", skillSlug);
+    const capturePath = path.join(E2E_HOME, "captures", `${skillSlug}.jsonl`);
+    const captureCommandPath = path.join(E2E_HOME, "bin", `${skillSlug}-capture`);
+    await Promise.all([
+      fs.mkdir(path.join(sourceRoot, "references"), { recursive: true }),
+      fs.mkdir(path.join(sourceRoot, "scripts"), { recursive: true }),
+      fs.mkdir(path.join(sourceRoot, "assets"), { recursive: true }),
+    ]);
+    await Promise.all([
+      fs.writeFile(
+        path.join(sourceRoot, "SKILL.md"),
+        `---\nname: ${skillSlug}\ndescription: Editable runtime skill.\n---\n\n# Version one\n`,
+        "utf8",
+      ),
+      fs.writeFile(path.join(sourceRoot, "references", "guide.md"), "# Guide one\n", "utf8"),
+      fs.writeFile(path.join(sourceRoot, "scripts", "check.mjs"), "export const version = 1;\n", "utf8"),
+      fs.writeFile(path.join(sourceRoot, "assets", "template.txt"), "template-one\n", "utf8"),
+    ]);
+    await writeCodexInstalledSkillContentCaptureStub(captureCommandPath, capturePath, skillSlug);
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Org-Editable-Runtime-Skill-${suffix}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string };
+
+    const importRes = await page.request.post(`/api/orgs/${organization.id}/skills/import`, {
+      data: { source: sourceRoot },
+    });
+    expect(importRes.ok()).toBe(true);
+    const imported = await importRes.json() as {
+      imported: Array<{
+        id: string;
+        key: string;
+        fileInventory: Array<{ path: string }>;
+      }>;
+    };
+    expect(imported.imported).toHaveLength(1);
+    const [skill] = imported.imported;
+    expect(skill!.fileInventory.map((entry) => entry.path)).toEqual(expect.arrayContaining([
+      "SKILL.md",
+      "references/guide.md",
+      "scripts/check.mjs",
+      "assets/template.txt",
+    ]));
+    const detailRes = await page.request.get(
+      `/api/orgs/${organization.id}/skills/${skill!.id}`,
+    );
+    expect(detailRes.ok()).toBe(true);
+    await expect(detailRes.json()).resolves.toMatchObject({ editable: true });
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Editable Skill Runner",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          command: captureCommandPath,
+          model: "gpt-5.4",
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const syncRes = await page.request.post(
+      `/api/agents/${agent.id}/skills/sync?orgId=${encodeURIComponent(organization.id)}`,
+      { data: { desiredSkills: [skill!.key] } },
+    );
+    expect(syncRes.ok()).toBe(true);
+
+    const firstRunRes = await page.request.post(
+      `/api/agents/${agent.id}/heartbeat/invoke?orgId=${organization.id}`,
+    );
+    expect(firstRunRes.ok()).toBe(true);
+    await expect.poll(async () => (await readJsonLines(capturePath)).length).toBe(1);
+    await expect.poll(async () => (await readJsonLines<{
+      skill: string;
+      reference: string;
+      script: string;
+      asset: string;
+    }>(capturePath))[0]).toMatchObject({
+      skill: expect.stringContaining("# Version one"),
+      reference: "# Guide one\n",
+      script: "export const version = 1;\n",
+      asset: "template-one\n",
+    });
+
+    const editRes = await page.request.patch(
+      `/api/orgs/${organization.id}/skills/${skill!.id}/files`,
+      {
+        data: {
+          path: "SKILL.md",
+          content: `---\nname: ${skillSlug}\ndescription: Editable runtime skill.\n---\n\n# Version two\n`,
+        },
+      },
+    );
+    expect(editRes.ok()).toBe(true);
+
+    const secondRunRes = await page.request.post(
+      `/api/agents/${agent.id}/heartbeat/invoke?orgId=${organization.id}`,
+    );
+    expect(secondRunRes.ok()).toBe(true);
+    await expect.poll(async () => (await readJsonLines(capturePath)).length).toBe(2);
+    const captures = await readJsonLines<{
+      skill: string;
+      reference: string;
+      script: string;
+      asset: string;
+    }>(capturePath);
+    expect(captures[1]).toMatchObject({
+      skill: expect.stringContaining("# Version two"),
+      reference: "# Guide one\n",
+      script: "export const version = 1;\n",
+      asset: "template-one\n",
+    });
   });
 });

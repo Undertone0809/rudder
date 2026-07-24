@@ -39,6 +39,7 @@ import {
   type ImportBehaviorOptions,
 } from "./organization-portability.core.js";
 import {
+  findPaperclipExtensionPath,
   inferContentTypeFromPath,
   isPortableBinaryFile,
   normalizePortablePath,
@@ -46,7 +47,10 @@ import {
   portableFileToBuffer,
   readPortableTextFile,
 } from "./organization-portability.files.js";
-import { parseFrontmatterMarkdown } from "./organization-portability.package.js";
+import {
+  parseFrontmatterMarkdown,
+  parseYamlFile,
+} from "./organization-portability.package.js";
 import type { createOrganizationPortabilityPreviewHandlers } from "./organization-portability.preview.js";
 
 type ImportContext = {
@@ -88,6 +92,14 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
     }
 
     const sourceManifest = plan.source.manifest;
+    const extensionPath = findPaperclipExtensionPath(plan.source.files);
+    const extension = extensionPath
+      ? parseYamlFile(readPortableTextFile(plan.source.files, extensionPath) ?? "")
+      : {};
+    // Older rudder/v1 exports omitted the then-default concurrency of three.
+    // Current exports materialize the field, while extension-free partial
+    // imports intentionally receive the current default.
+    const preserveLegacyMissingConcurrencyDefault = asString(extension.schema) === "rudder/v1";
     const warnings = [...plan.preview.warnings];
     const include = plan.include;
 
@@ -296,7 +308,9 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
           reportsTo: null,
           agentRuntimeType: effectiveAdapterType,
           agentRuntimeConfig: agentRuntimeConfigWithoutSkills,
-          runtimeConfig: disableImportedTimerHeartbeat(manifestAgent.runtimeConfig),
+          runtimeConfig: disableImportedTimerHeartbeat(manifestAgent.runtimeConfig, {
+            preserveLegacyMissingConcurrencyDefault,
+          }),
           budgetMonthlyCents: manifestAgent.budgetMonthlyCents,
           permissions: manifestAgent.permissions,
           metadata: manifestAgent.metadata,

@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, createRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImagePreviewProvider } from "../context/ImagePreviewContext";
 import { applyMentionChipDecoration } from "../lib/mention-chips";
 import {
+  formatComposerCursorInsertion,
   getMentionMenuPositionForViewport,
   getMentionPanelPositionForViewport,
   MarkdownEditor,
+  type MarkdownEditorRef,
   splitPlainTextMarkdownSourceByAtomicReferences,
 } from "./MarkdownEditor";
 
@@ -326,6 +328,64 @@ afterEach(() => {
 });
 
 describe("MarkdownEditor", () => {
+  it("adds only the boundary spacing needed for cursor insertions", () => {
+    expect(formatComposerCursorInsertion("alpha", 0, "Please explain.").value)
+      .toBe("Please explain. alpha");
+    expect(formatComposerCursorInsertion("alpha beta", 6, "Please explain.").value)
+      .toBe("alpha Please explain. beta");
+    expect(formatComposerCursorInsertion("alpha", 5, "Please explain.").value)
+      .toBe("alpha Please explain.");
+    expect(formatComposerCursorInsertion("前后", 1, "请详细解释。").value)
+      .toBe("前请详细解释。后");
+  });
+
+  it("inserts text at the remembered composer cursor after selection moves outside the editor", () => {
+    const container = document.createElement("div");
+    const source = document.createElement("div");
+    source.textContent = "response selection";
+    document.body.append(container, source);
+    const root = createRoot(container);
+    const editorRef = createRef<MarkdownEditorRef>();
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+      source.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          ref={editorRef}
+          value="alpha beta"
+          onChange={onChange}
+          plainText
+        />,
+      );
+    });
+    const editableText = container.querySelector('[contenteditable="true"]')?.firstChild;
+    expect(editableText).toBeInstanceOf(Text);
+    const composerRange = document.createRange();
+    composerRange.setStart(editableText!, "alpha ".length);
+    composerRange.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(composerRange);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const responseRange = document.createRange();
+    responseRange.selectNodeContents(source);
+    selection.removeAllRanges();
+    selection.addRange(responseRange);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => {
+      expect(editorRef.current?.insertTextAtSelection("explain ")).toBe(true);
+    });
+    expect(onChange).toHaveBeenLastCalledWith("alpha explain beta");
+  });
+
   it("keeps one local skill option when the global catalog points to the same skill", async () => {
     const restoreCaretRect = stubCaretRect();
     const container = document.createElement("div");

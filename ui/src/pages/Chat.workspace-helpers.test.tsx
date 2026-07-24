@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 
 import { chatsApi } from "@/api/chats";
+import type { ChatConversation, ChatInlineAnnotationInput, ChatMessage, ChatQueuedMessage } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { advanceChatDraftModelScope, chatComposerSubmitAction, chatSendButtonDisabled, useChatDraftQueries } from "./Chat.workspace-helpers";
+import {
+  canQueueComposerDraft,
+  createQueuedComposerMessage,
+  projectChatQueueDelivery,
+  queuedMessagePayloadForBodyEdit,
+  revealChatAnnotationSourceElement,
+  sideChatTargetFromMessage,
+  useChatDraftQueries,
+} from "./Chat.workspace-helpers";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -13,6 +22,7 @@ import { advanceChatDraftModelScope, chatComposerSubmitAction, chatSendButtonDis
 
 vi.mock("@/api/chats", () => ({
   chatsApi: {
+    createQueuedMessage: vi.fn(),
     list: vi.fn(),
     preflightDraft: vi.fn(),
   },
@@ -33,7 +43,6 @@ function DraftQueryProbe() {
     selectedOrganizationId: "org-1",
     selectedConversation: null,
     activeAgentId: "agent-1",
-    modelOverride: "gpt-5.6-terra",
     activeProjectId: "__no_project__",
     issueContextId: null,
     planMode: false,
@@ -64,8 +73,33 @@ function unmountProbe(root: Root, container: HTMLDivElement) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   document.body.replaceChildren();
+});
+
+describe("annotation source reveal", () => {
+  it("highlights briefly and avoids smooth scrolling for reduced motion", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    const source = document.createElement("div");
+    source.scrollIntoView = vi.fn();
+
+    revealChatAnnotationSourceElement(source);
+
+    expect(source.scrollIntoView).toHaveBeenCalledWith({
+      block: "center",
+      behavior: "auto",
+    });
+    expect(source.classList.contains("chat-message-jump-highlight")).toBe(true);
+    vi.advanceTimersByTime(1_800);
+    expect(source.classList.contains("chat-message-jump-highlight")).toBe(false);
+  });
 });
 
 describe("useChatDraftQueries", () => {
@@ -127,58 +161,155 @@ describe("useChatDraftQueries", () => {
   });
 });
 
-describe("chatComposerSubmitAction", () => {
-  it("blocks keyboard Queue while a conversation model change is pending", () => {
-    expect(chatComposerSubmitAction({
-      composerUnavailable: false,
-      newConversationSendInFlight: false,
-      modelSelectionPending: true,
-      selectedConversationHasActiveReply: true,
-      hasSelectedConversation: true,
-      controlsDisabled: true,
-    })).toBe("none");
-  });
+describe("projectChatQueueDelivery", () => {
+  it("prioritizes durable delivery and the active Steer request over a stale queued status", () => {
+    const queued = { status: "queued", deliveredMessageId: null, continuationMessageId: null, deliveryDisposition: null } as ChatQueuedMessage;
 
-  it("still allows Queue during an active reply when no model change is pending", () => {
-    expect(chatComposerSubmitAction({
-      composerUnavailable: false,
-      newConversationSendInFlight: false,
-      modelSelectionPending: false,
-      selectedConversationHasActiveReply: true,
-      hasSelectedConversation: true,
-      controlsDisabled: true,
-    })).toBe("queue");
+    expect(projectChatQueueDelivery(queued, true)).toEqual({ state: "sending", label: "Sending…" });
+    expect(projectChatQueueDelivery({ ...queued, deliveredMessageId: "message-1" })).toEqual({ state: "hidden" });
+    expect(projectChatQueueDelivery({ ...queued, status: "failed_actionable", sourceMessageId: "message-1" })).toEqual({ state: "hidden" });
+    expect(projectChatQueueDelivery({ ...queued, status: "failed_actionable", deliveryDisposition: "reconciled_current" })).toEqual({ state: "hidden" });
   });
 });
 
-describe("chatSendButtonDisabled", () => {
-  it("keeps Stop available while a conversation model change is pending", () => {
-    expect(chatSendButtonDisabled({
-      selectedConversationExternalBound: false,
-      modelSelectionPending: true,
-      composerUnavailable: false,
-      sendButtonMode: "stop",
-      hasDraft: false,
-    })).toBe(false);
-  });
+describe("createQueuedComposerMessage", () => {
+  it("passes annotation file indexes and files through to the Queue request", async () => {
+    const queryClient = new QueryClient();
+    const conversation = {
+      id: "chat-1",
+      orgId: "org-1",
+    } as ChatConversation;
+    const annotation: ChatInlineAnnotationInput = {
+      id: "00000000-0000-4000-8000-000000000001",
+      selectedText: "quoted answer",
+      comment: "Explain this",
+      sourceConversationId: "00000000-0000-4000-8000-000000000002",
+      sourceMessageId: "00000000-0000-4000-8000-000000000003",
+      surface: "assistant_body",
+      sourceHash: "a".repeat(64),
+      start: 4,
+      end: 17,
+      prefix: "the ",
+      suffix: " next",
+      attachmentFileIndexes: [0],
+    };
+    const annotationFile = new File(["proof"], "proof.png", { type: "image/png" });
+    const queued = {
+      id: "queue-1",
+      conversationId: conversation.id,
+      payload: {
+        body: "",
+        inlineAnnotations: [{ ...annotation, attachmentFileIndexes: undefined }],
+      },
+    };
+    vi.mocked(chatsApi.createQueuedMessage).mockResolvedValue(queued as never);
 
-  it.each(["send", "queue"] as const)("blocks %s while a conversation model change is pending", (sendButtonMode) => {
-    expect(chatSendButtonDisabled({
-      selectedConversationExternalBound: false,
-      modelSelectionPending: true,
-      composerUnavailable: false,
-      sendButtonMode,
-      hasDraft: true,
+    await createQueuedComposerMessage({
+      conversation,
+      body: "",
+      inlineAnnotations: [annotation],
+      files: [annotationFile],
+      orgId: "org-1",
+      projectId: null,
+      serverActiveGenerationId: "generation-1",
+      queueSnapshot: undefined,
+      queryClient,
+    });
+
+    expect(chatsApi.createQueuedMessage).toHaveBeenCalledWith(
+      conversation.id,
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          body: "",
+          inlineAnnotations: [annotation],
+        }),
+      }),
+      { files: [annotationFile] },
+    );
+  });
+});
+
+describe("canQueueComposerDraft", () => {
+  it("allows annotation-only Queue turns while a reply is active", () => {
+    expect(canQueueComposerDraft({
+      activeReply: true,
+      body: "",
+      annotationCount: 1,
+      pendingRegularFileCount: 0,
+      newConversationSendInFlight: false,
     })).toBe(true);
   });
+
+  it("keeps unsupported regular Composer files out of Queue", () => {
+    expect(canQueueComposerDraft({
+      activeReply: true,
+      body: "",
+      annotationCount: 1,
+      pendingRegularFileCount: 1,
+      newConversationSendInFlight: false,
+    })).toBe(false);
+  });
 });
 
-describe("advanceChatDraftModelScope", () => {
-  it("resets a draft override when the effective Agent or organization changes", () => {
-    const initial = advanceChatDraftModelScope(null, "org-1", "agent-1");
-    expect(initial).toEqual({ scope: "org-1:agent-1", reset: false });
-    expect(advanceChatDraftModelScope(initial.scope, "org-1", "agent-2").reset).toBe(true);
-    expect(advanceChatDraftModelScope(initial.scope, "org-2", "agent-1").reset).toBe(true);
-    expect(advanceChatDraftModelScope(initial.scope, "org-1", "agent-1").reset).toBe(false);
+describe("sideChatTargetFromMessage", () => {
+  it("owns an exact provisional annotation without mutating the source message", () => {
+    const conversation = {
+      id: "10000000-0000-4000-8000-000000000001",
+    } as ChatConversation;
+    const sourceMessage = {
+      id: "20000000-0000-4000-8000-000000000001",
+      body: "The full assistant response.",
+    } as unknown as ChatMessage;
+    const annotation: ChatInlineAnnotationInput = {
+      id: "30000000-0000-4000-8000-000000000001",
+      selectedText: "assistant response",
+      comment: null,
+      sourceConversationId: conversation.id,
+      sourceMessageId: sourceMessage.id,
+      surface: "assistant_body",
+      sourceHash: "a".repeat(64),
+      start: 9,
+      end: 27,
+      prefix: "The full ",
+      suffix: ".",
+    };
+
+    const target = sideChatTargetFromMessage(conversation, sourceMessage, annotation);
+
+    expect(target.sourcePreview).toBe(annotation.selectedText);
+    expect(target.inlineAnnotations).toEqual([annotation]);
+    expect(target.inlineAnnotations?.[0]).not.toBe(annotation);
+    expect(sourceMessage.body).toBe("The full assistant response.");
+  });
+});
+
+describe("queuedMessagePayloadForBodyEdit", () => {
+  it("omits annotations so the server preserves their queued assets", () => {
+    const payload = queuedMessagePayloadForBodyEdit({
+      body: "",
+      inlineAnnotations: [{
+        id: "00000000-0000-4000-8000-000000000001",
+        selectedText: "quoted answer",
+        comment: "Explain this",
+        sourceConversationId: "00000000-0000-4000-8000-000000000002",
+        sourceMessageId: "00000000-0000-4000-8000-000000000003",
+        surface: "assistant_body",
+        sourceHash: "a".repeat(64),
+        start: 4,
+        end: 17,
+        prefix: "the ",
+        suffix: " next",
+        attachmentIds: ["00000000-0000-4000-8000-000000000004"],
+      }],
+      attachmentIds: [],
+      skillRefs: [],
+    }, "Updated prompt");
+
+    expect(payload).toEqual({
+      body: "Updated prompt",
+      attachmentIds: [],
+      skillRefs: [],
+    });
+    expect(payload).not.toHaveProperty("inlineAnnotations");
   });
 });

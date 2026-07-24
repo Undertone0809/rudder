@@ -23,6 +23,7 @@ import {
 } from "./browser-capability.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { customIntegrationService } from "./integrations/custom-integrations.js";
+import { managedMcpBindingService } from "./mcp/managed-bindings.js";
 import { organizationSkillService } from "./organization-skills.js";
 import { listProjectResourceAttachments } from "./resource-catalog.js";
 import { secretService } from "./secrets.js";
@@ -471,12 +472,14 @@ export function agentRunContextService(
   const instanceSettings = instanceSettingsService(db);
   const secretsSvc = secretService(db);
   const organizationSkills = organizationSkillService(db, { deploymentMode });
+  const managedMcpBindings = managedMcpBindingService(db);
   const startupContextSvc = agentStartupContextService(db);
 
   async function prepareRuntimeConfig(input: {
     scene: AgentRunScene;
     agent: AgentRunContextAgent;
     baseConfig?: Record<string, unknown> | null;
+    materializeMissingRuntimeSkills?: boolean;
   }): Promise<PreparedAgentRunConfig> {
     const baseConfig =
       input.baseConfig ?? asRecord(input.agent.agentRuntimeConfig);
@@ -486,6 +489,10 @@ export function agentRunContextService(
         baseConfig,
       );
     const browserSettings = await instanceSettings.getBrowser();
+    const managedExternalMcpBindings = await managedMcpBindings.listRuntimeBindings(
+      input.agent.orgId,
+      input.agent.id,
+    );
     const browserCapability = resolveBrowserCapability({
       deploymentMode,
       browserEnabled: browserSettings.enabled,
@@ -510,6 +517,7 @@ export function agentRunContextService(
         input.agent.agentRuntimeType,
         resolvedConfig,
         instanceDesiredSkills,
+        { materializeMissing: input.materializeMissingRuntimeSkills !== false },
       );
     const browserRuntimeSkillEntries = browserCapability.instanceEligible
       ? resolvedRuntimeSkillEntries.filter((entry) => isBrowserSkillSelectionKey(entry.key))
@@ -532,6 +540,7 @@ export function agentRunContextService(
         paperclipSkillSync: { desiredSkills: desiredRuntimeSkills },
         rudderRuntimeSkills: runtimeSkillEntries,
         paperclipRuntimeSkills: runtimeSkillEntries,
+        managedExternalMcpBindings,
       },
       runtimeSkillEntries,
       secretKeys,

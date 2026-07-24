@@ -37,6 +37,8 @@ type CommentMentionWakeupInput = {
     description: string | null;
     status: string;
     priority: string;
+    assigneeAgentId: string | null;
+    reviewerAgentId: string | null;
   };
   comment: {
     id: string;
@@ -48,10 +50,27 @@ type CommentMentionWakeupInput = {
     actorType: "user" | "agent";
     actorId: string;
   };
+  targetAgentId: string;
   mutation?: "comment_edit";
 };
 
-export function buildCommentMentionWakeup({ issue, comment, actor, mutation }: CommentMentionWakeupInput) {
+export function resolveIssueAgentRelationship(
+  issue: Pick<CommentMentionWakeupInput["issue"], "assigneeAgentId" | "reviewerAgentId">,
+  targetAgentId: string,
+) {
+  if (issue.assigneeAgentId === targetAgentId) return "assignee" as const;
+  if (issue.reviewerAgentId === targetAgentId) return "reviewer" as const;
+  return "collaborator" as const;
+}
+
+export function buildCommentMentionWakeup({
+  issue,
+  comment,
+  actor,
+  targetAgentId,
+  mutation,
+}: CommentMentionWakeupInput) {
+  const relationship = resolveIssueAgentRelationship(issue, targetAgentId);
   return {
     source: "automation" as const,
     triggerDetail: "system" as const,
@@ -71,6 +90,7 @@ export function buildCommentMentionWakeup({ issue, comment, actor, mutation }: C
       wakeReason: "issue_comment_mentioned",
       wakeSource: "comment.mention",
       source: "comment.mention",
+      relationship,
       ...(mutation ? { mutation } : {}),
       issue: {
         id: issue.id,
@@ -251,6 +271,8 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
           description: issues.description,
           status: issues.status,
           priority: issues.priority,
+          assigneeAgentId: issues.assigneeAgentId,
+          reviewerAgentId: issues.reviewerAgentId,
         })
         .from(issues)
         .where(eq(issues.id, issueId))
@@ -322,6 +344,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
           issue,
           comment,
           actor: { actorType: "user", actorId: actor.userId },
+          targetAgentId: agentId,
           mutation: "comment_edit",
         }),
       ]));

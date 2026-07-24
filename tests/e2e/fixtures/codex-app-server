@@ -86,10 +86,6 @@ function finish(body, status = "completed") {
 
 function emitReasoning(itemId, text) {
   send({
-    method: "item/reasoning/summaryTextDelta",
-    params: { threadId, turnId, itemId, summaryIndex: 0, delta: text },
-  });
-  send({
     method: "item/completed",
     params: {
       threadId,
@@ -112,7 +108,10 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "turn/start") {
-    prompt = message.params?.input?.find((item) => item?.type === "text")?.text ?? "";
+    prompt = (message.params?.input ?? [])
+      .filter((item) => item?.type === "text" && typeof item.text === "string")
+      .map((item) => item.text)
+      .join("\n");
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
     if (prompt.includes("Keep Steer message position stable")) {
@@ -142,8 +141,12 @@ rl.on("line", (line) => {
       }, 500);
     }
     fallbackTimer = setTimeout(
-      () => finish("Initial App Server reply"),
-      prompt.includes("Render dual reasoning streams") ? 1_000 : 10_000,
+      () => finish(`Initial App Server reply (${prompt.includes("Keep Steer message position stable") ? "marker-true" : "marker-false"})`),
+      prompt.includes("Render dual reasoning streams")
+        ? 1_000
+        : prompt.includes("Keep Steer message position stable")
+          ? 60_000
+          : 30_000,
     );
     return;
   }
@@ -156,8 +159,13 @@ rl.on("line", (line) => {
       return;
     }
     const feedback = message.params?.input?.find((item) => item?.type === "text")?.text ?? "feedback";
+    const receivedLocalImage = message.params?.input?.some((item) => item?.type === "localImage")
+      ?? false;
     send({ id: message.id, result: { turnId } });
-    const finishSteeredTurn = () => finish(`Native steer applied: ${feedback}`);
+    const finishSteeredTurn = () => finish([
+      `Native steer applied: ${feedback}`,
+      `Native steer image received: ${receivedLocalImage}`,
+    ].join("\n\n"));
     if (prompt.includes("Keep Steer message position stable")) {
       setTimeout(() => emitReasoning("reason-after-steer", "Reasoning after Steer"), 250);
       setTimeout(finishSteeredTurn, 1_000);

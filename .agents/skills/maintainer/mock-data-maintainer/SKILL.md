@@ -153,9 +153,9 @@ opaque generated IDs.
 - Whole-org demo seeds should prefer API creation for the organization, then
   scoped database insertion for richer downstream evidence if the API surface is
   incomplete.
-- If the user asks for actual landing screenshots, use
-  `landing-proof-shots-maintainer` after the mock data has been selected or
-  seeded.
+- If the user asks for actual landing screenshots, use this skill's bundled
+  `scripts/capture-landing-proof-shots.ts` after selecting the scenario. Do not
+  route to a separate landing-proof skill.
 
 ## Live Rudder Instance Seed Rules
 

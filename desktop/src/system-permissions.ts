@@ -15,6 +15,14 @@ export type DesktopSystemPermissions = {
   automation: DesktopSystemPermissionStatus;
 };
 
+export type DesktopSystemPermissionId = keyof DesktopSystemPermissions;
+
+const MAC_SYSTEM_PERMISSION_SETTINGS_URLS: Record<DesktopSystemPermissionId, string> = {
+  fullDiskAccess: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+  accessibility: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+  automation: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+};
+
 type AccessFn = (targetPath: string, mode?: number) => void;
 
 const FULL_DISK_ACCESS_PROBE_PATHS = [
@@ -83,6 +91,21 @@ export function resolveAutomationStatus({
 } = {}): DesktopSystemPermissionStatus {
   if (platform !== "darwin") return "unsupported";
   return "per_app";
+}
+
+export function isDesktopSystemPermissionId(value: unknown): value is DesktopSystemPermissionId {
+  return value === "fullDiskAccess" || value === "accessibility" || value === "automation";
+}
+
+export function resolveSystemPermissionSettingsUrl({
+  platform = process.platform,
+  permission,
+}: {
+  platform?: NodeJS.Platform;
+  permission: DesktopSystemPermissionId;
+}): string | null {
+  if (platform !== "darwin") return null;
+  return MAC_SYSTEM_PERMISSION_SETTINGS_URLS[permission];
 }
 
 export function resolveDesktopSystemPermissions({

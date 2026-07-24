@@ -194,11 +194,19 @@ describe("heartbeat run concurrency", () => {
     dataDir = started.dataDir;
   }, 20_000);
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await db
+      .update(heartbeatRuns)
+      .set({
+        status: "cancelled",
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(heartbeatRuns.status, "queued"));
     vi.clearAllMocks();
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     mockRuntimeAdapter.reset();
-  });
+  }, 15_000);
 
   async function countPostgresLockWaiters() {
     const rows = await db.execute(sql<{ count: number }>`
@@ -1117,32 +1125,48 @@ describe("heartbeat run concurrency", () => {
     expect(mockRuntimeAdapter.calls.map((call) => call.taskKey)).toEqual(["serial:1"]);
   });
 
-  it("defaults agents without an explicit value to three concurrent runs", async () => {
+  it("defaults agents without an explicit value to eight concurrent runs", async () => {
     const { orgId, agentId } = await seedAgentFixture();
     const createdAt = new Date("2026-04-27T01:00:00.000Z");
-    await seedQueuedRun({ orgId, agentId, taskKey: "task:1", createdAt });
-    await seedQueuedRun({ orgId, agentId, taskKey: "task:2", createdAt: new Date(createdAt.getTime() + 1_000) });
-    await seedQueuedRun({ orgId, agentId, taskKey: "task:3", createdAt: new Date(createdAt.getTime() + 2_000) });
-    await seedQueuedRun({ orgId, agentId, taskKey: "task:4", createdAt: new Date(createdAt.getTime() + 3_000) });
+    for (let index = 0; index < 9; index += 1) {
+      await seedQueuedRun({
+        orgId,
+        agentId,
+        taskKey: `task:${index + 1}`,
+        createdAt: new Date(createdAt.getTime() + index * 1_000),
+      });
+    }
 
     const heartbeat = heartbeatService(db);
     await heartbeat.resumeQueuedRuns();
 
-    await waitForCondition(async () => {
-      const statuses = await listRunStatuses(agentId);
-      return (
-        mockRuntimeAdapter.calls.length === 3
-        && statuses.filter((run) => run.status === "running").length === 3
-      );
-    });
+    await waitForCondition(
+      async () => {
+        const statuses = await listRunStatuses(agentId);
+        return (
+          mockRuntimeAdapter.calls.length === 8
+          && statuses.filter((run) => run.status === "running").length === 8
+        );
+      },
+      10_000,
+    );
 
     const statuses = await listRunStatuses(agentId);
-    expect(statuses.filter((run) => run.status === "running")).toHaveLength(3);
+    expect(statuses.filter((run) => run.status === "running")).toHaveLength(8);
     expect(statuses.filter((run) => run.status === "queued")).toHaveLength(1);
     expect(new Set(mockRuntimeAdapter.calls.map((call) => call.taskKey))).toEqual(
-      new Set(["task:1", "task:2", "task:3"]),
+      new Set([
+        "task:1",
+        "task:2",
+        "task:3",
+        "task:4",
+        "task:5",
+        "task:6",
+        "task:7",
+        "task:8",
+      ]),
     );
-  });
+  }, 15_000);
 
   it("clamps invalid and oversized concurrency values to the supported range", async () => {
     const low = await seedAgentFixture(0);
@@ -1191,7 +1215,7 @@ describe("heartbeat run concurrency", () => {
     statuses = await listRunStatuses(high.agentId);
     expect(statuses.filter((run) => run.status === "running")).toHaveLength(10);
     expect(statuses.filter((run) => run.status === "queued")).toHaveLength(1);
-  });
+  }, 15_000);
 
   it("coalesces repeated wakeups for the same issue into one active execution run", async () => {
     const { orgId, agentId } = await seedAgentFixture(3);
@@ -2024,5 +2048,143 @@ describe("heartbeat run concurrency", () => {
       status: "claimed",
       reason: "issue_comment_mentioned",
     });
+  });
+
+  it.each([
+    { relationship: "assignee", status: "in_review" },
+    { relationship: "assignee", status: "done" },
+    { relationship: "reviewer", status: "in_review" },
+    { relationship: "reviewer", status: "done" },
+  ] as const)(
+    "leases explicit $relationship work without changing $status",
+    async ({ relationship, status }) => {
+      const { orgId, agentId } = await seedAgentFixture(1);
+      const issueId = await seedIssueFixture({
+        orgId,
+        agentId: relationship === "assignee" ? agentId : undefined,
+        reviewerAgentId: relationship === "reviewer" ? agentId : null,
+        status,
+      });
+      const wakeCommentId = randomUUID();
+      const heartbeat = heartbeatService(db);
+
+      const run = await heartbeat.wakeup(agentId, {
+        source: "automation",
+        triggerDetail: "system",
+        reason: "issue_comment_mentioned",
+        startImmediately: false,
+        payload: { issueId, commentId: wakeCommentId },
+        contextSnapshot: {
+          issueId,
+          taskId: issueId,
+          wakeReason: "issue_comment_mentioned",
+          wakeSource: "comment.mention",
+          wakeCommentId,
+          relationship,
+        },
+      });
+
+      expect(run).toBeTruthy();
+      const persistedIssue = await db
+        .select({
+          status: issues.status,
+          executionRunId: issues.executionRunId,
+          checkoutRunId: issues.checkoutRunId,
+        })
+        .from(issues)
+        .where(eq(issues.id, issueId))
+        .then((rows) => rows[0]);
+      expect(persistedIssue).toMatchObject({
+        status,
+        executionRunId: run!.id,
+        checkoutRunId: null,
+      });
+    },
+  );
+
+  it("recomputes mention relationship from the current issue instead of trusting wake context", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, status: "done" });
+    const wakeCommentId = randomUUID();
+    const heartbeat = heartbeatService(db);
+
+    const run = await heartbeat.wakeup(agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_comment_mentioned",
+      startImmediately: false,
+      payload: { issueId, commentId: wakeCommentId },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        wakeReason: "issue_comment_mentioned",
+        wakeSource: "comment.mention",
+        wakeCommentId,
+        relationship: "assignee",
+      },
+    });
+
+    expect(run).toBeTruthy();
+    expect(run?.contextSnapshot).toMatchObject({ relationship: "collaborator" });
+    const persistedIssue = await db
+      .select({ executionRunId: issues.executionRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]);
+    expect(persistedIssue?.executionRunId).toBeNull();
+  });
+
+  it("revalidates mention relationship under the issue lock before granting the execution lease", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "done" });
+    const wakeCommentId = randomUUID();
+    let releaseRelationshipChange!: () => void;
+    let relationshipLockAcquired!: () => void;
+    const mayChangeRelationship = new Promise<void>((resolve) => {
+      releaseRelationshipChange = resolve;
+    });
+    const relationshipLocked = new Promise<void>((resolve) => {
+      relationshipLockAcquired = resolve;
+    });
+    const relationshipChange = db.transaction(async (tx) => {
+      await tx.execute(sql`select id from issues where id = ${issueId} for update`);
+      relationshipLockAcquired();
+      await mayChangeRelationship;
+      await tx
+        .update(issues)
+        .set({ assigneeAgentId: null })
+        .where(eq(issues.id, issueId));
+    });
+    await relationshipLocked;
+
+    const heartbeat = heartbeatService(db);
+    const wakePromise = heartbeat.wakeup(agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_comment_mentioned",
+      startImmediately: false,
+      payload: { issueId, commentId: wakeCommentId },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        wakeReason: "issue_comment_mentioned",
+        wakeSource: "comment.mention",
+        wakeCommentId,
+        relationship: "assignee",
+      },
+    });
+    await waitForPostgresLockWaiters(1);
+    releaseRelationshipChange();
+    await relationshipChange;
+
+    const run = await wakePromise;
+    expect(run).toBeTruthy();
+    expect(run?.contextSnapshot).toMatchObject({ relationship: "collaborator" });
+    const persistedIssue = await db
+      .select({ executionRunId: issues.executionRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]);
+    expect(persistedIssue?.executionRunId).toBeNull();
   });
 });

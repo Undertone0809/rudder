@@ -92,6 +92,9 @@ owning domain contract.
 
 - Chat conversation/message lifecycle, attachments, rich references, and
   assistant turns: `CHAT.LIFECYCLE.001`, `RUN.CHAT.AGENT.001`.
+- Precise final-answer/visible-Process selections, optional comments and files,
+  source markers, immutable sent evidence, and Queue/Steer/Fork/Side Chat
+  preservation: `CHAT.RESPONSE.ANNOTATION.001`.
 - Runtime-neutral scriptless visuals embedded in completed assistant messages,
   including trusted backing state and sandbox rendering:
   `CHAT.INLINE.VISUAL.001`.
@@ -113,10 +116,13 @@ owning domain contract.
   primary surface: `ISSUE.SURFACE.001`.
 - Messenger custom group membership, grouped-row navigation/read behavior, and
   group pin priority: `MESSENGER.CUSTOM.GROUPS.001`.
-- Side Panel `Add to Messenger` eligibility and placement, Messenger's fixed
-  Saved section, Saved View routes, hidden restoration, custom-group mixing,
-  and Side Panel target reopening:
+- Side Panel exact-target promotion, loose-or-grouped Saved View placement,
+  Messenger directory movement, Main Workbench routes, full-bleed rendering,
+  Remove/Close independence, and cold restoration:
   `MESSENGER.SAVED.VIEWS.001`.
+- Desktop Local App review, safe start/stop, process attestation, isolated
+  guest hosting, and live Side-to-Main continuity:
+  `DESKTOP.LOCAL.APPS.001`.
 - Feishu/IM source badges on Feishu-bound chat rows: `IM.FEISHU.001`.
 - Issue comment and issue-thread facts: `ISSUE.COMMENTS.001`,
   `ROUTING.COMMENT.WAKE.001`.

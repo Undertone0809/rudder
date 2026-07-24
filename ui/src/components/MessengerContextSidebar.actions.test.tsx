@@ -15,6 +15,7 @@ const mockCreateCustomGroup = vi.hoisted(() => vi.fn());
 const mockCreateCustomGroupWithEntries = vi.hoisted(() => vi.fn());
 const mockAssignCustomGroupEntry = vi.hoisted(() => vi.fn());
 const mockListCustomGroups = vi.hoisted(() => vi.fn());
+const mockListSavedViews = vi.hoisted(() => vi.fn());
 const mockUpdateCustomGroup = vi.hoisted(() => vi.fn());
 const mockRegenerateCustomGroupTitle = vi.hoisted(() => vi.fn());
 const mockSeparateCustomGroup = vi.hoisted(() => vi.fn());
@@ -22,6 +23,7 @@ const mockReorderCustomGroups = vi.hoisted(() => vi.fn());
 const mockReorderCustomGroupEntries = vi.hoisted(() => vi.fn());
 const mockRemoveCustomGroupEntry = vi.hoisted(() => vi.fn());
 const mockDeleteSavedView = vi.hoisted(() => vi.fn());
+const mockGetSavedView = vi.hoisted(() => vi.fn());
 const mockUpdateConversation = vi.hoisted(() => vi.fn());
 const mockForkConversation = vi.hoisted(() => vi.fn());
 const mockRegenerateTitle = vi.hoisted(() => vi.fn());
@@ -33,6 +35,9 @@ const mockSetStreamDraftForChat = vi.hoisted(() => vi.fn());
 const mockConfirm = vi.hoisted(() => vi.fn(async () => true));
 const mockMarkThreadRead = vi.hoisted(() => vi.fn());
 const mockPushToast = vi.hoisted(() => vi.fn());
+const mockNavigate = vi.hoisted(() => vi.fn());
+const mockUnbindSavedView = vi.hoisted(() => vi.fn());
+const mockCloseWorkbenchTab = vi.hoisted(() => vi.fn());
 const invalidateQueries = vi.fn();
 const cancelQueries = vi.fn(() => Promise.resolve());
 const getQueryData = vi.fn();
@@ -48,11 +53,31 @@ const sortableMockState = vi.hoisted(() => ({
   transform: null as { x: number; y: number; scaleX?: number; scaleY?: number } | null,
 }));
 const dndMockState = vi.hoisted(() => ({
-  onDragEnd: null as ((event: { active: { id: string }; over: { id: string } | null }) => void) | null,
+  onDragEnd: null as ((event: {
+    activatorEvent?: Event;
+    active: {
+      id: string;
+      rect?: { current?: {
+        initial?: { top: number; bottom: number; height: number } | null;
+        translated?: { top: number; bottom: number; height: number } | null;
+      } };
+    };
+    over: { id: string; rect?: { top: number; bottom: number; height: number } } | null;
+  }) => void) | null,
   onDragStart: null as ((event: { active: { id: string } }) => void) | null,
   onDragOver: null as ((event: { active: { id: string }; over: { id: string } | null }) => void) | null,
   collisionDetection: null as unknown,
+  accessibility: null as {
+    announcements?: {
+      onDragStart?: (event: { active: { id: string } }) => string | undefined;
+      onDragOver?: (event: { active: { id: string }; over: { id: string } | null }) => string | undefined;
+      onDragEnd?: (event: { active: { id: string }; over: { id: string } | null }) => string | undefined;
+    };
+    screenReaderInstructions?: { draggable: string };
+  } | null,
   measuring: null as unknown,
+  sensorNames: [] as string[],
+  sortableItemSets: [] as string[][],
 }));
 const mockUseSortable = vi.hoisted(() => vi.fn(({ id }: { id: string | number }) => ({
   attributes: {},
@@ -84,8 +109,12 @@ let messengerRoute: any;
 let chatList: any[];
 let agentList: any[];
 let customGroupList: any[];
+let savedViewPagesByOffset: Map<number, any>;
 let intelligenceProfiles: any[];
 let activeGeneratingChatIds: Set<string>;
+let currentPathname: string;
+let workbenchActiveSavedViewId: string | null;
+let workbenchTabs: Array<{ savedViewId: string | null; viewInstanceId: string }>;
 let cleanupFn: (() => void) | null = null;
 let clipboardWriteText: ReturnType<typeof vi.fn>;
 
@@ -143,6 +172,9 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "messenger" && queryKey[2] === "groups") {
       return { data: { groups: hydrateCustomGroupFixtures(customGroupList) } };
     }
+    if (queryKey[0] === "messenger" && queryKey[2] === "saved-views") {
+      return { data: savedViewPagesByOffset.get(Number(queryKey[5] ?? 0)) };
+    }
     return { data: chatList };
   },
 }));
@@ -169,6 +201,7 @@ vi.mock("@/api/messenger", () => ({
     markThreadRead: mockMarkThreadRead,
     updateThreadUserState: mockUpdateThreadUserState,
     listCustomGroups: mockListCustomGroups,
+    listSavedViews: mockListSavedViews,
     createCustomGroup: mockCreateCustomGroup,
     createCustomGroupWithEntries: mockCreateCustomGroupWithEntries,
     updateCustomGroup: mockUpdateCustomGroup,
@@ -179,6 +212,7 @@ vi.mock("@/api/messenger", () => ({
     removeCustomGroupEntry: mockRemoveCustomGroupEntry,
     reorderCustomGroupEntries: mockReorderCustomGroupEntries,
     deleteSavedView: mockDeleteSavedView,
+    getSavedView: mockGetSavedView,
   },
 }));
 
@@ -186,6 +220,17 @@ vi.mock("@dnd-kit/sortable", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@dnd-kit/sortable")>();
   return {
     ...actual,
+    SortableContext: ({
+      children,
+      items,
+    }: {
+      children: ReactNode;
+      items: Array<string | { id: string }>;
+    }) => {
+      const normalizedItems = items.map((item) => typeof item === "string" ? item : item.id);
+      dndMockState.sortableItemSets.push(normalizedItems);
+      return <div data-sortable-items={JSON.stringify(normalizedItems)}>{children}</div>;
+    },
     useSortable: mockUseSortable,
   };
 });
@@ -194,8 +239,14 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@dnd-kit/core")>();
   return {
     ...actual,
+    useSensor: (sensor: { name?: string }, options?: unknown) => {
+      dndMockState.sensorNames.push(sensor.name ?? "anonymous");
+      return { options, sensor };
+    },
+    useSensors: (...sensors: unknown[]) => sensors,
     DndContext: ({
       children,
+      accessibility,
       collisionDetection,
       measuring,
       onDragEnd,
@@ -203,12 +254,24 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
       onDragOver,
     }: {
       children: ReactNode;
+      accessibility?: typeof dndMockState.accessibility;
       collisionDetection?: unknown;
       measuring?: unknown;
-      onDragEnd?: (event: { active: { id: string }; over: { id: string } | null }) => void;
+      onDragEnd?: (event: {
+        activatorEvent?: Event;
+        active: {
+          id: string;
+          rect?: { current?: {
+            initial?: { top: number; bottom: number; height: number } | null;
+            translated?: { top: number; bottom: number; height: number } | null;
+          } };
+        };
+        over: { id: string; rect?: { top: number; bottom: number; height: number } } | null;
+      }) => void;
       onDragStart?: (event: { active: { id: string } }) => void;
       onDragOver?: (event: { active: { id: string }; over: { id: string } | null }) => void;
     }) => {
+      dndMockState.accessibility = accessibility ?? null;
       dndMockState.collisionDetection = collisionDetection ?? null;
       dndMockState.measuring = measuring ?? null;
       dndMockState.onDragEnd = onDragEnd ?? null;
@@ -285,8 +348,35 @@ vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
     <a href={to} {...props}>{children}</a>
   ),
-  useLocation: () => ({ pathname: "/messenger" }),
-  useNavigate: () => vi.fn(),
+  useLocation: () => ({ pathname: currentPathname }),
+  useNavigate: () => mockNavigate,
+}));
+
+vi.mock("@/context/MainWorkbenchContext", () => ({
+  useMainWorkbench: () => ({
+    getState: () => ({
+      organizations: {
+        "org-1": {
+          tabsByViewInstanceId: Object.fromEntries(
+            workbenchTabs.map((tab) => [tab.viewInstanceId, tab]),
+          ),
+        },
+      },
+    }),
+    unbindSavedViewForOrganization: (
+      _organizationId: string,
+      viewInstanceId: string,
+      savedViewId: string,
+    ) => mockUnbindSavedView(viewInstanceId, savedViewId),
+  }),
+  useOrganizationMainWorkbench: () => ({
+    activeTab: workbenchActiveSavedViewId
+      ? { savedViewId: workbenchActiveSavedViewId, viewInstanceId: "active-view" }
+      : workbenchTabs.find((tab) => tab.savedViewId === null) ?? null,
+    closeTab: mockCloseWorkbenchTab,
+    tabs: workbenchTabs,
+    unbindSavedView: mockUnbindSavedView,
+  }),
 }));
 
 vi.mock("@/context/SidebarContext", () => ({
@@ -376,6 +466,68 @@ function baseModel(unreadCount = 0) {
   };
 }
 
+function savedViewGroup({
+  entries = [{
+    id: "entry-saved-a",
+    itemKey: "saved-view:30000000-0000-4000-8000-000000000001",
+    savedViewId: "30000000-0000-4000-8000-000000000001",
+    title: "Market dashboard",
+    viewInstanceId: "view-a",
+  }],
+  groupId = "group-saved",
+  name = "Launch research",
+}: {
+  entries?: Array<{
+    id: string;
+    itemKey: string;
+    savedViewId: string;
+    title: string;
+    viewInstanceId: string;
+  }>;
+  groupId?: string;
+  name?: string;
+} = {}) {
+  return {
+    id: groupId,
+    orgId: "org-1",
+    userId: "local-board",
+    name,
+    icon: "folder::amber",
+    sortOrder: 0,
+    collapsed: false,
+    pinnedAt: null,
+    createdAt: "2026-04-11T08:00:00.000Z",
+    updatedAt: "2026-04-11T08:00:00.000Z",
+    entries: entries.map((entry, index) => ({
+      id: entry.id,
+      orgId: "org-1",
+      userId: "local-board",
+      groupId,
+      itemKey: entry.itemKey,
+      sortOrder: index,
+      createdAt: "2026-04-11T08:00:00.000Z",
+      updatedAt: "2026-04-11T08:00:00.000Z",
+      item: {
+        type: "saved_view" as const,
+        itemKey: entry.itemKey,
+        title: entry.title,
+        savedView: {
+          id: entry.savedViewId,
+          title: entry.title,
+          subtitle: "https://example.com/private",
+          favicon: null,
+          targetPayload: {
+            kind: "browser" as const,
+            tabId: `tab-${index}`,
+            url: "https://example.com/private",
+            viewInstanceId: entry.viewInstanceId,
+          },
+        },
+      },
+    })),
+  };
+}
+
 function renderSidebar() {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -447,8 +599,24 @@ describe("MessengerContextSidebar chat actions", () => {
     });
     activeGeneratingChatIds = new Set();
     messengerRoute = { kind: "root" };
+    currentPathname = "/messenger";
+    workbenchActiveSavedViewId = null;
+    workbenchTabs = [];
     chatList = [baseConversation()];
     customGroupList = [];
+    savedViewPagesByOffset = new Map([[
+      0,
+      {
+        items: [],
+        pageInfo: {
+          limit: 50,
+          offset: 0,
+          total: 0,
+          hasMore: false,
+          nextOffset: null,
+        },
+      },
+    ]]);
     intelligenceProfiles = [
       {
         id: "profile-lightweight",
@@ -479,8 +647,11 @@ describe("MessengerContextSidebar chat actions", () => {
     dndMockState.onDragEnd = null;
     dndMockState.onDragStart = null;
     dndMockState.onDragOver = null;
+    dndMockState.accessibility = null;
     dndMockState.collisionDetection = null;
     dndMockState.measuring = null;
+    dndMockState.sensorNames = [];
+    dndMockState.sortableItemSets = [];
     mockUseSortable.mockClear();
     mockUpdateUserState.mockImplementation(async (chatId: string, data: Record<string, unknown>) => ({
       ...baseConversation(),
@@ -538,6 +709,12 @@ describe("MessengerContextSidebar chat actions", () => {
     });
     mockRemoveCustomGroupEntry.mockResolvedValue({ ok: true });
     mockDeleteSavedView.mockResolvedValue({ ok: true });
+    mockGetSavedView.mockResolvedValue({
+      id: "30000000-0000-4000-8000-000000000001",
+    });
+    mockNavigate.mockReset();
+    mockUnbindSavedView.mockReset();
+    mockCloseWorkbenchTab.mockReset();
     mockPushToast.mockReset();
     mockListCustomGroups.mockResolvedValue({ groups: [] });
     mockConfirm.mockResolvedValue(true);
@@ -802,7 +979,7 @@ describe("MessengerContextSidebar chat actions", () => {
   });
 
   it("optimistically pins a chat thread before the user-state request resolves", async () => {
-    renderSidebar();
+    const { container } = renderSidebar();
 
     const pin = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Pin") as HTMLButtonElement | undefined;
@@ -3417,6 +3594,773 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "approvals");
   });
 
+  it("derives Saved View selection from the current route, not the active Main Workbench tab", () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    customGroupList = [savedViewGroup()];
+    workbenchTabs = [
+      {
+        savedViewId: "30000000-0000-4000-8000-000000000001",
+        viewInstanceId: "view-a",
+      },
+    ];
+    workbenchActiveSavedViewId = "30000000-0000-4000-8000-000000000001";
+    messengerRoute = { kind: "chat", conversationId: "chat-a" };
+
+    const { container } = renderSidebar();
+    expect(
+      container.querySelector('[data-testid="messenger-saved-view-entry-saved-a"]')
+        ?.getAttribute("data-active"),
+    ).toBe("false");
+    cleanupSidebar();
+
+    workbenchActiveSavedViewId = null;
+    workbenchTabs = [{ savedViewId: null, viewInstanceId: "session-only" }];
+    messengerRoute = {
+      kind: "saved_view",
+      savedViewId: "30000000-0000-4000-8000-000000000001",
+    };
+    const rerendered = renderSidebar().container;
+    expect(
+      rerendered.querySelector('[data-testid="messenger-saved-view-entry-saved-a"]')
+        ?.getAttribute("data-active"),
+    ).toBe("true");
+  });
+
+  it("registers pointer and keyboard sensors and preserves mixed entry order in one SortableContext", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    chatList = [
+      baseConversation({ id: "chat-a", title: "Alpha" }),
+      baseConversation({ id: "chat-b", title: "Beta" }),
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        { ...baseModel().threadSummaries[0], threadKey: "chat:chat-a", title: "Alpha", href: "/messenger/chat/chat-a" },
+        { ...baseModel().threadSummaries[0], threadKey: "chat:chat-b", title: "Beta", href: "/messenger/chat/chat-b" },
+      ],
+    };
+    const saved = savedViewGroup();
+    customGroupList = [{
+      ...saved,
+      entries: [
+        {
+          id: "entry-chat-a",
+          orgId: "org-1",
+          userId: "local-board",
+          groupId: saved.id,
+          threadKey: "chat:chat-a",
+          itemKey: "chat:chat-a",
+          sortOrder: 0,
+          createdAt: saved.createdAt,
+          updatedAt: saved.updatedAt,
+          thread: messengerModel.threadSummaries[0],
+        },
+        { ...saved.entries[0], sortOrder: 1 },
+        {
+          id: "entry-chat-b",
+          orgId: "org-1",
+          userId: "local-board",
+          groupId: saved.id,
+          threadKey: "chat:chat-b",
+          itemKey: "chat:chat-b",
+          sortOrder: 2,
+          createdAt: saved.createdAt,
+          updatedAt: saved.updatedAt,
+          thread: messengerModel.threadSummaries[1],
+        },
+      ],
+    }];
+
+    renderSidebar();
+
+    expect(dndMockState.sensorNames).toEqual(expect.arrayContaining(["PointerSensor", "KeyboardSensor"]));
+    expect(dndMockState.sortableItemSets).toContainEqual([
+      "chat:chat-a",
+      "saved-view:30000000-0000-4000-8000-000000000001",
+      "chat:chat-b",
+    ]);
+    const pickedUp = dndMockState.accessibility?.announcements?.onDragStart?.({
+      active: { id: "saved-view:30000000-0000-4000-8000-000000000001" },
+    });
+    const requested = dndMockState.accessibility?.announcements?.onDragEnd?.({
+      active: { id: "saved-view:30000000-0000-4000-8000-000000000001" },
+      over: { id: "chat:chat-b" },
+    });
+    expect(pickedUp).toContain("Saved View");
+    expect(pickedUp).not.toContain("saved-view:");
+    expect(pickedUp).not.toContain("https://");
+    expect(requested).toContain("Move requested");
+    expect(requested).not.toContain("dropped");
+    const unchanged = dndMockState.accessibility?.announcements?.onDragEnd?.({
+      active: { id: "saved-view:30000000-0000-4000-8000-000000000001" },
+      over: { id: "saved-view:30000000-0000-4000-8000-000000000001" },
+    });
+    expect(unchanged).toContain("Move canceled");
+    expect(unchanged).not.toContain("Move requested");
+    expect(dndMockState.accessibility?.screenReaderInstructions?.draggable).toContain("Press Space");
+
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: "saved-view:30000000-0000-4000-8000-000000000001" },
+        over: { id: "chat:chat-b" },
+      });
+      await Promise.resolve();
+    });
+    expect(mockReorderCustomGroupEntries).toHaveBeenCalledWith("org-1", "group-saved", [
+      "chat:chat-a",
+      "chat:chat-b",
+      "saved-view:30000000-0000-4000-8000-000000000001",
+    ]);
+  });
+
+  it("moves a Saved View across groups and atomically groups it with an ungrouped Chat", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    const saved = savedViewGroup();
+    const destination = {
+      ...savedViewGroup({ entries: [], groupId: "group-review", name: "Review later" }),
+      sortOrder: 1,
+      entries: [{
+        id: "entry-review",
+        orgId: "org-1",
+        userId: "local-board",
+        groupId: "group-review",
+        threadKey: "chat:review",
+        itemKey: "chat:review",
+        sortOrder: 0,
+        createdAt: saved.createdAt,
+        updatedAt: saved.updatedAt,
+        thread: { ...baseModel().threadSummaries[0], threadKey: "chat:review", title: "Review", href: "/messenger/chat/review" },
+      }],
+    };
+    chatList = [baseConversation({ id: "review", title: "Review" })];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [destination.entries[0].thread],
+    };
+    customGroupList = [saved, destination];
+    renderSidebar();
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: "saved-view:30000000-0000-4000-8000-000000000001" },
+        over: { id: "chat:review" },
+      });
+      await Promise.resolve();
+    });
+    expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith(
+      "org-1",
+      "group-review",
+      "saved-view:30000000-0000-4000-8000-000000000001",
+    );
+    cleanupSidebar();
+
+    const looseThread = { ...baseModel().threadSummaries[0], threadKey: "chat:loose", title: "Loose research", href: "/messenger/chat/loose" };
+    chatList = [baseConversation({ id: "loose", title: "Loose research" })];
+    messengerModel = { ...baseModel(), threadSummaries: [looseThread] };
+    customGroupList = [saved];
+    mockAssignCustomGroupEntry.mockClear();
+    renderSidebar();
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        activatorEvent: new MouseEvent("pointerdown"),
+        active: { id: "saved-view:30000000-0000-4000-8000-000000000001" },
+        over: { id: "chat:loose" },
+      });
+      await Promise.resolve();
+    });
+    expect(mockCreateCustomGroupWithEntries).toHaveBeenCalledWith("org-1", {
+      anchorItemKey: "chat:loose",
+      autoGenerateName: false,
+      itemKeys: [
+        "chat:loose",
+        "saved-view:30000000-0000-4000-8000-000000000001",
+      ],
+      name: "Loose research",
+    });
+  });
+
+  it("loads bounded Saved View pages and renders only loose records once", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    const grouped = savedViewGroup();
+    customGroupList = [grouped];
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    const record = (
+      id: string,
+      title: string,
+      sortOrder: number,
+    ) => ({
+      id,
+      orgId: "org-1",
+      userId: "local-board",
+      targetKind: "browser",
+      targetPayload: {
+        kind: "browser",
+        tabId: `tab-${id}`,
+        url: `https://example.com/${id}`,
+        viewInstanceId: `view-${id}`,
+      },
+      resourceKey: `browser:${id}`,
+      instanceId: `view-${id}`,
+      canonicalResourceKey: `browser:${id}`,
+      clientMutationId: null,
+      title,
+      subtitle: null,
+      favicon: null,
+      sortOrder,
+      hiddenAt: null,
+      createdAt: "2026-04-11T08:00:00.000Z",
+      updatedAt: "2026-04-11T08:00:00.000Z",
+    });
+    savedViewPagesByOffset = new Map([
+      [0, {
+        items: [
+          record("30000000-0000-4000-8000-000000000001", "Market dashboard", 0),
+          record("saved-loose-a", "Loose first page", 1),
+        ],
+        pageInfo: {
+          limit: 50,
+          offset: 0,
+          total: 3,
+          hasMore: true,
+          nextOffset: 50,
+        },
+      }],
+      [50, {
+        items: [record("saved-loose-b", "Loose second page", 2)],
+        pageInfo: {
+          limit: 50,
+          offset: 50,
+          total: 3,
+          hasMore: false,
+          nextOffset: null,
+        },
+      }],
+    ]);
+
+    const { container } = renderSidebar();
+
+    expect(container.textContent).toContain("Loose first page");
+    expect(container.textContent).not.toContain("Loose second page");
+    expect(container.textContent?.match(/Market dashboard/g)).toHaveLength(1);
+    const loadMore = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Load more Saved Views"));
+    expect(loadMore).toBeTruthy();
+
+    await act(async () => {
+      loadMore?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Loose first page");
+    expect(container.textContent).toContain("Loose second page");
+    expect(container.textContent?.match(/Market dashboard/g)).toHaveLength(1);
+    expect(Array.from(container.querySelectorAll("button"))
+      .some((button) => button.textContent?.includes("Load more Saved Views"))).toBe(false);
+  });
+
+  it("drops a deleted first-page Saved View after loading a second page", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    customGroupList = [];
+    const record = (id: string, title: string, sortOrder: number) => ({
+      id,
+      orgId: "org-1",
+      userId: "local-board",
+      targetKind: "browser",
+      targetPayload: {
+        kind: "browser",
+        tabId: `tab-${id}`,
+        url: `https://example.com/${id}`,
+        viewInstanceId: `view-${id}`,
+      },
+      resourceKey: `browser:${id}`,
+      instanceId: `view-${id}`,
+      canonicalResourceKey: `browser:${id}`,
+      clientMutationId: null,
+      title,
+      subtitle: null,
+      favicon: null,
+      sortOrder,
+      hiddenAt: null,
+      createdAt: "2026-04-11T08:00:00.000Z",
+      updatedAt: "2026-04-11T08:00:00.000Z",
+    });
+    const first = record("saved-first", "Delete first page", 0);
+    const second = record("saved-second", "Keep second page", 1);
+    savedViewPagesByOffset = new Map([
+      [0, {
+        items: [first],
+        pageInfo: { limit: 50, offset: 0, total: 2, hasMore: true, nextOffset: 50 },
+      }],
+      [50, {
+        items: [second],
+        pageInfo: { limit: 50, offset: 50, total: 2, hasMore: false, nextOffset: null },
+      }],
+    ]);
+    const { container } = renderSidebar();
+    await act(async () => {
+      Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Load more Saved Views"))
+        ?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Delete first page");
+    expect(container.textContent).toContain("Keep second page");
+
+    savedViewPagesByOffset.set(0, {
+      items: [],
+      pageInfo: { limit: 50, offset: 0, total: 1, hasMore: false, nextOffset: null },
+    });
+    const firstRow = container.querySelector<HTMLElement>(
+      '[data-messenger-saved-view-id="saved-first"]',
+    )!;
+    await act(async () => {
+      Array.from(firstRow.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Remove from Messenger"))
+        ?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockDeleteSavedView).toHaveBeenCalledWith("org-1", "saved-first");
+    expect(container.textContent).not.toContain("Delete first page");
+  });
+
+  it("uses one pointer and keyboard placement path for loose Saved View grouping, release, reorder, and Issue merge", async () => {
+    const storage = installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    const rawSavedView = (id: string, title: string, sortOrder: number) => ({
+      id,
+      orgId: "org-1",
+      userId: "local-board",
+      targetKind: "browser",
+      targetPayload: {
+        kind: "browser",
+        tabId: `tab-${id}`,
+        url: `https://example.com/${id}`,
+        viewInstanceId: `view-${id}`,
+      },
+      resourceKey: `browser:${id}`,
+      instanceId: `view-${id}`,
+      canonicalResourceKey: `browser:${id}`,
+      clientMutationId: null,
+      title,
+      subtitle: null,
+      favicon: null,
+      sortOrder,
+      hiddenAt: null,
+      createdAt: "2026-04-11T08:00:00.000Z",
+      updatedAt: "2026-04-11T08:00:00.000Z",
+    });
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    customGroupList = [savedViewGroup({ entries: [], groupId: "group-a", name: "Group A" })];
+    savedViewPagesByOffset = new Map([[0, {
+      items: [
+        rawSavedView("saved-a", "Loose A", 0),
+        rawSavedView("saved-b", "Loose B", 1),
+      ],
+      pageInfo: { limit: 50, offset: 0, total: 2, hasMore: false, nextOffset: null },
+    }]]);
+    renderSidebar();
+
+    expect(dndMockState.sensorNames).toEqual(expect.arrayContaining([
+      "PointerSensor",
+      "KeyboardSensor",
+    ]));
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: "saved-view:saved-a" },
+        over: { id: "custom-group:group-a" },
+      });
+      await Promise.resolve();
+    });
+    expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith(
+      "org-1",
+      "group-a",
+      "saved-view:saved-a",
+    );
+
+    cleanupSidebar();
+    mockAssignCustomGroupEntry.mockClear();
+    customGroupList = [savedViewGroup({
+      entries: [{
+        id: "entry-grouped",
+        itemKey: "saved-view:saved-a",
+        savedViewId: "saved-a",
+        title: "Grouped A",
+        viewInstanceId: "view-saved-a",
+      }],
+      groupId: "group-a",
+      name: "Group A",
+    })];
+    renderSidebar();
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: "saved-view:saved-a" },
+        over: { id: "saved-view:saved-b" },
+      });
+      await Promise.resolve();
+    });
+    expect(mockRemoveCustomGroupEntry).toHaveBeenCalledWith(
+      "org-1",
+      "saved-view:saved-a",
+    );
+
+    cleanupSidebar();
+    customGroupList = [];
+    mockRemoveCustomGroupEntry.mockClear();
+    storage.store["rudder.messengerDefaultThreadOrder:org-1:anonymous"] = "[]";
+    renderSidebar();
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: "saved-view:saved-b" },
+        over: { id: "saved-view:saved-a" },
+      });
+      await Promise.resolve();
+    });
+    expect(JSON.parse(
+      storage.store["rudder.messengerDefaultThreadOrder:org-1:anonymous"] ?? "[]",
+    )).toEqual([
+      "saved-view:saved-b",
+      "saved-view:saved-a",
+    ]);
+
+    cleanupSidebar();
+    storage.store["rudder.messengerDefaultThreadOrder:org-1:anonymous"] = "[]";
+    mockCreateCustomGroupWithEntries.mockClear();
+    const chat = {
+      ...baseModel().threadSummaries[0],
+      threadKey: "chat:loose-chat",
+      kind: "chat",
+      title: "Loose chat",
+      href: "/messenger/chat/loose-chat",
+    };
+    chatList = [baseConversation({ id: "loose-chat", title: "Loose chat" })];
+    messengerModel = { ...baseModel(), threadSummaries: [chat] };
+    renderSidebar();
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        activatorEvent: new MouseEvent("pointerdown"),
+        active: {
+          id: "saved-view:saved-b",
+          rect: {
+            current: {
+              translated: { top: 101, bottom: 111, height: 10 },
+            },
+          },
+        },
+        over: {
+          id: "chat:loose-chat",
+          rect: { top: 100, bottom: 140, height: 40 },
+        },
+      });
+      await Promise.resolve();
+    });
+    expect(mockCreateCustomGroupWithEntries).not.toHaveBeenCalled();
+    expect(JSON.parse(
+      storage.store["rudder.messengerDefaultThreadOrder:org-1:anonymous"] ?? "[]",
+    )[0]).toBe("saved-view:saved-b");
+    expect(dndMockState.accessibility?.announcements?.onDragEnd?.({
+      active: {
+        id: "saved-view:saved-b",
+        rect: {
+          current: {
+            translated: { top: 101, bottom: 111, height: 10 },
+          },
+        },
+      },
+      over: {
+        id: "chat:loose-chat",
+        rect: { top: 100, bottom: 140, height: 40 },
+      },
+    } as any)).toContain("Reorder requested");
+
+    cleanupSidebar();
+    storage.store["rudder.messengerDefaultThreadOrder:org-1:anonymous"] = "[]";
+    mockCreateCustomGroupWithEntries.mockClear();
+    renderSidebar();
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        activatorEvent: new KeyboardEvent("keydown", { key: " " }),
+        active: {
+          id: "saved-view:saved-a",
+          rect: {
+            current: {
+              initial: { top: 180, bottom: 220, height: 40 },
+            },
+          },
+        },
+        over: {
+          id: "chat:loose-chat",
+          rect: { top: 100, bottom: 140, height: 40 },
+        },
+      });
+      await Promise.resolve();
+    });
+    expect(mockCreateCustomGroupWithEntries).not.toHaveBeenCalled();
+    expect(JSON.parse(
+      storage.store["rudder.messengerDefaultThreadOrder:org-1:anonymous"] ?? "[]",
+    )[0]).toBe("saved-view:saved-a");
+
+    cleanupSidebar();
+    mockCreateCustomGroupWithEntries.mockClear();
+    const issue = {
+      ...baseModel().threadSummaries[0],
+      threadKey: "issue:issue-a",
+      kind: "issues",
+      title: "Loose issue",
+      href: "/messenger/issues/issue-a",
+    };
+    messengerModel = { ...baseModel(), threadSummaries: [issue] };
+    renderSidebar();
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        activatorEvent: new KeyboardEvent("keydown", {
+          key: " ",
+          shiftKey: true,
+        }),
+        active: { id: "saved-view:saved-a" },
+        over: { id: "issue:issue-a" },
+      });
+      await Promise.resolve();
+    });
+    expect(mockCreateCustomGroupWithEntries).toHaveBeenCalledWith("org-1", {
+      anchorItemKey: "issue:issue-a",
+      autoGenerateName: false,
+      itemKeys: ["issue:issue-a", "saved-view:saved-a"],
+      name: "Loose issue",
+    });
+    expect(dndMockState.accessibility?.announcements?.onDragEnd?.({
+      active: { id: "saved-view:saved-a" },
+      over: { id: "issue:issue-a" },
+    })).toContain("Group requested");
+  });
+
+  it("does not persist grouped-to-loose order when membership removal fails", async () => {
+    const storage = installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+      "rudder.messengerDefaultThreadOrder:org-1:anonymous": "[]",
+    });
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    customGroupList = [savedViewGroup({
+      entries: [{
+        id: "entry-grouped",
+        itemKey: "saved-view:saved-grouped",
+        savedViewId: "saved-grouped",
+        title: "Grouped",
+        viewInstanceId: "view-grouped",
+      }],
+      groupId: "group-a",
+      name: "Group A",
+    })];
+    savedViewPagesByOffset = new Map([[0, {
+      items: [{
+        id: "saved-loose",
+        orgId: "org-1",
+        userId: "local-board",
+        targetKind: "browser",
+        targetPayload: {
+          kind: "browser",
+          tabId: "tab-loose",
+          url: "https://example.com/loose",
+          viewInstanceId: "view-loose",
+        },
+        resourceKey: "browser:loose",
+        instanceId: "view-loose",
+        canonicalResourceKey: "browser:loose",
+        clientMutationId: null,
+        title: "Loose",
+        subtitle: null,
+        favicon: null,
+        sortOrder: 0,
+        hiddenAt: null,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+      }],
+      pageInfo: { limit: 50, offset: 0, total: 1, hasMore: false, nextOffset: null },
+    }]]);
+    mockRemoveCustomGroupEntry.mockRejectedValueOnce(new Error("Move denied"));
+    renderSidebar();
+
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: "saved-view:saved-grouped" },
+        over: { id: "saved-view:saved-loose" },
+      });
+      await Promise.resolve();
+    });
+
+    expect(mockRemoveCustomGroupEntry).toHaveBeenCalledWith(
+      "org-1",
+      "saved-view:saved-grouped",
+    );
+    expect(JSON.parse(
+      storage.store["rudder.messengerDefaultThreadOrder:org-1:anonymous"] ?? "[]",
+    )).toEqual([]);
+    expect(mockPushToast).toHaveBeenCalledWith({
+      title: "Could not move Saved View",
+      body: "Move denied",
+      tone: "error",
+    });
+  });
+
+  it("releases a grouped Saved View loose and keeps group separation available", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    customGroupList = [savedViewGroup()];
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    const { container } = renderSidebar();
+
+    const moveLoose = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Move to Messenger sidebar"));
+    expect(moveLoose).toBeTruthy();
+    await act(async () => {
+      moveLoose?.click();
+      await Promise.resolve();
+    });
+    expect(mockRemoveCustomGroupEntry).toHaveBeenCalledWith(
+      "org-1",
+      "saved-view:30000000-0000-4000-8000-000000000001",
+    );
+
+    const separate = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Separate items"));
+    expect(separate).toBeTruthy();
+    expect(separate?.hasAttribute("disabled")).toBe(false);
+    expect(container.textContent).not.toContain(
+      "Move or remove Saved Views before separating this group.",
+    );
+  });
+
+  it("locks one Saved View placement until the server settles", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    const saved = savedViewGroup();
+    customGroupList = [
+      saved,
+      savedViewGroup({ entries: [], groupId: "group-b", name: "Group B" }),
+      savedViewGroup({ entries: [], groupId: "group-c", name: "Group C" }),
+    ];
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    const firstMove = deferred<any>();
+    mockAssignCustomGroupEntry
+      .mockReturnValueOnce(firstMove.promise)
+      .mockResolvedValue({ id: "entry-after-settle" });
+    const { container } = renderSidebar();
+
+    const savedItemKey =
+      "saved-view:30000000-0000-4000-8000-000000000001";
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: savedItemKey },
+        over: { id: "custom-group:group-b" },
+      });
+      await Promise.resolve();
+    });
+    expect(mockAssignCustomGroupEntry).toHaveBeenCalledTimes(1);
+    expect(
+      container.querySelector(`[data-messenger-saved-view-id="30000000-0000-4000-8000-000000000001"]`)
+        ?.getAttribute("aria-busy"),
+    ).toBe("true");
+
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: savedItemKey },
+        over: { id: "custom-group:group-c" },
+      });
+      await Promise.resolve();
+    });
+    expect(mockAssignCustomGroupEntry).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      firstMove.resolve({ id: "entry-b" });
+      await firstMove.promise;
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        container.querySelector(`[data-messenger-saved-view-id="30000000-0000-4000-8000-000000000001"]`)
+          ?.hasAttribute("aria-busy"),
+      ).toBe(false);
+    });
+
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: savedItemKey },
+        over: { id: "custom-group:group-c" },
+      });
+      await Promise.resolve();
+    });
+    expect(mockAssignCustomGroupEntry).toHaveBeenCalledTimes(2);
+  });
+
+  it("rebounds an invalid Saved View drop without creating loose membership", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    chatList = [];
+    const approvalsThread = {
+      ...baseModel().threadSummaries[0],
+      href: "/messenger/approvals",
+      kind: "approvals",
+      threadKey: "approvals",
+      title: "Approvals",
+    };
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [approvalsThread],
+    };
+    customGroupList = [savedViewGroup()];
+    renderSidebar();
+
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: "saved-view:30000000-0000-4000-8000-000000000001" },
+        over: null,
+      });
+      await Promise.resolve();
+    });
+
+    expect(mockAssignCustomGroupEntry).not.toHaveBeenCalled();
+    expect(mockRemoveCustomGroupEntry).not.toHaveBeenCalled();
+    expect(mockCreateCustomGroupWithEntries).not.toHaveBeenCalled();
+
+    await act(async () => {
+      dndMockState.onDragEnd?.({
+        active: { id: "saved-view:30000000-0000-4000-8000-000000000001" },
+        over: { id: "approvals" },
+      });
+      await Promise.resolve();
+    });
+    expect(mockCreateCustomGroupWithEntries).not.toHaveBeenCalled();
+    const invalidAnnouncement =
+      dndMockState.accessibility?.announcements?.onDragEnd?.({
+        active: { id: "saved-view:30000000-0000-4000-8000-000000000001" },
+        over: { id: "approvals" },
+      });
+    expect(invalidAnnouncement).toContain("not a valid destination");
+    expect(invalidAnnouncement).not.toContain("Move requested");
+  });
+
   it("evicts a successfully deleted Saved View from the exact organization groups cache before refetch", async () => {
     installLocalStorage({
       "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
@@ -3491,6 +4435,97 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(updateCache?.(legacyArrayCache)).toBe(legacyArrayCache);
     expect(mockDeleteSavedView.mock.invocationCallOrder[0]).toBeLessThan(setQueryData.mock.invocationCallOrder[0]);
     expect(setQueryData.mock.invocationCallOrder[0]).toBeLessThan(invalidateQueries.mock.invocationCallOrder[0]);
+  });
+
+  it("finalizes an uncertain Remove when reconciliation confirms 404", async () => {
+    const { ApiError } = await import("@/api/client");
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    customGroupList = [savedViewGroup()];
+    mockDeleteSavedView.mockRejectedValueOnce(
+      new TypeError("Network response was lost"),
+    );
+    mockGetSavedView.mockRejectedValueOnce(
+      new ApiError("Saved View not found", 404, null),
+    );
+    const { container } = renderSidebar();
+
+    const removeButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Remove from Messenger")) as HTMLButtonElement;
+    await act(async () => {
+      removeButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockGetSavedView).toHaveBeenCalledWith(
+      "org-1",
+      "30000000-0000-4000-8000-000000000001",
+    );
+    expect(mockPushToast).toHaveBeenCalledWith({
+      title: "Removed from Messenger",
+      body: "The open Main tab remains available for this session.",
+      tone: "success",
+    });
+  });
+
+  it("unbinds a removed Saved View from its live Main tab and replaces the durable route", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
+    });
+    chatList = [];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+    customGroupList = [savedViewGroup({
+      entries: [
+        {
+          id: "entry-saved-a",
+          itemKey: "saved-view:30000000-0000-4000-8000-000000000001",
+          savedViewId: "30000000-0000-4000-8000-000000000001",
+          title: "Market dashboard",
+          viewInstanceId: "view-a",
+        },
+        {
+          id: "entry-saved-b",
+          itemKey: "saved-view:30000000-0000-4000-8000-000000000002",
+          savedViewId: "30000000-0000-4000-8000-000000000002",
+          title: "Adjacent research",
+          viewInstanceId: "view-b",
+        },
+      ],
+    })];
+    workbenchTabs = [{
+      savedViewId: "30000000-0000-4000-8000-000000000001",
+      viewInstanceId: "view-a",
+    }];
+    currentPathname = "/messenger/saved/30000000-0000-4000-8000-000000000001";
+    const { container } = renderSidebar();
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLElement>(
+          "[data-messenger-saved-view-id]",
+        ),
+      ).map((row) => row.dataset.messengerSavedViewId),
+    ).toEqual([
+      "30000000-0000-4000-8000-000000000001",
+      "30000000-0000-4000-8000-000000000002",
+    ]);
+
+    const removeButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Remove from Messenger")) as HTMLButtonElement;
+    await act(async () => {
+      removeButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockUnbindSavedView).toHaveBeenCalledWith(
+      "view-a",
+      "30000000-0000-4000-8000-000000000001",
+    );
+    expect(mockNavigate).toHaveBeenCalledWith("/messenger/workbench", { replace: true });
+    expect(mockCloseWorkbenchTab).not.toHaveBeenCalled();
+    expect(document.activeElement?.textContent).toContain("Adjacent research");
   });
 
   it("surfaces Saved View move and remove failures", async () => {
@@ -3592,14 +4627,11 @@ describe("MessengerContextSidebar chat actions", () => {
 
     const separateButtons = Array.from(document.querySelectorAll("button"))
       .filter((button) => button.textContent?.includes("Separate items")) as HTMLButtonElement[];
-    const blockedSeparate = separateButtons.find((button) => button.disabled);
-    const blockedReasonId = blockedSeparate?.getAttribute("aria-describedby");
-    expect(blockedReasonId).toBeTruthy();
-    expect(document.getElementById(blockedReasonId!)?.textContent).toContain(
+    expect(separateButtons.every((button) => !button.disabled)).toBe(true);
+    expect(document.body.textContent).not.toContain(
       "Move or remove Saved Views before separating this group.",
     );
-
-    const availableSeparate = separateButtons.find((button) => !button.disabled);
+    const availableSeparate = separateButtons[0];
     expect(availableSeparate).toBeTruthy();
     await act(async () => {
       availableSeparate?.click();

@@ -52,7 +52,7 @@ export {
   GOAL_STATUSES, HEARTBEAT_INVOCATION_SOURCES,
   HEARTBEAT_RUN_STATUSES, INSTANCE_USER_ROLES, INVITE_JOIN_TYPES, INVITE_TYPES, ISSUE_ORIGIN_KINDS, ISSUE_PRIORITIES, ISSUE_STATUSES, JOIN_REQUEST_STATUSES, JOIN_REQUEST_TYPES, LIVE_EVENT_TYPES, MEMBERSHIP_STATUSES, MESSENGER_CUSTOM_GROUP_EMOJI_ICONS, MESSENGER_FORK_GROUP_DEFAULT_ICON, MESSENGER_SYSTEM_THREAD_KINDS, MESSENGER_THREAD_KINDS, ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES,
   ORGANIZATION_INTELLIGENCE_PROFILE_STATUSES, ORGANIZATION_RESOURCE_KINDS,
-  ORGANIZATION_RESOURCE_SOURCE_TYPES, ORGANIZATION_STATUSES, PAUSE_REASONS, PERMISSION_KEYS,
+  ORGANIZATION_RESOURCE_SOURCE_TYPES, ORGANIZATION_SECRET_PURPOSES, ORGANIZATION_STATUSES, PAUSE_REASONS, PERMISSION_KEYS,
   PLUGIN_API_VERSION, PLUGIN_BRIDGE_ERROR_CODES, PLUGIN_CAPABILITIES, PLUGIN_CATEGORIES, PLUGIN_EVENT_TYPES, PLUGIN_JOB_RUN_STATUSES,
   PLUGIN_JOB_RUN_TRIGGERS, PLUGIN_JOB_STATUSES, PLUGIN_LAUNCHER_ACTIONS,
   PLUGIN_LAUNCHER_BOUNDS, PLUGIN_LAUNCHER_PLACEMENT_ZONES, PLUGIN_LAUNCHER_RENDER_ENVIRONMENTS,
@@ -64,10 +64,29 @@ export {
   type GoalStatus, type HeartbeatInvocationSource,
   type HeartbeatRunStatus, type InstanceUserRole, type InviteJoinType, type InviteType, type IssueOriginKind, type IssuePriority, type IssueStatus, type JoinRequestStatus, type JoinRequestType, type LiveEventType, type MembershipStatus, type MessengerSystemThreadKind, type MessengerThreadKind, type OrganizationIntelligenceProfilePurpose,
   type OrganizationIntelligenceProfileStatus, type OrganizationResourceKind,
-  type OrganizationResourceSourceType, type OrganizationStatus, type PauseReason, type PermissionKey, type PluginBridgeErrorCode, type PluginCapability, type PluginCategory, type PluginEventType, type PluginJobRunStatus,
+  type OrganizationResourceSourceType, type OrganizationSecretPurpose, type OrganizationStatus, type PauseReason, type PermissionKey, type PluginBridgeErrorCode, type PluginCapability, type PluginCategory, type PluginEventType, type PluginJobRunStatus,
   type PluginJobRunTrigger, type PluginJobStatus, type PluginLauncherAction,
   type PluginLauncherBounds, type PluginLauncherPlacementZone, type PluginLauncherRenderEnvironment,
   type PluginStateScopeKind, type PluginStatus, type PluginUiSlotEntityType, type PluginUiSlotType, type PluginWebhookDeliveryStatus, type PrincipalType, type ProjectIconName, type ProjectResourceAttachmentRole, type ProjectStatus, type RudderAgentV1McpToolName, type RudderBrowserMcpToolName, type RudderCoreMcpToolName, type SecretProvider, type SideChatState, type StorageProvider, type WakeupRequestStatus, type WakeupTriggerDetail
+} from "./constants.js";
+
+export {
+  MCP_AGENT_BINDING_STATUSES,
+  MCP_CONNECTION_ACCESS_MODES,
+  MCP_CONNECTION_PROVIDERS,
+  MCP_CONNECTION_STATUSES,
+  MCP_CONNECTION_TRANSPORTS,
+  MCP_OAUTH_GRANT_STATUSES,
+  MCP_OAUTH_SESSION_STATUSES,
+  MCP_OAUTH_SESSION_TTL_MS,
+  MCP_PROVIDER_CATALOG,
+  type McpAgentBindingStatus,
+  type McpConnectionAccessMode,
+  type McpConnectionProvider,
+  type McpConnectionStatus,
+  type McpConnectionTransport,
+  type McpOAuthGrantStatus,
+  type McpOAuthSessionStatus
 } from "./constants.js";
 
 export { resolveAgentRunScene, toAgentRun, toAgentRunOrigin, toAgentRuns, toHeartbeatRun, toHeartbeatRuns, toPublicHeartbeatRunContextSnapshot } from "./agent-run.js";
@@ -87,6 +106,28 @@ export type {
   CustomIntegrationToolSummary
 } from "./types/custom-integration.js";
 
+export type {
+  ManagedExternalMcpBinding,
+  ManagedExternalMcpBindings,
+  ManagedExternalMcpToolPolicy,
+  McpAgentBinding,
+  McpAgentConnectionSummary,
+  McpConnectionSafeConfig,
+  McpConnectionSecretsMutation,
+  McpConnectionSummary,
+  McpCuratedSafeConfig,
+  McpDiscoveredTool,
+  McpExternalScopeOption,
+  McpExternalScopeSelectionResponse,
+  McpLegacyManualSafeConfig,
+  McpOAuthCallbackResult,
+  McpOAuthGrantSummary,
+  McpOAuthStartResponse,
+  McpProviderCatalogEntry,
+  McpStdioSafeConfig,
+  McpStreamableHttpSafeConfig
+} from "./types/mcp.js";
+
 export {
   createCustomIntegrationSchema,
   createCustomIntegrationToolCallSchema,
@@ -102,6 +143,40 @@ export {
   type CreateCustomIntegrationToolCall,
   type UpdateCustomIntegrationBinding
 } from "./validators/custom-integration.js";
+
+export {
+  createMcpConnectionSchema,
+  managedExternalMcpBindingSchema,
+  managedExternalMcpBindingsSchema, mcpAgentBindingSchema,
+  mcpAgentBindingStatusSchema, mcpAgentConnectionSummarySchema, mcpConnectionAccessModeSchema,
+  mcpConnectionMergedConfigSchema,
+  mcpConnectionMutationConfigSchema,
+  mcpConnectionProviderSchema,
+  mcpConnectionSafeConfigSchema,
+  mcpConnectionSecretsMutationSchema,
+  mcpConnectionStatusSchema,
+  mcpConnectionSummarySchema,
+  mcpConnectionTransportSchema,
+  mcpCuratedSafeConfigSchema,
+  mcpDiscoveredToolSchema,
+  mcpExternalScopeOptionSchema,
+  mcpLegacyManualSafeConfigSchema,
+  mcpOAuthCallbackSchema,
+  mcpOAuthGrantStatusSchema,
+  mcpOAuthGrantSummarySchema,
+  mcpOAuthStartResponseSchema,
+  mcpOAuthStartSchema,
+  mcpProviderCatalogEntrySchema,
+  mcpProviderCatalogSchema,
+  mcpScopeSelectionSchema,
+  mcpStdioSafeConfigSchema,
+  mcpStreamableHttpSafeConfigSchema,
+  updateMcpAgentBindingSchema, updateMcpConnectionSchema, upsertMcpAgentBindingSchema, type CreateMcpConnection,
+  type McpOAuthCallback,
+  type McpOAuthStart,
+  type McpScopeSelection, type UpdateMcpAgentBinding,
+  type UpdateMcpConnection, type UpsertMcpAgentBinding
+} from "./validators/mcp.js";
 
 export {
   appendChatGenerationEventSchema,
@@ -138,13 +213,14 @@ export type {
   ChatAskUserRequest, ChatAttachment,
   ChatContextLink, ChatControlAction, ChatControlActionKind, ChatControlDisposition, ChatConversation,
   ChatGeneration, ChatGenerationControlState, ChatGenerationEvent, ChatGenerationEventKind, ChatGenerationStatus,
-  ChatGenerationTerminalOutboxEntry, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
+  ChatGenerationTerminalOutboxEntry, ChatInlineAnnotation, ChatInlineAnnotationInput,
+  ChatInlineAnnotationSurface, ChatInlineAnnotationTranscriptKind, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
   ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatProviderControlDisposition, ChatQueueClaimResponse, ChatQueueDeliveryIntent, ChatQueueRequestActor, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference, ChatRichReferenceDisplay,
   ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent,
-  ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTodoItem,
-  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
+  ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
+  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
   CostSummary,
   CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
   FinanceByKind, FinanceEvent, FinanceSummary, Goal,
@@ -222,23 +298,26 @@ export {
 } from "./validators/index.js";
 
 export {
-  acceptInviteSchema, addApprovalCommentSchema, addChatMessageSchema, addIssueCommentSchema, agentIconSchema, agentInstructionsBundleModeSchema, agentIntegrationChatTypeSchema, agentIntegrationDropReasonSchema, agentIntegrationOutboundStatusSchema, agentIntegrationProviderRegionSchema, agentIntegrationProviderSchema, agentIntegrationSettingsSchema, agentIntegrationStatusSchema, agentIntegrationTransportSchema, agentPermissionsSchema, agentSkillEnableSchema, agentSkillEntrySchema,
+  MAX_CHAT_INLINE_ANNOTATIONS, MAX_CHAT_INLINE_ANNOTATION_ATTACHMENTS, MAX_CHAT_INLINE_ANNOTATION_COMMENT_LENGTH, MAX_CHAT_INLINE_ANNOTATION_CONTEXT_LENGTH, MAX_CHAT_INLINE_ANNOTATION_SELECTED_TEXT_LENGTH, MAX_CHAT_INLINE_ANNOTATION_TOTAL_TEXT_LENGTH, acceptInviteSchema, addApprovalCommentSchema, addChatMessageSchema, addIssueCommentSchema, agentIconSchema, agentInstructionsBundleModeSchema, agentIntegrationChatTypeSchema, agentIntegrationDropReasonSchema, agentIntegrationOutboundStatusSchema, agentIntegrationProviderRegionSchema, agentIntegrationProviderSchema, agentIntegrationSettingsSchema, agentIntegrationStatusSchema, agentIntegrationTransportSchema, agentPermissionsSchema, agentSkillEnableSchema, agentSkillEntrySchema,
   agentSkillSnapshotSchema, agentSkillStateSchema,
   agentSkillSyncModeSchema, agentSkillSyncSchema, assignMessengerCustomGroupEntrySchema, boardCliAuthAccessLevelSchema, calendarEventListQuerySchema, cancelChatQueuedMessageSchema, chatAskUserOptionSchema,
   chatAskUserQuestionSchema, chatAskUserRequestFromStructuredPayload, chatAskUserRequestSchema, chatAutomationCreateFromStructuredPayload, chatAutomationCreateSchema, chatContextEntityTypeSchema, chatConversationStatusSchema, chatDraftSchema,
-  chatIssueCreationModeSchema, chatIssueProposalFromStructuredPayload, chatMessageKindSchema, chatMessageRoleSchema, chatOperationProposalSchema, chatRichReferenceSchema, chatRichReferencesFromStructuredPayload, chatRichReferencesSchema, checkoutIssueSchema, claimJoinRequestApiKeySchema, connectAgentIntegrationSchema, convertChatToIssueSchema, copyOrganizationWorkspaceEntrySchema, createAgentHireSchema, createAgentIntegrationSchema, createAgentKeySchema, createAgentSchema, createApprovalSchema, createAssetImageMetadataSchema, createAutomationSchema, createAutomationTriggerSchema, createCalendarEventSchema, createCalendarSourceSchema, createChatAttachmentMetadataSchema, createChatContextLinkSchema,
-  createChatConversationSchema, createChatFirstTurnSchema, createChatQueuedMessageSchema, createCliAuthChallengeSchema, createCompanyInviteSchema, createCostEventSchema, createFinanceEventSchema, createGoalSchema, createIssueAttachmentMetadataSchema, createIssueLabelSchema, createIssueSchema, createIssueWorkProductSchema, createIssueWorkspaceAttachmentSchema, createLibraryDocumentSchema, createMessengerCustomGroupSchema, createMessengerCustomGroupWithEntriesSchema, createOpenClawInvitePromptSchema, createOrganizationResourceSchema, createOrganizationSchema, createOrganizationWorkspaceDirectorySchema, createOrganizationWorkspaceFileSchema, createOrganizationWorkspaceWebPreviewSessionSchema, createProjectInlineResourceSchema, createProjectSchema, createSecretSchema, createSideChatSchema, createWorkspaceBackupSchema, diceBearNotionistsAgentIconSchema, envBindingPlainSchema, envBindingSchema, envBindingSecretRefSchema, envConfigSchema, executionWorkspaceStatusSchema, feishuIntegrationSettingsSchema, forkChatConversationSchema, googleCalendarSyncSchema, installPluginSchema, issueDocumentFormatSchema, issueExecutionWorkspaceSettingsSchema, issueRunWorkspaceSettingsSchema, issueWorkProductReviewStateSchema, issueWorkProductStatusSchema, issueWorkProductTypeSchema, jsonSchemaSchema, linkIssueApprovalSchema, listJoinRequestsQuerySchema, listPluginStateSchema, mockFeishuInboundEventSchema, moveOrganizationWorkspaceEntrySchema, oreoAgentIconSchema, organizationIntelligenceProfileConfigSchema, organizationIntelligenceProfilePurposeSchema, organizationIntelligenceProfileStatusSchema, organizationIssueKeySchema, organizationPortabilityExportSchema, organizationPortabilityImportSchema, organizationPortabilityPreviewSchema, organizationResourceKindSchema,
+  chatInlineAnnotationInputSchema, chatInlineAnnotationSchema, chatInlineAnnotationsFromStructuredPayload, chatInlineAnnotationsInputSchema, chatInlineAnnotationsSchema, chatIssueCreationModeSchema, chatIssueProposalFromStructuredPayload, chatMessageKindSchema, chatMessageRoleSchema, chatOperationProposalSchema, chatRichReferenceSchema, chatRichReferencesFromStructuredPayload, chatRichReferencesSchema, checkoutIssueSchema, claimJoinRequestApiKeySchema, connectAgentIntegrationSchema, convertChatToIssueSchema, copyOrganizationWorkspaceEntrySchema, createAgentHireSchema, createAgentIntegrationSchema, createAgentKeySchema, createAgentSchema, createApprovalSchema, createAssetImageMetadataSchema, createAutomationSchema, createAutomationTriggerSchema, createCalendarEventSchema, createCalendarSourceSchema, createChatAttachmentMetadataSchema, createChatContextLinkSchema,
+  createChatConversationSchema, createChatFirstTurnSchema, createChatQueuedMessageSchema, createCliAuthChallengeSchema, createCompanyInviteSchema, createCostEventSchema, createFinanceEventSchema, createGoalSchema, createIssueAttachmentMetadataSchema, createIssueLabelSchema, createIssueSchema, createIssueWorkProductSchema, createIssueWorkspaceAttachmentSchema, createLibraryDocumentSchema, createMessengerCustomGroupSchema, createMessengerCustomGroupWithEntriesSchema, createOpenClawInvitePromptSchema, createOrganizationResourceSchema, createOrganizationSchema, createOrganizationWorkspaceDirectorySchema, createOrganizationWorkspaceFileSchema, createOrganizationWorkspaceWebPreviewSessionSchema, createProjectInlineResourceSchema, createProjectSchema, createSecretSchema, createSideChatSchema, createWorkspaceBackupSchema, diceBearNotionistsAgentIconSchema, envBindingPlainSchema, envBindingSchema, envBindingSecretRefSchema, envConfigSchema, executionWorkspaceStatusSchema, feishuIntegrationSettingsSchema, forkChatConversationSchema, googleCalendarSyncSchema, installPluginSchema, issueDocumentFormatSchema, issueExecutionWorkspaceSettingsSchema, issueRunWorkspaceSettingsSchema, issueWorkProductReviewStateSchema, issueWorkProductStatusSchema, issueWorkProductTypeSchema, jsonSchemaSchema, linkIssueApprovalSchema, listJoinRequestsQuerySchema, listPluginStateSchema, mockFeishuInboundEventSchema, moveOrganizationWorkspaceEntrySchema, normalizeChatInlineAnnotations, oreoAgentIconSchema, organizationIntelligenceProfileConfigSchema, organizationIntelligenceProfilePurposeSchema, organizationIntelligenceProfileStatusSchema, organizationIssueKeySchema, organizationPortabilityExportSchema, organizationPortabilityImportSchema, organizationPortabilityPreviewSchema, organizationResourceKindSchema,
   organizationResourceSourceTypeSchema, organizationSkillCompatibilitySchema, organizationSkillCreateSchema, organizationSkillDetailSchema, organizationSkillFileDetailSchema, organizationSkillFileInventoryEntrySchema, organizationSkillFileUpdateSchema, organizationSkillImportSchema, organizationSkillListItemSchema, organizationSkillLocalScanConflictSchema, organizationSkillLocalScanRequestSchema, organizationSkillLocalScanResultSchema, organizationSkillLocalScanSkippedSchema, organizationSkillProjectScanConflictSchema, organizationSkillProjectScanRequestSchema, organizationSkillProjectScanResultSchema, organizationSkillProjectScanSkippedSchema, organizationSkillSchema, organizationSkillSourceBadgeSchema, organizationSkillSourceTypeSchema, organizationSkillTrustLevelSchema, organizationSkillUpdateStatusSchema, organizationSkillUsageAgentSchema, patchPluginConfigSchema, pluginJobDeclarationSchema, pluginLauncherActionDeclarationSchema, pluginLauncherDeclarationSchema, pluginLauncherRenderDeclarationSchema, pluginManifestV1Schema, pluginStateScopeKeySchema, pluginToolDeclarationSchema,
   pluginUiSlotDeclarationSchema, pluginWebhookDeclarationSchema, portabilityAgentManifestEntrySchema, portabilityAgentSelectionSchema,
   portabilityCollisionStrategySchema, portabilityEnvInputSchema, portabilityIncludeSchema, portabilityManifestSchema, portabilityOrganizationManifestEntrySchema,
-  portabilitySidebarOrderSchema, portabilitySourceSchema,
-  portabilityTargetSchema, projectExecutionWorkspacePolicySchema, projectResourceAttachmentInputSchema, projectResourceAttachmentRoleSchema, renameOrganizationWorkspaceEntrySchema, reorderIssueSchema, reorderMessengerCustomGroupEntriesSchema, reorderMessengerCustomGroupsSchema, reportIssueCommitSchema, requestApprovalRevisionSchema, resetAgentSessionSchema, resolveApprovalSchema, resolveBudgetIncidentSchema, resolveChatOperationProposalSchema, resolveCliAuthChallengeSchema, restoreLibraryDocumentRevisionSchema, restoreWorkspaceBackupSchema, resubmitApprovalSchema, rotateAutomationTriggerSecretSchema, rotateSecretSchema, runAutomationSchema, runWorkspaceStatusSchema, sanitizeChatStructuredPayload, setChatProjectContextSchema, setPluginStateSchema, steerChatQueuedMessageSchema, testAgentRuntimeEnvironmentSchema, uninstallPluginSchema, updateAgentInstructionsBundleSchema, updateAgentInstructionsPathSchema, updateAgentIntegrationSettingsSchema, updateAgentPermissionsSchema, updateAgentSchema, updateAutomationSchema, updateAutomationTriggerSchema, updateBudgetSchema, updateCalendarEventSchema, updateCalendarSourceSchema, updateChatConversationSchema, updateChatConversationUserStateSchema, updateChatQueuedMessageSchema, updateExecutionWorkspaceSchema, updateGoalSchema, updateGoogleCalendarOAuthConfigSchema, updateIssueCommentSchema, updateIssueLabelSchema, updateIssueSchema, updateIssueWorkProductSchema, updateLibraryDocumentSchema, updateMemberPermissionsSchema, updateMessengerCustomGroupSchema, updateMessengerThreadUserStateSchema, updateOrganizationBrandingSchema, updateOrganizationResourceSchema, updateOrganizationSchema, updateOrganizationWorkspaceFileSchema, updatePluginStatusSchema, updateProjectResourceAttachmentSchema, updateProjectSchema, updateRunWorkspaceSchema, updateSecretSchema, updateUserCompanyAccessSchema, uploadedAgentIconSchema, upsertAgentInstructionsFileSchema, upsertBudgetPolicySchema, upsertOrganizationIntelligenceProfileSchema, upsertPluginConfigSchema, wakeAgentSchema, workspaceBackupTriggerSourceSchema, workspaceWebPreviewNetworkModeSchema, type AcceptInvite, type AddApprovalComment, type AddChatMessage, type AddIssueComment, type AgentSkillEnable, type AgentSkillSync, type AssignMessengerCustomGroupEntry, type BoardCliAuthAccessLevel, type CalendarEventListQuery, type CancelChatQueuedMessage, type ChatAutomationCreate, type ChatDraft, type ChatOperationProposal, type ChatQueuedMessagePayloadInput, type CheckoutIssue, type ClaimJoinRequestApiKey, type ConnectAgentIntegration, type ConvertChatToIssue, type CopyOrganizationWorkspaceEntry, type CreateAgent, type CreateAgentHire, type CreateAgentIntegration, type CreateAgentKey, type CreateApproval, type CreateAssetImageMetadata, type CreateAutomation, type CreateAutomationTrigger, type CreateCalendarEvent, type CreateCalendarSource, type CreateChatAttachmentMetadata, type CreateChatContextLink, type CreateChatConversation, type CreateChatFirstTurn, type CreateChatQueuedMessage, type CreateCliAuthChallenge, type CreateCompanyInvite, type CreateCostEvent, type CreateFinanceEvent, type CreateGoal, type CreateIssue, type CreateIssueAttachmentMetadata, type CreateIssueLabel, type CreateIssueWorkProduct, type CreateIssueWorkspaceAttachment, type CreateLibraryDocument, type CreateMessengerCustomGroup, type CreateMessengerCustomGroupWithEntries, type CreateOpenClawInvitePrompt, type CreateOrganization, type CreateOrganizationResource, type CreateOrganizationWorkspaceDirectory, type CreateOrganizationWorkspaceFile, type CreateProject, type CreateProjectInlineResource, type CreateSecret, type CreateSideChat, type CreateWorkspaceBackup, type ForkChatConversation, type GoogleCalendarSync, type InstallPlugin, type LinkIssueApproval, type ListJoinRequestsQuery, type ListPluginState, type MockFeishuInboundEvent, type MoveOrganizationWorkspaceEntry, type OrganizationIntelligenceProfilePurposeInput, type OrganizationPortabilityExport, type OrganizationPortabilityImport, type OrganizationPortabilityPreview, type PatchPluginConfig, type PluginJobDeclarationInput, type PluginLauncherActionDeclarationInput, type PluginLauncherDeclarationInput, type PluginLauncherRenderDeclarationInput, type PluginManifestV1Input, type PluginStateScopeKey, type PluginToolDeclarationInput,
+  portabilitySidebarOrderSchema, portabilitySourceSchema, portabilityTargetSchema, projectExecutionWorkspacePolicySchema, projectResourceAttachmentInputSchema, projectResourceAttachmentRoleSchema, renameOrganizationWorkspaceEntrySchema, reorderIssueSchema, reorderMessengerCustomGroupEntriesSchema, reorderMessengerCustomGroupsSchema, reportIssueCommitSchema, requestApprovalRevisionSchema, resetAgentSessionSchema, resolveApprovalSchema, resolveBudgetIncidentSchema, resolveChatOperationProposalSchema, resolveCliAuthChallengeSchema, restoreLibraryDocumentRevisionSchema, restoreWorkspaceBackupSchema, resubmitApprovalSchema, rotateAutomationTriggerSecretSchema, rotateSecretSchema, runAutomationSchema, runWorkspaceStatusSchema, sanitizeChatStructuredPayload, setChatProjectContextSchema, setPluginStateSchema, steerChatQueuedMessageSchema, testAgentRuntimeEnvironmentSchema, uninstallPluginSchema, updateAgentInstructionsBundleSchema, updateAgentInstructionsPathSchema, updateAgentIntegrationSettingsSchema, updateAgentPermissionsSchema, updateAgentSchema, updateAutomationSchema, updateAutomationTriggerSchema, updateBudgetSchema, updateCalendarEventSchema, updateCalendarSourceSchema, updateChatConversationSchema, updateChatConversationUserStateSchema, updateChatQueuedMessageSchema, updateExecutionWorkspaceSchema, updateGoalSchema, updateGoogleCalendarOAuthConfigSchema, updateIssueCommentSchema, updateIssueLabelSchema, updateIssueSchema, updateIssueWorkProductSchema, updateLibraryDocumentSchema, updateMemberPermissionsSchema, updateMessengerCustomGroupSchema, updateMessengerThreadUserStateSchema, updateOrganizationBrandingSchema, updateOrganizationResourceSchema, updateOrganizationSchema, updateOrganizationWorkspaceFileSchema, updatePluginStatusSchema, updateProjectResourceAttachmentSchema, updateProjectSchema, updateRunWorkspaceSchema, updateSecretSchema, updateUserCompanyAccessSchema, uploadedAgentIconSchema, upsertAgentInstructionsFileSchema, upsertBudgetPolicySchema, upsertOrganizationIntelligenceProfileSchema, upsertPluginConfigSchema, wakeAgentSchema, workspaceBackupTriggerSourceSchema, workspaceWebPreviewNetworkModeSchema, type AcceptInvite, type AddApprovalComment, type AddChatMessage, type AddIssueComment, type AgentSkillEnable, type AgentSkillSync, type AssignMessengerCustomGroupEntry, type BoardCliAuthAccessLevel, type CalendarEventListQuery, type CancelChatQueuedMessage, type ChatAutomationCreate, type ChatDraft, type ChatOperationProposal, type ChatQueuedMessagePayloadInput, type CheckoutIssue, type ClaimJoinRequestApiKey, type ConnectAgentIntegration, type ConvertChatToIssue, type CopyOrganizationWorkspaceEntry, type CreateAgent, type CreateAgentHire, type CreateAgentIntegration, type CreateAgentKey, type CreateApproval, type CreateAssetImageMetadata, type CreateAutomation, type CreateAutomationTrigger, type CreateCalendarEvent, type CreateCalendarSource, type CreateChatAttachmentMetadata, type CreateChatContextLink, type CreateChatConversation, type CreateChatFirstTurn, type CreateChatQueuedMessage, type CreateCliAuthChallenge, type CreateCompanyInvite, type CreateCostEvent, type CreateFinanceEvent, type CreateGoal, type CreateIssue, type CreateIssueAttachmentMetadata, type CreateIssueLabel, type CreateIssueWorkProduct, type CreateIssueWorkspaceAttachment, type CreateLibraryDocument, type CreateMessengerCustomGroup, type CreateMessengerCustomGroupWithEntries, type CreateOpenClawInvitePrompt, type CreateOrganization, type CreateOrganizationResource, type CreateOrganizationWorkspaceDirectory, type CreateOrganizationWorkspaceFile, type CreateProject, type CreateProjectInlineResource, type CreateSecret, type CreateSideChat, type CreateWorkspaceBackup, type ForkChatConversation, type GoogleCalendarSync, type InstallPlugin, type LinkIssueApproval, type ListJoinRequestsQuery, type ListPluginState, type MockFeishuInboundEvent, type MoveOrganizationWorkspaceEntry, type OrganizationIntelligenceProfilePurposeInput, type OrganizationPortabilityExport, type OrganizationPortabilityImport, type OrganizationPortabilityPreview, type PatchPluginConfig, type PluginJobDeclarationInput, type PluginLauncherActionDeclarationInput, type PluginLauncherDeclarationInput, type PluginLauncherRenderDeclarationInput, type PluginManifestV1Input, type PluginStateScopeKey, type PluginToolDeclarationInput,
   type PluginUiSlotDeclarationInput, type PluginWebhookDeclarationInput, type ProjectResourceAttachmentInputPayload, type RenameOrganizationWorkspaceEntry, type ReorderIssue, type ReorderMessengerCustomGroupEntries, type ReorderMessengerCustomGroups, type ReportIssueCommit, type RequestApprovalRevision, type ResetAgentSession, type ResolveApproval, type ResolveBudgetIncident, type ResolveChatOperationProposal, type ResolveCliAuthChallenge, type RestoreLibraryDocumentRevision, type RestoreWorkspaceBackup, type ResubmitApproval, type RotateAutomationTriggerSecret, type RotateSecret, type RunAutomation, type SetChatProjectContext, type SetPluginState, type SteerChatQueuedMessage, type TestAgentRuntimeEnvironment, type UninstallPlugin, type UpdateAgent, type UpdateAgentInstructionsBundle, type UpdateAgentInstructionsPath, type UpdateAgentIntegrationSettings, type UpdateAgentPermissions, type UpdateAutomation, type UpdateAutomationTrigger, type UpdateBudget, type UpdateCalendarEvent, type UpdateCalendarSource, type UpdateChatConversation, type UpdateChatConversationUserState, type UpdateChatQueuedMessage, type UpdateExecutionWorkspace, type UpdateGoal, type UpdateGoogleCalendarOAuthConfig, type UpdateIssue, type UpdateIssueComment, type UpdateIssueLabel, type UpdateIssueWorkProduct, type UpdateLibraryDocument, type UpdateMemberPermissions, type UpdateMessengerCustomGroup, type UpdateMessengerThreadUserState, type UpdateOrganization,
   type UpdateOrganizationBranding, type UpdateOrganizationResource, type UpdateOrganizationWorkspaceFile, type UpdatePluginStatus, type UpdateProject, type UpdateProjectResourceAttachment, type UpdateRunWorkspace, type UpdateSecret, type UpdateUserCompanyAccess, type UpsertAgentInstructionsFile, type UpsertBudgetPolicy, type UpsertOrganizationIntelligenceProfileInput, type UpsertPluginConfig, type WakeAgent
 } from "./validators/index.js";
 
 export { deriveAgentUrlKey, isUuidLike, normalizeAgentUrlKey } from "./agent-url-key.js";
 export { API, API_PREFIX } from "./api.js";
+export {
+  createMarkdownSourceBoundaryMap,
+  type MarkdownSourceBoundaryMap
+} from "./markdown-source-boundary.js";
 export { formatMessengerPreview, formatMessengerTitle, type MessengerPreviewOptions } from "./messenger-preview.js";
 export {
   ORGANIZATION_ISSUE_KEY_MAX_LENGTH,
@@ -319,6 +398,11 @@ export {
   type TokenUsageParts,
   type TokenUsageSummary
 } from "./token-usage.js";
+
+export {
+  isInternalChatTranscriptLifecycleEntry,
+  type ChatTranscriptLifecycleCandidate
+} from "./chat-transcript-visibility.js";
 
 export {
   ISSUE_UPDATE_ACTIVITY_METADATA_KEYS,

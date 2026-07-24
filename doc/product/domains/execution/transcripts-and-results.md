@@ -13,6 +13,8 @@ related_code:
   - server/src/services/heartbeat-run-reference.ts
   - server/src/routes/chats.stream-routes.ts
   - server/src/services/chat-generation-protocol.ts
+  - server/src/services/chat-inline-annotations.ts
+  - packages/shared/src/chat-transcript-provenance.ts
   - ui/src/components/transcript/RunTranscriptView.common.tsx
   - ui/src/components/transcript/RunTranscriptView.normalize.tsx
   - ui/src/components/transcript/RunTranscriptView.tsx
@@ -22,6 +24,8 @@ related_tests:
   - server/src/__tests__/heartbeat-run-summary.test.ts
   - server/src/__tests__/chat-routes.test.ts
   - server/src/services/chat-generation-protocol.test.ts
+  - server/src/services/chat-inline-annotations.test.ts
+  - packages/shared/src/chat-transcript-provenance.test.ts
   - tests/e2e/run-transcript-detail.spec.ts
   - tests/e2e/chat-concurrent-streaming.spec.ts
   - ui/src/components/transcript/RunTranscriptView.test.tsx
@@ -64,6 +68,12 @@ Behavior:
   such as `reasoning started` / `reasoning completed` or Rudder's internal
   result-envelope delimiters. Those raw entries remain attached to the run for
   diagnostics and audit.
+- Under `CHAT.RESPONSE.ANNOTATION.001`, an operator may deliberately quote
+  already-loaded, visible assistant/thinking prose from a terminal generation.
+  The quote retains its generation id plus inclusive generation-event sequence
+  range. It becomes user-authored message context only through that explicit
+  annotation action; the selected Process text remains Run evidence and is not
+  promoted into assistant body or result summary.
 - Consecutive completed tool activity is summarized as a compact semantic digest
   such as skills used, files read or edited, searches performed, and commands
   run. Expanding the digest reveals the individual structured actions and keeps
@@ -105,6 +115,10 @@ Invariant:
   from the same structured transcript evidence; rendered prose must never be
   reparsed to guess a path. Live and persisted transcripts must project the same
   semantic actions.
+- A Process annotation may address only one visible prose block. It cannot use
+  transcript-array index or timestamp as identity, cross hidden/tool/lifecycle
+  evidence, or make otherwise hidden reasoning visible. Provenance survives
+  normalization by merging only compatible contiguous generation-event ranges.
 
 Rationale:
 
@@ -118,6 +132,8 @@ Related code:
 - `server/src/services/heartbeat-run-reference.ts`
 - `server/src/routes/chats.stream-routes.ts`
 - `server/src/services/chat-generation-protocol.ts`
+- `server/src/services/chat-inline-annotations.ts`
+- `packages/shared/src/chat-transcript-provenance.ts`
 - `ui/src/components/transcript/RunTranscriptView.common.tsx`
 - `ui/src/components/transcript/RunTranscriptView.normalize.tsx`
 - `ui/src/components/transcript/RunTranscriptView.tsx`
@@ -133,6 +149,8 @@ Related tests:
 - `server/src/__tests__/heartbeat-run-summary.test.ts`
 - `server/src/__tests__/chat-routes.test.ts`
 - `server/src/services/chat-generation-protocol.test.ts`
+- `server/src/services/chat-inline-annotations.test.ts`
+- `packages/shared/src/chat-transcript-provenance.test.ts`
 - `packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts`
 - `packages/agent-runtimes/codex-local/src/server/parse.test.ts`
 - `packages/agent-runtimes/claude-local/src/server/parse.test.ts`
@@ -141,3 +159,4 @@ Related tests:
 - `ui/src/components/transcript/RunTranscriptView.test.tsx`
 - `ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx`
 - `tests/e2e/chat-transcript-internal-events.spec.ts`
+- `tests/e2e/chat-response-annotations.spec.ts`

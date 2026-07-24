@@ -44,6 +44,62 @@ describe("Desktop Local App registry", () => {
     expect((await stat(registryPath)).mode & 0o777).toBe(0o600);
   });
 
+  it("quarantines an oversized persisted icon instead of returning it to the renderer", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-icon-tamper-"));
+    const registryPath = path.join(root, "local-apps.json");
+    const registry = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    await registry.createDefinition(prepared);
+    const state = JSON.parse(await readFile(registryPath, "utf8")) as {
+      definitions: Array<{ iconDataUrl: string }>;
+    };
+    state.definitions[0].iconDataUrl = `data:image/png;base64,${"A".repeat(512 * 1024)}`;
+    await writeFile(registryPath, JSON.stringify(state), { mode: 0o600 });
+
+    const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    await expect(reloaded.listDefinitions()).resolves.toEqual([]);
+    expect((await readdir(root)).some((name) => name.startsWith("local-apps.json.corrupt-"))).toBe(true);
+  });
+
+  it("quarantines a persisted SVG that bypasses safe icon discovery", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-icon-svg-tamper-"));
+    const registryPath = path.join(root, "local-apps.json");
+    const registry = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    await registry.createDefinition(prepared);
+    const state = JSON.parse(await readFile(registryPath, "utf8")) as {
+      definitions: Array<{ iconDataUrl: string }>;
+    };
+    state.definitions[0].iconDataUrl = `data:image/svg+xml;base64,${Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+    ).toString("base64")}`;
+    await writeFile(registryPath, JSON.stringify(state), { mode: 0o600 });
+
+    const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    await expect(reloaded.listDefinitions()).resolves.toEqual([]);
+    expect((await readdir(root)).some((name) => name.startsWith("local-apps.json.corrupt-"))).toBe(true);
+  });
+
+  it("round-trips a valid icon at the discovery size boundary", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-icon-boundary-"));
+    const registryPath = path.join(root, "local-apps.json");
+    const registry = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    const prepared = await registry.prepareDefinition(draft(root));
+    await registry.createDefinition(prepared);
+    const state = JSON.parse(await readFile(registryPath, "utf8")) as {
+      definitions: Array<{ iconDataUrl: string }>;
+    };
+    const png = Buffer.alloc(384 * 1024);
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(png);
+    state.definitions[0].iconDataUrl = `data:image/png;base64,${png.toString("base64")}`;
+    await writeFile(registryPath, JSON.stringify(state), { mode: 0o600 });
+
+    const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
+    await expect(reloaded.listDefinitions()).resolves.toMatchObject([{
+      iconDataUrl: state.definitions[0].iconDataUrl,
+    }]);
+  });
+
   it("uses canonical cwd and invalidates approval when any trusted launch field changes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-fingerprint-"));
     const actual = path.join(root, "actual");

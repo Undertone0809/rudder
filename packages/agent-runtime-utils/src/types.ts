@@ -221,6 +221,7 @@ export type AgentRuntimeControlInterruptResult =
 export interface AgentRuntimeControlSteerInput {
   text: string;
   clientMessageId: string;
+  media?: AgentRuntimeMediaAttachment[];
 }
 
 export type AgentRuntimeControlSteerResult =

@@ -293,6 +293,7 @@ describe("Rudder Browser guest policy", () => {
     const guestHandlers = new Map<string, (...args: any[]) => void>();
     let popupHandler: ((details: { url: string }) => { action: string }) | undefined;
     const guest = {
+      id: 42,
       isDestroyed: vi.fn(() => false),
       close: vi.fn(),
       setWindowOpenHandler: vi.fn((handler) => {
@@ -306,7 +307,7 @@ describe("Rudder Browser guest policy", () => {
 
     expect(popupHandler?.({ url: "https://example.com/new" })).toEqual({ action: "deny" });
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(openBrowserPopup).toHaveBeenCalledWith("https://example.com/new");
+    expect(openBrowserPopup).toHaveBeenCalledWith("https://example.com/new", 42);
     expect(popupHandler?.({ url: "file:///tmp/private.txt" })).toEqual({ action: "deny" });
     expect(popupHandler?.({ url: "file://remote-host/share/private.txt" })).toEqual({ action: "deny" });
     expect(popupHandler?.({ url: "http://localhost:3100/api/orgs" })).toEqual({ action: "deny" });

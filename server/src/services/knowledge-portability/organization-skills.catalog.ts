@@ -49,6 +49,7 @@ export type ImportedSkill = {
   trustLevel: OrganizationSkillTrustLevel;
   compatibility: OrganizationSkillCompatibility;
   fileInventory: OrganizationSkillFileInventoryEntry[];
+  files?: Record<string, string | Uint8Array>;
   metadata: Record<string, unknown> | null;
 };
 
@@ -83,6 +84,7 @@ export type SkillSourceMeta = {
   workspaceId?: string;
   workspaceName?: string;
   workspaceCwd?: string;
+  installationVersion?: number;
 };
 
 export type LocalSkillInventoryMode = "full" | "project_root";
@@ -298,6 +300,24 @@ export function normalizePortablePath(input: string) {
     parts.push(segment);
   }
   return parts.join("/");
+}
+
+export function normalizeSafeRelativeSkillPath(input: string) {
+  if (input.includes("\0")) return null;
+  const portable = input.replace(/\\/g, "/");
+  if (
+    portable.startsWith("/")
+    || /^[A-Za-z]:\//.test(portable)
+  ) {
+    return null;
+  }
+  const parts: string[] = [];
+  for (const segment of portable.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") return null;
+    parts.push(segment);
+  }
+  return parts.length > 0 ? parts.join("/") : null;
 }
 
 export async function statPath(targetPath: string) {
@@ -1094,6 +1114,18 @@ export function mergeRequiredBundledSkillKeys(
 }
 
 export function normalizeSkillDirectory(skill: OrganizationSkill) {
+  const metadata = getSkillMeta(skill);
+  if (
+    metadata.installationVersion === 1
+    && !isBundledRudderSourceKind(asString(metadata.sourceKind))
+  ) {
+    return path.resolve(
+      resolveManagedSkillsRoot(skill.orgId),
+      "__installed__",
+      buildSkillRuntimeName(skill.key, skill.slug),
+    );
+  }
+  if (asString(metadata.sourceKind) === "community_preset") return null;
   if ((skill.sourceType !== "local_path" && skill.sourceType !== "catalog") || !skill.sourceLocator) return null;
   const resolved = path.resolve(skill.sourceLocator);
   if (path.basename(resolved).toLowerCase() === "skill.md") {
@@ -1148,16 +1180,22 @@ export function resolveWorkspaceEditPath(orgId: string, sourcePath: string | nul
 }
 
 export function resolveLocalSkillFilePath(skill: OrganizationSkill, relativePath: string) {
-  const normalized = normalizePortablePath(relativePath);
+  const normalized = normalizeSafeRelativeSkillPath(relativePath);
+  if (!normalized) return null;
   const skillDir = normalizeSkillDirectory(skill);
-  if (skillDir) {
-    return path.resolve(skillDir, normalized);
+  const root = skillDir ?? (skill.sourceLocator ? path.resolve(skill.sourceLocator) : null);
+  if (!root) return null;
+  const absoluteRoot = path.resolve(root);
+  const target = path.resolve(absoluteRoot, normalized);
+  const relativeTarget = path.relative(absoluteRoot, target);
+  if (
+    !relativeTarget
+    || relativeTarget.startsWith("..")
+    || path.isAbsolute(relativeTarget)
+  ) {
+    return null;
   }
-
-  if (!skill.sourceLocator) return null;
-  const fallbackRoot = path.resolve(skill.sourceLocator);
-  const directPath = path.resolve(fallbackRoot, normalized);
-  return directPath;
+  return target;
 }
 
 export function inferLanguageFromPath(filePath: string) {
@@ -1202,11 +1240,11 @@ export function deriveSkillSourceInfo(skill: OrganizationSkill): {
 
   if (asString(metadata.sourceKind) === "community_preset") {
     return {
-      editable: false,
-      editableReason: "Community preset skills are read-only.",
+      editable: true,
+      editableReason: null,
       sourceLabel: "Community preset",
       sourceBadge: "community",
-      sourcePath: null,
+      sourcePath: localSkillDir,
     };
   }
 
@@ -1214,11 +1252,11 @@ export function deriveSkillSourceInfo(skill: OrganizationSkill): {
     const owner = asString(metadata.owner) ?? null;
     const repo = asString(metadata.repo) ?? null;
     return {
-      editable: false,
-      editableReason: "Skills.sh-managed skills are read-only.",
+      editable: true,
+      editableReason: null,
       sourceLabel: skill.sourceLocator ?? (owner && repo ? `${owner}/${repo}` : null),
       sourceBadge: "skills_sh",
-      sourcePath: null,
+      sourcePath: localSkillDir,
     };
   }
 
@@ -1226,21 +1264,21 @@ export function deriveSkillSourceInfo(skill: OrganizationSkill): {
     const owner = asString(metadata.owner) ?? null;
     const repo = asString(metadata.repo) ?? null;
     return {
-      editable: false,
-      editableReason: "Remote GitHub skills are read-only. Fork or import locally to edit them.",
+      editable: true,
+      editableReason: null,
       sourceLabel: owner && repo ? `${owner}/${repo}` : skill.sourceLocator,
       sourceBadge: "github",
-      sourcePath: null,
+      sourcePath: localSkillDir,
     };
   }
 
   if (skill.sourceType === "url") {
     return {
-      editable: false,
-      editableReason: "URL-based skills are read-only. Save them locally to edit them.",
+      editable: true,
+      editableReason: null,
       sourceLabel: skill.sourceLocator,
       sourceBadge: "url",
-      sourcePath: null,
+      sourcePath: localSkillDir,
     };
   }
 
@@ -1272,11 +1310,11 @@ export function deriveSkillSourceInfo(skill: OrganizationSkill): {
   }
 
   return {
-    editable: false,
-    editableReason: "This skill source is read-only.",
+    editable: true,
+    editableReason: null,
     sourceLabel: skill.sourceLocator,
     sourceBadge: "catalog",
-    sourcePath: null,
+    sourcePath: localSkillDir,
   };
 }
 

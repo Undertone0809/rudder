@@ -47,7 +47,7 @@ commit_refs:
   - 678386c29
   - 7bc8a9534
   - 42147d67d
-updated_at: 2026-07-23
+updated_at: 2026-07-24
 ---
 
 # Messenger Work Packages and Desktop Local Apps
@@ -77,10 +77,9 @@ Affected contracts are `MESSENGER.SAVED.VIEWS.001`,
 
 This implementation restores the already-registered Saved View capability but
 intentionally changes its fixed-section and single-resource identity rules.
-The current user authorized implementation, not semantic edits to the guarded
-`doc/product/**` registry. Code, tests, and this plan therefore carry the
-concrete delta; registry synchronization is deferred pending explicit user
-authorization.
+On 2026-07-24 the user explicitly authorized the guarded `doc/product/**`
+registry update. The delta is now synchronized in the affected collaboration
+and Browser contracts plus the new `DESKTOP.LOCAL.APPS.001` contract.
 
 ## Invariants
 
@@ -114,9 +113,9 @@ authorization.
 
 The operator opens a Browser tab beside a stable Chat and selects `Keep in
 Messenger`. The Server creates one editable group named from the Chat title,
-adds the Chat and Saved View, and returns the placement. The Browser stays open
-and the current route does not change. Retrying the same mutation creates no
-duplicates.
+adds the Chat and Saved View, and returns the placement. The exact Browser guest
+moves into Messenger Main after Main claims its host lease; only that Side tab
+detaches. Retrying the same mutation creates no duplicates.
 
 ### 2. Ungrouped Issue saves a Library file
 
@@ -152,10 +151,10 @@ stale-write conflict handling.
 
 ### 7. Restore and remove
 
-Selecting a Saved View opens or focuses its Side Panel instance without
-changing unread state. Remove deletes the Saved View and membership but does
-not close its open panel. A group remains until the operator explicitly
-separates it.
+Selecting a Saved View opens or focuses its exact Main Workbench instance
+without changing unread state. Remove deletes the Saved View and membership but
+keeps an open Main tab as session-only. Closing Main keeps the durable row for a
+later cold reopen. A group remains until the operator explicitly separates it.
 
 ### 8. Protected group operations
 
@@ -240,7 +239,8 @@ device.
 - Add Keep actions to eligible Side Panel headers/address bar.
 - Add group chooser behavior outside Chat/Issue.
 - Hydrate/render Saved View rows directly inside custom groups.
-- Add a Saved View route workspace that focuses/restores the exact target.
+- Add a Saved View route workspace that focuses/restores the exact target in
+  Messenger Main.
 - Add `viewInstanceId` to resource targets and explicit New tab behavior.
 - Remove all fixed Saved, hidden, and loose rendering concepts.
 
@@ -286,8 +286,8 @@ device.
 ## Delivery Boundary
 
 Implementation and verification may be committed and pushed to `main` as the
-user requested. This plan does not authorize production deployment or semantic
-edits to `doc/product/**`.
+user requested. This plan does not authorize production deployment. The user
+separately authorized the semantic `doc/product/**` update on 2026-07-24.
 
 ## Delivery Evidence
 

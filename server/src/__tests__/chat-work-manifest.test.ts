@@ -200,6 +200,69 @@ describe("chatWorkManifestService", () => {
     expect(manifest.sources.filter((item) => item.url === "https://example.com/report")).toHaveLength(1);
   });
 
+  it("excludes annotation-owned attachments and quoted annotation content from work sources", async () => {
+    const { orgId, conversationId } = await seedBase("Annotations");
+    const messageId = randomUUID();
+    await db.insert(chatMessages).values({
+      id: messageId,
+      orgId,
+      conversationId,
+      role: "user",
+      body: "Please review the selected response.",
+    });
+    const [annotationAsset, ordinaryAsset] = await db.insert(assets).values([
+      {
+        orgId,
+        provider: "local",
+        objectKey: `annotation-${randomUUID()}`,
+        contentType: "text/plain",
+        byteSize: 12,
+        sha256: randomUUID(),
+        originalFilename: "annotation-context.txt",
+        createdByUserId: "operator",
+      },
+      {
+        orgId,
+        provider: "local",
+        objectKey: `ordinary-${randomUUID()}`,
+        contentType: "text/plain",
+        byteSize: 12,
+        sha256: randomUUID(),
+        originalFilename: "ordinary-source.txt",
+        createdByUserId: "operator",
+      },
+    ]).returning();
+    const [annotationAttachment] = await db.insert(chatAttachments).values([
+      { orgId, conversationId, messageId, assetId: annotationAsset!.id },
+      { orgId, conversationId, messageId, assetId: ordinaryAsset!.id },
+    ]).returning();
+    await db.update(chatMessages).set({
+      structuredPayload: {
+        inlineAnnotations: [{
+          id: randomUUID(),
+          surface: "assistant_body",
+          selectedText: "https://quoted.example/private",
+          comment: "[private](library-file://file?p=private.md)",
+          sourceConversationId: conversationId,
+          sourceMessageId: randomUUID(),
+          sourceHash: "a".repeat(64),
+          start: 0,
+          end: 5,
+          prefix: "",
+          suffix: "",
+          attachmentIds: [annotationAttachment!.id],
+        }],
+      },
+    }).where(eq(chatMessages.id, messageId));
+
+    await svc.reconcileConversation(conversationId);
+    const manifest = await svc.getConversationManifest(conversationId);
+
+    expect(manifest.sources.map((item) => item.title)).toEqual(["ordinary-source.txt"]);
+    expect(manifest.sources.some((item) => item.url?.includes("quoted.example"))).toBe(false);
+    expect(manifest.sources.some((item) => item.title === "private")).toBe(false);
+  });
+
   it("excludes trusted message-owned inline visuals and removes historical misclassified outputs", async () => {
     const { orgId, agentId, conversationId } = await seedBase("InlineVisual");
     const messageId = randomUUID();

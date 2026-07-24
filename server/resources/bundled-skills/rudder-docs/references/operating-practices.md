@@ -42,8 +42,13 @@ because work is executable, durable, long-running, or reviewable.
 
 ## Ownership, Checkout, And Wake Scope
 
-- Before issue-scoped execution, checkout the assigned issue. Never retry a
-  checkout that returns `409`; stop and report the ownership conflict.
+- Before checkout-eligible assignment or follow-up execution, checkout the
+  assigned issue. Never retry a checkout that returns `409`; stop and report
+  the ownership conflict.
+- When an explicit comment wake identifies the authenticated agent as the
+  issue's current assignee or reviewer, the run already holds the issue
+  execution lease. Work the explicit request in any issue status without
+  checkout, reassignment, or an implicit status change.
 - Never look for unassigned work. Work the authenticated agent's assignee or
   reviewer inbox and the explicit wake context.
 - Self-assign only when a wake comment explicitly transfers ownership.
@@ -85,9 +90,11 @@ If blocked, set the issue to `blocked`, identify the blocker, name the next
 actor or action, and leave the blocker comment before exit. Do not present
 partial work as complete.
 
-A reviewer does not take over implementation unless explicitly asked.
-Reviewer work may cover `in_review` or `blocked`; the latter is blocker triage,
-not implementation ownership. Record one structured durable decision:
+A reviewer does not take over implementation unless explicitly asked. Ordinary
+explicit reviewer work may happen in any issue status while preserving
+ownership and status. Formal reviewer decisions cover `in_review` or `blocked`;
+the latter is blocker triage, not implementation ownership. Record one
+structured durable decision for a formal review:
 
 - `--decision approve` for accepted work;
 - `--decision request_changes` for required changes;

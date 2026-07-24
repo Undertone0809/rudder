@@ -16,7 +16,7 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/built-in-browser"
 
 ## 定义
 
-Rudder Desktop 带有内置 Browser，可以让网页工作留在当前 Rudder 页面旁边。普通网页链接可以在 `Side Panel` 的 Browser 标签页打开，负责人也可以改用系统浏览器。
+Rudder Desktop 带有内置 Browser，可以让网页工作留在当前 Rudder 页面旁边。普通网页链接可以在 `Side Panel` 的 Browser 标签页打开；负责人也可以把同一个实时标签页移入 Messenger 主工作区，或改用系统浏览器。移动时会保留这个标签页的历史记录、表单状态、滚动位置和缩放比例。
 
 网站配置属于当前操作系统用户和这个 Rudder 实例。同一本地实例中的所有组织会共用它。因此，在一个组织中登录某个网站后，切换到另一个组织时，这个网站可能仍保持登录。
 
@@ -32,7 +32,9 @@ Agent 控制采用另一条边界。受支持的本地 Agent 运行只能使用�
 
 ## 什么时候有用
 
-人在 `Side Panel` 中查看网页时，可以使用内置 Browser。符合条件的本地 Agent 需要以可审计方式完成导航、读取、点击、输入或截图时，也可以使用。Agent Browser 只在 Desktop 的 `local_trusted` 模式下可用，而且要求实例已启用此功能，运行环境必须是受支持的 Claude、Codex、OpenCode 或 Pi 本地适配器。
+人在 `Side Panel` 中并排查看网页，或让网页填满 Messenger 主工作区时，可以使用内置 Browser。符合条件的本地 Agent 需要以可审计方式完成导航、读取、点击、输入或截图时，也可以使用。Agent Browser 只在 Desktop 的 `local_trusted` 模式下可用，而且要求实例已启用此功能，运行环境必须是受支持的 Claude、Codex、OpenCode 或 Pi 本地适配器。
+
+每个组织在侧边和主工作区合计最多保留八个实时的负责人 Browser 标签页。移动已有标签页不会占用额外名额，即使达到上限也仍可移动。请求打开第九个新标签页时，Rudder 会明确提示失败，不会静默替换或移除无关标签页。
 
 在 macOS 上，负责人确认影响范围后，可以从选定的 Chrome、Edge 或 Brave 配置导入受支持的 Cookie。导入范围不包括密码、历史记录、书签、扩展或下载内容。
 

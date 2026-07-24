@@ -113,6 +113,7 @@ describe("Messenger custom group title routes", () => {
       "Planning and Issues",
       "folder::amber",
       ["chat:chat-1", "issues"],
+      undefined,
     );
   });
 
@@ -135,6 +136,27 @@ describe("Messenger custom group title routes", () => {
       "Planning chat",
       "folder::amber",
       ["chat:chat-1", "issues"],
+      undefined,
+    );
+  });
+
+  it("forwards the exact loose row anchor for atomic group reuse", async () => {
+    const res = await request(createApp())
+      .post("/api/orgs/org-1/messenger/groups/merge")
+      .send({
+        name: "Planning chat",
+        itemKeys: ["chat:chat-1", "saved-view:30000000-0000-4000-8000-000000000001"],
+        anchorItemKey: "chat:chat-1",
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockMessengerService.createCustomGroupWithEntries).toHaveBeenCalledWith(
+      "org-1",
+      "user-1",
+      "Planning chat",
+      null,
+      ["chat:chat-1", "saved-view:30000000-0000-4000-8000-000000000001"],
+      "chat:chat-1",
     );
   });
 
@@ -219,6 +241,21 @@ describe("Messenger Saved View and generic group routes", () => {
     expect(mockSavedViewsService.keep).toHaveBeenCalledWith("org-1", "user-1", expect.objectContaining({
       target: expect.objectContaining({ kind: "browser", viewInstanceId: "view-1" }),
       placement: { kind: "group", groupId: "55555555-5555-4555-8555-555555555555" },
+    }));
+
+    mockSavedViewsService.keep.mockResolvedValueOnce({ savedView: { id: "view-2" }, group: null });
+    const keptLoose = await request(app)
+      .post("/api/orgs/org-1/messenger/saved-views/keep")
+      .send({
+        target: { kind: "library_file", filePath: "README.md", viewInstanceId: "view-2" },
+        title: "README",
+        clientMutationId: "66666666-6666-4666-8666-666666666666",
+        placement: { kind: "loose" },
+      });
+    expect(keptLoose.status).toBe(201);
+    expect(keptLoose.body).toEqual({ savedView: { id: "view-2" }, group: null });
+    expect(mockSavedViewsService.keep).toHaveBeenLastCalledWith("org-1", "user-1", expect.objectContaining({
+      placement: { kind: "loose" },
     }));
 
     expect((await request(app).get(`/api/orgs/org-1/messenger/saved-views/${savedViewId}`)).status).toBe(200);

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref, createMarkdownSourceBoundaryMap } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -9,6 +9,12 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImagePreviewProvider } from "../context/ImagePreviewContext";
 import { ThemeProvider } from "../context/ThemeContext";
+import {
+  CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
+  CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+  resolveChatAnnotationRange,
+  restoreChatAnnotationRange,
+} from "../lib/chat-response-annotation-selection";
 import { __clearWebsiteMetadataIconCacheForTests, MarkdownBody, WebsiteLinkIcon } from "./MarkdownBody";
 import type { MentionOption } from "./MarkdownEditor";
 import {
@@ -283,6 +289,235 @@ async function advanceTimersAndFlush(ms: number) {
 }
 
 describe("MarkdownBody", () => {
+  it("stores raw source offsets alongside rendered offsets after response normalization", () => {
+    const source = "Plan\\n\\n-[]任务\\n<br />\\nDone";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const task = container.querySelector("li")!;
+    const paragraphs = Array.from(container.querySelectorAll("p"));
+    const done = paragraphs.at(-1)!;
+    const taskStart = Number(task.dataset.markdownSourceStart);
+    const taskEnd = Number(task.dataset.markdownSourceEnd);
+    const doneStart = Number(done.dataset.markdownSourceStart);
+    const doneEnd = Number(done.dataset.markdownSourceEnd);
+
+    expect(source.slice(taskStart, taskEnd)).toBe("-[]任务");
+    expect(source.slice(doneStart, doneEnd)).toBe("Done");
+    expect(task.dataset.markdownRenderedSourceStart).not.toBe(task.dataset.markdownSourceStart);
+    expect(done.dataset.markdownRenderedSourceStart).not.toBe(done.dataset.markdownSourceStart);
+  });
+
+  it("resolves normalized DOM selections to canonical raw message ranges", () => {
+    const source = "Plan\\n\\n-[]任务\\n<br />\\nDone";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const sourceRoot = container.querySelector<HTMLElement>(".rudder-markdown")!;
+    sourceRoot.setAttribute(CHAT_ANNOTATION_SOURCE_ATTRIBUTE, "assistant:message-normalized");
+    sourceRoot.setAttribute(CHAT_ANNOTATION_BLOCK_ATTRIBUTE, "message-normalized");
+    const taskText = Array.from(sourceRoot.querySelector("li")!.childNodes)
+      .find((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.includes("任务"))!;
+    const doneText = Array.from(sourceRoot.querySelectorAll("p")).at(-1)!.firstChild!;
+    const range = document.createRange();
+    range.setStart(taskText, taskText.textContent!.indexOf("任务"));
+    range.setEnd(doneText, "Done".length);
+
+    const result = resolveChatAnnotationRange({
+      range,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+    expect(result).toMatchObject({
+      start: source.indexOf("任务"),
+      end: source.length,
+    });
+
+    const restored = restoreChatAnnotationRange({
+      sourceRoot,
+      source,
+      start: source.indexOf("任务"),
+      end: source.length,
+    });
+    expect(restored?.startContainer).toBe(taskText);
+    expect(restored?.startOffset).toBe(taskText.textContent!.indexOf("任务"));
+    expect(restored?.endContainer).toBe(doneText);
+    expect(restored?.endOffset).toBe("Done".length);
+  });
+
+  it("maps generated bare-agent mention Markdown back to the original mention text", () => {
+    const source = "你好 @Alice 👩🏽‍💻 &amp; 完成";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody
+          agentMentions={[{ name: "Alice", agentId: "agent-1" }]}
+        >
+          {source}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+    const mention = container.querySelector<HTMLElement>(
+      '[data-mention-kind="agent"]',
+    )!;
+    const start = Number(mention.dataset.markdownSourceStart);
+    const end = Number(mention.dataset.markdownSourceEnd);
+
+    expect(source.slice(start, end)).toBe("@Alice");
+    expect(Number(mention.dataset.markdownRenderedSourceEnd)).toBeGreaterThan(end);
+  });
+
+  it("maps selections over current mention and skill labels to immutable raw link spans", () => {
+    const issueId = "1664b23e-1111-4111-8111-111111111111";
+    const skillId = "2664b23e-1111-4111-8111-111111111111";
+    const issueLink = `[stale issue](${buildIssueMentionHref(issueId, "RUD-1")})`;
+    const skillHref = `skill://org/${skillId}?ref=stale-skill`;
+    const skillLink = `[stale-skill](${skillHref})`;
+    const source = `Review ${issueLink} with ${skillLink} before shipping.`;
+    markdownMentionsMock.mentions = [{
+      id: `issue:${issueId}`,
+      name: "RUD-42 Current issue title",
+      kind: "issue",
+      issueId,
+      issueIdentifier: "RUD-42",
+      issueStatus: "in_progress",
+    }];
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody
+          skillReferences={[{
+            href: skillHref,
+            label: "current-skill",
+            description: "Tooltip-only skill metadata",
+            categoryLabel: "Organization skill",
+          }]}
+        >
+          {source}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+    const sourceRoot = container.querySelector<HTMLElement>(".rudder-markdown")!;
+    sourceRoot.setAttribute(CHAT_ANNOTATION_SOURCE_ATTRIBUTE, "assistant:resolved-labels");
+    sourceRoot.setAttribute(CHAT_ANNOTATION_BLOCK_ATTRIBUTE, "resolved-labels");
+    const issueText = container.querySelector<HTMLElement>('[data-mention-kind="issue"]')!.firstChild!;
+    const skillText = container.querySelector<HTMLElement>('[data-skill-token="true"]')!.firstChild!;
+    const range = document.createRange();
+    range.setStart(issueText, 0);
+    range.setEnd(skillText, skillText.textContent!.length);
+
+    const result = resolveChatAnnotationRange({
+      range,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+
+    expect(result).toMatchObject({
+      selectedText: "RUD-42 Current issue title with current-skill",
+      start: source.indexOf(issueLink),
+      end: source.indexOf(skillLink) + skillLink.length,
+    });
+
+    const partialRange = document.createRange();
+    partialRange.setStart(issueText, "RUD-42 ".length);
+    partialRange.setEnd(skillText, "current".length);
+    const partial = resolveChatAnnotationRange({
+      range: partialRange,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+    const issueStart = source.indexOf(issueLink);
+    const skillStart = source.indexOf(skillLink);
+    expect(partial).toMatchObject({
+      selectedText: "Current issue title with current",
+      start: issueStart + createMarkdownSourceBoundaryMap(
+        issueLink,
+        "RUD-42 Current issue title",
+      ).renderedBoundaryToRaw["RUD-42 ".length],
+      end: skillStart + createMarkdownSourceBoundaryMap(
+        skillLink,
+        "current-skill",
+      ).renderedBoundaryToRaw["current".length],
+    });
+
+    const skillWrap = container.querySelector<HTMLElement>(".rudder-skill-token-wrap")!;
+    const trailingText = skillWrap.nextSibling!;
+    const spanningRange = document.createRange();
+    spanningRange.setStart(issueText, 0);
+    spanningRange.setEnd(trailingText, trailingText.textContent!.length);
+    const spanning = resolveChatAnnotationRange({
+      range: spanningRange,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+
+    expect(spanning).toMatchObject({
+      selectedText: "RUD-42 Current issue title with current-skill before shipping.",
+      start: source.indexOf(issueLink),
+      end: source.length,
+    });
+    expect(spanning?.selectedText).not.toContain("Tooltip-only");
+  });
+
+  it("maps a partial selection in a soft-break skill list to the exact raw source range", () => {
+    const source = [
+      "para-memory-files",
+      "rudder-docs",
+      "skill-creator",
+      "visualize",
+      "browser",
+    ].join("\n");
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const sourceRoot = container.querySelector<HTMLElement>(".rudder-markdown")!;
+    sourceRoot.setAttribute(CHAT_ANNOTATION_SOURCE_ATTRIBUTE, "assistant:skill-list");
+    sourceRoot.setAttribute(CHAT_ANNOTATION_BLOCK_ATTRIBUTE, "skill-list");
+    const paragraphText = sourceRoot.querySelector("p")!.firstChild!;
+    const rendered = paragraphText.textContent!;
+    const renderedStart = rendered.indexOf("skill-creator");
+    const selectedText = "skill-creato";
+    const range = document.createRange();
+    range.setStart(paragraphText, renderedStart);
+    range.setEnd(paragraphText, renderedStart + selectedText.length);
+
+    const result = resolveChatAnnotationRange({
+      range,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+
+    expect(result).toMatchObject({
+      selectedText,
+      start: source.indexOf(selectedText),
+      end: source.indexOf(selectedText) + selectedText.length,
+    });
+  });
+
   it("renders a file-type icon for local file links with source locations", () => {
     const container = render(
       <ThemeProvider>
@@ -457,6 +692,25 @@ describe("MarkdownBody", () => {
 
     expect(copyData.setData).toHaveBeenCalledWith("text/plain", source);
     expect(copyEvent.defaultPrevented).toBe(true);
+  });
+
+  it("exposes Markdown source offsets on inline formatting nodes for precise selections", () => {
+    const source = "Use **bold**, *emphasis*, ~~removed~~, and `code`.";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    for (const selector of ["strong", "em", "del", "code"]) {
+      const element = container.querySelector<HTMLElement>(selector);
+      expect(element, selector).toBeTruthy();
+      const start = Number(element?.dataset.markdownSourceStart);
+      const end = Number(element?.dataset.markdownSourceEnd);
+      expect(Number.isInteger(start), `${selector} start`).toBe(true);
+      expect(Number.isInteger(end), `${selector} end`).toBe(true);
+      expect(source.slice(start, end)).toContain(element?.textContent ?? "");
+    }
   });
 
   it("copies block code when code-block copy is enabled without adding inline-code buttons", async () => {

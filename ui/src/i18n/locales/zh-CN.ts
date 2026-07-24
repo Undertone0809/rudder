@@ -52,6 +52,11 @@ export const zhCN: Messages = {
   "browser.links.description": "此偏好与 Agent 的浏览器访问权限相互独立。",
   "browser.links.builtIn": "Rudder 浏览器",
   "browser.links.default": "默认浏览器",
+  "browser.onboarding.title": "在 Rudder 内继续浏览",
+  "browser.onboarding.description":
+    "Rudder 初始会使用内置浏览器打开网页链接。你可以在“设置 → 桌面应用 → 浏览器”中选择使用 Rudder 内置浏览器或系统默认浏览器。",
+  "browser.onboarding.settings": "浏览器设置",
+  "browser.onboarding.dismiss": "知道了",
   "browser.data.title": "浏览数据",
   "browser.data.description": "管理整个实例共享的浏览器配置文件。",
   "browser.data.trustDisclosure": "浏览数据和已登录的网站会话由此 Rudder 实例中的所有组织和 Agent 共享。",
@@ -644,4 +649,10 @@ export const zhCN: Messages = {
   "heartbeats.timerState": "定时心跳状态",
   "heartbeats.on": "开",
   "heartbeats.off": "关",
+  "chat.annotations.selectionUnavailable": "选区已不可用",
+  "chat.annotations.selectionUnavailableBody": "请重新选择回复中的文字后再试。",
+  "chat.annotations.couldNotAdd": "无法添加批注",
+  "chat.annotations.added": "已添加批注",
+  "chat.annotations.removed": "已移除批注",
+  "chat.annotations.moreDetailsPrompt": "请详细解释这段内容。",
 };

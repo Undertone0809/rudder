@@ -21,6 +21,7 @@ const issueTarget: SidePanelTarget = {
 
 function stubDesktopShell() {
   let closeListener: (() => void) | null = null;
+  let openEmptyListener: (() => void) | null = null;
   let browserResetListener: (() => void) | null = null;
   const desktopShell = {
     setSidePanelCloseShortcutActive: vi.fn(async () => undefined),
@@ -28,6 +29,12 @@ function stubDesktopShell() {
       closeListener = listener;
       return () => {
         closeListener = null;
+      };
+    }),
+    onOpenEmptySidePanel: vi.fn((listener: () => void) => {
+      openEmptyListener = listener;
+      return () => {
+        openEmptyListener = null;
       };
     }),
     onBrowserReset: vi.fn((listener: () => void) => {
@@ -44,6 +51,7 @@ function stubDesktopShell() {
   return {
     desktopShell,
     emitCloseActiveTab: () => closeListener?.(),
+    emitOpenEmpty: () => openEmptyListener?.(),
     emitBrowserReset: () => browserResetListener?.(),
   };
 }
@@ -524,6 +532,41 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "tab-count")).toBe("0");
   });
 
+  it("does not steal Command+W or the Desktop accelerator from a Main runtime", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const { desktopShell } = stubDesktopShell();
+    ({ container, root } = renderSidePanelProvider());
+    click(container, "Chat A");
+    click(container, "Open issue");
+
+    const mainHost = document.createElement("div");
+    mainHost.dataset.testid = "live-surface-runtime-host";
+    mainHost.dataset.ownerId = "main:org-a:view-a";
+    const mainInput = document.createElement("input");
+    mainHost.appendChild(mainInput);
+    document.body.appendChild(mainHost);
+    await act(async () => {
+      mainInput.focus();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(desktopShell.setSidePanelCloseShortcutActive)
+      .toHaveBeenLastCalledWith(false);
+
+    const shortcut = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "w",
+      metaKey: true,
+    });
+    act(() => mainInput.dispatchEvent(shortcut));
+
+    expect(shortcut.defaultPrevented).toBe(false);
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "tab-count")).toBe("1");
+    mainHost.remove();
+  });
+
   it("does not intercept the non-platform close-tab modifier", () => {
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     ({ container, root } = renderSidePanelProvider());
@@ -601,6 +644,26 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "tab-count")).toBe("0");
   });
 
+  it("opens an empty picker from Desktop without discarding existing tabs", async () => {
+    const { desktopShell, emitOpenEmpty } = stubDesktopShell();
+    ({ container, root } = renderSidePanelProvider());
+    click(container, "Chat A");
+    click(container, "Open issue");
+    click(container, "Hide");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(desktopShell.onOpenEmptySidePanel).toHaveBeenCalled();
+    act(() => emitOpenEmpty());
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "active-key")).toBe("");
+    expect(text(container, "tab-count")).toBe("1");
+
+    act(() => emitOpenEmpty());
+    expect(text(container, "tab-count")).toBe("1");
+  });
+
   it("routes Desktop close requests through the registered target lifecycle handler", async () => {
     const { emitCloseActiveTab } = stubDesktopShell();
     const closeRequest = vi.fn();
@@ -651,7 +714,37 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "tab-keys")).not.toContain("browser-tab:browser-9");
   });
 
-  it("reuses the active Browser tab for an ordinary routed link at capacity", () => {
+  it("shares the Side Browser limit across retained Chat and Issue contexts", () => {
+    ({ container, root } = renderSidePanelProvider());
+
+    act(() => {
+      for (let index = 1; index <= 8; index += 1) {
+        const contextKey = index <= 4 ? "chat:a" : "issue:b";
+        expect(sidePanelControls?.openTargetForContext(contextKey, {
+          kind: "browser",
+          label: `Browser ${index}`,
+          tabId: `browser-${index}`,
+          url: `https://example.com/${index}`,
+        })).toEqual({ admitted: true });
+      }
+    });
+
+    let overflow: ReturnType<NonNullable<typeof sidePanelControls>["openTargetForContext"]>
+      | undefined;
+    act(() => {
+      overflow = sidePanelControls?.openTargetForContext("chat:c", {
+        kind: "browser",
+        label: "Browser 9",
+        tabId: "browser-9",
+        url: "https://example.com/9",
+      });
+    });
+    expect(overflow).toEqual({ admitted: false, reason: "browser_capacity" });
+    act(() => sidePanelControls?.setContextKey("chat:c"));
+    expect(text(container, "tab-count")).toBe("0");
+  });
+
+  it("rejects an unrelated ordinary routed link at capacity without reusing an exact tab", () => {
     ({ container, root } = renderSidePanelProvider());
 
     click(container, "Open many browsers");
@@ -659,8 +752,8 @@ describe("SidePanelProvider context visibility", () => {
 
     expect(text(container, "tab-count")).toBe("8");
     expect(text(container, "active-key")).toBe("browser-tab:browser-8");
-    expect(text(container, "tab-urls")).toContain("https://example.com/reused-link");
-    expect(text(container, "tab-urls")).not.toContain("https://example.com/8,");
+    expect(text(container, "tab-urls")).not.toContain("https://example.com/reused-link");
+    expect(text(container, "tab-urls")).toContain("https://example.com/8");
   });
 
   it("preserves one Browser logical identity and Saved recovery when a routed link dedupes", () => {
@@ -714,7 +807,7 @@ describe("SidePanelProvider context visibility", () => {
     });
   });
 
-  it("keeps Saved metadata attached to the reused active Browser identity at capacity", () => {
+  it("keeps the active Saved Browser unchanged when an unrelated routed link is rejected at capacity", () => {
     ({ container, root } = renderSidePanelProvider());
     for (let index = 1; index <= 7; index += 1) {
       act(() => sidePanelControls!.openTarget({
@@ -745,22 +838,26 @@ describe("SidePanelProvider context visibility", () => {
         },
       },
     }));
-    act(() => sidePanelControls!.openTarget({
-      kind: "browser",
-      url: "https://example.com/capacity-navigation",
-      label: "Capacity navigation",
-      tabId: "discarded-physical",
-      dedupeKey: "https://example.com/capacity-navigation",
-    }));
+    let openResult: ReturnType<NonNullable<typeof sidePanelControls>["openTarget"]> | undefined;
+    act(() => {
+      openResult = sidePanelControls!.openTarget({
+        kind: "browser",
+        url: "https://example.com/capacity-navigation",
+        label: "Capacity navigation",
+        tabId: "discarded-physical",
+        dedupeKey: "https://example.com/capacity-navigation",
+      });
+    });
 
+    expect(openResult).toEqual({ admitted: false, reason: "browser_capacity" });
     expect(sidePanelControls!.tabs).toHaveLength(8);
     expect(sidePanelControls!.activeKey).toBe("browser-tab:physical-active");
     expect(sidePanelControls!.tabs.at(-1)).toMatchObject({
       kind: "browser",
       tabId: "physical-active",
       viewInstanceId: "instance-active",
-      url: "https://example.com/capacity-navigation",
-      label: "Capacity navigation",
+      url: "https://saved.example/old",
+      label: "Saved old",
       savedViewRecovery: { id: "saved-active" },
     });
   });

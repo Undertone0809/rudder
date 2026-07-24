@@ -782,8 +782,57 @@
     {
       "idx": 111,
       "version": "7",
-      "when": 1784806650087,
-      "tag": "0111_narrow_black_panther",
+      "when": 1784802737197,
+      "tag": "0111_nostalgic_scarecrow",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1784813923874,
+      "tag": "0112_yielding_starhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1784818435792,
+      "tag": "0113_nosy_doomsday",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1784821055022,
+      "tag": "0114_nervous_firebird",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1784825630207,
+      "tag": "0115_chubby_wraith",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1784832296563,
+      "tag": "0116_dark_skreet",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1784909456936,
+      "tag": "0117_reflective_namora",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1784918023143,
+      "tag": "0118_flippant_longshot",
       "breakpoints": true
     }
   ]

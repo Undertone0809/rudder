@@ -55,6 +55,7 @@ import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { queryKeys } from "../lib/queryKeys";
+import { OrganizationMcpSettings } from "./OrganizationMcpSettings";
 
 type AgentSnippetInput = {
   onboardingTextUrl: string;
@@ -62,7 +63,7 @@ type AgentSnippetInput = {
   testResolutionUrl?: string | null;
 };
 
-type OrganizationSettingsView = "general" | "workspace" | "intelligence" | "chat" | "access";
+type OrganizationSettingsView = "general" | "workspace" | "intelligence" | "chat" | "integrations" | "access";
 
 export function OrganizationSettings() {
   const { t } = useI18n();
@@ -499,6 +500,7 @@ export function OrganizationSettings() {
     { value: "workspace", label: t("organizationSettings.section.workspace") },
     { value: "intelligence", label: t("organizationSettings.view.intelligence") },
     { value: "chat", label: t("organizationSettings.section.chat") },
+    { value: "integrations", label: "Integrations / MCPs" },
     { value: "access", label: t("organizationSettings.view.accessData") },
   ];
 
@@ -1096,6 +1098,10 @@ export function OrganizationSettings() {
               </div>
             </SettingsGroup>
           </SettingsSection>
+        </TabsContent>
+
+        <TabsContent value="integrations" className="flex min-w-0 flex-col gap-6">
+          <OrganizationMcpSettings orgId={viewedOrganizationId!} />
         </TabsContent>
 
         <TabsContent value="access" className="flex min-w-0 flex-col gap-6">

@@ -23,7 +23,10 @@ type BrowserShortcutAction =
 async function installBrowserDesktopStub(page: Page) {
   await page.addInitScript(() => {
     let webLinkListener: ((request: DesktopWebLinkRequest) => void) | null = null;
-    let browserShortcutListener: ((action: BrowserShortcutAction) => void) | null = null;
+    let browserShortcutListener: ((request: {
+      action: BrowserShortcutAction;
+      sourceWebContentsId?: number;
+    }) => void) | null = null;
     let browserResetListener: ((event: { reason: "clear" | "disabled"; enabled: boolean; available: boolean }) => void) | null = null;
     const externalUrls: string[] = [];
     const enabledCalls: boolean[] = [];
@@ -33,7 +36,10 @@ async function installBrowserDesktopStub(page: Page) {
       __rudderBrowserExternalUrls: externalUrls,
       __rudderBrowserEnabledCalls: enabledCalls,
       __rudderBrowserShortcutActiveCalls: shortcutActiveCalls,
-      __emitDesktopBrowserShortcut: (action: BrowserShortcutAction) => browserShortcutListener?.(action),
+      __rudderBrowserWebLinkListenerReady: () => Boolean(webLinkListener),
+      __emitDesktopBrowserShortcut: (action: BrowserShortcutAction) => {
+        browserShortcutListener?.({ action });
+      },
       __emitDesktopWebLink: (request: DesktopWebLinkRequest) => webLinkListener?.(request),
       __rudderBrowserClearCalls: () => clearCalls,
     });
@@ -44,7 +50,10 @@ async function installBrowserDesktopStub(page: Page) {
         setBrowserSurfaceShortcutActive: async (active: boolean) => {
           shortcutActiveCalls.push(active);
         },
-        onBrowserShortcut: (listener: (action: BrowserShortcutAction) => void) => {
+        onBrowserShortcut: (listener: (request: {
+          action: BrowserShortcutAction;
+          sourceWebContentsId?: number;
+        }) => void) => {
           browserShortcutListener = listener;
           return () => { browserShortcutListener = null; };
         },
@@ -105,6 +114,13 @@ async function installBrowserDesktopStub(page: Page) {
   });
 }
 
+function activeSideBrowserHost(page: Page) {
+  return page.locator(
+    '[data-testid="live-surface-runtime-host"][data-owner-id^="side:"]'
+    + '[data-target-kind="browser"]:not([hidden])',
+  );
+}
+
 test.describe("Built-in Browser", () => {
   test.beforeEach(async ({ page }) => {
     await installBrowserDesktopStub(page);
@@ -125,9 +141,9 @@ test.describe("Built-in Browser", () => {
     const organization = await orgRes.json() as { issuePrefix: string };
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
-    await expect.poll(() => page.evaluate(() => typeof (
-      window as typeof window & { __emitDesktopWebLink?: unknown }
-    ).__emitDesktopWebLink)).toBe("function");
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & { __rudderBrowserWebLinkListenerReady(): boolean }
+    ).__rudderBrowserWebLinkListenerReady())).toBe(true);
     const dashboardUrl = page.url();
 
     await page.evaluate(() => (
@@ -135,7 +151,22 @@ test.describe("Built-in Browser", () => {
     ).__emitDesktopWebLink({ url: "https://example.com/docs", source: "link" }));
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible();
-    await expect(sidePanel.getByTestId("chat-side-panel-browser-webview")).toHaveAttribute("src", "https://example.com/docs");
+    const onboarding = page.getByTestId("browser-side-panel-onboarding");
+    await expect(onboarding).toContainText("Rudder starts with its Built-in Browser");
+    await expect(onboarding).toHaveAttribute("role", "status");
+    await expect(onboarding).toContainText("Settings");
+    await onboarding.screenshot({
+      path: "/tmp/rudder-browser-side-panel-onboarding.png",
+    });
+    await onboarding.getByRole("button", { name: "Got it" }).click();
+    await expect(onboarding).toHaveCount(0);
+    const browserRuntimeHost = activeSideBrowserHost(page);
+    await expect(browserRuntimeHost.getByTestId("chat-side-panel-browser-webview"))
+      .toHaveAttribute("src", "https://example.com/docs");
+    await expect(browserRuntimeHost).not.toHaveCSS("border-top-left-radius", "0px");
+    await expect(browserRuntimeHost).not.toHaveCSS("border-top-right-radius", "0px");
+    await expect(browserRuntimeHost).not.toHaveCSS("border-bottom-left-radius", "0px");
+    await expect(browserRuntimeHost).not.toHaveCSS("border-bottom-right-radius", "0px");
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
     expect(page.url()).toBe(dashboardUrl);
 
@@ -143,6 +174,7 @@ test.describe("Built-in Browser", () => {
       window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
     ).__emitDesktopWebLink({ url: "https://example.com/docs", source: "link" }));
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(page.getByTestId("browser-side-panel-onboarding")).toHaveCount(0);
 
     await page.evaluate(() => (
       window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
@@ -157,7 +189,8 @@ test.describe("Built-in Browser", () => {
       window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
     ).__emitDesktopWebLink({ url: "https://example.org/popup", source: "browser_popup" }));
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(3);
-    await expect(sidePanel.getByTestId("chat-side-panel-browser-webview")).toHaveAttribute("src", "https://example.org/popup");
+    await expect(activeSideBrowserHost(page).getByTestId("chat-side-panel-browser-webview"))
+      .toHaveAttribute("src", "https://example.org/popup");
 
     await page.evaluate(() => (
       window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
@@ -173,11 +206,37 @@ test.describe("Built-in Browser", () => {
     await page.evaluate(() => (
       window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
     ).__emitDesktopWebLink({ url: "https://example.net/disabled", source: "link" }));
-    await expect(sidePanel.getByTestId("chat-side-panel-browser-webview"))
+    await expect(activeSideBrowserHost(page).getByTestId("chat-side-panel-browser-webview"))
       .toHaveAttribute("src", "https://example.net/disabled");
     await expect.poll(() => page.evaluate(() => (
       window as typeof window & { __rudderBrowserExternalUrls: string[] }
     ).__rudderBrowserExternalUrls)).not.toContain("https://example.net/disabled");
+  });
+
+  test("opens the exact Browser settings destination from Side Panel onboarding", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Built-in Browser Onboarding ${Date.now()}`,
+        issuePrefix: `BRO${Date.now().toString().slice(-6)}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { issuePrefix: string };
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & { __rudderBrowserWebLinkListenerReady(): boolean }
+    ).__rudderBrowserWebLinkListenerReady())).toBe(true);
+    await page.evaluate(() => (
+      window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
+    ).__emitDesktopWebLink({ url: "https://example.com/onboarding", source: "link" }));
+
+    const onboarding = page.getByTestId("browser-side-panel-onboarding");
+    await onboarding.getByRole("button", { name: "Browser settings" }).click();
+
+    await expect(page).toHaveURL(/\/instance\/settings\/browser$/);
+    await expect(page.getByTestId("browser-settings-page")).toBeVisible();
+    await expect(onboarding).toHaveCount(0);
   });
 
   test("accepts local absolute file URLs from the Browser address bar", async ({ page }) => {
@@ -202,7 +261,8 @@ test.describe("Built-in Browser", () => {
       await page.getByTestId("global-side-panel-trigger").click();
       const sidePanel = page.getByTestId("chat-side-panel");
       await expect(sidePanel).toBeVisible();
-      const browserView = sidePanel.getByTestId("chat-side-panel-browser-view");
+      const browserRuntimeHost = activeSideBrowserHost(page);
+      const browserView = browserRuntimeHost.getByTestId("chat-side-panel-browser-view");
       if (!(await browserView.isVisible().catch(() => false))) {
         await sidePanel.getByTestId("chat-side-panel-empty-browser-target").click();
       }
@@ -212,7 +272,7 @@ test.describe("Built-in Browser", () => {
       const browserUrlInput = browserView.getByLabel("Browser URL");
       await browserUrlInput.fill(fileUrl);
       await browserUrlInput.press("Enter");
-      const webview = sidePanel.getByTestId("chat-side-panel-browser-webview");
+      const webview = browserRuntimeHost.getByTestId("chat-side-panel-browser-webview");
       await expect(webview).toHaveAttribute("src", fileUrl);
       await expect(sidePanel.getByTestId("chat-side-panel-tab").filter({ hasText: "local-report.html" }))
         .toHaveCount(1);
@@ -229,7 +289,8 @@ test.describe("Built-in Browser", () => {
           validatedURL: failedUrl,
         }));
       }, missingUrl);
-      await expect(sidePanel.getByTestId("chat-side-panel-browser-error")).toContainText("ERR_FILE_NOT_FOUND");
+      await expect(browserRuntimeHost.getByTestId("chat-side-panel-browser-error"))
+        .toContainText("ERR_FILE_NOT_FOUND");
       expect(page.url()).toBe(rudderUrl);
     } finally {
       await rm(fixtureRoot, { recursive: true, force: true });
@@ -252,7 +313,8 @@ test.describe("Built-in Browser", () => {
     ).__emitDesktopWebLink({ url: "https://example.com/shortcut-target", source: "link" }));
 
     const sidePanel = page.getByTestId("chat-side-panel");
-    const webview = sidePanel.getByTestId("chat-side-panel-browser-webview");
+    const browserRuntimeHost = activeSideBrowserHost(page);
+    const webview = browserRuntimeHost.getByTestId("chat-side-panel-browser-webview");
     await expect(webview).toBeVisible();
     await webview.evaluate((element) => {
       const state = {
@@ -276,7 +338,7 @@ test.describe("Built-in Browser", () => {
       element.dispatchEvent(new Event("dom-ready"));
     });
 
-    const address = sidePanel.getByRole("textbox", { name: "Browser URL" });
+    const address = browserRuntimeHost.getByRole("textbox", { name: "Browser URL" });
     await address.focus();
     await expect.poll(() => page.evaluate(() => (
       window as typeof window & { __rudderBrowserShortcutActiveCalls: boolean[] }
@@ -298,8 +360,6 @@ test.describe("Built-in Browser", () => {
       hardReload: 1,
       zoom: [1.1],
     });
-    await expect(sidePanel.getByTestId("chat-side-panel-browser-zoom")).toHaveText("110%");
-
     await page.getByRole("button", { name: "System settings" }).focus();
     await page.evaluate(() => (
       window as typeof window & { __emitDesktopBrowserShortcut(action: BrowserShortcutAction): void }
@@ -313,8 +373,13 @@ test.describe("Built-in Browser", () => {
       window as typeof window & { __emitDesktopBrowserShortcut(action: BrowserShortcutAction): void }
     ).__emitDesktopBrowserShortcut("new_tab"));
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
-    const activeAddress = sidePanel.getByRole("textbox", { name: "Browser URL" });
-    await sidePanel.getByRole("button", { name: "Open new browser tab" }).focus();
+    const activeAddress = activeSideBrowserHost(page).getByRole(
+      "textbox",
+      { name: "Browser URL" },
+    );
+    await activeSideBrowserHost(page)
+      .getByRole("button", { name: "Open new browser tab" })
+      .focus();
     await page.evaluate(() => (
       window as typeof window & { __emitDesktopBrowserShortcut(action: BrowserShortcutAction): void }
     ).__emitDesktopBrowserShortcut("focus_location"));

@@ -1,18 +1,22 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readlink, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runtimeSupportsDesktopShellAssets } from "../../cli/src/commands/start.js";
 import {
   ensureRuntimeInstalled,
+  isRuntimeCacheHit,
   resolveRuntimePostgresPayloadBinDir,
 } from "../../cli/src/runtime/install.js";
 import {
   DESKTOP_POSTGRES_RUNTIME_DIR,
   RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV,
   RUDDER_POSTGRES_BIN_DIR_ENV,
+  acquireDesktopPostgresLifecycleLock,
   createDesktopUpdateChildEnvironment,
   desktopPostgresPlatformSegment,
+  finalizeSharedPostgresRuntime,
+  isDesktopManagedPostgresBinDir,
   reconcileDesktopPostgresBinDir,
   resolveDesktopPostgresBinDir,
   resolvePreferredDesktopPostgresBinDir,
@@ -39,6 +43,7 @@ async function makePostgresBinDir(root: string, segment = desktopPostgresPlatfor
     const templatePath = path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, segment, "share", "postgresql", "postgres.bki");
     await mkdir(path.dirname(templatePath), { recursive: true });
     await writeFile(templatePath, "postgres template");
+    await writeFile(path.join(path.dirname(templatePath), "postgresql.conf.sample"), "postgres config template");
   }
   return binDir;
 }
@@ -48,6 +53,27 @@ afterEach(async () => {
 });
 
 describe("desktop PostgreSQL runtime payload", () => {
+  it("serializes PostgreSQL runtime startup and cleanup through one lifecycle lock", async () => {
+    const rudderHome = await makeTempRoot();
+    const env = { RUDDER_HOME: rudderHome };
+    const releaseFirst = await acquireDesktopPostgresLifecycleLock(env);
+    let secondAcquired = false;
+    const secondPromise = acquireDesktopPostgresLifecycleLock(env, {
+      timeoutMs: 2_000,
+      pollMs: 5,
+    }).then((release) => {
+      secondAcquired = true;
+      return release;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(secondAcquired).toBe(false);
+    await releaseFirst();
+    const releaseSecond = await secondPromise;
+    expect(secondAcquired).toBe(true);
+    await releaseSecond();
+  });
+
   it("uses platform and architecture in the payload path", () => {
     expect(desktopPostgresPlatformSegment("win32", "x64")).toBe("win32-x64");
     expect(desktopPostgresPlatformSegment("darwin", "arm64")).toBe("darwin-arm64");
@@ -75,6 +101,14 @@ describe("desktop PostgreSQL runtime payload", () => {
     expect(resolveDesktopPostgresBinDir(root, { platform: "win32", arch: "x64", validateVersion: false })).toBeNull();
   });
 
+  it("ignores PostgreSQL payload directories without configuration template files", async () => {
+    const root = await makeTempRoot();
+    const binDir = await makePostgresBinDir(root, "win32-x64");
+    await rm(path.join(binDir, "..", "share", "postgresql", "postgresql.conf.sample"));
+
+    expect(resolveDesktopPostgresBinDir(root, { platform: "win32", arch: "x64", validateVersion: false })).toBeNull();
+  });
+
   it("prefers external runtime cache payloads over bundled resources", async () => {
     const resourcesRoot = await makeTempRoot();
     const cacheRoot = await makeTempRoot();
@@ -91,6 +125,266 @@ describe("desktop PostgreSQL runtime payload", () => {
         validateVersion: false,
       }),
     ).toBe(cachedBinDir);
+  });
+
+  it("prefers the shared PostgreSQL payload over version-local runtime copies", async () => {
+    const resourcesRoot = await makeTempRoot();
+    const rudderHome = await makeTempRoot();
+    const runtimeRoot = path.join(rudderHome, "runtimes", "0.5.2-canary.3");
+    await makePostgresBinDir(runtimeRoot, "win32-x64");
+    const sharedPayloadRoot = path.join(rudderHome, "runtime-payloads");
+    const sharedBinDir = await makePostgresBinDir(sharedPayloadRoot, "win32-x64");
+
+    expect(
+      resolvePreferredDesktopPostgresBinDir({
+        isPackaged: true,
+        resourcesPath: resourcesRoot,
+        externalRuntimeCacheDir: runtimeRoot,
+        env: { RUDDER_HOME: rudderHome },
+        platform: "win32",
+        arch: "x64",
+        validateVersion: false,
+      }),
+    ).toBe(sharedBinDir);
+  });
+
+  it("recognizes the shared payload as a Desktop-managed PostgreSQL path", async () => {
+    const resourcesRoot = await makeTempRoot();
+    const rudderHome = await makeTempRoot();
+    const sharedPayloadRoot = path.join(rudderHome, "runtime-payloads");
+    const sharedBinDir = await makePostgresBinDir(sharedPayloadRoot, "darwin-arm64");
+
+    expect(
+      isDesktopManagedPostgresBinDir({
+        binDir: sharedBinDir,
+        resourcesPath: resourcesRoot,
+        env: { RUDDER_HOME: rudderHome },
+      }),
+    ).toBe(true);
+  });
+
+  it("finalizes legacy payloads only after a healthy shared runtime is active", async () => {
+    const rudderHome = await makeTempRoot();
+    const sharedPayloadRoot = path.join(rudderHome, "runtime-payloads");
+    const sharedBinDir = await makePostgresBinDir(sharedPayloadRoot);
+    const previousPayloadDir = path.join(sharedPayloadRoot, "postgres-18.3");
+    const expiredPayloadDir = path.join(sharedPayloadRoot, "postgres-17.6");
+    await mkdir(previousPayloadDir, { recursive: true });
+    await mkdir(expiredPayloadDir, { recursive: true });
+    await utimes(previousPayloadDir, new Date("2026-07-23T00:00:00.000Z"), new Date("2026-07-23T00:00:00.000Z"));
+    await utimes(expiredPayloadDir, new Date("2026-07-01T00:00:00.000Z"), new Date("2026-07-01T00:00:00.000Z"));
+    const currentRuntimeDir = path.join(rudderHome, "runtimes", "0.5.3-canary.0");
+    const currentBinDir = await makePostgresBinDir(currentRuntimeDir);
+    const protectedRuntimeDir = path.join(rudderHome, "runtimes", "0.5.2");
+    const protectedBinDir = await makePostgresBinDir(protectedRuntimeDir);
+    const platformPackage = process.platform === "darwin" && process.arch === "arm64"
+      ? ["@embedded-postgres", "darwin-arm64"]
+      : null;
+    await writeFile(path.join(currentRuntimeDir, "runtime.json"), JSON.stringify({
+      version: 1,
+      packageName: "@rudderhq/server",
+      packageVersion: "0.5.3-canary.0",
+      installedAt: "2026-07-24T00:00:00.000Z",
+    }));
+    const currentServerPackageDir = path.join(
+      currentRuntimeDir,
+      "node_modules",
+      "@rudderhq",
+      "server",
+    );
+    await mkdir(currentServerPackageDir, { recursive: true });
+    await writeFile(path.join(currentServerPackageDir, "package.json"), JSON.stringify({
+      name: "@rudderhq/server",
+      version: "0.5.3-canary.0",
+    }));
+    const embeddedPostgresPackageDir = path.join(
+      currentRuntimeDir,
+      "node_modules",
+      "embedded-postgres",
+    );
+    await mkdir(embeddedPostgresPackageDir, { recursive: true });
+    await writeFile(path.join(embeddedPostgresPackageDir, "package.json"), JSON.stringify({
+      name: "embedded-postgres",
+      version: "18.1.0-beta.16",
+    }));
+    await writeFile(path.join(protectedRuntimeDir, "runtime.json"), JSON.stringify({
+      version: 1,
+      packageName: "@rudderhq/server",
+      packageVersion: "0.5.2",
+      installedAt: "2026-07-23T00:00:00.000Z",
+    }));
+    if (platformPackage) {
+      await mkdir(path.join(currentRuntimeDir, "node_modules", ...platformPackage), { recursive: true });
+      await writeFile(path.join(currentRuntimeDir, "node_modules", ...platformPackage, "package.json"), "{}");
+      await mkdir(path.join(currentRuntimeDir, "node_modules", "@img", "sharp-darwin-arm64"), { recursive: true });
+      await writeFile(path.join(currentRuntimeDir, "node_modules", "@img", "sharp-darwin-arm64", "package.json"), "{}");
+    }
+    const orphanDir = path.join(rudderHome, "runtimes", "0.5.1-incomplete");
+    await mkdir(orphanDir, { recursive: true });
+    await utimes(orphanDir, new Date("2026-07-20T00:00:00.000Z"), new Date("2026-07-20T00:00:00.000Z"));
+    const lockedOrphanDir = path.join(rudderHome, "runtimes", "0.5.0-installing");
+    await mkdir(lockedOrphanDir, { recursive: true });
+    await utimes(lockedOrphanDir, new Date("2026-07-20T00:00:00.000Z"), new Date("2026-07-20T00:00:00.000Z"));
+    await mkdir(`${lockedOrphanDir}.install.lock`);
+    const activeRuntimeDir = path.join(rudderHome, "instances", "default", "runtime");
+    await mkdir(activeRuntimeDir, { recursive: true });
+    await writeFile(path.join(activeRuntimeDir, "server.json"), JSON.stringify({
+      instanceId: "default",
+      pid: process.pid,
+      version: "0.5.3-canary.0",
+      postgresBinDir: sharedBinDir,
+      postgresRuntimeKey: `postgres-18.4/${desktopPostgresPlatformSegment()}`,
+    }));
+    const protectedDescriptorDir = path.join(rudderHome, "instances", "legacy", "runtime");
+    await mkdir(protectedDescriptorDir, { recursive: true });
+    await writeFile(path.join(protectedDescriptorDir, "server.json"), JSON.stringify({
+      instanceId: "legacy",
+      pid: process.pid,
+      version: "0.5.2",
+      postgresBinDir: protectedBinDir,
+    }));
+
+    const result = await finalizeSharedPostgresRuntime({
+      env: { RUDDER_HOME: rudderHome },
+      now: new Date("2026-07-24T00:00:00.000Z"),
+      validateVersion: false,
+      expectedInstanceId: "default",
+      expectedVersion: "0.5.3-canary.0",
+    });
+
+    expect(result.sharedBinDir).toBe(sharedBinDir);
+    expect(result.linkedRuntimeVersions).toContain("0.5.3-canary.0");
+    expect(result.protectedRuntimeVersions).toContain("0.5.2");
+    expect((await lstat(path.join(currentRuntimeDir, DESKTOP_POSTGRES_RUNTIME_DIR))).isSymbolicLink()).toBe(true);
+    if (process.platform === "win32") {
+      expect(path.resolve(await readlink(path.join(currentRuntimeDir, DESKTOP_POSTGRES_RUNTIME_DIR)))).toBe(
+        path.resolve(sharedPayloadRoot, DESKTOP_POSTGRES_RUNTIME_DIR),
+      );
+    } else {
+      expect(await readlink(path.join(currentRuntimeDir, DESKTOP_POSTGRES_RUNTIME_DIR))).toBe(
+        path.join("..", "..", "runtime-payloads", DESKTOP_POSTGRES_RUNTIME_DIR),
+      );
+    }
+    await expect(access(protectedBinDir)).resolves.toBeUndefined();
+    await expect(access(orphanDir)).rejects.toThrow();
+    await expect(access(lockedOrphanDir)).resolves.toBeUndefined();
+    await expect(access(previousPayloadDir)).resolves.toBeUndefined();
+    await expect(access(expiredPayloadDir)).rejects.toThrow();
+    expect(result.removedSharedPayloadVersions).toEqual(["postgres-17.6"]);
+    if (platformPackage) {
+      await expect(access(path.join(currentRuntimeDir, "node_modules", ...platformPackage))).rejects.toThrow();
+      await expect(access(path.join(currentRuntimeDir, "node_modules", "@img", "sharp-darwin-arm64", "package.json"))).resolves.toBeUndefined();
+      await expect(isRuntimeCacheHit({
+        cacheDir: currentRuntimeDir,
+        version: "0.5.3-canary.0",
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+      })).resolves.toBe(true);
+    }
+  });
+
+  it("retains an older shared payload referenced by a bin-only live descriptor", async () => {
+    const rudderHome = await makeTempRoot();
+    const sharedPayloadRoot = path.join(rudderHome, "runtime-payloads");
+    const sharedBinDir = await makePostgresBinDir(sharedPayloadRoot);
+    const oldPayloadRoot = path.join(sharedPayloadRoot, "postgres-17.6");
+    const oldBinDir = path.join(
+      oldPayloadRoot,
+      desktopPostgresPlatformSegment(),
+      "bin",
+    );
+    await mkdir(oldBinDir, { recursive: true });
+    await writeFile(path.join(oldBinDir, "live-marker"), "keep");
+    await utimes(oldPayloadRoot, new Date("2026-07-01T00:00:00.000Z"), new Date("2026-07-01T00:00:00.000Z"));
+
+    const activeDescriptorDir = path.join(rudderHome, "instances", "default", "runtime");
+    await mkdir(activeDescriptorDir, { recursive: true });
+    await writeFile(path.join(activeDescriptorDir, "server.json"), JSON.stringify({
+      instanceId: "default",
+      pid: process.pid,
+      version: "0.5.3-canary.0",
+      postgresBinDir: sharedBinDir,
+      postgresRuntimeKey: `postgres-18.4/${desktopPostgresPlatformSegment()}`,
+    }));
+    const legacyDescriptorDir = path.join(rudderHome, "instances", "legacy", "runtime");
+    await mkdir(legacyDescriptorDir, { recursive: true });
+    await writeFile(path.join(legacyDescriptorDir, "server.json"), JSON.stringify({
+      instanceId: "legacy",
+      pid: process.pid,
+      version: "0.5.1",
+      postgresBinDir: oldBinDir,
+    }));
+
+    const result = await finalizeSharedPostgresRuntime({
+      env: { RUDDER_HOME: rudderHome },
+      now: new Date("2026-07-24T00:00:00.000Z"),
+      validateVersion: false,
+      expectedInstanceId: "default",
+      expectedVersion: "0.5.3-canary.0",
+    });
+
+    expect(result.removedSharedPayloadVersions).not.toContain("postgres-17.6");
+    await expect(access(path.join(oldBinDir, "live-marker"))).resolves.toBeUndefined();
+  });
+
+  it("refuses cleanup when the healthy descriptor belongs to another runtime instance", async () => {
+    const rudderHome = await makeTempRoot();
+    const sharedBinDir = await makePostgresBinDir(path.join(rudderHome, "runtime-payloads"));
+    const descriptorDir = path.join(rudderHome, "instances", "other", "runtime");
+    await mkdir(descriptorDir, { recursive: true });
+    await writeFile(path.join(descriptorDir, "server.json"), JSON.stringify({
+      instanceId: "other",
+      pid: process.pid,
+      version: "0.5.3-canary.0",
+      postgresBinDir: sharedBinDir,
+      postgresRuntimeKey: `postgres-18.4/${desktopPostgresPlatformSegment()}`,
+    }));
+
+    await expect(finalizeSharedPostgresRuntime({
+      env: { RUDDER_HOME: rudderHome },
+      validateVersion: false,
+      expectedInstanceId: "default",
+      expectedVersion: "0.5.3-canary.0",
+    })).rejects.toThrow("requires a live runtime descriptor");
+  });
+
+  it("repairs a compatibility link that points at a noncanonical payload", async () => {
+    if (process.platform === "win32") return;
+    const rudderHome = await makeTempRoot();
+    const sharedPayloadRoot = path.join(rudderHome, "runtime-payloads");
+    const sharedBinDir = await makePostgresBinDir(sharedPayloadRoot);
+    const stalePayloadRoot = path.join(rudderHome, "stale-payload");
+    await mkdir(stalePayloadRoot, { recursive: true });
+    const runtimeDir = path.join(rudderHome, "runtimes", "0.5.3-canary.0");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(path.join(runtimeDir, "runtime.json"), JSON.stringify({
+      version: 1,
+      packageName: "@rudderhq/server",
+      packageVersion: "0.5.3-canary.0",
+      installedAt: "2026-07-24T00:00:00.000Z",
+    }));
+    const compatibilityRoot = path.join(runtimeDir, DESKTOP_POSTGRES_RUNTIME_DIR);
+    await symlink(stalePayloadRoot, compatibilityRoot, "dir");
+    const descriptorDir = path.join(rudderHome, "instances", "default", "runtime");
+    await mkdir(descriptorDir, { recursive: true });
+    await writeFile(path.join(descriptorDir, "server.json"), JSON.stringify({
+      instanceId: "default",
+      pid: process.pid,
+      version: "0.5.3-canary.0",
+      postgresBinDir: sharedBinDir,
+      postgresRuntimeKey: `postgres-18.4/${desktopPostgresPlatformSegment()}`,
+    }));
+
+    const result = await finalizeSharedPostgresRuntime({
+      env: { RUDDER_HOME: rudderHome },
+      validateVersion: false,
+      expectedInstanceId: "default",
+      expectedVersion: "0.5.3-canary.0",
+    });
+
+    expect(result.linkedRuntimeVersions).toContain("0.5.3-canary.0");
+    expect(await realpath(compatibilityRoot)).toBe(
+      await realpath(path.join(sharedPayloadRoot, DESKTOP_POSTGRES_RUNTIME_DIR)),
+    );
   });
 
   it("does not override an explicit operator PostgreSQL bin directory", async () => {
@@ -240,13 +534,20 @@ describe("desktop PostgreSQL runtime payload", () => {
         preparePostgresPayload: true,
         pruneRuntimeCache: false,
       });
-      const stagedBinDir = resolveRuntimePostgresPayloadBinDir(runtime.cacheDir);
+      const compatibilityBinDir = resolveRuntimePostgresPayloadBinDir(runtime.cacheDir);
+      const sharedBinDir = path.join(
+        rudderHome,
+        "runtime-payloads",
+        DESKTOP_POSTGRES_RUNTIME_DIR,
+        desktopPostgresPlatformSegment(),
+        "bin",
+      );
 
-      expect(runtime.postgresPayloadBinDir).toBe(stagedBinDir);
+      expect(runtime.postgresPayloadBinDir).toBe(sharedBinDir);
       expect(runtimeSupportsDesktopShellAssets("0.5.2-canary.1", runtime)).toBe(true);
       expect(
         resolveDesktopPostgresBinDir(runtime.cacheDir, { validateVersion: false }),
-      ).toBe(stagedBinDir);
+      ).toBe(compatibilityBinDir);
     } finally {
       if (previousBinDir === undefined) delete process.env[RUDDER_POSTGRES_BIN_DIR_ENV];
       else process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = previousBinDir;

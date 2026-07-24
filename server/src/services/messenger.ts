@@ -1416,8 +1416,15 @@ export function messengerService(db: Db) {
           eq(messengerCustomGroupEntries.groupId, groupId),
         )))
         .filter((entry) => entry.threadKey.startsWith("saved-view:"));
-      if (savedMemberships.length > 0) {
-        throw conflict(`Cannot ${source === "group_delete" ? "delete" : "separate"} a Messenger group containing Saved Views; move or remove them first`);
+      for (const membership of savedMemberships) {
+        await logSavedViewPlacement(
+          txDb,
+          orgId,
+          userId,
+          membership.threadKey,
+          "messenger.saved_view_group_removed",
+          { groupId, source },
+        );
       }
       const [group] = await txDb
         .delete(messengerCustomGroups)
@@ -1547,9 +1554,27 @@ export function messengerService(db: Db) {
     });
   }
 
-  async function createCustomGroupWithEntries(orgId: string, userId: string, name: string, icon: string | null, threadKeys: string[]) {
+  async function createCustomGroupWithEntries(
+    orgId: string,
+    userId: string,
+    name: string,
+    icon: string | null,
+    threadKeys: string[],
+    anchorItemKey?: string,
+  ) {
     const uniqueThreadKeys = [...new Set(threadKeys)];
     if (uniqueThreadKeys.length === 0) throw badRequest("At least one thread key is required");
+    if (anchorItemKey && !uniqueThreadKeys.includes(anchorItemKey)) {
+      throw badRequest("Messenger group anchor must be included in the item keys");
+    }
+    if (
+      anchorItemKey
+      && anchorItemKey !== "issues"
+      && !anchorItemKey.startsWith("chat:")
+      && !anchorItemKey.startsWith("issue:")
+    ) {
+      throw badRequest("Messenger group anchor must be a Chat or Issue");
+    }
     const savedViewItemKeys = new Set<string>();
     for (const threadKey of uniqueThreadKeys) {
       if (savedViewIdFromItemKey(threadKey)) savedViewItemKeys.add(threadKey);
@@ -1558,7 +1583,25 @@ export function messengerService(db: Db) {
     await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db;
       await lockMessengerSavedViewPlacement(txDb, orgId, userId);
-      const group = await createCustomGroupWithClient(tx, orgId, userId, name, icon);
+      const [anchorMembership] = anchorItemKey
+        ? await txDb
+          .select({ groupId: messengerCustomGroupEntries.groupId })
+          .from(messengerCustomGroupEntries)
+          .where(and(
+            eq(messengerCustomGroupEntries.orgId, orgId),
+            eq(messengerCustomGroupEntries.userId, userId),
+            eq(messengerCustomGroupEntries.threadKey, anchorItemKey),
+          ))
+          .limit(1)
+        : [];
+      const group = anchorMembership
+        ? await getCustomGroupOrThrowWithDb(
+          txDb,
+          orgId,
+          userId,
+          anchorMembership.groupId,
+        )
+        : await createCustomGroupWithClient(tx, orgId, userId, name, icon);
       await lockMessengerCustomGroupPlacement(txDb, orgId, userId, group.id);
       for (const threadKey of uniqueThreadKeys) {
         if (savedViewItemKeys.has(threadKey) && !await findMessengerSavedViewWithDb(txDb, orgId, userId, threadKey)) {
@@ -1567,7 +1610,7 @@ export function messengerService(db: Db) {
         await assignThreadToCustomGroupWithClient(txDb, orgId, userId, group.id, threadKey);
         await logSavedViewPlacement(txDb, orgId, userId, threadKey, "messenger.saved_view_group_assigned", {
           groupId: group.id,
-          source: "group_create",
+          source: anchorMembership ? "group_reuse" : "group_create",
         });
       }
     });
@@ -1583,7 +1626,6 @@ export function messengerService(db: Db) {
         if (!await findMessengerSavedViewWithDb(txDb, orgId, userId, threadKey)) {
           throw notFound("Messenger Saved View not found");
         }
-        throw conflict("Saved Views cannot be removed from a group without a destination; move the Saved View or remove it instead");
       }
       const [membership] = await txDb
         .select({ id: messengerCustomGroupEntries.id, groupId: messengerCustomGroupEntries.groupId })

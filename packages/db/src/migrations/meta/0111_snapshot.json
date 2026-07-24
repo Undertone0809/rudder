@@ -1,5 +1,5 @@
 {
-  "id": "ff842d84-a4ff-4f5c-96d1-859ea3202cf5",
+  "id": "d36926ab-0c67-4dbf-849a-469129134037",
   "prevId": "15f9ef0e-8bfd-443d-b9f4-aea906e1337a",
   "version": "7",
   "dialect": "postgresql",
@@ -6743,12 +6743,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "model_override": {
-          "name": "model_override",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "routed_agent_id": {
           "name": "routed_agent_id",
           "type": "uuid",
@@ -9755,7 +9749,13 @@
           "name": "integration_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "status": {
           "name": "status",
@@ -9835,6 +9835,27 @@
           "method": "btree",
           "with": {}
         },
+        "agent_custom_integration_bindings_org_connection_idx": {
+          "name": "agent_custom_integration_bindings_org_connection_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "connection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "agent_custom_integration_bindings_agent_integration_uq": {
           "name": "agent_custom_integration_bindings_agent_integration_uq",
           "columns": [
@@ -9858,6 +9879,34 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_custom_integration_bindings_agent_connection_uq": {
+          "name": "agent_custom_integration_bindings_agent_connection_uq",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "connection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"agent_custom_integration_bindings\".\"connection_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -9902,12 +9951,30 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "agent_custom_integration_bindings_connection_id_mcp_connections_id_fk": {
+          "name": "agent_custom_integration_bindings_connection_id_mcp_connections_id_fk",
+          "tableFrom": "agent_custom_integration_bindings",
+          "tableTo": "mcp_connections",
+          "columnsFrom": [
+            "connection_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "agent_custom_integration_bindings_owner_check": {
+          "name": "agent_custom_integration_bindings_owner_check",
+          "value": "\"agent_custom_integration_bindings\".\"integration_id\" is not null or \"agent_custom_integration_bindings\".\"connection_id\" is not null"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.custom_integration_tool_calls": {
@@ -9931,7 +9998,13 @@
           "name": "integration_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "tool_id": {
           "name": "tool_id",
@@ -9978,6 +10051,12 @@
         },
         "sanitized_result": {
           "name": "sanitized_result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "redacted_dispatch_outcome": {
+          "name": "redacted_dispatch_outcome",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
@@ -10069,6 +10148,33 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "custom_integration_tool_calls_org_connection_started_idx": {
+          "name": "custom_integration_tool_calls_org_connection_started_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "connection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "started_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -10091,6 +10197,19 @@
           "tableTo": "custom_integrations",
           "columnsFrom": [
             "integration_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "custom_integration_tool_calls_connection_id_mcp_connections_id_fk": {
+          "name": "custom_integration_tool_calls_connection_id_mcp_connections_id_fk",
+          "tableFrom": "custom_integration_tool_calls",
+          "tableTo": "mcp_connections",
+          "columnsFrom": [
+            "connection_id"
           ],
           "columnsTo": [
             "id"
@@ -10128,7 +10247,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "custom_integration_tool_calls_owner_check": {
+          "name": "custom_integration_tool_calls_owner_check",
+          "value": "\"custom_integration_tool_calls\".\"integration_id\" is not null or \"custom_integration_tool_calls\".\"connection_id\" is not null"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.custom_integration_tools": {
@@ -10152,7 +10276,13 @@
           "name": "integration_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "external_tool_name": {
           "name": "external_tool_name",
@@ -10172,12 +10302,30 @@
           "primaryKey": false,
           "notNull": false
         },
+        "raw_input_schema": {
+          "name": "raw_input_schema",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "input_schema": {
           "name": "input_schema",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true,
           "default": "'{}'::jsonb"
+        },
+        "raw_output_schema": {
+          "name": "raw_output_schema",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "output_schema": {
+          "name": "output_schema",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         },
         "config": {
           "name": "config",
@@ -10192,6 +10340,25 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'active'"
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "discovered_at": {
+          "name": "discovered_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "removed_at": {
+          "name": "removed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -10220,6 +10387,27 @@
             },
             {
               "expression": "integration_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "custom_integration_tools_org_connection_idx": {
+          "name": "custom_integration_tools_org_connection_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "connection_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -10278,12 +10466,30 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "custom_integration_tools_connection_id_mcp_connections_id_fk": {
+          "name": "custom_integration_tools_connection_id_mcp_connections_id_fk",
+          "tableFrom": "custom_integration_tools",
+          "tableTo": "mcp_connections",
+          "columnsFrom": [
+            "connection_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "custom_integration_tools_owner_check": {
+          "name": "custom_integration_tools_owner_check",
+          "value": "\"custom_integration_tools\".\"integration_id\" is not null or \"custom_integration_tools\".\"connection_id\" is not null"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.custom_integrations": {
@@ -15687,6 +15893,782 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.mcp_connections": {
+      "name": "mcp_connections",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "legacy_custom_integration_id": {
+          "name": "legacy_custom_integration_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "credential_secret_id": {
+          "name": "credential_secret_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "transport": {
+          "name": "transport",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "external_scope": {
+          "name": "external_scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "access_mode": {
+          "name": "access_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'provider_default'"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "safe_config": {
+          "name": "safe_config",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "startup_timeout_ms": {
+          "name": "startup_timeout_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 10000
+        },
+        "tool_timeout_ms": {
+          "name": "tool_timeout_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 60000
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "required": {
+          "name": "required",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "last_discovered_at": {
+          "name": "last_discovered_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "activated_at": {
+          "name": "activated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "disabled_at": {
+          "name": "disabled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "mcp_connections_org_name_uq": {
+          "name": "mcp_connections_org_name_uq",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mcp_connections_org_provider_scope_uq": {
+          "name": "mcp_connections_org_provider_scope_uq",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "external_scope",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"mcp_connections\".\"provider\" <> 'custom' and \"mcp_connections\".\"external_scope\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mcp_connections_org_status_idx": {
+          "name": "mcp_connections_org_status_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mcp_connections_org_provider_idx": {
+          "name": "mcp_connections_org_provider_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mcp_connections_legacy_integration_uq": {
+          "name": "mcp_connections_legacy_integration_uq",
+          "columns": [
+            {
+              "expression": "legacy_custom_integration_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"mcp_connections\".\"legacy_custom_integration_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mcp_connections_credential_secret_idx": {
+          "name": "mcp_connections_credential_secret_idx",
+          "columns": [
+            {
+              "expression": "credential_secret_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "mcp_connections_org_id_organizations_id_fk": {
+          "name": "mcp_connections_org_id_organizations_id_fk",
+          "tableFrom": "mcp_connections",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "mcp_connections_legacy_custom_integration_id_custom_integrations_id_fk": {
+          "name": "mcp_connections_legacy_custom_integration_id_custom_integrations_id_fk",
+          "tableFrom": "mcp_connections",
+          "tableTo": "custom_integrations",
+          "columnsFrom": [
+            "legacy_custom_integration_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "mcp_connections_credential_secret_id_organization_secrets_id_fk": {
+          "name": "mcp_connections_credential_secret_id_organization_secrets_id_fk",
+          "tableFrom": "mcp_connections",
+          "tableTo": "organization_secrets",
+          "columnsFrom": [
+            "credential_secret_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "mcp_connections_legacy_manual_disabled_check": {
+          "name": "mcp_connections_legacy_manual_disabled_check",
+          "value": "\"mcp_connections\".\"transport\" <> 'legacy_manual' or \"mcp_connections\".\"enabled\" = false"
+        },
+        "mcp_connections_positive_timeouts_check": {
+          "name": "mcp_connections_positive_timeouts_check",
+          "value": "\"mcp_connections\".\"startup_timeout_ms\" > 0 and \"mcp_connections\".\"tool_timeout_ms\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.mcp_oauth_grants": {
+      "name": "mcp_oauth_grants",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "authorizing_user_id": {
+          "name": "authorizing_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_subject": {
+          "name": "provider_subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_scopes": {
+          "name": "provider_scopes",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "external_scope_metadata": {
+          "name": "external_scope_metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "credential_secret_id": {
+          "name": "credential_secret_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "status_metadata": {
+          "name": "status_metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_refreshed_at": {
+          "name": "last_refreshed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "mcp_oauth_grants_connection_uq": {
+          "name": "mcp_oauth_grants_connection_uq",
+          "columns": [
+            {
+              "expression": "connection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mcp_oauth_grants_org_status_idx": {
+          "name": "mcp_oauth_grants_org_status_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mcp_oauth_grants_authorizing_user_idx": {
+          "name": "mcp_oauth_grants_authorizing_user_idx",
+          "columns": [
+            {
+              "expression": "authorizing_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mcp_oauth_grants_credential_secret_idx": {
+          "name": "mcp_oauth_grants_credential_secret_idx",
+          "columns": [
+            {
+              "expression": "credential_secret_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "mcp_oauth_grants_org_id_organizations_id_fk": {
+          "name": "mcp_oauth_grants_org_id_organizations_id_fk",
+          "tableFrom": "mcp_oauth_grants",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "mcp_oauth_grants_connection_id_mcp_connections_id_fk": {
+          "name": "mcp_oauth_grants_connection_id_mcp_connections_id_fk",
+          "tableFrom": "mcp_oauth_grants",
+          "tableTo": "mcp_connections",
+          "columnsFrom": [
+            "connection_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "mcp_oauth_grants_authorizing_user_id_user_id_fk": {
+          "name": "mcp_oauth_grants_authorizing_user_id_user_id_fk",
+          "tableFrom": "mcp_oauth_grants",
+          "tableTo": "user",
+          "columnsFrom": [
+            "authorizing_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "mcp_oauth_grants_credential_secret_id_organization_secrets_id_fk": {
+          "name": "mcp_oauth_grants_credential_secret_id_organization_secrets_id_fk",
+          "tableFrom": "mcp_oauth_grants",
+          "tableTo": "organization_secrets",
+          "columnsFrom": [
+            "credential_secret_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.mcp_oauth_sessions": {
+      "name": "mcp_oauth_sessions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "authorizing_user_id": {
+          "name": "authorizing_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state_hash": {
+          "name": "state_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credential_secret_id": {
+          "name": "credential_secret_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "redirect_uri": {
+          "name": "redirect_uri",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'authorizing'"
+        },
+        "status_metadata": {
+          "name": "status_metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now() + interval '10 minutes'"
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "mcp_oauth_sessions_state_hash_uq": {
+          "name": "mcp_oauth_sessions_state_hash_uq",
+          "columns": [
+            {
+              "expression": "state_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mcp_oauth_sessions_org_connection_idx": {
+          "name": "mcp_oauth_sessions_org_connection_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "connection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mcp_oauth_sessions_expiry_idx": {
+          "name": "mcp_oauth_sessions_expiry_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "mcp_oauth_sessions_credential_secret_idx": {
+          "name": "mcp_oauth_sessions_credential_secret_idx",
+          "columns": [
+            {
+              "expression": "credential_secret_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "mcp_oauth_sessions_org_id_organizations_id_fk": {
+          "name": "mcp_oauth_sessions_org_id_organizations_id_fk",
+          "tableFrom": "mcp_oauth_sessions",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "mcp_oauth_sessions_connection_id_mcp_connections_id_fk": {
+          "name": "mcp_oauth_sessions_connection_id_mcp_connections_id_fk",
+          "tableFrom": "mcp_oauth_sessions",
+          "tableTo": "mcp_connections",
+          "columnsFrom": [
+            "connection_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "mcp_oauth_sessions_authorizing_user_id_user_id_fk": {
+          "name": "mcp_oauth_sessions_authorizing_user_id_user_id_fk",
+          "tableFrom": "mcp_oauth_sessions",
+          "tableTo": "user",
+          "columnsFrom": [
+            "authorizing_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "mcp_oauth_sessions_credential_secret_id_organization_secrets_id_fk": {
+          "name": "mcp_oauth_sessions_credential_secret_id_organization_secrets_id_fk",
+          "tableFrom": "mcp_oauth_sessions",
+          "tableTo": "organization_secrets",
+          "columnsFrom": [
+            "credential_secret_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "mcp_oauth_sessions_ten_minute_lifetime_check": {
+          "name": "mcp_oauth_sessions_ten_minute_lifetime_check",
+          "value": "\"mcp_oauth_sessions\".\"expires_at\" <= \"mcp_oauth_sessions\".\"created_at\" + interval '10 minutes'"
+        },
+        "mcp_oauth_sessions_consumed_after_create_check": {
+          "name": "mcp_oauth_sessions_consumed_after_create_check",
+          "value": "\"mcp_oauth_sessions\".\"consumed_at\" is null or \"mcp_oauth_sessions\".\"consumed_at\" >= \"mcp_oauth_sessions\".\"created_at\""
+        }
+      },
       "isRLSEnabled": false
     },
     "public.messenger_custom_group_entries": {

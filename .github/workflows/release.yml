@@ -20,6 +20,11 @@ on:
         required: false
         default: ""
         type: string
+      confirm_docs:
+        description: "For a real stable publish, enter PUBLISH DOCS only after explicit docs.rudderhq.dev deployment approval"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -46,7 +51,10 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
         env:
           CONFIRM_STABLE: ${{ inputs.confirm_stable }}
-        run: test "$CONFIRM_STABLE" = "PUBLISH STABLE"
+          CONFIRM_DOCS: ${{ inputs.confirm_docs }}
+        run: |
+          test "$CONFIRM_STABLE" = "PUBLISH STABLE"
+          test "$CONFIRM_DOCS" = "PUBLISH DOCS"
 
       - name: Require release repository safeguards
         if: github.event_name == 'workflow_dispatch'
@@ -54,7 +62,7 @@ jobs:
           RELEASE_SAFEGUARDS_CONFIGURED: ${{ vars.RELEASE_SAFEGUARDS_CONFIGURED }}
         run: |
           if [ "$RELEASE_SAFEGUARDS_CONFIGURED" != "true" ]; then
-            echo "Configure npm-stable reviewers, main protection with the release-workflow push path, and Actions workflow permissions, then set RELEASE_SAFEGUARDS_CONFIGURED=true." >&2
+            echo "Configure npm-stable reviewers, main protection without direct-push bypass, and Actions permission to create the version-handoff PR and dispatch CI, then set RELEASE_SAFEGUARDS_CONFIGURED=true." >&2
             exit 1
           fi
 
@@ -315,15 +323,32 @@ jobs:
             --remote origin \
             --stable-version "${{ steps.publish.outputs.version }}"
 
-  next-release-base:
-    name: Advance next release base
+  stable-docs:
+    name: Publish stable changelog to docs production
     needs:
       - preflight
       - stable
     if: needs.stable.result == 'success'
     permissions:
+      contents: write
+    uses: ./.github/workflows/docs-production.yml
+    with:
+      source_ref: v${{ needs.stable.outputs.version }}
+      tag_name: docs/release/v${{ needs.stable.outputs.version }}
+      release_docs_approved: true
+    secrets: inherit
+
+  next-release-base:
+    name: Prepare next release base PR
+    needs:
+      - preflight
+      - stable
+      - stable-docs
+    if: needs.stable.result == 'success' && needs.stable-docs.result == 'success'
+    permissions:
       actions: write
       contents: write
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -336,24 +361,39 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Advance main to the next patch version
+      - name: Prepare the next patch version branch
         id: next-release
         run: |
           node scripts/prepare-next-release.mjs \
             --stable-version "${{ needs.stable.outputs.version }}"
 
-      - name: Start CI for the advanced release base
+      - name: Create or reuse the next release base PR
         if: steps.next-release.outputs.action == 'updated' || steps.next-release.outputs.action == 'ready'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          branch="${{ steps.next-release.outputs.branch }}"
+          pr_url="$(gh pr list \
+            --base main \
+            --head "$branch" \
+            --state open \
+            --json url \
+            --jq '.[0].url // empty')"
+          if [ -z "$pr_url" ]; then
+            pr_url="$(gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "chore(release): start v${{ steps.next-release.outputs.version }}" \
+              --body "Automated post-release version handoff for v${{ needs.stable.outputs.version }}. This PR remains subject to normal CI and CODEOWNERS review.")"
+          fi
           gh workflow run ci.yml \
-            --ref main \
+            --ref "$branch" \
             -f source_sha="${{ steps.next-release.outputs.head_sha }}"
           {
             echo "### Next release base"
             echo "Version: ${{ steps.next-release.outputs.version }}"
             echo "Commit: ${{ steps.next-release.outputs.head_sha }}"
+            echo "Pull request: $pr_url"
             echo "Trusted CI dispatched for ${{ steps.next-release.outputs.head_sha }}."
           } >> "$GITHUB_STEP_SUMMARY"
 

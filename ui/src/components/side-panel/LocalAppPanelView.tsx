@@ -1,4 +1,15 @@
+import { messengerApi } from "@/api/messenger";
+import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useOrganization } from "@/context/OrganizationContext";
+import { useOptionalToast } from "@/context/ToastContext";
 import { readDesktopShell, type DesktopLocalAppRuntimeView } from "@/lib/desktop-shell";
 import {
   localAppIdentityMatches,
@@ -9,8 +20,9 @@ import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AppWindow, CircleAlert, Loader2, Play, RotateCw, Square, TerminalSquare } from "lucide-react";
+import { AppWindow, CircleAlert, Loader2, MoreHorizontal, Pencil, Pin, Play, RotateCw, Square, TerminalSquare } from "lucide-react";
 import { createElement, useEffect, useState } from "react";
+import { LocalAppDefinitionReviewDialog } from "./LocalAppsPanel";
 
 type LocalAppTarget = Extract<SidePanelTarget, { kind: "local_app" }>;
 
@@ -25,13 +37,20 @@ function errorMessage(value: unknown, fallback: string) {
 
 export function LocalAppPanelView({
   active,
+  savedViewId = null,
   target,
+  onTitleChange,
 }: {
   active: boolean;
+  savedViewId?: string | null;
   target: LocalAppTarget;
+  onTitleChange?: (title: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const { selectedOrganizationId } = useOrganization();
+  const toast = useOptionalToast();
   const [logsOpen, setLogsOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const localApps = readDesktopShell()?.localApps;
   const supported = Boolean(localApps?.supported);
   const definitionsQuery = useQuery({
@@ -39,6 +58,34 @@ export function LocalAppPanelView({
     queryFn: () => localApps!.list(),
     enabled: supported,
     staleTime: 1_000,
+  });
+  const savedViewQuery = useQuery({
+    queryKey: queryKeys.messenger.savedView(selectedOrganizationId ?? "__none__", savedViewId ?? "__none__"),
+    queryFn: () => messengerApi.getSavedView(selectedOrganizationId!, savedViewId!),
+    enabled: Boolean(selectedOrganizationId && savedViewId),
+  });
+  const pinMutation = useMutation({
+    mutationFn: (pinned: boolean) => messengerApi.updateSavedView(
+      selectedOrganizationId!,
+      savedViewId!,
+      { primaryRailPinned: pinned },
+    ),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(
+        queryKeys.messenger.savedView(selectedOrganizationId!, savedViewId!),
+        updated,
+      );
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.messenger.primaryRailPins(selectedOrganizationId!),
+      });
+    },
+    onError: (error) => {
+      toast?.pushToast({
+        title: "Could not update Primary Rail pin",
+        body: errorMessage(error, "Try again."),
+        tone: "error",
+      });
+    },
   });
   const definition = definitionsQuery.data?.find((candidate) => localAppIdentityMatches(candidate, target)) ?? null;
   const statusQuery = useQuery({
@@ -81,6 +128,41 @@ export function LocalAppPanelView({
       queryClient.removeQueries({
         queryKey: [...queryKeys.localApps.status(target.localBindingId), "attested"],
       });
+    },
+  });
+  const editMutation = useMutation({
+    mutationFn: (draft: Parameters<NonNullable<typeof localApps>["update"]>[1]) =>
+      localApps!.update(definition!.id, draft),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(queryKeys.localApps.definitions, (
+        current: Awaited<ReturnType<NonNullable<typeof localApps>["list"]>> | undefined,
+      ) => current?.map((candidate) => candidate.id === updated.id ? updated : candidate) ?? [updated]);
+      onTitleChange?.(updated.title);
+      if (selectedOrganizationId && savedViewId) {
+        void messengerApi.updateSavedView(selectedOrganizationId, savedViewId, {
+          title: updated.title,
+        }).then((savedView) => {
+          queryClient.setQueryData(
+            queryKeys.messenger.savedView(selectedOrganizationId, savedViewId),
+            savedView,
+          );
+          return Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.messenger.customGroups(selectedOrganizationId),
+            }),
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.messenger.primaryRailPins(selectedOrganizationId),
+            }),
+          ]);
+        }).catch((error) => {
+          toast?.pushToast({
+            title: "Local App updated",
+            body: `The project details were saved, but its Messenger title could not be refreshed: ${errorMessage(error, "try again.")}`,
+            tone: "warn",
+          });
+        });
+      }
+      setEditOpen(false);
     },
   });
   const logsQuery = useQuery({
@@ -133,29 +215,87 @@ export function LocalAppPanelView({
     >
       <header className="flex shrink-0 items-center gap-3 border-b border-[color:var(--border-soft)] px-3 py-2">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[color:var(--surface-active)] text-muted-foreground">
-          <AppWindow className="h-4 w-4" aria-hidden />
+          <LocalAppIdentityIcon
+            className="h-4 w-4"
+            iconDataUrl={definition?.iconDataUrl}
+            identity={target}
+            testId="local-app-header-icon"
+          />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-foreground">{target.label}</span>
+          <span className="block truncate text-sm font-medium text-foreground">
+            {definition?.title ?? target.label}
+          </span>
           <span className="block text-xs text-muted-foreground">
             {status ? runtimeLabel(status.status) : unavailable ? "Unavailable" : "Checking local runtime…"}
           </span>
         </span>
-        {canStop ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            data-testid="local-app-stop"
-            disabled={stopMutation.isPending || status?.status === "stopping"}
-            onClick={() => stopMutation.mutate()}
-          >
-            {stopMutation.isPending || status?.status === "stopping"
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-              : <Square className="h-3.5 w-3.5" aria-hidden />}
-            Stop
-          </Button>
-        ) : null}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              data-testid="local-app-more"
+              aria-label={`More actions for ${target.label}`}
+            >
+              <MoreHorizontal className="h-4 w-4" aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuItem
+              disabled={!definition || orphaned}
+              onClick={() => {
+                editMutation.reset();
+                setEditOpen(true);
+              }}
+            >
+              <Pencil className="h-4 w-4" />
+              Edit details
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setLogsOpen((open) => !open)}>
+              <TerminalSquare className="h-4 w-4" />
+              {logsOpen ? "Hide logs" : "Show logs"}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!savedViewId
+                || !selectedOrganizationId
+                || savedViewQuery.isPending
+                || pinMutation.isPending}
+              onClick={() => {
+                if (savedViewQuery.isError) {
+                  void savedViewQuery.refetch();
+                  return;
+                }
+                pinMutation.mutate(!savedViewQuery.data?.primaryRailPinnedAt);
+              }}
+            >
+              <Pin className="h-4 w-4" />
+              {!savedViewId
+                ? "Keep in Messenger to pin"
+                : savedViewQuery.isPending
+                  ? "Checking pin status…"
+                  : savedViewQuery.isError
+                    ? "Retry pin status"
+                    : savedViewQuery.data?.primaryRailPinnedAt
+                      ? "Unpin from Primary Rail"
+                      : "Pin to Primary Rail"}
+            </DropdownMenuItem>
+            {canStop ? <DropdownMenuSeparator /> : null}
+            {canStop ? (
+              <DropdownMenuItem
+                data-testid="local-app-stop"
+                disabled={stopMutation.isPending || status?.status === "stopping"}
+                onClick={() => stopMutation.mutate()}
+              >
+                {stopMutation.isPending || status?.status === "stopping"
+                  ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  : <Square className="h-4 w-4" aria-hidden />}
+                Stop
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </header>
 
       {definitionsQuery.isPending || (definition && statusQuery.isPending) ? (
@@ -273,6 +413,22 @@ export function LocalAppPanelView({
           </div>
         </div>
       )}
+      <LocalAppDefinitionReviewDialog
+        definition={definition}
+        edit
+        editable={!canStop && !orphaned}
+        error={editMutation.error ?? stopMutation.error}
+        open={editOpen}
+        pending={editMutation.isPending}
+        requestEditPending={stopMutation.isPending}
+        title="Edit Local App details"
+        onCancel={() => {
+          editMutation.reset();
+          setEditOpen(false);
+        }}
+        onRequestEdit={() => stopMutation.mutate()}
+        onSubmit={(draft) => editMutation.mutate(draft)}
+      />
     </section>
   );
 }

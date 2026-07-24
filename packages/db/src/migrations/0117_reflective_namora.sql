@@ -1,0 +1,1 @@
+ALTER TABLE "messenger_saved_view_mutations" ALTER COLUMN "group_id" DROP NOT NULL;

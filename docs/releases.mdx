@@ -25,6 +25,36 @@ each version shipped. For current product guidance, use the Concepts, How-to,
 and Reference pages in this site. Future release entries should use the current
 navigation names and link to the owning page when a term may be ambiguous.
 
+## v0.6.0
+
+Released: 2026-07-25
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.6.0)
+
+### New Features
+
+- Added a persistent Messenger workbench that can promote saved views and Side Panel content into the main workspace while preserving live state and context, including secure local web apps and spawned-subagent inspection.
+- Added response annotations across Chat and Side Chat so users can anchor feedback to exact response ranges and preserve it through queued delivery.
+- Added managed MCP connections with OAuth lifecycle management, settings, runtime injection, and provider-neutral agent access.
+- Expanded the built-in Browser with guided Side Panel onboarding, a separate Browser MCP runtime, backend-parity tools, downloads, and read-only DOM references.
+- Added shared Library media playback for audio and video work products.
+
+### Improvements
+
+- Simplified first-run onboarding and issue creation so new users reach active work with less setup.
+- Increased default agent-run concurrency to eight and improved run context, failed-run navigation, and subagent visibility.
+- Restored the bundled Rudder skill-creator workflow with current guidance, compatibility references, and evaluation tooling.
+- Improved Messenger saved-view organization, grouped keep actions, wide Side Panel resizing, and workbench continuity across navigation and promotion.
+- Improved Desktop runtime reuse with a shared PostgreSQL payload, stronger update recovery, safer shutdown, and faster stable-release orchestration.
+
+### Bug Fixes
+
+- Fixed duplicate live transcript deltas, queued-message delivery races, stale composer state, and hidden provider lifecycle details.
+- Fixed Chat runtime-preparation failures, organization-scoped transcript history, strict prompt matching, and exact failed-run recovery links.
+- Fixed organization skill installation, source protection, local materialization, and concurrent lifecycle transitions.
+- Fixed Browser credential isolation, managed MCP cleanup, DOM-reference safety, saved-view identity, and runtime shutdown boundaries.
+- Fixed Desktop local-app listener cleanup and recovery, saved-view routing and cache eviction, responsive Issue Detail and Library layouts, and several cross-platform release regressions.
+
 ## v0.5.1
 
 Released: 2026-07-22

@@ -11,6 +11,7 @@ import {
   type Db,
 } from "@rudderhq/db";
 import {
+  chatInlineAnnotationsFromStructuredPayload,
   chatInlineVisualMappingsFromStructuredPayload,
   extractVisibleChatWorkTargets,
   isUuidLike,
@@ -154,6 +155,10 @@ export function chatWorkManifestService(db: Db) {
     const candidates = new Map<string, ManifestCandidate>();
     for (const message of visibleMessages) {
       const role = message.role as "user" | "assistant";
+      const annotationAttachmentIds = new Set(
+        chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)
+          .flatMap((annotation) => annotation.attachmentIds),
+      );
       for (const target of extractVisibleChatWorkTargets(message.body)) {
         const output = role === "assistant" && Boolean(message.runId) &&
           (target.targetType === "library_entry" || target.targetType === "library_file") &&
@@ -181,6 +186,7 @@ export function chatWorkManifestService(db: Db) {
         });
       }
       for (const attachment of attachmentsByMessage.get(message.id) ?? []) {
+        if (annotationAttachmentIds.has(attachment.attachmentId)) continue;
         if (inlineVisualTargetKeys.has(`asset:${attachment.assetId}`)) continue;
         const output = role === "assistant" && Boolean(attachment.createdByAgentId);
         mergeCandidate(candidates, {

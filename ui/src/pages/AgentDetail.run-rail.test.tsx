@@ -42,6 +42,10 @@ vi.mock("../context/SidebarContext", () => ({
   useSidebar: () => ({ isMobile: testState.isMobile }),
 }));
 
+vi.mock("./AgentDetail.run-log", () => ({
+  LogViewer: () => null,
+}));
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {

@@ -171,7 +171,7 @@ describe("Messenger page headers", () => {
     const html = renderIssueThread();
 
     expect(html).toContain(">Review Summary</h2>");
-    expect(html).toContain("<strong>Rendered</strong>");
+    expect(html).toMatch(/<strong[^>]*>Rendered<\/strong>/);
     expect(html).toContain("Alex comment");
     expect(html).not.toContain("Source comment by Alex");
     expect(html).toContain('href="/messenger/issues/RUD-4#comment-comment-4"');

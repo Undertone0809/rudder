@@ -8,9 +8,9 @@ import {
 } from "./AgentConfigForm";
 
 describe("agent config defaults", () => {
-  it("defaults new agents to three concurrent runs", () => {
+  it("defaults new agents to eight concurrent runs", () => {
     expect(defaultCreateValues.maxConcurrentRuns).toBe(AGENT_RUN_CONCURRENCY_DEFAULT);
-    expect(defaultCreateValues.maxConcurrentRuns).toBe(3);
+    expect(defaultCreateValues.maxConcurrentRuns).toBe(8);
   });
 
   it("defaults timer heartbeat preflight on for new agents", () => {

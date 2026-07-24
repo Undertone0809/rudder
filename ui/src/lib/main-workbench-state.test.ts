@@ -57,6 +57,36 @@ function reduce(
   return actions.reduce(mainWorkbenchReducer, state);
 }
 
+function completePromotionActions(
+  promotionId: string,
+  savedViewId: string,
+  expectedSourceRevision: number,
+): Parameters<typeof mainWorkbenchReducer>[1][] {
+  return [
+    {
+      type: "promotion/server-commit",
+      organizationId: ORGANIZATION_A,
+      promotionId,
+      savedViewId,
+      expectedSourceRevision,
+    },
+    {
+      type: "promotion/claim",
+      organizationId: ORGANIZATION_A,
+      promotionId,
+      savedViewId,
+      expectedSourceRevision,
+    },
+    {
+      type: "promotion/detach-succeed",
+      organizationId: ORGANIZATION_A,
+      promotionId,
+      savedViewId,
+      expectedSourceRevision,
+    },
+  ];
+}
+
 describe("Main Workbench state", () => {
   it("focuses an existing Saved View tab by exact view instance without replacing its live state", () => {
     const originalTarget = browserTarget("view-a", "https://example.com/original");
@@ -349,6 +379,7 @@ describe("Main Workbench state", () => {
         id: "runtime-a",
         viewInstanceId: "view-a",
         targetKind: "browser",
+        target: browserTarget("view-a"),
         host: sourceHost,
       },
     });
@@ -385,6 +416,7 @@ describe("Main Workbench state", () => {
         id: "runtime-first",
         viewInstanceId: "view-shared",
         targetKind: "browser",
+        target: browserTarget("view-shared"),
         host: { kind: "side", contextKey: "chat:first" },
       },
     });
@@ -395,6 +427,7 @@ describe("Main Workbench state", () => {
         id: "runtime-second",
         viewInstanceId: "view-shared",
         targetKind: "browser",
+        target: browserTarget("view-shared"),
         host: { kind: "parked" },
       },
     });
@@ -410,6 +443,7 @@ describe("Main Workbench state", () => {
         id: "runtime-second",
         viewInstanceId: "view-shared",
         targetKind: "browser",
+        target: browserTarget("view-shared"),
         host: { kind: "disposed" },
       },
     });
@@ -434,6 +468,7 @@ describe("Main Workbench state", () => {
         id: "runtime-source",
         viewInstanceId: "view-source",
         targetKind: "browser",
+        target: sourceTarget,
         host: { kind: "side", contextKey: "chat:source" },
       },
     });
@@ -459,13 +494,7 @@ describe("Main Workbench state", () => {
 
     sourceTarget.url = "https://example.com/mutated-after-dispatch";
     sourceTarget.label = "Mutated";
-    state = mainWorkbenchReducer(state, {
-      type: "promotion/succeed",
-      organizationId: ORGANIZATION_A,
-      promotionId: "promotion-a",
-      savedViewId: "saved-source",
-      expectedSourceRevision: 1,
-    });
+    state = reduce(state, ...completePromotionActions("promotion-a", "saved-source", 1));
 
     expect(state.organizations[ORGANIZATION_A]?.promotionsById).not.toHaveProperty("promotion-a");
     expect(state.organizations[ORGANIZATION_A]?.tabsByViewInstanceId["view-source"]).toMatchObject({
@@ -501,6 +530,7 @@ describe("Main Workbench state", () => {
           id: "runtime-source",
           viewInstanceId: "view-source",
           targetKind: "library_file",
+          target: source.target,
           host: { kind: "side", contextKey: "issue:RUD-42" },
         },
       },
@@ -571,6 +601,7 @@ describe("Main Workbench state", () => {
           id: "runtime-source",
           viewInstanceId: "view-source",
           targetKind: "browser",
+          target: source.target,
           host: { kind: "side", contextKey: "chat:source" },
         },
       },
@@ -617,7 +648,7 @@ describe("Main Workbench state", () => {
     });
 
     const staleCompletion = mainWorkbenchReducer(state, {
-      type: "promotion/succeed",
+      type: "promotion/server-commit",
       organizationId: ORGANIZATION_A,
       promotionId: "promotion-a",
       savedViewId: "saved-source",
@@ -625,13 +656,7 @@ describe("Main Workbench state", () => {
     });
     expect(staleCompletion).toBe(state);
 
-    state = mainWorkbenchReducer(state, {
-      type: "promotion/succeed",
-      organizationId: ORGANIZATION_A,
-      promotionId: "promotion-a",
-      savedViewId: "saved-source",
-      expectedSourceRevision: 2,
-    });
+    state = reduce(state, ...completePromotionActions("promotion-a", "saved-source", 2));
     expect(state.organizations[ORGANIZATION_A]?.promotionsById).not.toHaveProperty("promotion-a");
     expect(state.organizations[ORGANIZATION_A]?.tabsByViewInstanceId).toHaveProperty("view-source");
   });
@@ -654,6 +679,7 @@ describe("Main Workbench state", () => {
           id: "runtime-source",
           viewInstanceId: "view-source",
           targetKind: "browser",
+          target: source.target,
           host: { kind: "side", contextKey: "chat:source" },
         },
       },
@@ -668,7 +694,7 @@ describe("Main Workbench state", () => {
 
     const staleTerminalActions = [
       {
-        type: "promotion/succeed" as const,
+        type: "promotion/server-commit" as const,
         organizationId: ORGANIZATION_A,
         promotionId: "promotion-a",
         savedViewId: "saved-source",
@@ -705,7 +731,7 @@ describe("Main Workbench state", () => {
   it("ignores every terminal transition unless the source runtime is still transferring", () => {
     const terminalActions = [
       {
-        type: "promotion/succeed" as const,
+        type: "promotion/server-commit" as const,
         organizationId: ORGANIZATION_A,
         promotionId: "promotion-a",
         savedViewId: "saved-source",
@@ -745,6 +771,7 @@ describe("Main Workbench state", () => {
             id: "runtime-source",
             viewInstanceId: "view-source",
             targetKind: "browser",
+            target: browserTarget("view-source"),
             host: { kind: "side", contextKey: "chat:source" },
           },
         },
@@ -792,6 +819,7 @@ describe("Main Workbench state", () => {
           id: "runtime-source",
           viewInstanceId: "view-source",
           targetKind: "browser",
+          target: source.target,
           host: { kind: "side", contextKey: "chat:source" },
         },
       },
@@ -801,6 +829,13 @@ describe("Main Workbench state", () => {
         promotionId: "promotion-a",
         source,
         clientMutationId: "mutation-source",
+      },
+      {
+        type: "promotion/server-commit",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-committed",
+        expectedSourceRevision: 1,
       },
       {
         type: "promotion/claim-fail",
@@ -841,13 +876,23 @@ describe("Main Workbench state", () => {
       retryingClaim.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host,
     ).toEqual({ kind: "transferring" });
 
-    const completed = mainWorkbenchReducer(retryingClaim, {
-      type: "promotion/succeed",
-      organizationId: ORGANIZATION_A,
-      promotionId: "promotion-a",
-      savedViewId: "saved-committed",
-      expectedSourceRevision: 2,
-    });
+    const completed = reduce(
+      retryingClaim,
+      {
+        type: "promotion/claim",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-committed",
+        expectedSourceRevision: 2,
+      },
+      {
+        type: "promotion/detach-succeed",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-committed",
+        expectedSourceRevision: 2,
+      },
+    );
     expect(completed.organizations[ORGANIZATION_A]?.promotionsById).not.toHaveProperty(
       "promotion-a",
     );
@@ -878,6 +923,7 @@ describe("Main Workbench state", () => {
           id: "runtime-source",
           viewInstanceId: "view-source",
           targetKind: "browser",
+          target: browserTarget("view-source"),
           host: { kind: "side", contextKey: "chat:source" },
         },
       },
@@ -895,13 +941,7 @@ describe("Main Workbench state", () => {
           originContextKey: "chat:source",
         },
       },
-      {
-        type: "promotion/succeed",
-        organizationId: ORGANIZATION_A,
-        promotionId: "promotion-a",
-        savedViewId: "saved-source",
-        expectedSourceRevision: 1,
-      },
+      ...completePromotionActions("promotion-a", "saved-source", 1),
     );
 
     const organization = state.organizations[ORGANIZATION_A]!;
@@ -951,13 +991,7 @@ describe("Main Workbench state", () => {
           originContextKey: "chat:source",
         },
       },
-      {
-        type: "promotion/succeed",
-        organizationId: ORGANIZATION_A,
-        promotionId: "promotion-a",
-        savedViewId: "saved-source",
-        expectedSourceRevision: 1,
-      },
+      ...completePromotionActions("promotion-a", "saved-source", 1),
     );
 
     const organization = state.organizations[ORGANIZATION_A]!;
@@ -993,6 +1027,7 @@ describe("Main Workbench state", () => {
           id: "runtime-source",
           viewInstanceId: "view-source",
           targetKind: "browser",
+          target: browserTarget("view-source"),
           host: { kind: "side", contextKey: "chat:source" },
         },
       },
@@ -1011,7 +1046,14 @@ describe("Main Workbench state", () => {
         },
       },
       {
-        type: "promotion/succeed",
+        type: "promotion/server-commit",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-conflict",
+        expectedSourceRevision: 1,
+      },
+      {
+        type: "promotion/claim",
         organizationId: ORGANIZATION_A,
         promotionId: "promotion-a",
         savedViewId: "saved-conflict",
@@ -1043,6 +1085,7 @@ describe("Main Workbench state", () => {
           id: `runtime-${index}`,
           viewInstanceId: `view-${index}`,
           targetKind: "browser",
+          target: browserTarget(`view-${index}`),
           host: index === MAIN_WORKBENCH_BROWSER_CAPACITY - 1
             ? { kind: "parked" }
             : { kind: "side", contextKey: `chat:${index}` },
@@ -1093,13 +1136,7 @@ describe("Main Workbench state", () => {
       Array.from({ length: MAIN_WORKBENCH_BROWSER_CAPACITY }, (_, index) => `runtime-${index}`),
     );
 
-    state = mainWorkbenchReducer(state, {
-      type: "promotion/succeed",
-      organizationId: ORGANIZATION_A,
-      promotionId: "promotion-zero",
-      savedViewId: "saved-zero",
-      expectedSourceRevision: 1,
-    });
+    state = reduce(state, ...completePromotionActions("promotion-zero", "saved-zero", 1));
     expect(mainWorkbenchLiveBrowserCount(state, ORGANIZATION_A)).toBe(
       MAIN_WORKBENCH_BROWSER_CAPACITY,
     );
@@ -1126,6 +1163,7 @@ describe("Main Workbench state", () => {
           id: `organization-a-runtime-${index}`,
           viewInstanceId: `organization-a-view-${index}`,
           targetKind: "browser",
+          target: browserTarget(`organization-a-view-${index}`),
           host: { kind: "parked" },
         },
       });
@@ -1158,5 +1196,355 @@ describe("Main Workbench state", () => {
       MAIN_WORKBENCH_BROWSER_CAPACITY,
     );
     expect(mainWorkbenchLiveBrowserCount(state, ORGANIZATION_B)).toBe(2);
+  });
+
+  it("stages a committed promotion before claiming Main and only finalizes after Side detach", () => {
+    const source = {
+      viewInstanceId: "view-source",
+      savedViewId: null,
+      sourceRevision: 3,
+      runtimeId: "runtime-source",
+      target: browserTarget("view-source", "https://example.com/claimed"),
+      originContextKey: "chat:source",
+    };
+    let state = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "runtime/admit",
+        organizationId: ORGANIZATION_A,
+        runtime: {
+          id: source.runtimeId,
+          viewInstanceId: source.viewInstanceId,
+          targetKind: source.target.kind,
+          target: source.target,
+          host: { kind: "side", contextKey: source.originContextKey },
+        },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        clientMutationId: "mutation-a",
+        source,
+      },
+    );
+
+    state = mainWorkbenchReducer(state, {
+      type: "promotion/server-commit",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      savedViewId: "saved-a",
+      expectedSourceRevision: 3,
+    });
+    expect(state.organizations[ORGANIZATION_A]?.promotionsById["promotion-a"]).toMatchObject({
+      status: "claiming",
+      savedViewId: "saved-a",
+    });
+    expect(state.organizations[ORGANIZATION_A]?.tabsByViewInstanceId).not.toHaveProperty(
+      "view-source",
+    );
+    expect(state.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host).toEqual({
+      kind: "transferring",
+    });
+
+    state = mainWorkbenchReducer(state, {
+      type: "promotion/claim",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      savedViewId: "saved-a",
+      expectedSourceRevision: 3,
+    });
+    expect(state.organizations[ORGANIZATION_A]?.promotionsById["promotion-a"]).toMatchObject({
+      status: "detaching",
+      savedViewId: "saved-a",
+    });
+    expect(state.organizations[ORGANIZATION_A]?.tabsByViewInstanceId["view-source"]).toMatchObject({
+      savedViewId: "saved-a",
+      runtimeId: "runtime-source",
+      target: source.target,
+    });
+    expect(state.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host).toEqual({
+      kind: "main",
+      organizationId: ORGANIZATION_A,
+    });
+
+    state = mainWorkbenchReducer(state, {
+      type: "promotion/detach-succeed",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      savedViewId: "saved-a",
+      expectedSourceRevision: 3,
+    });
+    expect(state.organizations[ORGANIZATION_A]?.promotionsById).not.toHaveProperty("promotion-a");
+    expect(state.organizations[ORGANIZATION_A]?.tabsByViewInstanceId["view-source"]?.savedViewId).toBe(
+      "saved-a",
+    );
+  });
+
+  it("rolls a provisional Main claim back to the exact Side host and retains its commit for retry", () => {
+    const source = {
+      viewInstanceId: "view-source",
+      savedViewId: null,
+      sourceRevision: 4,
+      runtimeId: "runtime-source",
+      target: browserTarget("view-source"),
+      originContextKey: "issue:RUD-42",
+    };
+    let state = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "runtime/admit",
+        organizationId: ORGANIZATION_A,
+        runtime: {
+          id: source.runtimeId,
+          viewInstanceId: source.viewInstanceId,
+          targetKind: source.target.kind,
+          target: source.target,
+          host: { kind: "side", contextKey: source.originContextKey },
+        },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        clientMutationId: "mutation-a",
+        source,
+      },
+      {
+        type: "promotion/server-commit",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-committed",
+        expectedSourceRevision: 4,
+      },
+      {
+        type: "promotion/claim",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        savedViewId: "saved-committed",
+        expectedSourceRevision: 4,
+      },
+    );
+
+    state = mainWorkbenchReducer(state, {
+      type: "promotion/detach-fail",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      savedViewId: "saved-committed",
+      expectedSourceRevision: 4,
+      error: "source revision changed",
+    });
+
+    expect(state.organizations[ORGANIZATION_A]?.promotionsById["promotion-a"]).toMatchObject({
+      status: "claim_failed",
+      savedViewId: "saved-committed",
+      clientMutationId: "mutation-a",
+      error: "source revision changed",
+    });
+    expect(state.organizations[ORGANIZATION_A]?.tabsByViewInstanceId).not.toHaveProperty(
+      "view-source",
+    );
+    expect(state.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host).toEqual({
+      kind: "side",
+      contextKey: "issue:RUD-42",
+    });
+
+    state = mainWorkbenchReducer(state, {
+      type: "promotion/claim-retry",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      expectedSourceRevision: 4,
+      nextSourceRevision: 5,
+    });
+    expect(state.organizations[ORGANIZATION_A]?.promotionsById["promotion-a"]).toMatchObject({
+      status: "claiming",
+      savedViewId: "saved-committed",
+      source: { sourceRevision: 5 },
+    });
+    expect(state.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host).toEqual({
+      kind: "transferring",
+    });
+  });
+
+  it("cancels an in-flight Saved View claim back to Side before Remove unbinds it", () => {
+    const source = {
+      viewInstanceId: "view-source",
+      savedViewId: null,
+      sourceRevision: 6,
+      runtimeId: "runtime-source",
+      target: browserTarget("view-source"),
+      originContextKey: "chat:source",
+    };
+    const detaching = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "runtime/admit",
+        organizationId: ORGANIZATION_A,
+        runtime: {
+          id: source.runtimeId,
+          viewInstanceId: source.viewInstanceId,
+          targetKind: source.target.kind,
+          target: source.target,
+          host: { kind: "side", contextKey: source.originContextKey },
+        },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-remove",
+        clientMutationId: "mutation-remove",
+        source,
+      },
+      {
+        type: "promotion/server-commit",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-remove",
+        savedViewId: "saved-remove",
+        expectedSourceRevision: 6,
+      },
+      {
+        type: "promotion/claim",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-remove",
+        savedViewId: "saved-remove",
+        expectedSourceRevision: 6,
+      },
+    );
+
+    const staleCancellation = mainWorkbenchReducer(detaching, {
+      type: "promotion/cancel-saved-view",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-remove",
+      savedViewId: "saved-other",
+      expectedSourceRevision: 6,
+    });
+    expect(staleCancellation).toBe(detaching);
+
+    const canceled = mainWorkbenchReducer(detaching, {
+      type: "promotion/cancel-saved-view",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-remove",
+      savedViewId: "saved-remove",
+      expectedSourceRevision: 6,
+    });
+    expect(canceled.organizations[ORGANIZATION_A]?.promotionsById)
+      .not.toHaveProperty("promotion-remove");
+    expect(canceled.organizations[ORGANIZATION_A]?.tabsByViewInstanceId)
+      .not.toHaveProperty("view-source");
+    expect(canceled.organizations[ORGANIZATION_A]?.runtimesById["runtime-source"]?.host)
+      .toEqual({ kind: "side", contextKey: "chat:source" });
+  });
+
+  it("updates runtime and tab targets only for the exact runtime and view instance", () => {
+    const originalTarget = browserTarget("view-a", "https://example.com/original");
+    const nextTarget = browserTarget("view-a", "https://example.com/next");
+    const initial = mainWorkbenchReducer(createMainWorkbenchState(), {
+      type: "session-tab/create",
+      organizationId: ORGANIZATION_A,
+      tab: tabDraft("view-a", originalTarget, "runtime-a"),
+    });
+
+    const staleRuntime = mainWorkbenchReducer(initial, {
+      type: "runtime/update-target",
+      organizationId: ORGANIZATION_A,
+      runtimeId: "runtime-a",
+      viewInstanceId: "stale-view",
+      target: nextTarget,
+    });
+    expect(staleRuntime).toBe(initial);
+
+    const runtimeUpdated = mainWorkbenchReducer(initial, {
+      type: "runtime/update-target",
+      organizationId: ORGANIZATION_A,
+      runtimeId: "runtime-a",
+      viewInstanceId: "view-a",
+      target: nextTarget,
+    });
+    expect(runtimeUpdated.organizations[ORGANIZATION_A]?.runtimesById["runtime-a"]?.target).toEqual(
+      nextTarget,
+    );
+    expect(runtimeUpdated.organizations[ORGANIZATION_A]?.tabsByViewInstanceId["view-a"]?.target).toEqual(
+      originalTarget,
+    );
+
+    const staleTab = mainWorkbenchReducer(runtimeUpdated, {
+      type: "tab/update-target",
+      organizationId: ORGANIZATION_A,
+      runtimeId: "stale-runtime",
+      viewInstanceId: "view-a",
+      target: nextTarget,
+    });
+    expect(staleTab).toBe(runtimeUpdated);
+
+    const tabUpdated = mainWorkbenchReducer(runtimeUpdated, {
+      type: "tab/update-target",
+      organizationId: ORGANIZATION_A,
+      runtimeId: "runtime-a",
+      viewInstanceId: "view-a",
+      target: nextTarget,
+    });
+    expect(tabUpdated.organizations[ORGANIZATION_A]?.tabsByViewInstanceId["view-a"]?.target).toEqual(
+      nextTarget,
+    );
+  });
+
+  it("discards only the exact terminal promotion attempt", () => {
+    const source = {
+      viewInstanceId: "view-source",
+      savedViewId: null,
+      sourceRevision: 3,
+      runtimeId: "runtime-source",
+      target: browserTarget("view-source"),
+      originContextKey: "chat:source",
+    };
+    const failed = reduce(
+      createMainWorkbenchState(),
+      {
+        type: "runtime/admit",
+        organizationId: ORGANIZATION_A,
+        runtime: {
+          id: "runtime-source",
+          viewInstanceId: "view-source",
+          targetKind: "browser",
+          target: source.target,
+          host: { kind: "side", contextKey: "chat:source" },
+        },
+      },
+      {
+        type: "promotion/start",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        source,
+        clientMutationId: "mutation-a",
+      },
+      {
+        type: "promotion/server-fail",
+        organizationId: ORGANIZATION_A,
+        promotionId: "promotion-a",
+        expectedSourceRevision: 3,
+        error: "failed",
+      },
+    );
+
+    const staleDiscard = mainWorkbenchReducer(failed, {
+      type: "promotion/discard",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      expectedSourceRevision: 2,
+    });
+    expect(staleDiscard).toBe(failed);
+
+    const discarded = mainWorkbenchReducer(failed, {
+      type: "promotion/discard",
+      organizationId: ORGANIZATION_A,
+      promotionId: "promotion-a",
+      expectedSourceRevision: 3,
+    });
+    expect(discarded.organizations[ORGANIZATION_A]?.promotionsById)
+      .not.toHaveProperty("promotion-a");
+    expect(
+      discarded.organizations[ORGANIZATION_A]
+        ?.runtimesById["runtime-source"]?.host,
+    ).toEqual({ kind: "side", contextKey: "chat:source" });
   });
 });

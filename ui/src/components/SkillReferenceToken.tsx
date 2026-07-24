@@ -1,4 +1,5 @@
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { CHAT_ANNOTATION_TEXT_IGNORE_ATTRIBUTE } from "@/lib/chat-response-annotation-selection";
 import { skillTokenIconInlineStyle } from "@/lib/skill-reference";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight, Boxes } from "lucide-react";
@@ -16,9 +17,14 @@ export interface MarkdownSkillReferencePreview {
 interface SkillReferenceTokenProps {
   label: string;
   preview?: MarkdownSkillReferencePreview | null;
+  sourceAttributes?: Record<string, string | undefined>;
 }
 
-export function SkillReferenceToken({ label, preview }: SkillReferenceTokenProps) {
+export function SkillReferenceToken({
+  label,
+  preview,
+  sourceAttributes,
+}: SkillReferenceTokenProps) {
   const displayName = preview?.displayName?.trim() || label;
   const description = preview?.description?.trim() || null;
   const categoryLabel = preview?.categoryLabel?.trim() || null;
@@ -33,6 +39,7 @@ export function SkillReferenceToken({ label, preview }: SkillReferenceTokenProps
       href={detailsHref}
       aria-label={`${displayName} skill`}
       style={skillTokenIconInlineStyle()}
+      {...sourceAttributes}
     >
       {label}
     </a>
@@ -43,6 +50,7 @@ export function SkillReferenceToken({ label, preview }: SkillReferenceTokenProps
       tabIndex={hasPreview ? 0 : undefined}
       aria-label={hasPreview ? `${displayName} skill` : undefined}
       style={skillTokenIconInlineStyle()}
+      {...sourceAttributes}
     >
       {label}
     </span>
@@ -52,7 +60,12 @@ export function SkillReferenceToken({ label, preview }: SkillReferenceTokenProps
     <span className={cn("rudder-skill-token-wrap", hasPreview && "rudder-skill-token-wrap--preview")}>
       {tokenContent}
       {hasPreview ? (
-        <span ref={hoverCardScrollRef} className="rudder-skill-hover-card scrollbar-auto-hide" role="tooltip">
+        <span
+          ref={hoverCardScrollRef}
+          className="rudder-skill-hover-card scrollbar-auto-hide"
+          role="tooltip"
+          {...{ [CHAT_ANNOTATION_TEXT_IGNORE_ATTRIBUTE]: "" }}
+        >
           <span className="flex items-start gap-3">
             <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[#2f80ed]/10 text-[#2f80ed]">
               <Boxes className="h-4 w-4" aria-hidden />

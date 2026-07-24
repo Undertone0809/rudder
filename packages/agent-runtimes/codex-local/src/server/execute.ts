@@ -45,7 +45,6 @@ import {
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isCodexClosedStdinToolSessionError } from "../shared/tool-errors.js";
 import { executeCodexAppServerChat } from "./app-server-chat.js";
 import {
   discoverExternalCodexSkillDisablePaths,
@@ -57,19 +56,9 @@ import {
 import { estimateCodexCostUsd } from "./cost.js";
 import { captureCodexInlineVisuals, codexInlineVisualDirectiveBody } from "./inline-visuals.js";
 import { isCodexUnknownSessionError, parseCodexJsonl } from "./parse.js";
+import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompleteLines, stripCodexBenignStderr } from "./stderr-filter.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const CODEX_BENIGN_STDERR_RES = [
-  /^\d{4}-\d{2}-\d{2}T[^\s]+\s+ERROR\s+codex_core::rollout::list:\s+state db missing rollout path for thread\s+[a-z0-9-]+$/i,
-  /^Error:\s+thread\/resume:\s+thread\/resume failed:\s+no rollout found for thread id\s+[a-z0-9-]+$/i,
-  /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_core::shell_snapshot:\s+Failed to delete shell snapshot at\s+".+?\.tmp-\d+":\s+Os\s+\{\s+code:\s*2,\s+kind:\s*NotFound,\s+message:\s*"No such file or directory"\s+\}$/i,
-  /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_protocol::openai_models:\s+Model personality requested but model_messages is missing, falling back to base instructions\.\s+model=\S+\s+personality=\S+$/i,
-  /^\d{4}-\d{2}-\d{2}T[^\s]+\s+ERROR\s+codex_core::models_manager::manager:\s+failed to refresh available models:\s+timeout waiting for child process to exit$/i,
-  /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_rmcp_client::stdio_server_launcher:\s+Failed to kill MCP process group for server (?:rudder-tools|rudder-browser):\s+No such process\s+\(os error 3\)$/i,
-  /^\d{4}-\d{2}-\d{2}T[^\s]+\s+ERROR\s+codex_memories_write::phase2:\s+Phase 2 no changes$/i,
-] as const;
-const CODEX_ANALYTICS_FORBIDDEN_HTML_START_RE =
-  /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_analytics::analytics_client:\s+events failed with status 403 Forbidden:\s+<html>$/i;
 const CODEX_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "CODEX_HOME",
@@ -81,62 +70,6 @@ const CODEX_PROTECTED_ENV_KEYS = new Set([
   "USERPROFILE",
 ]);
 
-function isBenignCodexStderrLine(line: string): boolean {
-  if (isCodexClosedStdinToolSessionError(line)) return true;
-  return CODEX_BENIGN_STDERR_RES.some((pattern) => pattern.test(line.trim()));
-}
-
-function createBenignCodexStderrFilter() {
-  let suppressingAnalyticsHtml = false;
-
-  return (line: string): boolean => {
-    const trimmed = line.trim();
-
-    if (suppressingAnalyticsHtml) {
-      if (/^<\/html>$/i.test(trimmed)) suppressingAnalyticsHtml = false;
-      return true;
-    }
-
-    if (CODEX_ANALYTICS_FORBIDDEN_HTML_START_RE.test(trimmed)) {
-      suppressingAnalyticsHtml = true;
-      return true;
-    }
-
-    return isBenignCodexStderrLine(trimmed);
-  };
-}
-
-function stripCodexBenignStderr(text: string): string {
-  const isBenignLine = createBenignCodexStderrFilter();
-  const parts = text.split(/\r?\n/);
-  const kept: string[] = [];
-  for (const part of parts) {
-    const trimmed = part.trim();
-    if (!trimmed) {
-      kept.push(part);
-      continue;
-    }
-    if (isBenignLine(trimmed)) continue;
-    kept.push(part);
-  }
-  return kept.join("\n");
-}
-
-function splitCompleteLines(text: string): { lines: string[]; remainder: string } {
-  const lines: string[] = [];
-  let start = 0;
-
-  for (let index = 0; index < text.length; index += 1) {
-    if (text[index] !== "\n") continue;
-    lines.push(text.slice(start, index + 1));
-    start = index + 1;
-  }
-
-  return {
-    lines,
-    remainder: text.slice(start),
-  };
-}
 
 function firstNonEmptyLine(text: string): string {
   return (
@@ -166,6 +99,31 @@ function firstMeaningfulErrorLine(text: string): string {
 
 function hasCliArg(args: string[], flag: string): boolean {
   return args.includes(flag);
+}
+
+function parseCodexAppServerExtraArgs(extraArgs: string[]): {
+  sandboxMode: "read-only" | null;
+  unsupportedArgs: string[];
+} {
+  let sandboxMode: "read-only" | null = null;
+  const unsupportedArgs: string[] = [];
+
+  for (let index = 0; index < extraArgs.length; index += 1) {
+    const arg = extraArgs[index];
+    if (arg === "--skip-git-repo-check") continue;
+    if (arg === "--sandbox=read-only") {
+      sandboxMode = "read-only";
+      continue;
+    }
+    if ((arg === "-s" || arg === "--sandbox") && extraArgs[index + 1] === "read-only") {
+      sandboxMode = "read-only";
+      index += 1;
+      continue;
+    }
+    unsupportedArgs.push(arg);
+  }
+
+  return { sandboxMode, unsupportedArgs };
 }
 
 function runtimeImagePaths(media: AgentRuntimeExecutionContext["media"]): string[] {
@@ -541,6 +499,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     pickRudderMcpManagedEnv(env),
     rudderMcpCommand,
     browserMcpCommand ?? undefined,
+    config,
   );
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
@@ -679,13 +638,16 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     heartbeatPromptChars: renderedPrompt.length,
   };
 
-  const appServerUnsupportedArgs = extraArgs.filter((arg) => arg !== "--skip-git-repo-check");
+  // Plan mode's CLI-shaped read-only overlay must preserve App Server's native
+  // turn controls; other custom args still require exec compatibility fallback.
+  // Traceability: doc/plans/2026-07-23-plan-mode-steer-queue-simplification.md
+  const appServerExtraArgs = parseCodexAppServerExtraArgs(extraArgs);
   const useAppServerChat =
     runtimeScene === "chat"
     && context.chatMode === true
     && context.rudderChatResultRepair !== true
     && asBoolean(config.chatAppServerEnabled, command === "codex")
-    && appServerUnsupportedArgs.length === 0;
+    && appServerExtraArgs.unsupportedArgs.length === 0;
 
   if (useAppServerChat) {
     const appServerArgs = ["app-server", "--stdio", "--disable", "plugins"];
@@ -728,6 +690,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         modelReasoningEffort,
         search,
         bypassApprovalsAndSandbox: bypass,
+        sandboxMode: appServerExtraArgs.sandboxMode,
         imagePaths,
         sessionId,
         timeoutSec,
@@ -846,7 +809,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
 
     let stderrBuffer = "";
-    const isBenignStderrLine = createBenignCodexStderrFilter();
+    const isBenignStderrLine = createCodexStderrLineFilter();
     const flushBufferedStderr = async (force: boolean) => {
       if (!stderrBuffer) return;
       const { lines, remainder } = splitCompleteLines(stderrBuffer);
@@ -872,6 +835,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           return;
         }
         stderrBuffer += chunk;
+        if (stderrBuffer.length > CODEX_STDERR_LINE_BUFFER_LIMIT) {
+          const overflow = stderrBuffer.slice(0, stderrBuffer.length - CODEX_STDERR_LINE_BUFFER_LIMIT);
+          stderrBuffer = stderrBuffer.slice(-CODEX_STDERR_LINE_BUFFER_LIMIT);
+          if (!isBenignStderrLine(overflow)) await onLog("stderr", overflow);
+        }
         await flushBufferedStderr(false);
       },
     });

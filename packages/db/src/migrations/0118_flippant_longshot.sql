@@ -1,0 +1,2 @@
+ALTER TABLE "messenger_saved_views" ADD COLUMN "primary_rail_pinned_at" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX "messenger_saved_views_org_user_primary_rail_pins_idx" ON "messenger_saved_views" USING btree ("org_id","user_id","primary_rail_pinned_at") WHERE "messenger_saved_views"."primary_rail_pinned_at" is not null;

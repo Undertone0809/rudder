@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "custom_integration_tools_connection_external_name_uq" ON "custom_integration_tools" USING btree ("connection_id","external_tool_name") WHERE "custom_integration_tools"."connection_id" is not null;

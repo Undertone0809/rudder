@@ -197,7 +197,7 @@ describe("ApprovalPayloadRenderer", () => {
     expect(html).toContain("CTO");
     expect(html).toContain("<h2");
     expect(html).toContain("Review Summary");
-    expect(html).toContain("<strong>markdown</strong>");
+    expect(html).toMatch(/<strong[^>]*>markdown<\/strong>/);
     expect(html).toContain('src="/api/assets/approval-screenshot/content"');
     expect(html).not.toContain("project-1");
     expect(html).not.toContain("agent-1");

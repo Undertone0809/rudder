@@ -3,7 +3,7 @@ import { chatsApi, type ChatSteerQueuedMessageRequest } from "@/api/chats";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { displayChatTitle } from "@/lib/chat-title";
 import { queryKeys } from "@/lib/queryKeys";
-import { buildChatMentionHref, type ChatConversation, type ChatGenerationStatus, type ChatMessage, type ChatStreamEvent } from "@rudderhq/shared";
+import { buildChatMentionHref, type ChatConversation, type ChatGenerationStatus, type ChatInlineAnnotationInput, type ChatMessage, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatStreamEvent } from "@rudderhq/shared";
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 
 export type SendButtonMode = "send" | "stop" | "sending" | "stopping" | "queue";
@@ -15,8 +15,6 @@ export type PendingChatSteerRetry = {
   request: ChatSteerQueuedMessageRequest;
   retryCount: number;
   timer: ReturnType<typeof setTimeout> | null;
-  lastFeedbackResult: string | null;
-  transportToastShown: boolean;
 };
 type ChatStreamProgressEvent = Extract<
   ChatStreamEvent,
@@ -33,6 +31,46 @@ export const CHAT_ISSUE_MENTION_LIMIT = 50;
 export const CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD = 5;
 export const CHAT_DRAFT_PREFLIGHT_STALE_TIME_MS = 5 * 60_000;
 export const CHAT_DRAFT_PREFLIGHT_GC_TIME_MS = 30 * 60_000;
+
+export type ChatQueueDeliveryProjection =
+  | { state: "hidden" }
+  | { state: "queued"; label: "Queued" }
+  | { state: "sending"; label: "Sending…" }
+  | { state: "failed"; label: "Couldn't send" };
+
+const DURABLE_QUEUE_DELIVERY_STATUSES = new Set<ChatQueuedMessage["status"]>([
+  "accepted_current",
+  "reconciled_current",
+  "continuation_pending",
+  "running_next",
+  "delivered",
+  "completed",
+  "steered",
+]);
+
+const DURABLE_QUEUE_DELIVERY_DISPOSITIONS = new Set<NonNullable<ChatQueuedMessage["deliveryDisposition"]>>([
+  "accepted_current",
+  "reconciled_current",
+  "continuation_pending",
+  "running_next",
+  "delivered",
+]);
+
+export function projectChatQueueDelivery(
+  item: ChatQueuedMessage,
+  isSteering = false,
+): ChatQueueDeliveryProjection {
+  const hasDurableDeliveryEvidence = Boolean(
+    item.sourceMessageId || item.deliveredMessageId || item.continuationMessageId,
+  )
+    || DURABLE_QUEUE_DELIVERY_STATUSES.has(item.status)
+    || (item.deliveryDisposition !== null && DURABLE_QUEUE_DELIVERY_DISPOSITIONS.has(item.deliveryDisposition));
+  if (hasDurableDeliveryEvidence || item.status === "cancelled") return { state: "hidden" };
+  if (isSteering) return { state: "sending", label: "Sending…" };
+  if (item.status === "queued") return { state: "queued", label: "Queued" };
+  if (item.status === "failed_actionable") return { state: "failed", label: "Couldn't send" };
+  return { state: "sending", label: "Sending…" };
+}
 
 const ACTIVE_CHAT_GENERATION_STATUSES = new Set<ChatGenerationStatus>([
   "starting",
@@ -113,12 +151,28 @@ export function chatMessageJumpTargetFromHref(href: string) {
   }
 }
 
-export function sideChatTargetFromMessage(conversation: ChatConversation, message: ChatMessage) {
+export function sideChatTargetFromMessage(
+  conversation: ChatConversation,
+  message: ChatMessage,
+  annotation?: ChatInlineAnnotationInput,
+) {
+  const ownedAnnotation = annotation
+    ? {
+        ...annotation,
+        ...(annotation.attachmentIds
+          ? { attachmentIds: [...annotation.attachmentIds] }
+          : {}),
+        ...(annotation.attachmentFileIndexes
+          ? { attachmentFileIndexes: [...annotation.attachmentFileIndexes] }
+          : {}),
+      }
+    : null;
   return {
     kind: "side_chat" as const,
     sourceConversationId: conversation.id,
     sourceMessageId: message.id,
-    sourcePreview: message.body,
+    sourcePreview: ownedAnnotation?.selectedText ?? message.body,
+    ...(ownedAnnotation ? { inlineAnnotations: [ownedAnnotation] } : {}),
     conversationId: null,
     clientMutationId: crypto.randomUUID(),
     label: "Side Chat",
@@ -134,14 +188,30 @@ function findChatMessageHighlightElement(target: HTMLElement) {
   return target.querySelector<HTMLElement>("[data-message-highlight-target='true']") ?? target;
 }
 
+function preferredChatScrollBehavior(): ScrollBehavior {
+  return typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ? "auto"
+    : "smooth";
+}
+
+function highlightChatElement(target: HTMLElement) {
+  target.classList.remove("chat-message-jump-highlight");
+  void target.offsetWidth;
+  target.classList.add("chat-message-jump-highlight");
+  window.setTimeout(() => target.classList.remove("chat-message-jump-highlight"), 1_800);
+}
+
 export function revealChatMessageElement(target: HTMLElement) {
   const highlightTarget = findChatMessageHighlightElement(target);
-  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  target.scrollIntoView({ block: "center", behavior: preferredChatScrollBehavior() });
   target.classList.remove("chat-message-jump-highlight");
-  highlightTarget.classList.remove("chat-message-jump-highlight");
-  void highlightTarget.offsetWidth;
-  highlightTarget.classList.add("chat-message-jump-highlight");
-  window.setTimeout(() => highlightTarget.classList.remove("chat-message-jump-highlight"), 1800);
+  highlightChatElement(highlightTarget);
+}
+
+export function revealChatAnnotationSourceElement(target: HTMLElement) {
+  target.scrollIntoView({ block: "center", behavior: preferredChatScrollBehavior() });
+  highlightChatElement(target);
 }
 
 export function useChatDraftQueries(input: {
@@ -233,26 +303,35 @@ export function advanceChatDraftModelScope(
 export async function createQueuedComposerMessage(input: {
   conversation: ChatConversation;
   body: string;
+  inlineAnnotations?: ChatInlineAnnotationInput[];
+  files?: File[];
   orgId: string;
   projectId: string | null;
   serverActiveGenerationId: string | null;
   queueSnapshot: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined;
   queryClient: QueryClient;
 }) {
-  const queued = await chatsApi.createQueuedMessage(input.conversation.id, {
-    clientMutationId: `ui:${Date.now()}:${Math.random().toString(36).slice(2)}`,
-    expectedGenerationId: input.serverActiveGenerationId,
-    payload: {
-      body: input.body,
-      attachmentIds: [],
-      skillRefs: [],
-      projectId: input.projectId,
-      accessMode: null,
-      model: null,
-      effort: null,
-      metadata: { source: "chat_composer" },
+  const queued = await chatsApi.createQueuedMessage(
+    input.conversation.id,
+    {
+      clientMutationId: `ui:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      expectedGenerationId: input.serverActiveGenerationId,
+      payload: {
+        body: input.body,
+        ...(input.inlineAnnotations?.length
+          ? { inlineAnnotations: input.inlineAnnotations }
+          : {}),
+        attachmentIds: [],
+        skillRefs: [],
+        projectId: input.projectId,
+        accessMode: null,
+        model: null,
+        effort: null,
+        metadata: { source: "chat_composer" },
+      },
     },
-  });
+    { files: input.files },
+  );
   input.queryClient.setQueryData(
     queryKeys.chats.queue(input.orgId, input.conversation.id),
     (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
@@ -264,4 +343,30 @@ export async function createQueuedComposerMessage(input: {
     }),
   );
   return queued;
+}
+
+export function canQueueComposerDraft(input: {
+  activeReply: boolean;
+  body: string;
+  annotationCount: number;
+  pendingRegularFileCount: number;
+  newConversationSendInFlight: boolean;
+}) {
+  return Boolean(
+    input.activeReply
+    && !input.newConversationSendInFlight
+    && input.pendingRegularFileCount === 0
+    && (input.body.trim().length > 0 || input.annotationCount > 0),
+  );
+}
+
+export function queuedMessagePayloadForBodyEdit(
+  payload: ChatQueuedMessagePayload,
+  body: string,
+) {
+  const {
+    inlineAnnotations: _preservedInlineAnnotations,
+    ...payloadWithoutAnnotations
+  } = payload;
+  return { ...payloadWithoutAnnotations, body };
 }
