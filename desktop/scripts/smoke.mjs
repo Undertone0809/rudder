@@ -120,10 +120,10 @@ async function waitForSmokeCondition(label, check, options = {}) {
   throw new Error(`Timed out waiting for ${label}.${detail}`);
 }
 
-async function runCapturedProcess(executable, args) {
+async function runCapturedProcess(executable, args, options = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe"] });
-    const timeout = setTimeout(() => child.kill("SIGKILL"), 5_000);
+    const timeout = setTimeout(() => child.kill("SIGKILL"), options.timeoutMs ?? 5_000);
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
@@ -4069,7 +4069,7 @@ async function readLocalAppListeners(port) {
     `-iTCP:${port}`,
     "-sTCP:LISTEN",
     "-Fpn",
-  ]);
+  ], { timeoutMs: 20_000 });
   if (lsof.code !== 0 && lsof.code !== 1) {
     throw new Error(`lsof failed while checking the Local App listener (${lsof.code})`);
   }
