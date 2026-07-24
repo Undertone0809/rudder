@@ -9,8 +9,7 @@ import {
 } from "@rudderhq/db";
 import type {
   ChatControlDisposition,
-  ChatGenerationStatus,
-  ChatStreamTranscriptEntry
+  ChatGenerationStatus
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -25,7 +24,11 @@ import {
   type AppendEventFields,
   type ChatGenerationProtocolTransaction,
 } from "./chat-generation-protocol.helpers.js";
-import { stripChatMetadataFromPayload } from "./chats.helpers.js";
+import {
+  freezeAssistantMessageProjection,
+  visibleGenerationProjectionThrough,
+} from "./chat-generation-provenance.js";
+import { withPersistedTranscript } from "./chats.helpers.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 
 export { hashChatGenerationBody } from "./chat-generation-protocol.helpers.js";
@@ -146,84 +149,6 @@ async function latestVisibleBodyCheckpoint(
     }
   }
   return { generationSeq: 0, bodyHash: EMPTY_BODY_SHA256 };
-}
-
-type VisibleGenerationProjection = {
-  body: string;
-  transcript: ChatStreamTranscriptEntry[];
-  assistantMessageId: string | null;
-  runId: string | null;
-};
-
-async function visibleGenerationProjectionThrough(
-  tx: ChatGenerationProtocolTransaction,
-  generationId: string,
-  generationSeq: number,
-): Promise<VisibleGenerationProjection> {
-  const events = generationSeq <= 0
-    ? []
-    : await tx
-      .select()
-      .from(chatGenerationEvents)
-      .where(and(
-        eq(chatGenerationEvents.generationId, generationId),
-        lte(chatGenerationEvents.generationSeq, generationSeq),
-      ))
-      .orderBy(asc(chatGenerationEvents.generationSeq));
-  let body = "";
-  const transcript: ChatStreamTranscriptEntry[] = [];
-  let assistantMessageId: string | null = null;
-  let runId: string | null = null;
-  for (const event of events) {
-    if (event.assistantMessageId) assistantMessageId = event.assistantMessageId;
-    if (event.runId) runId = event.runId;
-    if (event.eventKind === "assistant_delta" && typeof event.payload.delta === "string") {
-      body += event.payload.delta;
-    } else if (event.eventKind === "runtime_output" && typeof event.payload.body === "string") {
-      body = event.payload.body;
-    } else if (
-      event.eventKind === "transcript"
-      && event.payload.entry
-      && typeof event.payload.entry === "object"
-      && !Array.isArray(event.payload.entry)
-    ) {
-      transcript.push(event.payload.entry as ChatStreamTranscriptEntry);
-    }
-  }
-  return { body, transcript, assistantMessageId, runId };
-}
-
-async function freezeAssistantMessageProjection(
-  tx: ChatGenerationProtocolTransaction,
-  generation: GenerationRow,
-  acceptedThroughSeq: number,
-) {
-  const projection = await visibleGenerationProjectionThrough(tx, generation.id, acceptedThroughSeq);
-  if (!projection.assistantMessageId) return projection;
-  const existing = await tx
-    .select()
-    .from(chatMessages)
-    .where(and(
-      eq(chatMessages.id, projection.assistantMessageId),
-      eq(chatMessages.orgId, generation.orgId),
-      eq(chatMessages.conversationId, generation.conversationId),
-      eq(chatMessages.role, "assistant"),
-    ))
-    .limit(1)
-    .then((rows) => rows[0] ?? null);
-  if (!existing) return projection;
-  const durableBody = await normalizeLocalLibraryPathMarkdown(projection.body, generation.orgId);
-  await tx
-    .update(chatMessages)
-    .set({
-      status: "stopped",
-      body: durableBody,
-      structuredPayload: stripChatMetadataFromPayload(existing.structuredPayload),
-      ...(projection.runId ? { runId: projection.runId } : {}),
-      updatedAt: new Date(),
-    })
-    .where(eq(chatMessages.id, existing.id));
-  return projection;
 }
 
 function terminalStatusFromPayload(payload: Record<string, unknown>): ChatGenerationStatus | null {
@@ -382,7 +307,7 @@ export function chatGenerationProtocolService(db: Db) {
       if (input.messageId && !existing) {
         throw conflict("Visible generation message projection no longer exists");
       }
-      const structuredPayload = stripChatMetadataFromPayload(existing?.structuredPayload ?? null);
+      const structuredPayload = existing?.structuredPayload ?? null;
       const [message] = existing
         ? await tx
           .update(chatMessages)
@@ -419,7 +344,30 @@ export function chatGenerationProtocolService(db: Db) {
         payload,
         assistantMessageId: message.id,
       });
-      return { generation, message, event };
+      if (event.eventKind !== "transcript") {
+        return { generation, message, event };
+      }
+      const projection = await visibleGenerationProjectionThrough(
+        tx,
+        generation.id,
+        event.generationSeq,
+      );
+      const [messageWithProvenance] = await tx
+        .update(chatMessages)
+        .set({
+          structuredPayload: withPersistedTranscript(
+            message.structuredPayload,
+            projection.transcript,
+          ),
+          updatedAt: new Date(),
+        })
+        .where(eq(chatMessages.id, message.id))
+        .returning();
+      return {
+        generation,
+        message: messageWithProvenance ?? message,
+        event,
+      };
     });
   }
 

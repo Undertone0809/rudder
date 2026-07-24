@@ -246,6 +246,41 @@ describe("LazyStreamTranscriptItem", () => {
   });
 });
 
+describe("StreamTranscriptItem controlled disclosure", () => {
+  it("responds to an external open request after the transcript mounts", () => {
+    const entries: TranscriptEntry[] = [{
+      kind: "thinking",
+      ts: "2026-07-23T10:00:00.000Z",
+      text: "Visible process evidence",
+    }];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+    const renderTranscript = (open: boolean) => (
+      <QueryClientProvider client={queryClient}>
+        <StreamTranscriptItem
+          entries={entries}
+          state="completed"
+          streamStartedAt={new Date("2026-07-23T10:00:00.000Z")}
+          streamEndedAt={new Date("2026-07-23T10:00:01.000Z")}
+          open={open}
+          onOpenChange={vi.fn()}
+        />
+      </QueryClientProvider>
+    );
+
+    act(() => root.render(renderTranscript(false)));
+    expect(container.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
+
+    act(() => root.render(renderTranscript(true)));
+    expect(container.querySelector("button")?.getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
 describe("ChatMessagesLoadingState", () => {
   it("uses message skeletons for the chat loading state", () => {
     const container = render(<ChatMessagesLoadingState />);
@@ -266,6 +301,66 @@ describe("user chat message rendering", () => {
     }));
 
     expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
+  });
+
+  it("renders immutable sent annotations above the user bubble and hides their files from the generic gallery", () => {
+    const annotationAttachment = {
+      id: "40000000-0000-4000-8000-000000000001",
+      orgId: "50000000-0000-4000-8000-000000000001",
+      conversationId: "20000000-0000-4000-8000-000000000001",
+      messageId: "60000000-0000-4000-8000-000000000001",
+      assetId: "70000000-0000-4000-8000-000000000001",
+      contentType: "application/pdf",
+      byteSize: 42,
+      sha256: "b".repeat(64),
+      originalFilename: "annotation-proof.pdf",
+      createdByAgentId: null,
+      createdByUserId: "80000000-0000-4000-8000-000000000001",
+      createdAt: new Date("2026-07-23T00:00:00Z"),
+      updatedAt: new Date("2026-07-23T00:00:00Z"),
+      contentPath: "/api/assets/70000000-0000-4000-8000-000000000001/content",
+    };
+    const regularAttachment = {
+      ...annotationAttachment,
+      id: "40000000-0000-4000-8000-000000000002",
+      assetId: "70000000-0000-4000-8000-000000000002",
+      originalFilename: "regular-file.pdf",
+      contentPath: "/api/assets/70000000-0000-4000-8000-000000000002/content",
+    };
+    const container = renderChatMessageItem(message({
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "",
+      structuredPayload: {
+        inlineAnnotations: [{
+          id: "10000000-0000-4000-8000-000000000001",
+          selectedText: "Only real send failures show Retry.",
+          comment: "When can this happen?",
+          sourceConversationId: "20000000-0000-4000-8000-000000000001",
+          sourceMessageId: "30000000-0000-4000-8000-000000000001",
+          surface: "assistant_body",
+          sourceHash: "a".repeat(64),
+          start: 10,
+          end: 45,
+          prefix: "",
+          suffix: "",
+          attachmentIds: [annotationAttachment.id],
+        }],
+      },
+      attachments: [annotationAttachment, regularAttachment],
+    }));
+
+    const bubble = container.querySelector('[data-testid="chat-user-message-bubble"]');
+    expect(container.querySelector("[aria-label='Show 1 annotation']")).not.toBeNull();
+    expect(bubble?.textContent).toContain("regular-file.pdf");
+    expect(bubble?.textContent).not.toContain("annotation-proof.pdf");
+
+    act(() => {
+      container.querySelector<HTMLElement>("[aria-label='Show 1 annotation']")?.click();
+    });
+    expect(document.body.textContent).toContain("annotation-proof.pdf");
+    expect(document.body.querySelectorAll("a").length).toBeGreaterThanOrEqual(2);
   });
 
   it("keeps user-authored markdown syntax literal while preserving links and Rudder references", () => {
@@ -487,6 +582,32 @@ describe("user chat message rendering", () => {
 });
 
 describe("assistant chat message rendering", () => {
+  it("marks only stable visible assistant bodies as response annotation sources", () => {
+    const completed = renderChatMessageItem(message({
+      id: "assistant-completed",
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Stable answer",
+    }));
+    const stableSource = completed.querySelector("[data-chat-annotation-source]");
+    expect(stableSource?.getAttribute("data-chat-annotation-source")).toBe("assistant:assistant-completed");
+    expect(stableSource?.getAttribute("data-annotation-surface")).toBe("assistant_body");
+    expect(stableSource?.getAttribute("data-message-id")).toBe("assistant-completed");
+
+    cleanupFn?.();
+    cleanupFn = null;
+
+    const streaming = renderChatMessageItem(message({
+      id: "assistant-streaming",
+      role: "assistant",
+      kind: "message",
+      status: "streaming",
+      body: "Growing answer",
+    }));
+    expect(streaming.querySelector("[data-chat-annotation-source]")).toBeNull();
+  });
+
   it("exposes a fork action on persisted assistant responses", () => {
     const container = renderChatMessageItem(message({
       role: "assistant",

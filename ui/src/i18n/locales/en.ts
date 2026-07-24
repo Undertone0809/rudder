@@ -693,6 +693,12 @@ export const en = {
   "heartbeats.timerState": "Timer heartbeat state",
   "heartbeats.on": "On",
   "heartbeats.off": "Off",
+  "chat.annotations.selectionUnavailable": "Selection is no longer available",
+  "chat.annotations.selectionUnavailableBody": "Select the response text again and retry.",
+  "chat.annotations.couldNotAdd": "Could not add annotation",
+  "chat.annotations.added": "Annotation added",
+  "chat.annotations.removed": "Annotation removed",
+  "chat.annotations.moreDetailsPrompt": "Please explain this passage in more detail.",
 } as const;
 
 export type TranslationKey = keyof typeof en;

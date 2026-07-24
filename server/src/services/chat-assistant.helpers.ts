@@ -32,6 +32,10 @@ import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "
 import type { StorageService } from "../storage/types.js";
 import { type AgentRunContextAgent } from "./agent-run-context.js";
 import {
+  buildChatInlineAnnotationsPromptSection,
+  buildCurrentUserAttachmentPromptSection,
+} from "./chat-assistant.annotations.js";
+import {
   buildChatInlineVisualPromptSection
 } from "./chat-assistant.inline-visuals.js";
 
@@ -308,26 +312,36 @@ export function buildPrompt(
     priority: link.entity?.priority ?? null,
   }));
 
-  const history = input.messages.slice(-12).map((message) => ({
-    role: message.role,
-    kind: message.kind,
-    status: message.status,
-    body: message.body,
-    attachments: message.attachments.map((attachment) => {
-      const reference = attachmentReferences.get(attachment.id);
-      return {
-        id: attachment.id,
-        assetId: attachment.assetId,
-        name: attachment.originalFilename ?? attachment.assetId,
-        contentType: attachment.contentType,
-        byteSize: attachment.byteSize,
-        contentPath: attachment.contentPath,
-        ...(reference?.localPath ? { localPath: reference.localPath } : {}),
-        ...(reference?.localPathError ? { localPathError: reference.localPathError } : {}),
-      };
-    }),
-    structuredPayload: message.structuredPayload,
-  }));
+  const history = input.messages.slice(-12).map((message) => {
+    const structuredPayload = message.structuredPayload
+      ? { ...message.structuredPayload }
+      : null;
+    if (structuredPayload) {
+      delete structuredPayload.inlineAnnotations;
+    }
+    return {
+      role: message.role,
+      kind: message.kind,
+      status: message.status,
+      body: message.body,
+      attachments: message.attachments.map((attachment) => {
+        const reference = attachmentReferences.get(attachment.id);
+        return {
+          id: attachment.id,
+          assetId: attachment.assetId,
+          name: attachment.originalFilename ?? attachment.assetId,
+          contentType: attachment.contentType,
+          byteSize: attachment.byteSize,
+          contentPath: attachment.contentPath,
+          ...(reference?.localPath ? { localPath: reference.localPath } : {}),
+          ...(reference?.localPathError ? { localPathError: reference.localPathError } : {}),
+        };
+      }),
+      structuredPayload: structuredPayload && Object.keys(structuredPayload).length > 0
+        ? structuredPayload
+        : null,
+    };
+  });
 
   return JSON.stringify(
     {
@@ -348,42 +362,6 @@ export function buildPrompt(
     null,
     2,
   );
-}
-
-export function buildCurrentUserAttachmentPromptSection(
-  messages: ChatMessage[],
-  attachmentReferences: Map<string, ChatAttachmentPromptReference> = new Map(),
-) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]!;
-    if (message.role !== "user" || message.attachments.length === 0) continue;
-
-    const lines = [
-      "Current user message attachments:",
-      `- The latest user message includes ${message.attachments.length} attachment(s). Inspect any listed localPath directly before answering.`,
-      `- User message body: ${JSON.stringify(summarizeBody(message.body))}`,
-      ...message.attachments.map((attachment, attachmentIndex) => {
-        const name = attachment.originalFilename ?? attachment.assetId;
-        const reference = attachmentReferences.get(attachment.id);
-        const parts = [
-          `name=${name}`,
-          `contentType=${attachment.contentType}`,
-          `byteSize=${attachment.byteSize}`,
-          `contentPath=${attachment.contentPath}`,
-        ];
-        if (reference?.localPath) {
-          parts.push(`localPath=${reference.localPath}`);
-          parts.push("runtimeReference=local_image_file");
-        } else if (reference?.localPathError) {
-          parts.push(`localPathError=${reference.localPathError}`);
-        }
-        return `- [${attachmentIndex + 1}] ${parts.join("; ")}`;
-      }),
-    ];
-    return lines.join("\n");
-  }
-
-  return null;
 }
 
 export function buildOperatorProfilePromptSection(profile: OperatorProfileSettings | null | undefined) {
@@ -970,6 +948,7 @@ export function validateAssistantResult(
     ? (({
       inlineVisuals: _untrustedInlineVisuals,
       inlineVisualsV1: _untrustedInlineVisualsV1,
+      inlineAnnotations: _untrustedInlineAnnotations,
       ...trustedPayload
     }) =>
       Object.keys(trustedPayload).length > 0 ? trustedPayload : null)(sanitizedStructuredPayload)
@@ -1027,6 +1006,10 @@ export function buildConversationPrompt(
   const selectedIssueSection = buildSelectedIssuePromptSection(input.conversation, input.contextLinks);
   const issueLabelsSection = buildIssueLabelsPromptSection(input.issueLabels);
   const automationRunInputSection = buildAutomationRunInputPromptSection(input.messages);
+  const inlineAnnotationsSection = buildChatInlineAnnotationsPromptSection(
+    input.messages.slice(-12),
+    attachmentReferences,
+  );
   const currentUserAttachmentSection = buildCurrentUserAttachmentPromptSection(input.messages.slice(-12), attachmentReferences);
   /**
    * Chat prompt assembly stays compositional on purpose.
@@ -1048,6 +1031,7 @@ export function buildConversationPrompt(
     ...(automationRunInputSection ? [automationRunInputSection] : []),
     ...(orgResourcesPrompt ? [orgResourcesPrompt] : []),
     ...(operatorProfileSection ? [operatorProfileSection] : []),
+    ...(inlineAnnotationsSection ? [inlineAnnotationsSection] : []),
     ...(currentUserAttachmentSection ? [currentUserAttachmentSection] : []),
     "Conversation input:",
     buildPrompt(input, attachmentReferences),

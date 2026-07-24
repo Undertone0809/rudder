@@ -292,10 +292,10 @@ test("the Side Panel empty state opens the same provisional Side Chat flow", asy
   await page.getByTestId("workspace-main-card").getByTestId("chat-side-panel-trigger").click();
   const panel = page.getByTestId("chat-side-panel");
   await expect(panel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
-  await expect(panel.getByTestId("chat-side-panel-empty-side chat-target")).toBeVisible();
+  await expect(panel.getByTestId("chat-side-panel-empty-side-chat-target")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("08-side-panel-empty-state.png"), fullPage: true });
 
-  await panel.getByTestId("chat-side-panel-empty-side chat-target").click();
+  await panel.getByTestId("chat-side-panel-empty-side-chat-target").click();
   await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
   await expect(panel.getByTestId("side-chat-anchor-preview")).toContainText("narrow cohort");
   await expect(sideComposerEditor(panel)).toBeVisible();

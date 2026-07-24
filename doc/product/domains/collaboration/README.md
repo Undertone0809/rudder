@@ -41,6 +41,9 @@ edit_policy: user_confirmed_only
 
 - `CHAT.LIFECYCLE.001`: chat is a conversation-driven task execution surface
   with durable messages, runs, outputs, and references.
+- `CHAT.RESPONSE.ANNOTATION.001`: operators can attach precise stable assistant
+  or visible Process selections, optional comments, and per-annotation files to
+  a durable user message with source provenance and immutable sent evidence.
 - `CHAT.INLINE.VISUAL.001`: provider-neutral, message-owned scriptless visuals
   render inside completed assistant answers without becoming Library files or
   Chat Work manifest items.

@@ -15,6 +15,7 @@ import {
   MAX_CHAT_INLINE_ANNOTATIONS,
   normalizeChatInlineAnnotations,
   sanitizeChatStructuredPayload,
+  updateChatQueuedMessageSchema,
 } from "../index.js";
 import type { ChatInlineAnnotationInput } from "../types/chat.js";
 import type { AddChatMessage, ChatQueuedMessagePayloadInput } from "./chat.js";
@@ -105,6 +106,23 @@ describe("chat inline annotation contracts", () => {
     }).success).toBe(false);
   });
 
+  it("keeps omitted queued-edit annotations distinct from an explicit replacement", () => {
+    const preserved = updateChatQueuedMessageSchema.parse({
+      version: 2,
+      payload: { body: "Only revise the prose" },
+    });
+    const replaced = updateChatQueuedMessageSchema.parse({
+      version: 2,
+      payload: {
+        body: "Remove the annotations",
+        inlineAnnotations: [],
+      },
+    });
+
+    expect(Object.hasOwn(preserved.payload, "inlineAnnotations")).toBe(false);
+    expect(replaced.payload.inlineAnnotations).toEqual([]);
+  });
+
   it("normalizes comments and strips request-only attachment file indexes", () => {
     const request = assistantAnnotation(1, {
       comment: "   ",
@@ -187,6 +205,31 @@ describe("chat inline annotation contracts", () => {
       assistantAnnotation(1),
       assistantAnnotation(1, { selectedText: "A second selection" }),
     ]).success).toBe(false);
+  });
+
+  it("requires unique canonical source ranges even when annotation ids differ", () => {
+    expect(chatInlineAnnotationsInputSchema.safeParse([
+      assistantAnnotation(1),
+      assistantAnnotation(2, {
+        selectedText: "A duplicate snapshot",
+        comment: "A different comment cannot make the same anchor unique.",
+      }),
+    ]).success).toBe(false);
+    expect(chatInlineAnnotationsInputSchema.safeParse([
+      processAnnotation(1),
+      processAnnotation(2, {
+        selectedText: "A duplicate Process snapshot",
+        comment: "Still the same generation range and source offsets.",
+      }),
+    ]).success).toBe(false);
+    expect(chatInlineAnnotationsInputSchema.safeParse([
+      assistantAnnotation(1),
+      assistantAnnotation(2, {
+        start: 34,
+        end: 42,
+        selectedText: "Distinct",
+      }),
+    ]).success).toBe(true);
   });
 
   it("requires complete process provenance and forbids it on assistant body annotations", () => {

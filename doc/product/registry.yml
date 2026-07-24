@@ -193,6 +193,7 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
+      - doc/plans/2026-07-23-chat-response-annotations.md
   ROUTING.ASSIGNMENT.001:
     owner: product
     domain: work-routing
@@ -401,6 +402,7 @@ contracts:
       - doc/plans/2026-06-20-agent-run-unification-completion.md
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
       - doc/plans/2026-07-21-chat-agent-run-conversation-grouping.md
+      - doc/plans/2026-07-23-chat-response-annotations.md
   AGENT.IDENTITY.CONFIG.001:
     owner: product
     domain: agents
@@ -1076,6 +1078,62 @@ contracts:
       - doc/plans/2026-07-20-atomic-chat-first-turn.md
       - doc/plans/2026-07-21-chat-agent-run-conversation-grouping.md
       - doc/plans/2026-07-23-plan-mode-steer-queue-simplification.md
+      - doc/plans/2026-07-23-chat-response-annotations.md
+  CHAT.RESPONSE.ANNOTATION.001:
+    owner: product
+    domain: collaboration
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/collaboration/chat-messenger-im.md
+    related_code:
+      - packages/shared/src/types/chat.ts
+      - packages/shared/src/validators/chat.ts
+      - packages/shared/src/chat-transcript-provenance.ts
+      - server/src/services/chat-inline-annotations.ts
+      - server/src/services/chat-assistant.annotations.ts
+      - server/src/services/chat-assistant.helpers.ts
+      - server/src/services/chat-generation-provenance.ts
+      - server/src/services/chat-generation-protocol.ts
+      - server/src/services/chat-steer-messages.ts
+      - server/src/services/chats.annotation-persistence.ts
+      - server/src/services/chats.ts
+      - server/src/services/side-chats.ts
+      - server/src/services/chat-work-manifest.ts
+      - server/src/routes/chats.annotation-routes.ts
+      - server/src/routes/chats.ts
+      - server/src/routes/chats.stream-routes.ts
+      - ui/src/api/chats.ts
+      - ui/src/lib/chat-pending-attachments.ts
+      - ui/src/lib/chat-draft-storage.ts
+      - ui/src/lib/chat-response-annotation-selection.ts
+      - ui/src/lib/chat-response-annotations.ts
+      - ui/src/components/chat/ResponseAnnotations.tsx
+      - ui/src/components/chat/SelectionAnnotationToolbar.tsx
+      - ui/src/components/MarkdownBody.tsx
+      - ui/src/components/transcript/RunTranscriptView.chat.tsx
+      - ui/src/pages/Chat.messages.tsx
+      - ui/src/pages/Chat.side-panel.tsx
+      - ui/src/pages/Chat.tsx
+    related_tests:
+      - packages/shared/src/validators/chat.test.ts
+      - packages/shared/src/chat-transcript-provenance.test.ts
+      - server/src/services/chat-inline-annotations.test.ts
+      - server/src/services/chat-assistant.annotations.test.ts
+      - server/src/services/chat-generation-protocol.test.ts
+      - server/src/__tests__/chat-routes.test.ts
+      - server/src/__tests__/messenger-service.test.ts
+      - server/src/__tests__/chat-work-manifest.test.ts
+      - ui/src/components/chat/ResponseAnnotations.test.tsx
+      - ui/src/components/chat/SelectionAnnotationToolbar.test.tsx
+      - ui/src/components/MarkdownBody.test.tsx
+      - ui/src/components/transcript/RunTranscriptView.test.tsx
+      - ui/src/lib/chat-draft-storage.test.ts
+      - ui/src/lib/chat-response-annotation-selection.test.ts
+      - ui/src/lib/chat-response-annotations.test.ts
+      - ui/src/pages/Chat.messages.test.tsx
+    related_plans:
+      - doc/plans/2026-07-23-chat-response-annotations.md
   CHAT.INLINE.VISUAL.001:
     owner: product
     domain: collaboration
@@ -1170,6 +1228,7 @@ contracts:
       - tests/e2e/feishu-source-badges.spec.ts
     related_plans:
       - doc/plans/2026-06-22-chat-fork-conversation-groups.md
+      - doc/plans/2026-07-23-chat-response-annotations.md
   CHAT.SIDE.CHAT.001:
     owner: product
     domain: collaboration
@@ -1206,6 +1265,7 @@ contracts:
     related_plans:
       - doc/plans/2026-07-19-side-chat.md
       - doc/plans/2026-07-21-side-chat-title-and-fork-grouping.md
+      - doc/plans/2026-07-23-chat-response-annotations.md
   CHAT.RICH.REFERENCE.RENDERING.001:
     owner: product
     domain: collaboration
@@ -1283,6 +1343,7 @@ contracts:
       - tests/e2e/chat-work-manifest-image-preview.spec.ts
     related_plans:
       - doc/plans/2026-07-12-chat-work-manifest.md
+      - doc/plans/2026-07-23-chat-response-annotations.md
   CHAT.SIDE.PANEL.001:
     owner: product
     domain: collaboration
@@ -1659,6 +1720,7 @@ contracts:
       - scripts/product-logic-check.test.mjs
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-23-chat-response-annotations.md
 
   DOCUMENT.WORKPRODUCT.001:
     owner: product

@@ -247,6 +247,7 @@ export interface ChatQueuedMessage {
   version: number;
   clientMutationId: string;
   payload: ChatQueuedMessagePayload;
+  annotationCount?: number;
   requestActor?: ChatQueueRequestActor | null;
   deliveryIntent: ChatQueueDeliveryIntent;
   deliveryDisposition: ChatControlDisposition | null;
@@ -576,9 +577,21 @@ export interface ChatOperationProposalDecision {
   decidedAt: string | null;
 }
 
+export interface ChatTranscriptGenerationProvenance {
+  generationId: string;
+  generationSeqStart: number;
+  generationSeqEnd: number;
+}
+
+export type ChatStreamTranscriptTextEntry = {
+  kind: "assistant" | "thinking";
+  ts: string;
+  text: string;
+  delta?: boolean;
+} & Partial<ChatTranscriptGenerationProvenance>;
+
 export type ChatStreamTranscriptEntry =
-  | { kind: "assistant"; ts: string; text: string; delta?: boolean }
-  | { kind: "thinking"; ts: string; text: string; delta?: boolean }
+  | ChatStreamTranscriptTextEntry
   | { kind: "user"; ts: string; text: string }
   | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string }
   | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean }
@@ -638,6 +651,11 @@ export interface ChatStreamFinalEvent {
 export interface ChatStreamErrorEvent {
   type: "error";
   error: string;
+  /**
+   * Durable message associated with the failure. Before the stream's ack event,
+   * this is the committed user message receipt; after ack it identifies the
+   * persisted failed assistant message.
+   */
   messageId?: string | null;
 }
 

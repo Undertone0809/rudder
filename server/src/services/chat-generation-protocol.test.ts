@@ -162,10 +162,10 @@ describe("chatGenerationProtocolService", () => {
     return generation;
   }
 
-  it("keeps streaming transcript evidence in the generation ledger instead of the message payload", async () => {
+  it("keeps streaming transcript evidence in the ledger and a reloadable visible projection", async () => {
     const generation = await seedGeneration();
     const entry = {
-      kind: "stdout" as const,
+      kind: "thinking" as const,
       ts: "2026-07-23T08:00:00.000Z",
       text: `one transcript ledger entry ${"x".repeat(512)}`,
     };
@@ -182,6 +182,19 @@ describe("chatGenerationProtocolService", () => {
       chatTurnId: randomUUID(),
       turnVariant: 0,
     });
+    await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      eventKind: "assistant_delta",
+      payload: { delta: "Answer" },
+      messageId: projection.message.id,
+      bodyHash: hashChatGenerationBody("Answer"),
+      body: "Answer",
+      chatTurnId: projection.message.chatTurnId!,
+      turnVariant: projection.message.turnVariant,
+    });
 
     const [persistedMessage] = await db
       .select()
@@ -192,7 +205,14 @@ describe("chatGenerationProtocolService", () => {
       .from(chatGenerationEvents)
       .where(eq(chatGenerationEvents.id, projection.event.id));
 
-    expect(persistedMessage?.structuredPayload).toBeNull();
+    expect(persistedMessage?.structuredPayload).toEqual({
+      __chatTranscript: [{
+        ...entry,
+        generationId: generation.id,
+        generationSeqStart: projection.event.generationSeq,
+        generationSeqEnd: projection.event.generationSeq,
+      }],
+    });
     expect(persistedEvent?.payload).toEqual(expect.objectContaining({ entry }));
     expect(JSON.stringify(persistedEvent?.payload).length).toBeLessThan(1_024);
   });
@@ -629,6 +649,85 @@ describe("chatGenerationProtocolService", () => {
       status: 409,
       message: "Chat-visible output admission is closed for this generation",
     });
+  });
+
+  it("persists stable transcript generation provenance through reload and a Stop projection", async () => {
+    const generation = await seedGeneration();
+    const chatTurnId = randomUUID();
+    const firstEntry = {
+      kind: "thinking" as const,
+      ts: "2026-07-23T10:00:00.000Z",
+      text: "Inspect ",
+      delta: true,
+    };
+    const first = await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      eventKind: "transcript",
+      payload: { entry: firstEntry },
+      bodyHash: hashChatGenerationBody(""),
+      body: "",
+      chatTurnId,
+      turnVariant: 0,
+    });
+    const secondEntry = {
+      kind: "thinking" as const,
+      ts: "2026-07-23T10:00:01.000Z",
+      text: "the source.",
+      delta: true,
+    };
+    const second = await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      eventKind: "transcript",
+      payload: { entry: secondEntry },
+      messageId: first.message.id,
+      bodyHash: hashChatGenerationBody(""),
+      body: "",
+      chatTurnId,
+      turnVariant: 0,
+    });
+
+    const [persistedBeforeStop] = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, first.message.id));
+    expect(persistedBeforeStop?.structuredPayload?.__chatTranscript).toEqual([
+      expect.objectContaining({
+        text: "Inspect the source.",
+        generationId: generation.id,
+        generationSeqStart: first.event.generationSeq,
+        generationSeqEnd: second.event.generationSeq,
+      }),
+    ]);
+
+    await protocol.beginStopAction({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      controlActionId: randomUUID(),
+      expectedGenerationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      expectedControlVersion: generation.controlVersion,
+      requestedRenderSeq: second.event.generationSeq,
+      requestedBodyHash: hashChatGenerationBody(""),
+    });
+    const frozen = await protocol.getFrozenVisibleProjection({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+    });
+
+    expect(frozen.projection.transcript).toEqual([
+      expect.objectContaining({
+        generationId: generation.id,
+        generationSeqStart: first.event.generationSeq,
+        generationSeqEnd: second.event.generationSeq,
+      }),
+    ]);
   });
 
   it("freezes visible output before scheduling an unsupported-runtime Steer continuation", async () => {

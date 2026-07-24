@@ -12,6 +12,7 @@ import {
   steerChatQueuedMessageSchema,
   updateChatConversationSchema,
   updateChatQueuedMessageSchema,
+  type AgentRuntimeType,
   type ChatAttachment,
   type ChatContextLink,
   type ChatControlDisposition,
@@ -28,11 +29,13 @@ import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { assertTimeZone } from "../services/automations.scheduler.js";
 import { chatAgentRunService } from "../services/chat-agent-runs.js";
+import { buildChatNativeSteerFeedback } from "../services/chat-assistant.annotations.js";
 import {
   CHAT_ASSISTANT_USER_ERROR_MESSAGE,
   chatAssistantErrorForLog,
   chatAssistantService,
   ChatAssistantStreamError,
+  prepareChatAttachmentReferences,
   userVisiblePartialBodyFromError,
   type ChatAssistantResult,
   type ChatGeneratedAttachment,
@@ -47,6 +50,7 @@ import {
   steerActiveChatGeneration
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
+import { chatInlineAnnotationService } from "../services/chat-inline-annotations.js";
 import { chatSteerMessageService } from "../services/chat-steer-messages.js";
 import {
   buildChatTitlePromptFromMessages,
@@ -81,6 +85,11 @@ import {
   type ChatBackgroundTimer,
 } from "./chat-background-runtime.js";
 import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
+import {
+  createChatAnnotationRouteHelpers,
+  turnContextFromUserMessage,
+  type ChatTurnContext,
+} from "./chats.annotation-routes.js";
 import { attachGeneratedChatFiles } from "./chats.generated-attachments.js";
 import {
   isMultipartRequest,
@@ -120,6 +129,19 @@ export function chatRoutes(
   const chatTitles = chatTitleGenerationService({ chats: svc, productIntelligence });
   const steerMessages = chatSteerMessageService(db);
   const sideChats = sideChatService(db);
+  const inlineAnnotations = chatInlineAnnotationService(db);
+  const {
+    addAgentAuthoredMessage,
+    addUserMessage,
+    cleanupStoredUserMessageFiles,
+    storeUserMessageFiles,
+  } = createChatAnnotationRouteHelpers({
+    db,
+    storage,
+    chats: svc,
+    logActivity,
+    assertLocalMutationAllowed: assertChatLocalMutationAllowed,
+  });
 
   const CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE =
     "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
@@ -149,6 +171,130 @@ export function chatRoutes(
         else resolve();
       });
     });
+  }
+
+  function parseQueuedMultipartBody(
+    body: Record<string, unknown> | undefined,
+    mode: "create" | "update",
+  ) {
+    const raw = { ...(body ?? {}) };
+    let payload: Record<string, unknown> = {};
+    if (typeof raw.payload === "string") {
+      try {
+        const parsed = JSON.parse(raw.payload);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          payload = parsed as Record<string, unknown>;
+        }
+      } catch {
+        return null;
+      }
+    } else if (raw.payload && typeof raw.payload === "object" && !Array.isArray(raw.payload)) {
+      payload = raw.payload as Record<string, unknown>;
+    } else {
+      const payloadKeys = [
+        "body",
+        "inlineAnnotations",
+        "projectId",
+        "skillRefs",
+        "accessMode",
+        "model",
+        "effort",
+        "metadata",
+      ] as const;
+      for (const key of payloadKeys) {
+        if (Object.hasOwn(raw, key)) payload[key] = raw[key];
+      }
+    }
+    if (typeof payload.inlineAnnotations === "string") {
+      try {
+        payload.inlineAnnotations = JSON.parse(payload.inlineAnnotations);
+      } catch {
+        return null;
+      }
+    }
+    for (const key of ["skillRefs", "metadata"] as const) {
+      if (typeof payload[key] !== "string") continue;
+      try {
+        payload[key] = JSON.parse(payload[key] as string);
+      } catch {
+        return null;
+      }
+    }
+    if (mode === "create") {
+      return {
+        clientMutationId: raw.clientMutationId,
+        expectedGenerationId:
+          typeof raw.expectedGenerationId === "string" && raw.expectedGenerationId.trim()
+            ? raw.expectedGenerationId
+            : null,
+        payload,
+      };
+    }
+    const version = typeof raw.version === "string" ? Number(raw.version) : raw.version;
+    return { version, payload };
+  }
+
+  async function storeQueuedAnnotationFiles(
+    conversation: ChatConversation,
+    files: Array<{ mimetype: string; buffer: Buffer; originalname: string }>,
+  ) {
+    const storedFiles: Array<Awaited<ReturnType<StorageService["putFile"]>>> = [];
+    try {
+      for (const file of files) {
+        storedFiles.push(await storage.putFile({
+          orgId: conversation.orgId,
+          namespace: `chat-queue-annotations/${conversation.id}`,
+          originalFilename: file.originalname || null,
+          contentType: (file.mimetype || "").toLowerCase(),
+          body: file.buffer,
+        }));
+      }
+      return storedFiles;
+    } catch (error) {
+      await Promise.all(
+        storedFiles.map((stored) =>
+          storage.deleteObject(conversation.orgId, stored.objectKey).catch(() => undefined),
+        ),
+      );
+      throw error;
+    }
+  }
+
+  async function cleanupCommittedQueuedAnnotationAssets(
+    orgId: string,
+    queueItemId: string,
+    cleanupAttachments: Array<{ assetId: string; objectKey: string }>,
+  ) {
+    const deletedAssetIds: string[] = [];
+    for (const attachment of cleanupAttachments) {
+      try {
+        await storage.deleteObject(orgId, attachment.objectKey);
+        deletedAssetIds.push(attachment.assetId);
+      } catch (error) {
+        logger.warn(
+          { err: error, queuedMessageId: queueItemId, assetId: attachment.assetId },
+          "failed to delete orphaned queued annotation asset",
+        );
+      }
+    }
+    if (deletedAssetIds.length > 0) {
+      await svc.finalizeQueuedAnnotationAssetCleanup({ orgId, assetIds: deletedAssetIds });
+    }
+  }
+
+  async function cleanupUncommittedQueuedAnnotationFiles(
+    orgId: string,
+    queueMutationId: string,
+    attachments: Array<{ objectKey: string }>,
+  ) {
+    await Promise.all(attachments.map((attachment) =>
+      storage.deleteObject(orgId, attachment.objectKey).catch((error) => {
+        logger.warn(
+          { err: error, queueMutationId },
+          "failed to compensate an uncommitted queued annotation object",
+        );
+      }),
+    ));
   }
 
   async function assertConversationAccess(req: Request, conversationId: string) {
@@ -399,88 +545,6 @@ export function chatRoutes(
         runId: requestActor.runId,
       },
     } as unknown as Request;
-  }
-
-  type ChatTurnContext = { chatTurnId: string; turnVariant: number };
-
-  function turnContextFromUserMessage(userMessage: ChatMessage): ChatTurnContext {
-    if (!userMessage.chatTurnId) {
-      throw new Error("User message missing chat turn id");
-    }
-    return { chatTurnId: userMessage.chatTurnId, turnVariant: userMessage.turnVariant };
-  }
-
-  async function addUserMessage(
-    conversation: ChatConversation,
-    body: string,
-    actor: ActorInfo,
-    editUserMessageId?: string | null,
-  ) {
-    assertChatLocalMutationAllowed(conversation);
-    const userMessage = await svc.addUserChatMessage(
-      conversation.id,
-      conversation.orgId,
-      body,
-      editUserMessageId ?? null,
-    );
-
-    await logActivity(db, {
-      orgId: conversation.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.message_added",
-      entityType: "chat",
-      entityId: conversation.id,
-      details: {
-        messageId: userMessage.id,
-        role: "user",
-        kind: "message",
-        editUserMessageId: editUserMessageId ?? null,
-      },
-    });
-
-    return userMessage as ChatMessage;
-  }
-
-  async function addAgentAuthoredMessage(
-    conversation: ChatConversation,
-    body: string,
-    actor: ActorInfo,
-  ) {
-    assertChatLocalMutationAllowed(conversation);
-    if (!actor.agentId) {
-      throw forbidden("Agent authentication required");
-    }
-
-    const message = await svc.addMessage(conversation.id, {
-      orgId: conversation.orgId,
-      role: "assistant",
-      kind: "message",
-      body,
-      replyingAgentId: actor.agentId,
-    }) as ChatMessage;
-
-    await logActivity(db, {
-      orgId: conversation.orgId,
-      actorType: "agent",
-      actorId: actor.agentId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.message_added",
-      entityType: "chat",
-      entityId: conversation.id,
-      details: {
-        messageId: message.id,
-        role: "assistant",
-        kind: "message",
-        replyingAgentId: actor.agentId,
-        source: "agent_direct_message",
-      },
-    });
-
-    return message;
   }
 
   async function attachFilesToUserMessage(
@@ -1992,7 +2056,7 @@ export function chatRoutes(
     res.json(await svc.getQueueSnapshot(conversation.id, active?.generationId ?? null));
   });
 
-  router.post("/chats/:id/queue", validate(createChatQueuedMessageSchema), async (req, res) => {
+  router.post("/chats/:id/queue", async (req, res) => {
     const conversation = await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
@@ -2000,15 +2064,81 @@ export function chatRoutes(
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
-    const requestActor = queueRequestActor(req);
-    const item = await svc.createQueuedMessage({
+    const multipart = isMultipartRequest(req);
+    if (multipart) await runMessageFileUpload(req, res);
+    const files = multipart ? uploadedMessageFiles(req) : [];
+    const fileValidationError = validateUploadedMessageFiles(files);
+    if (fileValidationError) {
+      res.status(400).json({ error: fileValidationError });
+      return;
+    }
+    const requestBody = multipart
+      ? parseQueuedMultipartBody(req.body as Record<string, unknown> | undefined, "create")
+      : req.body;
+    const inlineAnnotationsProvided = Boolean(
+      requestBody
+      && typeof requestBody === "object"
+      && "payload" in requestBody
+      && requestBody.payload
+      && typeof requestBody.payload === "object"
+      && Object.hasOwn(requestBody.payload, "inlineAnnotations"),
+    );
+    if ((inlineAnnotationsProvided || files.length > 0) && req.actor.type !== "board") {
+      assertBoard(req);
+    }
+    const parsed = createChatQueuedMessageSchema.safeParse(requestBody);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Invalid queued message request",
+        details: parsed.error.issues,
+      });
+      return;
+    }
+    const preparedAnnotations = await inlineAnnotations.prepare({
       orgId: conversation.orgId,
       conversationId: conversation.id,
-      clientMutationId: req.body.clientMutationId,
-      expectedGenerationId: req.body.expectedGenerationId ?? getActiveChatGeneration(conversation.id)?.generationId ?? null,
-      payload: req.body.payload,
-      requestActor,
+      annotations: parsed.data.payload.inlineAnnotations,
+      uploadedFileCount: files.length,
     });
+    const storedFiles = await storeQueuedAnnotationFiles(conversation as ChatConversation, files);
+    const requestActor = queueRequestActor(req);
+    let result;
+    try {
+      result = await svc.createQueuedMessageWithStagedAttachments({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        clientMutationId: parsed.data.clientMutationId,
+        expectedGenerationId:
+          parsed.data.expectedGenerationId
+          ?? getActiveChatGeneration(conversation.id)?.generationId
+          ?? null,
+        payload: {
+          ...parsed.data.payload,
+          inlineAnnotations: preparedAnnotations.annotations,
+        },
+        requestActor,
+        stagedAttachments: storedFiles.map((attachment) => ({
+          ...attachment,
+          createdByAgentId: req.actor.type === "agent" ? (req.actor.agentId ?? null) : null,
+          createdByUserId: req.actor.type === "board" ? (req.actor.userId ?? null) : null,
+        })),
+        attachmentFileIndexesByAnnotationId:
+          preparedAnnotations.attachmentFileIndexesByAnnotationId,
+      });
+    } catch (error) {
+      await cleanupUncommittedQueuedAnnotationFiles(
+        conversation.orgId,
+        parsed.data.clientMutationId,
+        storedFiles,
+      );
+      throw error;
+    }
+    await cleanupUncommittedQueuedAnnotationFiles(
+      conversation.orgId,
+      parsed.data.clientMutationId,
+      result.cleanupAttachments,
+    );
+    const item = result.item;
     const actor = getActorInfo(req);
     await logActivity(db, {
       orgId: conversation.orgId,
@@ -2022,6 +2152,12 @@ export function chatRoutes(
       details: {
         queuedMessageId: item.id,
         position: item.position,
+        annotationCount: item.annotationCount ?? 0,
+        annotationSourceMessageIds: [
+          ...new Set(
+            (item.payload.inlineAnnotations ?? []).map((annotation) => annotation.sourceMessageId),
+          ),
+        ],
       },
     });
     wakeServerQueue();
@@ -2087,7 +2223,7 @@ export function chatRoutes(
     res.json({ item });
   });
 
-  router.patch("/chats/:id/queue/:itemId", validate(updateChatQueuedMessageSchema), async (req, res) => {
+  router.patch("/chats/:id/queue/:itemId", async (req, res) => {
     const conversation = await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
@@ -2095,13 +2231,80 @@ export function chatRoutes(
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
-    const item = await svc.updateQueuedMessage({
-      conversationId: conversation.id,
-      itemId: req.params.itemId as string,
-      version: req.body.version,
-      payload: req.body.payload,
-    });
-    res.json(item);
+    const multipart = isMultipartRequest(req);
+    if (multipart) await runMessageFileUpload(req, res);
+    const files = multipart ? uploadedMessageFiles(req) : [];
+    const fileValidationError = validateUploadedMessageFiles(files);
+    if (fileValidationError) {
+      res.status(400).json({ error: fileValidationError });
+      return;
+    }
+    const requestBody = multipart
+      ? parseQueuedMultipartBody(req.body as Record<string, unknown> | undefined, "update")
+      : req.body;
+    const inlineAnnotationsProvided = Boolean(
+      requestBody
+      && typeof requestBody === "object"
+      && "payload" in requestBody
+      && requestBody.payload
+      && typeof requestBody.payload === "object"
+      && Object.hasOwn(requestBody.payload, "inlineAnnotations"),
+    );
+    if ((inlineAnnotationsProvided || files.length > 0) && req.actor.type !== "board") {
+      assertBoard(req);
+    }
+    const parsed = updateChatQueuedMessageSchema.safeParse(requestBody);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Invalid queued message update",
+        details: parsed.error.issues,
+      });
+      return;
+    }
+    const preparedAnnotations = inlineAnnotationsProvided
+      ? await inlineAnnotations.prepare({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        annotations: parsed.data.payload.inlineAnnotations ?? [],
+        uploadedFileCount: files.length,
+      })
+      : null;
+    const storedFiles = await storeQueuedAnnotationFiles(conversation as ChatConversation, files);
+    let result;
+    try {
+      result = await svc.updateQueuedMessageWithStagedAttachments({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        itemId: req.params.itemId as string,
+        version: parsed.data.version,
+        payload: {
+          ...parsed.data.payload,
+          ...(inlineAnnotationsProvided
+            ? { inlineAnnotations: preparedAnnotations?.annotations ?? [] }
+            : {}),
+        },
+        stagedAttachments: storedFiles.map((attachment) => ({
+          ...attachment,
+          createdByAgentId: req.actor.type === "agent" ? (req.actor.agentId ?? null) : null,
+          createdByUserId: req.actor.type === "board" ? (req.actor.userId ?? null) : null,
+        })),
+        attachmentFileIndexesByAnnotationId:
+          preparedAnnotations?.attachmentFileIndexesByAnnotationId ?? new Map(),
+      });
+    } catch (error) {
+      await cleanupUncommittedQueuedAnnotationFiles(
+        conversation.orgId,
+        req.params.itemId as string,
+        storedFiles,
+      );
+      throw error;
+    }
+    await cleanupCommittedQueuedAnnotationAssets(
+      conversation.orgId,
+      result.item.id,
+      result.cleanupAttachments,
+    );
+    res.json(result.item);
   });
 
   router.delete("/chats/:id/queue/:itemId", async (req, res) => {
@@ -2117,12 +2320,18 @@ export function chatRoutes(
       res.status(400).json({ error: "Invalid queued message cancel request", details: parsed.error.issues });
       return;
     }
-    const item = await svc.cancelQueuedMessage({
+    const result = await svc.cancelQueuedMessageWithStagedAttachments({
+      orgId: conversation.orgId,
       conversationId: conversation.id,
       itemId: req.params.itemId as string,
       version: parsed.data.version ?? null,
     });
-    res.json(item);
+    await cleanupCommittedQueuedAnnotationAssets(
+      conversation.orgId,
+      result.item.id,
+      result.cleanupAttachments,
+    );
+    res.json(result.item);
   });
 
   router.post("/chats/:id/queue/:itemId/steer", validate(steerChatQueuedMessageSchema), async (req, res) => {
@@ -2221,60 +2430,102 @@ export function chatRoutes(
       { sendDenied: true }
     >;
     const providerSendState: { denied: DeniedProviderSend | null } = { denied: null };
-    const runtimeResult = await steerActiveChatGeneration({
-      conversationId: conversation.id,
-      expectedGenerationId: durableGenerationId,
-      expectedAttemptEpoch: durableAttemptEpoch,
-      feedback: {
-        text: started.item.payload.body,
-        clientMessageId: started.action.providerClientMessageId ?? durableControlActionId,
-      },
-      claimProviderSend: async () => {
-        const sendClaim = await svc.claimSteerProviderSend({
-          orgId: conversation.orgId,
-          controlActionId: durableControlActionId,
-        });
-        if (!sendClaim) return null;
-        if ("sendDenied" in sendClaim) {
-          providerSendState.denied = sendClaim;
-          return {
-            sendDenied: true as const,
-            reason: "generation_fence_changed" as const,
-          };
-        }
-        try {
-          await svc.appendGenerationEvent({
+    const nativeSteerMessageId = started.item.continuationMessageId
+      ?? started.item.sourceMessageId;
+    const nativeSteerMessage = nativeSteerMessageId
+      ? await svc.getMessage(conversation.id, nativeSteerMessageId)
+      : null;
+    if (
+      (started.item.payload.inlineAnnotations?.length ?? 0) > 0
+      && !nativeSteerMessage
+    ) {
+      throw conflict("Materialized Steer annotation message could not be loaded");
+    }
+    const nativeSteerRuntimeType = (
+      started.generation?.controlRuntimeType
+      ?? getActiveChatGeneration(conversation.id)?.runtimeType
+      ?? active?.runtimeType
+      ?? null
+    ) as AgentRuntimeType | null;
+    const preparedSteerAttachments = nativeSteerMessage && nativeSteerRuntimeType
+      ? await prepareChatAttachmentReferences({
+          runtimeType: nativeSteerRuntimeType,
+          messages: [nativeSteerMessage],
+          storage,
+          runId: durableControlActionId,
+        })
+      : {
+          references: new Map(),
+          media: [],
+          cleanup: async () => undefined,
+        };
+    const nativeSteerFeedback = nativeSteerMessage
+      ? buildChatNativeSteerFeedback({
+          message: nativeSteerMessage,
+          clientMessageId: started.action.providerClientMessageId ?? durableControlActionId,
+          attachmentReferences: preparedSteerAttachments.references,
+          media: preparedSteerAttachments.media,
+        })
+      : {
+          text: started.item.payload.body,
+          clientMessageId: started.action.providerClientMessageId ?? durableControlActionId,
+        };
+    let runtimeResult: Awaited<ReturnType<typeof steerActiveChatGeneration>>;
+    try {
+      runtimeResult = await steerActiveChatGeneration({
+        conversationId: conversation.id,
+        expectedGenerationId: durableGenerationId,
+        expectedAttemptEpoch: durableAttemptEpoch,
+        feedback: nativeSteerFeedback,
+        claimProviderSend: async () => {
+          const sendClaim = await svc.claimSteerProviderSend({
             orgId: conversation.orgId,
-            generationId: durableGenerationId,
-            attemptEpoch: durableAttemptEpoch,
-            eventKind: "steer_requested",
-            payload: { controlActionId: durableControlActionId, queueItemId: started.item.id },
             controlActionId: durableControlActionId,
-            queueItemId: started.item.id,
           });
-        } catch (error) {
-          await svc.releaseSteerProviderSendClaim({
-            orgId: conversation.orgId,
-            controlActionId: durableControlActionId,
-            reason: "steer_requested_event_failed",
-          }).catch(() => null);
-          throw error;
-        }
-        return {
-          clientMessageId: sendClaim.providerClientMessageId ?? durableControlActionId,
-          release: async () => {
-            const released = await svc.releaseSteerProviderSendClaim({
+          if (!sendClaim) return null;
+          if ("sendDenied" in sendClaim) {
+            providerSendState.denied = sendClaim;
+            return {
+              sendDenied: true as const,
+              reason: "generation_fence_changed" as const,
+            };
+          }
+          try {
+            await svc.appendGenerationEvent({
+              orgId: conversation.orgId,
+              generationId: durableGenerationId,
+              attemptEpoch: durableAttemptEpoch,
+              eventKind: "steer_requested",
+              payload: { controlActionId: durableControlActionId, queueItemId: started.item.id },
+              controlActionId: durableControlActionId,
+              queueItemId: started.item.id,
+            });
+          } catch (error) {
+            await svc.releaseSteerProviderSendClaim({
               orgId: conversation.orgId,
               controlActionId: durableControlActionId,
-              reason: "runtime_owner_changed_before_provider_send",
-            });
-            if (!released) {
-              throw new Error("Steer provider send claim could not be safely released before send");
-            }
-          },
-        };
-      },
-    });
+              reason: "steer_requested_event_failed",
+            }).catch(() => null);
+            throw error;
+          }
+          return {
+            clientMessageId: sendClaim.providerClientMessageId ?? durableControlActionId,
+            release: async () => {
+              const released = await svc.releaseSteerProviderSendClaim({
+                orgId: conversation.orgId,
+                controlActionId: durableControlActionId,
+                reason: "runtime_owner_changed_before_provider_send",
+              });
+              if (!released) {
+                throw new Error("Steer provider send claim could not be safely released before send");
+              }
+            },
+          };
+        },
+      });
+    } finally {
+      await preparedSteerAttachments.cleanup().catch(() => undefined);
+    }
 
     if (runtimeResult.status === "provider_send_in_flight") {
       res.json(responseForDurableDisposition(started.item, started.action.localDisposition));
@@ -2457,7 +2708,17 @@ export function chatRoutes(
     res.json(transcript);
   });
 
-  router.post("/chats/:id/messages", validate(addChatMessageSchema), async (req, res) => {
+  router.post(
+    "/chats/:id/messages",
+    (req, res, next) => {
+      res.locals.inlineAnnotationsProvided = Object.hasOwn(
+        req.body ?? {},
+        "inlineAnnotations",
+      );
+      next();
+    },
+    validate(addChatMessageSchema),
+    async (req, res) => {
     const conversation = await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
@@ -2468,6 +2729,14 @@ export function chatRoutes(
     assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertSideChatMutationAllowed(req, conversation as ChatConversation);
     if (actor.actorType === "agent") {
+      if (!req.body.body.trim()) {
+        res.status(422).json({ error: "Agent-authored chat messages require a nonempty body" });
+        return;
+      }
+      if (res.locals.inlineAnnotationsProvided === true) {
+        res.status(422).json({ error: "Agent-authored chat messages cannot include response annotations" });
+        return;
+      }
       if (req.body.editUserMessageId) {
         res.status(422).json({ error: "Agent-authored chat messages cannot edit operator messages" });
         return;
@@ -2477,6 +2746,16 @@ export function chatRoutes(
       return;
     }
 
+    const inlineAnnotationsProvided = res.locals.inlineAnnotationsProvided === true;
+    const preparedAnnotations = inlineAnnotationsProvided
+      ? await inlineAnnotations.prepare({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        annotations: req.body.inlineAnnotations ?? [],
+        uploadedFileCount: 0,
+        editUserMessageId: req.body.editUserMessageId ?? null,
+      })
+      : null;
     const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
     if (!assistantAvailability.available) {
       res.status(503).json({ error: assistantAvailability.error });
@@ -2498,6 +2777,9 @@ export function chatRoutes(
         payload: {
           body: req.body.body,
           attachmentIds: [],
+          ...(inlineAnnotationsProvided
+            ? { inlineAnnotations: preparedAnnotations?.annotations ?? [] }
+            : {}),
           skillRefs: [],
           projectId: null,
           accessMode: null,
@@ -2519,6 +2801,10 @@ export function chatRoutes(
         req.body.body,
         actor,
         req.body.editUserMessageId ?? null,
+        {
+          provided: inlineAnnotationsProvided,
+          prepared: preparedAnnotations,
+        },
       );
       await touchSideChat(req, conversation as ChatConversation);
       if (!req.body.editUserMessageId) {
@@ -2613,7 +2899,8 @@ export function chatRoutes(
     } finally {
       releaseGeneration();
     }
-  });
+    },
+  );
 
   registerChatStreamRoutes({
     router,
@@ -2644,6 +2931,11 @@ export function chatRoutes(
     assertContextLinksBelongToCompany,
     turnContextFromUserMessage,
     addUserMessage,
+    inlineAnnotations,
+    storeUserMessageFiles,
+    cleanupStoredUserMessageFiles,
+    storeQueuedAnnotationFiles,
+    cleanupUncommittedQueuedAnnotationFiles,
     startChatTitleGeneration,
     attachFilesToUserMessage,
     loadAssistantInput,

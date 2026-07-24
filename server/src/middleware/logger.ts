@@ -24,6 +24,29 @@ function isBrowserRequest(req: object): boolean {
     || pathname === "/api/instance/browser/broker";
 }
 
+function containsInlineAnnotations(body: unknown): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  if (Object.hasOwn(body, "inlineAnnotations")) return true;
+  const payload = (body as { payload?: unknown }).payload;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    return Object.hasOwn(payload, "inlineAnnotations");
+  }
+  if (typeof payload !== "string") return false;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    return Boolean(
+      parsed
+      && typeof parsed === "object"
+      && !Array.isArray(parsed)
+      && Object.hasOwn(parsed, "inlineAnnotations"),
+    );
+  } catch {
+    // Malformed multipart JSON still reaches HTTP error logging. Prefer
+    // over-redaction when it declares the sensitive annotation field.
+    return /"inlineAnnotations"\s*:/u.test(payload);
+  }
+}
+
 export function markHttpRequestBodySensitive(req: object): void {
   (req as { __rudderSensitiveRequestBody?: boolean }).__rudderSensitiveRequestBody = true;
 }
@@ -40,6 +63,7 @@ export function markBrowserHttpRequestBodySensitive(
 export function requestBodyForLogs(req: object, body: unknown): unknown {
   return (req as { __rudderSensitiveRequestBody?: boolean }).__rudderSensitiveRequestBody === true
     || isBrowserRequest(req)
+    || containsInlineAnnotations(body)
     ? REDACTED_REQUEST_BODY
     : body;
 }

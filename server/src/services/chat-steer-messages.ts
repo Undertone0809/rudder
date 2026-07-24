@@ -1,17 +1,17 @@
 import type { Db } from "@rudderhq/db";
 import {
-  activityLog,
   chatControlActions,
-  chatConversations,
   chatGenerationEvents,
   chatGenerations,
-  chatMessages,
   chatQueuedMessages,
 } from "@rudderhq/db";
-import type { ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueueRequestActor } from "@rudderhq/shared";
+import type { ChatQueueRequestActor } from "@rudderhq/shared";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
 import { conflict, notFound } from "../errors.js";
+import {
+  hydrateQueuedMessage,
+  materializeQueuedUserMessage,
+} from "./chat-queued-message-materialization.js";
 
 type ActivityActor = {
   actorType: "agent" | "user" | "system";
@@ -20,13 +20,6 @@ type ActivityActor = {
 };
 
 const NATIVE_STEER_GENERATION_STATUSES = ["starting", "active", "running", "tool_busy"] as const;
-
-function hydrateQueuedMessage(row: typeof chatQueuedMessages.$inferSelect): ChatQueuedMessage {
-  return {
-    ...row,
-    payload: row.payload as unknown as ChatQueuedMessagePayload,
-  };
-}
 
 export function chatSteerMessageService(db: Db) {
   async function materializeUserMessage(
@@ -39,26 +32,6 @@ export function chatSteerMessageService(db: Db) {
       now: Date;
     },
   ) {
-    const linkedMessageId = input.item.continuationMessageId ?? input.item.sourceMessageId;
-    if (linkedMessageId) {
-      const linkedMessage = await tx
-        .select()
-        .from(chatMessages)
-        .where(and(
-          eq(chatMessages.id, linkedMessageId),
-          eq(chatMessages.orgId, input.orgId),
-          eq(chatMessages.conversationId, input.conversationId),
-          eq(chatMessages.role, "user"),
-        ))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      if (linkedMessage) {
-        return { item: hydrateQueuedMessage(input.item), message: linkedMessage, created: false };
-      }
-    }
-
-    const body = String(input.item.payload.body ?? "").trim();
-    if (!body) throw conflict("Queued Steer feedback has no user-visible body");
     const targetGenerationId = input.item.activeGenerationId ?? input.item.expectedGenerationId;
     const transcriptAnchor = targetGenerationId
       ? await tx
@@ -74,78 +47,27 @@ export function chatSteerMessageService(db: Db) {
         ))
         .then((rows) => rows[0] ?? { afterTranscriptEntryCount: 0, generationSeq: 0 })
       : { afterTranscriptEntryCount: 0, generationSeq: 0 };
-    const [message] = await tx
-      .insert(chatMessages)
-      .values({
-        id: randomUUID(),
-        orgId: input.orgId,
-        conversationId: input.conversationId,
-        role: "user",
-        kind: "message",
-        status: "completed",
-        body,
-        structuredPayload: {
-          source: "steer",
-          targetGenerationId: targetGenerationId ?? null,
-          afterTranscriptEntryCount: transcriptAnchor.afterTranscriptEntryCount,
-          generationSeq: transcriptAnchor.generationSeq,
-          queueItemId: input.item.id,
-          controlActionId: input.item.controlActionId,
-          deliveryDisposition: input.item.deliveryDisposition,
-        },
-        chatTurnId: randomUUID(),
-        turnVariant: 0,
-        createdAt: input.now,
-        updatedAt: input.now,
-      })
-      .returning();
-    if (!message) throw new Error("Failed to persist Steer user message");
-
-    const [linkedItem] = await tx
-      .update(chatQueuedMessages)
-      .set({
-        continuationMessageId: message.id,
-        sourceMessageId: message.id,
-        version: sql`${chatQueuedMessages.version} + 1`,
-        updatedAt: input.now,
-      })
-      .where(and(
-        eq(chatQueuedMessages.id, input.item.id),
-        eq(chatQueuedMessages.version, input.item.version),
-        isNull(chatQueuedMessages.cancelledAt),
-      ))
-      .returning();
-    if (!linkedItem) throw conflict("Queued Steer feedback changed while its message was being persisted");
-
-    await tx
-      .update(chatConversations)
-      .set({ lastMessageAt: input.now, updatedAt: input.now })
-      .where(and(
-        eq(chatConversations.id, input.conversationId),
-        eq(chatConversations.orgId, input.orgId),
-      ));
-    await tx
-      .insert(activityLog)
-      .values({
-        orgId: input.orgId,
-        actorType: input.actor.actorType,
-        actorId: input.actor.actorId,
-        agentId: input.actor.agentId ?? null,
-        action: "chat.message_added",
-        entityType: "chat",
-        entityId: input.conversationId,
-        details: {
-          messageId: message.id,
-          role: "user",
-          kind: "message",
-          source: "steer",
-          queueItemId: input.item.id,
-        },
-        idempotencyKey: `chat-steer-message:${message.id}`,
-      })
-      .onConflictDoNothing();
-
-    return { item: hydrateQueuedMessage(linkedItem), message, created: true };
+    const materialized = await materializeQueuedUserMessage(tx, {
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      item: input.item,
+      actor: input.actor,
+      now: input.now,
+      expectedStatuses: [input.item.status],
+      structuredPayload: {
+        source: "steer",
+        targetGenerationId: targetGenerationId ?? null,
+        afterTranscriptEntryCount: transcriptAnchor.afterTranscriptEntryCount,
+        generationSeq: transcriptAnchor.generationSeq,
+        queueItemId: input.item.id,
+        controlActionId: input.item.controlActionId,
+        deliveryDisposition: input.item.deliveryDisposition,
+      },
+    });
+    return {
+      ...materialized,
+      item: hydrateQueuedMessage(materialized.item),
+    };
   }
 
   async function controlActionById(

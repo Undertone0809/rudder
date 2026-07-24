@@ -47,6 +47,7 @@ import { useToast } from "@/context/ToastContext";
 import { useBrowserSavedViewMetadataPersister } from "@/hooks/useBrowserSavedViewMetadataPersister";
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import { createBrowserSidePanelTarget as createChatSidePanelBrowserTarget } from "@/lib/browser-side-panel";
+import { createChatResponseAnnotationNavigationState } from "@/lib/chat-response-annotation-navigation";
 import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspaceLaunchTarget } from "@/lib/desktop-shell";
 import { MAIN_WORKBENCH_BROWSER_CAPACITY } from "@/lib/main-workbench-state";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, getOrganizationRouteKey } from "@/lib/organization-routes";
@@ -63,10 +64,11 @@ import {
   resolveBrowserShortcutInput,
   type Agent,
   type BrowserShortcutAction,
+  type ChatInlineAnnotation,
   type Issue,
   type IssueComment,
   type OrganizationWorkspaceFileDetail,
-  type OrganizationWorkspaceFileEntry
+  type OrganizationWorkspaceFileEntry,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -1411,6 +1413,21 @@ export function ChatSidePanel({
     if (handler) sideChatCloseHandlersRef.current.set(clientMutationId, handler);
     else sideChatCloseHandlersRef.current.delete(clientMutationId);
   }, []);
+  const selectSideChatResponseAnnotation = useCallback((
+    annotation: ChatInlineAnnotation,
+    ordinal: number,
+  ) => {
+    sidePanel.hidePanel();
+    navigate(
+      {
+        pathname: `/messenger/chat/${annotation.sourceConversationId}`,
+        search: `?messageId=${encodeURIComponent(annotation.sourceMessageId)}`,
+      },
+      {
+        state: createChatResponseAnnotationNavigationState(annotation, ordinal),
+      },
+    );
+  }, [navigate, sidePanel]);
 
   const visibleTabs = sidePanel.tabs;
   const browserTargets = useMemo(
@@ -2114,6 +2131,7 @@ export function ChatSidePanel({
               target={sideChatTarget}
               onRegisterCloseHandler={registerSideChatCloseHandler}
               onReplaceTarget={replaceSidePanelTarget}
+              onSelectResponseAnnotation={selectSideChatResponseAnnotation}
             />
           ) : subagentTarget ? (
             <SubagentPanelView target={subagentTarget} />

@@ -144,8 +144,8 @@ export type {
   ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent,
-  ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTodoItem,
-  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
+  ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
+  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
   CostSummary,
   CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
   FinanceByKind, FinanceEvent, FinanceSummary, Goal,
@@ -239,6 +239,10 @@ export {
 
 export { deriveAgentUrlKey, isUuidLike, normalizeAgentUrlKey } from "./agent-url-key.js";
 export { API, API_PREFIX } from "./api.js";
+export {
+  createMarkdownSourceBoundaryMap,
+  type MarkdownSourceBoundaryMap
+} from "./markdown-source-boundary.js";
 export { formatMessengerPreview, formatMessengerTitle, type MessengerPreviewOptions } from "./messenger-preview.js";
 export {
   ORGANIZATION_ISSUE_KEY_MAX_LENGTH,
@@ -319,6 +323,11 @@ export {
   type TokenUsageParts,
   type TokenUsageSummary
 } from "./token-usage.js";
+
+export {
+  isInternalChatTranscriptLifecycleEntry,
+  type ChatTranscriptLifecycleCandidate
+} from "./chat-transcript-visibility.js";
 
 export {
   ISSUE_UPDATE_ACTIVITY_METADATA_KEYS,

@@ -2,6 +2,10 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentMenuLabel, AssigneeLabel } from "@/components/AssigneeLabel";
 import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences";
+import {
+  AnchoredResponseAnnotationMarkers,
+  SentResponseAnnotationsCard,
+} from "@/components/chat/ResponseAnnotations";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { InlineEntitySelector, type InlineEntityOption } from "@/components/InlineEntitySelector";
 import { MarkdownBody, WebsiteLinkIcon, websiteUrlFromMarkdownHref, type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
@@ -41,6 +45,10 @@ import {
   formatChatProcessDuration,
   lastTranscriptAtMs
 } from "@/lib/chat-process-duration";
+import {
+  CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
+  CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+} from "@/lib/chat-response-annotation-selection";
 import { mergeNativeSteerTranscriptEntries } from "@/lib/chat-stream-state";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "@/lib/mention-chips";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
@@ -51,12 +59,15 @@ import { agentUrl, cn, relativeTime } from "@/lib/utils";
 import {
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
+  chatInlineAnnotationsFromStructuredPayload,
   chatInlineVisualMappingsFromStructuredPayload,
   rudderInlineVisualMappingsFromStructuredPayload,
   type Agent,
   type ChatAskUserQuestion,
   type ChatAskUserRequest,
   type ChatConversation,
+  type ChatInlineAnnotation,
+  type ChatInlineAnnotationInput,
   type ChatMessage,
   type ChatOperationProposalDecisionAction
 } from "@rudderhq/shared";
@@ -2131,6 +2142,11 @@ export function ChatMessageItem({
   onRefreshAssistantMessage,
   onOpenFile,
   onMarkdownLinkClick,
+  onSelectResponseAnnotation,
+  onResponseAnnotationsExpanded,
+  unlocatableResponseAnnotationId,
+  responseAnnotations = [],
+  onEditResponseAnnotation,
   turnBranchControls,
   skillReferences,
   inlineEdit,
@@ -2164,9 +2180,21 @@ export function ChatMessageItem({
   onRefreshAssistantMessage?: (message: ChatMessage) => void;
   onOpenFile: (targetPath: string) => void;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
+  onSelectResponseAnnotation?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+  onResponseAnnotationsExpanded?: (
+    annotations: ChatInlineAnnotation[],
+    expanded: boolean,
+  ) => void;
+  unlocatableResponseAnnotationId?: string | null;
+  responseAnnotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
+  onEditResponseAnnotation?: (
+    annotationId: string,
+    anchor: HTMLButtonElement,
+  ) => void;
   skillReferences: MarkdownSkillReferencePreview[];
   inlineEdit?: {
     draft: string;
+    canSubmitWithoutBody?: boolean;
     disabled: boolean;
     mentions: MentionOption[];
     surfaceRef: RefObject<HTMLDivElement | null>;
@@ -2183,6 +2211,7 @@ export function ChatMessageItem({
   issueCreatedMessage?: ChatMessage | null;
   turnBranchControls?: ChatTurnBranchControls | null;
 }) {
+  const assistantAnnotationSourceRef = useRef<HTMLDivElement>(null);
   if (message.kind === "issue_proposal" || message.kind === "operation_proposal") {
     return (
       <ProposalCard
@@ -2243,10 +2272,19 @@ export function ChatMessageItem({
   const isUser = message.role === "user";
   if (shouldHideSteerFallbackAssistantBubble(message)) return null;
   const displayedState = displayedChatMessageState(message);
+  const inlineAnnotations = isUser
+    ? chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)
+    : [];
+  const inlineAnnotationAttachmentIds = new Set(
+    inlineAnnotations.flatMap((annotation) => annotation.attachmentIds),
+  );
   const statusLabel = !isUser ? assistantStateLabel(displayedState) : null;
   const inlineVisualAttachmentIds = new Set([...chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload), ...rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload)].filter((mapping) => mapping.status === "ready").map((mapping) => mapping.attachmentId));
   const visibleMessageAttachments = message.attachments.filter(
-    (attachment) => !inlineVisualAttachmentIds.has(attachment.id),
+    (attachment) => (
+      !inlineVisualAttachmentIds.has(attachment.id)
+      && !inlineAnnotationAttachmentIds.has(attachment.id)
+    ),
   );
   const canContinueInterrupted = Boolean(onContinueInterruptedMessage) && canContinueInterruptedChatMessage(message);
   const recoverableFailure = displayedState === "failed" ? recoverableFailureFromMessage(message) : null;
@@ -2255,6 +2293,15 @@ export function ChatMessageItem({
     ? "Runtime unavailable"
     : "Response failed";
   const isEmptyStreamingAssistant = !isUser && displayedState === "streaming" && message.body.trim().length === 0;
+  const canAnnotateAssistantBody = !isUser
+    && message.kind === "message"
+    && !message.supersededAt
+    && message.body.trim().length > 0
+    && (message.status === "completed" || message.status === "stopped" || message.status === "failed");
+  const assistantResponseAnnotations = responseAnnotations.filter((annotation) => (
+    annotation.surface === "assistant_body"
+    && annotation.sourceMessageId === message.id
+  ));
   const canShowAssistantMessageActions = !isUser && message.status !== "stopped";
   const isInlineEditing = isUser && Boolean(inlineEdit);
 
@@ -2317,13 +2364,30 @@ export function ChatMessageItem({
               <TextDots text="Thinking" className="text-muted-foreground" />
             </div>
           ) : (
-            <ChatLongMessageBody
-              body={message.body}
-              message={message}
-              skillReferences={skillReferences}
-              onMarkdownLinkClick={onMarkdownLinkClick}
-              className="max-w-[72ch] text-[15px] leading-7 text-foreground"
-            />
+            <div
+              ref={assistantAnnotationSourceRef}
+              {...(canAnnotateAssistantBody ? {
+                [CHAT_ANNOTATION_SOURCE_ATTRIBUTE]: `assistant:${message.id}`,
+                [CHAT_ANNOTATION_BLOCK_ATTRIBUTE]: message.id,
+                "data-annotation-surface": "assistant_body",
+                "data-message-id": message.id,
+              } : {})}
+              className="relative"
+            >
+              <ChatLongMessageBody
+                body={message.body}
+                message={message}
+                skillReferences={skillReferences}
+                onMarkdownLinkClick={onMarkdownLinkClick}
+                className="max-w-[72ch] text-[15px] leading-7 text-foreground"
+              />
+              <AnchoredResponseAnnotationMarkers
+                sourceRootRef={assistantAnnotationSourceRef}
+                source={message.body}
+                annotations={assistantResponseAnnotations}
+                onActivate={onEditResponseAnnotation}
+              />
+            </div>
           )}
           <ChatRichReferences message={message} />
           <ChatAttachmentList
@@ -2394,8 +2458,23 @@ export function ChatMessageItem({
   }
 
   return (
-    <div data-testid="chat-user-message" data-message-id={message.id} className="flex justify-end transition-all duration-200">
-      <div className={cn("group flex flex-col items-end text-left", isInlineEditing ? "w-full max-w-full" : "max-w-[82%]")}>
+    <div data-testid="chat-user-message-turn" data-message-id={message.id} className="flex justify-end transition-all duration-200">
+      <div
+        data-testid="chat-user-message"
+        data-message-id={message.id}
+        className={cn("group flex flex-col items-end text-left", isInlineEditing ? "w-full max-w-full" : "max-w-[82%]")}
+      >
+        <SentResponseAnnotationsCard
+          annotations={inlineAnnotations}
+          attachments={message.attachments}
+          onSelect={onSelectResponseAnnotation}
+          onExpandedChange={(expanded) => onResponseAnnotationsExpanded?.(
+            inlineAnnotations,
+            expanded,
+          )}
+          unlocatableAnnotationId={unlocatableResponseAnnotationId}
+          className="mb-2"
+        />
         {isInlineEditing && inlineEdit ? (
           <div
             ref={inlineEdit.surfaceRef}
@@ -2422,10 +2501,10 @@ export function ChatMessageItem({
                 }
               }}
             />
-            {message.attachments.length > 0 ? (
+            {visibleMessageAttachments.length > 0 ? (
               <div className="mt-2">
                 <ChatAttachmentList
-                  attachments={message.attachments}
+                  attachments={visibleMessageAttachments}
                   onOpenFile={onOpenFile}
                 />
               </div>
@@ -2442,7 +2521,13 @@ export function ChatMessageItem({
               <Button
                 type="button"
                 size="sm"
-                disabled={inlineEdit.disabled || inlineEdit.draft.trim().length === 0}
+                disabled={
+                  inlineEdit.disabled
+                  || (
+                    inlineEdit.draft.trim().length === 0
+                    && !inlineEdit.canSubmitWithoutBody
+                  )
+                }
                 onClick={inlineEdit.onSubmit}
               >
                 Send
@@ -2464,14 +2549,14 @@ export function ChatMessageItem({
               className="text-[15px] leading-[1.6]"
             />
             <ChatAttachmentList
-              attachments={message.attachments}
+              attachments={visibleMessageAttachments}
               onOpenFile={onOpenFile}
             />
           </div>
         )}
-        {askUserAnswer && message.attachments.length > 0 ? (
+        {askUserAnswer && visibleMessageAttachments.length > 0 ? (
           <ChatAttachmentList
-            attachments={message.attachments}
+            attachments={visibleMessageAttachments}
             onOpenFile={onOpenFile}
           />
         ) : null}
@@ -2659,10 +2744,13 @@ export function StreamTranscriptItem({
   streamEndedAt,
   assistantMessageBody,
   showDeveloperDiagnostics,
+  open,
   defaultOpen = false,
   onOpenChange,
   onOpenFile,
   onOpenAgent,
+  annotationSource,
+  sentAnnotationContext,
 }: {
   entries: TranscriptEntry[];
   steerMessages?: ChatMessage[];
@@ -2672,10 +2760,28 @@ export function StreamTranscriptItem({
   streamEndedAt?: Date | null;
   assistantMessageBody?: string | null;
   showDeveloperDiagnostics?: boolean;
+  open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   onOpenFile?: (targetPath: string, label: string) => void;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  annotationSource?: {
+    sourceConversationId: string;
+    sourceMessageId: string;
+    annotations?: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
+    onActivateAnnotation?: (
+      annotationId: string,
+      anchor: HTMLButtonElement,
+    ) => void;
+  };
+  sentAnnotationContext?: {
+    onSelect?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+    onExpandedChange?: (
+      annotations: ChatInlineAnnotation[],
+      expanded: boolean,
+    ) => void;
+    unlocatableAnnotationId?: string | null;
+  };
 }) {
   const timelineEntries = useMemo(
     () => mergeNativeSteerTranscriptEntries(entries, steerMessages),
@@ -2683,7 +2789,10 @@ export function StreamTranscriptItem({
   );
   const streamingActive = state === "streaming" || state === "finalizing";
   const hasSteerInterjection = steerMessages.length > 0;
-  const [processOpen, setProcessOpen] = useState(() => streamingActive || defaultOpen || hasSteerInterjection);
+  const [internalProcessOpen, setInternalProcessOpen] = useState(
+    () => streamingActive || defaultOpen || hasSteerInterjection,
+  );
+  const processOpen = open ?? internalProcessOpen;
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -2693,7 +2802,7 @@ export function StreamTranscriptItem({
   }, [streamingActive]);
 
   useEffect(() => {
-    if (defaultOpen || hasSteerInterjection) setProcessOpen(true);
+    if (defaultOpen || hasSteerInterjection) setInternalProcessOpen(true);
   }, [defaultOpen, hasSteerInterjection]);
 
   const durationMs = useMemo(() => {
@@ -2730,11 +2839,9 @@ export function StreamTranscriptItem({
               disabled={streamingActive}
               onClick={() => {
                 if (!streamingActive) {
-                  setProcessOpen((open) => {
-                    const next = !open;
-                    onOpenChange?.(next);
-                    return next;
-                  });
+                  const next = !processOpen;
+                  if (open === undefined) setInternalProcessOpen(next);
+                  onOpenChange?.(next);
                 }
               }}
               aria-expanded={showBody}
@@ -2772,6 +2879,8 @@ export function StreamTranscriptItem({
               hiddenAssistantMessageText={assistantMessageBody}
               onOpenFile={onOpenFile}
               onOpenAgent={onOpenAgent}
+              annotationSource={annotationSource}
+              sentAnnotationContext={sentAnnotationContext}
             />
           </div>
         ) : null}
