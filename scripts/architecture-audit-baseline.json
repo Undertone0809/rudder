@@ -232,6 +232,14 @@
       "rationale": "Shared runtime CLI assembly still combines environment discovery, command execution, and compatibility adapters in one module.",
       "target": "Extract environment and process adapters behind focused runtime utilities and reduce below 1500 lines.",
       "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/services/mcp/oauth.ts",
+      "lines": 1501,
+      "owner": "integrations-server",
+      "rationale": "Managed MCP OAuth currently combines provider discovery, authorization callbacks, token lifecycle, and compatibility handling while the integration contract stabilizes.",
+      "target": "Extract provider discovery, callback exchange, and token lifecycle services and reduce this coordinator below 1500 lines.",
+      "expiry": "2027-03-31"
     }
   ]
 }
