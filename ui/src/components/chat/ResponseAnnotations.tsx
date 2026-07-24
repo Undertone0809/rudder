@@ -54,6 +54,63 @@ export type ResponseAnnotationAnchorRect = Pick<
   "left" | "right" | "top" | "bottom" | "width" | "height"
 >;
 
+export function useResponseAnnotationEditorController(
+  fallbackFocusRef: RefObject<HTMLButtonElement | null>,
+) {
+  const [annotationId, setAnnotationId] = useState<string | null>(null);
+  const [initialAnchor, setInitialAnchor] = useState<{
+    anchorRect: ResponseAnnotationAnchorRect;
+    boundaryRect: ResponseAnnotationAnchorRect | null;
+  } | null>(null);
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const close = useCallback(() => {
+    setInitialAnchor(null);
+    setAnnotationId(null);
+  }, []);
+  const openFromAnchor = useCallback((
+    nextAnnotationId: string,
+    anchor: HTMLButtonElement | null,
+  ) => {
+    anchorRef.current = anchor;
+    setInitialAnchor(null);
+    setAnnotationId(nextAnnotationId);
+  }, []);
+  const openFromSelection = useCallback((
+    nextAnnotationId: string,
+    nextInitialAnchor: NonNullable<typeof initialAnchor>,
+  ) => {
+    anchorRef.current = null;
+    setInitialAnchor(nextInitialAnchor);
+    setAnnotationId(nextAnnotationId);
+  }, []);
+  const getAnchorRect = useCallback(() => (
+    anchorRef.current?.isConnected
+      ? anchorRef.current.getBoundingClientRect()
+      : initialAnchor?.anchorRect ?? null
+  ), [initialAnchor]);
+  const getBoundaryRect = useCallback(() => (
+    anchorRef.current
+      ?.closest<HTMLElement>('[data-testid="chat-main-workspace-card"]')
+      ?.getBoundingClientRect()
+      ?? initialAnchor?.boundaryRect
+      ?? null
+  ), [initialAnchor]);
+
+  return {
+    annotationId,
+    close,
+    openFromAnchor,
+    openFromSelection,
+    editorPlacement: {
+      anchorRect: getAnchorRect(),
+      getAnchorRect,
+      boundaryRect: getBoundaryRect(),
+      getBoundaryRect,
+      returnFocusRef: anchorRef.current ? anchorRef : fallbackFocusRef,
+    },
+  };
+}
+
 export type ResponseAnnotationEditorChanges = {
   comment: string | null;
   pendingFiles: File[];
