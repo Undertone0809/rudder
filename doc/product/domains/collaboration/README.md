@@ -26,6 +26,9 @@ edit_policy: user_confirmed_only
 
 - Chat conversations, messages, attachments, rich references, and assistant
   turns, including the thread Work manifest.
+- Cross-surface live-preview behavior for explicitly opted-in durable Markdown
+  documents; the owning Issue, Library, Automation, Goal, and Project domains
+  still own their persisted values and save flows.
 - Messenger thread directory, unread state, custom groups, pin/archive/delete,
   Saved Views, and attention aggregation.
 - Issue-thread presentation of comments/activity when shown in Messenger.
@@ -53,6 +56,9 @@ edit_policy: user_confirmed_only
 - `CHAT.WEBSITE.LINK.ICON.001`: common websites use embedded recognizable icons
   without metadata requests, while unlisted sites retain safe discovery and
   generic-icon fallback.
+- `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`: durable Markdown document surfaces keep
+  exact source as their only content truth while inactive blocks render,
+  active blocks reveal source, and Rudder references remain atomic.
 - `CHAT.THREAD.MANIFEST.001`: each Chat exposes a typed, provenance-preserving
   current-thread Outputs/Sources/References index.
 - `CHAT.SIDE.PANEL.001`: Side Panel is a global board workbench for opening

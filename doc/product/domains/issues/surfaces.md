@@ -56,6 +56,10 @@ Behavior:
 - Issue detail description reading and editing are the same content surface:
   headings, lists, paragraphs, links, images, and multiline spacing must keep
   the same readable rhythm when the operator enters edit mode.
+- New Issue, Issue Detail, and Side Panel issue-description authoring follow
+  `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`: inactive logical blocks render, active
+  blocks reveal exact Markdown source, and the owning Issue save path remains
+  authoritative.
 - Issue description and issue-level attachment images open in the shared
   application image-preview overlay with explicit close, copy, and download
   controls plus `Escape` dismissal. They do not open as Built-in Browser
@@ -85,6 +89,10 @@ Invariant:
 - Issue description edit mode must not introduce a different Markdown box model
   from display mode. Any editor-specific implementation must opt into the same
   issue-description typography contract used by the read state.
+- Live-preview focus or decoration must not normalize a non-empty Issue
+  description. Issue comment composition and wake behavior remain governed by
+  `ISSUE.COMMENTS.001` and `ROUTING.COMMENT.WAKE.001`, not by the
+  issue-description editor.
 - Image evidence on Issue Detail must retain an application-owned exit path
   while the image is loading or unavailable; image size and load failure must
   not clip the preview controls.

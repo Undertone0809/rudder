@@ -1,21 +1,7 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { E2E_BASE_URL } from "./support/e2e-env";
 
-async function placeCaretAtEnd(locator: Locator) {
-  await locator.evaluate((element) => {
-    const editable = element.closest<HTMLElement>('[contenteditable="true"]');
-    if (!editable) throw new Error("Expected a contenteditable ancestor");
-    editable.focus();
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  });
-}
-
-test("issue description stays Library-style editable and preserves Enter-created paragraphs", async ({ page }) => {
+test("issue description stays Library-style source-backed and preserves exact line breaks", async ({ page }) => {
   test.setTimeout(120_000);
 
   const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
@@ -42,7 +28,9 @@ test("issue description stays Library-style editable and preserves Enter-created
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/issues/${issue.identifier ?? issue.id}`);
 
-  const editor = page.locator(".rudder-issue-description-markdown .ProseMirror");
+  const editor = page
+    .locator(".rudder-issue-description-surface")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
   await expect(editor).toBeVisible();
   await expect(page.locator(".rudder-issue-description-markdown-read")).toHaveCount(0);
   const verticalGap = await page.getByTestId("issue-detail-layout").evaluate((layout) => {
@@ -54,23 +42,23 @@ test("issue description stays Library-style editable and preserves Enter-created
   expect(verticalGap).toBeGreaterThanOrEqual(16);
   expect(verticalGap).toBeLessThanOrEqual(32);
 
-  const openingParagraph = editor.locator(":scope > p", { hasText: "Opening paragraph" });
-  await placeCaretAtEnd(openingParagraph);
-  await page.keyboard.press("Enter");
+  const openingPreview = editor
+    .locator('[data-markdown-preview-state="preview"]')
+    .filter({ hasText: "Opening paragraph" });
+  await expect(openingPreview).toBeVisible();
+  await openingPreview.dispatchEvent("mousedown", { button: 0 });
+  await expect(
+    editor.locator('[data-markdown-preview-state="source"]').first(),
+  ).toContainText("Opening paragraph");
 
-  const blankParagraph = editor.locator(":scope > p").nth(1);
-  await expect(blankParagraph).toBeVisible();
-  const blankParagraphHeight = await blankParagraph.evaluate((element) => element.getBoundingClientRect().height);
-  expect(blankParagraphHeight).toBeGreaterThanOrEqual(20);
-  await page.keyboard.type("Inserted paragraph");
-  await expect(editor.locator(":scope > p", { hasText: "Inserted paragraph" })).toBeVisible();
-
-  const alphaItem = editor.locator("li > p", { hasText: "alpha" });
-  await placeCaretAtEnd(alphaItem);
-  await page.keyboard.press("Enter");
-  await page.keyboard.type("beta");
-  await expect(editor.locator("li > p", { hasText: "alpha" })).toHaveCount(1);
-  await expect(editor.locator("li > p", { hasText: "beta" })).toHaveCount(1);
+  const exactDescription = "\nOpening paragraph  \n\nInserted paragraph\n\n- alpha\n- beta\n";
+  const sourceEditor = editor.locator(".cm-content");
+  await sourceEditor.click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.insertText(exactDescription);
+  await sourceEditor.evaluate((element) => {
+    if (element instanceof HTMLElement) element.blur();
+  });
 
   await page.getByRole("region", { name: "Issue properties" }).getByText("Properties", { exact: true }).click();
   await expect.poll(async () => {
@@ -78,15 +66,25 @@ test("issue description stays Library-style editable and preserves Enter-created
     expect(response.ok()).toBe(true);
     const updated = await response.json() as { description: string | null };
     return updated.description;
-  }).toContain("Inserted paragraph");
+  }).toBe(exactDescription);
 
   await page.reload();
-  await expect(editor.locator(":scope > p", { hasText: "Inserted paragraph" })).toBeVisible();
-  await expect(editor.locator("li > p", { hasText: "beta" })).toBeVisible();
+  await expect(
+    page
+      .locator(".rudder-issue-description-surface")
+      .locator('[data-markdown-preview-state="preview"]')
+      .filter({ hasText: "Inserted paragraph" }),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".rudder-issue-description-surface")
+      .locator('[data-markdown-preview-state="preview"]')
+      .filter({ hasText: "beta" }),
+  ).toBeVisible();
   await page.screenshot({ path: "/tmp/rudder-issue-description-fixed.png", fullPage: false });
 });
 
-test("issue description and attachment images open the global preview", async ({ page }) => {
+test("issue description images reveal source while attachment images keep the global preview", async ({ page }) => {
   test.setTimeout(120_000);
 
   const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
@@ -164,38 +162,32 @@ test("issue description and attachment images open the global preview", async ({
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
 
-  const descriptionEditor = page.locator(".rudder-issue-description-markdown .ProseMirror");
+  const descriptionEditor = page
+    .locator(".rudder-issue-description-surface")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
   await expect(descriptionEditor).toBeVisible();
   await expect(page.locator(".rudder-issue-description-markdown-read")).toHaveCount(0);
 
   const descriptionImage = descriptionEditor.locator('img[alt="Description evidence"]:visible');
   await expect(descriptionImage).toBeVisible();
-  await descriptionImage.dblclick();
+  await descriptionImage.dispatchEvent("mousedown", { button: 0 });
+  await expect(
+    descriptionEditor.locator('[data-markdown-preview-state="source"]').filter({
+      hasText: `![Description evidence](${attachment.contentPath})`,
+    }),
+  ).toBeVisible();
+  await expect(page.getByTestId("markdown-editor-image-preview-dialog")).toHaveCount(0);
 
-  const previewDialog = page.getByTestId("markdown-editor-image-preview-dialog");
-  await expect(previewDialog).toBeVisible();
-  await expect(previewDialog.getByAltText("Description evidence")).toBeVisible();
-  await expect(previewDialog.getByRole("button", { name: "Copy Image" })).toBeVisible();
-
-  const previewMetrics = await previewDialog.getByAltText("Description evidence").evaluate((image) => {
-    const element = image as HTMLImageElement;
-    const rect = element.getBoundingClientRect();
-    return {
-      renderedWidth: rect.width,
-      renderedHeight: rect.height,
-      ratioDelta: Math.abs(rect.width / rect.height - element.naturalWidth / element.naturalHeight),
-    };
+  await descriptionEditor.locator(".cm-content").evaluate((element) => {
+    if (element instanceof HTMLElement) element.blur();
   });
-  expect(previewMetrics.renderedWidth).toBeGreaterThan(560);
-  expect(previewMetrics.renderedHeight).toBeGreaterThan(300);
-  expect(previewMetrics.ratioDelta).toBeLessThan(0.01);
+  await expect(descriptionEditor.locator('img[alt="Description evidence"]:visible')).toBeVisible();
 
-  await page.keyboard.press("Escape");
-  await expect(previewDialog).toHaveCount(0);
-
-  const attachmentName = page.getByRole("button", { name: "issue-evidence.png", exact: true });
-  await expect(attachmentName).toBeVisible();
-  await attachmentName.click();
+  const attachmentPreviewButton = page.getByRole("button", {
+    name: "Open image preview: issue-evidence.png",
+  });
+  await expect(attachmentPreviewButton).toBeVisible();
+  await attachmentPreviewButton.click();
 
   const attachmentPreview = page.getByTestId("issue-attachment-image-preview-dialog");
   await expect(attachmentPreview).toBeVisible();

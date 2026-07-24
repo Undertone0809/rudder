@@ -1019,7 +1019,9 @@ test.describe("Workspace shell", () => {
     await page.setViewportSize({ width: 1491, height: 926 });
     await gotoOrganizationPath(page, organization, "/library?path=heading-doc.md");
 
-    const markdownEditor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+    const markdownEditor = page
+      .getByTestId("org-workspaces-markdown-editor")
+      .locator('[data-editor-engine="codemirror-live-preview"]');
     await expect(markdownEditor.locator("h1", { hasText: "Launch Plan" })).toBeVisible();
     const documentOutline = page.getByTestId("org-workspaces-document-outline");
     await expect(documentOutline).toBeVisible();
@@ -1038,7 +1040,11 @@ test.describe("Workspace shell", () => {
     await expect.poll(async () => markdownEditorScroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(
       beforeOutlineClickScrollTop,
     );
-    await expect(markdownEditor.locator("h2", { hasText: "Tasks" })).toBeInViewport();
+    await expect(
+      markdownEditor.locator('[data-markdown-preview-state="source"]', {
+        hasText: "## Tasks",
+      }),
+    ).toBeInViewport();
 
     await gotoOrganizationPath(page, organization, "/library?path=plain-doc.md");
     await expect(markdownEditor).toContainText("Keep this note intentionally flat.");
@@ -1225,7 +1231,9 @@ test.describe("Workspace shell", () => {
     await rootCreateFileDialog.getByRole("button", { name: "Create file" }).click();
     await expect(page.getByText("File created")).toBeVisible();
     await expect(page.getByTestId("org-workspaces-editor-tabs").getByRole("tab", { name: "root-created.md" })).toBeVisible();
-    const markdownEditor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+    const markdownEditor = page
+      .getByTestId("org-workspaces-markdown-editor")
+      .locator('[data-editor-engine="codemirror-live-preview"]');
     await expect(markdownEditor).toBeVisible();
     await expect(page.getByTestId("org-workspaces-path-breadcrumb").getByRole("button", { name: "root-created.md" })).toBeVisible();
 
@@ -1270,7 +1278,11 @@ test.describe("Workspace shell", () => {
     await createFileDialog.getByRole("button", { name: "Create file" }).click();
     await expect(page.getByText("File created")).toBeVisible();
     await expect(page.getByTestId("org-workspaces-editor-tabs").getByRole("tab", { name: "menu-created.md" })).toBeVisible();
-    await expect(page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror")).toBeVisible();
+    await expect(
+      page
+        .getByTestId("org-workspaces-markdown-editor")
+        .locator('[data-editor-engine="codemirror-live-preview"]'),
+    ).toBeVisible();
     await page.getByTestId("org-workspaces-entry-more-artifacts").click();
     await page.getByRole("menuitem", { name: "New folder" }).click();
     const createFolderDialog = page.getByRole("dialog", { name: "New folder" });
@@ -1348,9 +1360,13 @@ test.describe("Workspace shell", () => {
     await expect(markdownEditor).toContainText("Shared Notes");
     await expect(markdownEditor.locator("h1", { hasText: "Shared Notes" })).toBeVisible();
 
-    await markdownEditor.click();
+    const sourceEditor = markdownEditor.locator(".cm-content");
+    await sourceEditor.click();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-    await page.keyboard.type("# Shared Notes\n\n- Keep project setup docs nearby.\n");
+    await page.keyboard.insertText("# Shared Notes\n\n- Keep project setup docs nearby.\n");
+    await sourceEditor.evaluate((element) => {
+      if (element instanceof HTMLElement) element.blur();
+    });
     await expect(markdownEditor.locator("h1", { hasText: "Shared Notes" })).toBeVisible();
     await expect.poll(async () => fs.readFile(path.join(resolveOrganizationWorkspaceRoot(organization.id), "notes.md"), "utf8"))
       .toContain("Keep project setup docs nearby.");
@@ -1358,7 +1374,9 @@ test.describe("Workspace shell", () => {
 
     await filesCard.getByRole("button", { name: "frontmatter.md", exact: true }).click();
     const frontmatterEditor = page.getByTestId("org-workspaces-frontmatter-editor");
-    const frontmatterMarkdownEditor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+    const frontmatterMarkdownEditor = page
+      .getByTestId("org-workspaces-markdown-editor")
+      .locator('[data-editor-engine="codemirror-live-preview"]');
     await expect(frontmatterEditor).toBeVisible();
     await expect(frontmatterMarkdownEditor.locator("h1", { hasText: "Frontmatter Heading" })).toBeVisible();
 

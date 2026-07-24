@@ -40,6 +40,10 @@ Product model:
 - Goals belong to one organization.
 - A goal has level, status, optional parent, optional owner agent, and linked
   work.
+- A goal description is durable Markdown and follows
+  `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001` in create and detail authoring surfaces.
+  Full description views render Markdown; compact list/search summaries may
+  flatten it to plain text.
 - A valid organization has at least one root organization-level goal.
 - Parent goals must be in the same organization and must not form a cycle.
 - Deleting a goal is blocked when dependent projects, issues, automations, or
@@ -58,6 +62,8 @@ Invariants:
 
 - Goal hierarchy cannot cross organizations or cycle.
 - Goal deletion must not silently detach existing work from its rationale.
+- Rendering or focusing a Goal description must not normalize its non-empty
+  Markdown source.
 
 Evidence:
 
@@ -79,6 +85,10 @@ Product model:
   compatibility where code still carries `goalId`.
 - Projects have status, target date, lead agent, URL/shortname identity, visual
   metadata, resources, workspaces, chats, and issues.
+- A project description is durable Markdown and follows
+  `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001` in create and detail/configuration
+  authoring surfaces. Full description views render Markdown; compact
+  list/search summaries may flatten it to plain text.
 - Creating a project can initialize the project's Library layout so resources
   and outputs have a stable place.
 
@@ -96,6 +106,8 @@ Invariants:
 - Project identity must stay organization-scoped and URL-stable.
 - Project goal links must not imply execution state; chat, issue, and automation
   contracts still own work progress.
+- Rendering or focusing a Project description must not normalize its non-empty
+  Markdown source.
 
 Evidence:
 

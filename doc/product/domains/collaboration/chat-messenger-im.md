@@ -1433,6 +1433,11 @@ Product model:
   or generic file icon. Resolving the icon does not read the local filesystem.
 - Composer/editor surfaces and read-only markdown surfaces share the same
   visual grammar for the same reference type.
+- In a `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001` surface, canonical Rudder entity
+  references inserted through `@`, existing `$skill` references, and previously
+  persisted canonical references remain atomic tokens in active and inactive
+  blocks. An unmodified click navigates directly instead of exposing the
+  underlying Markdown link.
 - Issue references that carry status metadata show the issue status icon inline,
   whether they appear in assistant messages, user messages, comments, or other
   read-only markdown bodies.
@@ -1450,6 +1455,9 @@ Flow:
 4. When a rendered link is an explicit absolute local-file target, the renderer
    classifies its icon from the normalized path and leaves filesystem access to
    an explicit operator action under `CHAT.SIDE.PANEL.001`.
+5. In document live preview, copy, deletion, undo, and persistence continue to
+   operate on the canonical Markdown representation even though the reference
+   remains an atomic visible token.
 
 Invariants:
 
@@ -1470,6 +1478,9 @@ Invariants:
   tokens. Raw ids are acceptable only as fallback or secondary disambiguation.
 - Truncation in editors is only for labels long enough to threaten the current
   line; ordinary labels should not be shortened.
+- Atomic document tokens must not flash or expand into raw link syntax when
+  their block becomes active. This direct-click rule does not change Chat,
+  Side Chat, decision-note, message-edit, or Issue comment composer behavior.
 
 Evidence:
 
@@ -1496,6 +1507,9 @@ Product model:
 
 - External `http` and `https` links render as ordinary inline text links with a
   compact leading website icon.
+- In a `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001` surface, an external link shows that
+  icon only while its logical block is inactive. Activating the block removes
+  the icon projection and exposes the exact Markdown link source.
 - Rudder may resolve common public or first-party sites from an embedded
   known-icon cache that stores real website favicon/logo image assets as data
   URLs. This avoids repeated public-page fetches for frequently pasted sites
@@ -1513,6 +1527,10 @@ Product model:
   already data URLs and do not need proxying.
 - Rudder caches metadata lookups briefly so repeated rendering of the same link
   does not repeatedly fetch the same external page during normal reading.
+- Website metadata requests distinguish preview from authoring. Preview keeps
+  the known-icon no-fetch optimization. Authoring may fetch a public page title
+  for smart-link paste through the same URL validation, redirect revalidation,
+  response bounds, cache, and SSRF protections.
 - Rudder falls back to the generic website icon when metadata discovery returns
   no valid image icon, fails, or the proxied image cannot be rendered.
 
@@ -1529,6 +1547,12 @@ Flow:
 5. When an icon is found, the renderer swaps the generic icon for the proxied
    website icon while keeping the link label/copy text unchanged.
 6. If no icon is found, the generic website icon remains visible.
+7. When document authoring pastes one HTTP(S) URL without selected text, Rudder
+   inserts a site-name or hostname label immediately and may request the public
+   page title.
+8. A returned page title replaces only the unchanged fallback link inserted by
+   that paste. If the operator edits its label or destination first, Rudder
+   leaves the operator's source untouched.
 
 Invariants:
 
@@ -1539,6 +1563,9 @@ Invariants:
 - The embedded set is an optimization for common sites, not an exhaustive
   website directory. Unlisted public sites continue through metadata discovery
   and generic-icon fallback instead of requiring a bundled asset.
+- Preview resolution for a known icon must not fetch the public page. An
+  explicit authoring-purpose title request is the only live-preview exception
+  and remains subject to the same network-safety boundary.
 - Same-origin Rudder app links remain internal navigation links and do not use
   website metadata discovery.
 - Unsafe or non-HTTP schemes are not fetched for metadata.
@@ -1546,7 +1573,9 @@ Invariants:
   secrets to the external site.
 - Private, loopback, link-local, and otherwise internal network targets must be
   rejected before fetch; redirects must be revalidated before they are followed.
-- The icon is decorative; it must not change selectable/copyable link text.
+- The icon is decorative; icon resolution must not change selectable/copyable
+  link text. Conditional authoring title enrichment is a source edit governed
+  by `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`, not an icon side effect.
 
 Evidence:
 
@@ -1974,6 +2003,10 @@ Product model:
   undo/redo, visible save state, and explicit stale-write conflict resolution.
   The Side Panel preserves the operator's draft until a conditional write
   succeeds or the operator chooses the latest server version.
+- Side Panel Issue descriptions, Automation instructions, and Library Markdown
+  bodies use the same `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001` behavior as their
+  full surfaces. Docking, expanding, hiding, or switching tabs must not change
+  the Markdown source or create a save by itself.
 - Eligible Browser, automation, Library document, Library entry, Library file,
   and Library directory targets can be added to Messenger Saved Views. Adding a
   target is a persistence action only: it must not navigate, close or hide the
@@ -2107,6 +2140,9 @@ Invariants:
   output, run-history, and dispatch semantics from `AUTOMATION.*`.
 - Side Panel Library views must preserve `LIBRARY.FILES.001` path safety,
   protected paths, previews, and stable reference behavior.
+- Side Panel live preview must preserve the owning Issue, Automation, or Library
+  save and conflict semantics. The Issue Activity comment composer remains a
+  separate composer and does not inherit document live preview.
 - Transcript local-file tabs are not Library files and must not reinterpret a
   project-relative transcript path as an organization Library path. They accept
   only structured absolute targets resolved by `RUN.RESULT.001`, use the Desktop

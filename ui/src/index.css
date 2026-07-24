@@ -4068,6 +4068,99 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   opacity: 1;
 }
 
+.rudder-codemirror-markdown-editor {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background: transparent;
+}
+
+.rudder-codemirror-markdown-editor--bordered {
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--background) 78%, transparent);
+}
+
+.rudder-codemirror-markdown-editor--bordered:focus-within {
+  border-color: color-mix(in oklab, var(--ring) 58%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--ring) 18%, transparent);
+}
+
+.rudder-codemirror-markdown-content,
+.rudder-codemirror-markdown-content .cm-editor,
+.rudder-codemirror-markdown-content .cm-scroller {
+  min-width: 0;
+}
+
+.rudder-codemirror-markdown-content .cm-editor.cm-focused {
+  outline: none;
+}
+
+.rudder-codemirror-markdown-content .cm-content {
+  font-family: inherit;
+  width: 100%;
+  min-width: 0;
+}
+
+.rudder-codemirror-markdown-content .cm-line {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.rudder-codemirror-markdown-content .cm-line[data-markdown-preview-state="source"] {
+  min-height: 1.55em;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.rudder-codemirror-markdown-preview {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  contain: inline-size;
+  cursor: text;
+  white-space: normal;
+}
+
+.rudder-codemirror-markdown-rendered {
+  min-width: 0;
+  max-width: 100%;
+  overflow: visible;
+}
+
+.rudder-codemirror-markdown-preview .rudder-codemirror-markdown-rendered,
+.rudder-codemirror-markdown-preview .rudder-markdown-table-scroll {
+  width: 100%;
+  max-width: 100%;
+}
+
+.rudder-codemirror-markdown-rendered > :first-child {
+  margin-top: 0;
+}
+
+.rudder-codemirror-markdown-rendered > :last-child {
+  margin-bottom: 0;
+}
+
+.rudder-codemirror-markdown-atomic {
+  display: inline-flex;
+  max-width: 100%;
+  vertical-align: baseline;
+  white-space: normal;
+}
+
+.rudder-codemirror-markdown-rendered--atomic,
+.rudder-codemirror-markdown-rendered--atomic > :where(p, div) {
+  display: inline;
+  margin: 0;
+  padding: 0;
+}
+
+.rudder-codemirror-markdown-rendered--atomic .rudder-mention-chip,
+.rudder-codemirror-markdown-rendered--atomic .rudder-skill-token {
+  vertical-align: baseline;
+}
+
 /* Rendered markdown code blocks & inline code (prose/MarkdownBody context).
    Dark theme code blocks with compact sizing.
    Override prose CSS variables so prose-invert can't revert to defaults. */

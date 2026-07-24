@@ -43,6 +43,7 @@ import { useI18n } from "../context/I18nContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { libraryCopy } from "../lib/library-copy";
+import { markdownDocumentOrUndefined } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
 import {
   organizationResourceKindLabel,
@@ -143,6 +144,7 @@ export function NewProjectDialog() {
   const [targetDate, setTargetDate] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [resourceDrafts, setResourceDrafts] = useState<DraftProjectResource[]>([]);
+  const [documentSessionId, setDocumentSessionId] = useState(0);
 
   const [statusOpen, setStatusOpen] = useState(false);
   const [goalOpen, setGoalOpen] = useState(false);
@@ -189,6 +191,7 @@ export function NewProjectDialog() {
   });
 
   function reset() {
+    setDocumentSessionId((current) => current + 1);
     setName("");
     setDescription("");
     setStatus("in_progress");
@@ -363,7 +366,7 @@ export function NewProjectDialog() {
     try {
       const created = await createProject.mutateAsync({
         name: name.trim(),
-        description: description.trim() || undefined,
+        description: markdownDocumentOrUndefined(description),
         status,
         color,
         icon,
@@ -485,6 +488,8 @@ export function NewProjectDialog() {
           <div className="px-4 pb-2">
             <MarkdownEditor
               ref={descriptionEditorRef}
+              engine="codemirror"
+              documentIdentity={`new-project:${documentSessionId}`}
               value={description}
               onChange={setDescription}
               placeholder="Add description..."

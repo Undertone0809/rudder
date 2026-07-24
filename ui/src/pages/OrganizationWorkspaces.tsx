@@ -19,8 +19,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import {
-  buildAgentMentionHref,
-  parseAgentMentionHref,
   type OrganizationSkillFileDetail,
   type OrganizationWorkspaceFileDetail,
   type OrganizationWorkspaceFileEntry,
@@ -75,10 +73,8 @@ import { mentionChipNavigationPath, parseMentionChipHref } from "../lib/mention-
 import { queryKeys } from "../lib/queryKeys";
 import { normalizeWorkspaceCsvRows, parseWorkspaceCsvContent } from "../lib/workspace-csv";
 import {
-  containsEmbeddedImageDataUrl,
   countWorkspaceDocumentWords,
   displayWorkspaceDocumentKind,
-  EMBEDDED_IMAGE_DATA_URL_ERROR,
   formatWorkspaceWordCount,
   isWorkspaceCsvContentType,
   isWorkspaceCsvFilePath,
@@ -157,6 +153,7 @@ import {
 } from "./organization-workspaces/organizationWorkspaceCapabilities";
 import { ProjectResourceDetailPanel } from "./organization-workspaces/ProjectResourceDetailPanel";
 import { SkillLibraryAddDialog } from "./organization-workspaces/SkillLibraryAddDialog";
+import { useWorkspaceFileSaveQueue } from "./organization-workspaces/useWorkspaceFileSaveQueue";
 import { CsvWorkspaceEditor, LegacyHeartbeatInstructionsDialog } from "./organization-workspaces/WorkspaceDocumentEditors";
 import {
   didDragLeaveCurrentTarget,
@@ -182,7 +179,6 @@ const SKILL_INSTALL_CHAT_PREFILL = [
   "",
   "After importing, verify it appears in Library / skills and explain whether it is editable or read-only.",
 ].join("\n");
-const AGENT_MENTION_MARKDOWN_LINK_RE = /\[([^\]]*)]\((agent:\/\/[^)\s]+)\)/g;
 const WORKSPACE_TAB_DND_MIME = "application/x-rudder-workspace-tab";
 
 function clampWorkspaceTabContextMenuPosition(left: number, top: number) {
@@ -193,25 +189,14 @@ function clampWorkspaceTabContextMenuPosition(left: number, top: number) {
   };
 }
 
-function enrichAgentMentionMarkdown(markdown: string, mentionOptions: MentionOption[]) {
-  if (!markdown || mentionOptions.length === 0) return markdown;
-  const iconByAgentId = new Map(
-    mentionOptions
-      .filter((option) => option.kind === "agent" && option.agentId && option.agentIcon)
-      .map((option) => [option.agentId!, option.agentIcon!] as const),
-  );
-  if (iconByAgentId.size === 0) return markdown;
+type OrganizationWorkspaceBrowserProps = { breadcrumbLabel?: string; emptyMessage?: string; editorTitle?: string; noSelectionMessage?: ReactNode };
 
-  return markdown.replace(AGENT_MENTION_MARKDOWN_LINK_RE, (match, label: string, href: string) => {
-    const parsed = parseAgentMentionHref(href);
-    if (!parsed) return match;
-    const icon = iconByAgentId.get(parsed.agentId);
-    if (!icon || parsed.icon === icon) return match;
-    return `[${label}](${buildAgentMentionHref(parsed.agentId, icon)})`;
-  });
+export function OrganizationWorkspaceBrowser(props: OrganizationWorkspaceBrowserProps) {
+  const { viewedOrganizationId } = useViewedOrganization();
+  return <OrganizationWorkspaceBrowserForOrganization key={viewedOrganizationId ?? "__none__"} {...props} />;
 }
 
-export function OrganizationWorkspaceBrowser({
+function OrganizationWorkspaceBrowserForOrganization({
   breadcrumbLabel = "Workspaces",
   emptyMessage = "Select an organization to browse its shared workspace.",
   editorTitle = "Editor",
@@ -222,12 +207,7 @@ export function OrganizationWorkspaceBrowser({
       this workspace can be edited here.
     </>
   ),
-}: {
-  breadcrumbLabel?: string;
-  emptyMessage?: string;
-  editorTitle?: string;
-  noSelectionMessage?: ReactNode;
-}) {
+}: OrganizationWorkspaceBrowserProps) {
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const { locale } = useI18n();
   const { pushToast } = useToast();
@@ -321,7 +301,7 @@ export function OrganizationWorkspaceBrowser({
     draftFilePath: string | null;
   }>({ draftContent: "", draftFilePath: null });
   const syncedFileRef = useRef<{ filePath: string | null; content: string }>({ filePath: null, content: "" });
-  const saveWorkspaceFileMutateRef = useRef<((payload: { filePath: string; content: string }) => void) | null>(null);
+  const saveWorkspaceFileQueueRef = useRef<ReturnType<typeof useWorkspaceFileSaveQueue>["queue"] | null>(null);
   const editorScrollElementRef = useRef<HTMLElement | null>(null);
   const libraryFindRootRef = useRef<HTMLDivElement | null>(null);
   const markdownEditorRef = useRef<MarkdownEditorRef | null>(null);
@@ -386,8 +366,12 @@ export function OrganizationWorkspaceBrowser({
     const { draftContent: currentDraftContent, draftFilePath: currentDraftFilePath } = draftStateRef.current;
     if (!currentDraftFilePath) return;
     const syncedFile = syncedFileRef.current;
-    if (syncedFile.filePath === currentDraftFilePath && syncedFile.content === currentDraftContent) return;
-    saveWorkspaceFileMutateRef.current?.({ filePath: currentDraftFilePath, content: currentDraftContent });
+    if (syncedFile.filePath !== currentDraftFilePath || syncedFile.content === currentDraftContent) return;
+    saveWorkspaceFileQueueRef.current?.retry(
+      currentDraftFilePath,
+      currentDraftContent,
+      syncedFile.content,
+    );
   }, []);
 
   const openWorkspaceFileTab = useCallback((filePath: string) => {
@@ -741,15 +725,17 @@ export function OrganizationWorkspaceBrowser({
       return;
     }
     if (!fileQuery.data || fileQuery.data.filePath !== selectedFilePath) return;
-    const nextContent = fileQuery.data.content ?? "";
+    const serverContent = fileQuery.data.content ?? "";
     const syncedFile = syncedFileRef.current;
     const hasLocalDirtyDraft =
       draftFilePath === selectedFilePath
       && syncedFile.filePath === selectedFilePath
       && draftContent !== syncedFile.content;
     if (hasLocalDirtyDraft) return;
-    syncedFileRef.current = { filePath: selectedFilePath, content: nextContent };
-    setDraftContent(nextContent);
+    saveWorkspaceFileQueueRef.current?.seed(selectedFilePath, serverContent);
+    const localContent = saveWorkspaceFileQueueRef.current?.localContent(selectedFilePath);
+    syncedFileRef.current = { filePath: selectedFilePath, content: serverContent };
+    setDraftContent(localContent ?? serverContent);
     setDraftFilePath(selectedFilePath);
   }, [draftContent, draftFilePath, fileQuery.data, selectedFilePath]);
 
@@ -785,31 +771,16 @@ export function OrganizationWorkspaceBrowser({
     [requestedDirectoryPath, selectedFilePath, selectedResourcePath, selectedSkillTreePath],
   );
 
-  const saveWorkspaceFile = useMutation({
-    mutationFn: (payload: { filePath: string; content: string }) => {
-      if (containsEmbeddedImageDataUrl(payload.content)) {
-        throw new Error(EMBEDDED_IMAGE_DATA_URL_ERROR);
-      }
-      return organizationsApi.updateWorkspaceFile(viewedOrganizationId!, payload.filePath, {
-        content: payload.content,
-      });
-    },
-    onSuccess: (detail) => {
-      if (!viewedOrganizationId) return;
-      syncedFileRef.current = { filePath: detail.filePath, content: detail.content ?? "" };
-      queryClient.setQueryData(
-        queryKeys.organizations.workspaceFile(viewedOrganizationId, detail.filePath),
-        detail,
-      );
-    },
-    onError: (error) => {
-      pushToast({
-        title: "Image upload required",
-        body: error instanceof Error ? error.message : EMBEDDED_IMAGE_DATA_URL_ERROR,
-        tone: "error",
-      });
-    },
+  const {
+    clearNotice: clearWorkspaceFileSaveNotice,
+    notices: workspaceFileSaveNotices,
+    queue: saveWorkspaceFileQueue,
+  } = useWorkspaceFileSaveQueue({
+    organizationId: viewedOrganizationId,
+    selectedFilePathRef,
+    syncedFileRef,
   });
+  saveWorkspaceFileQueueRef.current = saveWorkspaceFileQueue;
   const uploadWorkspaceImage = useMutation({
     mutationFn: async (payload: { file: File; filePath: string | null }) => {
       if (!viewedOrganizationId) throw new Error("No organization selected");
@@ -820,10 +791,18 @@ export function OrganizationWorkspaceBrowser({
       );
     },
   });
-  const saveWorkspaceFileMutate = saveWorkspaceFile.mutate;
-  useEffect(() => {
-    saveWorkspaceFileMutateRef.current = saveWorkspaceFileMutate;
-  }, [saveWorkspaceFileMutate]);
+  const saveWorkspaceFileConflict = saveWorkspaceFileQueue.isConflicted(selectedFilePath);
+  async function reloadWorkspaceFileAfterConflict() {
+    const result = await fileQuery.refetch();
+    const detail = result.data;
+    if (!detail || detail.filePath !== selectedFilePath) return;
+    const content = detail.content ?? "";
+    saveWorkspaceFileQueue.resolveWithServer(detail.filePath, content);
+    syncedFileRef.current = { filePath: detail.filePath, content };
+    setDraftContent(content);
+    setDraftFilePath(detail.filePath);
+    clearWorkspaceFileSaveNotice(detail.filePath);
+  }
 
   useEffect(() => () => {
     flushCurrentDraft();
@@ -1242,9 +1221,16 @@ export function OrganizationWorkspaceBrowser({
     if (!detail || detail.filePath !== selectedFilePath) return;
     if (detail.content === null || detail.truncated) return;
     if (draftContent === detail.content) return;
+    if (saveWorkspaceFileConflict) return;
 
     const timeout = window.setTimeout(() => {
-      saveWorkspaceFileMutate({ filePath: selectedFilePath, content: draftContent });
+      const syncedFile = syncedFileRef.current;
+      if (syncedFile.filePath !== selectedFilePath) return;
+      saveWorkspaceFileQueue.enqueue(
+        selectedFilePath,
+        draftContent,
+        syncedFile.content,
+      );
     }, 700);
 
     return () => window.clearTimeout(timeout);
@@ -1252,7 +1238,8 @@ export function OrganizationWorkspaceBrowser({
     draftContent,
     draftFilePath,
     fileQuery.data,
-    saveWorkspaceFileMutate,
+    saveWorkspaceFileConflict,
+    saveWorkspaceFileQueue,
     selectedFilePath,
   ]);
 
@@ -1577,7 +1564,17 @@ export function OrganizationWorkspaceBrowser({
   };
 
   const handleLibraryInlineTokenClick = (token: AtomicInlineTokenElement, _event: InlineTokenClickEvent) => {
-    if (token.kind !== "mention") return;
+    if (token.kind === "skill") {
+      const detailsHref = token.element
+        .closest<HTMLAnchorElement>("a[data-skill-token='true'][href]")
+        ?.getAttribute("href")
+        ?? agentWorkspaceMentionOptions.find((option) => (
+          option.kind === "skill"
+          && option.skillMarkdownTarget === token.href
+        ))?.skillDetailsHref;
+      if (detailsHref) navigate(detailsHref);
+      return;
+    }
     const parsed = parseMentionChipHref(token.href);
     if (!parsed) return;
     if (parsed.kind === "library_file") {
@@ -1633,10 +1630,7 @@ export function OrganizationWorkspaceBrowser({
     ? draftContent
     : selectedFileDetail?.content ?? "";
   const selectedMarkdownParts = splitYamlFrontmatter(selectedEditorContent);
-  const selectedMarkdownBodyForEditor = enrichAgentMentionMarkdown(
-    selectedMarkdownParts.body,
-    agentWorkspaceMentionOptions,
-  );
+  const selectedMarkdownBodyForEditor = selectedMarkdownParts.body;
   const selectedFileUsesMarkdownEditor = isWorkspaceMarkdownFilePath(selectedFilePath);
   const selectedFileUsesCsvEditor = Boolean(
     selectedFileDetail?.content !== null
@@ -1699,7 +1693,14 @@ export function OrganizationWorkspaceBrowser({
           : displayWorkspaceDocumentKind(selectedFilePath),
         formatWorkspaceWordCount(selectedDocumentWordCount),
       ];
-  const selectedSaveStatus = saveWorkspaceFile.isError
+  const selectedWorkspaceSaveNotice = selectedFilePath
+    ? workspaceFileSaveNotices.get(selectedFilePath) ?? null
+    : null;
+  const selectedWorkspaceSaveError = selectedWorkspaceSaveNotice?.status === "error"
+    ? selectedWorkspaceSaveNotice.error
+    : null;
+  const selectedWorkspaceSavePending = selectedWorkspaceSaveNotice?.status === "saving";
+  const selectedSaveStatus = selectedWorkspaceSaveError
     ? "Save failed"
     : draftFilePath === selectedFilePath && syncedFileRef.current.filePath === selectedFilePath && draftContent !== syncedFileRef.current.content
       ? "Saving"
@@ -1791,18 +1792,7 @@ export function OrganizationWorkspaceBrowser({
   );
 
   function scrollToSelectedMarkdownOutlineItem(item: DocumentOutlineItem) {
-    const editorScrollElement = editorScrollElementRef.current;
-    if (!editorScrollElement) return;
-    const headings = Array.from(editorScrollElementRef.current?.querySelectorAll("h1,h2,h3,h4,h5,h6") ?? []);
-    const targetHeading = headings[item.headingIndex];
-    if (targetHeading instanceof HTMLElement) {
-      const editorRect = editorScrollElement.getBoundingClientRect();
-      const headingRect = targetHeading.getBoundingClientRect();
-      editorScrollElement.scrollTo({
-        top: Math.max(0, editorScrollElement.scrollTop + headingRect.top - editorRect.top),
-        behavior: "smooth",
-      });
-    }
+    markdownEditorRef.current?.revealLine?.(item.line);
   }
 
   function handleMarkdownEditorBlankClick(event: MouseEvent<HTMLDivElement>) {
@@ -1810,7 +1800,7 @@ export function OrganizationWorkspaceBrowser({
     if (event.target.closest("button, a, input, textarea, select, [role='button'], [role='menu'], [role='listbox']")) {
       return;
     }
-    if (event.target.closest(".ProseMirror")) return;
+    if (event.target.closest(".ProseMirror, [data-editor-engine='codemirror-live-preview']")) return;
     markdownEditorRef.current?.focus();
   }
 
@@ -2298,10 +2288,10 @@ export function OrganizationWorkspaceBrowser({
 
           <section
             data-testid="org-workspaces-editor-card"
-            data-active-surface={saveWorkspaceFile.isPending || uploadWorkspaceImage.isPending ? "workspace-document" : undefined}
+            data-active-surface={selectedWorkspaceSavePending || uploadWorkspaceImage.isPending ? "workspace-document" : undefined}
             className={cn(
               "rudder-doc-editor-surface flex min-h-[420px] min-w-0 flex-col bg-transparent lg:min-h-0 lg:flex-1",
-              (saveWorkspaceFile.isPending || uploadWorkspaceImage.isPending) && "active-surface-ring",
+              (selectedWorkspaceSavePending || uploadWorkspaceImage.isPending) && "active-surface-ring",
             )}
           >
             {showWorkspaceFileTabs ? (
@@ -2641,11 +2631,20 @@ export function OrganizationWorkspaceBrowser({
                       {selectedFileDetail.message}
                     </div>
                   ) : null}
-                  {saveWorkspaceFile.isError ? (
-                    <div className="shrink-0 border-b border-border px-4 py-2 text-xs text-destructive">
-                      {saveWorkspaceFile.error instanceof Error
-                        ? saveWorkspaceFile.error.message
-                        : "Failed to save workspace file."}
+                  {selectedWorkspaceSaveError ? (
+                    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2 text-xs text-destructive">
+                      <span>{selectedWorkspaceSaveError instanceof Error
+                        ? selectedWorkspaceSaveError.message
+                        : "Failed to save workspace file."}</span>
+                      {saveWorkspaceFileConflict ? (
+                        <Button variant="outline" size="sm" onClick={() => void reloadWorkspaceFileAfterConflict()}>
+                          Reload latest
+                        </Button>
+                      ) : (
+                        <Button variant="outline" size="sm" onClick={flushCurrentDraft}>
+                          Retry
+                        </Button>
+                      )}
                     </div>
                   ) : null}
                   {selectedFileCanRenderHtml ? (
@@ -2668,7 +2667,7 @@ export function OrganizationWorkspaceBrowser({
                   ) : selectedFileUsesMarkdownEditor ? (
                     <div
                       ref={setEditorScrollElementRef}
-                      data-testid="org-workspaces-markdown-editor"
+                      data-testid="org-workspaces-markdown-editor" data-markdown-scroll-container="true"
                       className="rudder-library-document-editor-scroll scrollbar-auto-hide min-h-[280px] flex-1 overflow-auto bg-[color:var(--surface-elevated)]"
                       onClick={handleMarkdownEditorBlankClick}
                     >
@@ -2702,7 +2701,8 @@ export function OrganizationWorkspaceBrowser({
                           <MarkdownEditor
                             ref={markdownEditorRef}
                             key={selectedFilePath}
-                            engine="milkdown"
+                            engine="codemirror"
+                            documentIdentity={`library-file:${selectedFilePath}`}
                             value={selectedMarkdownBodyForEditor}
                             onChange={(nextContent) => handleMarkdownBodyDraftChange(selectedFilePath, nextContent)}
                             mentions={agentWorkspaceMentionOptions}
@@ -2790,13 +2790,13 @@ export function OrganizationWorkspaceBrowser({
                     </div>
                     <div className={cn(
                       "flex shrink-0 items-center gap-1.5",
-                      saveWorkspaceFile.isError ? "text-destructive" : "text-muted-foreground",
+                      selectedWorkspaceSaveError ? "text-destructive" : "text-muted-foreground",
                     )}>
                       <span
                         aria-hidden="true"
                         className={cn(
                           "h-2 w-2 rounded-full",
-                          saveWorkspaceFile.isError ? "bg-destructive" : "bg-[color:var(--accent-strong)]",
+                          selectedWorkspaceSaveError ? "bg-destructive" : "bg-[color:var(--accent-strong)]",
                         )}
                       />
                       {selectedSaveStatus}

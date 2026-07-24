@@ -13,9 +13,11 @@ import { InlineEditor } from "./InlineEditor";
 
 const markdownEditorHarness = vi.hoisted(() => ({
   currentMarkdown: null as null | string,
+  engine: null as null | string,
   onChange: null as null | ((value: string) => void),
   onSubmit: null as null | (() => void),
   submitShortcut: null as null | string,
+  focus: vi.fn(),
 }));
 
 vi.mock("./MarkdownBody", () => ({
@@ -27,14 +29,16 @@ vi.mock("./MarkdownBody", () => ({
 vi.mock("./MarkdownEditor", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
-    MarkdownEditor: forwardRef(function MarkdownEditorMock({ value, onChange, onSubmit, contentClassName, submitShortcut }: {
+    MarkdownEditor: forwardRef(function MarkdownEditorMock({ value, onChange, onSubmit, contentClassName, engine, submitShortcut }: {
       value: string;
       onChange: (value: string) => void;
       onSubmit: () => void;
       contentClassName?: string;
+      engine?: string;
       submitShortcut?: string;
     }, ref) {
       markdownEditorHarness.currentMarkdown = value;
+      markdownEditorHarness.engine = engine ?? null;
       markdownEditorHarness.onChange = (nextValue) => {
         markdownEditorHarness.currentMarkdown = nextValue;
         onChange(nextValue);
@@ -42,7 +46,7 @@ vi.mock("./MarkdownEditor", async () => {
       markdownEditorHarness.onSubmit = onSubmit;
       markdownEditorHarness.submitShortcut = submitShortcut ?? null;
       useImperativeHandle(ref, () => ({
-        focus: () => undefined,
+        focus: markdownEditorHarness.focus,
         getMarkdown: () => markdownEditorHarness.currentMarkdown ?? value,
       }));
       return (
@@ -105,6 +109,20 @@ describe("InlineEditor", () => {
     expect(html).not.toContain("hover:bg-accent/50");
   });
 
+  it("renders CodeMirror document preview directly so a clicked line activates in place", () => {
+    const html = renderToStaticMarkup(
+      <InlineEditor
+        value="# Goal description"
+        onSave={() => undefined}
+        multiline
+        editorEngine="codemirror"
+      />,
+    );
+
+    expect(html).toContain("data-testid=\"markdown-editor\"");
+    expect(html).not.toContain("data-testid=\"markdown-body\"");
+  });
+
   it("flushes changed always-edit Markdown on blur without leaving edit mode", async () => {
     const onSave = vi.fn();
     const host = document.createElement("div");
@@ -136,6 +154,252 @@ describe("InlineEditor", () => {
       root.unmount();
     });
     host.remove();
+  });
+
+  it("routes CodeMirror document descriptions without trimming non-empty Markdown", async () => {
+    const onSave = vi.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <InlineEditor
+          value="Persisted"
+          onSave={onSave}
+          multiline
+          alwaysEdit
+          editorEngine="codemirror"
+        />,
+      );
+    });
+
+    expect(markdownEditorHarness.engine).toBe("codemirror");
+    await act(async () => {
+      markdownEditorHarness.onChange?.("\n  **Exact**  \n");
+      markdownEditorHarness.onSubmit?.();
+    });
+
+    expect(onSave).toHaveBeenCalledWith("\n  **Exact**  \n");
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("accepts an external CodeMirror value while focused when the draft is unchanged", async () => {
+    const onSave = vi.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <InlineEditor
+          value="Original"
+          onSave={onSave}
+          multiline
+          alwaysEdit
+          editorEngine="codemirror"
+        />,
+      );
+    });
+
+    await act(async () => {
+      host.querySelector("[data-testid='markdown-editor']")!.dispatchEvent(
+        new FocusEvent("focusin", { bubbles: true }),
+      );
+      root.render(
+        <InlineEditor
+          value="Updated externally"
+          onSave={onSave}
+          multiline
+          alwaysEdit
+          editorEngine="codemirror"
+        />,
+      );
+    });
+    expect(markdownEditorHarness.currentMarkdown).toBe("Updated externally");
+
+    await act(async () => {
+      host.querySelector("[data-testid='markdown-editor']")!.dispatchEvent(
+        new FocusEvent("focusout", { bubbles: true, relatedTarget: null }),
+      );
+    });
+    expect(onSave).not.toHaveBeenCalled();
+
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("keeps a dirty CodeMirror draft without saving when an external update arrives", async () => {
+    const onSave = vi.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <InlineEditor
+          value="Original"
+          onSave={onSave}
+          multiline
+          alwaysEdit
+          editorEngine="codemirror"
+        />,
+      );
+    });
+
+    await act(async () => {
+      host.querySelector<HTMLElement>("[data-testid='markdown-editor']")!.focus();
+      markdownEditorHarness.onChange?.("Local draft");
+      root.render(
+        <InlineEditor
+          value="Updated externally"
+          onSave={onSave}
+          multiline
+          alwaysEdit
+          editorEngine="codemirror"
+        />,
+      );
+    });
+    const conflictStatus = Array.from(host.querySelectorAll("span")).find(
+      (element) => element.textContent === "Updated elsewhere — submit to overwrite",
+    );
+    expect(conflictStatus?.className).toContain("opacity-100");
+
+    await act(async () => {
+      host.querySelector("[data-testid='markdown-editor']")!.dispatchEvent(
+        new FocusEvent("focusout", { bubbles: true, relatedTarget: null }),
+      );
+    });
+    expect(onSave).not.toHaveBeenCalled();
+    expect(markdownEditorHarness.currentMarkdown).toBe("Local draft");
+
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("accepts the external CodeMirror value on Escape without saving the dirty draft", async () => {
+    const onSave = vi.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <InlineEditor
+          value="Original"
+          onSave={onSave}
+          multiline
+          alwaysEdit
+          editorEngine="codemirror"
+        />,
+      );
+    });
+
+    const editor = host.querySelector<HTMLElement>("[data-testid='markdown-editor']")!;
+    await act(async () => {
+      editor.focus();
+      markdownEditorHarness.onChange?.("Local draft");
+      root.render(
+        <InlineEditor
+          value="Updated externally"
+          onSave={onSave}
+          multiline
+          alwaysEdit
+          editorEngine="codemirror"
+        />,
+      );
+    });
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(markdownEditorHarness.currentMarkdown).toBe("Updated externally");
+
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("allows an explicit CodeMirror submit to overwrite an external update", async () => {
+    const onSave = vi.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <InlineEditor
+          value="Original"
+          onSave={onSave}
+          multiline
+          alwaysEdit
+          editorEngine="codemirror"
+        />,
+      );
+    });
+
+    await act(async () => {
+      host.querySelector<HTMLElement>("[data-testid='markdown-editor']")!.focus();
+      markdownEditorHarness.onChange?.("Local draft");
+      root.render(
+        <InlineEditor
+          value="Updated externally"
+          onSave={onSave}
+          multiline
+          alwaysEdit
+          editorEngine="codemirror"
+        />,
+      );
+    });
+    await act(async () => {
+      markdownEditorHarness.onSubmit?.();
+    });
+
+    expect(onSave).toHaveBeenCalledWith("Local draft");
+
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("leaves an always-edit CodeMirror document in preview until the user focuses it", async () => {
+    markdownEditorHarness.focus.mockClear();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <InlineEditor
+          value="# Preview first"
+          onSave={() => undefined}
+          multiline
+          alwaysEdit
+          editorEngine="codemirror"
+        />,
+      );
+    });
+
+    expect(markdownEditorHarness.focus).not.toHaveBeenCalled();
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+    vi.unstubAllGlobals();
   });
 
   it("serializes an in-flight autosave before the latest explicit save", async () => {

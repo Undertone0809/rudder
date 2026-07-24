@@ -11,6 +11,10 @@ export interface MentionMenuPositionOptions {
   maxHeight?: number;
 }
 
+export interface MentionPanelPositionOptions {
+  maxWidth?: number;
+}
+
 export interface MentionMenuAnchor {
   viewportTop: number;
   viewportBottom: number;
@@ -80,15 +84,20 @@ export function getMentionPanelPositionForViewport(
   state: MentionMenuContainerAnchor,
   viewportWidth: number,
   viewportHeight: number,
+  options: MentionPanelPositionOptions = {},
 ) {
   const availableWidth = Math.max(
     MENTION_MENU_MIN_WIDTH,
     viewportWidth - MENTION_MENU_VIEWPORT_PADDING * 2,
   );
+  const maxWidth = Math.max(
+    MENTION_MENU_MIN_WIDTH,
+    Math.min(options.maxWidth ?? availableWidth, availableWidth),
+  );
   const desiredWidth = clamp(
     state.viewportRight - state.viewportLeft,
     MENTION_MENU_MIN_WIDTH,
-    availableWidth,
+    maxWidth,
   );
   const left = clamp(
     state.viewportLeft,

@@ -41,6 +41,7 @@ import { useBrowserSavedViewMetadataPersister } from "@/hooks/useBrowserSavedVie
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import { createBrowserSidePanelTarget as createChatSidePanelBrowserTarget } from "@/lib/browser-side-panel";
 import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspaceLaunchTarget } from "@/lib/desktop-shell";
+import { markdownDocumentOrNull } from "@/lib/markdown-document-value";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
@@ -393,15 +394,14 @@ function ChatIssueSidePanelView({
               <section aria-label="Issue properties" className="py-3">
                 <IssueProperties issue={issue} onUpdate={(data) => void updateIssueField(data)} showAuditFields={false} />
               </section>
-            ) : null}
-            <InlineEditor
+            ) : null}<InlineEditor
               value={issue.description ?? ""}
-              onSave={(description) => updateIssueField({ description: description.trim() || null })}
+              onSave={(description) => updateIssueField({ description: markdownDocumentOrNull(description) })}
               as="p"
               className="text-[15px] leading-7 text-foreground"
               placeholder="Add a description..."
               multiline
-              editorEngine="milkdown"
+              editorEngine="codemirror" documentIdentity={`issue:${issue.id}`}
               alwaysEdit
               variant="issue-description"
             />
@@ -1001,7 +1001,7 @@ function ChatSidePanelMarkdownFileEditor({
         <MarkdownEditor
           ref={editorRef}
           key={filePath}
-          engine="milkdown"
+          engine="codemirror" documentIdentity={`library-file:${filePath}`}
           value={markdownParts.body}
           onChange={(body) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
             markdownParts.frontmatter,

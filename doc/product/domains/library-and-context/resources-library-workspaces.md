@@ -191,6 +191,10 @@ Product model:
   the Side Panel. Autosave uses the last confirmed server content as a write
   precondition so changes already visible at the server's final guarded read
   produce a conflict instead of being silently overwritten by a stale draft.
+- Markdown bodies in the full Library work surface, workbench, and Messenger
+  Side Panel follow `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`. The file's exact
+  Markdown body remains the content truth; YAML frontmatter keeps its explicit
+  source editor and is not projected as live preview.
 - HTML files in the full Library work surface and Messenger Side Panel follow
   `LIBRARY.WEB.PREVIEW.001` for multi-file rendering, the Connected default,
   the unified preview toolbar, isolated runtime boundaries, and static Offline
@@ -308,6 +312,9 @@ Invariants:
   editor's last confirmed read when that change is visible to the conditional
   save check. Dirty drafts remain local until a conditional save succeeds or the
   operator explicitly chooses the latest server version.
+- Preview decorations, active-block changes, website metadata, and favicon
+  loading must not create a Library write. A non-empty body is persisted without
+  trimming or editor-driven Markdown normalization.
 - Concurrent in-process writes to the same workspace file are serialized, while
   the expected-content precondition detects completed writes from other
   processes or windows before the guarded comparison. Arbitrary filesystem

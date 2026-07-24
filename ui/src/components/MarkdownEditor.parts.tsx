@@ -28,6 +28,7 @@ import {
   readAtomicInlineTokenElement,
   type AtomicInlineTokenElement
 } from "../lib/inline-token-dom";
+import type { MarkdownEditorEngine } from "../lib/markdown-editor-engine";
 import {
   parseMentionChipHref
 } from "../lib/mention-chips";
@@ -106,10 +107,13 @@ export interface MarkdownEditorProps {
   onInlineTokenClick?: (token: AtomicInlineTokenElement) => void;
   /** Opt into activating inline tokens on plain click for document surfaces where tokens behave like links. */
   activateInlineTokensOnPlainClick?: boolean;
+  documentIdentity?: string;
+  engine?: MarkdownEditorEngine;
 }
 
 export interface MarkdownEditorRef {
   focus: () => void;
+  revealLine?: (line: number) => void;
 }
 
 export type CaretTarget =

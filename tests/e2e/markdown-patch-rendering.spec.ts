@@ -46,7 +46,10 @@ test.describe("Markdown patch rendering", () => {
 
     await patchBlock.click();
     await expect(
-      page.locator(".rudder-inline-markdown-surface .rudder-milkdown-content [contenteditable='true']").first(),
-    ).toBeVisible();
+      page
+        .locator(".rudder-issue-description-surface")
+        .locator('[data-editor-engine="codemirror-live-preview"] [data-markdown-preview-state="source"]')
+        .first(),
+    ).toContainText("```patch");
   });
 });

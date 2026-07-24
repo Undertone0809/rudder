@@ -8,6 +8,7 @@ import { NewIssueDialog } from "./NewIssueDialog";
 
 let capturedMentions: Array<Record<string, unknown>> = [];
 let capturedMarkdownEditorProps: {
+  engine?: string;
   mentionMenuPlacement?: string;
 } | null = null;
 const dialogState = vi.hoisted(() => ({
@@ -181,14 +182,17 @@ vi.mock("./MarkdownEditor", () => ({
   MarkdownEditor: ({
     mentions,
     contentClassName,
+    engine,
     mentionMenuPlacement,
   }: {
     mentions?: Array<Record<string, unknown>>;
     contentClassName?: string;
+    engine?: string;
     mentionMenuPlacement?: string;
   }) => {
     capturedMentions = mentions ?? [];
     capturedMarkdownEditorProps = {
+      engine,
       mentionMenuPlacement,
     };
     return <textarea aria-label="Description" className={contentClassName} />;
@@ -380,6 +384,12 @@ describe("NewIssueDialog", () => {
     renderToStaticMarkup(<NewIssueDialog />);
 
     expect(capturedMarkdownEditorProps?.mentionMenuPlacement).toBeUndefined();
+  });
+
+  it("uses CodeMirror live preview for the issue description", () => {
+    renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(capturedMarkdownEditorProps?.engine).toBe("codemirror");
   });
 
   it("does not render the run workspace controls", () => {

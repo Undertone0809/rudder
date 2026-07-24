@@ -394,9 +394,12 @@ test.describe("Chat Side Panel", () => {
     await expect(assistantMessage).toContainText(libraryFileName, { timeout: 15_000 });
     await assistantMessage.getByRole("link", { name: libraryFileName }).click();
     const sidePanel = page.getByTestId("chat-side-panel");
-    const documentTitle = sidePanel.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research",
-      exact: true,
+    const markdownEditor = sidePanel.getByTestId("chat-side-panel-library-markdown-editor");
+    const livePreviewEditor = markdownEditor.locator(
+      '[data-editor-engine="codemirror-live-preview"]',
+    );
+    const documentTitle = livePreviewEditor.locator("h1", {
+      hasText: "OpenClaw and Hermes Agent SEO competitor research",
     });
     await expect(documentTitle).toBeVisible();
     const fileToolbar = sidePanel.getByTestId("chat-side-panel-library-file-toolbar");
@@ -438,8 +441,7 @@ test.describe("Chat Side Panel", () => {
       (toolbarBox?.y ?? 0) + (toolbarBox?.height ?? 0),
     );
 
-    const markdownEditor = sidePanel.getByTestId("chat-side-panel-library-markdown-editor");
-    const editable = markdownEditor.locator(".rudder-milkdown-content [contenteditable='true']").first();
+    const editable = livePreviewEditor.locator(".cm-content");
     const historyControls = markdownEditor.getByTestId("chat-side-panel-library-history-controls");
     const undoButton = markdownEditor.getByRole("button", { name: "Undo Markdown edit" });
     const redoButton = markdownEditor.getByRole("button", { name: "Redo Markdown edit" });
@@ -467,34 +469,25 @@ test.describe("Chat Side Panel", () => {
       await route.continue();
     });
 
-    await documentTitle.evaluate((heading) => {
-      const editableRoot = heading.closest<HTMLElement>("[contenteditable='true']");
-      editableRoot?.focus();
-      const range = document.createRange();
-      range.selectNodeContents(heading);
-      range.collapse(false);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    });
+    await documentTitle.dispatchEvent("mousedown", { button: 0 });
+    await editable.press("End");
     await page.keyboard.type(" revised");
-    await expect(markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research revised",
-      exact: true,
-    })).toBeVisible();
+    await expect(
+      livePreviewEditor.locator('[data-markdown-preview-state="source"]').filter({
+        hasText: "# OpenClaw and Hermes Agent SEO competitor research revised",
+      }),
+    ).toBeVisible();
     await expect(undoButton).toBeEnabled();
 
     await undoButton.click();
-    await expect(markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research",
-      exact: true,
+    await expect(livePreviewEditor.locator("h1", {
+      hasText: "OpenClaw and Hermes Agent SEO competitor research",
     })).toBeVisible();
     await expect(redoButton).toBeEnabled();
 
     await redoButton.click();
-    await expect(markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research revised",
-      exact: true,
+    await expect(livePreviewEditor.locator("h1", {
+      hasText: "OpenClaw and Hermes Agent SEO competitor research revised",
     })).toBeVisible();
     await expect(markdownEditor).toContainText("Save failed", { timeout: 10_000 });
     allowPatch = true;
@@ -510,21 +503,15 @@ test.describe("Chat Side Panel", () => {
     expect(retriedFile.content).toContain("# OpenClaw and Hermes Agent SEO competitor research revised");
 
     allowPatch = false;
-    const revisedHeading = markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research revised",
-      exact: true,
+    const revisedHeading = livePreviewEditor.locator("h1", {
+      hasText: "OpenClaw and Hermes Agent SEO competitor research revised",
     });
-    await revisedHeading.evaluate((heading) => {
-      const editableRoot = heading.closest<HTMLElement>("[contenteditable='true']");
-      editableRoot?.focus();
-      const range = document.createRange();
-      range.selectNodeContents(heading);
-      range.collapse(false);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    });
+    await revisedHeading.dispatchEvent("mousedown", { button: 0 });
+    await editable.press("End");
     await page.keyboard.type(" conflict");
+    await editable.evaluate((element) => {
+      if (element instanceof HTMLElement) element.blur();
+    });
     await expect(markdownEditor).toContainText("Save failed", { timeout: 10_000 });
 
     const concurrentLibraryContent = "# New agent copy\n\nKeep this concurrent update.";
@@ -538,9 +525,8 @@ test.describe("Chat Side Panel", () => {
     await expect(markdownEditor).toContainText("Conflict", { timeout: 10_000 });
     await expect(markdownEditor.getByRole("button", { name: "Keep mine" })).toBeVisible();
     await expect(markdownEditor.getByRole("button", { name: "Use latest" })).toBeVisible();
-    await expect(markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research revised conflict",
-      exact: true,
+    await expect(livePreviewEditor.locator("h1", {
+      hasText: "OpenClaw and Hermes Agent SEO competitor research revised conflict",
     })).toBeVisible();
 
     await markdownEditor.getByRole("button", { name: "Keep mine" }).click();
@@ -555,21 +541,15 @@ test.describe("Chat Side Panel", () => {
     expect(keptFile.content).not.toBe(concurrentLibraryContent);
 
     allowPatch = false;
-    const keptHeading = markdownEditor.getByRole("heading", {
-      name: "OpenClaw and Hermes Agent SEO competitor research revised conflict",
-      exact: true,
+    const keptHeading = livePreviewEditor.locator("h1", {
+      hasText: "OpenClaw and Hermes Agent SEO competitor research revised conflict",
     });
-    await keptHeading.evaluate((heading) => {
-      const editableRoot = heading.closest<HTMLElement>("[contenteditable='true']");
-      editableRoot?.focus();
-      const range = document.createRange();
-      range.selectNodeContents(heading);
-      range.collapse(false);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    });
+    await keptHeading.dispatchEvent("mousedown", { button: 0 });
+    await editable.press("End");
     await page.keyboard.type(" again");
+    await editable.evaluate((element) => {
+      if (element instanceof HTMLElement) element.blur();
+    });
     await expect(markdownEditor).toContainText("Save failed", { timeout: 10_000 });
 
     const secondConcurrentContent = "# Latest agent copy\n\nUse this second concurrent update.";
@@ -583,7 +563,7 @@ test.describe("Chat Side Panel", () => {
     await expect(markdownEditor).toContainText("Conflict", { timeout: 10_000 });
     await markdownEditor.getByRole("button", { name: "Use latest" }).click();
     await expect(markdownEditor).toContainText("Saved");
-    await expect(markdownEditor.getByRole("heading", { name: "Latest agent copy", exact: true })).toBeVisible();
+    await expect(livePreviewEditor.locator("h1", { hasText: "Latest agent copy" })).toBeVisible();
 
     const savedFileRes = await page.request.get(
       `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(libraryFilePath)}`,
@@ -844,6 +824,36 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Frequency");
     await expect(sidePanel).toContainText("Previous runs");
     await expect(sidePanel.getByLabel("Pause automation")).toBeVisible();
+    const automationEditor = sidePanel
+      .getByTestId("automation-detail-shell")
+      .locator('[data-editor-engine="codemirror-live-preview"]');
+    await expect(automationEditor).toBeVisible();
+    await expect(
+      automationEditor.locator('[data-markdown-preview-state="preview"]').filter({
+        hasText: "This Automation uses the same detail UI in Messenger and the workspace.",
+      }),
+    ).toBeVisible();
+
+    const exactEmbeddedInstructions = "\n  ## Embedded automation instructions  \n\n`side-panel`\n";
+    const automationSource = automationEditor.locator(".cm-content");
+    await automationSource.click();
+    await automationSource.press("ControlOrMeta+A");
+    await page.keyboard.insertText(exactEmbeddedInstructions);
+    await automationSource.evaluate((element) => {
+      if (element instanceof HTMLElement) element.blur();
+    });
+    await expect.poll(async () => {
+      const response = await page.request.get(`/api/automations/${automation.id}?_=${Date.now()}`);
+      expect(response.ok(), await response.text()).toBe(true);
+      const updated = await response.json() as { description: string | null };
+      return updated.description;
+    }).toBe(exactEmbeddedInstructions);
+    await expect(
+      automationEditor.locator('[data-markdown-preview-state="preview"]').filter({
+        hasText: "Embedded automation instructions",
+      }),
+    ).toBeVisible();
+
     await sidePanel.getByRole("button", { name: "Automation actions" }).click();
     await expect(page.getByRole("menuitem", { name: "Run now" })).toBeVisible();
     await page.keyboard.press("Escape");
@@ -1072,9 +1082,14 @@ test.describe("Chat Side Panel", () => {
       return response.request().method() === "PATCH"
         && url.pathname.endsWith(`/api/issues/${issue.id}`);
     });
-    const descriptionEditor = sidePanel.locator(".rudder-inline-markdown-surface .rudder-milkdown-content [contenteditable='true']").first();
+    const descriptionSurface = sidePanel
+      .getByTestId("chat-side-panel-issue-view")
+      .locator('[data-editor-engine="codemirror-live-preview"]');
+    const descriptionEditor = descriptionSurface.locator(".cm-content");
     await expect(descriptionEditor).toBeVisible({ timeout: 15_000 });
-    await descriptionEditor.fill("Edited from the chat detail panel.");
+    await descriptionEditor.click();
+    await descriptionEditor.press("ControlOrMeta+A");
+    await page.keyboard.insertText("Edited from the chat detail panel.");
     await propertiesPanel.click();
     const descriptionPatchRes = await descriptionPatchResponse;
     expect(descriptionPatchRes.ok(), await descriptionPatchRes.text()).toBe(true);

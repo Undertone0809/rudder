@@ -7,7 +7,11 @@ async function createOrg(page: import("@playwright/test").Page, name: string) {
     data: { name: `${name}-${Date.now()}` },
   });
   expect(orgRes.ok()).toBe(true);
-  return await orgRes.json() as { id: string; issuePrefix: string };
+  return await orgRes.json() as {
+    id: string;
+    issuePrefix: string;
+    urlKey?: string | null;
+  };
 }
 
 async function selectOrg(page: import("@playwright/test").Page, organizationId: string) {
@@ -27,6 +31,13 @@ async function writeWorkspaceFile(
     data: { filePath, content },
   });
   expect(fileRes.ok()).toBe(true);
+}
+
+async function revealLibraryDocumentOutline(page: import("@playwright/test").Page) {
+  await expect(page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("org-workspaces-document-outline")).toBeVisible({ timeout: 15_000 });
 }
 
 test("Library markdown Agent links return to the document on Escape", async ({ page }) => {
@@ -53,11 +64,14 @@ test("Library markdown Agent links return to the document on Escape", async ({ p
   await selectOrg(page, organization.id);
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
 
-  await page.getByText("Asher", { exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/agents/[^/]+/dashboard`));
+  const organizationRouteKey = organization.urlKey ?? organization.issuePrefix;
+  await page.getByRole("link", { name: /Asher/ }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/${organizationRouteKey}/agents/[^/]+(?:/dashboard)?$`),
+  );
 
   await page.keyboard.press("Escape");
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?path=${encodeURIComponent(filePath)}`));
+  await expect(page).toHaveURL(new RegExp(`/${organizationRouteKey}/library\\?path=${encodeURIComponent(filePath)}`));
   await expect(page.getByTestId("org-workspaces-markdown-editor").locator("h1", { hasText: "Agent Link" })).toBeVisible();
 });
 
@@ -70,13 +84,14 @@ test("Library markdown blank area clicks focus the editor", async ({ page }) => 
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
 
   const editorScroll = page.getByTestId("org-workspaces-markdown-editor");
-  await expect(editorScroll.locator(".ProseMirror")).toBeVisible();
+  const editor = editorScroll.locator('[data-editor-engine="codemirror-live-preview"]');
+  await expect(editor.locator(".cm-content")).toBeVisible();
   const box = await editorScroll.boundingBox();
   expect(box).not.toBeNull();
   await page.mouse.click(box!.x + 140, box!.y + box!.height - 80);
   await page.keyboard.type("Blank area text");
 
-  await expect(editorScroll.locator(".ProseMirror")).toContainText("Blank area text");
+  await expect(editor.locator(".cm-content")).toContainText("Blank area text");
 });
 
 test("Library markdown paste parses markdown syntax and keeps code blocks readable", async ({ page }) => {
@@ -92,12 +107,20 @@ test("Library markdown paste parses markdown syntax and keeps code blocks readab
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
 
-  const editor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+  const editor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
   await expect(editor.locator("pre")).toBeVisible();
   await expect(editor.locator("pre").first()).toHaveCSS("background-color", "rgb(27, 28, 25)");
   await page.evaluate(() => navigator.clipboard.writeText("## HEAD2"));
-  await editor.click();
+  const sourceEditor = editor.locator(".cm-content");
+  await sourceEditor.click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End");
+  await page.keyboard.press("Enter");
   await page.keyboard.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
+  await sourceEditor.evaluate((element) => {
+    if (element instanceof HTMLElement) element.blur();
+  });
 
   await expect(editor.locator("h2", { hasText: "HEAD2" })).toBeVisible();
   await expect(editor).not.toContainText("## HEAD2");
@@ -132,55 +155,56 @@ test("Library markdown copied list selections keep Markdown bullet markers", asy
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
 
-  const editor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+  const editor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
   await expect(editor.locator("h2", { hasText: "Exit" })).toBeVisible();
-  const selectEditorNodeContents = async (selector: string) => {
-    await editor.evaluate(async (element, targetSelector) => {
-      const target = targetSelector === ":scope" ? element : element.querySelector(targetSelector);
-      if (!target) throw new Error(`Expected rendered Markdown node: ${targetSelector}`);
-      if (!(target instanceof Node)) throw new Error(`Rendered target is not a DOM node: ${targetSelector}`);
-      if (element instanceof HTMLElement && !element.contains(document.activeElement)) {
-        element.focus();
-        await new Promise(requestAnimationFrame);
+  const copyRenderedMarkdown = async (selector: string) => {
+    return await editor.evaluate((element, targetSelector) => {
+      const targets = Array.from(element.querySelectorAll(targetSelector));
+      if (targets.length === 0) {
+        throw new Error(`Expected rendered Markdown nodes: ${targetSelector}`);
       }
-      const range = document.createRange();
-      range.selectNodeContents(target);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
+      return targets.map((target) => {
+        const markdownBody = target.closest<HTMLElement>("[data-copy-markdown-source='true']");
+        if (!markdownBody) {
+          throw new Error(`Expected rendered Markdown source for: ${targetSelector}`);
+        }
+        const range = document.createRange();
+        range.selectNode(target);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        const clipboardData = new DataTransfer();
+        const copyEvent = new ClipboardEvent("copy", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData,
+        });
+        markdownBody.dispatchEvent(copyEvent);
+        if (!copyEvent.defaultPrevented) {
+          throw new Error(`Rendered Markdown copy was not handled for: ${targetSelector}`);
+        }
+        return clipboardData.getData("text/plain");
+      }).join("\n");
     }, selector);
   };
 
-  await selectEditorNodeContents("ul");
-  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString() ?? "")).toContain(
-    "Comment on in_progress work before exiting.",
-  );
-  await page.evaluate(() => navigator.clipboard.writeText("__rudder_clipboard_sentinel__"));
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
-
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe([
+  expect(await copyRenderedMarkdown("ul li")).toBe([
     "- Comment on in_progress work before exiting.",
     "- Reviewer work is not closed by a free-form accept/reject comment; use `rudder issue review`.",
     "- A successful `todo` or `in_progress` issue run without a close-out signal can trigger a same-agent passive follow-up.",
     "- Exit cleanly if no assignments.",
   ].join("\n"));
 
-  await selectEditorNodeContents("ol");
-  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString() ?? "")).toContain(
-    "Read today's plan from memory.",
-  );
-  await page.evaluate(() => navigator.clipboard.writeText("__rudder_clipboard_sentinel__"));
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
-
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe([
+  expect(await copyRenderedMarkdown("ol li")).toBe([
     "3. Read today's plan from memory.",
     "4. Review planned items.",
   ].join("\n"));
 
-  await selectEditorNodeContents(":scope");
-  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString() ?? "")).toContain(
-    "Runtime Heartbeat Checklist Copy Fixture",
-  );
+  const sourceEditor = editor.locator(".cm-content");
+  await sourceEditor.click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
   await page.evaluate(() => navigator.clipboard.writeText("__rudder_clipboard_sentinel__"));
   await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
 
@@ -242,7 +266,9 @@ test("Library markdown pasted images are uploaded as assets before save", async 
   await selectOrg(page, organization.id);
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
 
-  const editor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+  const editor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
   await expect(editor.locator("h1", { hasText: "Image Upload" })).toBeVisible();
 
   const uploadResponse = page.waitForResponse((response) =>
@@ -251,7 +277,10 @@ test("Library markdown pasted images are uploaded as assets before save", async 
     && response.status() === 201,
   );
 
-  await editor.evaluate(async (element) => {
+  const sourceEditor = editor.locator(".cm-content");
+  await sourceEditor.click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End");
+  await sourceEditor.evaluate(async (element) => {
     const canvas = document.createElement("canvas");
     canvas.width = 320;
     canvas.height = 180;
@@ -286,6 +315,9 @@ test("Library markdown pasted images are uploaded as assets before save", async 
 
   const uploadedAsset = await (await uploadResponse).json() as { contentPath: string };
   expect(uploadedAsset.contentPath).toMatch(/^\/api\/assets\/[^/]+\/content$/);
+  await sourceEditor.evaluate((element) => {
+    if (element instanceof HTMLElement) element.blur();
+  });
   await expect(editor.locator(`img[src="${uploadedAsset.contentPath}"]`)).toBeVisible();
 
   await expect.poll(async () => {
@@ -360,26 +392,32 @@ test("Library markdown tables keep readable columns inside the document pane", a
     ].join("\n"),
   );
   await selectOrg(page, organization.id);
-  await page.setViewportSize({ width: 1491, height: 926 });
+  await page.setViewportSize({ width: 1800, height: 926 });
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
 
-  const editor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+  const editor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
   const table = editor.locator("table").first();
   await expect(table).toBeVisible();
-  await expect(page.getByTestId("org-workspaces-document-outline")).toBeVisible();
+  await revealLibraryDocumentOutline(page);
 
   const metrics = await table.evaluate((element) => {
     const reliabilityHeader = element.querySelector("th:nth-child(2)");
     const supportHeader = element.querySelector("th:nth-child(3)");
     const supportCell = element.querySelector("tbody tr:first-child td:nth-child(3), tr:nth-child(2) td:nth-child(3)");
+    const tableViewport = element.closest<HTMLElement>(".rudder-markdown-table-scroll");
     const outline = document.querySelector('[data-testid="org-workspaces-document-outline"]');
-    const tableRect = element.getBoundingClientRect();
+    const tableViewportRect = tableViewport?.getBoundingClientRect();
     const outlineRect = outline?.getBoundingClientRect();
     const reliabilityRect = reliabilityHeader?.getBoundingClientRect();
     const supportRect = supportCell?.getBoundingClientRect();
     return {
-      tableRight: tableRect.right,
-      outlineLeft: outlineRect?.left ?? Number.POSITIVE_INFINITY,
+      tableViewportRight: tableViewportRect?.right ?? Number.POSITIVE_INFINITY,
+      outlineLeft: outlineRect?.left ?? 0,
+      tableClientWidth: tableViewport?.clientWidth ?? 0,
+      tableScrollWidth: tableViewport?.scrollWidth ?? 0,
+      tableOverflowX: tableViewport ? getComputedStyle(tableViewport).overflowX : "",
       reliabilityHeaderWidth: reliabilityRect?.width ?? 0,
       reliabilityHeaderHeight: reliabilityRect?.height ?? 0,
       supportHeaderText: supportHeader?.textContent ?? "",
@@ -387,7 +425,9 @@ test("Library markdown tables keep readable columns inside the document pane", a
     };
   });
 
-  expect(metrics.tableRight).toBeLessThan(metrics.outlineLeft);
+  expect(metrics.tableViewportRight).toBeLessThan(metrics.outlineLeft);
+  expect(metrics.tableOverflowX).toBe("auto");
+  expect(metrics.tableScrollWidth).toBeGreaterThan(metrics.tableClientWidth);
   expect(metrics.reliabilityHeaderWidth).toBeGreaterThan(120);
   expect(metrics.reliabilityHeaderHeight).toBeLessThan(60);
   expect(metrics.supportHeaderText).toBe("支撑内容");
@@ -400,18 +440,26 @@ test("Library markdown section jumps align headings to the top of the editor vie
   const filler = Array.from({ length: 34 }, (_, index) => `Intro ${index + 1}`).join("\n\n");
   await writeWorkspaceFile(page, organization.id, filePath, `# Outline\n\n${filler}\n\n## Target Section\n\nDone.\n`);
   await selectOrg(page, organization.id);
-  await page.setViewportSize({ width: 1491, height: 926 });
+  await page.setViewportSize({ width: 1800, height: 926 });
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
 
   const editorScroll = page.getByTestId("org-workspaces-markdown-editor");
-  const targetHeading = editorScroll.locator("h2", { hasText: "Target Section" });
-  await page.getByTestId("org-workspaces-document-outline").getByRole("button", { name: "Target Section" }).click();
+  await revealLibraryDocumentOutline(page);
+  const targetSectionButton = page
+    .getByTestId("org-workspaces-document-outline")
+    .getByRole("button", { name: "Target Section" });
+  await expect(targetSectionButton).toBeVisible();
+  await targetSectionButton.click();
+  const targetSource = editorScroll.locator(
+    '[data-markdown-preview-state="source"][data-source-line-start]',
+    { hasText: "## Target Section" },
+  );
 
   await expect.poll(async () => {
     const scrollBox = await editorScroll.boundingBox();
-    const headingBox = await targetHeading.boundingBox();
-    if (!scrollBox || !headingBox) return 999;
-    return Math.round(headingBox.y - scrollBox.y);
+    const sourceBox = await targetSource.boundingBox();
+    if (!scrollBox || !sourceBox) return 999;
+    return Math.round(sourceBox.y - scrollBox.y);
   }).toBeLessThan(48);
 });
 
@@ -435,15 +483,20 @@ test("Library markdown section options can reveal hidden headings", async ({ pag
     ].join("\n"),
   );
   await selectOrg(page, organization.id);
-  await page.setViewportSize({ width: 1491, height: 926 });
+  await page.setViewportSize({ width: 1800, height: 926 });
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
 
+  await revealLibraryDocumentOutline(page);
   const outline = page.getByTestId("org-workspaces-document-outline");
-  await expect(outline).toBeVisible();
-  await expect(outline.getByRole("button", { name: "Visible Outline", exact: true })).toBeVisible();
+  await expect(outline.getByRole("button", {
+    name: "Visible Outline",
+    exact: true,
+  })).toBeVisible();
   await expect(outline.getByRole("button", { name: /Hidden Notes/ })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Document options" }).click();
+  const documentOptions = page.getByRole("button", { name: "Document options" });
+  await documentOptions.focus();
+  await documentOptions.press("Enter");
   await page.getByRole("menuitemcheckbox", { name: "Show hidden sections" }).click();
 
   const hiddenSectionButton = outline.getByRole("button", { name: /Hidden Notes/ });
@@ -451,13 +504,16 @@ test("Library markdown section options can reveal hidden headings", async ({ pag
   await expect(hiddenSectionButton).toContainText("Hidden");
 
   const editorScroll = page.getByTestId("org-workspaces-markdown-editor");
-  const hiddenHeading = editorScroll.locator("h2", { hasText: "Hidden Notes" });
   await hiddenSectionButton.click();
+  const hiddenSource = editorScroll.locator(
+    '[data-markdown-preview-state="source"][data-source-line-start]',
+    { hasText: "## Hidden Notes" },
+  );
   await expect.poll(async () => {
     const scrollBox = await editorScroll.boundingBox();
-    const headingBox = await hiddenHeading.boundingBox();
-    if (!scrollBox || !headingBox) return 999;
-    return Math.round(headingBox.y - scrollBox.y);
+    const sourceBox = await hiddenSource.boundingBox();
+    if (!scrollBox || !sourceBox) return 999;
+    return Math.round(sourceBox.y - scrollBox.y);
   }).toBeLessThan(48);
 });
 
@@ -466,19 +522,25 @@ test("Library markdown section options can hide and restore the outline panel", 
   const filePath = "docs/hide-outline.md";
   await writeWorkspaceFile(page, organization.id, filePath, "# Visible Outline\n\n## Next Step\n\nDone.\n");
   await selectOrg(page, organization.id);
-  await page.setViewportSize({ width: 1491, height: 926 });
+  await page.setViewportSize({ width: 1800, height: 926 });
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
 
+  await revealLibraryDocumentOutline(page);
   const outline = page.getByTestId("org-workspaces-document-outline");
-  await expect(outline).toBeVisible();
-  await page.getByRole("button", { name: "Document options" }).click();
+  await expect(outline).toHaveCount(1);
+  const documentOptions = page.getByRole("button", { name: "Document options" });
+  await documentOptions.focus();
+  await documentOptions.press("Enter");
   await page.getByRole("menuitem", { name: "Hide sections" }).click();
 
   await expect(outline).toHaveCount(0);
-  await page.getByRole("button", { name: "Document options" }).click();
+  await documentOptions.focus();
+  await documentOptions.press("Enter");
   await page.getByRole("menuitem", { name: "Show sections" }).click();
   await expect(page.getByTestId("org-workspaces-document-outline")).toBeVisible();
-  await expect(page.getByTestId("org-workspaces-document-outline").getByRole("button", { name: "Next Step" })).toBeVisible();
+  await expect(page
+    .getByTestId("org-workspaces-document-outline")
+    .getByRole("button", { name: "Next Step" })).toBeVisible();
 });
 
 test("Library MDX files use the markdown document chrome and outline options", async ({ page }) => {
@@ -499,14 +561,19 @@ test("Library MDX files use the markdown document chrome and outline options", a
     ].join("\n"),
   );
   await selectOrg(page, organization.id);
-  await page.setViewportSize({ width: 1491, height: 926 });
+  await page.setViewportSize({ width: 1800, height: 926 });
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
 
+  await revealLibraryDocumentOutline(page);
   await expect(page.getByTestId("org-workspaces-markdown-editor").locator("h1", { hasText: "MDX Notes" })).toBeVisible();
-  await expect(page.getByTestId("org-workspaces-document-outline").getByRole("button", { name: "Component Section" })).toBeVisible();
+  await expect(page
+    .getByTestId("org-workspaces-document-outline")
+    .getByRole("button", { name: "Component Section" })).toBeVisible();
   await expect(page.getByTestId("org-workspaces-path-breadcrumb")).toContainText("component-notes.mdx");
 
-  await page.getByRole("button", { name: "Document options" }).click();
+  const documentOptions = page.getByRole("button", { name: "Document options" });
+  await documentOptions.focus();
+  await documentOptions.press("Enter");
   await page.getByRole("menuitem", { name: "Hide sections" }).click();
   await expect(page.getByTestId("org-workspaces-document-outline")).toHaveCount(0);
 });

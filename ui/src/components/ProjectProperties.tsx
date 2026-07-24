@@ -8,6 +8,7 @@ import { AlertCircle, Archive, ArchiveRestore, Check, Loader2, Plus, X } from "l
 import { useState } from "react";
 import { goalsApi } from "../api/goals";
 import { useOrganization } from "../context/OrganizationContext";
+import { markdownDocumentOrNull } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
 import { statusBadge, statusBadgeDefault } from "../lib/status-colors";
 import { cn, formatDate } from "../lib/utils";
@@ -272,11 +273,15 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
           {onUpdate || onFieldUpdate ? (
             <InlineEditor
               value={project.description ?? ""}
-              onSave={(description) => commitField("description", { description })}
+              onSave={(description) => commitField("description", {
+                description: markdownDocumentOrNull(description),
+              })}
               as="p"
               className="text-sm text-muted-foreground"
               placeholder="Add a description..."
               multiline
+              editorEngine="codemirror"
+              documentIdentity={`project:${project.id}`}
             />
           ) : (
             <p className="text-sm text-muted-foreground">

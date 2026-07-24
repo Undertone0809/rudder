@@ -149,7 +149,9 @@ test("issue mentions render the canonical status icon across read-only and edito
   await page.setViewportSize({ width: 1440, height: 900 });
 
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
-  const libraryEditor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+  const libraryEditor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
   await expect(libraryEditor).toBeVisible({ timeout: 15_000 });
   await expectEditorIssueStatusMention(libraryEditor, targetIssue.id, "done");
 

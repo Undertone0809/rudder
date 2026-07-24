@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { E2E_BASE_URL } from "./support/e2e-env";
 
-test("keeps inline markdown image previews in landscape when opened from the editor", async ({ page }) => {
+test("reveals exact Markdown source when a New Issue description image is activated", async ({ page }) => {
   const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
     data: {
       name: `Markdown-Image-Preview-${Date.now()}`,
@@ -55,43 +55,16 @@ test("keeps inline markdown image previews in landscape when opened from the edi
   const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
   await expect(dialog).toBeVisible();
 
-  const inlineImage = dialog.locator(".rudder-mdxeditor-content img").first();
+  const editor = dialog.locator('[data-editor-engine="codemirror-live-preview"]');
+  const inlineImage = editor.locator('img[alt="Wide image"]').first();
   await expect(inlineImage).toBeVisible();
-  await inlineImage.dblclick();
+  await inlineImage.dispatchEvent("mousedown", { button: 0 });
 
-  const previewDialog = page.getByTestId("markdown-editor-image-preview-dialog");
-  await expect(previewDialog).toBeVisible();
-  const previewImage = previewDialog.getByAltText("Wide image");
-  await expect(previewImage).toBeVisible();
-
-  const previewChrome = await previewDialog.evaluate((dialog) => {
-    const dialogStyle = window.getComputedStyle(dialog);
-    const image = dialog.querySelector("img");
-    if (!(image instanceof HTMLImageElement)) {
-      throw new Error("Expected image preview image");
-    }
-    const imageStyle = window.getComputedStyle(image);
-    return {
-      mediaAnimationName: dialogStyle.animationName,
-      mediaBorderRadius: Number.parseFloat(dialogStyle.borderTopLeftRadius),
-      imageBorderRadius: Number.parseFloat(imageStyle.borderTopLeftRadius),
-    };
-  });
-  expect(previewChrome.mediaAnimationName).toContain("rudder-image-preview-media-in");
-  expect(previewChrome.mediaBorderRadius).toBeGreaterThan(0);
-  expect(previewChrome.imageBorderRadius).toBeGreaterThan(0);
-
-  const previewMetrics = await previewImage.evaluate((image) => {
-    const element = image as HTMLImageElement;
-    const rect = element.getBoundingClientRect();
-    return {
-      ratioDelta: Math.abs(rect.width / rect.height - element.naturalWidth / element.naturalHeight),
-      renderedWidth: rect.width,
-      renderedHeight: rect.height,
-    };
-  });
-
-  expect(previewMetrics.ratioDelta).toBeLessThan(0.01);
-  expect(previewMetrics.renderedWidth).toBeGreaterThan(1200);
-  expect(previewMetrics.renderedHeight).toBeGreaterThan(675);
+  await expect(
+    editor.locator('[data-markdown-preview-state="source"]').filter({
+      hasText: "![Wide image](data:image/png;base64,",
+    }),
+  ).toBeVisible();
+  await expect(editor.locator('img[alt="Wide image"]')).toHaveCount(0);
+  await expect(page.getByTestId("markdown-editor-image-preview-dialog")).toHaveCount(0);
 });

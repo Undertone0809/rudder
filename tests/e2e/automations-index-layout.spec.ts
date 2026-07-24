@@ -344,8 +344,11 @@ test.describe("Automations index layout", () => {
     await templatePicker.getByRole("button", { name: /Daily review/ }).click();
 
     await expect(page.getByPlaceholder("Automation title")).toHaveValue("Daily review");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("Review what I worked on today");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("highest-priority next action for tomorrow");
+    const instructionsEditor = page
+      .getByTestId("automation-instructions-composer")
+      .locator('[data-editor-engine="codemirror-live-preview"]');
+    await expect(instructionsEditor).toContainText("Review what I worked on today");
+    await expect(instructionsEditor).toContainText("highest-priority next action for tomorrow");
     await expect(page.getByText("Every day at 18:00")).toBeVisible();
     await expect(page.getByTestId("automation-create-output-mode")).toContainText("Send to chat");
     await expect(page.getByTestId("automation-create-chat-destination")).toContainText("New chat per run");
@@ -476,13 +479,16 @@ test.describe("Automations index layout", () => {
     await page.getByRole("button", { name: /Bug triage/ }).click();
 
     await expect(page.getByPlaceholder("Automation title")).toHaveValue("Bug triage");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("List all open issues labeled bug");
+    const instructionsEditor = page
+      .getByTestId("automation-instructions-composer")
+      .locator('[data-editor-engine="codemirror-live-preview"]');
+    await expect(instructionsEditor).toContainText("List all open issues labeled bug");
     await expect(page.getByText("Weekdays at 09:00")).toBeVisible();
     await expect(page.getByRole("button", { name: /Track as issue/ })).toBeVisible();
     await page.getByRole("button", { name: /Track as issue/ }).click();
     await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
     await page.getByRole("button", { name: /Send to chat/ }).click();
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("each run's final result to a new Rudder chat");
+    await expect(instructionsEditor).toContainText("each run's final result to a new Rudder chat");
     await expect(page.getByRole("button", { name: /^Create$/ })).toBeDisabled();
 
     await page.screenshot({
@@ -689,8 +695,11 @@ test.describe("Automations index layout", () => {
     await templatePicker.getByRole("button", { name: /每日回顾/ }).click();
 
     await expect(page.getByPlaceholder("Automation title")).toHaveValue("每日回顾");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("回顾我今天完成的工作");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("推荐明天优先级最高的行动");
+    const instructionsEditor = page
+      .getByTestId("automation-instructions-composer")
+      .locator('[data-editor-engine="codemirror-live-preview"]');
+    await expect(instructionsEditor).toContainText("回顾我今天完成的工作");
+    await expect(instructionsEditor).toContainText("推荐明天优先级最高的行动");
     await expect(page.getByText("每天 18:00")).toBeVisible();
     await expect(page.getByTestId("automation-create-output-mode")).toContainText("发送到聊天");
 
@@ -755,13 +764,15 @@ test.describe("Automations index layout", () => {
     await page.getByRole("button", { name: /Mention Builder/ }).click();
     await page.keyboard.press("Escape");
 
-    const composer = page.locator(".rudder-mdxeditor-content").first();
+    const composer = page
+      .getByTestId("automation-instructions-composer")
+      .locator('[data-editor-engine="codemirror-live-preview"] .cm-content');
     await composer.click();
     await page.keyboard.type("Use $advisor");
 
     const mentionMenu = page.getByTestId("markdown-mention-menu");
     await expect(mentionMenu).toBeVisible({ timeout: 15_000 });
-    await expect(mentionMenu).toHaveAttribute("role", "listbox");
+    await expect(mentionMenu).toHaveAttribute("role", "menu");
     await expect(mentionMenu).toHaveClass(/scrollbar-auto-hide/);
 
     const menuBox = await mentionMenu.boundingBox();
@@ -772,8 +783,9 @@ test.describe("Automations index layout", () => {
     await composer.focus();
     await page.keyboard.press("ArrowDown");
 
-    const selectedOption = mentionMenu.locator('[aria-selected="true"]');
+    const selectedOption = mentionMenu.locator('[data-mention-option-index="1"]');
     await expect(selectedOption).toContainText("advisor-skill-01");
+    await expect(selectedOption).toHaveClass(/surface-active/);
 
     await page.keyboard.press("Enter");
     await expect(composer.locator("[data-skill-token='true']")).toContainText("advisor-skill-01");

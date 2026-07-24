@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { organizationsApi } from "../api/orgs";
 import { __clearLibraryEntryMetadataCacheForTests, __setLibraryEntryMetadataCacheForTests } from "../lib/library-entry-cache";
 import { OrganizationWorkspaces, WorkspaceLaunchTargetIcon } from "./OrganizationWorkspaces";
 import { OrganizationWorkspaceFilesSidebar } from "./organization-workspaces/OrganizationWorkspaceFilesSidebar";
@@ -18,6 +19,7 @@ const mockState = vi.hoisted(() => ({
   pushToast: vi.fn(),
   setSearchParams: vi.fn(),
   uploadImage: vi.fn(),
+  updateWorkspaceFile: vi.fn(),
   searchParams: "path=artifacts/chat-ui-review/image.png",
   viewedOrganizationId: "org-1",
   viewedOrganizationIssuePrefix: "RUD",
@@ -28,6 +30,10 @@ const mockState = vi.hoisted(() => ({
   workspaceFileRootExists: true,
   loadingLibraryEntryIds: new Set<string>(),
   markdownEditorValues: [] as string[],
+  queryClient: {
+    invalidateQueries: vi.fn(),
+    setQueryData: vi.fn(),
+  },
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -523,10 +529,7 @@ vi.mock("@tanstack/react-query", () => ({
       isError: false,
     };
   }),
-  useQueryClient: vi.fn(() => ({
-    invalidateQueries: vi.fn(),
-    setQueryData: vi.fn(),
-  })),
+  useQueryClient: vi.fn(() => mockState.queryClient),
 }));
 
 vi.mock("../api/assets", () => ({
@@ -581,10 +584,12 @@ vi.mock("../lib/desktop-shell", () => ({
 vi.mock("../components/MarkdownEditor", () => ({
   MarkdownEditor: ({
     value,
+    onChange,
     onInlineTokenClick,
     imageUploadHandler,
   }: {
     value?: string;
+    onChange?: (value: string) => void;
     imageUploadHandler?: (file: File) => Promise<string>;
     onInlineTokenClick?: (
       token: {
@@ -603,6 +608,13 @@ vi.mock("../components/MarkdownEditor", () => ({
           {value ?? ""}
         </div>
         <textarea aria-label="Markdown editor" readOnly value={value ?? ""} />
+        <button
+          type="button"
+          data-testid="mock-markdown-editor-change"
+          onClick={() => onChange?.(`${value ?? ""}Local organization draft.\n`)}
+        >
+          Change markdown
+        </button>
         <button
           type="button"
           data-testid="mock-library-file-token"
@@ -660,6 +672,20 @@ beforeEach(() => {
     assetId: "asset-1",
     contentPath: "/api/assets/asset-1/content",
   });
+  mockState.updateWorkspaceFile.mockImplementation(async (
+    _organizationId: string,
+    filePath: string,
+    payload: { content: string },
+  ) => ({
+    filePath,
+    content: payload.content,
+    contentType: "text/markdown",
+    previewKind: "text",
+    truncated: false,
+  }));
+  vi.spyOn(organizationsApi, "updateWorkspaceFile").mockImplementation(
+    (...args) => mockState.updateWorkspaceFile(...args),
+  );
   mockState.searchParams = "path=artifacts/chat-ui-review/image.png";
   mockState.viewedOrganizationId = "org-1";
   mockState.viewedOrganizationIssuePrefix = "RUD";
@@ -709,6 +735,7 @@ afterEach(() => {
   document.body.innerHTML = "";
   __clearLibraryEntryMetadataCacheForTests();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -1494,6 +1521,59 @@ describe("OrganizationWorkspaces scroll regions", () => {
       "org-1",
       expect.any(File),
       "library/artifacts/chat-ui-review/notes",
+    );
+  });
+
+  it("keeps an in-flight Library draft owned by its original organization", async () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/notes.md";
+    let resolveFirstSave!: (detail: {
+      filePath: string;
+      content: string;
+      contentType: string;
+      previewKind: string;
+      truncated: boolean;
+    }) => void;
+    mockState.updateWorkspaceFile.mockImplementationOnce((
+      _organizationId: string,
+      filePath: string,
+      payload: { content: string },
+    ) => new Promise((resolve) => {
+      resolveFirstSave = resolve;
+    }));
+    renderWorkspacesPage();
+
+    await act(async () => {
+      document.querySelector("[data-testid='mock-markdown-editor-change']")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(701);
+      await Promise.resolve();
+    });
+    expect(mockState.updateWorkspaceFile).toHaveBeenCalledTimes(1);
+    expect(mockState.updateWorkspaceFile.mock.calls[0]?.[0]).toBe("org-1");
+
+    mockState.viewedOrganizationId = "org-2";
+    renderWorkspacesPage();
+    resolveFirstSave({
+      filePath: "artifacts/chat-ui-review/notes.md",
+      content: "[README.md](library-file://file?p=artifacts%2Fchat-ui-review%2FREADME.md&t=README.md)\nLocal organization draft.\n",
+      contentType: "text/markdown",
+      previewKind: "text",
+      truncated: false,
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockState.updateWorkspaceFile.mock.calls.map((call) => call[0])).toEqual(["org-1"]);
+    expect(mockState.updateWorkspaceFile).not.toHaveBeenCalledWith(
+      "org-2",
+      expect.any(String),
+      expect.objectContaining({ content: expect.stringContaining("Local organization draft.") }),
     );
   });
 

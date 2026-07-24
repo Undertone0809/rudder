@@ -210,6 +210,42 @@ describe("buildNewIssueCreateRequest", () => {
     );
   });
 
+  it("preserves non-empty Markdown description bytes in the create payload", () => {
+    expect(
+      buildNewIssueCreateRequest({
+        title: "Preserve source",
+        description: "\n  **Keep delimiters**  \n",
+        status: "todo",
+        priority: "medium",
+        projectId: "",
+        labelIds: [],
+        projectWorkspaceId: "",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        description: "\n  **Keep delimiters**  \n",
+      }),
+    );
+  });
+
+  it("keeps whitespace-only issue descriptions absent", () => {
+    expect(
+      buildNewIssueCreateRequest({
+        title: "No description",
+        description: " \n\t ",
+        status: "todo",
+        priority: "medium",
+        projectId: "",
+        labelIds: [],
+        projectWorkspaceId: "",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        description: undefined,
+      }),
+    );
+  });
+
   it("includes reviewer fields in the create payload", () => {
     expect(
       buildNewIssueCreateRequest({

@@ -21,6 +21,7 @@ import { assetsApi } from "../api/assets";
 import { goalsApi } from "../api/goals";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
+import { markdownDocumentOrUndefined } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
@@ -43,6 +44,7 @@ export function NewGoalDialog() {
   const [level, setLevel] = useState("task");
   const [parentId, setParentId] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [documentSessionId, setDocumentSessionId] = useState(0);
 
   const [statusOpen, setStatusOpen] = useState(false);
   const [levelOpen, setLevelOpen] = useState(false);
@@ -76,6 +78,7 @@ export function NewGoalDialog() {
   });
 
   function reset() {
+    setDocumentSessionId((current) => current + 1);
     setTitle("");
     setDescription("");
     setStatus("planned");
@@ -88,7 +91,7 @@ export function NewGoalDialog() {
     if (!selectedOrganizationId || !title.trim()) return;
     createGoal.mutate({
       title: title.trim(),
-      description: description.trim() || undefined,
+      description: markdownDocumentOrUndefined(description),
       status,
       level,
       ...(appliedParentId ? { parentId: appliedParentId } : {}),
@@ -171,6 +174,8 @@ export function NewGoalDialog() {
         <div className="px-4 pb-2">
           <MarkdownEditor
             ref={descriptionEditorRef}
+            engine="codemirror"
+            documentIdentity={`new-goal:${documentSessionId}`}
             value={description}
             onChange={setDescription}
             placeholder="Add description..."

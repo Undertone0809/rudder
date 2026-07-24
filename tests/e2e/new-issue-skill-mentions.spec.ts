@@ -77,7 +77,8 @@ test.describe("New issue skill mentions", () => {
     await expect(dialog).toBeVisible({ timeout: 15_000 });
 
     await dialog.getByPlaceholder("Issue title").fill("Use current agent skill mention");
-    const composer = dialog.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').first();
+    const editor = dialog.locator('[data-editor-engine="codemirror-live-preview"]');
+    const composer = editor.locator(".cm-content");
 
     await composer.click();
     await page.keyboard.type("Use @advisor");
@@ -111,7 +112,10 @@ test.describe("New issue skill mentions", () => {
     expect(atTokenEndBox).not.toBeNull();
     expect(atMentionMenuBox!.x).toBeGreaterThan(composerBox!.x + 24);
     expect(atMentionMenuBox!.width).toBeLessThan(composerBox!.width - 80);
-    expect(Math.abs(atMentionMenuBox!.x - atTokenEndBox!.x)).toBeLessThan(32);
+    expect(atTokenEndBox!.x).toBeGreaterThanOrEqual(atMentionMenuBox!.x - 8);
+    expect(atTokenEndBox!.x).toBeLessThanOrEqual(
+      atMentionMenuBox!.x + atMentionMenuBox!.width + 8,
+    );
     await expect(atMentionMenu.locator('[data-testid^="markdown-mention-option-skill:"]').first()).toContainText("build-advisor");
 
     await composer.press("ControlOrMeta+A");
@@ -132,7 +136,9 @@ test.describe("New issue skill mentions", () => {
     await expect(skillOption).toContainText("build-advisor");
     await skillOption.dispatchEvent("mousedown");
 
-    const insertedSkillToken = composer.locator("a").filter({ hasText: "build-advisor" }).first();
+    const insertedSkillToken = editor.locator("[data-skill-token='true']").filter({
+      hasText: "build-advisor",
+    }).first();
     await expect(insertedSkillToken).toBeVisible({ timeout: 15_000 });
     const insertedSkillLabel = (await insertedSkillToken.textContent())?.trim() ?? "";
     expect(insertedSkillLabel).toContain("build-advisor");

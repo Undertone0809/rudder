@@ -217,11 +217,11 @@ export function NewIssueDialog() {
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const [activeSavedIssueDraftId, setActiveSavedIssueDraftId] = useState<string | null>(null);
+  const [documentSessionId, setDocumentSessionId] = useState(0);
   const [redirectingIssueRef, setRedirectingIssueRef] = useState<string | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingDraftSaveRef = useRef<{ draft: IssueDraft; savedDraftId: string | null } | null>(null);
   const openContextLocationRef = useRef<{ pathname: string; search: string } | null>(null);
-
   const effectiveCompanyId = dialogCompanyId ?? selectedOrganizationId;
   const dialogCompany = organizations.find((c) => c.id === effectiveCompanyId) ?? selectedOrganization;
   const requestedSavedIssueDraftId = newIssueDefaults.draftId ?? null;
@@ -709,7 +709,6 @@ export function NewIssueDialog() {
     }
   }, [supportsAssigneeOverrides, assigneeAdapterType, assigneeThinkingEffort, effectiveAssigneeModel]);
 
-  // Cleanup timer on unmount
   useEffect(() => {
     return () => {
       flushPendingDraftSave();
@@ -717,6 +716,7 @@ export function NewIssueDialog() {
   }, [flushPendingDraftSave]);
 
   function reset() {
+    setDocumentSessionId((current) => current + 1);
     setTitle("");
     setDescription("");
     setStatus("todo");
@@ -1524,7 +1524,7 @@ export function NewIssueDialog() {
           >
             <MarkdownEditor
               ref={descriptionEditorRef}
-              engine="milkdown"
+              engine="codemirror" documentIdentity={`new-issue:${effectiveCompanyId ?? "none"}:${activeSavedIssueDraftId ?? documentSessionId}`}
               value={description}
               onChange={setDescription}
               placeholder="Add description..."

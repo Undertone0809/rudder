@@ -60,6 +60,7 @@ import {
   removeAtomicInlineTokenFromMarkdown,
   type AtomicInlineTokenElement,
 } from "../lib/inline-token-dom";
+import { resolveMarkdownEditorEngine } from "../lib/markdown-editor-engine";
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
 import {
   applyMentionChipDecoration,
@@ -83,6 +84,7 @@ import {
 import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
+import { CodeMirrorMarkdownEditor } from "./CodeMirrorMarkdownEditor";
 import { hasUnrenderedCanonicalRudderReference } from "./MarkdownEditor.parts";
 import {
   MilkdownMarkdownEditor,
@@ -179,8 +181,8 @@ export interface MarkdownEditorProps {
   onInlineTokenClick?: (token: AtomicInlineTokenElement, event: InlineTokenClickEvent) => void;
   /** Opt into activating inline tokens on plain click for document surfaces where tokens behave like links. */
   activateInlineTokensOnPlainClick?: boolean;
-  /** Experimental editor engine for true Markdown surfaces. */
-  engine?: "legacy" | "milkdown";
+  documentIdentity?: string;
+  engine?: "legacy" | "milkdown" | "codemirror";
 }
 
 export interface MarkdownEditorRef {
@@ -190,15 +192,13 @@ export interface MarkdownEditorRef {
   redo?: () => boolean;
   canUndo?: () => boolean;
   canRedo?: () => boolean;
+  revealLine?: (line: number) => void;
 }
-
 type CaretTarget =
   | { kind: "text"; node: Text; offset: number }
   | { kind: "after"; node: Node }
   | { kind: "inside"; node: Node; offset: number };
-
 const INLINE_CARET_BOUNDARY = "\u200B";
-
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -2410,8 +2410,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     mentions: mergedMentions,
     onMentionQueryChange: handleMentionQueryChange,
   };
-  if (props.engine === "milkdown" && !props.plainText) {
-    return <MilkdownMarkdownEditor {...editorProps} ref={forwardedRef} />;
-  }
+  const resolvedEngine = resolveMarkdownEditorEngine(props);
+  if (resolvedEngine === "codemirror") return <CodeMirrorMarkdownEditor {...editorProps} ref={forwardedRef} />;
+  if (resolvedEngine === "milkdown") return <MilkdownMarkdownEditor {...editorProps} ref={forwardedRef} />;
   return <LegacyMarkdownEditor {...editorProps} ref={forwardedRef} />;
 });

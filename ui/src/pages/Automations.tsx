@@ -68,6 +68,7 @@ import {
   concurrencyPolicyDescriptions,
 } from "../lib/automation-localization";
 import { getAutomationRunDisplay } from "../lib/automation-run-display";
+import { markdownDocumentOrNull } from "../lib/markdown-document-value";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
@@ -322,19 +323,34 @@ function outputMethodCopy(locale: InstanceLocale) {
 }
 
 function withOutputInstruction(description: string, mode: AutomationOutputMode, locale: InstanceLocale) {
-  const trimmedDescription = description.trim();
-  if (!trimmedDescription) return "";
+  if (!description.trim()) return "";
   const instruction = outputInstruction(mode, locale);
-  return `${trimmedDescription}\n\n${instruction}`;
+  const lineSeparator = description.includes("\r\n") ? "\r\n" : "\n";
+  return `${description}${lineSeparator}${lineSeparator}${instruction}`;
 }
 
 function removeOutputInstruction(description: string) {
-  return description
-    .replace(/\n*Output: create or update board-tracked work so the result can be reviewed\.\s*$/u, "")
-    .replace(/\n*Output: send each run's final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
-    .replace(/\n*输出：创建或更新 board 可跟踪任务，确保结果可以被 review。\s*$/u, "")
-    .replace(/\n*输出：每次运行都将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
-    .trim();
+  const trailingWhitespace = description.match(/[ \t\r\n]*$/u)?.[0] ?? "";
+  const contentEnd = description.length - trailingWhitespace.length;
+  const instructions = [
+    outputInstruction("track_issue", "en"),
+    outputInstruction("chat_output", "en"),
+    outputInstruction("track_issue", "zh-CN"),
+    outputInstruction("chat_output", "zh-CN"),
+  ];
+  for (const instruction of instructions) {
+    const instructionStart = contentEnd - instruction.length;
+    if (
+      instructionStart < 0
+      || description.slice(instructionStart, contentEnd) !== instruction
+    ) {
+      continue;
+    }
+    const prefix = description.slice(0, instructionStart);
+    const delimiter = prefix.endsWith("\r\n\r\n") ? 4 : prefix.endsWith("\n\n") ? 2 : 0;
+    return prefix.slice(0, prefix.length - delimiter);
+  }
+  return description;
 }
 
 function autoResizeTextarea(element: HTMLTextAreaElement | null) {
@@ -382,6 +398,7 @@ export function Automations() {
   const [runningAutomationId, setRunningAutomationId] = useState<string | null>(null);
   const [statusMutationAutomationId, setStatusMutationAutomationId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [documentSessionId, setDocumentSessionId] = useState(0);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [detailCollapsed, setDetailCollapsed] = useState(false);
@@ -400,6 +417,7 @@ export function Automations() {
   });
 
   const resetDraft = useCallback(() => {
+    setDocumentSessionId((current) => current + 1);
     setDraft({
       title: "",
       description: "",
@@ -415,6 +433,7 @@ export function Automations() {
   }, []);
 
   const openComposer = useCallback((template: AutomationTemplate = blankAutomationTemplate) => {
+    setDocumentSessionId((current) => current + 1);
     setDraft((current) => ({
       ...current,
       title: localizeText(template.title, locale),
@@ -528,7 +547,7 @@ export function Automations() {
     mutationFn: async () => {
       const automation = await automationsApi.create(selectedOrganizationId!, {
         title: draft.title,
-        instructions: draft.description.trim() || null,
+        instructions: markdownDocumentOrNull(draft.description),
         projectId: draft.projectId || null,
         assigneeAgentId: draft.assigneeAgentId,
         priority: draft.priority,
@@ -816,12 +835,13 @@ export function Automations() {
                 <div ref={descriptionComposerRef} data-testid="automation-instructions-composer">
                   <MarkdownEditor
                     ref={descriptionEditorRef}
+                    engine="codemirror"
+                    documentIdentity={`new-automation:${documentSessionId}`}
                     value={draft.description}
                     onChange={(description) => setDraft((current) => ({ ...current, description }))}
                     mentions={mentionOptions}
                     mentionMenuAnchorRef={descriptionComposerRef}
                     mentionMenuPlacement="container"
-                    plainText
                     placeholder="Add instructions e.g. look for crashes in Sentry"
                     bordered={false}
                     contentClassName="min-h-[320px] bg-transparent text-[15px] leading-7 text-foreground/90 placeholder:text-muted-foreground/55 md:min-h-[440px]"

@@ -13,6 +13,8 @@ owning domain contract.
 ## Issue Detail
 
 - Issue fields, local status, and issue-visible slots: `ISSUE.SURFACE.001`.
+- Source-backed Issue-description live preview:
+  `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`.
 - Issue status rules: `ISSUE.STATE.001`.
 - Parent/sub-issue hierarchy and ancestor context:
   `ISSUE.HIERARCHY.001`.
@@ -47,6 +49,7 @@ owning domain contract.
 ## Issues List
 
 - Issue state and visible issue metadata: `ISSUE.SURFACE.001`.
+- New Issue description authoring: `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`.
 - New Issue post-create routing between Primary Rail Issues and Messenger Issue
   Detail: `ISSUE.SURFACE.001`.
 - Assignment/reviewer display and inline updates: `ROUTING.ASSIGNMENT.001`,
@@ -56,12 +59,16 @@ owning domain contract.
 
 - Goal hierarchy, owner, status, dependency protection, and linked work:
   `ORG.GOAL.001`.
+- Full Goal-description authoring and rendering:
+  `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`.
 - Project and issue references remain governed by `ORG.PROJECT.001` and
   `ISSUE.SURFACE.001`.
 
 ## Project Detail
 
 - Project identity, goal links, lead agent, and grouping: `ORG.PROJECT.001`.
+- Full Project-description authoring and rendering:
+  `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`.
 - Project resources and Library-backed context: `CONTEXT.RESOURCES.001`,
   `LIBRARY.FILES.001`.
 - Project workspaces: `WORKSPACE.PROJECT.001`.
@@ -73,6 +80,8 @@ owning domain contract.
 - Definition, trigger, status, owner, and run history:
   `AUTOMATION.DEFINITION.001`, `AUTOMATION.TRIGGER.001`,
   `AUTOMATION.RUN.001`.
+- Source-backed Automation-instruction authoring:
+  `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`.
 - Output mode and linked issue/chat navigation: `AUTOMATION.OUTPUT.001`,
   `ISSUE.WORKFLOW.001`, `CHAT.LIFECYCLE.001`.
 
@@ -80,6 +89,8 @@ owning domain contract.
 
 - Library file lifecycle, protected paths, and references:
   `LIBRARY.FILES.001`.
+- Full, workbench, and Side Panel Markdown-body authoring:
+  `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`.
 - Isolated multi-file HTML rendering, Connected/Offline behavior, unified
   preview controls, and preview Open actions: `LIBRARY.WEB.PREVIEW.001`.
 - Organization/project resources: `CONTEXT.RESOURCES.001`.
@@ -104,6 +115,8 @@ owning domain contract.
   object workbench behavior: `CHAT.SIDE.PANEL.001`, with target-specific
   behavior still owned by the issue, automation, Library, chat, and Messenger
   contracts below.
+- Side Panel Issue-description, Automation-instruction, and Library-Markdown
+  live preview: `MARKDOWN.DOCUMENT.LIVE.PREVIEW.001`.
 - HTML Library references rendered in the Side Panel follow
   `LIBRARY.WEB.PREVIEW.001` for the isolated runtime, Connected default, shared
   toolbar, and Open in Library behavior.

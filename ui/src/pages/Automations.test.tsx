@@ -14,6 +14,7 @@ const mockNavigate = vi.fn();
 const mockSetHeaderActions = vi.fn();
 const mockConfirm = vi.fn(async () => true);
 const markdownEditorProps = vi.hoisted(() => [] as Array<{
+  engine?: string;
   mentions?: Array<{ id: string; kind?: string; name: string }>;
   mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
   mentionMenuPlacement?: "caret" | "container";
@@ -257,6 +258,7 @@ vi.mock("../components/MarkdownEditor", () => ({
   MarkdownEditor: forwardRef(function MockMarkdownEditor(
     props: {
       mentions?: Array<{ id: string; kind?: string; name: string }>;
+      engine?: string;
       value?: string;
       onChange?: (value: string) => void;
       placeholder?: string;
@@ -530,6 +532,42 @@ describe("Automations", () => {
     expect(document.body.textContent).not.toContain("New chat per run");
   });
 
+  it("preserves nonempty Markdown boundaries while switching output method", async () => {
+    renderPage();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const headerContainer = renderHeaderActions();
+    await act(async () => {
+      headerContainer.querySelector("button")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    const prefix = "\n  **Keep exact instructions**  \n";
+    const chatInstruction = "Output: send each run's final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions.";
+    const trackInstruction = "Output: create or update board-tracked work so the result can be reviewed.";
+    const runbookInput = document.querySelector(
+      'textarea[aria-label="Instructions"]',
+    ) as HTMLTextAreaElement;
+    await act(async () => {
+      setTextareaValue(runbookInput, `${prefix}\n\n${chatInstruction}`);
+      document.body.querySelector<HTMLButtonElement>(
+        '[data-testid="automation-create-output-mode"]',
+      )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Each run opens board-tracked work"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(runbookInput.value).toBe(`${prefix}\n\n${trackInstruction}`);
+  });
+
   it("opens the composer from the header as a blank prompt input", async () => {
     renderPage();
 
@@ -792,7 +830,8 @@ describe("Automations", () => {
     });
 
     const baseMentionIds = markdownEditorProps.at(-1)?.mentions?.map((mention) => mention.id) ?? [];
-    expect(markdownEditorProps.at(-1)?.plainText).toBe(true);
+    expect(markdownEditorProps.at(-1)?.engine).toBe("codemirror");
+    expect(markdownEditorProps.at(-1)?.plainText).toBeUndefined();
     expect(markdownEditorProps.at(-1)?.mentionMenuPlacement).toBe("container");
     expect(markdownEditorProps.at(-1)?.mentionMenuAnchorRef?.current?.dataset.testid)
       .toBe("automation-instructions-composer");
@@ -833,6 +872,7 @@ describe("Automations", () => {
 
     await act(async () => {
       setTextareaValue(titleInput!, "帮我 flomo 打 tag");
+      setTextareaValue(runbookInput!, "\n  **Keep exact instructions**  \n");
     });
     await act(async () => {
       Array.from(document.body.querySelectorAll("button"))
@@ -856,6 +896,7 @@ describe("Automations", () => {
       title: "帮我 flomo 打 tag",
       projectId: null,
       assigneeAgentId: "agent-1",
+      instructions: "\n  **Keep exact instructions**  \n",
       outputMode: "chat_output",
       chatConversationId: null,
       notifyOnIssueCreated: false,

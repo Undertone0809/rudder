@@ -614,6 +614,9 @@ importers:
       hermes-paperclip-adapter:
         specifier: 0.3.0
         version: 0.3.0
+      ipaddr.js:
+        specifier: ^1.9.1
+        version: 1.9.1
       jsdom:
         specifier: ^28.1.0
         version: 28.1.0(@noble/hashes@2.0.1)
@@ -635,6 +638,9 @@ importers:
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
+      undici:
+        specifier: 7.28.0
+        version: 7.28.0
       ws:
         specifier: ^8.21.0
         version: 8.21.0
@@ -687,12 +693,18 @@ importers:
 
   ui:
     dependencies:
+      '@codemirror/commands':
+        specifier: ^6.10.3
+        version: 6.10.3
       '@codemirror/lang-javascript':
         specifier: ^6.2.5
         version: 6.2.5
       '@codemirror/lang-json':
         specifier: ^6.0.2
         version: 6.0.2
+      '@codemirror/lang-markdown':
+        specifier: ^6.5.0
+        version: 6.5.0
       '@codemirror/lang-python':
         specifier: ^6.2.1
         version: 6.2.1
