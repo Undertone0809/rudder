@@ -24,6 +24,25 @@ npx @rudderhq/cli@latest start
 操作指南和参考页面为准。今后的发布记录应使用当前导航名称；术语可能有歧义时，
 应链接到对应的权威页面。
 
+## v0.6.1
+
+发布时间：2026-07-25
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.6.1)
+
+### New Features
+
+- 增加由 agent 全程推进的稳定发布路径：用户明确指定版本后，可自动完成 npm、GitHub Release、Desktop 资产、公开文档、安装烟测和下一版本交接，不再需要第二账号审批。
+
+### Improvements
+
+- 加强稳定发布自动化，增加 canonical repository 检查、精确源码 CI 验证、main history 校验，以及非交互式生产文档授权。
+
+### Bug Fixes
+
+- 修复全新 macOS 安装在准备 PostgreSQL 18.4 时，因上游归档内 pgAdmin 的无关断链而失败的问题。
+- 修复发布请求已经授权文档上线后，稳定发布仍无法调用可复用生产文档 workflow 的问题。
+
 ## v0.6.0
 
 发布时间：2026-07-25

@@ -67,27 +67,33 @@ Release preparation and release execution are separate operations:
 2. **Landing/Staging Gate** — obtain explicit permission before merging to
    `main` when that merge publishes a canary or updates docs staging.
 3. **Production Gate** — report the exact source ref, version/tag, production
-   targets, successful and failing checks, and rollback point; then stop and wait
-   for an operator to explicitly approve the production release.
+   targets, successful and failing checks, and rollback point. An explicit
+   versioned release instruction authorizes the release agent to complete the
+   GitHub Actions publish and verification without a second GitHub-account
+   approval.
 
 Instructions such as `start`, `continue`, `proceed`, `implement`, or approval of
 a plan do not satisfy the production gate. A staging approval is not production
 approval. Agents and automation must not set `dry_run: false`, enter workflow
-confirmation strings, or synthesize a release tag as evidence of approval. The
-operator's explicit authorization must exist before those values are supplied.
+confirmation strings, or synthesize a release tag without an explicit versioned
+release request. Once that request exists, the release agent supplies the
+confirmation strings and completes all standard release surfaces, including
+production docs, without returning UI tasks to the operator.
 That stable-release authorization also covers creating the deterministic
 post-release PR that advances `main` to the next patch base; it does not
 authorize bypassing that PR's review or CI.
 
-The workflow also fails closed unless `npm-stable` has required reviewers,
-`main` is protected, and GitHub Actions can create the generated post-stable
-version PR and dispatch its CI. These repository settings are part of the
-release gate, not optional documentation.
+The workflow also fails closed unless `npm-stable` is a main-only,
+non-interactive environment, `main` is protected, and GitHub Actions can create
+the generated post-stable version PR and dispatch its CI. The environment must
+not require an account switch, reviewer click, or wait timer. These repository
+settings are part of the machine-enforced release gate, not optional
+documentation.
 
-Even when an initial request or plan includes production deployment, always
-pause at the production gate after presenting the reviewed source, target,
-checks, known failures, and rollback point. Only the operator's latest explicit
-approval for that described release authorizes proceeding.
+Only an explicit versioned production-release instruction authorizes proceeding.
+Once it exists and the reviewed source, target, checks, known failures, and
+rollback point are recorded, the agent owns the remaining publish, recovery,
+verification, cleanup, and closeout steps end to end.
 
 ## Docs Site Releases
 
