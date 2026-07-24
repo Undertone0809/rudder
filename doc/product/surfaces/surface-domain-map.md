@@ -116,9 +116,10 @@ owning domain contract.
   primary surface: `ISSUE.SURFACE.001`.
 - Messenger custom group membership, grouped-row navigation/read behavior, and
   group pin priority: `MESSENGER.CUSTOM.GROUPS.001`.
-- Side Panel exact-target promotion, group-only Saved View placement, Main
-  Workbench routes, full-bleed rendering, Remove/Close independence, and cold
-  restoration: `MESSENGER.SAVED.VIEWS.001`.
+- Side Panel exact-target promotion, loose-or-grouped Saved View placement,
+  Messenger directory movement, Main Workbench routes, full-bleed rendering,
+  Remove/Close independence, and cold restoration:
+  `MESSENGER.SAVED.VIEWS.001`.
 - Desktop Local App review, safe start/stop, process attestation, isolated
   guest hosting, and live Side-to-Main continuity:
   `DESKTOP.LOCAL.APPS.001`.
