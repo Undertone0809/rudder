@@ -436,6 +436,12 @@ describe("managedMcpOAuthService", () => {
       .where(eq(mcpOAuthSessions.connectionId, connection.id))
       .then((rows) => rows[0]!);
     expect(session.redirectUri).toBe("http://127.0.0.1:4310/api/mcp/oauth/callback");
+    expect(session.statusMetadata).toEqual({
+      authorization: {
+        serverUrl: "https://mcp.supabase.com/mcp",
+        accessMode: "read_only",
+      },
+    });
     expect(session.stateHash).toBe(createHash("sha256").update(rawState!).digest("hex"));
     expect(JSON.stringify(session)).not.toContain(rawState);
     const secret = await db.select().from(organizationSecrets)
@@ -994,7 +1000,12 @@ describe("managedMcpOAuthService", () => {
     expect(updated.status).toBe("active");
     const [selectedGrant] = await db.select().from(mcpOAuthGrants)
       .where(eq(mcpOAuthGrants.connectionId, connection.id));
-    expect(selectedGrant?.statusMetadata).toEqual({});
+    expect(selectedGrant?.statusMetadata).toEqual({
+      authorization: {
+        serverUrl: "https://mcp.supabase.com/mcp",
+        accessMode: "read_only",
+      },
+    });
     expect(refreshConnectionTools).toHaveBeenCalledOnce();
   });
 
@@ -1028,6 +1039,35 @@ describe("managedMcpOAuthService", () => {
     expect(svc.resolveProviderEndpoint(updated)).toBe(expectedEndpoint);
   });
 
+  it("pins Linear OAuth to the resource selected at start and rejects later access-mode drift", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "linear", "read_only");
+    const oauthAuth = oauthAuthStub();
+    const svc = managedMcpOAuthService(db, serviceOptions({ oauthAuth }));
+    const started = await svc.start(orgId, connection.id, { userId });
+    const [session] = await db.select().from(mcpOAuthSessions)
+      .where(eq(mcpOAuthSessions.connectionId, connection.id));
+    expect(session?.statusMetadata).toEqual({
+      authorization: {
+        serverUrl: "https://mcp.linear.app/mcp/readonly",
+        scope: "read",
+        accessMode: "read_only",
+      },
+    });
+
+    await db.update(mcpConnections)
+      .set({ accessMode: "read_write" })
+      .where(eq(mcpConnections.id, connection.id));
+    await expect(svc.callback({
+      state: new URL(started.authorizationUrl).searchParams.get("state")!,
+      code: "provider-code",
+    })).rejects.toMatchObject({ status: 422 });
+    expect(oauthAuth).toHaveBeenCalledOnce();
+    const [updated] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    expect(updated?.status).toBe("needs_reauth");
+  });
+
   it.each([
     {
       provider: "linear",
@@ -1045,16 +1085,16 @@ describe("managedMcpOAuthService", () => {
     {
       provider: "notion",
       accessMode: "provider_default",
-      toolName: "notion-get-self",
-      expectedArguments: {},
+      toolName: "notion-fetch",
+      expectedArguments: { id: "self" },
       actorId: "notion-bot-id",
       workspaceId: "notion-workspace-id",
       result: {
-        id: "notion-bot-id",
-        name: "Rudder Bot",
-        bot: {
-          workspace_id: "notion-workspace-id",
-          workspace_name: "Notion Workspace",
+        self: {
+          workspace: {
+            id: "notion-workspace-id",
+            name: "Notion Workspace",
+          },
         },
       },
     },

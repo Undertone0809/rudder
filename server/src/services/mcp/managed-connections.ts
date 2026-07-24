@@ -795,12 +795,12 @@ export function managedMcpConnectionService(
       }
       if (
         existing.provider === "linear"
-        && existing.accessMode === "read_only"
-        && patch.accessMode === "read_write"
-        && existing.status === "active"
+        && patch.accessMode !== undefined
+        && patch.accessMode !== existing.accessMode
+        && (existing.status === "active" || existing.status === "authorizing")
       ) {
         throw unprocessable(
-          "Linear write access requires reauthorization: disconnect the read-only grant, select write access, then reconnect OAuth",
+          "Linear access-mode changes require reauthorization: disconnect, select the new access mode, then reconnect OAuth",
         );
       }
 
@@ -858,12 +858,12 @@ export function managedMcpConnectionService(
         }
         if (
           locked.provider === "linear"
-          && locked.accessMode === "read_only"
-          && patch.accessMode === "read_write"
-          && locked.status === "active"
+          && patch.accessMode !== undefined
+          && patch.accessMode !== locked.accessMode
+          && (locked.status === "active" || locked.status === "authorizing")
         ) {
           throw unprocessable(
-            "Linear write access requires reauthorization: disconnect the read-only grant, select write access, then reconnect OAuth",
+            "Linear access-mode changes require reauthorization: disconnect, select the new access mode, then reconnect OAuth",
           );
         }
         if (replacement) {

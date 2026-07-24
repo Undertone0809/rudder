@@ -35,8 +35,8 @@ describe("managed MCP provider registry", () => {
         scopeSelection: "workspace",
         defaultAccessMode: "provider_default",
         scopeIdentity: {
-          toolNames: ["notion-get-self"],
-          arguments: {},
+          toolNames: ["notion-fetch"],
+          arguments: { id: "self" },
           containers: ["workspace", "organization"],
         },
       },

@@ -1478,6 +1478,16 @@ describe("managedMcpConnectionService", () => {
       { allowCuratedAccessMode: true },
     )).rejects.toThrow(/reconnect|reauthoriz/i);
 
+    await db.update(mcpConnections).set({ accessMode: "read_write" })
+      .where(eq(mcpConnections.id, linear.id));
+    await expect(svc.update(
+      orgId,
+      linear.id,
+      { accessMode: "read_only" },
+      { userId: "owner-1" },
+      { allowCuratedAccessMode: true },
+    )).rejects.toThrow(/reconnect|reauthoriz/i);
+
     await db.update(mcpConnections).set({
       status: "revoked",
       enabled: false,
@@ -1491,10 +1501,8 @@ describe("managedMcpConnectionService", () => {
     )).resolves.toMatchObject({ accessMode: "read_write" });
   });
 
-  it("rechecks Linear write escalation after locking the current connection lifecycle", async () => {
+  it("rejects Linear access-mode changes while OAuth is authorizing", async () => {
     const orgId = await seedOrg(db);
-    const lookupEntered = deferred<void>();
-    const releaseLookup = deferred<void>();
     const svc = service();
     const linear = await svc.create(orgId, {
       name: "linear-racing-permissions",
@@ -1507,33 +1515,18 @@ describe("managedMcpConnectionService", () => {
     await db.update(mcpConnections).set({ status: "authorizing" })
       .where(eq(mcpConnections.id, linear.id));
 
-    const racingService = service({
-      dnsLookup: async () => {
-        lookupEntered.resolve();
-        await releaseLookup.promise;
-        return [{ address: "93.184.216.34", family: 4 as const }];
-      },
-    });
-    const escalation = racingService.update(
+    await expect(svc.update(
       orgId,
       linear.id,
       { accessMode: "read_write" },
       { userId: "owner-1" },
       { allowCuratedAccessMode: true },
-    );
-    await lookupEntered.promise;
-    await db.update(mcpConnections).set({
-      status: "active",
-      updatedAt: new Date(Date.now() + 1_000),
-    }).where(eq(mcpConnections.id, linear.id));
-    releaseLookup.resolve();
-
-    await expect(escalation).rejects.toThrow(/reconnect|reauthoriz/i);
+    )).rejects.toThrow(/reconnect|reauthoriz/i);
     const [persisted] = await db.select().from(mcpConnections)
       .where(eq(mcpConnections.id, linear.id));
     expect(persisted).toMatchObject({
       accessMode: "read_only",
-      status: "active",
+      status: "authorizing",
     });
   });
 

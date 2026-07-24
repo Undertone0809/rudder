@@ -48,6 +48,8 @@ const KNOWN_TOKEN_VALUE_RE =
   /^(?:sk-(?:proj-)?|gh[oprsu]_|github_pat_|xox[baprs]-|pat_|lin_api_|ntn_)[A-Za-z0-9_-]{12,}$/iu;
 const TOKEN_QUERY_VALUE_RE =
   /(?:^|[?&])(?:access_token|api_key|apikey|token|auth)=/iu;
+const EMAIL_ADDRESS_RE =
+  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu;
 const HIGH_ENTROPY_VALUE_RE = /^(?=[A-Za-z0-9+/_=-]{32,}$)(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9+/_=-]+$/u;
 const MAX_AUDIT_RECORD_BYTES = 24 * 1024;
 const MAX_AUDIT_STRING_CHARS = 2_048;
@@ -82,9 +84,10 @@ function redactBoundedValue(
     ) {
       return REDACTED_EVENT_VALUE;
     }
-    return value.length > MAX_AUDIT_STRING_CHARS
-      ? `${value.slice(0, MAX_AUDIT_STRING_CHARS)}…`
-      : value;
+    const redacted = value.replace(EMAIL_ADDRESS_RE, REDACTED_EVENT_VALUE);
+    return redacted.length > MAX_AUDIT_STRING_CHARS
+      ? `${redacted.slice(0, MAX_AUDIT_STRING_CHARS)}…`
+      : redacted;
   }
   if (Array.isArray(value)) {
     const bounded = value.slice(0, MAX_AUDIT_ITEMS)
@@ -97,7 +100,17 @@ function redactBoundedValue(
   const output: Record<string, unknown> = {};
   const entries = Object.entries(value).slice(0, MAX_AUDIT_KEYS);
   for (const [key, child] of entries) {
-    output[key] = SECRET_KEY_RE.test(key)
+    const baseKey = key
+      .replace(EMAIL_ADDRESS_RE, REDACTED_EVENT_VALUE)
+      .slice(0, MAX_AUDIT_STRING_CHARS);
+    let safeKey = baseKey;
+    let collision = 2;
+    while (Object.hasOwn(output, safeKey)) {
+      const suffix = `#${collision}`;
+      safeKey = `${baseKey.slice(0, MAX_AUDIT_STRING_CHARS - suffix.length)}${suffix}`;
+      collision += 1;
+    }
+    output[safeKey] = SECRET_KEY_RE.test(key)
       ? REDACTED_EVENT_VALUE
       : redactBoundedValue(child, state, depth + 1);
   }

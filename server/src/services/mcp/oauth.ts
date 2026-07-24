@@ -114,6 +114,56 @@ interface PreparedOAuthSecret {
   valueSha256: string;
 }
 
+interface OAuthAuthorizationSnapshot {
+  serverUrl: string;
+  scope?: string;
+  accessMode: McpConnectionSummary["accessMode"];
+}
+
+function createOAuthAuthorizationSnapshot(
+  connection: McpConnectionRow,
+): OAuthAuthorizationSnapshot {
+  if (connection.provider === "custom") {
+    throw unprocessable("Managed MCP OAuth only supports curated providers");
+  }
+  const serverUrl = connection.provider === "supabase"
+    ? MCP_PROVIDER_REGISTRY.supabase.endpoint
+    : resolveCuratedMcpEndpoint({
+        provider: connection.provider as "linear" | "notion",
+        accessMode: connection.accessMode as
+          "provider_default" | "read_only" | "read_write",
+        externalScope: connection.externalScope,
+      }).href;
+  return {
+    serverUrl,
+    ...(connection.provider === "linear" && connection.accessMode === "read_only"
+      ? { scope: "read" }
+      : {}),
+    accessMode: connection.accessMode as McpConnectionSummary["accessMode"],
+  };
+}
+
+function readOAuthAuthorizationSnapshot(
+  statusMetadata: Record<string, unknown>,
+  connection: McpConnectionRow,
+): OAuthAuthorizationSnapshot {
+  const value = statusMetadata.authorization;
+  if (
+    isRecord(value)
+    && typeof value.serverUrl === "string"
+    && value.serverUrl.length > 0
+    && typeof value.accessMode === "string"
+    && (value.scope === undefined || typeof value.scope === "string")
+  ) {
+    return {
+      serverUrl: value.serverUrl,
+      ...(typeof value.scope === "string" ? { scope: value.scope } : {}),
+      accessMode: value.accessMode as McpConnectionSummary["accessMode"],
+    };
+  }
+  return createOAuthAuthorizationSnapshot(connection);
+}
+
 function hashState(state: string): string {
   return createHash("sha256").update(state).digest("hex");
 }
@@ -236,6 +286,7 @@ function oauthRevocationEndpoint(material: ManagedMcpOAuthMaterial | null): stri
 
 const SAFE_SCOPE_METADATA_KEYS = new Set([
   "region",
+  "scopeKind",
   "status",
   "workspaceName",
   "workspace_name",
@@ -332,6 +383,10 @@ function providerScopeContainer(
   if (provider === "notion" && isRecord(bot)) {
     candidates.push(...definition.containers.map((key) => bot[key]));
   }
+  const self = value.self;
+  if (provider === "notion" && isRecord(self)) {
+    candidates.push(...definition.containers.map((key) => self[key]));
+  }
   return candidates.find(isRecord) ?? null;
 }
 
@@ -355,6 +410,28 @@ export function parseProviderWorkspaceScope(
         "organizationName",
         "name",
       ],
+    });
+  }
+  if (
+    provider === "linear"
+    && typeof value.id === "string"
+    && value.id.length > 0
+    && Array.isArray(value.teams)
+    && value.teams.some((team) => isRecord(team) && typeof team.id === "string")
+  ) {
+    const authorizationName = typeof value.name === "string" && value.name.length > 0
+      ? `${value.name}'s Linear authorization`
+      : "Linear authorization";
+    const opaqueSubjectId = createHash("sha256")
+      .update(`linear-authorization-subject:${value.id}`)
+      .digest("hex")
+      .slice(0, 24);
+    return safeScopeOption({
+      id: `linear-authorization-subject-${opaqueSubjectId}`,
+      displayName: authorizationName,
+      metadata: {
+        scopeKind: "authorization_subject",
+      },
     });
   }
   const nested = provider === "notion" && isRecord(value.bot) ? value.bot : value;
@@ -889,12 +966,10 @@ export function managedMcpOAuthService(
         material = structuredClone(next);
       },
     });
-    const endpoint = MCP_PROVIDER_REGISTRY[connection.provider].endpoint;
+    const authorization = createOAuthAuthorizationSnapshot(connection);
     const result = await runAuth(provider, {
-      serverUrl: endpoint,
-      scope: connection.provider === "linear" && connection.accessMode === "read_only"
-        ? "read"
-        : undefined,
+      serverUrl: authorization.serverUrl,
+      scope: authorization.scope,
       fetchFn: secureFetch,
     });
     if (result !== "REDIRECT" || !provider.authorizationUrl) {
@@ -983,6 +1058,7 @@ export function managedMcpOAuthService(
         credentialSecretId: sessionSecret.id,
         redirectUri,
         status: "authorizing",
+        statusMetadata: { authorization },
         expiresAt,
       });
       await tx.update(mcpConnections).set({
@@ -1070,7 +1146,9 @@ export function managedMcpOAuthService(
         consumedAt: now,
         status: input.error ? "error" : "consumed",
         credentialSecretId: null,
-        statusMetadata: input.error ? { reason: "provider_denied" } : {},
+        statusMetadata: input.error
+          ? { ...lockedSession.statusMetadata, reason: "provider_denied" }
+          : lockedSession.statusMetadata,
       }).where(and(
         eq(mcpOAuthSessions.id, lockedSession.id),
         eq(mcpOAuthSessions.status, "authorizing"),
@@ -1157,6 +1235,22 @@ export function managedMcpOAuthService(
       throw unprocessable("Managed MCP OAuth authorization was not completed");
     }
 
+    const authorization = readOAuthAuthorizationSnapshot(
+      consumed.session.statusMetadata,
+      consumed.connection,
+    );
+    if (
+      consumed.connection.provider === "linear"
+      && authorization.accessMode !== consumed.connection.accessMode
+    ) {
+      await finishFailure({
+        status: "needs_reauth",
+        action: "mcp_oauth.authorization_failed",
+        reason: "authorization_resource_changed",
+      });
+      throw unprocessable("Linear access mode changed; start authorization again");
+    }
+
     let grantMaterial: ManagedMcpOAuthMaterial;
     try {
       grantMaterial = structuredClone(consumed.sessionMaterial);
@@ -1193,30 +1287,19 @@ export function managedMcpOAuthService(
         },
       });
       const authResult = await runAuth(provider, {
-        serverUrl: MCP_PROVIDER_REGISTRY[consumed.connection.provider].endpoint,
+        serverUrl: authorization.serverUrl,
         authorizationCode: input.code,
         iss: input.iss,
-        scope: consumed.connection.provider === "linear"
-          && consumed.connection.accessMode === "read_only"
-          ? "read"
-          : undefined,
+        scope: authorization.scope,
         fetchFn: secureFetch,
       });
       if (authResult !== "AUTHORIZED" || !grantMaterial.tokens?.access_token) {
         throw unprocessable("Managed MCP OAuth token exchange failed");
       }
-      const onboardingEndpoint = consumed.connection.provider === "supabase"
-        ? MCP_PROVIDER_REGISTRY.supabase.endpoint
-        : resolveCuratedMcpEndpoint({
-            provider: consumed.connection.provider,
-            accessMode: consumed.connection.accessMode as
-              "provider_default" | "read_only" | "read_write",
-            externalScope: consumed.connection.externalScope,
-          }).href;
       scope = await discoverScope({
         connection: consumed.connection,
         material: grantMaterial,
-        endpoint: onboardingEndpoint,
+        endpoint: authorization.serverUrl,
       });
     } catch (error) {
       await finishUnpersistedGrantFailure({
@@ -1336,9 +1419,12 @@ export function managedMcpOAuthService(
             externalScopeMetadata: selected?.metadata ?? {},
             credentialSecretId: grantSecret.id,
             status: "active",
-            statusMetadata: connection.provider === "supabase"
-              ? { scopeOptions: safeOptions }
-              : {},
+            statusMetadata: {
+              authorization,
+              ...(connection.provider === "supabase"
+                ? { scopeOptions: safeOptions }
+                : {}),
+            },
             expiresAt: tokenExpiry(grantMaterial.tokens, now),
             lastRefreshedAt: now,
             refreshLeaseNonce: null,
@@ -1533,6 +1619,10 @@ export function managedMcpOAuthService(
         : [];
       const selected = optionsList.find((option) => option.id === selection.externalScope);
       if (!selected) throw unprocessable("Selected Supabase project was not discovered");
+      const {
+        scopeOptions: _consumedScopeOptions,
+        ...grantAuthorizationMetadata
+      } = grant.statusMetadata;
       const row = await tx.update(mcpConnections).set({
         externalScope: selected.id,
         accessMode: selection.accessMode,
@@ -1550,7 +1640,7 @@ export function managedMcpOAuthService(
       )).returning().then((rows) => rows[0]!);
       const updatedGrant = await tx.update(mcpOAuthGrants).set({
         externalScopeMetadata: selected.metadata,
-        statusMetadata: {},
+        statusMetadata: grantAuthorizationMetadata,
         updatedAt: now,
       }).where(and(
         eq(mcpOAuthGrants.orgId, orgId),
@@ -1774,6 +1864,7 @@ export function managedMcpOAuthService(
       grant: McpOAuthGrantRow & { credentialSecretId: string };
       secret: typeof organizationSecrets.$inferSelect;
       material: ManagedMcpOAuthMaterial;
+      authorization: OAuthAuthorizationSnapshot;
     } | null = null;
     while (!claimed) {
       const result = await db.transaction(async (tx) => {
@@ -1806,6 +1897,21 @@ export function managedMcpOAuthService(
           return { kind: "needs_reauth" as const };
         }
         assertCurated(connection);
+        const authorization = readOAuthAuthorizationSnapshot(
+          grant.statusMetadata,
+          connection,
+        );
+        if (
+          connection.provider === "linear"
+          && authorization.accessMode !== connection.accessMode
+        ) {
+          await transitionGrantToNeedsReauth(
+            tx,
+            grant,
+            "authorization_resource_changed",
+          );
+          return { kind: "needs_reauth" as const };
+        }
         if (!await isValidAuthorizerInTransaction(tx, orgId, grant.authorizingUserId)) {
           await transitionGrantToNeedsReauth(
             tx,
@@ -1859,6 +1965,7 @@ export function managedMcpOAuthService(
           grant: { ...grant, credentialSecretId: grant.credentialSecretId },
           secret: resolved.secret,
           material: resolved.material,
+          authorization,
         };
       });
       if (result.kind === "needs_reauth") {
@@ -1896,11 +2003,8 @@ export function managedMcpOAuthService(
     }, claimed.timeoutMs);
     try {
       authResult = await withHardTimeout(runAuth(provider, {
-        serverUrl: MCP_PROVIDER_REGISTRY[claimed.connection.provider].endpoint,
-        scope: claimed.connection.provider === "linear"
-          && claimed.connection.accessMode === "read_only"
-          ? "read"
-          : undefined,
+        serverUrl: claimed.authorization.serverUrl,
+        scope: claimed.authorization.scope,
         fetchFn: (input, init) => secureFetch(input, {
           ...init,
           signal: init?.signal

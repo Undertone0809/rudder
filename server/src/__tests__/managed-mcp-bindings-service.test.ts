@@ -584,8 +584,16 @@ describe("managedMcpBindingService", () => {
       startedAt: new Date(),
     }).returning();
     const callTool = vi.fn().mockResolvedValue({
-      content: [{ type: "text", text: "ok" }],
+      content: [{
+        type: "text",
+        text: "{\"email\":\"provider-user@example.test\",\"status\":\"ok\"}",
+      }],
       structuredContent: {
+        email: "structured-user@example.test",
+        contacts: {
+          "first-contact@example.test": { marker: "first-contact" },
+          "second-contact@example.test": { marker: "second-contact" },
+        },
         token: "upstream-secret",
         nested: { authorization: "Bearer should-not-persist" },
         bearerValue: "Bearer standalone-secret",
@@ -624,7 +632,10 @@ describe("managedMcpBindingService", () => {
       },
     );
     expect(result).toEqual(expect.objectContaining({
-      content: [{ type: "text", text: "ok" }],
+      content: [{
+        type: "text",
+        text: "{\"email\":\"provider-user@example.test\",\"status\":\"ok\"}",
+      }],
     }));
     expect(callTool).toHaveBeenCalledWith("read", {
       query: "hello",
@@ -659,6 +670,12 @@ describe("managedMcpBindingService", () => {
     expect(persisted).not.toContain("sk-proj-");
     expect(persisted).not.toContain("cHJpdmF0");
     expect(persisted).not.toContain("private-token-value");
+    expect(persisted).not.toContain("provider-user@example.test");
+    expect(persisted).not.toContain("structured-user@example.test");
+    expect(persisted).not.toContain("first-contact@example.test");
+    expect(persisted).not.toContain("second-contact@example.test");
+    expect(persisted).toContain("first-contact");
+    expect(persisted).toContain("second-contact");
     expect(persisted).toContain("***REDACTED***");
   });
 
