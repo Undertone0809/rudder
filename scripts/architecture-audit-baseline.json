@@ -242,6 +242,22 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "cli/src/runtime/install.ts",
+      "lines": 1501,
+      "owner": "runtime-cli",
+      "rationale": "Runtime installation currently combines cache preparation, shared PostgreSQL payload migration, locking, and cleanup compatibility paths.",
+      "target": "Extract shared payload lifecycle and cleanup policies and reduce the installer below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/routes/chats.stream-routes.ts",
+      "lines": 1501,
+      "owner": "collaboration-server",
+      "rationale": "Chat streaming transport currently coordinates transcript annotations, workbench events, and compatibility responses in one route module.",
+      "target": "Extract annotation and workbench stream handlers and reduce the transport module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
       "path": "server/src/services/mcp/oauth.ts",
       "lines": 1501,
       "owner": "integrations-server",
