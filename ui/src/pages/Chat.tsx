@@ -14,7 +14,7 @@ import { AgentIcon } from "@/components/AgentIconPicker";
 import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
-  type ResponseAnnotationAnchorRect,
+  useResponseAnnotationEditorController,
 } from "@/components/chat/ResponseAnnotations";
 import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
 import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
@@ -255,13 +255,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   );
   const responseAnnotationStateByScopeRef = useRef<Record<string, ChatResponseAnnotationState>>({});
   const [responseAnnotationsExpanded, setResponseAnnotationsExpanded] = useState(false);
-  const [editingResponseAnnotationId, setEditingResponseAnnotationId] = useState<string | null>(null);
-  const [editingResponseAnnotationInitialAnchor, setEditingResponseAnnotationInitialAnchor] = useState<{
-    anchorRect: ResponseAnnotationAnchorRect;
-    boundaryRect: ResponseAnnotationAnchorRect | null;
-  } | null>(null);
-  const editingResponseAnnotationAnchorRef = useRef<HTMLButtonElement | null>(null);
   const draftResponseAnnotationsChipRef = useRef<HTMLButtonElement | null>(null);
+  const responseAnnotationEditor = useResponseAnnotationEditorController(
+    draftResponseAnnotationsChipRef,
+  );
   const [historicalResponseAnnotations, setHistoricalResponseAnnotations] = useState<ChatResponseAnnotationDraft[]>([]);
   const [unlocatableResponseAnnotationId, setUnlocatableResponseAnnotationId] = useState<string | null>(null);
   const [pendingResponseAnnotationSelection, setPendingResponseAnnotationSelection] = useState<PendingChatResponseAnnotationSelection | null>(null);
@@ -362,7 +359,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pendingFilesByAnnotationId: inMemoryAnnotations?.pendingFilesByAnnotationId,
     });
     setResponseAnnotationsExpanded(false);
-    setEditingResponseAnnotationId(null);
+    responseAnnotationEditor.close();
     setPendingResponseAnnotationSelection(null);
     setHistoricalResponseAnnotations([]);
     setUnlocatableResponseAnnotationId(null);
@@ -1202,7 +1199,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       setBranchPreview(null); setDraft(""); clearPendingFilesForCurrentScope();
       dispatchResponseAnnotation({ type: "clear" });
       setResponseAnnotationsExpanded(false);
-      setEditingResponseAnnotationId(null);
+      responseAnnotationEditor.close();
     }
     await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, conversation.id) });
     return true;
@@ -1320,7 +1317,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 clearPendingFilesForCurrentScope();
                 dispatchResponseAnnotation({ type: "clear" });
                 setResponseAnnotationsExpanded(false);
-                setEditingResponseAnnotationId(null);
+                responseAnnotationEditor.close();
               }
               options?.onUserMessageAcknowledged?.();
               if (options?.clearPendingFilesOnSuccess && !pendingFilesClearedAfterAck) {
@@ -1442,7 +1439,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               clearPendingFilesForCurrentScope();
               dispatchResponseAnnotation({ type: "clear" });
               setResponseAnnotationsExpanded(false);
-              setEditingResponseAnnotationId(null);
+              responseAnnotationEditor.close();
             }
             setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
             return;
@@ -1451,7 +1448,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             if (usesComposerState) {
               dispatchResponseAnnotation({ type: "clear" });
               setResponseAnnotationsExpanded(false);
-              setEditingResponseAnnotationId(null);
+              responseAnnotationEditor.close();
             }
             if (body.startsWith(ASK_USER_ANSWER_PREFIX)) {
               setRecentAskUserAnswerMessageId(event.userMessage.id);
@@ -1480,7 +1477,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               if (usesComposerState) {
                 dispatchResponseAnnotation({ type: "clear" });
                 setResponseAnnotationsExpanded(false);
-                setEditingResponseAnnotationId(null);
+                responseAnnotationEditor.close();
               }
               options?.onUserMessageAcknowledged?.();
               if (options?.clearPendingFilesOnSuccess && !pendingFilesClearedAfterAck) {
@@ -1815,14 +1812,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!pending) return;
     const annotation = await addPendingResponseAnnotation({ focusComposer: false });
     if (!annotation) return;
-    editingResponseAnnotationAnchorRef.current = null;
     setResponseAnnotationsExpanded(false);
-    setEditingResponseAnnotationInitialAnchor({
+    responseAnnotationEditor.openFromSelection(annotation.id, {
       anchorRect: pending.anchorRect,
       boundaryRect: pending.boundaryRoot?.getBoundingClientRect() ?? null,
     });
-    setEditingResponseAnnotationId(annotation.id);
-  }, [addPendingResponseAnnotation, pendingResponseAnnotationSelection]);
+  }, [addPendingResponseAnnotation, pendingResponseAnnotationSelection, responseAnnotationEditor]);
   const handleAskSelectionInSideChat = useCallback(async () => {
     const pending = pendingResponseAnnotationSelection;
     if (!pending || !pending.sideChatEligible || !selectedConversation) return;
@@ -3058,48 +3053,37 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             onOpenChange={(open) => {
               setResponseAnnotationsExpanded(open);
               if (open) {
-                setEditingResponseAnnotationInitialAnchor(null);
-                setEditingResponseAnnotationId(null);
+                responseAnnotationEditor.close();
               }
             }}
             onClear={() => {
               dispatchResponseAnnotation({ type: "clear" });
               setResponseAnnotationsExpanded(false);
-              setEditingResponseAnnotationInitialAnchor(null);
-              setEditingResponseAnnotationId(null);
+              responseAnnotationEditor.close();
               setResponseAnnotationAnnouncement(t("chat.annotations.removed"));
             }}
             onEdit={(annotation) => {
-              editingResponseAnnotationAnchorRef.current = draftResponseAnnotationsChipRef.current;
-              setEditingResponseAnnotationInitialAnchor(null);
-              setEditingResponseAnnotationId(annotation.id);
+              responseAnnotationEditor.openFromAnchor(
+                annotation.id,
+                draftResponseAnnotationsChipRef.current,
+              );
             }}
             onDelete={(annotationId) => {
               dispatchResponseAnnotation({ type: "delete", id: annotationId });
               if (responseAnnotationState.annotations.length === 1) {
                 setResponseAnnotationsExpanded(false);
               }
-              setEditingResponseAnnotationId((current) => (
-                current === annotationId ? null : current
-              ));
+              if (responseAnnotationEditor.annotationId === annotationId) {
+                responseAnnotationEditor.close();
+              }
               setResponseAnnotationAnnouncement(t("chat.annotations.removed"));
             }}
           />
-          {editingResponseAnnotationId ? (() => {
+          {responseAnnotationEditor.annotationId ? (() => {
             const annotation = responseAnnotationState.annotations.find(
-              (candidate) => candidate.id === editingResponseAnnotationId,
+              (candidate) => candidate.id === responseAnnotationEditor.annotationId,
             );
             if (!annotation) return null;
-            const editorAnchor = editingResponseAnnotationAnchorRef.current;
-            const editorAnchorRect = editorAnchor?.getBoundingClientRect()
-              ?? editingResponseAnnotationInitialAnchor?.anchorRect
-              ?? null;
-            const editorBoundary = editorAnchor?.closest<HTMLElement>(
-              '[data-testid="chat-main-workspace-card"]',
-            ) ?? null;
-            const editorBoundaryRect = editorBoundary?.getBoundingClientRect()
-              ?? editingResponseAnnotationInitialAnchor?.boundaryRect
-              ?? null;
             return (
               <ResponseAnnotationEditor
                 key={annotation.id}
@@ -3108,23 +3092,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 pendingFiles={
                   responseAnnotationState.pendingFilesByAnnotationId[annotation.id] ?? []
                 }
-                anchorRect={editorAnchorRect}
-                getAnchorRect={() => (
-                  editorAnchor?.isConnected
-                    ? editorAnchor.getBoundingClientRect()
-                    : editingResponseAnnotationInitialAnchor?.anchorRect ?? null
-                )}
-                boundaryRect={editorBoundaryRect}
-                getBoundaryRect={() => (
-                  editorBoundary?.isConnected
-                    ? editorBoundary.getBoundingClientRect()
-                    : editingResponseAnnotationInitialAnchor?.boundaryRect ?? null
-                )}
-                returnFocusRef={
-                  editorAnchor
-                    ? editingResponseAnnotationAnchorRef
-                    : draftResponseAnnotationsChipRef
-                }
+                {...responseAnnotationEditor.editorPlacement}
                 validateSave={(changes) => validateChatResponseAnnotationReplacement(
                   responseAnnotationState,
                   annotation.id,
@@ -3142,17 +3110,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     attachmentIds: changes.attachmentIds,
                     files: changes.pendingFiles,
                   });
-                  setEditingResponseAnnotationInitialAnchor(null);
-                  setEditingResponseAnnotationId(null);
+                  responseAnnotationEditor.close();
                 }}
-                onCancel={() => {
-                  setEditingResponseAnnotationInitialAnchor(null);
-                  setEditingResponseAnnotationId(null);
-                }}
+                onCancel={responseAnnotationEditor.close}
                 onDelete={() => {
                   dispatchResponseAnnotation({ type: "delete", id: annotation.id });
-                  setEditingResponseAnnotationInitialAnchor(null);
-                  setEditingResponseAnnotationId(null);
+                  responseAnnotationEditor.close();
                   setResponseAnnotationAnnouncement(t("chat.annotations.removed"));
                 }}
               />
@@ -3794,11 +3757,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                                 (annotation) => annotation.id === annotationId,
                                               )) {
                                                 setResponseAnnotationsExpanded(false);
-                                                editingResponseAnnotationAnchorRef.current = anchor;
-                                                setEditingResponseAnnotationInitialAnchor(null);
-                                                setEditingResponseAnnotationId(annotationId);
+                                                responseAnnotationEditor.openFromAnchor(
+                                                  annotationId,
+                                                  anchor,
+                                                );
                                               } else {
-                                                setEditingResponseAnnotationId(null);
+                                                responseAnnotationEditor.close();
                                               }
                                             },
                                           }
@@ -3860,11 +3824,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                       (annotation) => annotation.id === annotationId,
                                     )) {
                                       setResponseAnnotationsExpanded(false);
-                                      editingResponseAnnotationAnchorRef.current = anchor;
-                                      setEditingResponseAnnotationInitialAnchor(null);
-                                      setEditingResponseAnnotationId(annotationId);
+                                      responseAnnotationEditor.openFromAnchor(
+                                        annotationId,
+                                        anchor,
+                                      );
                                     } else {
-                                      setEditingResponseAnnotationId(null);
+                                      responseAnnotationEditor.close();
                                     }
                                   }}
                                   onSelectResponseAnnotation={handleSelectSentResponseAnnotation}
