@@ -60,6 +60,7 @@ import {
 } from "./oauth-provider.js";
 import { createSecureMcpFetch } from "./pinned-fetch.js";
 import {
+  MCP_CURATED_OAUTH_ORIGINS,
   MCP_PROVIDER_REGISTRY,
   resolveCuratedMcpEndpoint,
 } from "./provider-registry.js";
@@ -565,8 +566,15 @@ export function managedMcpOAuthService(
 ) {
   const grantRefreshSingleFlights = new Map<string, Promise<void>>();
   const runAuth = options.oauthAuth ?? auth;
+  const oauthAllowedOrigins = Array.from(new Set([
+    ...options.allowlists.httpOrigins,
+    ...MCP_CURATED_OAUTH_ORIGINS,
+  ]));
   const secureFetch = createSecureMcpFetch({
-    allowedOrigins: options.allowlists.httpOrigins,
+    // Curated OAuth origins are registry-pinned and still use TLS hostname
+    // verification. Explicitly allowing them also supports local transparent
+    // DNS proxies that map public hosts into 198.18.0.0/15 fake-IP space.
+    allowedOrigins: oauthAllowedOrigins,
     lookup: options.dnsLookup,
   });
 
@@ -977,7 +985,7 @@ export function managedMcpOAuthService(
     }
     try {
       await resolveMcpHttpTarget(provider.authorizationUrl.href, {
-        allowedOrigins: options.allowlists.httpOrigins,
+        allowedOrigins: oauthAllowedOrigins,
         lookup: options.dnsLookup,
       });
     } catch {

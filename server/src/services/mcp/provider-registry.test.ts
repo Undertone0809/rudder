@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MCP_CURATED_OAUTH_ORIGINS,
   MCP_PROVIDER_REGISTRY,
   resolveCuratedMcpEndpoint,
 } from "./provider-registry.js";
@@ -9,6 +10,7 @@ describe("managed MCP provider registry", () => {
     expect(MCP_PROVIDER_REGISTRY).toMatchObject({
       supabase: {
         endpoint: "https://mcp.supabase.com/mcp",
+        oauthOrigins: ["https://mcp.supabase.com", "https://api.supabase.com"],
         requiresOAuth: true,
         scopeSelection: "project",
         defaultAccessMode: "read_only",
@@ -19,6 +21,7 @@ describe("managed MCP provider registry", () => {
       },
       linear: {
         endpoint: "https://mcp.linear.app/mcp",
+        oauthOrigins: ["https://mcp.linear.app"],
         readOnlyEndpoint: "https://mcp.linear.app/mcp/readonly",
         requiresOAuth: true,
         scopeSelection: "workspace",
@@ -31,6 +34,7 @@ describe("managed MCP provider registry", () => {
       },
       notion: {
         endpoint: "https://mcp.notion.com/mcp",
+        oauthOrigins: ["https://mcp.notion.com"],
         requiresOAuth: true,
         scopeSelection: "workspace",
         defaultAccessMode: "provider_default",
@@ -42,10 +46,17 @@ describe("managed MCP provider registry", () => {
       },
       custom: {
         endpoint: null,
+        oauthOrigins: [],
         requiresOAuth: false,
         scopeSelection: "none",
       },
     });
+    expect(MCP_CURATED_OAUTH_ORIGINS).toEqual([
+      "https://mcp.supabase.com",
+      "https://api.supabase.com",
+      "https://mcp.linear.app",
+      "https://mcp.notion.com",
+    ]);
   });
 
   it("requires a Supabase project and pins read-only by default", () => {
