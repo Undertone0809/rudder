@@ -207,6 +207,20 @@ describe("LiveSurfaceRuntimeProvider", () => {
     expect(host?.getAttribute("data-owner-id")).toBe("main:org-a:view-a");
     expect(host?.style.left).toBe("300px");
     expect(host?.style.width).toBe("900px");
+    expect(host?.className).toContain("rounded-[var(--desktop-workspace-radius)]");
+  });
+
+  it("preserves the bottom-only Main boundary for non-Browser live surfaces", () => {
+    const runtimeId = render({ main: true, target: libraryFile });
+
+    act(() => {
+      expect(runtime?.claimSurface(runtimeId, "main:org-a:view-a")).toBe(true);
+    });
+
+    const host = container?.querySelector<HTMLElement>(
+      '[data-testid="live-surface-runtime-host"]',
+    );
+    expect(host?.getAttribute("data-owner-id")).toBe("main:org-a:view-a");
     expect(host?.className).toContain("rounded-b-[var(--desktop-workspace-radius)]");
     expect(host?.className).not.toContain("rounded-[var(--desktop-workspace-radius)]");
   });

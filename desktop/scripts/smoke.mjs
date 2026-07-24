@@ -2710,6 +2710,23 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
       expectedUrl,
       `crossing the 2:1 boundary at ${viewportWidth}px should preserve the Browser guest`,
     );
+    const expandedBrowserCorners = await page.evaluate(() => {
+      const host = Array.from(document.querySelectorAll(
+        "[data-testid='live-surface-runtime-host'][data-owner-id^='side:'][data-target-kind='browser']",
+      )).find((candidate) => !candidate.hidden);
+      if (!host) throw new Error("expanded Side Browser runtime host was unavailable");
+      const style = getComputedStyle(host);
+      return [
+        style.borderTopLeftRadius,
+        style.borderTopRightRadius,
+        style.borderBottomLeftRadius,
+        style.borderBottomRightRadius,
+      ];
+    });
+    assert.ok(
+      expandedBrowserCorners.every((radius) => Number.parseFloat(radius) > 0),
+      `expanded Side Browser runtime host must preserve every rounded corner (${expandedBrowserCorners.join(", ")})`,
+    );
 
     await sidePanel.getByLabel("Restore Side Panel width").click();
     await page.getByTestId("side-panel-expanded-overlay").waitFor({ state: "detached", timeout: 5_000 });
@@ -3289,6 +3306,23 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       assert.equal(guestBeforeMove.guestState.formValue, "preserve-this-form");
       assert.equal(guestBeforeMove.guestState.heapMarker, browserTransferMarker);
       assert.ok(guestBeforeMove.guestState.scrollY > 0);
+      const sideBrowserCorners = await page.evaluate(() => {
+        const host = Array.from(document.querySelectorAll(
+          "[data-testid='live-surface-runtime-host'][data-owner-id^='side:'][data-target-kind='browser']",
+        )).find((candidate) => !candidate.hidden);
+        if (!host) throw new Error("visible Side Browser runtime host was unavailable");
+        const style = getComputedStyle(host);
+        return {
+          bottomLeft: style.borderBottomLeftRadius,
+          bottomRight: style.borderBottomRightRadius,
+          topLeft: style.borderTopLeftRadius,
+          topRight: style.borderTopRightRadius,
+        };
+      });
+      assert.ok(
+        Object.values(sideBrowserCorners).every((radius) => Number.parseFloat(radius) > 0),
+        `Side Browser runtime host must clip every visible corner (${JSON.stringify(sideBrowserCorners)})`,
+      );
 
       const moveResponsePromise = page.waitForResponse((response) => {
         const url = new URL(response.url());
@@ -3426,6 +3460,8 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           host: rect(host),
           hostBottomLeftRadius: getComputedStyle(host).borderBottomLeftRadius,
           hostBottomRightRadius: getComputedStyle(host).borderBottomRightRadius,
+          hostTopLeftRadius: getComputedStyle(host).borderTopLeftRadius,
+          hostTopRightRadius: getComputedStyle(host).borderTopRightRadius,
           nestedCardCount: root.querySelectorAll(".workspace-main-card").length,
           panel: rect(panel),
           root: rect(root),
@@ -3439,16 +3475,18 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       const withinTwoPixels = (left, right) => Math.abs(left - right) <= 2;
       assert.equal(fullBleed.nestedCardCount, 0, "Main Browser must not be nested in another workspace card");
       assert.ok(
-        fullBleed.rootBorderRadius === "0px" || fullBleed.rootBorderRadius === "",
-        `Main Workbench must leave its shell backdrop transparent (received radius ${fullBleed.rootBorderRadius})`,
+        Number.parseFloat(fullBleed.rootBorderRadius) > 0,
+        `Main Workbench must retain its transparent rounded boundary (received radius ${fullBleed.rootBorderRadius})`,
       );
       assert.equal(fullBleed.rootBackgroundAlpha, 0, "Main Workbench shell backdrop must be transparent");
       assert.equal(fullBleed.tablistBackgroundAlpha, 0, "Main Workbench tab strip must be transparent");
       assert.equal(fullBleed.rootPadding, "0px", "Main Workbench must not inset the Browser surface");
       assert.ok(
-        Number.parseFloat(fullBleed.hostBottomLeftRadius) > 0
+        Number.parseFloat(fullBleed.hostTopLeftRadius) > 0
+          && Number.parseFloat(fullBleed.hostTopRightRadius) > 0
+          && Number.parseFloat(fullBleed.hostBottomLeftRadius) > 0
           && Number.parseFloat(fullBleed.hostBottomRightRadius) > 0,
-        "Main Browser runtime host must clip its visible content to the workspace bottom corners",
+        "Main Browser runtime host must clip its visible content to every workspace corner",
       );
       assert.equal(
         fullBleed.browserToolbarFlowsDirectlyIntoContent,

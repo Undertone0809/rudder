@@ -2692,6 +2692,11 @@ Invariants:
   workspace with only a narrow resize affordance between them. It must not leave
   a broad blank gutter that visually separates the panel from the current work
   surface.
+- A visible Browser runtime surface must clip its toolbar and page content to
+  all four shared workspace-radius corners in both docked and expanded Side
+  Panel states. The Browser must not expose square toolbar or page corners
+  against the surrounding desktop shell, and resizing or transferring the
+  exact guest must preserve that boundary without remounting it.
 - Desktop Side Panel geometry must preserve a fixed right edge while opening,
   expanding, restoring, or closing. Its left edge, the divider, and the current
   work-surface width must move monotonically in the requested direction. The
@@ -3241,7 +3246,10 @@ instance into Main; it does not reopen a copy in Side.
   and removes only that tab from Side.
 - Main Browser and Local App surfaces fill the Main content directly beneath
   the mixed tab strip. They must not be wrapped in another card, inset frame,
-  rounded inner shell, or second Browser tab strip.
+  rounded inner shell, or second Browser tab strip. The transparent Main shell
+  and tab strip must still preserve the shared outer workspace radius, and the
+  live Browser host must clip its toolbar and page content at all four outer
+  corners.
 - Browser rows show a legal favicon or generic Web/Globe icon and title/domain,
   never the URL. Library, Automation, and Local App rows use their type icons.
 - Missing or device-local targets show an explicit unavailable/retry state in

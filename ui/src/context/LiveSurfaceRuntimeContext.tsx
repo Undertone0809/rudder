@@ -816,7 +816,9 @@ export function LiveSurfaceRuntimeLayer() {
               owner?.ownerId.startsWith("side:")
                 ? "rounded-[var(--desktop-workspace-radius)]"
                 : owner?.ownerId.startsWith("main:")
-                  ? "rounded-b-[var(--desktop-workspace-radius)]"
+                  ? record.target.kind === "browser"
+                    ? "rounded-[var(--desktop-workspace-radius)]"
+                    : "rounded-b-[var(--desktop-workspace-radius)]"
                   : ""
             }`}
             style={{
