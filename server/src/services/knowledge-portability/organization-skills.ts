@@ -117,6 +117,7 @@ import {
 
 const ORGANIZATION_SKILL_INSTALLATION_VERSION = 1;
 const skillInstallationPromises = new Map<string, Promise<string>>();
+const skillMutationLocks = new Map<string, Promise<void>>();
 
 export function organizationSkillService(
   db: Db,
@@ -190,6 +191,29 @@ export function organizationSkillService(
     await Promise.all(workers);
   }
 
+  async function withSkillMutationLock<T>(
+    orgId: string,
+    skillKey: string,
+    operation: () => Promise<T>,
+  ) {
+    const lockKey = `${orgId}:${skillKey}`;
+    const previous = skillMutationLocks.get(lockKey) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    skillMutationLocks.set(lockKey, current);
+    await previous.catch(() => {});
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (skillMutationLocks.get(lockKey) === current) {
+        skillMutationLocks.delete(lockKey);
+      }
+    }
+  }
+
   async function readImportedSkillFiles(skill: ImportedSkill) {
     const files = new Map<string, string | Uint8Array>();
     for (const [rawPath, content] of Object.entries(skill.files ?? {})) {
@@ -214,10 +238,11 @@ export function organizationSkillService(
     return files;
   }
 
-  async function replaceInstalledSkillDirectory(
+  async function replaceInstalledSkillDirectory<T>(
     orgId: string,
     skill: Pick<ImportedSkill, "key" | "slug" | "fileInventory">,
     files: Map<string, string | Uint8Array>,
+    persist: () => Promise<T>,
   ) {
     const target = resolveInstalledSkillDirectory(orgId, skill.key, skill.slug);
     const parent = path.dirname(target);
@@ -265,28 +290,69 @@ export function organizationSkillService(
         }
         throw error;
       }
+      let persisted: T;
+      try {
+        persisted = await persist();
+      } catch (error) {
+        await fs.rm(target, { recursive: true, force: true }).catch(() => {});
+        if (movedExisting) {
+          try {
+            await fs.rename(backup, target);
+            movedExisting = false;
+          } catch {
+            // Preserve the backup for operator recovery if rollback cannot restore it.
+          }
+        }
+        throw error;
+      }
       if (movedExisting) {
         await fs.rm(backup, { recursive: true, force: true }).catch(() => {});
         movedExisting = false;
       }
-      return target;
+      return persisted;
     } finally {
       await fs.rm(staging, { recursive: true, force: true });
     }
   }
 
-  async function installImportedSkill(orgId: string, skill: ImportedSkill) {
+  async function installImportedSkill<T>(
+    orgId: string,
+    skill: ImportedSkill,
+    persist: (installed: ImportedSkill) => Promise<T>,
+  ) {
     const sourceKind = asString(skill.metadata?.sourceKind);
-    if (isBundledRudderSourceKind(sourceKind)) return skill;
-    const files = await readImportedSkillFiles(skill);
-    await replaceInstalledSkillDirectory(orgId, skill, files);
-    return {
+    if (isBundledRudderSourceKind(sourceKind)) return persist(skill);
+    const installed = {
       ...skill,
       metadata: {
         ...(skill.metadata ?? {}),
         installationVersion: ORGANIZATION_SKILL_INSTALLATION_VERSION,
       },
     };
+    const files = await readImportedSkillFiles(installed);
+    return withSkillMutationLock(orgId, installed.key, () =>
+      replaceInstalledSkillDirectory(
+        orgId,
+        installed,
+        files,
+        () => persist(installed),
+      ));
+  }
+
+  async function installAndUpsertImportedSkills(orgId: string, skills: ImportedSkill[]) {
+    const out: OrganizationSkill[] = [];
+    for (const skill of skills) {
+      out.push(await installImportedSkill(
+        orgId,
+        skill,
+        async (installed) => {
+          const [persisted] = await upsertImportedSkills(orgId, [installed]);
+          if (!persisted) throw notFound("Failed to persist organization skill");
+          return persisted;
+        },
+      ));
+    }
+    return out;
   }
 
   async function getAgentWorkspaceRow(orgId: string, agentId: string): Promise<AgentWorkspaceRow> {
@@ -1318,19 +1384,26 @@ export function organizationSkillService(
       throw unprocessable(`Skill ${skill.key} could not be re-imported from its source.`);
     }
 
-    const installed = await installImportedSkill(orgId, {
-      ...matching,
-      key: skill.key,
-      slug: skill.slug,
-      sourceType: skill.sourceType,
-      sourceLocator: skill.sourceLocator,
-      metadata: {
-        ...(matching.metadata ?? {}),
-        ...(skill.metadata ?? {}),
+    return installImportedSkill(
+      orgId,
+      {
+        ...matching,
+        key: skill.key,
+        slug: skill.slug,
+        sourceType: skill.sourceType,
+        sourceLocator: skill.sourceLocator,
+        metadata: {
+          ...(skill.metadata ?? {}),
+          ...(matching.metadata ?? {}),
+          sourceKind: asString(skill.metadata?.sourceKind)
+            ?? asString(matching.metadata?.sourceKind),
+        },
       },
-    });
-    const imported = await upsertImportedSkills(orgId, [installed]);
-    return imported[0] ?? null;
+      async (installed) => {
+        const [persisted] = await upsertImportedSkills(orgId, [installed]);
+        return persisted ?? null;
+      },
+    );
   }
 
   async function ensureInstalledSkill(orgId: string, skill: OrganizationSkill) {
@@ -1376,7 +1449,19 @@ export function organizationSkillService(
         if (!skill.sourceLocator) {
           throw unprocessable("Skill source locator is missing.");
         }
-        const parsed = parseSkillImportSourceInput(skill.sourceLocator);
+        const skillMetadata = getSkillMeta(skill);
+        const owner = asString(skillMetadata.owner);
+        const repo = asString(skillMetadata.repo);
+        const repoSkillDir = asString(skillMetadata.repoSkillDir);
+        const migrationSource = (
+          (skill.sourceType === "github" || skill.sourceType === "skills_sh")
+          && skill.sourceRef
+          && owner
+          && repo
+        )
+          ? `https://github.com/${owner}/${repo}/tree/${skill.sourceRef}${repoSkillDir ? `/${repoSkillDir}` : ""}`
+          : skill.sourceLocator;
+        const parsed = parseSkillImportSourceInput(migrationSource);
         const result = await readUrlSkillImports(
           orgId,
           parsed.resolvedSource,
@@ -1413,26 +1498,40 @@ export function organizationSkillService(
         throw unprocessable(`Skill ${skill.key} could not be installed from its source.`);
       }
 
-      const installed = await installImportedSkill(orgId, {
-        ...imported,
-        key: skill.key,
-        slug: skill.slug,
-        sourceType: skill.sourceType,
-        sourceLocator: skill.sourceLocator,
-        sourceRef: skill.sourceRef,
-        metadata: {
-          ...(imported.metadata ?? {}),
-          ...(skill.metadata ?? {}),
+      return installImportedSkill(
+        orgId,
+        {
+          ...imported,
+          key: skill.key,
+          slug: skill.slug,
+          sourceType: skill.sourceType,
+          sourceLocator: skill.sourceLocator,
+          sourceRef: skill.sourceRef ?? imported.sourceRef,
+          metadata: {
+            ...(skill.metadata ?? {}),
+            ...(imported.metadata ?? {}),
+            sourceKind: asString(skill.metadata?.sourceKind)
+              ?? asString(imported.metadata?.sourceKind),
+          },
         },
-      });
-      await db
-        .update(organizationSkills)
-        .set({
-          metadata: installed.metadata,
-          updatedAt: new Date(),
-        })
-        .where(eq(organizationSkills.id, skill.id));
-      return resolveInstalledSkillDirectory(orgId, skill.key, skill.slug);
+        async (installed) => {
+          await db
+            .update(organizationSkills)
+            .set({
+              name: installed.name,
+              description: installed.description,
+              markdown: installed.markdown,
+              sourceRef: installed.sourceRef,
+              trustLevel: installed.trustLevel,
+              compatibility: installed.compatibility,
+              fileInventory: serializeFileInventory(installed.fileInventory),
+              metadata: installed.metadata,
+              updatedAt: new Date(),
+            })
+            .where(eq(organizationSkills.id, skill.id));
+          return resolveInstalledSkillDirectory(orgId, skill.key, skill.slug);
+        },
+      );
     })();
 
     skillInstallationPromises.set(lockKey, installation);
@@ -1599,10 +1698,7 @@ export function organizationSkillService(
 
     if (toPersist.length === 0) return out;
 
-    const installedSkills = await Promise.all(
-      toPersist.map((skill) => installImportedSkill(orgId, skill)),
-    );
-    const persisted = await upsertImportedSkills(orgId, installedSkills);
+    const persisted = await installAndUpsertImportedSkills(orgId, toPersist);
     for (let index = 0; index < prepared.length; index += 1) {
       const persistedSkill = persisted[index];
       const preparedSkill = prepared[index];
@@ -1716,10 +1812,7 @@ export function organizationSkillService(
         skill.key = deriveCanonicalSkillKey(orgId, skill);
       }
     }
-    const installedSkills = await Promise.all(
-      filteredSkills.map((skill) => installImportedSkill(orgId, skill)),
-    );
-    const imported = await upsertImportedSkills(orgId, installedSkills);
+    const imported = await installAndUpsertImportedSkills(orgId, filteredSkills);
     return { imported, warnings };
   }
 

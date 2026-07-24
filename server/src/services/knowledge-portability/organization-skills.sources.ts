@@ -764,11 +764,14 @@ export async function readUrlSkillImports(
       ? allPaths.filter((entry) => entry.startsWith(basePrefix))
       : allPaths;
     const relativePaths = scopedPaths.map((entry) => basePrefix ? entry.slice(basePrefix.length) : entry);
-    const filteredPaths = parsed.filePath
-      ? relativePaths.filter((entry) => entry === path.posix.relative(parsed.basePath || ".", parsed.filePath!))
-      : relativePaths;
+    const selectedFilePath = parsed.filePath
+      ? path.posix.relative(parsed.basePath || ".", parsed.filePath)
+      : null;
+    const filteredPaths = relativePaths;
     const skillPaths = filteredPaths.filter(
-      (entry) => path.posix.basename(entry).toLowerCase() === "skill.md",
+      (entry) =>
+        path.posix.basename(entry).toLowerCase() === "skill.md"
+        && (!selectedFilePath || entry === selectedFilePath),
     );
     if (skillPaths.length === 0) {
       throw unprocessable(

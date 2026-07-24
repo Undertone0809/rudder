@@ -208,6 +208,42 @@ describe("organization skill local installations", () => {
       .resolves.toBe("echo local\n");
   });
 
+  it("installs sibling files when importing a GitHub blob SKILL.md URL", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Blob Skill Org",
+      urlKey: "blob-skill-org",
+      issuePrefix: "BLO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/git/trees/")) return githubTreeResponse();
+      if (url.endsWith("/SKILL.md")) {
+        return new Response("---\nname: Offline Skill\ndescription: Blob import.\n---\n");
+      }
+      if (url.endsWith("/references/guide.md")) return new Response("# Blob guide\n");
+      if (url.endsWith("/scripts/run.sh")) return new Response("echo blob\n");
+      return new Response("not found", { status: 404 });
+    }));
+
+    const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+    const sourceUrl = `https://github.com/acme/skills/blob/${PINNED_REF}/skills/offline-skill/SKILL.md`;
+    const skill = (await skillSvc.importFromSource(orgId, sourceUrl)).imported[0]!;
+
+    expect(skill.fileInventory).toEqual([
+      { path: "references/guide.md", kind: "reference" },
+      { path: "scripts/run.sh", kind: "script" },
+      { path: "SKILL.md", kind: "skill" },
+    ]);
+    await expect(skillSvc.readFile(orgId, skill.id, "references/guide.md")).resolves.toMatchObject({
+      content: "# Blob guide\n",
+    });
+  });
+
   it("edits an installed remote skill and realizes the edited content", { timeout: 30_000 }, async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -461,6 +497,84 @@ describe("organization skill local installations", () => {
     });
   });
 
+  it("restores the previous installation when update persistence fails", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Persistence Rollback Org",
+      urlKey: "persistence-rollback-org",
+      issuePrefix: "PRO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/git/trees/")) return githubTreeResponse();
+      if (url.endsWith("/SKILL.md")) {
+        return new Response("---\nname: Offline Skill\ndescription: Stable.\n---\n\n# Stable\n");
+      }
+      if (url.endsWith("/references/guide.md")) return new Response("# Stable guide\n");
+      if (url.endsWith("/scripts/run.sh")) return new Response("echo stable\n");
+      return new Response("not found", { status: 404 });
+    }));
+
+    const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+    const pinnedSource = `https://github.com/acme/skills/tree/${PINNED_REF}/skills/offline-skill`;
+    const skill = (await skillSvc.importFromSource(orgId, pinnedSource)).imported[0]!;
+    await db
+      .update(organizationSkills)
+      .set({
+        sourceLocator: "https://github.com/acme/skills/tree/main/skills/offline-skill",
+        metadata: { ...(skill.metadata ?? {}), trackingRef: "main" },
+      })
+      .where(eq(organizationSkills.id, skill.id));
+
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/commits/main")) {
+        return new Response(JSON.stringify({ sha: UPDATED_REF }));
+      }
+      if (url.includes("/git/trees/")) return githubTreeResponse();
+      if (url.endsWith("/SKILL.md")) {
+        return new Response("---\nname: Offline Skill\ndescription: New.\n---\n\n# New\n");
+      }
+      if (url.endsWith("/references/guide.md")) return new Response("# New guide\n");
+      if (url.endsWith("/scripts/run.sh")) return new Response("echo new\n");
+      return new Response("not found", { status: 404 });
+    }));
+
+    const realUpdate = db.update.bind(db);
+    const updateSpy = vi.spyOn(db, "update").mockImplementation(((table: unknown) => {
+      const builder = realUpdate(table as never) as unknown as {
+        set: (values: Record<string, unknown>) => unknown;
+      };
+      const realSet = builder.set.bind(builder);
+      builder.set = (values: Record<string, unknown>) => {
+        if (values.sourceRef === UPDATED_REF) {
+          throw new Error("simulated database persistence failure");
+        }
+        return realSet(values);
+      };
+      return builder;
+    }) as typeof db.update);
+
+    try {
+      await expect(skillSvc.installUpdate(orgId, skill.id)).rejects.toThrow(
+        "simulated database persistence failure",
+      );
+    } finally {
+      updateSpy.mockRestore();
+    }
+
+    await expect(skillSvc.readFile(orgId, skill.id, "SKILL.md")).resolves.toMatchObject({
+      content: "---\nname: Offline Skill\ndescription: Stable.\n---\n\n# Stable\n",
+    });
+    await expect(skillSvc.readFile(orgId, skill.id, "references/guide.md")).resolves.toMatchObject({
+      content: "# Stable guide\n",
+    });
+  });
+
   it("deduplicates concurrent legacy remote migration", { timeout: 30_000 }, async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -548,5 +662,94 @@ describe("organization skill local installations", () => {
       .where(eq(organizationSkills.id, skillId))
       .then((rows) => rows[0]!);
     expect(stored.metadata).toMatchObject({ installationVersion: 1 });
+  });
+
+  it("migrates a legacy branch row from its pinned sourceRef", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const skillId = randomUUID();
+    const skillKey = "acme/skills/pinned-legacy";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Pinned Legacy Org",
+      urlKey: "pinned-legacy-org",
+      issuePrefix: "PLO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Pinned Migrator",
+      workspaceKey: "pinned-migrator",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+    });
+    await db.insert(organizationSkills).values({
+      id: skillId,
+      orgId,
+      key: skillKey,
+      slug: "pinned-legacy",
+      name: "Pinned Legacy",
+      description: "Pinned legacy row.",
+      markdown: "---\nname: Pinned Legacy\n---\n",
+      sourceType: "github",
+      sourceLocator: "https://github.com/acme/skills/tree/main/skills/pinned-legacy",
+      sourceRef: PINNED_REF,
+      trustLevel: "markdown_only",
+      compatibility: "compatible",
+      fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+      metadata: {
+        sourceKind: "github",
+        owner: "acme",
+        repo: "skills",
+        ref: PINNED_REF,
+        trackingRef: "main",
+        repoSkillDir: "skills/pinned-legacy",
+      },
+    });
+
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/commits/main")) {
+        return new Response(JSON.stringify({ sha: UPDATED_REF }));
+      }
+      if (url.includes("/git/trees/")) {
+        return new Response(JSON.stringify({
+          tree: [{ path: "skills/pinned-legacy/SKILL.md", type: "blob" }],
+        }));
+      }
+      if (url.endsWith("/SKILL.md")) {
+        return new Response("---\nname: Pinned Legacy\n---\n\n# Pinned bytes\n");
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+    await skillSvc.listRealizedSkillEntriesForAgent(
+      orgId,
+      agentId,
+      "codex_local",
+      {},
+      [`org:${skillKey}`],
+    );
+
+    expect(fetchMock.mock.calls.some(([input]) =>
+      String(input).includes(`/git/trees/${PINNED_REF}`))).toBe(true);
+    expect(fetchMock.mock.calls.some(([input]) =>
+      String(input).includes(`/git/trees/${UPDATED_REF}`))).toBe(false);
+    const stored = await db
+      .select()
+      .from(organizationSkills)
+      .where(eq(organizationSkills.id, skillId))
+      .then((rows) => rows[0]!);
+    expect(stored.sourceRef).toBe(PINNED_REF);
+    expect(stored.metadata).toMatchObject({
+      ref: PINNED_REF,
+      installationVersion: 1,
+    });
   });
 });
