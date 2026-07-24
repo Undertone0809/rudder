@@ -94,6 +94,14 @@ function githubTreeResponse() {
   }));
 }
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe("organization skill local installations", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
@@ -126,6 +134,40 @@ describe("organization skill local installations", () => {
     if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
     else process.env.RUDDER_HOME = previousRudderHome;
   });
+
+  async function createUpdatableSkill(orgId: string, name: string) {
+    await db.insert(organizations).values({
+      id: orgId,
+      name,
+      urlKey: `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${orgId.slice(0, 8)}`,
+      issuePrefix: "RCE",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/git/trees/")) return githubTreeResponse();
+      if (url.endsWith("/SKILL.md")) {
+        return new Response("---\nname: Offline Skill\ndescription: Stable.\n---\n\n# Stable\n");
+      }
+      if (url.endsWith("/references/guide.md")) return new Response("# Stable guide\n");
+      if (url.endsWith("/scripts/run.sh")) return new Response("echo stable\n");
+      return new Response("not found", { status: 404 });
+    }));
+    const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+    const skill = (await skillSvc.importFromSource(
+      orgId,
+      `https://github.com/acme/skills/tree/${PINNED_REF}/skills/offline-skill`,
+    )).imported[0]!;
+    await db
+      .update(organizationSkills)
+      .set({
+        sourceLocator: "https://github.com/acme/skills/tree/main/skills/offline-skill",
+        metadata: { ...(skill.metadata ?? {}), trackingRef: "main" },
+      })
+      .where(eq(organizationSkills.id, skill.id));
+    return { skillSvc, skill };
+  }
 
   it("installs the complete remote tree once and reuses it offline", { timeout: 30_000 }, async () => {
     const orgId = randomUUID();
@@ -300,6 +342,153 @@ describe("organization skill local installations", () => {
     const installedPath = runtimeEntries.find((entry) => entry.key === `org:${skill.key}`)?.source;
     await expect(fs.promises.readFile(path.join(installedPath!, "SKILL.md"), "utf8"))
       .resolves.toBe(edited);
+  });
+
+  it("rejects unsafe and uninventoried edit paths on every host platform", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const localSkillDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rudder-safe-edit-path-"));
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Safe Edit Path Org",
+      urlKey: "safe-edit-path-org",
+      issuePrefix: "SEP",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const original = "---\nname: Safe Edit Path\n---\n\n# Original\n";
+    await fs.promises.mkdir(path.join(localSkillDir, "references"), { recursive: true });
+    await fs.promises.writeFile(path.join(localSkillDir, "SKILL.md"), original, "utf8");
+    await fs.promises.writeFile(
+      path.join(localSkillDir, "references", "guide.md"),
+      "# Guide\n",
+      "utf8",
+    );
+
+    try {
+      const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+      const skill = (await skillSvc.importFromSource(orgId, localSkillDir)).imported[0]!;
+      const unsafePaths = [
+        "C:\\SKILL.md",
+        "\\\\server\\share\\SKILL.md",
+        "/SKILL.md",
+        "../SKILL.md",
+        "references/../../SKILL.md",
+        "references/\0guide.md",
+        "not-in-inventory.md",
+      ];
+
+      for (const unsafePath of unsafePaths) {
+        await expect(skillSvc.updateFile(
+          orgId,
+          skill.id,
+          unsafePath,
+          "# Escaped\n",
+        )).rejects.toThrow();
+      }
+      await expect(fs.promises.readFile(path.join(localSkillDir, "SKILL.md"), "utf8"))
+        .resolves.toBe(original);
+      await expect(
+        fs.promises.stat(path.join(localSkillDir, "not-in-inventory.md")).catch(() => null),
+      ).resolves.toBeNull();
+    } finally {
+      await fs.promises.rm(localSkillDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects inventoried symlinks that resolve outside the skill root", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const localSkillDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rudder-symlink-root-"));
+    const outsideDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rudder-symlink-outside-"));
+    const outsideFile = path.join(outsideDir, "outside.md");
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Symlink Containment Org",
+      urlKey: "symlink-containment-org",
+      issuePrefix: "SCO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await fs.promises.writeFile(
+      path.join(localSkillDir, "SKILL.md"),
+      "---\nname: Symlink Containment\n---\n\n# Skill\n",
+      "utf8",
+    );
+    await fs.promises.writeFile(outsideFile, "# Outside\n", "utf8");
+    await fs.promises.symlink(outsideFile, path.join(localSkillDir, "escape.md"));
+
+    try {
+      const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+      const skill = (await skillSvc.importFromSource(orgId, localSkillDir)).imported[0]!;
+      await db
+        .update(organizationSkills)
+        .set({
+          fileInventory: [
+            ...skill.fileInventory,
+            { path: "escape.md", kind: "reference" },
+          ],
+        })
+        .where(eq(organizationSkills.id, skill.id));
+
+      await expect(skillSvc.readFile(orgId, skill.id, "escape.md")).rejects.toThrow(
+        "Skill file not found",
+      );
+      await expect(skillSvc.updateFile(
+        orgId,
+        skill.id,
+        "escape.md",
+        "# Escaped\n",
+      )).rejects.toThrow("Skill file not found");
+      await expect(fs.promises.readFile(outsideFile, "utf8")).resolves.toBe("# Outside\n");
+    } finally {
+      await fs.promises.rm(localSkillDir, { recursive: true, force: true });
+      await fs.promises.rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores edited bytes when edit metadata persistence fails", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const localSkillDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rudder-edit-rollback-"));
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Edit Rollback Org",
+      urlKey: "edit-rollback-org",
+      issuePrefix: "ERO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const original = "---\nname: Edit Rollback\n---\n\n# Original\n";
+    const edited = "---\nname: Edit Rollback\n---\n\n# Edited\n";
+    await fs.promises.writeFile(path.join(localSkillDir, "SKILL.md"), original, "utf8");
+
+    try {
+      const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+      const skill = (await skillSvc.importFromSource(orgId, localSkillDir)).imported[0]!;
+      const realUpdate = db.update.bind(db);
+      const updateSpy = vi.spyOn(db, "update").mockImplementation(((table: unknown) => {
+        const builder = realUpdate(table as never) as unknown as {
+          set: (values: Record<string, unknown>) => unknown;
+        };
+        const realSet = builder.set.bind(builder);
+        builder.set = (values: Record<string, unknown>) => {
+          if (values.markdown === edited) throw new Error("simulated edit persistence failure");
+          return realSet(values);
+        };
+        return builder;
+      }) as typeof db.update);
+      try {
+        await expect(skillSvc.updateFile(orgId, skill.id, "SKILL.md", edited)).rejects.toThrow(
+          "simulated edit persistence failure",
+        );
+      } finally {
+        updateSpy.mockRestore();
+      }
+
+      await expect(fs.promises.readFile(path.join(localSkillDir, "SKILL.md"), "utf8"))
+        .resolves.toBe(original);
+      await expect(skillSvc.getById(skill.id)).resolves.toMatchObject({ markdown: original });
+    } finally {
+      await fs.promises.rm(localSkillDir, { recursive: true, force: true });
+    }
   });
 
   it("keeps Rudder-bundled skills read-only at the service boundary", { timeout: 30_000 }, async () => {
@@ -1034,6 +1223,191 @@ describe("organization skill local installations", () => {
     await expect(skillSvc.readFile(orgId, skill.id, "references/guide.md")).resolves.toMatchObject({
       content: "# Stable guide\n",
     });
+  });
+
+  it("surfaces an explicit consistency error when rollback cannot restore the backup", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const { skillSvc, skill } = await createUpdatableSkill(orgId, "Rollback Failure Org");
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/commits/main")) {
+        return new Response(JSON.stringify({ sha: UPDATED_REF }));
+      }
+      if (url.includes("/git/trees/")) return githubTreeResponse();
+      if (url.endsWith("/SKILL.md")) {
+        return new Response("---\nname: Offline Skill\ndescription: New.\n---\n\n# New\n");
+      }
+      if (url.endsWith("/references/guide.md")) return new Response("# New guide\n");
+      if (url.endsWith("/scripts/run.sh")) return new Response("echo new\n");
+      return new Response("not found", { status: 404 });
+    }));
+
+    const realUpdate = db.update.bind(db);
+    const updateSpy = vi.spyOn(db, "update").mockImplementation(((table: unknown) => {
+      const builder = realUpdate(table as never) as unknown as {
+        set: (values: Record<string, unknown>) => unknown;
+      };
+      const realSet = builder.set.bind(builder);
+      builder.set = (values: Record<string, unknown>) => {
+        if (values.sourceRef === UPDATED_REF) {
+          throw new Error("simulated database persistence failure");
+        }
+        return realSet(values);
+      };
+      return builder;
+    }) as typeof db.update);
+    const realRename = fs.promises.rename.bind(fs.promises);
+    const renameSpy = vi.spyOn(fs.promises, "rename").mockImplementation(async (from, to) => {
+      if (String(from).includes(".backup-")) {
+        throw new Error("simulated backup restore failure");
+      }
+      return realRename(from, to);
+    });
+
+    try {
+      await expect(skillSvc.installUpdate(orgId, skill.id)).rejects.toThrow(
+        /consistency.*rollback|rollback.*consistency/i,
+      );
+    } finally {
+      updateSpy.mockRestore();
+      renameSpy.mockRestore();
+    }
+
+    await expect(skillSvc.getById(skill.id)).resolves.toMatchObject({
+      sourceRef: PINNED_REF,
+    });
+  });
+
+  it("does not lose an edit racing an installed-directory swap", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const { skillSvc, skill } = await createUpdatableSkill(orgId, "Edit Swap Race Org");
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/commits/main")) {
+        return new Response(JSON.stringify({ sha: UPDATED_REF }));
+      }
+      if (url.includes("/git/trees/")) return githubTreeResponse();
+      if (url.endsWith("/SKILL.md")) {
+        return new Response("---\nname: Offline Skill\ndescription: Updated.\n---\n\n# Updated\n");
+      }
+      if (url.endsWith("/references/guide.md")) return new Response("# Updated guide\n");
+      if (url.endsWith("/scripts/run.sh")) return new Response("echo updated\n");
+      return new Response("not found", { status: 404 });
+    }));
+
+    const backupRenameStarted = deferred();
+    const releaseBackupRename = deferred();
+    const editWriteStarted = deferred();
+    const edited = "---\nname: Offline Skill\ndescription: Edited.\n---\n\n# Edited wins\n";
+    const realRename = fs.promises.rename.bind(fs.promises);
+    const renameSpy = vi.spyOn(fs.promises, "rename").mockImplementation(async (from, to) => {
+      if (String(to).includes(".backup-")) {
+        backupRenameStarted.resolve();
+        await releaseBackupRename.promise;
+      }
+      return realRename(from, to);
+    });
+    const realWriteFile = fs.promises.writeFile.bind(fs.promises);
+    const writeSpy = vi.spyOn(fs.promises, "writeFile").mockImplementation(async (...args) => {
+      if (args[1] === edited) editWriteStarted.resolve();
+      return realWriteFile(...args);
+    });
+
+    try {
+      const updating = skillSvc.installUpdate(orgId, skill.id);
+      await backupRenameStarted.promise;
+      const editing = skillSvc.updateFile(orgId, skill.id, "SKILL.md", edited);
+      await Promise.race([
+        editWriteStarted.promise,
+        new Promise<void>((resolve) => setTimeout(resolve, 100)),
+      ]);
+      releaseBackupRename.resolve();
+      await expect(updating).resolves.toMatchObject({ id: skill.id });
+      await expect(editing).resolves.toMatchObject({ content: edited });
+      await expect(skillSvc.readFile(orgId, skill.id, "SKILL.md")).resolves.toMatchObject({
+        content: edited,
+      });
+    } finally {
+      releaseBackupRename.resolve();
+      renameSpy.mockRestore();
+      writeSpy.mockRestore();
+    }
+  });
+
+  it("does not recreate a deleted skill when an update download finishes later", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const { skillSvc, skill } = await createUpdatableSkill(orgId, "Delete Update Race Org");
+    const updateDownloadStarted = deferred();
+    const releaseUpdateDownload = deferred();
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/commits/main")) {
+        return new Response(JSON.stringify({ sha: UPDATED_REF }));
+      }
+      if (url.includes("/git/trees/")) return githubTreeResponse();
+      if (url.endsWith("/SKILL.md")) {
+        updateDownloadStarted.resolve();
+        await releaseUpdateDownload.promise;
+        return new Response("---\nname: Offline Skill\ndescription: Late.\n---\n\n# Late\n");
+      }
+      if (url.endsWith("/references/guide.md")) return new Response("# Late guide\n");
+      if (url.endsWith("/scripts/run.sh")) return new Response("echo late\n");
+      return new Response("not found", { status: 404 });
+    }));
+
+    const updating = skillSvc.installUpdate(orgId, skill.id);
+    await updateDownloadStarted.promise;
+    await expect(skillSvc.deleteSkill(orgId, skill.id)).resolves.toMatchObject({ id: skill.id });
+    releaseUpdateDownload.resolve();
+
+    await expect(updating).rejects.toThrow(/changed|no longer exists/i);
+    await expect(skillSvc.getByKey(orgId, skill.key)).resolves.toBeNull();
+  });
+
+  it("does not overwrite a local replacement when an update download finishes later", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const localSkillDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rudder-update-local-race-"));
+    const { skillSvc, skill } = await createUpdatableSkill(orgId, "Local Update Race Org");
+    await fs.promises.writeFile(
+      path.join(localSkillDir, "SKILL.md"),
+      "---\nkey: acme/skills/offline-skill\nname: Offline Skill\n---\n\n# Local wins\n",
+      "utf8",
+    );
+    const updateDownloadStarted = deferred();
+    const releaseUpdateDownload = deferred();
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/commits/main")) {
+        return new Response(JSON.stringify({ sha: UPDATED_REF }));
+      }
+      if (url.includes("/git/trees/")) return githubTreeResponse();
+      if (url.endsWith("/SKILL.md")) {
+        updateDownloadStarted.resolve();
+        await releaseUpdateDownload.promise;
+        return new Response("---\nname: Offline Skill\ndescription: Late.\n---\n\n# Late\n");
+      }
+      if (url.endsWith("/references/guide.md")) return new Response("# Late guide\n");
+      if (url.endsWith("/scripts/run.sh")) return new Response("echo late\n");
+      return new Response("not found", { status: 404 });
+    }));
+
+    try {
+      const updating = skillSvc.installUpdate(orgId, skill.id);
+      await updateDownloadStarted.promise;
+      const local = (await skillSvc.importFromSource(orgId, localSkillDir)).imported[0]!;
+      releaseUpdateDownload.resolve();
+
+      await expect(updating).rejects.toThrow(/changed/i);
+      await expect(skillSvc.getById(local.id)).resolves.toMatchObject({
+        sourceType: "local_path",
+        sourceLocator: path.resolve(localSkillDir),
+      });
+      await expect(fs.promises.readFile(path.join(localSkillDir, "SKILL.md"), "utf8"))
+        .resolves.toContain("# Local wins");
+    } finally {
+      releaseUpdateDownload.resolve();
+      await fs.promises.rm(localSkillDir, { recursive: true, force: true });
+    }
   });
 
   it("deduplicates concurrent legacy remote migration", { timeout: 30_000 }, async () => {

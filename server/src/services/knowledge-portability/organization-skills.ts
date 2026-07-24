@@ -80,6 +80,7 @@ import {
   listStaleCommunityPresetSkillIds,
   normalizePackageFileMap,
   normalizePortablePath,
+  normalizeSafeRelativeSkillPath,
   normalizeSelectionRef,
   normalizeSkillDescription,
   normalizeSkillDirectory,
@@ -138,15 +139,7 @@ export function organizationSkillService(
   });
 
   function normalizeInstalledFilePath(relativePath: string) {
-    const portable = relativePath.replace(/\\/g, "/");
-    if (
-      portable.startsWith("/")
-      || /^[A-Za-z]:\//.test(portable)
-      || portable.split("/").some((segment) => segment === "..")
-    ) {
-      throw unprocessable(`Invalid skill file path: ${relativePath}`);
-    }
-    const normalized = normalizePortablePath(portable);
+    const normalized = normalizeSafeRelativeSkillPath(relativePath);
     if (!normalized) {
       throw unprocessable(`Invalid skill file path: ${relativePath}`);
     }
@@ -250,6 +243,65 @@ export function organizationSkillService(
     const backup = path.join(parent, `.${path.basename(target)}.backup-${randomUUID()}`);
     let movedExisting = false;
 
+    async function restorePreviousInstallation(originalError: unknown) {
+      const displaced = path.join(
+        parent,
+        `.${path.basename(target)}.rollback-displaced-${randomUUID()}`,
+      );
+      let movedCurrentTarget = false;
+      try {
+        if (await fs.stat(target).catch(() => null)) {
+          await fs.rename(target, displaced);
+          movedCurrentTarget = true;
+        }
+        await fs.rename(backup, target);
+        movedExisting = false;
+        if (movedCurrentTarget) {
+          await fs.rm(displaced, { recursive: true, force: true });
+          movedCurrentTarget = false;
+        }
+      } catch (rollbackError) {
+        if (
+          movedCurrentTarget
+          && !(await fs.stat(target).catch(() => null))
+        ) {
+          await fs.rename(displaced, target).catch(() => {});
+        }
+        throw conflict(
+          "Organization skill installation consistency error: rollback could not restore the previous installation.",
+          {
+            target,
+            backup,
+            originalError: originalError instanceof Error
+              ? originalError.message
+              : String(originalError),
+            rollbackError: rollbackError instanceof Error
+              ? rollbackError.message
+              : String(rollbackError),
+          },
+        );
+      }
+    }
+
+    async function removeFailedInstallation(originalError: unknown) {
+      try {
+        await fs.rm(target, { recursive: true, force: true });
+      } catch (rollbackError) {
+        throw conflict(
+          "Organization skill installation consistency error: rollback could not remove the failed installation.",
+          {
+            target,
+            originalError: originalError instanceof Error
+              ? originalError.message
+              : String(originalError),
+            rollbackError: rollbackError instanceof Error
+              ? rollbackError.message
+              : String(rollbackError),
+          },
+        );
+      }
+    }
+
     await fs.mkdir(staging, { recursive: true });
     try {
       await mapWithConcurrency(skill.fileInventory, 8, async (entry) => {
@@ -281,12 +333,7 @@ export function organizationSkillService(
         await fs.rename(staging, target);
       } catch (error) {
         if (movedExisting) {
-          try {
-            await fs.rename(backup, target);
-            movedExisting = false;
-          } catch {
-            // Preserve the backup for operator recovery if the rollback rename fails.
-          }
+          await restorePreviousInstallation(error);
         }
         throw error;
       }
@@ -294,19 +341,15 @@ export function organizationSkillService(
       try {
         persisted = await persist();
       } catch (error) {
-        await fs.rm(target, { recursive: true, force: true }).catch(() => {});
         if (movedExisting) {
-          try {
-            await fs.rename(backup, target);
-            movedExisting = false;
-          } catch {
-            // Preserve the backup for operator recovery if rollback cannot restore it.
-          }
+          await restorePreviousInstallation(error);
+        } else {
+          await removeFailedInstallation(error);
         }
         throw error;
       }
       if (movedExisting) {
-        await fs.rm(backup, { recursive: true, force: true }).catch(() => {});
+        await fs.rm(backup, { recursive: true, force: true });
         movedExisting = false;
       }
       return persisted;
@@ -364,6 +407,52 @@ export function organizationSkillService(
       return directory;
     }
     return null;
+  }
+
+  function isStrictlyWithinPath(root: string, target: string) {
+    const relative = path.relative(root, target);
+    return Boolean(relative)
+      && !relative.startsWith("..")
+      && !path.isAbsolute(relative);
+  }
+
+  async function resolveValidatedLocalSkillFilePath(
+    skill: OrganizationSkill,
+    relativePath: string,
+  ) {
+    const absolutePath = resolveLocalSkillFilePath(skill, relativePath);
+    const skillRoot = normalizeSkillDirectory(skill);
+    if (!absolutePath || !skillRoot) return null;
+    const realRoot = await fs.realpath(skillRoot).catch(() => null);
+    if (!realRoot) return null;
+
+    const targetEntry = await fs.lstat(absolutePath).catch(() => null);
+    if (targetEntry) {
+      const realTarget = await fs.realpath(absolutePath).catch(() => null);
+      return realTarget && isStrictlyWithinPath(realRoot, realTarget)
+        ? absolutePath
+        : null;
+    }
+
+    let existingAncestor = path.dirname(absolutePath);
+    while (
+      !(await fs.lstat(existingAncestor).catch(() => null))
+      && existingAncestor !== path.dirname(existingAncestor)
+    ) {
+      existingAncestor = path.dirname(existingAncestor);
+    }
+    const realAncestor = await fs.realpath(existingAncestor).catch(() => null);
+    if (
+      !realAncestor
+      || (realAncestor !== realRoot && !isStrictlyWithinPath(realRoot, realAncestor))
+    ) {
+      return null;
+    }
+    const projectedTarget = path.resolve(
+      realAncestor,
+      path.relative(existingAncestor, absolutePath),
+    );
+    return isStrictlyWithinPath(realRoot, projectedTarget) ? absolutePath : null;
   }
 
   async function assertDirectLocalSourceIsUnmanaged(orgId: string, skill: ImportedSkill) {
@@ -1276,7 +1365,8 @@ export function organizationSkillService(
     const skill = await getById(skillId);
     if (!skill || skill.orgId !== orgId) return null;
 
-    const normalizedPath = normalizePortablePath(relativePath || "SKILL.md");
+    const normalizedPath = normalizeSafeRelativeSkillPath(relativePath || "SKILL.md");
+    if (!normalizedPath) throw notFound("Skill file not found");
     const fileEntry = skill.fileInventory.find((entry) => entry.path === normalizedPath);
     if (!fileEntry) {
       throw notFound("Skill file not found");
@@ -1287,7 +1377,7 @@ export function organizationSkillService(
     const localSkillDirectory = normalizeSkillDirectory(skill);
 
     if (localSkillDirectory) {
-      const absolutePath = resolveLocalSkillFilePath(skill, normalizedPath);
+      const absolutePath = await resolveValidatedLocalSkillFilePath(skill, normalizedPath);
       if (absolutePath) {
         content = await fs.readFile(absolutePath, "utf8");
       } else if (normalizedPath === "SKILL.md") {
@@ -1379,7 +1469,7 @@ export function organizationSkillService(
 
   async function updateFile(orgId: string, skillId: string, relativePath: string, content: string): Promise<OrganizationSkillFileDetail> {
     await ensureSkillInventoryCurrent(orgId);
-    let skill = await getById(skillId);
+    const skill = await getById(skillId);
     if (!skill || skill.orgId !== orgId) throw notFound("Skill not found");
 
     const source = deriveSkillSourceInfo(skill);
@@ -1387,37 +1477,86 @@ export function organizationSkillService(
       throw unprocessable(source.editableReason ?? "This skill cannot be edited.");
     }
     await ensureInstalledSkill(orgId, skill);
-    skill = await getById(skillId);
-    if (!skill || skill.orgId !== orgId) throw notFound("Skill not found");
+    return withSkillMutationLock(orgId, skill.key, async () => {
+      const current = await getById(skillId);
+      if (!current || current.orgId !== orgId) throw notFound("Skill not found");
+      const currentSource = deriveSkillSourceInfo(current);
+      if (!currentSource.editable) {
+        throw unprocessable(currentSource.editableReason ?? "This skill cannot be edited.");
+      }
 
-    const normalizedPath = normalizePortablePath(relativePath);
-    const absolutePath = resolveLocalSkillFilePath(skill, normalizedPath);
-    if (!absolutePath) throw notFound("Skill file not found");
+      const normalizedPath = normalizeSafeRelativeSkillPath(relativePath);
+      if (!normalizedPath) throw notFound("Skill file not found");
+      if (!current.fileInventory.some((entry) => entry.path === normalizedPath)) {
+        throw notFound("Skill file not found");
+      }
+      const absolutePath = await resolveValidatedLocalSkillFilePath(current, normalizedPath);
+      if (!absolutePath) throw notFound("Skill file not found");
 
-    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-    await fs.writeFile(absolutePath, content, "utf8");
+      let previousContent: Buffer | null = null;
+      let fileExisted = false;
+      try {
+        previousContent = await fs.readFile(absolutePath);
+        fileExisted = true;
+      } catch (error) {
+        if (
+          !(error instanceof Error)
+          || !("code" in error)
+          || error.code !== "ENOENT"
+        ) {
+          throw error;
+        }
+      }
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(absolutePath, content, "utf8");
 
-    if (normalizedPath === "SKILL.md") {
-      const parsed = parseFrontmatterMarkdown(content);
-      await db
-        .update(organizationSkills)
-        .set({
-          name: asString(parsed.frontmatter.name) ?? skill.name,
-          description: normalizeSkillDescription(parsed.frontmatter.description) ?? skill.description,
-          markdown: content,
-          updatedAt: new Date(),
-        })
-        .where(eq(organizationSkills.id, skill.id));
-    } else {
-      await db
-        .update(organizationSkills)
-        .set({ updatedAt: new Date() })
-        .where(eq(organizationSkills.id, skill.id));
-    }
+      try {
+        if (normalizedPath === "SKILL.md") {
+          const parsed = parseFrontmatterMarkdown(content);
+          await db
+            .update(organizationSkills)
+            .set({
+              name: asString(parsed.frontmatter.name) ?? current.name,
+              description: normalizeSkillDescription(parsed.frontmatter.description)
+                ?? current.description,
+              markdown: content,
+              updatedAt: new Date(),
+            })
+            .where(eq(organizationSkills.id, current.id));
+        } else {
+          await db
+            .update(organizationSkills)
+            .set({ updatedAt: new Date() })
+            .where(eq(organizationSkills.id, current.id));
+        }
+      } catch (persistenceError) {
+        try {
+          if (fileExisted) {
+            await fs.writeFile(absolutePath, previousContent!);
+          } else {
+            await fs.rm(absolutePath, { force: true });
+          }
+        } catch (rollbackError) {
+          throw conflict(
+            "Organization skill edit consistency error: rollback could not restore the previous file.",
+            {
+              path: normalizedPath,
+              persistenceError: persistenceError instanceof Error
+                ? persistenceError.message
+                : String(persistenceError),
+              rollbackError: rollbackError instanceof Error
+                ? rollbackError.message
+                : String(rollbackError),
+            },
+          );
+        }
+        throw persistenceError;
+      }
 
-    const detail = await readFile(orgId, skillId, normalizedPath);
-    if (!detail) throw notFound("Skill file not found");
-    return detail;
+      const detail = await readFile(orgId, skillId, normalizedPath);
+      if (!detail) throw notFound("Skill file not found");
+      return detail;
+    });
   }
 
   async function syncWorkspaceFileChange(orgId: string, workspaceFilePath: string, content: string): Promise<void> {
@@ -1488,6 +1627,11 @@ export function organizationSkillService(
         },
       },
       async (installed) => {
+        const current = await getById(skill.id);
+        if (!current) throw conflict(`Skill ${skill.key} no longer exists.`);
+        if (!hasUnchangedInstallationSource(current, skill)) {
+          throw conflict(`Skill ${skill.key} changed while update was downloading.`);
+        }
         const [persisted] = await upsertImportedSkills(orgId, [installed]);
         return persisted ?? null;
       },
@@ -1925,27 +2069,22 @@ export function organizationSkillService(
   }
 
   async function deleteSkill(orgId: string, skillId: string): Promise<OrganizationSkill | null> {
-    const row = await db
-      .select()
-      .from(organizationSkills)
-      .where(and(eq(organizationSkills.id, skillId), eq(organizationSkills.orgId, orgId)))
-      .then((rows) => rows[0] ?? null);
-    if (!row) return null;
+    const initial = await getById(skillId);
+    if (!initial || initial.orgId !== orgId) return null;
+    return withSkillMutationLock(orgId, initial.key, async () => {
+      const skill = await getById(skillId);
+      if (!skill || skill.orgId !== orgId) return null;
+      if (isBundledRudderSourceKind(asString(getSkillMeta(skill).sourceKind))) {
+        throw unprocessable("Bundled Rudder skills are read-only.");
+      }
 
-    const skill = toCompanySkill(row);
-    if (isBundledRudderSourceKind(asString(getSkillMeta(skill).sourceKind))) {
-      throw unprocessable("Bundled Rudder skills are read-only.");
-    }
-
-    await enabledSkills.removeSkillKeys(orgId, [skill.key]);
-
-    await db
-      .delete(organizationSkills)
-      .where(eq(organizationSkills.id, skillId));
-
-    await removeInstalledSkillDirectory(orgId, skill);
-
-    return skill;
+      await enabledSkills.removeSkillKeys(orgId, [skill.key]);
+      await db
+        .delete(organizationSkills)
+        .where(eq(organizationSkills.id, skillId));
+      await removeInstalledSkillDirectory(orgId, skill);
+      return skill;
+    });
   }
 
   return {

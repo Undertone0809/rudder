@@ -302,6 +302,24 @@ export function normalizePortablePath(input: string) {
   return parts.join("/");
 }
 
+export function normalizeSafeRelativeSkillPath(input: string) {
+  if (input.includes("\0")) return null;
+  const portable = input.replace(/\\/g, "/");
+  if (
+    portable.startsWith("/")
+    || /^[A-Za-z]:\//.test(portable)
+  ) {
+    return null;
+  }
+  const parts: string[] = [];
+  for (const segment of portable.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") return null;
+    parts.push(segment);
+  }
+  return parts.length > 0 ? parts.join("/") : null;
+}
+
 export async function statPath(targetPath: string) {
   return fs.stat(targetPath).catch(() => null);
 }
@@ -1162,16 +1180,22 @@ export function resolveWorkspaceEditPath(orgId: string, sourcePath: string | nul
 }
 
 export function resolveLocalSkillFilePath(skill: OrganizationSkill, relativePath: string) {
-  const normalized = normalizePortablePath(relativePath);
+  const normalized = normalizeSafeRelativeSkillPath(relativePath);
+  if (!normalized) return null;
   const skillDir = normalizeSkillDirectory(skill);
-  if (skillDir) {
-    return path.resolve(skillDir, normalized);
+  const root = skillDir ?? (skill.sourceLocator ? path.resolve(skill.sourceLocator) : null);
+  if (!root) return null;
+  const absoluteRoot = path.resolve(root);
+  const target = path.resolve(absoluteRoot, normalized);
+  const relativeTarget = path.relative(absoluteRoot, target);
+  if (
+    !relativeTarget
+    || relativeTarget.startsWith("..")
+    || path.isAbsolute(relativeTarget)
+  ) {
+    return null;
   }
-
-  if (!skill.sourceLocator) return null;
-  const fallbackRoot = path.resolve(skill.sourceLocator);
-  const directPath = path.resolve(fallbackRoot, normalized);
-  return directPath;
+  return target;
 }
 
 export function inferLanguageFromPath(filePath: string) {
