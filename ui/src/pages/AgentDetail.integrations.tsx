@@ -27,15 +27,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Braces,
   CalendarDays,
-  Database,
   ExternalLink,
-  FileText,
   FolderOpen,
   Github,
   Inbox,
   KeyRound,
   Loader2,
-  MessageSquareText,
   PlugZap,
   Trash2,
   type LucideIcon,
@@ -43,6 +40,7 @@ import {
 import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { agentsApi } from "../api/agents";
 import { FeishuLogoIcon } from "../components/FeishuLogoIcon";
+import { McpProviderIcon } from "../components/McpProviderIcon";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime } from "../lib/utils";
@@ -119,8 +117,6 @@ type ManagedMcpProviderDefinition = {
   name: string;
   description: string;
   category: Extract<IntegrationCategory, "productivity" | "developer">;
-  logoSrc?: string;
-  Icon: LucideIcon;
 };
 
 const MANAGED_MCP_PROVIDER_INTEGRATIONS: ManagedMcpProviderDefinition[] = [
@@ -129,23 +125,18 @@ const MANAGED_MCP_PROVIDER_INTEGRATIONS: ManagedMcpProviderDefinition[] = [
     name: "Notion",
     description: "Search pages, databases, and operating notes through organization-managed MCP tools.",
     category: "productivity",
-    logoSrc: "/brands/notion-logo.svg",
-    Icon: FileText,
   },
   {
     id: "supabase",
     name: "Supabase",
     description: "Use the organization’s connected Supabase project through explicit MCP tool access.",
     category: "developer",
-    Icon: Database,
   },
   {
     id: "linear",
     name: "Linear",
     description: "Work with the organization’s Linear workspace through managed MCP tools.",
     category: "developer",
-    logoSrc: "/brands/linear-logo.svg",
-    Icon: MessageSquareText,
   },
 ];
 
@@ -879,11 +870,7 @@ function ManagedMcpProviderCard({
       className="grid gap-3 rounded-md border border-border bg-background/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
     >
       <div className="flex min-w-0 items-start gap-3">
-        <IntegrationBrandIcon
-          src={integration.logoSrc}
-          name={integration.name}
-          Icon={integration.Icon}
-        />
+        <McpProviderIcon provider={integration.id} />
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold text-foreground">{integration.name}</p>

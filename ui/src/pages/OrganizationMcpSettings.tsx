@@ -23,13 +23,13 @@ import {
   Loader2,
   Plus,
   RefreshCw,
-  Server,
   Trash2,
   Wrench,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { managedMcpApi } from "../api/managedMcp";
+import { McpProviderIcon } from "../components/McpProviderIcon";
 import { SettingsGroup, SettingsSection } from "../components/settings/SettingsScaffold";
 import { useToast } from "../context/ToastContext";
 import { readDesktopShell, type DesktopShellApi } from "../lib/desktop-shell";
@@ -433,6 +433,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
               <ProviderCard
                 key={provider.id}
                 testId={`mcp-provider-${provider.id}`}
+                provider={provider.id}
                 title={provider.label}
                 description={providerDescription(provider)}
                 actionLabel="Connect"
@@ -450,6 +451,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
           })}
           <ProviderCard
             testId="mcp-provider-custom"
+            provider="custom"
             title="Custom MCP"
             description="Connect a Codex-compatible STDIO or Streamable HTTP MCP server."
             actionLabel="Configure"
@@ -505,6 +507,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
 
 function ProviderCard({
   testId,
+  provider,
   title,
   description,
   actionLabel,
@@ -513,6 +516,7 @@ function ProviderCard({
   onAction,
 }: {
   testId?: string;
+  provider: McpConnectionProvider;
   title: string;
   description: string;
   actionLabel: string;
@@ -526,9 +530,7 @@ function ProviderCard({
       className="flex min-h-36 flex-col justify-between gap-3 rounded-md border border-border bg-background/40 p-3"
     >
       <div className="flex min-w-0 items-start gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
-          <Server className="size-5" />
-        </span>
+        <McpProviderIcon provider={provider} />
         <div className="min-w-0 space-y-1">
           <p className="text-sm font-semibold text-foreground">{title}</p>
           <p className="text-[13px] leading-5 text-muted-foreground">{description}</p>
