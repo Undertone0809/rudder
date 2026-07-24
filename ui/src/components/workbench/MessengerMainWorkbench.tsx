@@ -868,7 +868,7 @@ export function MessengerMainWorkbench({
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
+        "workspace-main-card flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
         className,
       )}
       data-testid="messenger-main-workbench"

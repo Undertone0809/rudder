@@ -812,7 +812,11 @@ export function LiveSurfaceRuntimeLayer() {
             aria-hidden={!visible}
             hidden={!visible}
             inert={inert ? true : undefined}
-            className="fixed flex min-h-0 flex-col overflow-hidden bg-[color:var(--surface-panel)]"
+            className={`fixed flex min-h-0 flex-col overflow-hidden bg-[color:var(--surface-panel)] ${
+              owner?.ownerId.startsWith("main:")
+                ? "rounded-b-[var(--desktop-workspace-radius)]"
+                : ""
+            }`}
             style={{
               height: rect ? `${rect.height}px` : "0px",
               left: rect ? `${rect.left}px` : "0px",

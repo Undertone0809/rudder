@@ -3023,10 +3023,17 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
 
       await browserUrlInput.focus();
       await pressElectronSurfaceShortcut(electronApp, "window", "=", [shortcutModifier]);
-      await page.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "visible", timeout: 15_000 });
-      assert.equal(await page.getByTestId("chat-side-panel-browser-zoom").textContent(), "110%");
+      await page.waitForFunction(async () => {
+        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+        if (!webview || typeof webview.getZoomFactor !== "function") return false;
+        return Math.abs((await webview.getZoomFactor()) - 1.1) < 0.001;
+      }, null, { timeout: 15_000 });
       await pressElectronSurfaceShortcut(electronApp, "window", "0", [shortcutModifier]);
-      await page.getByTestId("chat-side-panel-browser-zoom").waitFor({ state: "detached", timeout: 15_000 });
+      await page.waitForFunction(async () => {
+        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+        if (!webview || typeof webview.getZoomFactor !== "function") return false;
+        return Math.abs((await webview.getZoomFactor()) - 1) < 0.001;
+      }, null, { timeout: 15_000 });
 
       const browserTabCountBeforeShortcut = await sidePanel.getByTestId("chat-side-panel-tab").count();
       const nativeWindowCountBeforeShortcut = electronApp
@@ -3367,7 +3374,10 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         const browserToolbar = host?.querySelector(
           "[data-testid='chat-side-panel-browser-toolbar']",
         );
-        if (!root || !tablist || !panel || !anchor || !host || !browserSurface || !browserToolbar) {
+        const browserContent = host?.querySelector(
+          "[data-testid='chat-side-panel-browser-content']",
+        );
+        if (!root || !tablist || !panel || !anchor || !host || !browserSurface || !browserToolbar || !browserContent) {
           throw new Error("Main Workbench full-bleed geometry was unavailable");
         }
         const rect = (element) => {
@@ -3393,8 +3403,12 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         return {
           anchor: rect(anchor),
           browserSurfaceAlpha: backgroundAlpha(browserSurface),
+          browserToolbarFlowsDirectlyIntoContent:
+            browserToolbar.nextElementSibling === browserContent,
           browserToolbarAlpha: backgroundAlpha(browserToolbar),
           host: rect(host),
+          hostBottomLeftRadius: getComputedStyle(host).borderBottomLeftRadius,
+          hostBottomRightRadius: getComputedStyle(host).borderBottomRightRadius,
           nestedCardCount: root.querySelectorAll(".workspace-main-card").length,
           panel: rect(panel),
           root: rect(root),
@@ -3406,10 +3420,20 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       const withinTwoPixels = (left, right) => Math.abs(left - right) <= 2;
       assert.equal(fullBleed.nestedCardCount, 0, "Main Browser must not be nested in another workspace card");
       assert.ok(
-        fullBleed.rootBorderRadius === "0px" || fullBleed.rootBorderRadius === "",
-        `Main Workbench must not add an inner rounded frame (received ${fullBleed.rootBorderRadius})`,
+        Number.parseFloat(fullBleed.rootBorderRadius) > 0,
+        `Main Workbench must use the shared workspace-card radius (received ${fullBleed.rootBorderRadius})`,
       );
       assert.equal(fullBleed.rootPadding, "0px", "Main Workbench must not inset the Browser surface");
+      assert.ok(
+        Number.parseFloat(fullBleed.hostBottomLeftRadius) > 0
+          && Number.parseFloat(fullBleed.hostBottomRightRadius) > 0,
+        "Main Browser runtime host must clip its visible content to the workspace bottom corners",
+      );
+      assert.equal(
+        fullBleed.browserToolbarFlowsDirectlyIntoContent,
+        true,
+        "Main Browser must not render a redundant site-title row below the address bar",
+      );
       for (const [surface, alpha] of [
         ["Browser surface", fullBleed.browserSurfaceAlpha],
         ["Browser toolbar", fullBleed.browserToolbarAlpha],

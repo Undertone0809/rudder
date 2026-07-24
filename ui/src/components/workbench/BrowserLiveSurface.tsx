@@ -23,7 +23,6 @@ import {
   ExternalLink,
   FileWarning,
   Globe2,
-  Loader2,
   Plus,
   RotateCw,
 } from "lucide-react";
@@ -112,7 +111,6 @@ export function BrowserLiveSurface({
   );
   const [currentUrl, setCurrentUrl] = useState(target.url);
   const [webviewSrc, setWebviewSrc] = useState(target.url);
-  const [title, setTitle] = useState(target.label);
   const [loading, setLoading] = useState(false);
   const [navigationState, setNavigationState] = useState({
     canGoBack: false,
@@ -120,7 +118,6 @@ export function BrowserLiveSurface({
   });
   const [loadError, setLoadError] = useState<BrowserLoadError | null>(null);
   const [loadErrorDetailsOpen, setLoadErrorDetailsOpen] = useState(false);
-  const [zoomFactor, setZoomFactor] = useState(1);
   const isBlank = currentUrl === BROWSER_SIDE_PANEL_BLANK_URL;
   const loadErrorContent = loadError ? browserSidePanelErrorContent(loadError) : null;
   currentUrlRef.current = currentUrl;
@@ -167,7 +164,6 @@ export function BrowserLiveSurface({
     }, false);
     if (!applied) return;
     zoomFactorRef.current = factor;
-    setZoomFactor(factor);
   }, [safeWebviewCall]);
 
   const stepZoomFactor = useCallback((direction: -1 | 1) => {
@@ -259,7 +255,6 @@ export function BrowserLiveSurface({
     currentUrlRef.current = nextUrl;
     targetRef.current = nextTarget;
     setCurrentUrl(nextUrl);
-    setTitle(nextTitle);
     setAddressValue(nextUrl === BROWSER_SIDE_PANEL_BLANK_URL ? "" : nextUrl);
     targetUrlRef.current = nextUrl;
     onReplaceTargetRef.current(targetKey, nextTarget);
@@ -271,7 +266,6 @@ export function BrowserLiveSurface({
     currentUrlRef.current = target.url;
     targetRef.current = target;
     setCurrentUrl(target.url);
-    setTitle(target.label);
     setAddressValue(target.url === BROWSER_SIDE_PANEL_BLANK_URL ? "" : target.url);
     if (externallyChangedUrl) {
       setWebviewSrc(target.url);
@@ -320,7 +314,6 @@ export function BrowserLiveSurface({
       const nextTitle = "title" in event && typeof event.title === "string" && event.title.trim()
         ? event.title.trim()
         : browserSidePanelLabel(nextUrl);
-      setTitle(nextTitle);
       const nextTarget = { ...targetRef.current, url: nextUrl, label: nextTitle };
       targetRef.current = nextTarget;
       onReplaceTargetRef.current(targetKey, nextTarget);
@@ -558,21 +551,10 @@ export function BrowserLiveSurface({
           <ExternalLink className="h-3.5 w-3.5" />
         </Button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col bg-[color:var(--surface-inset)]">
-        <div className="flex h-8 shrink-0 items-center gap-2 border-b border-[color:var(--border-soft)] px-3 text-xs text-muted-foreground">
-          {loading
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : <Globe2 className="h-3.5 w-3.5" />}
-          <span className="min-w-0 flex-1 truncate">{isBlank ? "New tab" : title}</span>
-          {zoomFactor !== 1 ? (
-            <span
-              className="shrink-0 tabular-nums"
-              data-testid="chat-side-panel-browser-zoom"
-            >
-              {Math.round(zoomFactor * 100)}%
-            </span>
-          ) : null}
-        </div>
+      <div
+        className="flex min-h-0 flex-1 flex-col bg-[color:var(--surface-inset)]"
+        data-testid="chat-side-panel-browser-content"
+      >
         {isBlank ? (
           <div
             className="flex min-h-[44vh] flex-1 items-center justify-center px-6 text-center"

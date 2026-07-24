@@ -54,6 +54,9 @@ describe("BrowserLiveSurface", () => {
       ?.classList.contains("bg-[color:var(--surface-elevated)]")).toBe(true);
     expect(container.querySelector("webview")
       ?.classList.contains("bg-[color:var(--surface-elevated)]")).toBe(true);
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-toolbar']")
+      ?.nextElementSibling?.getAttribute("data-testid"))
+      .toBe("chat-side-panel-browser-content");
   });
 
   it("routes guest Ctrl+Tab to the current surface owner without recreating the guest", () => {
@@ -266,7 +269,7 @@ describe("BrowserLiveSurface", () => {
     expect(goBack).toHaveBeenCalledOnce();
     expect(goForward).toHaveBeenCalledOnce();
     expect(setZoomFactor).toHaveBeenLastCalledWith(1.1);
-    expect(container.querySelector("[data-testid='chat-side-panel-browser-zoom']")?.textContent).toBe("110%");
+    expect(container.querySelector("[data-testid='chat-side-panel-browser-zoom']")).toBeNull();
 
     const address = container.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]')!;
     address.setSelectionRange(0, 0);
