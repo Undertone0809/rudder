@@ -1,8 +1,8 @@
-import { isImageContentType } from "@/lib/image-actions";
 import {
   CHAT_ANNOTATION_IGNORE_ATTRIBUTE,
   restoreChatAnnotationRange,
 } from "@/lib/chat-response-annotation-selection";
+import { isImageContentType } from "@/lib/image-actions";
 import { cn } from "@/lib/utils";
 import type {
   ChatAttachment,
@@ -32,6 +32,7 @@ import {
   useState,
   type ChangeEvent,
   type CSSProperties,
+  type Ref,
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
@@ -150,6 +151,7 @@ export function ResponseAnnotationCountChip({
   controlsId,
   onToggle,
   onClear,
+  buttonRef,
   labels = DEFAULT_LABELS,
   className,
 }: {
@@ -158,6 +160,7 @@ export function ResponseAnnotationCountChip({
   controlsId?: string;
   onToggle: () => void;
   onClear?: () => void;
+  buttonRef?: Ref<HTMLButtonElement>;
   labels?: ResponseAnnotationLabels;
   className?: string;
 }) {
@@ -170,6 +173,7 @@ export function ResponseAnnotationCountChip({
       )}
     >
       <button
+        ref={buttonRef}
         type="button"
         className="inline-flex h-full items-center gap-1.5 px-3 transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 motion-reduce:transition-none"
         aria-label={expanded ? labels.hideAnnotations(count) : labels.showAnnotations(count)}
@@ -506,8 +510,10 @@ export function ResponseAnnotationEditor({
   useEffect(() => {
     if (!anchored) return;
     const updatePosition = () => {
-      if (getAnchorRect) setLiveAnchorRect(getAnchorRect());
-      if (getBoundaryRect) setLiveBoundaryRect(getBoundaryRect());
+      const nextAnchorRect = getAnchorRect?.();
+      if (nextAnchorRect) setLiveAnchorRect(nextAnchorRect);
+      const nextBoundaryRect = getBoundaryRect?.();
+      if (nextBoundaryRect) setLiveBoundaryRect(nextBoundaryRect);
     };
     updatePosition();
     window.addEventListener("resize", updatePosition);
@@ -525,7 +531,7 @@ export function ResponseAnnotationEditor({
       dismiss();
     };
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (event.key !== "Escape") return;
       event.preventDefault();
       dismiss();
     };
@@ -794,6 +800,48 @@ export function SentResponseAnnotationsCard({
   const annotationsListId = useId();
   const chipAnchorRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLOListElement>(null);
+  const closeDetails = useCallback((restoreFocus: boolean) => {
+    setExpanded((current) => {
+      if (!current) return current;
+      onExpandedChange?.(false);
+      return false;
+    });
+    if (restoreFocus) {
+      chipAnchorRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    }
+  }, [onExpandedChange]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        chipAnchorRef.current?.contains(target)
+        || cardRef.current?.contains(target)
+      ) {
+        return;
+      }
+      closeDetails(false);
+    };
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeDetails(true);
+    };
+    const handleOtherCardOpened = (event: Event) => {
+      const openedId = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (openedId && openedId !== annotationsListId) closeDetails(false);
+    };
+    document.addEventListener("click", handleClick);
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("rudder:sent-response-annotations-opened", handleOtherCardOpened);
+    return () => {
+      document.removeEventListener("click", handleClick);
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("rudder:sent-response-annotations-opened", handleOtherCardOpened);
+    };
+  }, [annotationsListId, closeDetails, expanded]);
+
   useLayoutEffect(() => {
     if (!expanded) {
       setCardPosition(null);
@@ -853,6 +901,12 @@ export function SentResponseAnnotationsCard({
           controlsId={annotationsListId}
           onToggle={() => setExpanded((current) => {
             const next = !current;
+            if (next) {
+              document.dispatchEvent(new CustomEvent(
+                "rudder:sent-response-annotations-opened",
+                { detail: { id: annotationsListId } },
+              ));
+            }
             onExpandedChange?.(next);
             return next;
           })}

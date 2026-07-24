@@ -8,6 +8,7 @@ import {
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
+  isInternalChatTranscriptLifecycleEntry,
   type ChatInlineAnnotation,
   type ChatStreamTranscriptEntry,
   type ChatStreamTranscriptTextEntry,
@@ -18,6 +19,7 @@ import { createHash } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import type { ChatGenerationProtocolTransaction } from "./chat-generation-protocol.helpers.js";
 import { renderedMarkdownSelectionText } from "./chat-inline-annotation-rendering.js";
+import { renderedMarkdownSelectionTextWithResolvedLabels } from "./chat-inline-annotation-resolved-labels.js";
 import { chatTranscriptFromPayload } from "./chats.helpers.js";
 
 const STABLE_ANNOTATION_MESSAGE_STATUSES = new Set(["completed", "stopped", "failed"]);
@@ -26,7 +28,7 @@ const MAX_PROCESS_ANNOTATION_EVENT_SPAN = 1_000;
 const INTERNAL_RESULT_MARKER_PATTERN =
   /RUDDER_RESULT_(?:BEGIN|END)|__RUDDER_RESULT_[a-f0-9-]+__/i;
 
-type ValidationQuery = Pick<ChatGenerationProtocolTransaction, "select">;
+export type ValidationQuery = Pick<ChatGenerationProtocolTransaction, "select">;
 
 export function hashChatAnnotationSource(value: string) {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -99,26 +101,45 @@ function isExplicitlyHiddenTranscriptEvidence(
     || visibility === "private";
 }
 
-function assertSelectedTextExactlyMatchesRange(
+async function assertSelectedTextExactlyMatchesRange(
+  query: ValidationQuery,
+  orgId: string,
   annotation: ChatInlineAnnotation,
   source: string,
 ) {
+  const resolvedLabelProjection =
+    await renderedMarkdownSelectionTextWithResolvedLabels(query, {
+      orgId,
+      source,
+      start: annotation.start,
+      end: annotation.end,
+    });
+  const visibleResolvedSelections = resolvedLabelProjection.selections.filter(
+    (selection) => /[^\p{White_Space}\u200b\ufeff]/u.test(selection),
+  );
+  if (visibleResolvedSelections.includes(annotation.selectedText)) return;
+  if (resolvedLabelProjection.overlapsResolvableDynamicLabel) {
+    throw unprocessable(
+      "Annotation selected text does not exactly match its rendered Markdown source range",
+    );
+  }
   const expectedSelectedText = renderedMarkdownSelectionText(
     source,
     annotation.start,
     annotation.end,
   );
+  const rawRangeContainsVisibleText = expectedSelectedText !== null
+    && /[^\p{White_Space}\u200b\ufeff]/u.test(expectedSelectedText);
   if (
-    expectedSelectedText === null
-    || !/[^\p{White_Space}\u200b\ufeff]/u.test(expectedSelectedText)
-  ) {
+    rawRangeContainsVisibleText
+    && annotation.selectedText === expectedSelectedText
+  ) return;
+  if (!rawRangeContainsVisibleText && visibleResolvedSelections.length === 0) {
     throw unprocessable("Annotation source range must contain visible text");
   }
-  if (annotation.selectedText !== expectedSelectedText) {
-    throw unprocessable(
-      "Annotation selected text does not exactly match its rendered Markdown source range",
-    );
-  }
+  throw unprocessable(
+    "Annotation selected text does not exactly match its rendered Markdown source range",
+  );
 }
 
 function trimTrailingWhitespace(value: string) {
@@ -167,12 +188,16 @@ function redactAssistantSuffixFromVisibleProjection(
 }
 
 function transcriptEntriesBeforeAssistantTextIndex(
-  entries: ChatStreamTranscriptTextEntry[],
+  entries: ChatStreamTranscriptEntry[],
   endIndex: number,
 ) {
-  const visible: ChatStreamTranscriptTextEntry[] = [];
+  const visible: ChatStreamTranscriptEntry[] = [];
   let offset = 0;
   for (const entry of entries) {
+    if (entry.kind !== "assistant") {
+      visible.push(entry);
+      continue;
+    }
     const entryEnd = offset + entry.text.length;
     if (entryEnd <= endIndex) {
       visible.push(entry);
@@ -192,11 +217,12 @@ function stripInternalResultProtocolFromVisibleProjection(
   entries: ChatStreamTranscriptEntry[],
 ) {
   const filtered: ChatStreamTranscriptEntry[] = [];
-  let assistantGroup: ChatStreamTranscriptTextEntry[] = [];
+  let assistantGroup: ChatStreamTranscriptEntry[] = [];
 
   const flushAssistantGroup = () => {
     if (assistantGroup.length === 0) return;
     const markerIndex = assistantGroup
+      .filter((entry): entry is ChatStreamTranscriptTextEntry => entry.kind === "assistant")
       .map((entry) => entry.text)
       .join("")
       .search(INTERNAL_RESULT_MARKER_PATTERN);
@@ -210,6 +236,14 @@ function stripInternalResultProtocolFromVisibleProjection(
 
   for (const entry of entries) {
     if (entry.kind === "assistant") {
+      assistantGroup.push(entry);
+      continue;
+    }
+    if (
+      assistantGroup.length > 0
+      && entry.kind === "system"
+      && isInternalChatTranscriptLifecycleEntry(entry)
+    ) {
       assistantGroup.push(entry);
       continue;
     }
@@ -561,7 +595,12 @@ export async function validateCanonicalChatInlineAnnotations(
         sourceMessage: source,
     });
     assertSourceAnchor(annotation, anchorSource);
-    assertSelectedTextExactlyMatchesRange(annotation, anchorSource);
+    await assertSelectedTextExactlyMatchesRange(
+      query,
+      input.orgId,
+      annotation,
+      anchorSource,
+    );
   }
 }
 

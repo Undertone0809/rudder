@@ -649,6 +649,11 @@ export interface ChatStreamFinalEvent {
 export interface ChatStreamErrorEvent {
   type: "error";
   error: string;
+  /**
+   * Durable message associated with the failure. Before the stream's ack event,
+   * this is the committed user message receipt; after ack it identifies the
+   * persisted failed assistant message.
+   */
   messageId?: string | null;
 }
 

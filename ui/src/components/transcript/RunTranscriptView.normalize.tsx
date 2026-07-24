@@ -1,3 +1,4 @@
+import type { ChatMessage } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { describeToolSemanticInfo, extractSkillSlugFromEntryPath, extractToolUseId, isCommandTool, parseStructuredToolResult, readStringField } from "./RunTranscriptView.semantic";
@@ -11,6 +12,10 @@ type ProvenancedTranscriptTextEntry = Extract<
   generationSeqStart: number;
   generationSeqEnd: number;
 }>;
+
+type NativeSteerTranscriptEntry = Extract<TranscriptEntry, { kind: "user" }> & {
+  steerMessage?: ChatMessage;
+};
 
 function transcriptEntryProvenance(entry: ProvenancedTranscriptTextEntry) {
   return typeof entry.generationId === "string"
@@ -493,6 +498,9 @@ export function normalizeTranscript(
     }
 
     if (entry.kind === "assistant" || entry.kind === "user") {
+      const steerMessage = entry.kind === "user"
+        ? (entry as NativeSteerTranscriptEntry).steerMessage
+        : undefined;
       if (entry.kind === "user") {
         if (isInternalAgentInstructionText(entry.text)) {
           if (options?.showDeveloperDiagnostics) {
@@ -568,6 +576,7 @@ export function normalizeTranscript(
             source: entry.source,
             messageId: entry.messageId,
             controlActionId: entry.controlActionId,
+            steerMessage,
           } : {}),
           ts: entry.ts,
           text: entry.text,

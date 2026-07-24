@@ -948,6 +948,7 @@ export function validateAssistantResult(
     ? (({
       inlineVisuals: _untrustedInlineVisuals,
       inlineVisualsV1: _untrustedInlineVisualsV1,
+      inlineAnnotations: _untrustedInlineAnnotations,
       ...trustedPayload
     }) =>
       Object.keys(trustedPayload).length > 0 ? trustedPayload : null)(sanitizedStructuredPayload)

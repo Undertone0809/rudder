@@ -10,6 +10,7 @@ import {
   canQueueComposerDraft,
   createQueuedComposerMessage,
   queuedMessagePayloadForBodyEdit,
+  revealChatAnnotationSourceElement,
   sideChatTargetFromMessage,
   useChatDraftQueries,
 } from "./Chat.workspace-helpers";
@@ -71,8 +72,33 @@ function unmountProbe(root: Root, container: HTMLDivElement) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   document.body.replaceChildren();
+});
+
+describe("annotation source reveal", () => {
+  it("highlights briefly and avoids smooth scrolling for reduced motion", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    const source = document.createElement("div");
+    source.scrollIntoView = vi.fn();
+
+    revealChatAnnotationSourceElement(source);
+
+    expect(source.scrollIntoView).toHaveBeenCalledWith({
+      block: "center",
+      behavior: "auto",
+    });
+    expect(source.classList.contains("chat-message-jump-highlight")).toBe(true);
+    vi.advanceTimersByTime(1_800);
+    expect(source.classList.contains("chat-message-jump-highlight")).toBe(false);
+  });
 });
 
 describe("useChatDraftQueries", () => {

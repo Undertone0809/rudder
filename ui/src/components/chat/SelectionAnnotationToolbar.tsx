@@ -86,6 +86,7 @@ export function SelectionAnnotationToolbar({
   onDismiss,
   labels = DEFAULT_LABELS,
   returnFocusRef,
+  onReturnFocus,
   autoFocus = false,
   className,
 }: {
@@ -101,6 +102,7 @@ export function SelectionAnnotationToolbar({
   onDismiss: () => void;
   labels?: SelectionAnnotationToolbarLabels;
   returnFocusRef?: RefObject<HTMLElement | null>;
+  onReturnFocus?: () => void;
   autoFocus?: boolean;
   className?: string;
 }) {
@@ -186,11 +188,12 @@ export function SelectionAnnotationToolbar({
       if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
       onDismiss();
-      returnFocusRef?.current?.focus();
+      if (onReturnFocus) onReturnFocus();
+      else returnFocusRef?.current?.focus();
     };
     document.addEventListener("keydown", handleGlobalKeyDown);
     return () => document.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [onDismiss, open, returnFocusRef]);
+  }, [onDismiss, onReturnFocus, open, returnFocusRef]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -202,7 +205,8 @@ export function SelectionAnnotationToolbar({
       event.preventDefault();
       event.stopPropagation();
       onDismiss();
-      returnFocusRef?.current?.focus();
+      if (onReturnFocus) onReturnFocus();
+      else returnFocusRef?.current?.focus();
       return;
     }
     const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);

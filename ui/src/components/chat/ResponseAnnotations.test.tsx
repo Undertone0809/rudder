@@ -294,6 +294,27 @@ describe("response annotation components", () => {
     focusReturn.remove();
   });
 
+  it("keeps the last anchor position when the source button is replaced", async () => {
+    render(
+      <ResponseAnnotationEditor
+        annotation={annotation}
+        ordinal={1}
+        pendingFiles={[]}
+        anchorRect={{ left: 40, right: 60, top: 100, bottom: 110, width: 20, height: 10 }}
+        getAnchorRect={() => null}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    await act(async () => Promise.resolve());
+    const editor = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-editor']",
+    )!;
+    expect(editor.style.visibility).toBe("visible");
+  });
+
   it("dismisses an anchored editor with Escape and restores focus", () => {
     const onCancel = vi.fn();
     const focusReturn = document.createElement("button");
@@ -345,6 +366,81 @@ describe("response annotation components", () => {
 
     click(document.body.querySelector("[data-annotation-id]")!);
     expect(onSelect).toHaveBeenCalledWith(annotation, 1);
+  });
+
+  it("dismisses sent annotation details with Escape and restores focus", () => {
+    const onExpandedChange = vi.fn();
+    render(
+      <SentResponseAnnotationsCard
+        annotations={[annotation]}
+        attachments={[]}
+        onExpandedChange={onExpandedChange}
+      />,
+    );
+
+    const chip = host.querySelector<HTMLButtonElement>(
+      "[aria-label='Show 1 annotation']",
+    )!;
+    click(chip);
+    expect(document.body.querySelector("[data-testid='chat-response-annotation-sent-card']"))
+      .not.toBeNull();
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+      }));
+    });
+
+    expect(document.body.querySelector("[data-testid='chat-response-annotation-sent-card']"))
+      .toBeNull();
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(chip);
+    expect(onExpandedChange.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("dismisses sent details on outside click and keeps only one sent card open", () => {
+    const secondAnnotation: ChatInlineAnnotation = {
+      ...annotation,
+      id: "10000000-0000-4000-8000-000000000002",
+      selectedText: "A second immutable quote.",
+      start: 50,
+      end: 75,
+    };
+    const firstExpanded = vi.fn();
+    const secondExpanded = vi.fn();
+    render(
+      <>
+        <SentResponseAnnotationsCard
+          annotations={[annotation]}
+          attachments={[]}
+          onExpandedChange={firstExpanded}
+        />
+        <SentResponseAnnotationsCard
+          annotations={[secondAnnotation]}
+          attachments={[]}
+          onExpandedChange={secondExpanded}
+        />
+      </>,
+    );
+
+    const chips = host.querySelectorAll<HTMLButtonElement>(
+      "[aria-label='Show 1 annotation']",
+    );
+    click(chips[0]!);
+    click(chips[1]!);
+    expect(document.body.querySelectorAll(
+      "[data-testid='chat-response-annotation-sent-card']",
+    )).toHaveLength(1);
+    expect(firstExpanded.mock.calls).toEqual([[true], [false]]);
+    expect(secondExpanded.mock.calls).toEqual([[true]]);
+
+    act(() => {
+      document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(document.body.querySelector("[data-testid='chat-response-annotation-sent-card']"))
+      .toBeNull();
+    expect(secondExpanded.mock.calls).toEqual([[true], [false]]);
   });
 
   it("keeps the immutable snapshot visible when its source can no longer be located", () => {

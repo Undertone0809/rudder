@@ -1,11 +1,11 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type { Db } from "@rudderhq/db";
 import type {
   ChatAttachment,
   ChatConversation,
   ChatMessage,
 } from "@rudderhq/shared";
 import type { Router } from "express";
-import type { Db } from "@rudderhq/db";
 import { createAssistantTextAccumulator } from "../services/chat-assistant.helpers.js";
 import type { StorageService } from "../storage/types.js";
 

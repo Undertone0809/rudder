@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
+import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptSentAnnotationContext, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
@@ -664,6 +664,7 @@ export function TranscriptChatTurn({
   agentInspections = EMPTY_AGENT_INSPECTIONS,
   onOpenAgent,
   annotationSource,
+  sentAnnotationContext,
 }: {
   turn: ChatTranscriptTurn;
   density: TranscriptDensity;
@@ -674,6 +675,7 @@ export function TranscriptChatTurn({
   agentInspections?: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   annotationSource?: TranscriptAnnotationSourceContext;
+  sentAnnotationContext?: TranscriptSentAnnotationContext;
 }) {
   const detailVariant = variant === "detail";
   const segments = segmentChatTranscriptBlocks(turn.blocks);
@@ -691,6 +693,7 @@ export function TranscriptChatTurn({
               thinkingClassName,
               onMarkdownLinkClick,
               annotationSource,
+              sentAnnotationContext,
             })
           : (
             <TranscriptChatActionGroup
@@ -899,6 +902,7 @@ export function TranscriptChatTimeline({
   agentInspections,
   onOpenAgent,
   annotationSource,
+  sentAnnotationContext,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
@@ -913,6 +917,7 @@ export function TranscriptChatTimeline({
   agentInspections: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   annotationSource?: TranscriptAnnotationSourceContext;
+  sentAnnotationContext?: TranscriptSentAnnotationContext;
 }) {
   const timelineEntries = useMemo(
     () => filterChatAssistantTranscriptEntries(entries, {
@@ -939,6 +944,7 @@ export function TranscriptChatTimeline({
         thinkingClassName,
         onMarkdownLinkClick,
         annotationSource,
+        sentAnnotationContext,
       }))}
       {turns.map((turn) => (
         <TranscriptChatTurn
@@ -951,6 +957,7 @@ export function TranscriptChatTimeline({
           agentInspections={agentInspections}
           onOpenAgent={onOpenAgent}
           annotationSource={annotationSource}
+          sentAnnotationContext={sentAnnotationContext}
         />
       ))}
     </div>

@@ -33,6 +33,7 @@ export type AddUserChatMessageOptions = {
     createdByUserId: string | null;
   }>;
   attachmentFileIndexesByAnnotationId?: Map<string, number[]>;
+  onTransactionCommitted?: (messageId: string) => void;
 };
 
 function remapInlineAnnotationAttachmentIds(
@@ -289,6 +290,7 @@ export function createChatAnnotationMessagePersistence(
         ));
       return message.id;
     });
+    options.onTransactionCommitted?.(messageId);
     const message = await getMessage(conversationId, messageId);
     if (!message) throw new Error("Failed to hydrate created chat message");
     return message;

@@ -2707,7 +2707,7 @@ export function chatRoutes(
       ? await inlineAnnotations.prepare({
         orgId: conversation.orgId,
         conversationId: conversation.id,
-        annotations: req.body.inlineAnnotations,
+        annotations: req.body.inlineAnnotations ?? [],
         uploadedFileCount: 0,
         editUserMessageId: req.body.editUserMessageId ?? null,
       })

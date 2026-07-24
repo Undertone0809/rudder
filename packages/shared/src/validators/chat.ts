@@ -384,11 +384,11 @@ export const createSideChatSchema = z.object({
 
 export const addChatMessageSchema = z.object({
   body: z.string().trim().max(20000).default(""),
-  inlineAnnotations: chatInlineAnnotationsInputSchema.optional().default([]),
+  inlineAnnotations: chatInlineAnnotationsInputSchema.optional(),
   editUserMessageId: z.string().uuid().optional().nullable(),
   queuedMessageId: z.string().uuid().optional().nullable(),
 }).superRefine((value, ctx) => {
-  if (value.body.length === 0 && value.inlineAnnotations.length === 0) {
+  if (value.body.length === 0 && (value.inlineAnnotations?.length ?? 0) === 0) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Chat message body or at least one inline annotation is required",

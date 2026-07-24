@@ -537,7 +537,7 @@ describe("ChatSystemMessageBody", () => {
     }));
 
     expect(html).toContain("rudder-markdown");
-    expect(html).toContain("<strong>approved</strong>");
+    expect(html).toMatch(/<strong[^>]*>approved<\/strong>/);
     expect(html).not.toContain("chat-system-issue-link");
   });
 

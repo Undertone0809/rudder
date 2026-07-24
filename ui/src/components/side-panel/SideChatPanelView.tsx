@@ -24,7 +24,12 @@ import { queryKeys } from "@/lib/queryKeys";
 import { latestSideChatAnchor, sideChatConversationMessages, sideChatIsReadOnly } from "@/lib/side-chat";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { AssistantDraftItem, ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
-import type { Agent, ChatConversation, ChatMessage } from "@rudderhq/shared";
+import type {
+  Agent,
+  ChatConversation,
+  ChatInlineAnnotation,
+  ChatMessage,
+} from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, CirclePlus, Clock3, Folder, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -62,11 +67,13 @@ export function SideChatPanelView({
   target,
   onRegisterCloseHandler,
   onReplaceTarget,
+  onSelectResponseAnnotation,
 }: {
   organizationId: string;
   target: SideChatTarget;
   onRegisterCloseHandler: (clientMutationId: string, handler: (() => Promise<string | null>) | null) => void;
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
+  onSelectResponseAnnotation: (annotation: ChatInlineAnnotation, ordinal: number) => void;
 }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState("");
@@ -79,11 +86,11 @@ export function SideChatPanelView({
     target.inlineAnnotations ?? [],
     createChatResponseAnnotationState,
   );
-  const [annotationsExpanded, setAnnotationsExpanded] = useState(
-    () => annotationState.annotations.length > 0,
-  );
+  const [annotationsExpanded, setAnnotationsExpanded] = useState(false);
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const editingAnnotationAnchorRef = useRef<HTMLButtonElement | null>(null);
+  const annotationDetailsSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const annotationDetailsChipRef = useRef<HTMLButtonElement | null>(null);
   const closeRequestedRef = useRef(false);
   const createPromiseRef = useRef<Promise<ChatConversation> | null>(null);
   const conversationIdRef = useRef(target.conversationId);
@@ -127,6 +134,31 @@ export function SideChatPanelView({
     const timer = window.setInterval(() => setNow(new Date()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!annotationsExpanded || editingAnnotationId) return;
+    const closeDetails = (restoreFocus: boolean) => {
+      setAnnotationsExpanded(false);
+      if (restoreFocus) annotationDetailsChipRef.current?.focus();
+    };
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (annotationDetailsSurfaceRef.current?.contains(target)) return;
+      closeDetails(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeDetails(true);
+    };
+    document.addEventListener("click", handleClick);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("click", handleClick);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [annotationsExpanded, editingAnnotationId]);
 
   const sourceConversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(organizationId, target.sourceConversationId),
@@ -219,8 +251,8 @@ export function SideChatPanelView({
       state: "streaming",
       transcript: [],
     });
+    let conversationId = target.conversationId;
     try {
-      let conversationId = target.conversationId;
       if (!conversationId) {
         const createPromise = chatsApi.createSideChat(target.sourceConversationId, {
           sourceMessageId,
@@ -290,7 +322,25 @@ export function SideChatPanelView({
             for (const message of event.messages) appendMessage(conversationId!, message);
             setStream(null);
           }
-          if (event.type === "error") throw new Error(event.error);
+          if (event.type === "error") {
+            if (!acknowledged && event.messageId) {
+              acknowledged = true;
+              dispatchAnnotation({ type: "clear" });
+              setAnnotationsExpanded(false);
+              setEditingAnnotationId(null);
+              onReplaceTarget(
+                sidePanelTargetKey({ ...target, conversationId }),
+                {
+                  ...target,
+                  sourceMessageId,
+                  sourcePreview,
+                  conversationId,
+                  inlineAnnotations: [],
+                },
+              );
+            }
+            throw new Error(event.error);
+          }
         },
       });
       await Promise.all([
@@ -300,6 +350,16 @@ export function SideChatPanelView({
     } catch (error) {
       if (closeRequestedRef.current) return;
       if (!acknowledged) setDraft((current) => current || body);
+      if (acknowledged && conversationId) {
+        await Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.chats.detail(organizationId, conversationId),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.chats.messages(organizationId, conversationId),
+          }),
+        ]).catch(() => undefined);
+      }
       setStream((current) => current ? { ...current, state: "failed" } : current);
       setSendError(error instanceof Error ? error.message : "Could not send this message.");
     } finally {
@@ -374,6 +434,7 @@ export function SideChatPanelView({
                     actionPending={false}
                     onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}
                     onOpenFile={noop}
+                    onSelectResponseAnnotation={onSelectResponseAnnotation}
                     skillReferences={EMPTY_SKILL_REFERENCES}
                   />
                 </div>
@@ -410,10 +471,14 @@ export function SideChatPanelView({
         <div className="shrink-0 px-4 pb-4" data-testid="side-chat-composer">
           <div className="chat-composer mx-auto w-full max-w-4xl rounded-[var(--radius-lg)] p-3">
             {annotationState.annotations.length > 0 ? (
-              <div className="mb-3 flex flex-col items-start gap-2">
+              <div
+                ref={annotationDetailsSurfaceRef}
+                className="mb-3 flex flex-col items-start gap-2"
+              >
                 <ResponseAnnotationCountChip
                   count={annotationState.annotations.length}
                   expanded={annotationsExpanded}
+                  buttonRef={annotationDetailsChipRef}
                   onToggle={() => setAnnotationsExpanded((current) => !current)}
                   onClear={() => {
                     dispatchAnnotation({ type: "clear" });

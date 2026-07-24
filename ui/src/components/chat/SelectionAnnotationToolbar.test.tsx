@@ -70,7 +70,7 @@ describe("selection annotation toolbar", () => {
     const onDismiss = vi.fn();
     const focusReturn = document.createElement("button");
     document.body.appendChild(focusReturn);
-    const returnFocusRef = { current: focusReturn };
+    const onReturnFocus = vi.fn(() => focusReturn.focus());
 
     act(() => {
       root.render(
@@ -81,7 +81,7 @@ describe("selection annotation toolbar", () => {
           onMoreDetails={onMoreDetails}
           onAskInSideChat={onAskInSideChat}
           onDismiss={onDismiss}
-          returnFocusRef={returnFocusRef}
+          onReturnFocus={onReturnFocus}
           autoFocus
         />,
       );
@@ -111,6 +111,7 @@ describe("selection annotation toolbar", () => {
       toolbar.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     expect(onDismiss).toHaveBeenCalledOnce();
+    expect(onReturnFocus).toHaveBeenCalledOnce();
     expect(document.activeElement).toBe(focusReturn);
 
     focusReturn.remove();

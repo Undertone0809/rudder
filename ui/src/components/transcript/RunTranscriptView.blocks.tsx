@@ -1,5 +1,9 @@
+import {
+  AnchoredResponseAnnotationMarkers,
+  SentResponseAnnotationsCard,
+} from "@/components/chat/ResponseAnnotations";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { AnchoredResponseAnnotationMarkers } from "@/components/chat/ResponseAnnotations";
+import { chatInlineAnnotationsFromStructuredPayload } from "@rudderhq/shared";
 import {
   Check,
   ChevronRight,
@@ -16,11 +20,30 @@ import { useScrollbarActivityRef } from "../../hooks/useScrollbarActivityRef";
 import {
   CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
   CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+  registerChatAnnotationSourceText,
 } from "../../lib/chat-response-annotation-selection";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
 import { MarkdownBody } from "../MarkdownBody";
-import { asRecord, compactWhitespace, formatTranscriptDuration, formatTranscriptTimestamp, getTranscriptTimestampTitle, TranscriptActionIconCategory, TranscriptActionIconSlot, TranscriptActionIconStack, TranscriptActionIconStatus, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptPresentation, TranscriptToolCardEntry, truncate } from "./RunTranscriptView.common";
+import {
+  asRecord,
+  compactWhitespace,
+  formatTranscriptDuration,
+  formatTranscriptTimestamp,
+  getTranscriptTimestampTitle,
+  TranscriptActionIconCategory,
+  TranscriptActionIconSlot,
+  TranscriptActionIconStack,
+  TranscriptActionIconStatus,
+  TranscriptAnnotationSourceContext,
+  TranscriptBlock,
+  TranscriptDensity,
+  TranscriptMarkdownLinkClickHandler,
+  TranscriptPresentation,
+  TranscriptSentAnnotationContext,
+  TranscriptToolCardEntry,
+  truncate,
+} from "./RunTranscriptView.common";
 import { formatSemanticDigest, getTodoListCompletedCount } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
 import { formatMemoryScopeLabel, stripWrappedShell } from "./RunTranscriptView.shell";
@@ -63,6 +86,11 @@ function TranscriptAnnotationSource({
   children: ReactNode;
 }) {
   const sourceRootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const sourceRoot = sourceRootRef.current;
+    if (!sourceRoot) return;
+    registerChatAnnotationSourceText(sourceRoot, block.text);
+  }, [block.text]);
   if (
     !context
     || block.streaming
@@ -218,6 +246,7 @@ export function TranscriptMessageBlock({
   collapsibleSummary = false,
   onMarkdownLinkClick,
   annotationSource,
+  sentAnnotationContext,
 }: {
   block: Extract<TranscriptBlock, { type: "message" }>;
   density: TranscriptDensity;
@@ -226,12 +255,16 @@ export function TranscriptMessageBlock({
   collapsibleSummary?: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   annotationSource?: TranscriptAnnotationSourceContext;
+  sentAnnotationContext?: TranscriptSentAnnotationContext;
 }) {
   const compact = density === "compact";
   const isUser = block.role === "user";
   const isSteer = block.source === "steer";
   const showRoleLabel = isUser && presentation !== "detail";
   const [open, setOpen] = useState(true);
+  const steerAnnotations = block.steerMessage
+    ? chatInlineAnnotationsFromStructuredPayload(block.steerMessage.structuredPayload)
+    : [];
 
   const body = (
     <TranscriptAnnotationSource
@@ -266,6 +299,19 @@ export function TranscriptMessageBlock({
         title={getTranscriptTimestampTitle(block.ts)}
       >
         <div className="max-w-[min(100%,72ch)] text-right">
+          {block.steerMessage ? (
+            <SentResponseAnnotationsCard
+              annotations={steerAnnotations}
+              attachments={block.steerMessage.attachments}
+              onSelect={sentAnnotationContext?.onSelect}
+              onExpandedChange={(expanded) => sentAnnotationContext?.onExpandedChange?.(
+                steerAnnotations,
+                expanded,
+              )}
+              unlocatableAnnotationId={sentAnnotationContext?.unlocatableAnnotationId}
+              className="mb-2 ml-auto"
+            />
+          ) : null}
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
             Steer
           </div>
@@ -401,6 +447,7 @@ export function renderTranscriptBlock({
   thinkingClassName,
   onMarkdownLinkClick,
   annotationSource,
+  sentAnnotationContext,
 }: {
   block: TranscriptBlock;
   index: number;
@@ -410,6 +457,7 @@ export function renderTranscriptBlock({
   thinkingClassName?: string;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   annotationSource?: TranscriptAnnotationSourceContext;
+  sentAnnotationContext?: TranscriptSentAnnotationContext;
 }) {
   return (
     <div
@@ -424,6 +472,7 @@ export function renderTranscriptBlock({
           collapsibleSummary={presentation === "chat"}
           onMarkdownLinkClick={onMarkdownLinkClick}
           annotationSource={annotationSource}
+          sentAnnotationContext={sentAnnotationContext}
         />
       )}
       {block.type === "thinking" && (

@@ -239,6 +239,10 @@ export {
 
 export { deriveAgentUrlKey, isUuidLike, normalizeAgentUrlKey } from "./agent-url-key.js";
 export { API, API_PREFIX } from "./api.js";
+export {
+  createMarkdownSourceBoundaryMap,
+  type MarkdownSourceBoundaryMap
+} from "./markdown-source-boundary.js";
 export { formatMessengerPreview, formatMessengerTitle, type MessengerPreviewOptions } from "./messenger-preview.js";
 export {
   ORGANIZATION_ISSUE_KEY_MAX_LENGTH,
@@ -319,6 +323,11 @@ export {
   type TokenUsageParts,
   type TokenUsageSummary
 } from "./token-usage.js";
+
+export {
+  isInternalChatTranscriptLifecycleEntry,
+  type ChatTranscriptLifecycleCandidate
+} from "./chat-transcript-visibility.js";
 
 export {
   ISSUE_UPDATE_ACTIVITY_METADATA_KEYS,

@@ -26,7 +26,7 @@ export type ChatAnnotationRouteInput = {
     sha256: string;
     originalFilename: string | null;
   }>;
-  onPersisted?: () => void;
+  onPersisted?: (messageId: string) => void;
 };
 
 export type ChatTurnContext = {
@@ -59,6 +59,15 @@ export function createChatAnnotationRouteHelpers(input: {
     annotationInput?: ChatAnnotationRouteInput,
   ) {
     input.assertLocalMutationAllowed(conversation);
+    let transactionCommitReported = false;
+    const reportTransactionCommit = (messageId: string) => {
+      if (transactionCommitReported) return;
+      transactionCommitReported = true;
+      annotationInput?.onPersisted?.(messageId);
+    };
+    const transactionCommitOptions = annotationInput?.onPersisted
+      ? { onTransactionCommitted: reportTransactionCommit }
+      : {};
     const messageOptions = annotationInput?.provided
       ? {
         structuredPayload: {
@@ -76,6 +85,7 @@ export function createChatAnnotationRouteHelpers(input: {
               annotationInput.prepared?.attachmentFileIndexesByAnnotationId,
           }
           : {}),
+        ...transactionCommitOptions,
       }
       : annotationInput?.storedAttachments?.length
         ? {
@@ -84,8 +94,11 @@ export function createChatAnnotationRouteHelpers(input: {
             createdByAgentId: actor.agentId,
             createdByUserId: actor.actorType === "user" ? actor.actorId : null,
           })),
+          ...transactionCommitOptions,
         }
-        : undefined;
+        : annotationInput?.onPersisted
+          ? transactionCommitOptions
+          : undefined;
     const userMessage = messageOptions
       ? await input.chats.addUserChatMessage(
         conversation.id,
@@ -100,7 +113,7 @@ export function createChatAnnotationRouteHelpers(input: {
         body,
         editUserMessageId ?? null,
       );
-    annotationInput?.onPersisted?.();
+    reportTransactionCommit(userMessage.id);
     const persistedAnnotations = chatInlineAnnotationsFromStructuredPayload(
       userMessage.structuredPayload,
     );

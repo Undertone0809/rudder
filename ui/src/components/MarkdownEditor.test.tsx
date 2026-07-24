@@ -6,9 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImagePreviewProvider } from "../context/ImagePreviewContext";
 import { applyMentionChipDecoration } from "../lib/mention-chips";
 import {
+  formatComposerCursorInsertion,
   getMentionMenuPositionForViewport,
   getMentionPanelPositionForViewport,
-  formatComposerCursorInsertion,
   MarkdownEditor,
   type MarkdownEditorRef,
   splitPlainTextMarkdownSourceByAtomicReferences,

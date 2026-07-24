@@ -1128,7 +1128,11 @@ export function MarkdownBody({
           ?? null;
         const skillLabel = formatSkillReferenceDisplayLabel(preview?.label) || skillReference.label;
         return (
-          <SkillReferenceToken label={skillLabel} preview={preview} />
+          <SkillReferenceToken
+            label={skillLabel}
+            preview={preview}
+            sourceAttributes={sourceAttributesForNode(node)}
+          />
         );
       }
       const linkLabel = flattenText(linkChildren);

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref, createMarkdownSourceBoundaryMap } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -372,6 +372,109 @@ describe("MarkdownBody", () => {
 
     expect(source.slice(start, end)).toBe("@Alice");
     expect(Number(mention.dataset.markdownRenderedSourceEnd)).toBeGreaterThan(end);
+  });
+
+  it("maps selections over current mention and skill labels to immutable raw link spans", () => {
+    const issueId = "1664b23e-1111-4111-8111-111111111111";
+    const skillId = "2664b23e-1111-4111-8111-111111111111";
+    const issueLink = `[stale issue](${buildIssueMentionHref(issueId, "RUD-1")})`;
+    const skillHref = `skill://org/${skillId}?ref=stale-skill`;
+    const skillLink = `[stale-skill](${skillHref})`;
+    const source = `Review ${issueLink} with ${skillLink} before shipping.`;
+    markdownMentionsMock.mentions = [{
+      id: `issue:${issueId}`,
+      name: "RUD-42 Current issue title",
+      kind: "issue",
+      issueId,
+      issueIdentifier: "RUD-42",
+      issueStatus: "in_progress",
+    }];
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody
+          skillReferences={[{
+            href: skillHref,
+            label: "current-skill",
+            description: "Tooltip-only skill metadata",
+            categoryLabel: "Organization skill",
+          }]}
+        >
+          {source}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+    const sourceRoot = container.querySelector<HTMLElement>(".rudder-markdown")!;
+    sourceRoot.setAttribute(CHAT_ANNOTATION_SOURCE_ATTRIBUTE, "assistant:resolved-labels");
+    sourceRoot.setAttribute(CHAT_ANNOTATION_BLOCK_ATTRIBUTE, "resolved-labels");
+    const issueText = container.querySelector<HTMLElement>('[data-mention-kind="issue"]')!.firstChild!;
+    const skillText = container.querySelector<HTMLElement>('[data-skill-token="true"]')!.firstChild!;
+    const range = document.createRange();
+    range.setStart(issueText, 0);
+    range.setEnd(skillText, skillText.textContent!.length);
+
+    const result = resolveChatAnnotationRange({
+      range,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+
+    expect(result).toMatchObject({
+      selectedText: "RUD-42 Current issue title with current-skill",
+      start: source.indexOf(issueLink),
+      end: source.indexOf(skillLink) + skillLink.length,
+    });
+
+    const partialRange = document.createRange();
+    partialRange.setStart(issueText, "RUD-42 ".length);
+    partialRange.setEnd(skillText, "current".length);
+    const partial = resolveChatAnnotationRange({
+      range: partialRange,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+    const issueStart = source.indexOf(issueLink);
+    const skillStart = source.indexOf(skillLink);
+    expect(partial).toMatchObject({
+      selectedText: "Current issue title with current",
+      start: issueStart + createMarkdownSourceBoundaryMap(
+        issueLink,
+        "RUD-42 Current issue title",
+      ).renderedBoundaryToRaw["RUD-42 ".length],
+      end: skillStart + createMarkdownSourceBoundaryMap(
+        skillLink,
+        "current-skill",
+      ).renderedBoundaryToRaw["current".length],
+    });
+
+    const skillWrap = container.querySelector<HTMLElement>(".rudder-skill-token-wrap")!;
+    const trailingText = skillWrap.nextSibling!;
+    const spanningRange = document.createRange();
+    spanningRange.setStart(issueText, 0);
+    spanningRange.setEnd(trailingText, trailingText.textContent!.length);
+    const spanning = resolveChatAnnotationRange({
+      range: spanningRange,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+
+    expect(spanning).toMatchObject({
+      selectedText: "RUD-42 Current issue title with current-skill before shipping.",
+      start: source.indexOf(issueLink),
+      end: source.length,
+    });
+    expect(spanning?.selectedText).not.toContain("Tooltip-only");
   });
 
   it("renders a file-type icon for local file links with source locations", () => {

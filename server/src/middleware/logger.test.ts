@@ -74,6 +74,44 @@ describe("HTTP request-body logging", () => {
     ))).not.toContain("PRIVATE_THINKING_TEXT");
   });
 
+  it("redacts multipart Queue payloads whose annotation JSON is still stringified", () => {
+    const payload = JSON.stringify({
+      body: "",
+      inlineAnnotations: [{
+        selectedText: "PRIVATE_MULTIPART_THINKING_TEXT",
+        comment: "PRIVATE_MULTIPART_OPERATOR_COMMENT",
+      }],
+    });
+    const multipartCreate = {
+      payload,
+      clientMutationId: "mutation-1",
+    };
+    const multipartUpdate = {
+      payload,
+      expectedVersion: "2",
+    };
+
+    expect(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/queue" },
+      multipartCreate,
+    )).toBe("[REDACTED]");
+    expect(requestBodyForLogs(
+      { originalUrl: "/api/chats/chat-1/queue/queued-1" },
+      multipartUpdate,
+    )).toBe("[REDACTED]");
+
+    const logged = JSON.stringify([
+      requestBodyForLogs({}, multipartCreate),
+      requestBodyForLogs({}, multipartUpdate),
+    ]);
+    expect(logged).not.toContain("PRIVATE_MULTIPART_THINKING_TEXT");
+    expect(logged).not.toContain("PRIVATE_MULTIPART_OPERATOR_COMMENT");
+
+    expect(requestBodyForLogs({}, {
+      payload: "{\"inlineAnnotations\":[{\"selectedText\":\"PRIVATE_TRUNCATED_TEXT\"}",
+    })).toBe("[REDACTED]");
+  });
+
   it("keeps Browser bodies redacted when an HTTP request returns before its route", async () => {
     const app = express();
     let loggedBody: unknown;

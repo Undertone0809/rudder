@@ -1,4 +1,5 @@
 import {
+  agents,
   applyPendingMigrations,
   assets,
   chatAttachments,
@@ -8,20 +9,27 @@ import {
   chatMessages,
   createDb,
   ensurePostgresDatabase,
+  issues,
+  organizationSkills,
   organizations,
 } from "@rudderhq/db";
-import type { ChatInlineAnnotationInput } from "@rudderhq/shared";
+import {
+  buildIssueMentionHref,
+  createMarkdownSourceBoundaryMap,
+  type ChatInlineAnnotationInput,
+} from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   bindPreparedChatInlineAnnotationFiles,
   chatInlineAnnotationService,
 } from "./chat-inline-annotations.js";
+import { createChatAnnotationMessagePersistence } from "./chats.annotation-persistence.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -111,6 +119,9 @@ describe("chatInlineAnnotationService", () => {
     await db.delete(assets);
     await db.delete(chatMessages);
     await db.delete(chatConversations);
+    await db.delete(issues);
+    await db.delete(agents);
+    await db.delete(organizationSkills);
     await db.delete(organizations);
   });
 
@@ -256,6 +267,61 @@ describe("chatInlineAnnotationService", () => {
     expect(canonical[0]).not.toHaveProperty("attachmentFileIndexes");
   });
 
+  it("signals committed annotation uploads before post-transaction message hydration", async () => {
+    const body = "Read [the docs](https://example.test) and `run tests` before shipping.";
+    const source = await seedSource({ body });
+    const prepared = await service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      annotations: [assistantAnnotation(source, body)],
+      uploadedFileCount: 1,
+    });
+    const onTransactionCommitted = vi.fn();
+    const persist = createChatAnnotationMessagePersistence(
+      db,
+      async () => null,
+    );
+
+    await expect(persist(
+      source.conversationId,
+      source.orgId,
+      "",
+      null,
+      {
+        structuredPayload: { inlineAnnotations: prepared.annotations },
+        structuredPayloadProvided: true,
+        attachments: [{
+          provider: "local_disk",
+          objectKey: "chats/annotation/committed-before-hydration.txt",
+          contentType: "text/plain",
+          byteSize: 4,
+          sha256: "a".repeat(64),
+          originalFilename: "context.txt",
+          createdByAgentId: null,
+          createdByUserId: "user-1",
+        }],
+        attachmentFileIndexesByAnnotationId:
+          prepared.attachmentFileIndexesByAnnotationId,
+        onTransactionCommitted,
+      },
+    )).rejects.toThrow("Failed to hydrate created chat message");
+
+    expect(onTransactionCommitted).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(assets)).toEqual([
+      expect.objectContaining({
+        objectKey: "chats/annotation/committed-before-hydration.txt",
+      }),
+    ]);
+    expect(await db.select().from(chatAttachments)).toHaveLength(1);
+    expect(
+      (await db.select().from(chatMessages))
+        .filter((message) => message.role === "user"),
+    ).toHaveLength(1);
+    const [committedUserMessage] = (await db.select().from(chatMessages))
+      .filter((message) => message.role === "user");
+    expect(onTransactionCommitted).toHaveBeenCalledWith(committedUserMessage?.id);
+  });
+
   it("accepts rendered assistant selections across links, inline code, CJK, entities, whitespace, and blocks", async () => {
     const body = [
       "## 说明",
@@ -290,6 +356,222 @@ describe("chatInlineAnnotationService", () => {
       annotations: [expect.objectContaining({
         selectedText: "中文文档 与 npm test & verify.\nSecond block.",
       })],
+    });
+  });
+
+  it("accepts only current resolved issue and skill labels for anchored Markdown links", async () => {
+    const source = await seedSource({ body: "placeholder" });
+    const issueId = randomUUID();
+    const skillId = randomUUID();
+    const agentId = randomUUID();
+    await db.insert(agents).values({
+      id: agentId,
+      orgId: source.orgId,
+      name: "Annotation agent",
+      role: "engineer",
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId: source.orgId,
+      title: "Current issue title",
+      identifier: "RUD-42",
+      createdByAgentId: agentId,
+    });
+    await db.insert(organizationSkills).values({
+      id: skillId,
+      orgId: source.orgId,
+      key: "org:current-skill",
+      slug: "current-skill",
+      name: "Current skill",
+      markdown: "# Current skill",
+    });
+    const issueLink = `[stale issue](issue://${issueId})`;
+    const skillLink = `[stale-skill](skill://org/${skillId}?ref=stale-skill)`;
+    const body = `Review ${issueLink} with ${skillLink} before shipping.`;
+    await db.update(chatMessages)
+      .set({ body })
+      .where(eq(chatMessages.id, source.sourceMessageId));
+    const start = body.indexOf(issueLink);
+    const end = body.indexOf(skillLink) + skillLink.length;
+    const annotation = assistantAnnotation(source, body, {
+      selectedText: "RUD-42 Current issue title with current-skill",
+      start,
+      end,
+      prefix: body.slice(Math.max(0, start - 12), start),
+      suffix: body.slice(end, end + 16),
+      attachmentFileIndexes: [],
+    });
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [annotation],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({
+        selectedText: "RUD-42 Current issue title with current-skill",
+      })],
+    });
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        ...annotation,
+        id: randomUUID(),
+        selectedText: "stale issue with stale-skill",
+      }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("selected text"),
+    });
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        ...annotation,
+        id: randomUUID(),
+        selectedText: "RUD-42 Current issue title with fabricated-skill",
+      }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("selected text"),
+    });
+
+    const issueLabel = "RUD-42 Current issue title";
+    const skillLabel = "current-skill";
+    const partialStart = start
+      + createMarkdownSourceBoundaryMap(issueLink, issueLabel)
+        .renderedBoundaryToRaw["RUD-42 ".length]!;
+    const skillStart = body.indexOf(skillLink);
+    const partialEnd = skillStart
+      + createMarkdownSourceBoundaryMap(skillLink, skillLabel)
+        .renderedBoundaryToRaw["current".length]!;
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        ...annotation,
+        id: randomUUID(),
+        selectedText: "Current issue title with current",
+        start: partialStart,
+        end: partialEnd,
+        prefix: body.slice(Math.max(0, partialStart - 160), partialStart),
+        suffix: body.slice(partialEnd, partialEnd + 160),
+      }],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({
+        selectedText: "Current issue title with current",
+      })],
+    });
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [assistantAnnotation(source, body, {
+        id: randomUUID(),
+        selectedText: "Review ",
+        start: 0,
+        end: start,
+        prefix: "",
+        suffix: body.slice(start, start + 160),
+        attachmentFileIndexes: [],
+      })],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({
+        selectedText: "Review ",
+      })],
+    });
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [assistantAnnotation(source, body, {
+        id: randomUUID(),
+        selectedText: " before shipping.",
+        start: end,
+        end: body.length,
+        prefix: body.slice(Math.max(0, end - 160), end),
+        suffix: "",
+        attachmentFileIndexes: [],
+      })],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({
+        selectedText: " before shipping.",
+      })],
+    });
+
+    const otherOrgId = randomUUID();
+    const otherIssueId = randomUUID();
+    await db.insert(organizations).values({
+      id: otherOrgId,
+      name: "Other annotation organization",
+      urlKey: `other-annotation-${otherOrgId}`,
+      issuePrefix: `O${otherOrgId.replaceAll("-", "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(issues).values({
+      id: otherIssueId,
+      orgId: otherOrgId,
+      title: "Private cross-org issue",
+      identifier: "PRIVATE-1",
+    });
+    const crossOrgBody = `[stale](${buildIssueMentionHref(otherIssueId, "PRIVATE-1")})`;
+    await db.update(chatMessages)
+      .set({ body: crossOrgBody })
+      .where(eq(chatMessages.id, source.sourceMessageId));
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        ...annotation,
+        id: randomUUID(),
+        selectedText: "PRIVATE-1 Private cross-org issue",
+        sourceHash: sha256(crossOrgBody),
+        start: 0,
+        end: crossOrgBody.length,
+        prefix: "",
+        suffix: "",
+      }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("selected text"),
+    });
+  });
+
+  it("rejects malformed encoded issue hrefs without surfacing a URIError", async () => {
+    const body = "Review [x](/issues/%E0%A4%A) before shipping.";
+    const source = await seedSource({ body });
+    const link = "[x](/issues/%E0%A4%A)";
+    const start = body.indexOf(link);
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "assistant_body",
+        selectedText: "fabricated issue label",
+        comment: null,
+        sourceConversationId: source.conversationId,
+        sourceMessageId: source.sourceMessageId,
+        sourceHash: sha256(body),
+        start,
+        end: start + link.length,
+        prefix: body.slice(0, start),
+        suffix: body.slice(start + link.length),
+        attachmentIds: [],
+      }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("selected text"),
     });
   });
 
@@ -659,6 +941,54 @@ describe("chatInlineAnnotationService", () => {
     });
   });
 
+  it("accepts Process evidence from the exact parent anchor of a Side Chat", async () => {
+    const source = await seedSource({ body: "Final answer" });
+    const evidence = await seedProcessEvidence({
+      source,
+      text: "Inspect the parent process evidence.",
+    });
+    const sideConversationId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: sideConversationId,
+      orgId: source.orgId,
+      title: "Process annotation Side Chat",
+      conversationKind: "side_chat",
+      sideChatState: "active",
+      forkedFromConversationId: source.conversationId,
+      forkedFromMessageId: source.sourceMessageId,
+    });
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: sideConversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "process_transcript",
+        transcriptKind: "thinking",
+        selectedText: evidence.text,
+        comment: null,
+        sourceConversationId: source.conversationId,
+        sourceMessageId: source.sourceMessageId,
+        sourceHash: sha256(evidence.text),
+        generationId: evidence.generationId,
+        generationSeqStart: 1,
+        generationSeqEnd: 1,
+        start: 0,
+        end: evidence.text.length,
+        prefix: "",
+        suffix: "",
+        attachmentIds: [],
+      }],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({
+        sourceConversationId: source.conversationId,
+        sourceMessageId: source.sourceMessageId,
+        generationId: evidence.generationId,
+      })],
+    });
+  });
+
   it("rejects hidden thinking evidence even when its text appears in the visible projection", async () => {
     const source = await seedSource({ body: "Final answer" });
     const evidence = await seedProcessEvidence({
@@ -842,6 +1172,110 @@ describe("chatInlineAnnotationService", () => {
       conversationId: source.conversationId,
       annotations: [annotation],
       uploadedFileCount: 0,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("visible message projection"),
+    });
+  });
+
+  it("rejects protocol text split across hidden lifecycle transcript entries", async () => {
+    const source = await seedSource({ body: "Final answer" });
+    const generationId = randomUUID();
+    const ts = "2026-07-23T10:00:00.000Z";
+    const privateChunk = "BEGIN\nPRIVATE_PROTOCOL";
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      status: "completed",
+      completedAt: new Date(),
+    });
+    await db.insert(chatGenerationEvents).values([
+      {
+        orgId: source.orgId,
+        generationId,
+        generationSeq: 1,
+        attemptEpoch: 1,
+        eventKind: "transcript",
+        payload: { entry: { kind: "assistant", ts, text: "RUDDER_RESULT_", delta: true } },
+        assistantMessageId: source.sourceMessageId,
+      },
+      {
+        orgId: source.orgId,
+        generationId,
+        generationSeq: 2,
+        attemptEpoch: 1,
+        eventKind: "transcript",
+        payload: { entry: { kind: "system", ts, text: "reasoning completed" } },
+        assistantMessageId: source.sourceMessageId,
+      },
+      {
+        orgId: source.orgId,
+        generationId,
+        generationSeq: 3,
+        attemptEpoch: 1,
+        eventKind: "transcript",
+        payload: { entry: { kind: "assistant", ts, text: privateChunk, delta: true } },
+        assistantMessageId: source.sourceMessageId,
+      },
+    ]);
+    await db.update(chatMessages).set({
+      structuredPayload: {
+        __chatTranscript: [
+          {
+            kind: "assistant",
+            ts,
+            text: "RUDDER_RESULT_",
+            delta: true,
+            generationId,
+            generationSeqStart: 1,
+            generationSeqEnd: 1,
+          },
+          {
+            kind: "system",
+            ts,
+            text: "reasoning completed",
+            generationId,
+            generationSeqStart: 2,
+            generationSeqEnd: 2,
+          },
+          {
+            kind: "assistant",
+            ts,
+            text: privateChunk,
+            delta: true,
+            generationId,
+            generationSeqStart: 3,
+            generationSeqEnd: 3,
+          },
+        ],
+      },
+    }).where(eq(chatMessages.id, source.sourceMessageId));
+    const selectedText = "PRIVATE_PROTOCOL";
+    const start = privateChunk.indexOf(selectedText);
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "process_transcript",
+        transcriptKind: "assistant",
+        selectedText,
+        comment: null,
+        sourceConversationId: source.conversationId,
+        sourceMessageId: source.sourceMessageId,
+        sourceHash: sha256(privateChunk),
+        generationId,
+        generationSeqStart: 3,
+        generationSeqEnd: 3,
+        start,
+        end: start + selectedText.length,
+        prefix: privateChunk.slice(0, start),
+        suffix: "",
+        attachmentIds: [],
+      }],
     })).rejects.toMatchObject({
       status: 422,
       message: expect.stringContaining("visible message projection"),

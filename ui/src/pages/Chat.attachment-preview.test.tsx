@@ -58,6 +58,7 @@ const mockState = vi.hoisted(() => ({
   automationRuns: {} as Record<string, AutomationRunSummary[]>,
   projects: [] as Project[],
   routeBase: "/messenger/chat",
+  locationState: null as unknown,
   workspaceDirectories: {} as Record<string, { directoryPath: string; entries: OrganizationWorkspaceFileEntry[] }>,
   workspaceFiles: {} as Record<string, { rootPath?: string | null; filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; message?: string | null; truncated: boolean }>,
   queueSnapshot: {
@@ -380,6 +381,7 @@ vi.mock("@/lib/router", () => ({
     search: "",
     hash: "",
     key: "chat",
+    state: mockState.locationState,
   }),
   useNavigate: () => mockState.navigate,
   useParams: () => (mockState.conversationId ? { conversationId: mockState.conversationId } : {}),
@@ -395,6 +397,7 @@ vi.mock("react-router-dom", () => ({
     search: "",
     hash: "",
     key: "chat",
+    state: mockState.locationState,
   }),
   useNavigate: () => mockState.navigate,
 }));
@@ -1407,6 +1410,7 @@ beforeEach(() => {
     }),
   ];
   mockState.routeBase = "/messenger/chat";
+  mockState.locationState = null;
   mockState.workspaceDirectories = {};
   mockState.workspaceFiles = {};
   mockState.updateWorkspaceFile.mockReset();
@@ -6692,6 +6696,103 @@ describe("Chat streaming controls", () => {
   });
 });
 
+describe("historical response annotation source navigation", () => {
+  const parentConversationId = "10000000-0000-4000-8000-000000000101";
+  const sideConversationId = "10000000-0000-4000-8000-000000000102";
+  const sourceMessageId = "20000000-0000-4000-8000-000000000101";
+  const selectedText = "Only failed deliveries show Retry.";
+  const historicalAnnotation = {
+    ...persistedResponseAnnotation,
+    sourceConversationId: parentConversationId,
+    sourceMessageId,
+    selectedText,
+    start: 0,
+    end: selectedText.length,
+    prefix: "",
+    suffix: "",
+  };
+
+  it("navigates a kept Side Chat annotation back to its parent source message", async () => {
+    mockState.conversationId = sideConversationId;
+    mockState.conversations = [
+      chat({ id: parentConversationId, title: "Parent chat" }),
+      chat({
+        id: sideConversationId,
+        title: "Kept Side Chat",
+        conversationKind: "side_chat",
+        sideChatState: "kept",
+        forkedFromConversationId: parentConversationId,
+      }),
+    ];
+    mockState.messagesByChatId = {
+      [sideConversationId]: [message({
+        id: "20000000-0000-4000-8000-000000000102",
+        conversationId: sideConversationId,
+        body: "Why does this happen?",
+        structuredPayload: { inlineAnnotations: [historicalAnnotation] },
+      })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        '[aria-label="Show 1 annotation"]',
+      )?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.trim() === "Show source")
+        ?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.navigate).toHaveBeenCalledWith(
+      {
+        pathname: `/chat/${parentConversationId}`,
+        search: `?messageId=${encodeURIComponent(sourceMessageId)}`,
+      },
+      {
+        state: {
+          chatResponseAnnotationSource: {
+            annotation: historicalAnnotation,
+            ordinal: 1,
+          },
+        },
+      },
+    );
+  });
+
+  it("restores the exact marker after arriving in the parent conversation", async () => {
+    mockState.conversationId = parentConversationId;
+    mockState.conversations = [
+      chat({ id: parentConversationId, title: "Parent chat" }),
+    ];
+    mockState.messagesByChatId = {
+      [parentConversationId]: [message({
+        id: sourceMessageId,
+        conversationId: parentConversationId,
+        role: "assistant",
+        body: selectedText,
+        status: "completed",
+      })],
+    };
+    mockState.locationState = {
+      chatResponseAnnotationSource: {
+        annotation: historicalAnnotation,
+        ordinal: 1,
+      },
+    };
+
+    renderChat();
+
+    await vi.waitFor(() => expect(scrollIntoViewMock).toHaveBeenCalled());
+    expect(document.body.querySelector(
+      `[data-message-id="${sourceMessageId}"][data-annotation-surface="assistant_body"]`,
+    )?.classList.contains("chat-message-jump-highlight")).toBe(true);
+  });
+});
+
 describe("Feishu-backed chat controls", () => {
   function feishuChat(overrides: Partial<ChatConversation> = {}) {
     return chat({
@@ -7645,6 +7746,100 @@ describe("Atomic new-chat drafts", () => {
     expect(container.textContent).toContain("failure-context.txt");
     expect(container.querySelector("[data-testid='chat-project-selector']")?.textContent).toContain("Rudder mkt");
     expect(mockState.navigate).not.toHaveBeenCalled();
+  });
+
+  it("restores an existing-chat draft before slow failure reconciliation finishes", async () => {
+    const attachment = new File(["recovery context"], "recovery-context.txt", {
+      type: "text/plain",
+    });
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "existing-user-message", body: "Existing turn." })],
+    };
+    updateChatPendingAttachmentsForScope(
+      resolveChatPendingAttachmentScopeKey("org-1", "chat-1"),
+      () => [attachment],
+    );
+    let releaseRefresh!: () => void;
+    const blockedRefresh = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    mockState.invalidateQueries.mockImplementation(() => blockedRefresh);
+    mockState.sendMessageStream.mockRejectedValueOnce(
+      new ApiError("Source annotation was rejected", 422, null),
+    );
+
+    const { container } = renderChat();
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Composer draft']",
+    );
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(editor, "Keep this existing-chat draft.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+
+    await vi.waitFor(() => {
+      expect(editor?.value).toBe("Keep this existing-chat draft.");
+      expect(container.textContent).toContain("recovery-context.txt");
+      expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Failed to send message",
+        body: "Source annotation was rejected",
+        tone: "error",
+      }));
+    });
+
+    releaseRefresh();
+    await act(async () => {
+      await Promise.resolve();
+    });
+  });
+
+  it("does not restore an existing-chat draft when a pre-ack stream error identifies the committed user message", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "existing-user-message", body: "Existing turn." })],
+    };
+    mockState.sendMessageStream.mockImplementationOnce(async (
+      _chatId: string,
+      _body: string,
+      options: { onEvent: (event: ChatStreamEvent) => void | Promise<void> },
+    ) => {
+      await options.onEvent({
+        type: "error",
+        error: "The saved message could not be hydrated.",
+        messageId: "committed-user-message",
+      });
+    });
+
+    const { container } = renderChat();
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Composer draft']",
+    );
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(editor, "Do not send this twice.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => {
+      expect(editor?.value).toBe("");
+      expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: "The saved message could not be hydrated.",
+        tone: "error",
+      }));
+    });
   });
 
   it("commits the first-turn UI only after the acknowledgement", async () => {

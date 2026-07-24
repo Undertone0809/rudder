@@ -5655,6 +5655,58 @@ describe("chat routes", () => {
     ]);
   });
 
+  it("retains committed multipart objects when message hydration fails after the transaction", async () => {
+    const committedUserMessageId = "10000000-0000-4000-8000-000000000007";
+    const conversation = createConversation({ id: annotationConversationId });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockImplementationOnce(async (
+      _conversationId,
+      _orgId,
+      _body,
+      _editUserMessageId,
+      options,
+    ) => {
+      options?.onTransactionCommitted?.(committedUserMessageId);
+      throw new Error("Failed to hydrate created chat message");
+    });
+
+    const res = await request(createApp())
+      .post(`/api/chats/${annotationConversationId}/messages/stream`)
+      .field("body", "Explain this")
+      .field("inlineAnnotations", JSON.stringify([
+        createInlineAnnotation({ attachmentFileIndexes: [0] }),
+      ]))
+      .attach("files", Buffer.from("file"), {
+        filename: "context.txt",
+        contentType: "text/plain",
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockStorage.putFile).toHaveBeenCalledTimes(1);
+    expect(mockStorage.deleteObject).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+    expect(mockChatService.addMessage).not.toHaveBeenCalled();
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "error",
+        messageId: committedUserMessageId,
+      }),
+    ]);
+  });
+
   it("keeps copied edit attachments in the stream ack when no new files are uploaded", async () => {
     const conversation = createConversation();
     const editUserMessageId = "10000000-0000-4000-8000-000000000099";
@@ -5735,6 +5787,9 @@ describe("chat routes", () => {
       "organization-1",
       "Edited with copied attachment",
       editUserMessageId,
+      expect.objectContaining({
+        onTransactionCommitted: expect.any(Function),
+      }),
     );
     expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledWith(expect.objectContaining({
       messages: [expect.objectContaining({

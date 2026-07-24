@@ -1,3 +1,9 @@
+import {
+  isInternalChatTranscriptLifecycleEntry,
+  type ChatInlineAnnotation,
+  type ChatInlineAnnotationInput,
+  type ChatMessage,
+} from "@rudderhq/shared";
 import type { LucideIcon } from "lucide-react";
 import {
   Boxes,
@@ -13,7 +19,6 @@ import {
   TerminalSquare,
   Wrench
 } from "lucide-react";
-import type { ChatInlineAnnotationInput } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { stripBenignStderr } from "../../lib/benign-stderr";
 import { cn } from "../../lib/utils";
@@ -116,6 +121,8 @@ export interface RunTranscriptViewProps {
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   /** Stable owning assistant message for selectable persisted Process prose. */
   annotationSource?: TranscriptAnnotationSourceContext;
+  /** Read-only annotations attached to user Steer messages embedded in Process. */
+  sentAnnotationContext?: TranscriptSentAnnotationContext;
 }
 
 export interface TranscriptAnnotationSourceContext {
@@ -126,6 +133,15 @@ export interface TranscriptAnnotationSourceContext {
     annotationId: string,
     anchor: HTMLButtonElement,
   ) => void;
+}
+
+export interface TranscriptSentAnnotationContext {
+  onSelect?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+  onExpandedChange?: (
+    annotations: ChatInlineAnnotation[],
+    expanded: boolean,
+  ) => void;
+  unlocatableAnnotationId?: string | null;
 }
 
 export interface TranscriptGenerationProvenance {
@@ -153,6 +169,7 @@ export type TranscriptBlock =
       source?: "steer";
       messageId?: string;
       controlActionId?: string;
+      steerMessage?: ChatMessage;
       ts: string;
       text: string;
       streaming: boolean;
@@ -365,11 +382,7 @@ export function compactWhitespace(value: string): string {
 
 export function isInternalTranscriptLifecycleEntry(entry: TranscriptEntry): boolean {
   if (entry.kind !== "system") return false;
-  const text = compactWhitespace(entry.text).toLowerCase();
-  return text === "reasoning started"
-    || text === "reasoning completed"
-    || /^item (?:started|completed): reasoning(?:\s+\([^)]*\))?$/.test(text)
-    || /^item (?:started|completed): user[_-]?message(?:\s+\([^)]*\))?$/.test(text);
+  return isInternalChatTranscriptLifecycleEntry(entry);
 }
 
 export function isTurnStartedText(value: string): boolean {

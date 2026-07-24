@@ -8,6 +8,7 @@ import {
   hashChatAnnotationSource,
   resolveChatAnnotationRange,
   restoreChatAnnotationRange,
+  shouldAutoFocusChatAnnotationToolbar,
 } from "./chat-response-annotation-selection";
 
 const sourceHash = "b".repeat(64);
@@ -20,6 +21,20 @@ function sourceRoot(sourceId: string, blockId: string) {
 }
 
 describe("chat response annotation selection", () => {
+  it("autofocuses annotation actions only for keyboard range selection", () => {
+    expect(shouldAutoFocusChatAnnotationToolbar(
+      new KeyboardEvent("keyup", { key: "ArrowRight", shiftKey: true }),
+    )).toBe(true);
+    expect(shouldAutoFocusChatAnnotationToolbar(
+      new KeyboardEvent("keyup", { key: "End", shiftKey: true }),
+    )).toBe(true);
+    expect(shouldAutoFocusChatAnnotationToolbar(
+      new KeyboardEvent("keyup", { key: "ArrowRight" }),
+    )).toBe(false);
+    expect(shouldAutoFocusChatAnnotationToolbar(new MouseEvent("mouseup"))).toBe(false);
+    expect(shouldAutoFocusChatAnnotationToolbar(new TouchEvent("touchend"))).toBe(false);
+  });
+
   it("hashes the persisted raw source with SHA-256", async () => {
     await expect(hashChatAnnotationSource("hello")).resolves.toBe(
       "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",

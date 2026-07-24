@@ -46,6 +46,7 @@ export function RunTranscriptView({
   onOpenFile,
   onOpenAgent,
   annotationSource,
+  sentAnnotationContext,
 }: RunTranscriptViewProps) {
   const toastContext = useOptionalToast();
   const handleMarkdownLinkClick = useCallback<TranscriptMarkdownLinkClickHandler>(({ event, href }) => {
@@ -173,6 +174,7 @@ export function RunTranscriptView({
           agentInspections={agentInspections}
           onOpenAgent={onOpenAgent}
           annotationSource={annotationSource}
+          sentAnnotationContext={sentAnnotationContext}
         />
       </div>
     );
@@ -194,6 +196,7 @@ export function RunTranscriptView({
             thinkingClassName,
             onMarkdownLinkClick: handleMarkdownLinkClick,
             annotationSource,
+            sentAnnotationContext,
           })}
         </div>
       ))}

@@ -3,11 +3,11 @@ import {
   chatGenerations,
   chatMessages,
 } from "@rudderhq/db";
+import type { ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import {
   coalesceChatTranscriptTextEntries,
   withChatTranscriptGenerationProvenance,
 } from "@rudderhq/shared/chat-transcript-provenance";
-import type { ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import { and, asc, eq, lte } from "drizzle-orm";
 import type { ChatGenerationProtocolTransaction } from "./chat-generation-protocol.helpers.js";
 import { withPersistedTranscript } from "./chats.helpers.js";

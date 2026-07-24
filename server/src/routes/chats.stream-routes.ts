@@ -175,7 +175,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       ? await inlineAnnotations.prepare({
         orgId: conversation.orgId,
         conversationId: conversation.id,
-        annotations: parsedBody.data.inlineAnnotations,
+        annotations: parsedBody.data.inlineAnnotations ?? [],
         uploadedFileCount: messageFiles.length,
         editUserMessageId: parsedBody.data.editUserMessageId ?? null,
       })
@@ -368,6 +368,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     let assistantProgressMessageId: string | null = null;
     let activeChatRunId: string | null = null;
     let userMessagePersisted = Boolean(atomicFirstTurn);
+    let committedUserMessageId = atomicFirstTurn?.userMessage.id ?? null;
     let generationTerminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
     let admittedAssistantBody = "";
     let stopCutoff: { body: string; transcript: TranscriptEntry[] } | null = null;
@@ -487,12 +488,16 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           provided: inlineAnnotationsProvided,
           prepared: preparedAnnotations,
           storedAttachments: stagedMessageFiles.files,
-          onPersisted: () => {
+          onPersisted: (messageId: string) => {
             userMessagePersisted = true;
+            committedUserMessageId = messageId;
             stagedMessageFiles.markCommitted();
           },
         },
       );
+      userMessagePersisted = true;
+      committedUserMessageId = userMessage.id;
+      stagedMessageFiles.markCommitted();
       await touchSideChat(req, conversation as ChatConversation);
       if (queuedMessageId) {
         await svc.markQueuedMessageRunning({
@@ -802,6 +807,24 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
             errorCode: "chat_runtime_exception",
             runId: null,
             messageId: null,
+          });
+          res.end();
+        }
+        return;
+      }
+      if (!turnContextForPartial && committedUserMessageId) {
+        logger.warn({
+          err: chatAssistantErrorForLog(err),
+          conversationId: conversation.id,
+          userMessageId: committedUserMessageId,
+        }, "chat user message hydration failed after commit");
+        if (!clientClosed) {
+          writeStreamEvent(res, {
+            type: "error",
+            error: CHAT_ASSISTANT_USER_ERROR_MESSAGE,
+            errorCode: "chat_runtime_exception",
+            runId: null,
+            messageId: committedUserMessageId,
           });
           res.end();
         }

@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 
+import type { ChatMessage } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
+import { readChatAnnotationSourceText } from "../../lib/chat-response-annotation-selection";
+import { mergeNativeSteerTranscriptEntries } from "../../lib/chat-stream-state";
 import {
   ExpandableTranscriptResponsePre,
   TranscriptActivityRow,
@@ -13,6 +16,21 @@ import {
   TranscriptMessageBlock,
 } from "./RunTranscriptView.blocks";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
+
+vi.mock("../../pages/Chat.attachments", () => ({
+  ChatFileAttachmentChip: ({ name, href }: { name: string; href?: string }) => (
+    href ? <a href={href}>{name}</a> : <span>{name}</span>
+  ),
+  ChatImageAttachmentTile: ({ name }: { name: string }) => <span>{name}</span>,
+  PendingAttachmentPreview: ({ file, onRemove }: { file: File; onRemove: () => void }) => (
+    <span>
+      {file.name}
+      <button type="button" aria-label={`Remove ${file.name}`} onClick={onRemove}>
+        Remove
+      </button>
+    </span>
+  ),
+}));
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -167,6 +185,37 @@ describe("TranscriptActivityRow", () => {
 });
 
 describe("native Steer transcript blocks", () => {
+  it("registers the exact visible Process projection as the annotation source", () => {
+    const visibleProcess = "Exploration before the final answer";
+    const container = render(
+      <ThemeProvider>
+        <TranscriptMessageBlock
+          block={{
+            type: "message",
+            role: "assistant",
+            ts: "2026-07-23T10:00:00.000Z",
+            text: visibleProcess,
+            streaming: false,
+            generationId: "generation-visible-prefix",
+            generationSeqStart: 1,
+            generationSeqEnd: 1,
+          }}
+          density="compact"
+          presentation="chat"
+          annotationSource={{
+            sourceConversationId: "conversation-visible-prefix",
+            sourceMessageId: "message-visible-prefix",
+          }}
+        />
+      </ThemeProvider>,
+    );
+    const sourceRoot = container.querySelector<HTMLElement>(
+      '[data-annotation-surface="process_transcript"]',
+    )!;
+
+    expect(readChatAnnotationSourceText(sourceRoot)).toBe(visibleProcess);
+  });
+
   it("keeps adjacent same-anchor Steer messages as separate durable blocks", () => {
     const entries: TranscriptEntry[] = [
       {
@@ -204,5 +253,75 @@ describe("native Steer transcript blocks", () => {
     expect(steerBlocks).toHaveLength(2);
     expect(steerBlocks[0]?.getAttribute("data-message-id")).toBe("steer-message-1");
     expect(steerBlocks[1]?.getAttribute("data-message-id")).toBe("steer-message-2");
+  });
+
+  it("keeps sent annotation evidence attached to the embedded Steer bubble", () => {
+    const steerMessage: ChatMessage = {
+      id: "steer-with-annotation",
+      orgId: "org-1",
+      conversationId: "chat-1",
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Use the selected evidence",
+      structuredPayload: {
+        source: "steer",
+        targetGenerationId: "generation-1",
+        afterTranscriptEntryCount: 0,
+        generationSeq: 4,
+        controlActionId: "control-1",
+        deliveryDisposition: "accepted_current",
+        inlineAnnotations: [{
+          id: "10000000-0000-4000-8000-000000000001",
+          selectedText: "selected evidence",
+          comment: "Preserve this comment.",
+          sourceConversationId: "20000000-0000-4000-8000-000000000001",
+          sourceMessageId: "30000000-0000-4000-8000-000000000001",
+          surface: "assistant_body",
+          sourceHash: "a".repeat(64),
+          start: 0,
+          end: 17,
+          prefix: "",
+          suffix: "",
+          attachmentIds: [],
+        }],
+      },
+      approvalId: null,
+      approval: null,
+      attachments: [],
+      replyingAgentId: null,
+      chatTurnId: "turn-1",
+      turnVariant: 0,
+      supersededAt: null,
+      createdAt: new Date("2026-07-21T08:00:00.000Z"),
+      updatedAt: new Date("2026-07-21T08:00:00.000Z"),
+    };
+    const [block] = normalizeTranscript(
+      mergeNativeSteerTranscriptEntries([], [steerMessage]),
+      false,
+    );
+    expect(block).toMatchObject({
+      type: "message",
+      source: "steer",
+      steerMessage: { id: "steer-with-annotation" },
+    });
+    if (block?.type !== "message") throw new Error("Expected a Steer message block");
+
+    render(
+      <ThemeProvider>
+        <TranscriptMessageBlock block={block} density="compact" presentation="chat" />
+      </ThemeProvider>,
+    );
+    const chip = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Show 1 annotation"]',
+    );
+    expect(chip).not.toBeNull();
+
+    act(() => chip?.click());
+
+    expect(document.body.textContent).toContain("selected evidence");
+    expect(document.body.textContent).toContain("Preserve this comment.");
+    expect(document.querySelector('[aria-label^="Edit annotation"]')).toBeNull();
+    expect(document.querySelector('[aria-label^="Delete annotation"]')).toBeNull();
   });
 });

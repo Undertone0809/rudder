@@ -2,11 +2,41 @@ import type {
   ChatInlineAnnotationSurface,
   ChatInlineAnnotationTranscriptKind,
 } from "@rudderhq/shared";
-import { createMarkdownSourceBoundaryMap } from "./markdown-normalize";
+import { createMarkdownSourceBoundaryMap } from "@rudderhq/shared";
 
 export const CHAT_ANNOTATION_SOURCE_ATTRIBUTE = "data-chat-annotation-source";
 export const CHAT_ANNOTATION_BLOCK_ATTRIBUTE = "data-chat-annotation-block";
 export const CHAT_ANNOTATION_IGNORE_ATTRIBUTE = "data-chat-annotation-ignore";
+export const CHAT_ANNOTATION_TEXT_IGNORE_ATTRIBUTE = "data-chat-annotation-text-ignore";
+
+const chatAnnotationSourceTextByRoot = new WeakMap<HTMLElement, string>();
+
+export function registerChatAnnotationSourceText(
+  sourceRoot: HTMLElement,
+  source: string,
+) {
+  chatAnnotationSourceTextByRoot.set(sourceRoot, source);
+}
+
+export function readChatAnnotationSourceText(sourceRoot: HTMLElement) {
+  return chatAnnotationSourceTextByRoot.get(sourceRoot) ?? null;
+}
+
+const KEYBOARD_RANGE_KEYS = new Set([
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "End",
+  "Home",
+]);
+
+export function shouldAutoFocusChatAnnotationToolbar(event: Event) {
+  return event instanceof KeyboardEvent
+    && event.type === "keyup"
+    && event.shiftKey
+    && KEYBOARD_RANGE_KEYS.has(event.key);
+}
 
 export async function hashChatAnnotationSource(value: string) {
   const digest = await globalThis.crypto.subtle.digest(
@@ -96,7 +126,10 @@ const SEMANTIC_LINE_BREAK_ELEMENTS = new Set([
 function semanticVisibleText(node: Node): string {
   if (
     node instanceof Element
-    && node.hasAttribute(CHAT_ANNOTATION_IGNORE_ATTRIBUTE)
+    && (
+      node.hasAttribute(CHAT_ANNOTATION_IGNORE_ATTRIBUTE)
+      || node.hasAttribute(CHAT_ANNOTATION_TEXT_IGNORE_ATTRIBUTE)
+    )
   ) {
     return "";
   }
@@ -210,7 +243,10 @@ function visibleTextBoundaryAtOffset(
 ): DomBoundary | null {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
-      return closestAttributeElement(node, CHAT_ANNOTATION_IGNORE_ATTRIBUTE)
+      return (
+        closestAttributeElement(node, CHAT_ANNOTATION_IGNORE_ATTRIBUTE)
+        || closestAttributeElement(node, CHAT_ANNOTATION_TEXT_IGNORE_ATTRIBUTE)
+      )
         ? NodeFilter.FILTER_REJECT
         : NodeFilter.FILTER_ACCEPT;
     },

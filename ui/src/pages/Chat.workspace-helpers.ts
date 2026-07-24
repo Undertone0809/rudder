@@ -150,14 +150,30 @@ function findChatMessageHighlightElement(target: HTMLElement) {
   return target.querySelector<HTMLElement>("[data-message-highlight-target='true']") ?? target;
 }
 
+function preferredChatScrollBehavior(): ScrollBehavior {
+  return typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ? "auto"
+    : "smooth";
+}
+
+function highlightChatElement(target: HTMLElement) {
+  target.classList.remove("chat-message-jump-highlight");
+  void target.offsetWidth;
+  target.classList.add("chat-message-jump-highlight");
+  window.setTimeout(() => target.classList.remove("chat-message-jump-highlight"), 1_800);
+}
+
 export function revealChatMessageElement(target: HTMLElement) {
   const highlightTarget = findChatMessageHighlightElement(target);
-  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  target.scrollIntoView({ block: "center", behavior: preferredChatScrollBehavior() });
   target.classList.remove("chat-message-jump-highlight");
-  highlightTarget.classList.remove("chat-message-jump-highlight");
-  void highlightTarget.offsetWidth;
-  highlightTarget.classList.add("chat-message-jump-highlight");
-  window.setTimeout(() => highlightTarget.classList.remove("chat-message-jump-highlight"), 1800);
+  highlightChatElement(highlightTarget);
+}
+
+export function revealChatAnnotationSourceElement(target: HTMLElement) {
+  target.scrollIntoView({ block: "center", behavior: preferredChatScrollBehavior() });
+  highlightChatElement(target);
 }
 
 export function useChatDraftQueries(input: {

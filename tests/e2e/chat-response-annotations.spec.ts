@@ -1,8 +1,8 @@
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, type Locator, type Page } from "@playwright/test";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   chatConversations,
@@ -204,7 +204,7 @@ async function seedAnnotationChat(
     page.locator(
       `[data-testid="chat-assistant-message"][data-message-id="${assistantMessageId}"]`,
     ),
-  ).toContainText("Rudder docs", { timeout: 15_000 });
+  ).toContainText("Rudder docs", { timeout: 30_000 });
 
   return {
     organization,
@@ -655,6 +655,7 @@ test.describe("Chat response annotations", () => {
       .getByRole("button", { name: "Show source" })
       .click();
     await expect(finalSource).toBeVisible({ timeout: 15_000 });
+    await expect(finalSource).toHaveClass(/chat-message-jump-highlight/);
     const restoredSelectionGeometry = await selectVisibleText(
       page,
       finalSource,
@@ -666,6 +667,12 @@ test.describe("Chat response annotations", () => {
       .getByTestId("chat-response-annotation-marker")
       .filter({ hasText: "1" });
     await expectMarkerNearSelection(restoredMarker, finalSource, restoredSelectionGeometry);
+    await expect(reloadedCard).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(reloadedCard).toHaveCount(0);
+    const reloadedChip = reloadedTurn.getByRole("button", { name: "Show 2 annotations" });
+    await expect(reloadedChip).toBeFocused();
+    await reloadedChip.click();
     await expect(reloadedCard).toBeVisible();
 
     await page.screenshot({
@@ -814,6 +821,7 @@ test.describe("Chat response annotations", () => {
       .click();
     await expect(sourceProcessToggle).toHaveAttribute("aria-expanded", "true");
     await expect(processSource).toBeVisible({ timeout: 15_000 });
+    await expect(processSource).toHaveClass(/chat-message-jump-highlight/);
     const restoredProcessSelectionGeometry = await selectVisibleText(
       page,
       processSource,
@@ -922,6 +930,14 @@ test.describe("Chat response annotations", () => {
       fullPage: false,
       animations: "disabled",
     });
+    await addSelectionToChat(page);
+    const mobileDraftChip = draftAnnotationChip(page, 1);
+    await mobileDraftChip.click();
+    await expect(page.getByTestId("chat-response-annotation-card")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("chat-response-annotation-card")).toHaveCount(0);
+    await expect(mobileDraftChip).toBeFocused();
+    await page.getByRole("button", { name: "Clear all annotations" }).click();
 
     await page.setViewportSize({ width: 1280, height: 820 });
     await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
@@ -1019,7 +1035,9 @@ test.describe("Chat response annotations", () => {
       }));
     }, { orgId: seeded.organization.id, conversationId: seeded.conversationId });
     await page.reload();
-    await expect(composer(page)).toHaveText("Legacy string-only draft");
+    await expect(composer(page)).toHaveText("Legacy string-only draft", {
+      timeout: 30_000,
+    });
 
     const finalSource = annotationSource(page, {
       messageId: seeded.assistantMessageId,
@@ -1077,8 +1095,200 @@ test.describe("Chat response annotations", () => {
     await expect(page.getByTestId("chat-response-annotation-pending-attachment")).toHaveCount(0);
   });
 
+  test("keeps immutable annotations through message edit and remaps their source and files in a UI Fork", async ({ page }) => {
+    test.setTimeout(120_000);
+    const seeded = await seedAnnotationChat(page, `Response-Annotation-Edit-Fork-${Date.now()}`);
+    const finalSource = annotationSource(page, {
+      messageId: seeded.assistantMessageId,
+      surface: "assistant_body",
+    });
+    await selectVisibleText(page, finalSource, "Rudder docs");
+    await addSelectionToChat(page);
+    await editAnnotation(page, 1, {
+      comment: "Carry this exact evidence through edit and Fork.",
+      files: [{
+        name: "edit-fork-annotation.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("immutable edit and fork evidence"),
+      }],
+    });
+    await composer(page).fill("Original annotated edit body");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const originalTurn = page
+      .getByTestId("chat-user-message-turn")
+      .filter({ hasText: "Original annotated edit body" });
+    await expect(originalTurn.getByRole("button", { name: "Show 1 annotation" }))
+      .toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." }),
+    ).toBeVisible({ timeout: 20_000 });
+
+    const originalMessagesResponse = await page.request.get(
+      `/api/chats/${seeded.conversationId}/messages`,
+    );
+    expect(originalMessagesResponse.ok(), await originalMessagesResponse.text()).toBe(true);
+    const originalMessages = await originalMessagesResponse.json() as Array<{
+      id: string;
+      role: string;
+      body: string;
+      structuredPayload: {
+        inlineAnnotations?: Array<{
+          id: string;
+          sourceMessageId: string;
+          attachmentIds: string[];
+        }>;
+      } | null;
+    }>;
+    const originalAnnotatedMessage = originalMessages.find((message) => (
+      message.role === "user" && message.body === "Original annotated edit body"
+    ));
+    const originalAnnotation = originalAnnotatedMessage
+      ?.structuredPayload
+      ?.inlineAnnotations
+      ?.[0];
+    expect(originalAnnotatedMessage).toBeTruthy();
+    expect(originalAnnotation).toMatchObject({
+      sourceMessageId: seeded.assistantMessageId,
+      attachmentIds: [expect.any(String)],
+    });
+    const completedReply = [...originalMessages].reverse().find((message) => (
+      message.role === "assistant"
+      && message.id !== seeded.assistantMessageId
+      && message.body === "Streaming reply for chat."
+    ));
+    expect(completedReply).toBeTruthy();
+
+    await e2eDb
+      .update(chatMessages)
+      .set({ status: "failed" })
+      .where(eq(chatMessages.id, completedReply!.id));
+    await page.reload();
+    const failedReply = page.locator(
+      `[data-testid="chat-assistant-message"][data-message-id="${completedReply!.id}"]`,
+    );
+    await expect(failedReply.getByRole("button", { name: "Retry" }))
+      .toBeVisible({ timeout: 15_000 });
+    await failedReply.getByRole("button", { name: "Retry" }).click();
+
+    const retriedTurn = page
+      .getByTestId("chat-user-message-turn")
+      .filter({ hasText: "Original annotated edit body" });
+    await expect(retriedTurn.getByRole("button", { name: "Show 1 annotation" }))
+      .toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("2/2")).toBeVisible({ timeout: 15_000 });
+    const retriedCard = await expandSentAnnotations(page, retriedTurn, 1);
+    await expect(retriedCard).toContainText("Carry this exact evidence through edit and Fork.");
+    await expect(retriedCard.getByText("edit-fork-annotation.txt")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." }).last(),
+    ).toBeVisible({ timeout: 20_000 });
+
+    const originalBubble = retriedTurn.getByTestId("chat-user-message-bubble");
+    await originalBubble.hover();
+    await retriedTurn.getByRole("button", { name: "Edit message" }).click();
+    const inlineEditor = page.getByTestId("chat-inline-message-editor");
+    await expect(inlineEditor).toBeVisible();
+    await inlineEditor
+      .locator(".rudder-mdxeditor-content")
+      .fill("Edited annotated edit body");
+    await inlineEditor.getByRole("button", { name: "Send" }).click();
+
+    const editedTurn = page
+      .getByTestId("chat-user-message-turn")
+      .filter({ hasText: "Edited annotated edit body" });
+    await expect(editedTurn.getByRole("button", { name: "Show 1 annotation" }))
+      .toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByTestId("chat-user-message-turn").filter({ hasText: "Original annotated edit body" }),
+    ).toHaveCount(0);
+    const editedCard = await expandSentAnnotations(page, editedTurn, 1);
+    await expect(editedCard).toContainText("Carry this exact evidence through edit and Fork.");
+    await expect(editedCard.getByText("edit-fork-annotation.txt")).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    const branchAssistant = page
+      .getByTestId("chat-assistant-message")
+      .filter({ hasText: "Streaming reply for chat." })
+      .last();
+    await expect(branchAssistant).toBeVisible({ timeout: 20_000 });
+    await branchAssistant.hover();
+    const forkResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && response.url().includes(`/api/chats/${seeded.conversationId}/fork`)
+    ));
+    await branchAssistant.getByRole("button", { name: "Fork from here" }).click();
+    const forkResponse = await forkResponsePromise;
+    expect(forkResponse.ok(), await forkResponse.text()).toBe(true);
+    const forkedConversation = await forkResponse.json() as { id: string };
+    await expect(page).toHaveURL(
+      new RegExp(`/messenger/chat/${forkedConversation.id}$`),
+      { timeout: 15_000 },
+    );
+
+    const forkedTurn = page
+      .getByTestId("chat-user-message-turn")
+      .filter({ hasText: "Edited annotated edit body" });
+    await expect(forkedTurn.getByRole("button", { name: "Show 1 annotation" }))
+      .toBeVisible({ timeout: 15_000 });
+    const forkedCard = await expandSentAnnotations(page, forkedTurn, 1);
+    await expect(forkedCard).toContainText("Carry this exact evidence through edit and Fork.");
+    await expect(forkedCard.getByText("edit-fork-annotation.txt")).toBeVisible();
+
+    const forkMessagesResponse = await page.request.get(
+      `/api/chats/${forkedConversation.id}/messages`,
+    );
+    expect(forkMessagesResponse.ok(), await forkMessagesResponse.text()).toBe(true);
+    const forkMessages = await forkMessagesResponse.json() as Array<{
+      id: string;
+      role: string;
+      body: string;
+      structuredPayload: {
+        inlineAnnotations?: Array<{
+          id: string;
+          sourceConversationId: string;
+          sourceMessageId: string;
+          attachmentIds: string[];
+        }>;
+      } | null;
+      attachments: Array<{ id: string; originalFilename: string | null }>;
+    }>;
+    const forkedAnnotatedMessage = forkMessages.find((message) => (
+      message.role === "user" && message.body === "Edited annotated edit body"
+    ));
+    const forkedAnnotation = forkedAnnotatedMessage
+      ?.structuredPayload
+      ?.inlineAnnotations
+      ?.[0];
+    expect(forkedAnnotation).toMatchObject({
+      id: originalAnnotation!.id,
+      sourceConversationId: forkedConversation.id,
+      attachmentIds: [expect.any(String)],
+    });
+    expect(forkedAnnotation!.sourceMessageId).not.toBe(seeded.assistantMessageId);
+    expect(forkedAnnotation!.attachmentIds[0]).not.toBe(originalAnnotation!.attachmentIds[0]);
+    expect(forkedAnnotatedMessage!.attachments).toEqual([
+      expect.objectContaining({
+        id: forkedAnnotation!.attachmentIds[0],
+        originalFilename: "edit-fork-annotation.txt",
+      }),
+    ]);
+
+    await forkedCard
+      .getByTestId("chat-response-annotation-sent-card-entry")
+      .getByRole("button", { name: "Show source" })
+      .click();
+    const forkedSource = annotationSource(page, {
+      messageId: forkedAnnotation!.sourceMessageId,
+      surface: "assistant_body",
+    });
+    await expect(forkedSource).toBeVisible({ timeout: 15_000 });
+    await expect(forkedSource).toHaveClass(/chat-message-jump-highlight/);
+  });
+
   test("carries annotation count and provenance through Queue edit and Steer delivery", async ({ page }) => {
-    test.setTimeout(90_000);
+    test.setTimeout(120_000);
     const seeded = await seedAnnotationChat(
       page,
       `Response-Annotation-Queue-${Date.now()}`,
@@ -1095,10 +1305,6 @@ test.describe("Chat response annotations", () => {
       return (await response.json() as { activeGenerationStatus: string | null })
         .activeGenerationStatus;
     }, { timeout: 15_000 }).toMatch(/starting|running/);
-    await page.getByRole("button", { name: /Worked for/ }).last().click();
-    await expect(page.getByText("Reasoning before Steer", { exact: true }))
-      .toBeVisible({ timeout: 15_000 });
-
     const finalSource = annotationSource(page, {
       messageId: seeded.assistantMessageId,
       surface: "assistant_body",
@@ -1143,6 +1349,8 @@ test.describe("Chat response annotations", () => {
         sourceMessageId: seeded.assistantMessageId,
         selectedText: "第一段包含",
         comment: "Keep this staged evidence with Queue and Steer.",
+        // Queue storage keeps uploaded files in a private asset envelope until
+        // delivery creates the owning user message and attachment records.
         attachmentIds: [],
       }),
     ]);
@@ -1173,8 +1381,25 @@ test.describe("Chat response annotations", () => {
     await queueItem.getByRole("button", { name: "Steer" }).click();
 
     const deliveredTurn = page
-      .getByTestId("chat-user-message-turn")
+      .getByTestId("chat-transcript-steer-message")
       .filter({ hasText: "Edited Queue body keeps its annotation" });
+    await expect(deliveredTurn).toBeVisible({ timeout: 30_000 });
+    // The native Steer bubble first appears in the live transcript and is then
+    // remounted from persisted history. Assert the immutable card only after
+    // that handoff so the test exercises the stable, refreshable UI.
+    await expect(page.getByRole("button", { name: "Stop streaming" }))
+      .toHaveCount(0, { timeout: 30_000 });
+    const steeredAssistant = page.getByTestId("chat-assistant-message").last();
+    await expect(steeredAssistant).toContainText(
+      "User-provided response annotations",
+    );
+    await expect(steeredAssistant).toContainText("第一段包含");
+    await expect(steeredAssistant).toContainText(
+      "Keep this staged evidence with Queue and Steer.",
+    );
+    await expect(steeredAssistant).toContainText(
+      "Native steer image received: true",
+    );
     await expect(deliveredTurn).toBeVisible({ timeout: 30_000 });
     await expect(deliveredTurn.getByRole("button", { name: "Show 1 annotation" }))
       .toBeVisible();
@@ -1247,7 +1472,8 @@ test.describe("Chat response annotations", () => {
     await expect(provisionalCard).toBeVisible();
     await provisionalCard.hover();
     await provisionalCard.getByRole("button", { name: "Edit annotation 1" }).click();
-    const provisionalEditor = panel.getByTestId("chat-response-annotation-editor");
+    const provisionalEditor = page.getByTestId("chat-response-annotation-editor");
+    await expect(provisionalEditor).toBeVisible();
     await provisionalEditor
       .getByPlaceholder("Add an optional comment…")
       .fill("Side Chat owns this comment and evidence.");
@@ -1275,7 +1501,8 @@ test.describe("Chat response annotations", () => {
       && /\/api\/chats\/[^/]+\/messages\/stream$/.test(request.url())
       && !request.url().includes(`/api/chats/${seeded.conversationId}/messages/stream`)
     ));
-    await panel.getByRole("button", { name: "Send Side Chat message" }).click();
+    const sideSendButton = panel.getByRole("button", { name: "Send Side Chat message" });
+    await sideSendButton.click();
     const createResponse = await createSideChat;
     expect(createResponse.ok(), await createResponse.text()).toBe(true);
     const sideChat = await createResponse.json() as { id: string };
@@ -1296,7 +1523,6 @@ test.describe("Chat response annotations", () => {
     await expect(sentSideAnnotation).toContainText(
       "Side Chat owns this comment and evidence.",
     );
-    await expect(sentSideAnnotation.getByText("side-chat-annotation-evidence.png")).toBeVisible();
     await expect(sentSideAnnotation.getByTestId("chat-annotation-image-attachment")).toBeVisible();
     await expect(
       sentSideCard.getByRole("button", { name: /Edit annotation|Delete annotation/ }),

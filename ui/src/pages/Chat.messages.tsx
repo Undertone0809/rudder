@@ -2744,6 +2744,7 @@ export function StreamTranscriptItem({
   onOpenFile,
   onOpenAgent,
   annotationSource,
+  sentAnnotationContext,
 }: {
   entries: TranscriptEntry[];
   steerMessages?: ChatMessage[];
@@ -2765,6 +2766,14 @@ export function StreamTranscriptItem({
       annotationId: string,
       anchor: HTMLButtonElement,
     ) => void;
+  };
+  sentAnnotationContext?: {
+    onSelect?: (annotation: ChatInlineAnnotation, ordinal: number) => void;
+    onExpandedChange?: (
+      annotations: ChatInlineAnnotation[],
+      expanded: boolean,
+    ) => void;
+    unlocatableAnnotationId?: string | null;
   };
 }) {
   const timelineEntries = useMemo(
@@ -2861,6 +2870,7 @@ export function StreamTranscriptItem({
               onOpenFile={onOpenFile}
               onOpenAgent={onOpenAgent}
               annotationSource={annotationSource}
+              sentAnnotationContext={sentAnnotationContext}
             />
           </div>
         ) : null}
