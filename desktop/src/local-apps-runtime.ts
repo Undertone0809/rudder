@@ -288,6 +288,7 @@ async function defaultVerifyListenerOwnership(input: { port: number; pid: number
     if (!processGroupPids.includes(input.pid) || processGroupPids.length === 0) return false;
     const { stdout } = await execFileAsync("/usr/sbin/lsof", [
       "-nP",
+      "-a",
       `-iTCP:${input.port}`,
       "-sTCP:LISTEN",
       "-Fpn",
