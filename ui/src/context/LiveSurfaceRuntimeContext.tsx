@@ -813,7 +813,7 @@ export function LiveSurfaceRuntimeLayer() {
             hidden={!visible}
             inert={inert ? true : undefined}
             className={`fixed flex min-h-0 flex-col overflow-hidden bg-[color:var(--surface-panel)] ${
-              owner?.ownerId.startsWith("main:")
+              owner?.ownerId.startsWith("main:") || record.target.kind === "browser"
                 ? "rounded-[var(--desktop-workspace-radius)]"
                 : ""
             }`}

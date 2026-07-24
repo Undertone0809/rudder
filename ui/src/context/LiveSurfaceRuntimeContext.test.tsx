@@ -191,7 +191,7 @@ describe("LiveSurfaceRuntimeProvider", () => {
     expect(container?.querySelector('[data-testid="live-surface-runtime-host"]')
       ?.getAttribute("data-owner-id")).toBe("side:chat-a:view-a");
     expect(container?.querySelector('[data-testid="live-surface-runtime-host"]')
-      ?.className).not.toContain("rounded-b-[var(--desktop-workspace-radius)]");
+      ?.className).toContain("rounded-[var(--desktop-workspace-radius)]");
 
     act(() => {
       physicalBefore?.dispatchEvent(new MouseEvent("click", { bubbles: true }));

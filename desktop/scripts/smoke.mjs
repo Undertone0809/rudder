@@ -2710,6 +2710,23 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
       expectedUrl,
       `crossing the 2:1 boundary at ${viewportWidth}px should preserve the Browser guest`,
     );
+    const expandedBrowserCorners = await page.evaluate(() => {
+      const host = Array.from(document.querySelectorAll(
+        "[data-testid='live-surface-runtime-host'][data-owner-id^='side:'][data-target-kind='browser']",
+      )).find((candidate) => !candidate.hidden);
+      if (!host) throw new Error("expanded Side Browser runtime host was unavailable");
+      const style = getComputedStyle(host);
+      return [
+        style.borderTopLeftRadius,
+        style.borderTopRightRadius,
+        style.borderBottomLeftRadius,
+        style.borderBottomRightRadius,
+      ];
+    });
+    assert.ok(
+      expandedBrowserCorners.every((radius) => Number.parseFloat(radius) > 0),
+      `expanded Side Browser runtime host must preserve every rounded corner (${expandedBrowserCorners.join(", ")})`,
+    );
 
     await sidePanel.getByLabel("Restore Side Panel width").click();
     await page.getByTestId("side-panel-expanded-overlay").waitFor({ state: "detached", timeout: 5_000 });
@@ -3272,6 +3289,23 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       assert.equal(guestBeforeMove.guestState.formValue, "preserve-this-form");
       assert.equal(guestBeforeMove.guestState.heapMarker, browserTransferMarker);
       assert.ok(guestBeforeMove.guestState.scrollY > 0);
+      const sideBrowserCorners = await page.evaluate(() => {
+        const host = Array.from(document.querySelectorAll(
+          "[data-testid='live-surface-runtime-host'][data-owner-id^='side:'][data-target-kind='browser']",
+        )).find((candidate) => !candidate.hidden);
+        if (!host) throw new Error("visible Side Browser runtime host was unavailable");
+        const style = getComputedStyle(host);
+        return {
+          bottomLeft: style.borderBottomLeftRadius,
+          bottomRight: style.borderBottomRightRadius,
+          topLeft: style.borderTopLeftRadius,
+          topRight: style.borderTopRightRadius,
+        };
+      });
+      assert.ok(
+        Object.values(sideBrowserCorners).every((radius) => Number.parseFloat(radius) > 0),
+        `Side Browser runtime host must clip every visible corner (${JSON.stringify(sideBrowserCorners)})`,
+      );
 
       const moveResponsePromise = page.waitForResponse((response) => {
         const url = new URL(response.url());
