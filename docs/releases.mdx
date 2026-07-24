@@ -35,20 +35,20 @@ Released: 2026-07-24
 
 - Added a persistent Messenger workbench that can promote saved views and Side Panel content into the main workspace while preserving live state and context.
 - Added secure local web apps in Messenger, including discovery, launch controls, isolated partitions, lifecycle supervision, and recovery after unexpected exits.
-- Added response annotations across Chat and Side Chat so users can anchor feedback to exact response ranges and preserve it through queued delivery.
+- Added a built-in skill-creator workflow with current Rudder guidance, evaluation tooling, and compatibility references for improving reusable skills.
 - Added shared Library media playback, richer Browser agent capabilities, and direct Side Panel inspection for spawned subagents.
 
 ### Improvements
 
-- Simplified first-run onboarding and restored the bundled Rudder skill-creator workflow with current guidance and evaluation tooling.
+- Simplified first-run onboarding and issue creation so new users reach active work with less setup.
 - Improved Messenger saved-view organization, grouped keep actions, wide Side Panel resizing, and workbench state continuity across navigation and promotion.
-- Improved Browser runtime parity, read-only DOM references, download handling, managed MCP isolation, and runtime credential cleanup.
-- Increased default agent-run concurrency and refined Chat activity, run navigation, prompt matching, queue delivery, and draft preflight behavior.
+- Improved Browser runtime parity, read-only DOM references, download handling, a separate Browser MCP runtime, and run-scoped MCP credential isolation and cleanup.
+- Refined Chat activity, run navigation, strict prompt matching, delivered-queue cleanup, and draft-preflight caching.
 
 ### Bug Fixes
 
-- Fixed duplicate live transcript deltas, queued-message acknowledgement races, response-annotation offset drift, and hidden provider lifecycle details.
-- Fixed Desktop shutdown, local-app listener cleanup, runtime recovery, PostgreSQL payload sharing, and canary update behavior.
+- Fixed duplicate live transcript deltas, delivered queue messages lingering in the composer, and hidden provider user-message lifecycle details.
+- Fixed Desktop shutdown, local-app listener cleanup and recovery, browser/runtime shutdown, and canary runtime update behavior.
 - Fixed saved-view lifecycle and organization-rule edge cases, hidden-view ghosts, Browser identity persistence, and stale cache eviction.
 - Fixed responsive Issue Detail and Library media layouts, global-search status icons, and several release and cross-platform verification regressions.
 
