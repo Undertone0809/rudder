@@ -62,6 +62,8 @@ related_code:
   - server/src/services/integrations/feishu/event-verifier.ts
   - ui/src/index.css
   - ui/src/components/MarkdownBody.tsx
+  - ui/src/components/chat/ResponseAnnotations.tsx
+  - ui/src/lib/chat-response-annotation-selection.ts
   - ui/src/lib/chat-pending-attachments.ts
   - ui/src/api/websiteMetadata.ts
   - ui/src/lib/source-badge.ts
@@ -122,6 +124,8 @@ related_tests:
   - packages/shared/src/browser-shortcuts.test.ts
   - ui/src/components/MilkdownMarkdownEditor.test.ts
   - ui/src/components/MarkdownBody.test.tsx
+  - ui/src/components/chat/ResponseAnnotations.test.tsx
+  - ui/src/components/side-panel/SideChatPanelView.test.tsx
   - packages/shared/src/chat-transcript-provenance.test.ts
   - server/src/services/chat-assistant.annotations.test.ts
   - server/src/services/chat-inline-annotations.test.ts
@@ -690,18 +694,30 @@ copying context into the composer or losing the relationship to its source.
    conversation; first Send follows `CHAT.SIDE.CHAT.001`.
 4. Adding the same source surface and canonical range to the same draft is
    idempotent. New distinct annotations append in order and immediately render
-   an accent marker at the source. Deleting an item renumbers the remaining
-   markers.
+   an accent marker beside the complete visual source line. A marker uses an
+   available line-end or line-start gutter and must not cover selected or
+   adjacent response text; same-line and narrow-surface collision handling
+   keeps every marker within the visible surface and clear of body text.
+   Deleting an item renumbers the remaining markers.
 5. The composer renders an `N annotations` chip. Expanding it shows an ordered
-   list of Selected text, optional User comment, and annotation-owned files.
-   Draft rows expose edit and delete actions. Collapsing the details keeps the
-   draft unchanged. Activating the chip's explicit Clear/X control clears all
+   list of Selected text, optional User comment, and annotation-owned files in
+   a portal above the composer, without increasing composer height. Details
+   appear only after explicit chip activation; creating or editing an
+   annotation does not automatically reveal the complete list. Draft rows
+   expose edit and delete actions. Collapsing the details keeps the draft
+   unchanged. Activating the chip's explicit Clear/X control clears all
    annotations and their draft-only files but preserves the message body and
    unrelated composer attachments.
-6. Marker or edit activation opens an anchored editor with the selection
-   snapshot, text comment input, image/file add and remove controls, Delete,
-   Cancel, and Save. Cancel restores the prior draft item; Save commits the
-   local draft changes without sending.
+6. Marker or row-edit activation closes the complete-list surface and opens
+   only that selected annotation in an anchored editor above the composer. The
+   editor shows the selection snapshot, text comment input, an icon-only
+   attachment action with an accessible name, image/file removal controls,
+   Delete, Cancel, and Save. Cancel restores the prior draft item; Save commits
+   the local draft changes without sending. Opening and closing the list and
+   editor, and marker appearance, use directional non-essential motion; Save
+   and Delete commit immediately while their visual surface completes its exit,
+   and reduced-motion preference preserves the same state transitions without
+   animation.
 7. An existing Chat message may be sent with an empty body when it has at least
    one annotation. If both body and annotations are empty, normal validation
    rejects Send. A direct first-message Chat create still requires its normal
@@ -760,6 +776,7 @@ copying context into the composer or losing the relationship to its source.
 | Stable final-answer selection | One completed/stopped/failed assistant body; one valid range | Add one ordered annotation and source marker; expose Side Chat only for a completed owning assistant message | Select a user/system message, cross-message range, streaming content, or create a Side Chat from a stopped/failed anchor | UI, service, and E2E tests |
 | Visible Process selection | Loaded visible assistant/thinking prose; terminal generation; one provenance range | Add one process annotation with generation sequence identity | Use transcript index/timestamp, hidden reasoning, tool payload, stdout/stderr, or lifecycle events | Provenance, service, UI, and E2E tests |
 | Comment and files | Draft annotation is editable and uploads satisfy Chat file policy | Save optional comment and annotation-owned images/files | Attach a foreign asset, duplicate the file as a generic message tile, or log its contents | Multipart, ownership, UI, and E2E tests |
+| Inspect or edit one draft | Operator explicitly opens the count chip or activates one marker/edit action | Show the ordered list above the composer, or show only the activated annotation editor | Expand details automatically, increase composer height, show unrelated annotations, or cover response text with a marker | UI and E2E tests |
 | More details | Eligible selection; main composer available | Add the annotation and insert localized detail request at the cursor | Send automatically or replace existing draft text | UI and E2E tests |
 | Annotation-only Send | Existing Chat; body empty; at least one valid annotation | Persist and run one normal user turn | Reject solely for empty body or create an empty first Chat | Shared, route, and E2E tests |
 | Duplicate selection | Same source surface and canonical range already in draft | Keep one item and one marker | Add duplicate payloads or skip numbering | UI tests |
@@ -781,16 +798,22 @@ copying context into the composer or losing the relationship to its source.
   Enter/Space activates the focused command. Focus returns to the selection,
   marker, or composer that opened it.
 - The editor accepts text comments plus the same governed image/file types and
-  size limits as normal Chat attachments. It shows pending/upload failure and
-  removal state per file.
+  size limits as normal Chat attachments. The attachment picker is presented as
+  an icon-only action with an accessible label and tooltip. The editor shows
+  pending/upload failure and removal state per file.
 - Selection, toolbar, count changes, deletion, source-unavailable state, and
   upload failure have appropriate labels or polite live announcements. Reduced
   motion preserves the same state changes without movement-dependent meaning.
 
 ## Operator-Visible Output
 
-- Draft source text shows ordered accent markers; the composer shows one compact
-  count chip and, when expanded, the ordered annotation details.
+- Draft source text shows ordered accent markers beside, never over, response
+  text. The composer shows one compact count chip and, only after explicit
+  activation, a portaled ordered-details surface above the composer without
+  changing composer height.
+- Activating a marker or row edit shows only that annotation's anchored editor;
+  other draft details remain hidden until the operator explicitly requests
+  them.
 - Each detail distinguishes Selected text from User comment and displays its own
   image/file attachments.
 - Sent user messages retain the read-only chip and card after reload. Annotation
@@ -798,7 +821,8 @@ copying context into the composer or losing the relationship to its source.
 - Source navigation expands Process evidence when required, scrolls to the
   matching source, and uses a brief non-essential highlight.
 - Narrow Chat and an open Side Panel use collision-aware placement without
-  clipping the toolbar/editor or covering the active composer action.
+  clipping the toolbar/editor, covering response text, or covering the active
+  composer action.
 
 ## Persisted Evidence
 
@@ -834,8 +858,9 @@ copying context into the composer or losing the relationship to its source.
    - Trigger: select two final-answer ranges, choose Add to chat, comment on each,
      and attach one screenshot to each annotation.
    - Expected state/action: two numbered markers and one `2 annotations` chip;
-     annotation-only Send persists two quoted contexts and two message-owned
-     image attachments.
+     explicit chip activation opens the two-row list above the composer, while
+     activating marker 2 opens only annotation 2. Annotation-only Send persists
+     two quoted contexts and two message-owned image attachments.
    - Visible output: immutable sent card with each screenshot under its own
      quote, then source jump/highlight after reload.
    - Evidence: shared/service/UI tests and response-annotation E2E.
