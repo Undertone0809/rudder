@@ -229,6 +229,7 @@ export type DesktopLocalAppDefinitionDraft = {
 
 export type DesktopPreparedLocalAppDefinition = DesktopLocalAppDefinitionDraft & {
   trustFingerprint: string;
+  iconDataUrl?: string | null;
 };
 
 export type DesktopLocalAppDefinition = DesktopPreparedLocalAppDefinition & {

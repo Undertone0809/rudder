@@ -40,6 +40,7 @@ const mockState = vi.hoisted(() => ({
   invalidateQueries: vi.fn(),
   pathname: "/dashboard",
   primaryRailPaths: {} as Record<string, string>,
+  pinnedLocalApps: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -56,8 +57,10 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({
     invalidateQueries: mockState.invalidateQueries,
   }),
-  useQuery: () => ({
-    data: mockState.notificationSettings,
+  useQuery: (options: { queryKey?: readonly unknown[] }) => ({
+    data: options.queryKey?.includes("primary-rail-pins")
+      ? { items: mockState.pinnedLocalApps }
+      : mockState.notificationSettings,
     isLoading: false,
   }),
 }));
@@ -84,6 +87,7 @@ vi.mock("@/api/instanceSettings", () => ({
 vi.mock("@/api/messenger", () => ({
   messengerApi: {
     dismissUnreads: mockState.dismissUnreads,
+    listSavedViews: vi.fn(),
   },
 }));
 
@@ -203,6 +207,7 @@ beforeEach(() => {
   };
   mockState.pathname = "/dashboard";
   mockState.primaryRailPaths = {};
+  mockState.pinnedLocalApps = [];
   mockState.setSidebarOpen.mockReset();
   mockState.dismissUnreads.mockResolvedValue({ dismissedCount: 4, dismissedThreadKeys: [] });
   mockState.invalidateQueries.mockReset();
@@ -402,11 +407,16 @@ describe("PrimaryRail active motion indicator", () => {
     await renderPrimaryRail();
 
     const rail = document.querySelector('[data-testid="primary-rail"]');
+    const nav = document.querySelector(".motion-rail-nav");
 
     expect(rail?.getAttribute("data-desktop-platform")).toBe("macos");
     expect(rail?.className).toContain("w-[40px]");
     expect(rail?.className).not.toContain("w-[52px]");
     expect(rail?.className).not.toContain("[--primary-rail-item-width:52px]");
+    expect(nav?.className).toContain(
+      "w-[calc(var(--primary-rail-item-width,66px)+var(--primary-rail-item-shift,0.25rem)+var(--primary-rail-item-shift,0.25rem)+0.625rem)]",
+    );
+    expect(nav?.className).not.toContain("w-full");
   });
 
   it("applies rail motion styling to the create menu", async () => {
@@ -490,6 +500,53 @@ describe("PrimaryRail active motion indicator", () => {
 
     expect(libraryLink?.getAttribute("href")).toBe("/library");
     expect(nav?.getAttribute("data-active-index")).toBe("3");
+  });
+
+  it("shows pinned Local App Saved Views after the fixed destinations", async () => {
+    mockState.pinnedLocalApps = [{
+      id: "saved-local-a",
+      title: "MKT dashboard",
+      targetPayload: {
+        kind: "local_app",
+        desktopInstallationId: "installation-a",
+        appPublicId: "public-a",
+        localBindingId: "binding-a",
+        viewInstanceId: "view-a",
+      },
+    }];
+
+    await renderPrimaryRail();
+
+    const pinnedLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("MKT dashboard"));
+    expect(pinnedLink?.getAttribute("href")).toBe("/messenger/saved/saved-local-a");
+    expect(pinnedLink?.querySelector('[data-testid="primary-rail-local-app-icon"]')).not.toBeNull();
+    expect(document.querySelector(".motion-rail-nav")?.className).toContain("overflow-y-auto");
+  });
+
+  it("gives an exact pinned Saved View the only Messenger-route active treatment", async () => {
+    mockState.pathname = "/messenger/saved/saved-local-a";
+    mockState.pinnedLocalApps = [{
+      id: "saved-local-a",
+      title: "MKT dashboard",
+      targetPayload: {
+        kind: "local_app",
+        desktopInstallationId: "installation-a",
+        appPublicId: "public-a",
+        localBindingId: "binding-a",
+        viewInstanceId: "view-a",
+      },
+    }];
+
+    await renderPrimaryRail();
+
+    const links = Array.from(document.querySelectorAll("a"));
+    const messenger = links.find((link) => link.textContent?.includes("Messenger"));
+    const pinned = links.find((link) => link.textContent?.includes("MKT dashboard"));
+    expect(messenger?.hasAttribute("aria-current")).toBe(false);
+    expect(pinned?.getAttribute("aria-current")).toBe("page");
+    expect(pinned?.querySelector('[data-testid="primary-rail-pinned-active-indicator"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="primary-rail-active-indicator"]')).toBeNull();
   });
 
   it("keeps the legacy resources route active under Library", async () => {

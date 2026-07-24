@@ -82,6 +82,7 @@ export interface MessengerSavedView {
   sortOrder: number;
   /** Non-null only for legacy rows; current mutations may restore but never hide. */
   hiddenAt: Date | null;
+  primaryRailPinnedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

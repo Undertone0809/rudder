@@ -1690,6 +1690,9 @@ export function MessengerContextSidebar() {
     await queryClient.invalidateQueries({
       queryKey: queryKeys.messenger.customGroups(organizationId),
     });
+    await queryClient.invalidateQueries({
+      queryKey: ["messenger", organizationId, "saved-views"],
+    });
     if (
       focusItemKey
       && currentOrganizationIdRef.current === organizationId

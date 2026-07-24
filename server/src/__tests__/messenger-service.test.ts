@@ -11023,6 +11023,120 @@ describe("messengerService and issue follows", () => {
     await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).resolves.toMatchObject({ id: group.id });
   });
 
+  it("pins only owner-scoped Local App Saved Views to the Primary Rail", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const userId = "local-app-pin-user";
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Local App Pins Org",
+        urlKey: deriveOrganizationUrlKey("Local App Pins Org"),
+        issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Local App Pins Org",
+        urlKey: deriveOrganizationUrlKey("Other Local App Pins Org"),
+        issuePrefix: `Q${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      },
+    ]);
+    const localApp = await insertSavedViewFixture(orgId, userId, {
+      target: {
+        kind: "local_app",
+        desktopInstallationId: "desktop-a",
+        appPublicId: "public-a",
+        localBindingId: "binding-a",
+        viewInstanceId: "local-app-view-a",
+      },
+      title: "Pinned dashboard",
+    });
+    const browser = await insertSavedViewFixture(orgId, userId, {
+      target: {
+        kind: "browser",
+        tabId: "tab-a",
+        url: "https://example.test",
+        viewInstanceId: "browser-view-a",
+      },
+      title: "Browser",
+    });
+
+    const pinned = await savedViewsSvc.update(orgId, userId, localApp.id, { primaryRailPinned: true });
+    expect(pinned.primaryRailPinnedAt).toBeInstanceOf(Date);
+    expect((await db.select().from(activityLog).where(
+      eq(activityLog.entityId, localApp.id),
+    )).some((event) => (
+      (event.details as { primaryRailPinned?: boolean } | null)?.primaryRailPinned === true
+    ))).toBe(true);
+    expect((await savedViewsSvc.list(orgId, userId, { primaryRailPinned: true })).items).toMatchObject([
+      { id: localApp.id, title: "Pinned dashboard" },
+    ]);
+    expect((await savedViewsSvc.list(orgId, "other-user", { primaryRailPinned: true })).items).toEqual([]);
+    expect((await savedViewsSvc.list(otherOrgId, userId, { primaryRailPinned: true })).items).toEqual([]);
+    await expect(savedViewsSvc.update(orgId, userId, browser.id, { primaryRailPinned: true }))
+      .rejects.toMatchObject({ status: 400 });
+
+    await db.insert(messengerSavedViews).values(Array.from({ length: 99 }, (_, index) => {
+      const viewInstanceId = `pinned-limit-view-${index}`;
+      const target = {
+        kind: "local_app" as const,
+        desktopInstallationId: "desktop-a",
+        appPublicId: `public-limit-${index}`,
+        localBindingId: `binding-limit-${index}`,
+        viewInstanceId,
+      };
+      return {
+        orgId,
+        userId,
+        targetKind: target.kind,
+        targetPayload: target,
+        resourceKey: messengerSavedViewResourceKey(target),
+        instanceId: viewInstanceId,
+        canonicalResourceKey: messengerSavedViewCanonicalResourceKey(target),
+        title: `Pinned limit ${index}`,
+        sortOrder: index + 2,
+        primaryRailPinnedAt: new Date(),
+      };
+    }));
+    await expect(savedViewsSvc.update(
+      orgId,
+      userId,
+      localApp.id,
+      { primaryRailPinned: true },
+    )).resolves.toMatchObject({ id: localApp.id });
+    const overLimit = await insertSavedViewFixture(orgId, userId, {
+      target: {
+        kind: "local_app",
+        desktopInstallationId: "desktop-a",
+        appPublicId: "public-over-limit",
+        localBindingId: "binding-over-limit",
+        viewInstanceId: "local-app-over-limit",
+      },
+      title: "Over pin limit",
+    });
+    await expect(savedViewsSvc.update(
+      orgId,
+      userId,
+      overLimit.id,
+      { primaryRailPinned: true },
+    )).rejects.toMatchObject({ status: 400 });
+
+    const unpinned = await savedViewsSvc.update(orgId, userId, localApp.id, { primaryRailPinned: false });
+    expect(unpinned.primaryRailPinnedAt).toBeNull();
+    expect((await db.select().from(activityLog).where(
+      eq(activityLog.entityId, localApp.id),
+    )).some((event) => (
+      (event.details as { primaryRailPinned?: boolean } | null)?.primaryRailPinned === false
+    ))).toBe(true);
+    const remainingPins = await savedViewsSvc.list(
+      orgId,
+      userId,
+      { primaryRailPinned: true, limit: 100 },
+    );
+    expect(remainingPins.items).toHaveLength(99);
+    expect(remainingPins.items.some((view) => view.id === localApp.id)).toBe(false);
+  });
+
   it("reorders Saved Views and transactionally removes their group membership", async () => {
     const orgId = randomUUID();
     const userId = "saved-view-order-user";

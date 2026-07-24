@@ -144,6 +144,7 @@ describe("Messenger Saved View validators", () => {
 
   it("validates metadata updates, legacy restoration, and complete reorder identities", () => {
     expect(updateMessengerSavedViewSchema.safeParse({ title: "Renamed" }).success).toBe(true);
+    expect(updateMessengerSavedViewSchema.safeParse({ primaryRailPinned: true }).success).toBe(true);
     expect(updateMessengerSavedViewSchema.safeParse({ hidden: false }).success).toBe(true);
     expect(updateMessengerSavedViewSchema.safeParse({ hidden: true }).success).toBe(false);
     expect(updateMessengerSavedViewSchema.safeParse({}).success).toBe(false);
@@ -153,6 +154,8 @@ describe("Messenger Saved View validators", () => {
       limit: 100,
       offset: 50,
     });
+    expect(listMessengerSavedViewsQuerySchema.parse({ primaryRailPinned: "true" }).primaryRailPinned).toBe(true);
+    expect(listMessengerSavedViewsQuerySchema.safeParse({ primaryRailPinned: "false" }).success).toBe(false);
     expect(listMessengerSavedViewsQuerySchema.safeParse({ limit: 101 }).success).toBe(false);
     expect(messengerSavedViewIdSchema.safeParse(savedViewId).success).toBe(true);
     expect(messengerSavedViewIdSchema.safeParse("not-a-uuid").success).toBe(false);
