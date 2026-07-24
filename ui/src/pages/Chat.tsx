@@ -211,6 +211,8 @@ type PendingChatResponseAnnotationSelection = {
 
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
+  const macDesktopShell = typeof document !== "undefined"
+    && document.documentElement.classList.contains("desktop-shell-macos");
   const { openImagePreview } = useImagePreview(); const {
     abortChatStream,
     sendInFlightByChatId,
@@ -3348,6 +3350,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           data-testid="chat-main-workspace-card"
           className="workspace-main-card relative flex min-h-0 flex-1 flex-col overflow-hidden md:rounded-[var(--desktop-workspace-radius)]"
         >
+          {conversationId && macDesktopShell ? (
+            <div
+              aria-hidden="true"
+              data-testid="chat-desktop-toolbar-clearance"
+              className="chat-desktop-toolbar-clearance workspace-main-header hidden shrink-0 md:block"
+            />
+          ) : null}
           {loadErrorMessage && conversationId ? (
             <div
               aria-hidden="true"
@@ -3403,7 +3412,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 </div>
               </div>
             </div> ) : selectedConversation ? ( <>
-              <div className="pointer-events-none absolute right-3 top-12 z-30 flex justify-end gap-1.5 md:relative md:right-auto md:top-auto md:h-9 md:shrink-0 md:items-center md:px-3">
+              <div
+                data-testid="chat-desktop-toolbar-actions"
+                className={cn(
+                  "pointer-events-none absolute right-3 top-12 z-30 flex justify-end gap-1.5",
+                  macDesktopShell
+                    ? "md:right-3 md:top-2"
+                    : "md:relative md:right-auto md:top-auto md:h-9 md:shrink-0 md:items-center md:px-3",
+                )}
+              >
                 {workManifestAvailable && !sidePanelOpen ? (
                   <ChatWorkManifestToggle
                     open={workManifestWideOpen}
