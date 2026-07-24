@@ -359,7 +359,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pendingFilesByAnnotationId: inMemoryAnnotations?.pendingFilesByAnnotationId,
     });
     setResponseAnnotationsExpanded(false);
-    setEditingResponseAnnotationId(null);
+    responseAnnotationEditor.close();
     setPendingResponseAnnotationSelection(null);
     setHistoricalResponseAnnotations([]);
     setUnlocatableResponseAnnotationId(null);
@@ -1199,7 +1199,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       setBranchPreview(null); setDraft(""); clearPendingFilesForCurrentScope();
       dispatchResponseAnnotation({ type: "clear" });
       setResponseAnnotationsExpanded(false);
-      setEditingResponseAnnotationId(null);
+      responseAnnotationEditor.close();
     }
     await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, conversation.id) });
     return true;
@@ -1317,7 +1317,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 clearPendingFilesForCurrentScope();
                 dispatchResponseAnnotation({ type: "clear" });
                 setResponseAnnotationsExpanded(false);
-                setEditingResponseAnnotationId(null);
+                responseAnnotationEditor.close();
               }
               options?.onUserMessageAcknowledged?.();
               if (options?.clearPendingFilesOnSuccess && !pendingFilesClearedAfterAck) {
@@ -1439,7 +1439,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               clearPendingFilesForCurrentScope();
               dispatchResponseAnnotation({ type: "clear" });
               setResponseAnnotationsExpanded(false);
-              setEditingResponseAnnotationId(null);
+              responseAnnotationEditor.close();
             }
             setStreamDraftForChat(chatId, (current) => current?.streamKey === streamKey ? null : current);
             return;
@@ -1448,7 +1448,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             if (usesComposerState) {
               dispatchResponseAnnotation({ type: "clear" });
               setResponseAnnotationsExpanded(false);
-              setEditingResponseAnnotationId(null);
+              responseAnnotationEditor.close();
             }
             if (body.startsWith(ASK_USER_ANSWER_PREFIX)) {
               setRecentAskUserAnswerMessageId(event.userMessage.id);
@@ -1477,7 +1477,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               if (usesComposerState) {
                 dispatchResponseAnnotation({ type: "clear" });
                 setResponseAnnotationsExpanded(false);
-                setEditingResponseAnnotationId(null);
+                responseAnnotationEditor.close();
               }
               options?.onUserMessageAcknowledged?.();
               if (options?.clearPendingFilesOnSuccess && !pendingFilesClearedAfterAck) {
@@ -3073,9 +3073,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               if (responseAnnotationState.annotations.length === 1) {
                 setResponseAnnotationsExpanded(false);
               }
-              setEditingResponseAnnotationId((current) => (
-                current === annotationId ? null : current
-              ));
+              if (responseAnnotationEditor.annotationId === annotationId) {
+                responseAnnotationEditor.close();
+              }
               setResponseAnnotationAnnouncement(t("chat.annotations.removed"));
             }}
           />
