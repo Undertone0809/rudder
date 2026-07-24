@@ -49,6 +49,7 @@ export type ImportedSkill = {
   trustLevel: OrganizationSkillTrustLevel;
   compatibility: OrganizationSkillCompatibility;
   fileInventory: OrganizationSkillFileInventoryEntry[];
+  files?: Record<string, string | Uint8Array>;
   metadata: Record<string, unknown> | null;
 };
 
@@ -83,6 +84,7 @@ export type SkillSourceMeta = {
   workspaceId?: string;
   workspaceName?: string;
   workspaceCwd?: string;
+  installationVersion?: number;
 };
 
 export type LocalSkillInventoryMode = "full" | "project_root";
@@ -1094,6 +1096,18 @@ export function mergeRequiredBundledSkillKeys(
 }
 
 export function normalizeSkillDirectory(skill: OrganizationSkill) {
+  const metadata = getSkillMeta(skill);
+  if (
+    metadata.installationVersion === 1
+    && !isBundledRudderSourceKind(asString(metadata.sourceKind))
+  ) {
+    return path.resolve(
+      resolveManagedSkillsRoot(skill.orgId),
+      "__installed__",
+      buildSkillRuntimeName(skill.key, skill.slug),
+    );
+  }
+  if (asString(metadata.sourceKind) === "community_preset") return null;
   if ((skill.sourceType !== "local_path" && skill.sourceType !== "catalog") || !skill.sourceLocator) return null;
   const resolved = path.resolve(skill.sourceLocator);
   if (path.basename(resolved).toLowerCase() === "skill.md") {
@@ -1202,11 +1216,11 @@ export function deriveSkillSourceInfo(skill: OrganizationSkill): {
 
   if (asString(metadata.sourceKind) === "community_preset") {
     return {
-      editable: false,
-      editableReason: "Community preset skills are read-only.",
+      editable: true,
+      editableReason: null,
       sourceLabel: "Community preset",
       sourceBadge: "community",
-      sourcePath: null,
+      sourcePath: localSkillDir,
     };
   }
 
@@ -1214,11 +1228,11 @@ export function deriveSkillSourceInfo(skill: OrganizationSkill): {
     const owner = asString(metadata.owner) ?? null;
     const repo = asString(metadata.repo) ?? null;
     return {
-      editable: false,
-      editableReason: "Skills.sh-managed skills are read-only.",
+      editable: true,
+      editableReason: null,
       sourceLabel: skill.sourceLocator ?? (owner && repo ? `${owner}/${repo}` : null),
       sourceBadge: "skills_sh",
-      sourcePath: null,
+      sourcePath: localSkillDir,
     };
   }
 
@@ -1226,21 +1240,21 @@ export function deriveSkillSourceInfo(skill: OrganizationSkill): {
     const owner = asString(metadata.owner) ?? null;
     const repo = asString(metadata.repo) ?? null;
     return {
-      editable: false,
-      editableReason: "Remote GitHub skills are read-only. Fork or import locally to edit them.",
+      editable: true,
+      editableReason: null,
       sourceLabel: owner && repo ? `${owner}/${repo}` : skill.sourceLocator,
       sourceBadge: "github",
-      sourcePath: null,
+      sourcePath: localSkillDir,
     };
   }
 
   if (skill.sourceType === "url") {
     return {
-      editable: false,
-      editableReason: "URL-based skills are read-only. Save them locally to edit them.",
+      editable: true,
+      editableReason: null,
       sourceLabel: skill.sourceLocator,
       sourceBadge: "url",
-      sourcePath: null,
+      sourcePath: localSkillDir,
     };
   }
 
@@ -1272,11 +1286,11 @@ export function deriveSkillSourceInfo(skill: OrganizationSkill): {
   }
 
   return {
-    editable: false,
-    editableReason: "This skill source is read-only.",
+    editable: true,
+    editableReason: null,
     sourceLabel: skill.sourceLocator,
     sourceBadge: "catalog",
-    sourcePath: null,
+    sourcePath: localSkillDir,
   };
 }
 

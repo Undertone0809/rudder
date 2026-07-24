@@ -23,6 +23,7 @@ import {
   toBundledRudderSkillKey,
 } from "@rudderhq/shared";
 import { and, asc, eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { conflict, notFound, unprocessable } from "../../errors.js";
@@ -77,7 +78,6 @@ import {
   listLegacyUserHomeLocalScanSkillIds,
   listStaleBundledSkillIds,
   listStaleCommunityPresetSkillIds,
-  normalizeGitHubSkillDirectory,
   normalizePackageFileMap,
   normalizePortablePath,
   normalizeSelectionRef,
@@ -103,7 +103,6 @@ import {
 } from "./organization-skills.catalog.js";
 import { createOrganizationSkillScanHandlers } from "./organization-skills.scans.js";
 import {
-  fetchText,
   parseFrontmatterMarkdown,
   parseSkillImportSourceInput,
   readCommunityPresetFallbackImport,
@@ -114,8 +113,10 @@ import {
   resolveBundledSkillsRoot,
   resolveCommunityPresetSkillsRoot,
   resolveGitHubCommitSha,
-  resolveRawGitHubUrl,
 } from "./organization-skills.sources.js";
+
+const ORGANIZATION_SKILL_INSTALLATION_VERSION = 1;
+const skillInstallationPromises = new Map<string, Promise<string>>();
 
 export function organizationSkillService(
   db: Db,
@@ -134,6 +135,159 @@ export function organizationSkillService(
     projects,
     upsertImportedSkills,
   });
+
+  function normalizeInstalledFilePath(relativePath: string) {
+    const portable = relativePath.replace(/\\/g, "/");
+    if (
+      portable.startsWith("/")
+      || /^[A-Za-z]:\//.test(portable)
+      || portable.split("/").some((segment) => segment === "..")
+    ) {
+      throw unprocessable(`Invalid skill file path: ${relativePath}`);
+    }
+    const normalized = normalizePortablePath(portable);
+    if (!normalized) {
+      throw unprocessable(`Invalid skill file path: ${relativePath}`);
+    }
+    return normalized;
+  }
+
+  function resolveInstalledSkillDirectory(orgId: string, key: string, slug: string) {
+    const managedRoot = path.resolve(resolveManagedSkillsRoot(orgId));
+    const installedRoot = path.resolve(managedRoot, "__installed__");
+    const target = path.resolve(installedRoot, buildSkillRuntimeName(key, slug));
+    const relative = path.relative(installedRoot, target);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw unprocessable("Invalid organization skill installation path.");
+    }
+    return target;
+  }
+
+  async function removeInstalledSkillDirectory(orgId: string, skill: OrganizationSkill) {
+    if (getSkillMeta(skill).installationVersion !== ORGANIZATION_SKILL_INSTALLATION_VERSION) return;
+    await fs.rm(
+      resolveInstalledSkillDirectory(orgId, skill.key, skill.slug),
+      { recursive: true, force: true },
+    );
+  }
+
+  async function mapWithConcurrency<T>(
+    values: T[],
+    concurrency: number,
+    operation: (value: T) => Promise<void>,
+  ) {
+    let nextIndex = 0;
+    const workers = Array.from(
+      { length: Math.min(Math.max(1, concurrency), values.length) },
+      async () => {
+        while (nextIndex < values.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          await operation(values[index]!);
+        }
+      },
+    );
+    await Promise.all(workers);
+  }
+
+  async function readImportedSkillFiles(skill: ImportedSkill) {
+    const files = new Map<string, string | Uint8Array>();
+    for (const [rawPath, content] of Object.entries(skill.files ?? {})) {
+      files.set(normalizeInstalledFilePath(rawPath), content);
+    }
+    if (skill.packageDir) {
+      await mapWithConcurrency(skill.fileInventory, 8, async (entry) => {
+        const relativePath = normalizeInstalledFilePath(entry.path);
+        if (files.has(relativePath)) return;
+        files.set(
+          relativePath,
+          await fs.readFile(path.resolve(skill.packageDir!, relativePath)),
+        );
+      });
+    }
+    for (const entry of skill.fileInventory) {
+      const relativePath = normalizeInstalledFilePath(entry.path);
+      if (!files.has(relativePath)) {
+        throw unprocessable(`Skill source did not provide declared file: ${relativePath}`);
+      }
+    }
+    return files;
+  }
+
+  async function replaceInstalledSkillDirectory(
+    orgId: string,
+    skill: Pick<ImportedSkill, "key" | "slug" | "fileInventory">,
+    files: Map<string, string | Uint8Array>,
+  ) {
+    const target = resolveInstalledSkillDirectory(orgId, skill.key, skill.slug);
+    const parent = path.dirname(target);
+    const staging = path.join(parent, `.${path.basename(target)}.staging-${randomUUID()}`);
+    const backup = path.join(parent, `.${path.basename(target)}.backup-${randomUUID()}`);
+    let movedExisting = false;
+
+    await fs.mkdir(staging, { recursive: true });
+    try {
+      await mapWithConcurrency(skill.fileInventory, 8, async (entry) => {
+        const relativePath = normalizeInstalledFilePath(entry.path);
+        const targetPath = path.resolve(staging, relativePath);
+        const relativeTarget = path.relative(staging, targetPath);
+        if (relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget)) {
+          throw unprocessable(`Invalid skill file path: ${entry.path}`);
+        }
+        const content = files.get(relativePath);
+        if (content === undefined) {
+          throw unprocessable(`Skill source did not provide declared file: ${relativePath}`);
+        }
+        await fs.mkdir(path.dirname(targetPath), { recursive: true });
+        await fs.writeFile(targetPath, content);
+      });
+      const skillFile = await fs.stat(path.join(staging, "SKILL.md")).catch(() => null);
+      if (!skillFile?.isFile()) {
+        throw unprocessable("Installed skill is missing SKILL.md.");
+      }
+
+      await fs.mkdir(parent, { recursive: true });
+      const existing = await fs.stat(target).catch(() => null);
+      if (existing) {
+        await fs.rename(target, backup);
+        movedExisting = true;
+      }
+      try {
+        await fs.rename(staging, target);
+      } catch (error) {
+        if (movedExisting) {
+          try {
+            await fs.rename(backup, target);
+            movedExisting = false;
+          } catch {
+            // Preserve the backup for operator recovery if the rollback rename fails.
+          }
+        }
+        throw error;
+      }
+      if (movedExisting) {
+        await fs.rm(backup, { recursive: true, force: true }).catch(() => {});
+        movedExisting = false;
+      }
+      return target;
+    } finally {
+      await fs.rm(staging, { recursive: true, force: true });
+    }
+  }
+
+  async function installImportedSkill(orgId: string, skill: ImportedSkill) {
+    const sourceKind = asString(skill.metadata?.sourceKind);
+    if (isBundledRudderSourceKind(sourceKind)) return skill;
+    const files = await readImportedSkillFiles(skill);
+    await replaceInstalledSkillDirectory(orgId, skill, files);
+    return {
+      ...skill,
+      metadata: {
+        ...(skill.metadata ?? {}),
+        installationVersion: ORGANIZATION_SKILL_INSTALLATION_VERSION,
+      },
+    };
+  }
 
   async function getAgentWorkspaceRow(orgId: string, agentId: string): Promise<AgentWorkspaceRow> {
     const row = await db
@@ -304,7 +458,9 @@ export function organizationSkillService(
     const toPersist = presetSkills.filter((skill) => {
       const existing = existingByKey.get(skill.key);
       if (!existing) return true;
-      return asString((existing.metadata as Record<string, unknown> | null | undefined)?.sourceKind) === "community_preset";
+      const existingMetadata = isPlainRecord(existing.metadata) ? existing.metadata : {};
+      return asString(existingMetadata.sourceKind) === "community_preset"
+        && existingMetadata.installationVersion !== ORGANIZATION_SKILL_INSTALLATION_VERSION;
     });
     const persisted = toPersist.length > 0 ? await upsertImportedSkills(orgId, toPersist) : [];
     const stalePresetIds = listStaleCommunityPresetSkillIds(existingRows, currentCommunityPresetKeys);
@@ -335,7 +491,7 @@ export function organizationSkillService(
       await db
         .delete(organizationSkills)
         .where(eq(organizationSkills.id, skill.id));
-      await fs.rm(resolveRuntimeSkillMaterializedPath(orgId, skill), { recursive: true, force: true });
+      await removeInstalledSkillDirectory(orgId, skill);
     }
   }
 
@@ -358,7 +514,7 @@ export function organizationSkillService(
       await db
         .delete(organizationSkills)
         .where(eq(organizationSkills.id, skill.id));
-      await fs.rm(resolveRuntimeSkillMaterializedPath(orgId, skill), { recursive: true, force: true });
+      await removeInstalledSkillDirectory(orgId, skill);
     }
   }
 
@@ -817,10 +973,16 @@ export function organizationSkillService(
         const skill = skillByKey.get(entry.organizationSkillKey);
         if (!skill) continue;
         let source = normalizeSkillDirectory(skill);
+        if (
+          source
+          && !(await fs.stat(path.join(source, "SKILL.md")).catch(() => null))?.isFile()
+        ) {
+          source = null;
+        }
         if (!source) {
           source = options.materializeMissing === false
-            ? resolveRuntimeSkillMaterializedPath(orgId, skill)
-            : await materializeRuntimeSkillFiles(orgId, skill).catch(() => null);
+            ? null
+            : await ensureInstalledSkill(orgId, skill).catch(() => null);
         }
         if (!source) continue;
         out.push({
@@ -968,8 +1130,9 @@ export function organizationSkillService(
 
     const source = deriveSkillSourceInfo(skill);
     let content = "";
+    const localSkillDirectory = normalizeSkillDirectory(skill);
 
-    if (skill.sourceType === "local_path" || skill.sourceType === "catalog") {
+    if (localSkillDirectory) {
       const absolutePath = resolveLocalSkillFilePath(skill, normalizedPath);
       if (absolutePath) {
         content = await fs.readFile(absolutePath, "utf8");
@@ -978,24 +1141,10 @@ export function organizationSkillService(
       } else {
         throw notFound("Skill file not found");
       }
-    } else if (skill.sourceType === "github" || skill.sourceType === "skills_sh") {
-      const metadata = getSkillMeta(skill);
-      const owner = asString(metadata.owner);
-      const repo = asString(metadata.repo);
-      const ref = skill.sourceRef ?? asString(metadata.ref) ?? "main";
-      const repoSkillDir = normalizeGitHubSkillDirectory(asString(metadata.repoSkillDir), skill.slug);
-      if (!owner || !repo) {
-        throw unprocessable("Skill source metadata is incomplete.");
-      }
-      const repoPath = normalizePortablePath(path.posix.join(repoSkillDir, normalizedPath));
-      content = await fetchText(resolveRawGitHubUrl(owner, repo, ref, repoPath));
-    } else if (skill.sourceType === "url") {
-      if (normalizedPath !== "SKILL.md") {
-        throw notFound("This skill source only exposes SKILL.md");
-      }
+    } else if (normalizedPath === "SKILL.md") {
       content = skill.markdown;
     } else {
-      throw unprocessable("Unsupported skill source.");
+      throw notFound("Skill file is not installed yet.");
     }
 
     return {
@@ -1076,13 +1225,16 @@ export function organizationSkillService(
 
   async function updateFile(orgId: string, skillId: string, relativePath: string, content: string): Promise<OrganizationSkillFileDetail> {
     await ensureSkillInventoryCurrent(orgId);
-    const skill = await getById(skillId);
+    let skill = await getById(skillId);
     if (!skill || skill.orgId !== orgId) throw notFound("Skill not found");
 
     const source = deriveSkillSourceInfo(skill);
-    if (!source.editable || skill.sourceType !== "local_path") {
+    if (!source.editable) {
       throw unprocessable(source.editableReason ?? "This skill cannot be edited.");
     }
+    await ensureInstalledSkill(orgId, skill);
+    skill = await getById(skillId);
+    if (!skill || skill.orgId !== orgId) throw notFound("Skill not found");
 
     const normalizedPath = normalizePortablePath(relativePath);
     const absolutePath = resolveLocalSkillFilePath(skill, normalizedPath);
@@ -1166,56 +1318,131 @@ export function organizationSkillService(
       throw unprocessable(`Skill ${skill.key} could not be re-imported from its source.`);
     }
 
-    const imported = await upsertImportedSkills(orgId, [matching]);
+    const installed = await installImportedSkill(orgId, {
+      ...matching,
+      key: skill.key,
+      slug: skill.slug,
+      sourceType: skill.sourceType,
+      sourceLocator: skill.sourceLocator,
+      metadata: {
+        ...(matching.metadata ?? {}),
+        ...(skill.metadata ?? {}),
+      },
+    });
+    const imported = await upsertImportedSkills(orgId, [installed]);
     return imported[0] ?? null;
   }
 
-  async function materializeCatalogSkillFiles(
-    orgId: string,
-    skill: ImportedSkill,
-    normalizedFiles: Record<string, string>,
-  ) {
-    const packageDir = skill.packageDir ? normalizePortablePath(skill.packageDir) : null;
-    if (!packageDir) return null;
-    const catalogRoot = path.resolve(resolveManagedSkillsRoot(orgId), "__catalog__");
-    const skillDir = path.resolve(catalogRoot, buildSkillRuntimeName(skill.key, skill.slug));
-    await fs.rm(skillDir, { recursive: true, force: true });
-    await fs.mkdir(skillDir, { recursive: true });
-
-    for (const entry of skill.fileInventory) {
-      const sourcePath = entry.path === "SKILL.md"
-        ? `${packageDir}/SKILL.md`
-        : `${packageDir}/${entry.path}`;
-      const content = normalizedFiles[sourcePath];
-      if (typeof content !== "string") continue;
-      const targetPath = path.resolve(skillDir, entry.path);
-      await fs.mkdir(path.dirname(targetPath), { recursive: true });
-      await fs.writeFile(targetPath, content, "utf8");
+  async function ensureInstalledSkill(orgId: string, skill: OrganizationSkill) {
+    const existingDirectory = normalizeSkillDirectory(skill);
+    if (
+      existingDirectory
+      && (await fs.stat(path.join(existingDirectory, "SKILL.md")).catch(() => null))?.isFile()
+    ) {
+      return existingDirectory;
+    }
+    if (isBundledRudderSourceKind(asString(skill.metadata?.sourceKind))) {
+      throw unprocessable("Bundled Rudder skill files are unavailable.");
     }
 
-    return skillDir;
-  }
+    const lockKey = `${orgId}:${skill.id}`;
+    const existingInstall = skillInstallationPromises.get(lockKey);
+    if (existingInstall) return existingInstall;
 
-  async function materializeRuntimeSkillFiles(orgId: string, skill: OrganizationSkill) {
-    const runtimeRoot = path.resolve(resolveManagedSkillsRoot(orgId), "__runtime__");
-    const skillDir = path.resolve(runtimeRoot, buildSkillRuntimeName(skill.key, skill.slug));
-    await fs.rm(skillDir, { recursive: true, force: true });
-    await fs.mkdir(skillDir, { recursive: true });
+    const installation = (async () => {
+      const target = resolveInstalledSkillDirectory(orgId, skill.key, skill.slug);
+      if ((await fs.stat(path.join(target, "SKILL.md")).catch(() => null))?.isFile()) {
+        if (getSkillMeta(skill).installationVersion !== ORGANIZATION_SKILL_INSTALLATION_VERSION) {
+          await db
+            .update(organizationSkills)
+            .set({
+              metadata: {
+                ...(skill.metadata ?? {}),
+                installationVersion: ORGANIZATION_SKILL_INSTALLATION_VERSION,
+              },
+              updatedAt: new Date(),
+            })
+            .where(eq(organizationSkills.id, skill.id));
+        }
+        return target;
+      }
 
-    for (const entry of skill.fileInventory) {
-      const detail = await readFile(orgId, skill.id, entry.path).catch(() => null);
-      if (!detail) continue;
-      const targetPath = path.resolve(skillDir, entry.path);
-      await fs.mkdir(path.dirname(targetPath), { recursive: true });
-      await fs.writeFile(targetPath, detail.content, "utf8");
+      let imported: ImportedSkill | null = null;
+      if (
+        skill.sourceType === "github"
+        || skill.sourceType === "skills_sh"
+        || skill.sourceType === "url"
+      ) {
+        if (!skill.sourceLocator) {
+          throw unprocessable("Skill source locator is missing.");
+        }
+        const parsed = parseSkillImportSourceInput(skill.sourceLocator);
+        const result = await readUrlSkillImports(
+          orgId,
+          parsed.resolvedSource,
+          parsed.requestedSkillSlug ?? skill.slug,
+        );
+        imported = result.skills.find((entry) => entry.key === skill.key)
+          ?? result.skills.find((entry) => entry.slug === skill.slug)
+          ?? result.skills[0]
+          ?? null;
+      } else if (
+        (skill.sourceType === "local_path" || skill.sourceType === "catalog")
+        && skill.sourceLocator
+      ) {
+        const sourceDirectory = path.basename(skill.sourceLocator).toLowerCase() === "skill.md"
+          ? path.dirname(skill.sourceLocator)
+          : skill.sourceLocator;
+        imported = {
+          key: skill.key,
+          slug: skill.slug,
+          name: skill.name,
+          description: skill.description,
+          markdown: skill.markdown,
+          packageDir: path.resolve(sourceDirectory),
+          sourceType: skill.sourceType,
+          sourceLocator: skill.sourceLocator,
+          sourceRef: skill.sourceRef,
+          trustLevel: skill.trustLevel,
+          compatibility: skill.compatibility,
+          fileInventory: skill.fileInventory,
+          metadata: skill.metadata ?? {},
+        };
+      }
+      if (!imported) {
+        throw unprocessable(`Skill ${skill.key} could not be installed from its source.`);
+      }
+
+      const installed = await installImportedSkill(orgId, {
+        ...imported,
+        key: skill.key,
+        slug: skill.slug,
+        sourceType: skill.sourceType,
+        sourceLocator: skill.sourceLocator,
+        sourceRef: skill.sourceRef,
+        metadata: {
+          ...(imported.metadata ?? {}),
+          ...(skill.metadata ?? {}),
+        },
+      });
+      await db
+        .update(organizationSkills)
+        .set({
+          metadata: installed.metadata,
+          updatedAt: new Date(),
+        })
+        .where(eq(organizationSkills.id, skill.id));
+      return resolveInstalledSkillDirectory(orgId, skill.key, skill.slug);
+    })();
+
+    skillInstallationPromises.set(lockKey, installation);
+    try {
+      return await installation;
+    } finally {
+      if (skillInstallationPromises.get(lockKey) === installation) {
+        skillInstallationPromises.delete(lockKey);
+      }
     }
-
-    return skillDir;
-  }
-
-  function resolveRuntimeSkillMaterializedPath(orgId: string, skill: OrganizationSkill) {
-    const runtimeRoot = path.resolve(resolveManagedSkillsRoot(orgId), "__runtime__");
-    return path.resolve(runtimeRoot, buildSkillRuntimeName(skill.key, skill.slug));
   }
 
   async function listRuntimeSkillEntries(
@@ -1233,10 +1460,16 @@ export function organizationSkillService(
         continue;
       }
       let source = normalizeSkillDirectory(skill);
+      if (
+        source
+        && !(await fs.stat(path.join(source, "SKILL.md")).catch(() => null))?.isFile()
+      ) {
+        source = null;
+      }
       if (!source) {
         source = options.materializeMissing === false
-          ? resolveRuntimeSkillMaterializedPath(orgId, skill)
-          : await materializeRuntimeSkillFiles(orgId, skill).catch(() => null);
+          ? null
+          : await ensureInstalledSkill(orgId, skill).catch(() => null);
       }
       if (!source) continue;
 
@@ -1266,11 +1499,21 @@ export function organizationSkillService(
     if (importedSkills.length === 0) return [];
 
     for (const skill of importedSkills) {
-      if (skill.sourceType !== "catalog") continue;
-      const materializedDir = await materializeCatalogSkillFiles(orgId, skill, normalizedFiles);
-      if (materializedDir) {
-        skill.sourceLocator = materializedDir;
+      const packageDir = skill.packageDir ? normalizePortablePath(skill.packageDir) : null;
+      if (!packageDir) continue;
+      const packageFiles: Record<string, string> = {};
+      for (const entry of skill.fileInventory) {
+        const sourcePath = entry.path === "SKILL.md"
+          ? `${packageDir}/SKILL.md`
+          : `${packageDir}/${entry.path}`;
+        const content = normalizedFiles[sourcePath];
+        if (typeof content !== "string") {
+          throw unprocessable(`Skill package did not provide declared file: ${sourcePath}`);
+        }
+        packageFiles[entry.path] = content;
       }
+      skill.files = packageFiles;
+      skill.packageDir = null;
     }
 
     const conflictStrategy = options?.onConflict ?? "replace";
@@ -1356,7 +1599,10 @@ export function organizationSkillService(
 
     if (toPersist.length === 0) return out;
 
-    const persisted = await upsertImportedSkills(orgId, toPersist);
+    const installedSkills = await Promise.all(
+      toPersist.map((skill) => installImportedSkill(orgId, skill)),
+    );
+    const persisted = await upsertImportedSkills(orgId, installedSkills);
     for (let index = 0; index < prepared.length; index += 1) {
       const persistedSkill = persisted[index];
       const preparedSkill = prepared[index];
@@ -1395,6 +1641,9 @@ export function organizationSkillService(
       }
 
       const metadata = {
+        ...(existingMeta.installationVersion === ORGANIZATION_SKILL_INSTALLATION_VERSION
+          ? { installationVersion: ORGANIZATION_SKILL_INSTALLATION_VERSION }
+          : {}),
         ...(skill.metadata ?? {}),
         skillKey: skill.key,
       };
@@ -1467,7 +1716,10 @@ export function organizationSkillService(
         skill.key = deriveCanonicalSkillKey(orgId, skill);
       }
     }
-    const imported = await upsertImportedSkills(orgId, filteredSkills);
+    const installedSkills = await Promise.all(
+      filteredSkills.map((skill) => installImportedSkill(orgId, skill)),
+    );
+    const imported = await upsertImportedSkills(orgId, installedSkills);
     return { imported, warnings };
   }
 
@@ -1487,7 +1739,7 @@ export function organizationSkillService(
       .delete(organizationSkills)
       .where(eq(organizationSkills.id, skillId));
 
-    await fs.rm(resolveRuntimeSkillMaterializedPath(orgId, skill), { recursive: true, force: true });
+    await removeInstalledSkillDirectory(orgId, skill);
 
     return skill;
   }

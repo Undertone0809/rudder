@@ -204,6 +204,35 @@ export async function fetchText(url: string) {
   return response.text();
 }
 
+export async function fetchBytes(url: string) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw unprocessable(`Failed to fetch ${url}: ${response.status}`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  operation: (value: T, index: number) => Promise<R>,
+) {
+  const out = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        out[index] = await operation(values[index]!, index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return out;
+}
+
 export async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, {
     headers: {
@@ -751,7 +780,8 @@ export async function readUrlSkillImports(
       const repoSkillPath = basePrefix ? `${basePrefix}${relativeSkillPath}` : relativeSkillPath;
       const markdown = await fetchText(resolveRawGitHubUrl(parsed.owner, parsed.repo, ref, repoSkillPath));
       const parsedMarkdown = parseFrontmatterMarkdown(markdown);
-      const skillDir = path.posix.dirname(relativeSkillPath);
+      const rawSkillDir = path.posix.dirname(relativeSkillPath);
+      const skillDir = rawSkillDir === "." ? "" : rawSkillDir;
       const slug = deriveImportedSkillSlug(parsedMarkdown.frontmatter, path.posix.basename(skillDir));
       const skillKey = readCanonicalSkillKey(
         parsedMarkdown.frontmatter,
@@ -773,12 +803,37 @@ export async function readUrlSkillImports(
         ),
       };
       const inventory = filteredPaths
-        .filter((entry) => entry === relativeSkillPath || entry.startsWith(`${skillDir}/`))
-        .map((entry) => ({
-          path: entry === relativeSkillPath ? "SKILL.md" : entry.slice(skillDir.length + 1),
-          kind: classifyInventoryKind(entry === relativeSkillPath ? "SKILL.md" : entry.slice(skillDir.length + 1)),
-        }))
+        .filter((entry) =>
+          entry === relativeSkillPath
+          || (skillDir ? entry.startsWith(`${skillDir}/`) : true))
+        .map((entry) => {
+          const relativePath = entry === relativeSkillPath
+            ? "SKILL.md"
+            : skillDir
+              ? entry.slice(skillDir.length + 1)
+              : entry;
+          return {
+            path: relativePath,
+            kind: classifyInventoryKind(relativePath),
+          };
+        })
         .sort((left, right) => left.path.localeCompare(right.path));
+      const repoSkillDir = normalizeGitHubSkillDirectory(
+        basePrefix ? `${basePrefix}${skillDir}` : skillDir,
+        slug,
+      );
+      const downloadedFiles = await mapWithConcurrency(
+        inventory,
+        8,
+        async (entry) => {
+          if (entry.path === "SKILL.md") return [entry.path, markdown] as const;
+          const repoPath = normalizePortablePath(path.posix.join(repoSkillDir, entry.path));
+          return [
+            entry.path,
+            await fetchBytes(resolveRawGitHubUrl(parsed.owner, parsed.repo, ref, repoPath)),
+          ] as const;
+        },
+      );
       skills.push({
         key: deriveCanonicalSkillKey(orgId, {
           slug,
@@ -796,6 +851,7 @@ export async function readUrlSkillImports(
         trustLevel: deriveTrustLevel(inventory),
         compatibility: "compatible",
         fileInventory: inventory,
+        files: Object.fromEntries(downloadedFiles),
         metadata,
       });
     }
@@ -842,6 +898,7 @@ export async function readUrlSkillImports(
         trustLevel: deriveTrustLevel(inventory),
         compatibility: "compatible",
         fileInventory: inventory,
+        files: { "SKILL.md": markdown },
         metadata,
       }],
       warnings,
