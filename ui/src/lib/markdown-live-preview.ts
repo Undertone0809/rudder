@@ -49,6 +49,9 @@ const RAW_HTML_LINE_RE =
   /^\s*<\/?[a-z][\w-]*(?:\s[^>]*)?\s*\/?>|^\s*<!--|^\s*<![A-Z]|^\s*<\?|^\s*<%/iu;
 const LIST_ITEM_RE = /^ {0,3}(?:[-+*]|\d+[.)])[ \t]+/u;
 const BLOCKQUOTE_RE = /^ {0,3}>/u;
+const ATX_HEADING_RE = /^ {0,3}#{1,6}(?:[ \t]+|$)/u;
+const THEMATIC_BREAK_RE =
+  /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/u;
 const HTML_OPEN_TAG_RE = /^\s*<([a-z][\w-]*)(?:\s[^>]*)?\s*\/?>/iu;
 const HTML_VOID_TAGS = new Set([
   "area",
@@ -149,10 +152,35 @@ function listEndIndex(lines: SourceLine[], startIndex: number) {
   let index = startIndex + 1;
   while (index < lines.length) {
     const text = lines[index]!.text;
-    if (!text.trim()) break;
+    if (!text.trim()) {
+      let nextIndex = index + 1;
+      while (nextIndex < lines.length && !lines[nextIndex]!.text.trim()) {
+        nextIndex += 1;
+      }
+      if (nextIndex >= lines.length) break;
+
+      const nextText = lines[nextIndex]!.text;
+      const nextIndent = nextText.match(/^[ \t]*/u)?.[0]
+        .replace(/\t/gu, "    ").length ?? 0;
+      if (!LIST_ITEM_RE.test(nextText) && nextIndent <= startIndent) break;
+      index = nextIndex;
+      continue;
+    }
+
     const itemIndent = text.match(/^[ \t]*/u)?.[0]
       .replace(/\t/gu, "    ").length ?? 0;
-    if (LIST_ITEM_RE.test(text) && itemIndent <= startIndent) break;
+    if (
+      itemIndent <= startIndent
+      && (
+        FENCE_START_RE.test(text)
+        || ATX_HEADING_RE.test(text)
+        || BLOCKQUOTE_RE.test(text)
+        || RAW_HTML_LINE_RE.test(text)
+        || THEMATIC_BREAK_RE.test(text)
+      )
+    ) {
+      break;
+    }
     index += 1;
   }
   return index - 1;

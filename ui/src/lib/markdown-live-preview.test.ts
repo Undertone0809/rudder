@@ -76,11 +76,13 @@ describe("getMarkdownPreviewBlocks", () => {
     });
   });
 
-  it("keeps sibling list items independently editable while retaining nested structure", () => {
+  it("keeps compact and loose sibling list items in one stable editing block", () => {
     const source = [
       "1. first",
       "1. second",
       "   - [ ] nested task",
+      "",
+      "1. third",
       "",
       "after",
     ].join("\n");
@@ -89,19 +91,64 @@ describe("getMarkdownPreviewBlocks", () => {
       expect.objectContaining({
         kind: "list",
         startLine: 1,
-        endLine: 1,
-        markdown: "1. first",
-      }),
-      expect.objectContaining({
-        kind: "list",
-        startLine: 2,
-        endLine: 3,
-        markdown: "1. second\n   - [ ] nested task",
+        endLine: 5,
+        markdown: "1. first\n1. second\n   - [ ] nested task\n\n1. third",
       }),
       expect.objectContaining({
         kind: "line",
-        startLine: 5,
-        endLine: 5,
+        startLine: 7,
+        endLine: 7,
+      }),
+    ]);
+  });
+
+  it("does not absorb a paragraph after a list-ending blank line", () => {
+    const source = "- first\n\nparagraph";
+
+    expect(getMarkdownPreviewBlocks(source)).toEqual([
+      expect.objectContaining({
+        kind: "list",
+        startLine: 1,
+        endLine: 1,
+        markdown: "- first",
+      }),
+      expect.objectContaining({
+        kind: "line",
+        startLine: 3,
+        endLine: 3,
+        markdown: "paragraph",
+      }),
+    ]);
+  });
+
+  it("retains a CommonMark lazy continuation in its list block", () => {
+    const source = "- first\ncontinued";
+
+    expect(getMarkdownPreviewBlocks(source)).toEqual([
+      expect.objectContaining({
+        kind: "list",
+        startLine: 1,
+        endLine: 2,
+        markdown: source,
+      }),
+    ]);
+  });
+
+  it("ends a list before a directly following fenced code block", () => {
+    const source = "- first\n```ts\nconst answer = 42;\n```";
+
+    expect(getMarkdownPreviewBlocks(source)).toEqual([
+      expect.objectContaining({
+        kind: "list",
+        startLine: 1,
+        endLine: 1,
+        markdown: "- first",
+      }),
+      expect.objectContaining({
+        kind: "fenced-code",
+        startLine: 2,
+        endLine: 4,
+        markdown: "```ts\nconst answer = 42;\n```",
       }),
     ]);
   });

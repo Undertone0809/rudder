@@ -424,6 +424,7 @@ function sourceLineDecorations(
       Decoration.line({
         attributes: {
           "data-markdown-preview-state": "source",
+          "data-markdown-source-kind": block.kind,
           "data-source-line-start": String(lineNumber),
           "data-source-line-end": String(block.endLine),
         },
