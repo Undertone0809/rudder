@@ -68,7 +68,8 @@
     {"reminder":"chat-messenger: reviewer should compare public facts with INBOX.ATTENTION.001, MESSENGER.ATTENTION.001, CHAT.RESPONSE.ANNOTATION.001","fingerprint":"c560e4a6c17976ee05dffd9b85ae393e7c5c38bf72e85cf0d82fcfbc642d2979","classification":"false-positive","reviewed_revision":"e6988736f-release-protection-review-2026-07-25"},
     {"reminder":"configure-feishu-integration: reviewer should compare English and Chinese counterparts","fingerprint":"9fa9b78e587581aa9046adc3f816559c0161cc7bc2d406514af90744ecae2363","classification":"false-positive","reviewed_revision":"e6988736f-release-protection-review-2026-07-25"},
     {"reminder":"configure-feishu-integration: reviewer should compare public facts with IM.FEISHU.001","fingerprint":"9fa9b78e587581aa9046adc3f816559c0161cc7bc2d406514af90744ecae2363","classification":"false-positive","reviewed_revision":"e6988736f-release-protection-review-2026-07-25"},
-    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"bcdf4181763ae195c7e997cbdb5da5bd9645a1b1b1c1bdb6ad4b373936ae770b","classification":"false-positive","reviewed_revision":"e6988736f-release-protection-review-2026-07-25"}
+    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"bcdf4181763ae195c7e997cbdb5da5bd9645a1b1b1c1bdb6ad4b373936ae770b","classification":"false-positive","reviewed_revision":"e6988736f-release-protection-review-2026-07-25"},
+    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"54a4e614fd9b28b12bd063de2dceeb48282c9173c9249e440109ad2799d71c84","classification":"false-positive","reviewed_revision":"agent-automated-stable-release-review-2026-07-25"}
   ],
   "allowed_classifications": ["fixed", "intentional", "false-positive"]
 }
