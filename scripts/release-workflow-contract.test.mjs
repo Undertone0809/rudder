@@ -27,7 +27,12 @@ describe("release workflow latency contracts", () => {
   it("resolves an immutable source and runs release preflight before installation", () => {
     expect(releaseWorkflow).toMatch(/^  preflight:/m);
     expect(releaseWorkflow).toContain("source_sha:");
+    expect(releaseWorkflow).toContain("Require release source from protected main history");
+    expect(releaseWorkflow).toContain('git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main');
     expect(releaseWorkflow).toContain("Require successful CI for exact source");
+    expect(releaseWorkflow).toContain('.event == "push"');
+    expect(releaseWorkflow).toContain('.head_branch == "main"');
+    expect(releaseWorkflow).toContain('test "$GITHUB_REPOSITORY" = "Undertone0809/rudder"');
     expect(releaseWorkflow).toContain("./scripts/release.sh canary --preflight");
     expect(releaseWorkflow).toContain("./scripts/release.sh stable --preflight");
     expect(releaseWorkflow).toContain("Locked canary preflight");
@@ -48,6 +53,10 @@ describe("release workflow latency contracts", () => {
     expect(workflowPermissions).not.toContain("id-token: write");
     expect(releaseWorkflow).toContain("Require release repository safeguards");
     expect(releaseWorkflow).toContain("RELEASE_SAFEGUARDS_CONFIGURED");
+    expect(releaseWorkflow).toContain("STABLE_RELEASE_MODE");
+    expect(releaseWorkflow).toContain("agent-automated");
+    expect(releaseWorkflow).toContain("main-only non-interactive environment");
+    expect(releaseWorkflow).not.toContain("Configure npm-stable reviewers");
   });
 
   it("serializes publication and prepares the next patch base through a protected PR", () => {
@@ -83,7 +92,7 @@ describe("release workflow latency contracts", () => {
     expect(releaseScript).toContain("Reusing workspace build from verification gate");
   });
 
-  it("makes the localized public changelog a separately approved stable release surface", () => {
+  it("keeps the localized public changelog in the stable release machine gate", () => {
     const stableDocsIndex = releaseWorkflow.indexOf("\n  stable-docs:\n");
     const nextReleaseIndex = releaseWorkflow.indexOf("\n  next-release-base:\n");
 
