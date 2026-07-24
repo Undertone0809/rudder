@@ -3,7 +3,6 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
-import { LiquidGlassSurface } from "@/components/ui/liquid-glass-surface";
 import { cn } from "@/lib/utils";
 
 function Dialog({
@@ -62,12 +61,11 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-        "glass-modal liquid-glass-host motion-modal fixed top-[max(0.75rem,env(safe-area-inset-top))] md:top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-1.5rem)] translate-x-[-50%] translate-y-0 gap-4 rounded-md border bg-card p-6 shadow-[0_32px_90px_-46px_rgb(20_20_20/0.34)] outline-none md:translate-y-[-50%] sm:max-w-lg dark:shadow-[0_36px_96px_-48px_rgb(0_0_0/0.58)]",
+        "glass-modal motion-modal fixed top-[max(0.75rem,env(safe-area-inset-top))] md:top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-1.5rem)] translate-x-[-50%] translate-y-0 gap-4 rounded-md border bg-card p-6 shadow-[0_32px_90px_-46px_rgb(20_20_20/0.34)] outline-none md:translate-y-[-50%] sm:max-w-lg dark:shadow-[0_36px_96px_-48px_rgb(0_0_0/0.58)]",
           className
         )}
         {...props}
       >
-        <LiquidGlassSurface variant="modal" />
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close
