@@ -30,9 +30,15 @@ describe("release workflow latency contracts", () => {
     expect(releaseWorkflow).toContain("Require release source from protected main history");
     expect(releaseWorkflow).toContain('git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main');
     expect(releaseWorkflow).toContain("Require successful CI for exact source");
+    expect(releaseWorkflow).toContain('-f head_sha="$SOURCE_SHA"');
+    expect(releaseWorkflow).toContain("-f status=success");
     expect(releaseWorkflow).toContain('.event == "push"');
     expect(releaseWorkflow).toContain('.head_branch == "main"');
     expect(releaseWorkflow).toContain('test "$GITHUB_REPOSITORY" = "Undertone0809/rudder"');
+    expect(releaseWorkflow).toContain(
+      "if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'",
+    );
+    expect(releaseWorkflow).toContain("environment: npm-stable");
     expect(releaseWorkflow).toContain("./scripts/release.sh canary --preflight");
     expect(releaseWorkflow).toContain("./scripts/release.sh stable --preflight");
     expect(releaseWorkflow).toContain("Locked canary preflight");

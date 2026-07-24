@@ -798,8 +798,8 @@ When the user asks "what do I do now?", answer in this order:
    failing checks, dirty release files, or missing Desktop artifacts.
 3. **Next Actions**: numbered, executable steps with exact commands or GitHub UI
    actions.
-4. **Human Gates**: approvals, npm login/trusted-publisher setup, GitHub
-   environment approval, announcement copy.
+4. **Authorization**: the explicit versioned release request, npm
+   login/trusted-publisher setup when missing, and announcement scope.
 5. **Verification**: exact checks that prove the release surface is complete.
 
 For hands-on release execution, keep short status updates while working, then
