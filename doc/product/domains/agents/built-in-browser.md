@@ -46,6 +46,7 @@ related_code:
   - packages/shared/src/browser-shortcuts.ts
   - ui/src/context/SidePanelContext.tsx
   - ui/src/components/DesktopBrowserLinkBridge.tsx
+  - ui/src/components/workbench/BrowserLiveSurface.tsx
   - ui/src/lib/browser-side-panel.ts
   - ui/src/lib/desktop-browser-link-router.ts
   - ui/src/pages/Chat.side-panel.tsx
@@ -88,6 +89,7 @@ related_tests:
   - ui/src/pages/InstanceBrowserSettings.test.tsx
   - ui/src/components/BrowserDataImportDialog.test.tsx
   - ui/src/components/DesktopBrowserLinkBridge.test.tsx
+  - ui/src/components/workbench/BrowserLiveSurface.test.tsx
   - ui/src/context/SidePanelContext.test.tsx
   - ui/src/lib/browser-side-panel.test.ts
   - ui/src/lib/desktop-browser-link-router.test.ts
@@ -185,6 +187,18 @@ auditing remain inside existing boundaries.
    `openLinksIn` is `built_in`, independently of whether Agent Browser access is
    enabled. The current Rudder route stays in place. The explicit external
    command always uses the system browser.
+   The first time an active Browser surface is shown in the Side Panel, Rudder
+   shows a localized onboarding card explaining that Rudder starts with the
+   Built-in Browser for web links and that the operator can choose the Built-in
+   Browser or system default browser under `Settings > Desktop app > Browser`.
+   `Browser settings` dismisses the card and opens that exact settings
+   destination as an overlay while preserving the current route as its
+   background. `Got it` dismisses the card in place. Either action records the
+   one-time dismissal in local renderer storage and synchronizes it across
+   active Browser surfaces; if durable storage is unavailable, a session
+   fallback prevents repeat prompts for the current session. The card is not
+   shown when the same Browser target is hosted in the Messenger Main
+   Workbench.
    Operator Browser popup requests are intercepted into another tab on the
    surface that owns the source guest instead of creating an unrestricted guest
    window, even when ordinary Rudder links are configured to use the system
@@ -268,6 +282,7 @@ auditing remain inside existing boundaries.
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
 | Fresh Desktop instance | No saved Browser fields | Browser is enabled and Rudder web links use the Side Panel Browser | Legacy absence must not disable the capability or default links externally | Settings service/UI tests |
+| First Side Panel Browser onboarding | An active Side Panel Browser surface has no recorded dismissal | Explain the default and both link destinations; let the operator dismiss in place or jump directly to `Settings > Desktop app > Browser` without losing the background route | Do not show the card in Main Workbench, repeat it after dismissal, or send the operator to a generic settings landing page | Browser surface component tests and built-in Browser E2E |
 | Built-in link | `openLinksIn=built_in`, external HTTP(S) URL, regardless of Agent Browser enablement | Open or focus a Side Panel Browser tab and preserve the current Rudder route | Do not replace the Rudder route or open the system browser because Agent Browser access is off | Side Panel E2E and Desktop smoke |
 | Operator local-file address | Operator explicitly submits a canonical local absolute `file:///` URL with empty authority and a non-UNC decoded path | Bootstrap that target in the current Browser tab; preserve the Rudder route; show the normal in-tab failure state if the file is missing | Do not grant the file target Rudder renderer/API privileges or replace the Browser guest on failure | URL-policy tests, Browser E2E, and real Desktop smoke |
 | Noncanonical file address | Explicit address input is remote-authority, `localhost`, UNC/UNC-equivalent, encoded-separator, or relative `file:` input | Treat the input as a search query instead of a local file navigation | Do not resolve or fetch a remote share or reinterpret a relative path as local authority | Side Panel URL normalization and profile-policy tests |
@@ -296,6 +311,11 @@ dialog shows discovered source profiles, supported data types, confirmation,
 progress, and explicit partial-success or error results. Passwords are shown as
 unavailable, not as a successful import option.
 
+On the first active Side Panel Browser surface, the operator also sees a
+localized, one-time onboarding card with `Browser settings` and `Got it`
+actions. The settings action opens the Browser subsection directly rather than
+requiring the operator to find it from the general settings landing page.
+
 The runtime agent sees the read-only `Browser` skill and the eight typed Browser
 tools only when Rudder resolves the capability for the run. Tool arguments
 contain action inputs such as URL, tab id, element reference, or text, but not
@@ -314,6 +334,8 @@ targets the actual owning Side or Main tab and must not close the Desktop shell.
   Main tabs fill the Messenger work area directly beneath the mixed Main tab
   strip. Both expose address/search, navigation, reload, close, and explicit
   external-open actions.
+  The first Side Panel appearance additionally shows the compact Browser
+  onboarding card until either action dismisses it.
   Canonical local files use the same tab shell; missing files show the attempted
   address and actionable main-frame failure state without replacing the route.
 - Focused Browser tabs accept `Command` on macOS or `Ctrl` elsewhere with `R`,
@@ -407,6 +429,17 @@ targets the actual owning Side or Main tab and must not close the Desktop shell.
      zoom intact; siblings remain in Side.
    - Evidence: Main promotion tests and packaged Desktop Browser smoke.
 
+9. First-use Browser destination guidance:
+   - Trigger: operator opens an active Browser surface in the Side Panel before
+     dismissing Browser onboarding.
+   - Expected state/action: Rudder explains the default Built-in Browser
+     behavior and both supported link destinations. `Browser settings` records
+     dismissal and opens `/instance/settings/browser` over the current route;
+     `Got it` records dismissal without navigation.
+   - Visible output: the onboarding card appears only in Side Panel, does not
+     recur after dismissal, and never overlays the same Browser target in Main.
+   - Evidence: Browser surface component tests and built-in Browser E2E.
+
 ### Invariants / Non-Goals
 
 - Profile identity is OS user plus canonical Rudder instance, never
@@ -470,9 +503,10 @@ targets the actual owning Side or Main tab and must not close the Desktop shell.
 
 ### Drift Boundaries
 
-Update this contract when changing default enablement/link destination, profile
-or tab ownership scope, supported link protocols, clear/disable lifecycle,
-import platforms/data types, Browser skill/tool names or projection, runtime
+Update this contract when changing default enablement/link destination,
+first-use Browser onboarding or its settings destination, profile or tab
+ownership scope, supported link protocols, clear/disable lifecycle, import
+platforms/data types, Browser skill/tool names or projection, runtime
 eligibility, Broker identity/authorization, or persisted/redacted evidence.
 
 Internal Electron, IPC, MCP, or importer refactors that preserve these product
