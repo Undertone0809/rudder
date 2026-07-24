@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useI18n } from "@/context/I18nContext";
 import {
   BROWSER_SIDE_PANEL_BLANK_URL,
   browserSidePanelErrorContent,
@@ -23,6 +24,7 @@ import {
   ExternalLink,
   FileWarning,
   Globe2,
+  Info,
   Plus,
   RotateCw,
 } from "lucide-react";
@@ -38,6 +40,25 @@ import {
 const BROWSER_LIVE_SURFACE_ZOOM_FACTORS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5,
 ] as const;
+const BROWSER_SIDE_PANEL_ONBOARDING_STORAGE_KEY = "rudder.browser.side-panel-onboarding.dismissed.v1";
+const BROWSER_SIDE_PANEL_ONBOARDING_SESSION_STORAGE_KEY = "rudder.browser.side-panel-onboarding.session-dismissed.v1";
+const BROWSER_SIDE_PANEL_ONBOARDING_DISMISSED_EVENT = "rudder:browser-side-panel-onboarding-dismissed";
+
+function hasDismissedBrowserSidePanelOnboarding() {
+  if (typeof window === "undefined") return true;
+  try {
+    if (window.localStorage.getItem(BROWSER_SIDE_PANEL_ONBOARDING_STORAGE_KEY) === "true") {
+      return true;
+    }
+  } catch {
+    // Fall through to the session-scoped fallback.
+  }
+  try {
+    return window.sessionStorage.getItem(BROWSER_SIDE_PANEL_ONBOARDING_SESSION_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
 
 type BrowserWebviewElement = HTMLElement & {
   canGoBack?: () => boolean;
@@ -67,8 +88,10 @@ function acceptedBrowserFavicon(value: unknown) {
 export type BrowserLiveSurfaceProps = {
   active: boolean;
   canOpenNewTab: boolean;
+  surface: "side_panel" | "workbench";
   target: Extract<SidePanelTarget, { kind: "browser" }>;
   targetKey: string;
+  onOpenBrowserSettings?: () => void;
   onOpenTarget: (target: SidePanelTarget) => void;
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
   onCloseTarget: (target: SidePanelTarget) => void;
@@ -83,8 +106,10 @@ export type BrowserLiveSurfaceProps = {
 export function BrowserLiveSurface({
   active,
   canOpenNewTab,
+  surface,
   target,
   targetKey,
+  onOpenBrowserSettings,
   onOpenTarget,
   onReplaceTarget,
   onCloseTarget,
@@ -92,6 +117,7 @@ export function BrowserLiveSurface({
   onWebContentsIdChange,
   onRegisterShortcutController,
 }: BrowserLiveSurfaceProps) {
+  const { t } = useI18n();
   const addressInputRef = useRef<HTMLInputElement | null>(null);
   const webviewRef = useRef<BrowserWebviewElement | null>(null);
   const webviewReadyRef = useRef(false);
@@ -118,6 +144,9 @@ export function BrowserLiveSurface({
   });
   const [loadError, setLoadError] = useState<BrowserLoadError | null>(null);
   const [loadErrorDetailsOpen, setLoadErrorDetailsOpen] = useState(false);
+  const [showSidePanelOnboarding, setShowSidePanelOnboarding] = useState(
+    () => !hasDismissedBrowserSidePanelOnboarding(),
+  );
   const isBlank = currentUrl === BROWSER_SIDE_PANEL_BLANK_URL;
   const loadErrorContent = loadError ? browserSidePanelErrorContent(loadError) : null;
   currentUrlRef.current = currentUrl;
@@ -438,6 +467,29 @@ export function BrowserLiveSurface({
     onWebContentsIdChangeRef.current?.(null);
   }, []);
 
+  useEffect(() => {
+    const handleDismissed = () => setShowSidePanelOnboarding(false);
+    window.addEventListener(BROWSER_SIDE_PANEL_ONBOARDING_DISMISSED_EVENT, handleDismissed);
+    return () => {
+      window.removeEventListener(BROWSER_SIDE_PANEL_ONBOARDING_DISMISSED_EVENT, handleDismissed);
+    };
+  }, []);
+
+  const dismissSidePanelOnboarding = () => {
+    setShowSidePanelOnboarding(false);
+    try {
+      window.localStorage.setItem(BROWSER_SIDE_PANEL_ONBOARDING_STORAGE_KEY, "true");
+    } catch {
+      // Fall back to session storage below.
+    }
+    try {
+      window.sessionStorage.setItem(BROWSER_SIDE_PANEL_ONBOARDING_SESSION_STORAGE_KEY, "true");
+    } catch {
+      // The mounted Browser surfaces still synchronize through the event below.
+    }
+    window.dispatchEvent(new Event(BROWSER_SIDE_PANEL_ONBOARDING_DISMISSED_EVENT));
+  };
+
   const navigateTo = useCallback((nextValue: string) => {
     const nextUrl = normalizeBrowserSidePanelUrl(nextValue);
     setLoadError(null);
@@ -552,9 +604,51 @@ export function BrowserLiveSurface({
         </Button>
       </div>
       <div
-        className="flex min-h-0 flex-1 flex-col bg-[color:var(--surface-inset)]"
+        className="relative flex min-h-0 flex-1 flex-col bg-[color:var(--surface-inset)]"
         data-testid="chat-side-panel-browser-content"
       >
+        {active && surface === "side_panel" && showSidePanelOnboarding ? (
+          <aside
+            role="status"
+            aria-live="polite"
+            aria-labelledby="browser-side-panel-onboarding-title"
+            data-testid="browser-side-panel-onboarding"
+            className="absolute right-3 top-3 z-20 w-[min(22rem,calc(100%-1.5rem))] rounded-[var(--radius-md)] border border-[color:var(--border-strong)] bg-[color:var(--surface-elevated)] p-3 shadow-lg"
+          >
+            <div className="flex items-start gap-2.5">
+              <Info className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <h3
+                  id="browser-side-panel-onboarding-title"
+                  className="text-sm font-semibold text-foreground"
+                >
+                  {t("browser.onboarding.title")}
+                </h3>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t("browser.onboarding.description")}
+                </p>
+                <div className="mt-2.5 flex items-center justify-between gap-2">
+                  {onOpenBrowserSettings ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        dismissSidePanelOnboarding();
+                        onOpenBrowserSettings();
+                      }}
+                    >
+                      {t("browser.onboarding.settings")}
+                    </Button>
+                  ) : <span />}
+                  <Button type="button" size="sm" onClick={dismissSidePanelOnboarding}>
+                    {t("browser.onboarding.dismiss")}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </aside>
+        ) : null}
         {isBlank ? (
           <div
             className="flex min-h-[44vh] flex-1 items-center justify-center px-6 text-center"

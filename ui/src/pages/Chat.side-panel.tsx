@@ -54,6 +54,10 @@ import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, getOrganiza
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
 import {
+  buildSettingsOverlayState,
+  rememberSettingsOverlayBackgroundPath,
+} from "@/lib/settings-overlay-state";
+import {
   sidePanelTargetKey,
   sidePanelTargetSupportsSavedView,
   type SidePanelTarget,
@@ -1406,6 +1410,15 @@ export function ChatSidePanel({
     if (controller) browserShortcutControllersRef.current.set(key, controller);
     else browserShortcutControllersRef.current.delete(key);
   }, []);
+  const openBrowserSettings = useCallback(() => {
+    const currentPath = `${location.pathname}${location.search}${location.hash}`;
+    const overlayState = buildSettingsOverlayState(location);
+    rememberSettingsOverlayBackgroundPath(currentPath);
+    navigate(
+      "/instance/settings/browser",
+      overlayState ? { state: overlayState } : undefined,
+    );
+  }, [location, navigate]);
   const registerSideChatCloseHandler = useCallback((
     clientMutationId: string,
     handler: (() => Promise<string | null>) | null,
@@ -2028,6 +2041,7 @@ export function ChatSidePanel({
                     void closeSidePanelTab(nextTarget);
                   },
                   onCycleTab: cycleSidePanelTab,
+                  onOpenBrowserSettings: openBrowserSettings,
                   onOpenTarget: openSidePanelTarget,
                   onRegisterShortcutController: registerBrowserShortcutController,
                   onReplaceTarget: (nextTarget) => (
@@ -2051,8 +2065,10 @@ export function ChatSidePanel({
                 <BrowserLiveSurface
                   active={active}
                   canOpenNewTab={canOpenNewBrowserGuest}
+                  surface="side_panel"
                   target={target}
                   targetKey={targetKey}
+                  onOpenBrowserSettings={openBrowserSettings}
                   onOpenTarget={openSidePanelTarget}
                   onReplaceTarget={replaceSidePanelTarget}
                   onCloseTarget={closeSidePanelTab}

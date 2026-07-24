@@ -59,6 +59,7 @@ export type LiveSurfaceOwnerCallbacks = {
   canOpenNewTab?: boolean;
   onCloseTarget?: (target: SidePanelTarget) => void;
   onCycleTab?: (direction: -1 | 1) => void;
+  onOpenBrowserSettings?: () => void;
   onOpenTarget?: (target: SidePanelTarget) => void;
   onRegisterShortcutController?: (
     key: string,
@@ -597,6 +598,9 @@ export function LiveSurfaceAnchor({
     onCycleTab: (direction) => (
       callbacksRef.current.onCycleTab?.(direction)
     ),
+    onOpenBrowserSettings: () => (
+      callbacksRef.current.onOpenBrowserSettings?.()
+    ),
     onOpenTarget: (nextTarget) => (
       callbacksRef.current.onOpenTarget?.(nextTarget)
     ),
@@ -704,10 +708,12 @@ function RuntimeSurface({
       <BrowserLiveSurface
         active={visible}
         canOpenNewTab={callbacks?.canOpenNewTab ?? false}
+        surface={surface}
         target={target}
         targetKey={sidePanelTargetKey(target)}
         onCloseTarget={closeTarget}
         onCycleTab={callbacks?.onCycleTab}
+        onOpenBrowserSettings={callbacks?.onOpenBrowserSettings}
         onOpenTarget={openTarget}
         onRegisterShortcutController={
           (key, controller) => {
