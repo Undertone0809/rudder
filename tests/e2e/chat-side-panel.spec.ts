@@ -121,6 +121,10 @@ async function installDesktopShellLocalFilePreviewStub(page: Page, expectedPath:
 
 async function installBrowserDesktopStub(page: Page) {
   await page.addInitScript(() => {
+    let openEmptySidePanelListener: (() => void) | null = null;
+    Object.assign(window, {
+      __emitDesktopOpenEmptySidePanel: () => openEmptySidePanelListener?.(),
+    });
     Object.defineProperty(window, "desktopShell", {
       configurable: true,
       value: {
@@ -129,6 +133,12 @@ async function installBrowserDesktopStub(page: Page) {
         forceOpenExternal: async () => {},
         setSidePanelCloseShortcutActive: async () => {},
         onCloseSidePanelActiveTab: () => () => {},
+        onOpenEmptySidePanel: (listener: () => void) => {
+          openEmptySidePanelListener = listener;
+          return () => {
+            openEmptySidePanelListener = null;
+          };
+        },
         onBrowserReset: () => () => {},
       },
     });
@@ -1724,7 +1734,7 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Browser");
     await expect(sidePanel).toContainText("Library");
 
-    await sidePanel.getByRole("button", { name: /Library/ }).click();
+    await sidePanel.getByTestId("chat-side-panel-empty-library-target").click();
     await expect(sidePanel).toContainText("Library root");
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
 
@@ -1737,6 +1747,58 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toBeHidden();
     await page.getByTestId("side-panel-hover-edge").hover();
     await expect(page.getByTestId("global-side-panel-trigger")).toBeVisible();
+  });
+
+  test("opens the panel picker from the Desktop new-tab event without creating placeholder tabs", async ({ page }) => {
+    await installBrowserDesktopStub(page);
+    await installEnabledBrowserSettingsStub(page);
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Desktop-Side-Panel-New-Tab-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+
+    const emitDesktopNewTab = () => page.evaluate(() => (
+      window as typeof window & { __emitDesktopOpenEmptySidePanel(): void }
+    ).__emitDesktopOpenEmptySidePanel());
+    const sidePanel = page.getByTestId("chat-side-panel");
+
+    await expect(sidePanel).toHaveCount(0);
+    await emitDesktopNewTab();
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(0);
+
+    await sidePanel.getByTestId("chat-side-panel-empty-library-target").click();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(sidePanel.getByTestId("chat-side-panel-tab").first()).toContainText("Library");
+
+    await emitDesktopNewTab();
+    await emitDesktopNewTab();
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+
+    await sidePanel.getByTestId("chat-side-panel-empty-browser-target").click();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await sidePanel.getByLabel("Close Side Panel").click();
+    await expect(sidePanel).toBeHidden();
+
+    await emitDesktopNewTab();
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await sidePanel.getByTestId("chat-side-panel-empty-browser-target").click();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(3);
   });
 
   test("animates the Side Panel shell and auto-collapses during narrow resize", async ({ page }) => {

@@ -3073,10 +3073,25 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
       const nativeWindowCountBeforeShortcut = electronApp
         ? await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
         : null;
+      await page.evaluate(async () => {
+        const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
+        if (!webview || typeof webview.executeJavaScript !== "function") throw new Error("Browser webview unavailable");
+        webview.focus();
+        await webview.executeJavaScript("document.querySelector('[aria-label=\"Smoke input\"]')?.focus()");
+      });
+      await pressElectronSurfaceShortcut(electronApp, "webview", "T", [shortcutModifier]);
+      await sidePanel.getByTestId("chat-side-panel-empty-state").waitFor({ state: "visible", timeout: 15_000 });
+      assert.equal(
+        await sidePanel.getByTestId("chat-side-panel-tab").count(),
+        browserTabCountBeforeShortcut,
+        "Browser guest new-tab shortcut must open the panel picker without creating a placeholder tab",
+      );
       await pressElectronSurfaceShortcut(electronApp, "window", "T", [shortcutModifier]);
-      await page.waitForFunction((expectedCount) => (
-        document.querySelectorAll("[data-testid='chat-side-panel-tab']").length === expectedCount
-      ), browserTabCountBeforeShortcut + 1, { timeout: 15_000 });
+      assert.equal(
+        await sidePanel.getByTestId("chat-side-panel-tab").count(),
+        browserTabCountBeforeShortcut,
+        "repeated new-tab shortcuts must reuse the open panel picker",
+      );
       if (nativeWindowCountBeforeShortcut !== null) {
         assert.equal(
           await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length),
@@ -3084,13 +3099,17 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
           "Browser new-tab shortcut must not create a native Electron window",
         );
       }
+      await sidePanel.getByTestId("chat-side-panel-empty-browser-target").click();
+      await page.waitForFunction((expectedCount) => (
+        document.querySelectorAll("[data-testid='chat-side-panel-tab']").length === expectedCount
+      ), browserTabCountBeforeShortcut + 1, { timeout: 15_000 });
       await sidePanel.getByTestId("chat-side-panel-tab").first().evaluate((button) => button.click());
       await page.waitForFunction(({ expectedUrl, marker }) => {
         if (window.__rudderBrowserShortcutHostMarker !== marker) return false;
         const webview = document.querySelector("[data-testid='chat-side-panel-browser-webview'][data-active='true']");
         return Boolean(webview && typeof webview.getURL === "function" && webview.getURL() === expectedUrl);
       }, { expectedUrl: fixtureUrl, marker: hostShortcutMarker }, { timeout: 15_000 });
-      console.log("[desktop-smoke] Browser physical shortcuts preserved the host and targeted the active guest");
+      console.log("[desktop-smoke] Browser guest new-tab shortcut opened the picker and preserved the active guest");
 
       const routedUrl = `${fixture.url}/routed-link`;
       await page.evaluate((url) => {
@@ -4636,6 +4655,37 @@ async function runLocalAppsScenario(mode) {
       run.page,
       definition,
       transferMarker,
+    );
+    const localAppTabCountBeforeShortcut = await initial.sidePanel
+      .getByTestId("chat-side-panel-tab")
+      .count();
+    const shortcutModifier = process.platform === "darwin" ? "meta" : "control";
+    await run.page.evaluate((bindingId) => {
+      const webview = Array.from(document.querySelectorAll("[data-testid='local-app-webview']"))
+        .find((candidate) => candidate.getAttribute("data-local-binding-id") === bindingId
+          && candidate.getAttribute("data-active") === "true");
+      if (!webview) throw new Error("Local App shortcut smoke requires the active guest");
+      webview.focus();
+    }, definition.localBindingId);
+    await pressElectronSurfaceShortcut(
+      run.electronApp,
+      "webview",
+      "T",
+      [shortcutModifier],
+    );
+    await initial.sidePanel
+      .getByTestId("chat-side-panel-empty-state")
+      .waitFor({ state: "visible", timeout: 15_000 });
+    assert.equal(
+      await initial.sidePanel.getByTestId("chat-side-panel-tab").count(),
+      localAppTabCountBeforeShortcut,
+      "Local App guest new-tab shortcut must open the picker without creating a placeholder tab",
+    );
+    await activeLocalAppTab.click();
+    assert.deepEqual(
+      await readActiveLocalAppGuestIdentity(run.page, definition),
+      guestBeforeMove,
+      "closing the Local App shortcut picker must preserve the exact guest",
     );
 
     const keepButton = initial.sidePanel.getByTestId("chat-side-panel-keep-in-messenger");

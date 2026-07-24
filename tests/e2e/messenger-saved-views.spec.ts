@@ -80,6 +80,33 @@ async function listGroups(page: Page, orgId: string) {
   }> }>;
 }
 
+async function keepLooseSavedView(
+  page: Page,
+  orgId: string,
+  input: {
+    title: string;
+    target:
+      | { kind: "browser"; tabId: string; url: string; viewInstanceId: string }
+      | { kind: "library_file"; filePath: string; viewInstanceId: string };
+  },
+) {
+  const response = await page.request.post(
+    `/api/orgs/${orgId}/messenger/saved-views/keep`,
+    {
+      data: {
+        ...input,
+        clientMutationId: randomUUID(),
+        placement: { kind: "loose" },
+      },
+    },
+  );
+  expect(response.ok(), await response.text()).toBe(true);
+  return response.json() as Promise<{
+    savedView: { id: string; title: string };
+    group: null;
+  }>;
+}
+
 async function openGlobalLibraryFileInSidePanel(page: Page, fileName: string) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByTestId("side-panel-hover-edge").hover();
@@ -497,7 +524,142 @@ test.describe("Messenger Saved Views", () => {
     await expect(savedRow.locator("a")).not.toHaveAttribute("aria-current", "page");
   });
 
-  test("explains that a global Side Panel view needs an existing group", async ({ page }) => {
+  test("moves a Library Saved View group to sidebar, reorders loose views, and moves it back after reload", async ({ page }) => {
+    const organization = await createOrganization(page.request, "Messenger-Saved-View-Loose-Lifecycle");
+    const libraryFilePath = `loose/library-${randomUUID()}.md`;
+    const libraryTitle = "Loose library document";
+    const browserTitle = "Loose browser reference";
+    const fileResponse = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: { filePath: libraryFilePath, content: "# Loose library document\n" },
+    });
+    expect(fileResponse.ok(), await fileResponse.text()).toBe(true);
+    const groupResponse = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Research package", icon: "folder::emerald" },
+    });
+    expect(groupResponse.ok(), await groupResponse.text()).toBe(true);
+    const group = await groupResponse.json() as { id: string };
+    const library = await keepLooseSavedView(page, organization.id, {
+      title: libraryTitle,
+      target: {
+        kind: "library_file",
+        filePath: libraryFilePath,
+        viewInstanceId: `library-${randomUUID()}`,
+      },
+    });
+    const browser = await keepLooseSavedView(page, organization.id, {
+      title: browserTitle,
+      target: {
+        kind: "browser",
+        tabId: `browser-${randomUUID()}`,
+        url: "https://example.com/research",
+        viewInstanceId: `browser-${randomUUID()}`,
+      },
+    });
+    const groupLibraryResponse = await page.request.post(
+      `/api/orgs/${organization.id}/messenger/groups/${group.id}/entries`,
+      { data: { itemKey: `saved-view:${library.savedView.id}` } },
+    );
+    expect(groupLibraryResponse.ok(), await groupLibraryResponse.text()).toBe(true);
+
+    await selectOrganization(page, organization);
+    await page.goto(`/${organization.issuePrefix}/messenger/workbench`);
+
+    const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);
+    const groupedLibraryRow = groupSection.locator(
+      `[data-messenger-saved-view-id="${library.savedView.id}"]`,
+    );
+    await expect(groupedLibraryRow).toBeVisible({ timeout: 15_000 });
+    await groupedLibraryRow.hover();
+    await groupedLibraryRow.getByRole("button", {
+      name: `Saved View actions for ${libraryTitle}`,
+    }).click();
+    await page.getByRole("menuitem", { name: "Move to Messenger sidebar" }).click();
+
+    const looseLibraryRow = page.locator(
+      `[data-messenger-saved-view-id="${library.savedView.id}"]`,
+    );
+    const looseBrowserRow = page.locator(
+      `[data-messenger-saved-view-id="${browser.savedView.id}"]`,
+    );
+    await expect(looseLibraryRow).toBeVisible();
+    await expect(looseBrowserRow).toBeVisible();
+    await expect.poll(async () => (
+      (await listGroups(page, organization.id)).groups
+        .find((candidate) => candidate.id === group.id)
+        ?.entries.some((entry) => entry.itemKey === `saved-view:${library.savedView.id}`)
+    )).toBe(false);
+
+    const initialLibraryBox = await looseLibraryRow.boundingBox();
+    const initialBrowserBox = await looseBrowserRow.boundingBox();
+    expect(initialLibraryBox).not.toBeNull();
+    expect(initialBrowserBox).not.toBeNull();
+    const rowToMove = initialLibraryBox!.y < initialBrowserBox!.y
+      ? looseBrowserRow
+      : looseLibraryRow;
+    const rowToMoveTitle = initialLibraryBox!.y < initialBrowserBox!.y
+      ? browserTitle
+      : libraryTitle;
+    const targetRow = rowToMoveTitle === libraryTitle
+      ? looseBrowserRow
+      : looseLibraryRow;
+    const dragHandleBox = await rowToMove
+      .getByRole("button", { name: `Drag ${rowToMoveTitle}` })
+      .boundingBox();
+    const targetRowBox = await targetRow.boundingBox();
+    expect(dragHandleBox).not.toBeNull();
+    expect(targetRowBox).not.toBeNull();
+    await page.mouse.move(
+      dragHandleBox!.x + dragHandleBox!.width / 2,
+      dragHandleBox!.y + dragHandleBox!.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      targetRowBox!.x + targetRowBox!.width / 2,
+      targetRowBox!.y + 4,
+      { steps: 12 },
+    );
+    await page.mouse.up();
+
+    const reorderedLibraryBox = await looseLibraryRow.boundingBox();
+    const reorderedBrowserBox = await looseBrowserRow.boundingBox();
+    expect(reorderedLibraryBox).not.toBeNull();
+    expect(reorderedBrowserBox).not.toBeNull();
+    expect(
+      rowToMoveTitle === libraryTitle
+        ? reorderedLibraryBox!.y < reorderedBrowserBox!.y
+        : reorderedBrowserBox!.y < reorderedLibraryBox!.y,
+    ).toBe(true);
+
+    await page.reload();
+    await expect(looseLibraryRow).toBeVisible({ timeout: 15_000 });
+    await expect(looseBrowserRow).toBeVisible();
+    const reloadedLibraryBox = await looseLibraryRow.boundingBox();
+    const reloadedBrowserBox = await looseBrowserRow.boundingBox();
+    expect(
+      rowToMoveTitle === libraryTitle
+        ? reloadedLibraryBox!.y < reloadedBrowserBox!.y
+        : reloadedBrowserBox!.y < reloadedLibraryBox!.y,
+    ).toBe(true);
+
+    await looseLibraryRow.hover();
+    await looseLibraryRow.getByRole("button", {
+      name: `Saved View actions for ${libraryTitle}`,
+    }).click();
+    await page.getByRole("menuitem", { name: "Move to group" }).hover();
+    await page.getByRole("menuitem", { name: "Research package" }).click();
+    await expect(groupSection.locator(
+      `[data-messenger-saved-view-id="${library.savedView.id}"]`,
+    )).toBeVisible();
+    await expect(looseBrowserRow).toBeVisible();
+
+    await page.reload();
+    await expect(groupSection.locator(
+      `[data-messenger-saved-view-id="${library.savedView.id}"]`,
+    )).toBeVisible({ timeout: 15_000 });
+    await expect(looseBrowserRow).toBeVisible();
+  });
+
+  test("keeps a global Side Panel view loose when no groups exist", async ({ page }) => {
     const organization = await createOrganization(page.request, "Messenger-Saved-View-No-Group");
     const filePath = `no-group-${randomUUID()}.md`;
     const fileName = filePath.split("/").at(-1)!;
@@ -511,7 +673,12 @@ test.describe("Messenger Saved Views", () => {
     const sidePanel = await openGlobalLibraryFileInSidePanel(page, fileName);
     const keepButton = sidePanel.getByTestId("chat-side-panel-keep-in-messenger");
     await keepButton.click();
-    await expect(page.getByText("No groups yet. Keep a view from a Chat or Issue first to create one.")).toBeVisible();
+    await page.getByRole("menuitem", { name: "Messenger sidebar" }).click();
+    await expect(page.getByText("Moved to Messenger", { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/messenger\/saved\/[^/]+$/);
     expect((await listGroups(page, organization.id)).groups).toHaveLength(0);
+    await expect(page.locator(`[data-messenger-saved-view-id]`).filter({ hasText: fileName })).toBeVisible();
+    await page.reload();
+    await expect(page.locator(`[data-messenger-saved-view-id]`).filter({ hasText: fileName })).toBeVisible();
   });
 });
