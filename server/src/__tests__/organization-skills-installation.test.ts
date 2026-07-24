@@ -595,6 +595,9 @@ describe("organization skill local installations", () => {
         `https://github.com/acme/skills/tree/${PINNED_REF}/skills/direct-transition`,
       )).imported[0]!;
       expect(remote.metadata).toMatchObject({ installationVersion: 1 });
+      const remoteRuntime = await skillSvc.listRuntimeSkillEntries(orgId);
+      const installedPath = remoteRuntime.find((entry) => entry.key === remote.key)?.source;
+      expect(installedPath).toContain(`${path.sep}__installed__${path.sep}`);
 
       const local = (await skillSvc.importFromSource(orgId, localSkillDir)).imported[0]!;
       expect(local.id).toBe(remote.id);
@@ -605,7 +608,237 @@ describe("organization skill local installations", () => {
       expect(local.metadata).not.toMatchObject({ installationVersion: 1 });
       const runtime = await skillSvc.listRuntimeSkillEntries(orgId);
       expect(runtime.find((entry) => entry.key === local.key)?.source).toBe(path.resolve(localSkillDir));
+      await expect(fs.promises.stat(installedPath!).catch(() => null)).resolves.toBeNull();
     } finally {
+      await fs.promises.rm(localSkillDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the managed installation when a direct local replacement fails to persist", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const localSkillDir = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), "rudder-direct-transition-rollback-"),
+    );
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Direct Transition Rollback Org",
+      urlKey: "direct-transition-rollback-org",
+      issuePrefix: "DTR",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await fs.promises.writeFile(
+      path.join(localSkillDir, "SKILL.md"),
+      "---\nkey: acme/skills/direct-transition\nname: Direct Transition\n---\n\n# Local\n",
+      "utf8",
+    );
+
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/git/trees/")) {
+        return new Response(JSON.stringify({
+          tree: [{ path: "skills/direct-transition/SKILL.md", type: "blob" }],
+        }));
+      }
+      if (url.endsWith("/SKILL.md")) {
+        return new Response("---\nname: Direct Transition\n---\n\n# Remote\n");
+      }
+      return new Response("not found", { status: 404 });
+    }));
+
+    try {
+      const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+      const remote = (await skillSvc.importFromSource(
+        orgId,
+        `https://github.com/acme/skills/tree/${PINNED_REF}/skills/direct-transition`,
+      )).imported[0]!;
+      const runtime = await skillSvc.listRuntimeSkillEntries(orgId);
+      const installedPath = runtime.find((entry) => entry.key === remote.key)?.source;
+      expect(installedPath).toContain(`${path.sep}__installed__${path.sep}`);
+
+      const realUpdate = db.update.bind(db);
+      const updateSpy = vi.spyOn(db, "update").mockImplementation(((table: unknown) => {
+        const builder = realUpdate(table as never) as unknown as {
+          set: (values: Record<string, unknown>) => unknown;
+        };
+        const realSet = builder.set.bind(builder);
+        builder.set = (values: Record<string, unknown>) => {
+          if (values.sourceType === "local_path") {
+            throw new Error("simulated local transition persistence failure");
+          }
+          return realSet(values);
+        };
+        return builder;
+      }) as typeof db.update);
+
+      try {
+        await expect(skillSvc.importFromSource(orgId, localSkillDir)).rejects.toThrow(
+          "simulated local transition persistence failure",
+        );
+      } finally {
+        updateSpy.mockRestore();
+      }
+
+      await expect(fs.promises.stat(installedPath!)).resolves.toMatchObject({});
+      await expect(skillSvc.getById(remote.id)).resolves.toMatchObject({
+        sourceType: "github",
+        metadata: expect.objectContaining({ installationVersion: 1 }),
+      });
+    } finally {
+      await fs.promises.rm(localSkillDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects using a managed installation as its own direct local replacement", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Managed Source Rejection Org",
+      urlKey: "managed-source-rejection-org",
+      issuePrefix: "MSR",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/git/trees/")) {
+        return new Response(JSON.stringify({
+          tree: [{ path: "skills/direct-transition/SKILL.md", type: "blob" }],
+        }));
+      }
+      if (url.endsWith("/SKILL.md")) {
+        return new Response(
+          "---\nkey: acme/skills/direct-transition\nname: Direct Transition\n---\n\n# Remote\n",
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }));
+
+    const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+    const remote = (await skillSvc.importFromSource(
+      orgId,
+      `https://github.com/acme/skills/tree/${PINNED_REF}/skills/direct-transition`,
+    )).imported[0]!;
+    const runtime = await skillSvc.listRuntimeSkillEntries(orgId);
+    const installedPath = runtime.find((entry) => entry.key === remote.key)?.source;
+
+    await expect(skillSvc.importFromSource(orgId, installedPath!)).rejects.toThrow(
+      "Managed organization skill installations cannot be imported",
+    );
+    await expect(fs.promises.stat(path.join(installedPath!, "SKILL.md"))).resolves.toMatchObject({});
+    await expect(skillSvc.getById(remote.id)).resolves.toMatchObject({
+      sourceType: "github",
+      metadata: expect.objectContaining({ installationVersion: 1 }),
+    });
+  });
+
+  it("keeps a direct local replacement when legacy migration finishes later", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const skillId = randomUUID();
+    const skillKey = "acme/skills/migration-race";
+    const localSkillDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rudder-migration-race-"));
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Migration Race Org",
+      urlKey: "migration-race-org",
+      issuePrefix: "MRO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Race Agent",
+      workspaceKey: "race-agent",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+    });
+    await db.insert(organizationSkills).values({
+      id: skillId,
+      orgId,
+      key: skillKey,
+      slug: "migration-race",
+      name: "Migration Race",
+      description: "Legacy remote row.",
+      markdown: "---\nname: Migration Race\n---\n\n# Legacy\n",
+      sourceType: "github",
+      sourceLocator: `https://github.com/acme/skills/tree/${PINNED_REF}/skills/migration-race`,
+      sourceRef: PINNED_REF,
+      trustLevel: "markdown_only",
+      compatibility: "compatible",
+      fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+      metadata: {
+        sourceKind: "github",
+        owner: "acme",
+        repo: "skills",
+        ref: PINNED_REF,
+        trackingRef: "main",
+        repoSkillDir: "skills/migration-race",
+      },
+    });
+    await fs.promises.writeFile(
+      path.join(localSkillDir, "SKILL.md"),
+      `---\nkey: ${skillKey}\nname: Migration Race\n---\n\n# Local wins\n`,
+      "utf8",
+    );
+
+    let releaseRemoteFetch!: () => void;
+    const remoteFetchBlocked = new Promise<void>((resolve) => {
+      releaseRemoteFetch = resolve;
+    });
+    let markRemoteFetchStarted!: () => void;
+    const remoteFetchStarted = new Promise<void>((resolve) => {
+      markRemoteFetchStarted = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/git/trees/")) {
+        return new Response(JSON.stringify({
+          tree: [{ path: "skills/migration-race/SKILL.md", type: "blob" }],
+        }));
+      }
+      if (url.endsWith("/SKILL.md")) {
+        markRemoteFetchStarted();
+        await remoteFetchBlocked;
+        return new Response("---\nname: Migration Race\n---\n\n# Remote loses\n");
+      }
+      return new Response("not found", { status: 404 });
+    }));
+
+    try {
+      const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+      const realization = skillSvc.listRealizedSkillEntriesForAgent(
+        orgId,
+        agentId,
+        "codex_local",
+        {},
+        [`org:${skillKey}`],
+      );
+      await remoteFetchStarted;
+
+      const local = (await skillSvc.importFromSource(orgId, localSkillDir)).imported[0]!;
+      releaseRemoteFetch();
+      const realized = await realization;
+
+      expect(local).toMatchObject({
+        id: skillId,
+        sourceType: "local_path",
+        sourceLocator: path.resolve(localSkillDir),
+      });
+      expect(realized.find((entry) => entry.key === `org:${skillKey}`)?.source)
+        .toBe(path.resolve(localSkillDir));
+      const stored = await skillSvc.getById(skillId);
+      expect(stored).toMatchObject({
+        sourceType: "local_path",
+        sourceLocator: path.resolve(localSkillDir),
+      });
+      expect(stored?.metadata).not.toMatchObject({ installationVersion: 1 });
+    } finally {
+      releaseRemoteFetch();
       await fs.promises.rm(localSkillDir, { recursive: true, force: true });
     }
   });
