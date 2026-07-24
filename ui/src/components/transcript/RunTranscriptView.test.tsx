@@ -1708,6 +1708,8 @@ describe("RunTranscriptView", () => {
       scope: "stable_instructions",
       summary: "Gabriel updated stable memory instructions.",
       effect: "Effective next run",
+      rawText:
+        "file changes: update /Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/gabriel--abc/instructions/MEMORY.md",
     });
     expect(blocks[1]).toMatchObject({
       type: "event",
@@ -1855,6 +1857,7 @@ describe("RunTranscriptView", () => {
     expect(html).toContain('data-transcript-action-icon="memory"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("$AGENT_HOME/instructions/MEMORY.md");
+    expect(html).not.toContain("Raw event");
     expect(html).not.toContain("file changes: update");
   });
 
@@ -1879,8 +1882,11 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Daily note");
     expect(html).not.toContain(">Failed<");
     expect(html).toContain("permission denied");
+    expect(html).toContain("Failure");
+    expect(html).toContain("Paths");
     expect(html).toContain("$AGENT_HOME/memory/2026-03-12.md");
-    expect(html).toContain("Raw event");
+    expect(html).not.toContain("Raw event");
+    expect(html).not.toContain("memory update failed: update");
     expect(html).toContain('aria-expanded="true"');
   });
 
