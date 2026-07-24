@@ -24,6 +24,33 @@ npx @rudderhq/cli@latest start
 操作指南和参考页面为准。今后的发布记录应使用当前导航名称；术语可能有歧义时，
 应链接到对应的权威页面。
 
+## v0.5.2
+
+发布时间：2026-07-24
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.5.2)
+
+### New Features
+
+- 增加持久化 Messenger workbench，可把 saved views 和 Side Panel 内容提升到主工作区，同时保留实时状态与上下文。
+- 增加 Messenger 安全本地 Web 应用，覆盖发现、启动控制、隔离 partition、生命周期监管和异常退出恢复。
+- 增加 Chat 与 Side Chat response annotations，让用户可以把反馈锚定到精确的回复区间，并在 queued delivery 中保留。
+- 增加共享 Library 媒体播放、更丰富的 Browser agent 能力，以及在 Side Panel 中直接检查 spawned subagents。
+
+### Improvements
+
+- 简化首次 onboarding，并恢复内置 Rudder skill-creator 工作流及其当前指南和 evaluation tooling。
+- 改善 Messenger saved-view 组织、分组 keep 操作、宽幅 Side Panel 调整，以及导航与提升过程中的 workbench state continuity。
+- 改善 Browser runtime parity、只读 DOM references、下载处理、managed MCP isolation 和 runtime credential cleanup。
+- 提高默认 agent-run concurrency，并改善 Chat activity、run navigation、prompt matching、queue delivery 和 draft preflight。
+
+### Bug Fixes
+
+- 修复重复 live transcript deltas、queued-message acknowledgement 竞态、response-annotation offset 漂移，以及隐藏 provider lifecycle details。
+- 修复 Desktop shutdown、local-app listener cleanup、runtime recovery、PostgreSQL payload sharing 和 canary update 行为。
+- 修复 saved-view lifecycle 与 organization-rule 边界情况、hidden-view ghosts、Browser identity persistence 和 stale cache eviction。
+- 修复响应式 Issue Detail 与 Library media 布局、global-search status icons，以及多项发布和跨平台验证回归。
+
 ## v0.5.1
 
 发布时间：2026-07-22
