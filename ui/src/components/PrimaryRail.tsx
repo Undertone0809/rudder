@@ -171,7 +171,7 @@ function RailNavItem({
           </span>
         ) : null}
       </span>
-      <span className="max-w-full text-center whitespace-normal">{label}</span>
+      <span className="max-w-full text-center whitespace-normal [overflow-wrap:anywhere]">{label}</span>
     </NavLink>
   );
 }

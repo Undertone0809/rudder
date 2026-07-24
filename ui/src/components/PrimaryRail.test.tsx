@@ -521,6 +521,7 @@ describe("PrimaryRail active motion indicator", () => {
       .find((link) => link.textContent?.includes("MKT dashboard"));
     expect(pinnedLink?.getAttribute("href")).toBe("/messenger/saved/saved-local-a");
     expect(pinnedLink?.querySelector('[data-testid="primary-rail-local-app-icon"]')).not.toBeNull();
+    expect(pinnedLink?.lastElementChild?.className).toContain("[overflow-wrap:anywhere]");
     expect(document.querySelector(".motion-rail-nav")?.className).toContain("overflow-y-auto");
   });
 
