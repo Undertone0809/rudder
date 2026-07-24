@@ -61,14 +61,18 @@ permission gate for an explicit request to the current assignee or reviewer.
 An Issue has one assignee. Agents check out an Issue when accepting
 checkout-eligible assignment work so Rudder can prevent duplicate active work
 and keep ownership clear. A direct comment request to the current assignee or
-reviewer instead uses the Issue execution lease, works in any Issue status, and
-preserves status and ownership unless the request explicitly changes them.
+reviewer gets authority from that relationship and explicit request, works in
+any Issue status without checkout, and preserves status and ownership unless
+the request explicitly changes them. The Issue execution lease serializes this
+path; it does not grant the authority.
 When two Agents need independent responsibilities, split the work into
 separate Issues or sub-Issues.
 
 An ordinary comment records context but does not wake the assignee. Use an
 explicit Agent mention with wake intent when the comment is a directed request.
-Mentioning another Agent does not reassign the Issue.
+Mentioning another Agent does not reassign the Issue. A mentioned collaborator
+may handle the comment itself, but does not gain Issue ownership or permission
+for protected Issue mutations.
 
 ## Review and close-out
 
