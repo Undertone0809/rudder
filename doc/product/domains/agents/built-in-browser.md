@@ -107,7 +107,8 @@ edit_policy: user_confirmed_only
 
 Rudder Desktop provides an instance-scoped Built-in Browser for operators and
 Rudder-managed agents. It is enabled by default, opens ordinary Rudder web
-links in a Browser tab in the global Side Panel by default, and stores one
+links in a Browser tab in the global Side Panel by default, can transfer an
+exact operator tab into the Messenger Main Workbench, and stores one
 persistent website profile per operating-system user and canonical Rudder
 instance. Organizations intentionally share that website identity, while Agent
 Browser tabs and control leases remain isolated by organization, agent, run,
@@ -145,15 +146,16 @@ auditing remain inside existing boundaries.
 
 ### Actors / Objects / State
 
-- Operator: configures Browser behavior, opens Side Panel tabs, imports cookies,
-  and clears data.
+- Operator: configures Browser behavior, opens Side or Main Browser tabs,
+  transfers exact tabs into Messenger, imports cookies, and clears data.
 - Runtime agent: uses the conditional Browser skill and tools during an active
   supported local run.
 - Browser settings: instance-scoped `enabled` and `openLinksIn` values. Missing
   or legacy values resolve to `true` and `built_in`.
 - Browser profile: a persistent Electron partition derived from OS user plus
   canonical Rudder instance, without `orgId` in the key.
-- Operator Browser tab: a global Side Panel Browser target using that profile.
+- Operator Browser tab: an organization-scoped exact working instance hosted
+  by Side or Messenger Main using that profile.
 - Agent Browser lease: in-memory ownership keyed by `orgId`, `agentId`,
   `runId`, and `tabId`.
 - Desktop Broker: loopback-only, in-memory authenticated bridge between the
@@ -166,7 +168,7 @@ auditing remain inside existing boundaries.
 - `Settings > Desktop app > Browser` for enablement, link destination, import,
   and clear actions.
 - Ordinary external `http:` and `https:` links opened from Rudder Desktop.
-- Side Panel Browser address/search input, including explicit canonical local
+- Side or Main Browser address/search input, including explicit canonical local
   absolute `file:///` URLs, and explicit `Open externally`.
 - `rudder_browser_tabs`, `rudder_browser_open`, `rudder_browser_navigate`,
   `rudder_browser_read`, `rudder_browser_click`, `rudder_browser_type`,
@@ -183,14 +185,18 @@ auditing remain inside existing boundaries.
    `openLinksIn` is `built_in`, independently of whether Agent Browser access is
    enabled. The current Rudder route stays in place. The explicit external
    command always uses the system browser.
-   Operator Browser popup requests are intercepted into another Side Panel tab
-   instead of creating an unrestricted guest window, even when ordinary Rudder
-   links are configured to use the system browser. Agent-page popups are
-   denied in V1; Agents open another tab through the audited Browser tool. Each
-   Side Panel context holds at most eight Browser tabs. At capacity, an ordinary
-   Rudder link reuses the active Browser tab or the first Browser tab, while an
-   explicit new-tab or popup request is discarded. Desktop accepts at most eight
-   operator popup requests in a rolling ten-second window.
+   Operator Browser popup requests are intercepted into another tab on the
+   surface that owns the source guest instead of creating an unrestricted guest
+   window, even when ordinary Rudder links are configured to use the system
+   browser. Agent-page popups are denied in V1; Agents open another tab through
+   the audited Browser tool. Side and Main share at most eight live operator
+   Browser guests per organization. At capacity, an ordinary Rudder link may
+   focus an already mapped exact target, but a new, popup, or cold Saved View
+   request is rejected or shown as a recoverable capacity state; Rudder never
+   silently reuses or evicts an unrelated exact tab. Moving a live guest between
+   Side and Main transfers ownership without increasing the count and must
+   still succeed. Desktop accepts at most eight operator popup requests in a
+   rolling ten-second window.
    Main-window same-origin navigation and redirects are revalidated before
    commit, so a cross-origin 30x is routed to Browser or denied rather than
    loading into the privileged Rudder renderer.
@@ -204,9 +210,11 @@ auditing remain inside existing boundaries.
    in-page navigation, or frame navigation, which remain HTTP(S)-only. A missing
    local file renders the normal Browser main-frame failure state in the same
    tab while preserving its attempted address and the current Rudder route.
-4. Side Panel and Agent Browser tabs use the same website profile. Switching
+4. Side, Main, and Agent Browser tabs use the same website profile. Switching
    organizations or restarting Desktop preserves cookies and site data, but a
-   different Rudder instance uses a different profile.
+   different Rudder instance uses a different profile. Operator tab/session
+   ownership remains organization-scoped even though website identity is
+   instance-scoped.
 5. In `local_trusted` mode, when Browser is enabled, organization skill
    reconciliation exposes the read-only bundled `Browser` skill. A run receives
    that skill, the capability flag, and Browser tools only when its adapter is
@@ -271,7 +279,7 @@ auditing remain inside existing boundaries.
 | Cross-run tab call | Tab belongs to another org, agent, or run | Reject without revealing tab content | Shared cookies must not grant shared tab control | Browser route/Broker tests |
 | Browser unavailable | Enabled but no healthy local Desktop Broker | Return stable `browser_unavailable` | The run must not hang or receive a false success | Browser route tests |
 | Agent Browser disabled | Capability is off at projection or call time | Remove the skill and tools from later run projections; reject current calls with `browser_disabled`; revoke Agent tabs while preserving operator tabs and link routing | A stale run snapshot must not retain control, and Agent enablement must not override `openLinksIn` | Skill reconciliation, adapter, link-router, Side Panel E2E, and Desktop smoke tests |
-| Operator tab capacity | Side Panel context already has eight Browser tabs | Ordinary Rudder links reuse an existing Browser tab; popup and explicit new-tab requests are discarded | Do not create an unbounded guest or native window | Side Panel capacity and popup tests |
+| Operator tab capacity | Side plus Main already own eight live Browser guests for the organization | Live Side-to-Main transfer succeeds; ordinary links may reuse an eligible tab; popup/new/cold-open requests fail visibly | Do not create guest nine, block a transfer, or evict/reuse an unrelated exact tab | Main reducer, Side capacity, popup, and packaged Desktop tests |
 | Agent tab capacity | Run already has eight tabs or Desktop has 32 Agent tabs | Reject another open with `browser_tab_limit` until an owned tab closes | One run must not exhaust the Desktop with unbounded hidden tabs | Agent tab controller tests |
 | Cookie import | macOS supported Chromium source selected and operator confirms | Import supported cookies locally, preserve existing cookies, and report partial outcomes | Do not read before confirmation, alter source Cookie records or DB/WAL contents, expose values, or claim password import | Desktop importer and dialog tests |
 | Source browser open | Selected Chromium Cookie database is actively used in WAL mode | Create an online consistent snapshot and import without interrupting the source browser | Do not require browser shutdown, copy a torn database/WAL pair, alter source Cookie records or DB/WAL contents, or expose filesystem paths, cookie data, or Keychain details; transient SQLite shared-memory coordination updates are allowed | Snapshot, Desktop smoke, IPC, preload, and dialog tests |
@@ -293,17 +301,19 @@ tools only when Rudder resolves the capability for the run. Tool arguments
 contain action inputs such as URL, tab id, element reference, or text, but not
 organization, agent, run, API, or Broker credentials.
 
-When an operator Browser surface owns keyboard focus, Desktop reserves the
+When an operator Side or Main Browser surface owns keyboard focus, Desktop reserves the
 platform browser mappings for reload, reload ignoring cache, new tab, location,
 back, forward, zoom in, zoom out, and zoom reset. Browser visibility alone does
 not establish this scope: focus in Chat, Library, a dialog, or another Rudder
-surface leaves the command with Rudder or the native shell. The existing Side
-Panel close command remains separately available for any active Side Panel tab.
+surface leaves the command with Rudder or the native shell. Close-tab dispatch
+targets the actual owning Side or Main tab and must not close the Desktop shell.
 
 ### Operator-Visible Output
 
-- Browser Side Panel tabs keep the current Rudder route visible and expose
-  address/search, navigation, reload, close, and explicit external-open actions.
+- Browser Side Panel tabs keep the current Rudder route visible, while Browser
+  Main tabs fill the Messenger work area directly beneath the mixed Main tab
+  strip. Both expose address/search, navigation, reload, close, and explicit
+  external-open actions.
   Canonical local files use the same tab shell; missing files show the attempted
   address and actionable main-frame failure state without replacing the route.
 - Focused Browser tabs accept `Command` on macOS or `Ctrl` elsewhere with `R`,
@@ -386,8 +396,16 @@ Panel close command remains separately available for any active Side Panel tab.
      Browser guests do not receive it.
    - Visible output: page navigation, tab creation, address selection, or zoom
      occurs without reloading, closing, or zooming the Rudder shell.
-   - Evidence: shared and Desktop resolver tests, Side Panel component tests,
+   - Evidence: shared and Desktop resolver tests, Side/Main component tests,
      Side Panel E2E, and packaged Desktop smoke.
+8. Exact Side-to-Main transfer:
+   - Trigger: operator moves a live Browser tab into Messenger while sibling
+     Side tabs remain.
+   - Expected state/action: the same guest and `webContentsId` acquire the Main
+     host lease without increasing live Browser count.
+   - Visible output: the page fills Main with its history, form, scroll, and
+     zoom intact; siblings remain in Side.
+   - Evidence: Main promotion tests and packaged Desktop Browser smoke.
 
 ### Invariants / Non-Goals
 
@@ -399,13 +417,16 @@ Panel close command remains separately available for any active Side Panel tab.
 - Agent Browser enablement controls Agent skill/tool and import admission only.
   It must not close operator Browser tabs, hide the operator Browser target, or
   override the independently persisted `openLinksIn` destination.
-- Tab/control identity is always `orgId + agentId + runId + tabId`; profile
-  sharing never weakens run ownership.
-- Operator Browser capacity is eight tabs per Side Panel context. At capacity,
-  ordinary Rudder links reuse an existing tab, while popup and explicit new-tab
-  requests are discarded. A focused new-tab shortcut is still consumed at the
-  limit so it cannot create a native shell tab. Operator popups are limited to
-  eight per rolling ten seconds per Desktop process.
+- Agent tab/control identity is always `orgId + agentId + runId + tabId`;
+  operator live identity is organization plus exact `viewInstanceId`. Profile
+  sharing never weakens either ownership model.
+- Operator Browser capacity is eight live guests across Side and Main per
+  organization. A live transfer does not increase usage and cannot be rejected
+  at the limit. New tabs, popups, and cold Saved View opens fail visibly at the
+  limit; Rudder does not silently reuse or LRU-evict an unrelated exact tab. A
+  focused new-tab shortcut is still consumed at the limit so it cannot create a
+  native shell tab. Operator popups are limited to eight per rolling ten
+  seconds per Desktop process.
 - Operator page zoom is in-memory and per Browser tab. It does not scale the
   Rudder shell, cross tab boundaries, persist across restart, or add an Agent
   Browser zoom tool. Blank or not-yet-ready tabs safely consume unsupported

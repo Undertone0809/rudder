@@ -28,9 +28,11 @@ contracts:
       - server/src/routes/issues.mutations.ts
     related_tests:
       - server/src/__tests__/issue-lifecycle-routes.test.ts
+      - server/src/__tests__/heartbeat-run-concurrency.test.ts
       - tests/e2e/issue-detail-done-project-edit.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
   ISSUE.WORKFLOW.001:
     owner: product
     domain: issues
@@ -38,13 +40,17 @@ contracts:
     docs:
       - doc/product/domains/issues/workflows.md
     related_code:
+      - server/src/routes/issues.ts
       - server/src/routes/issues.mutations.ts
       - server/src/services/issues.ts
     related_tests:
       - server/src/__tests__/issue-comment-reopen-routes.test.ts
+      - server/src/__tests__/issue-lifecycle-routes.test.ts
+      - server/src/__tests__/heartbeat-run-concurrency.test.ts
       - tests/e2e/issue-detail-toolbar-actions.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
   ISSUE.SURFACE.001:
     owner: product
     domain: issues
@@ -84,6 +90,7 @@ contracts:
       - doc/product/domains/execution/heartbeats.md
     related_code:
       - packages/shared/src/agent-run.ts
+      - packages/shared/src/types/heartbeat.ts
       - server/src/services/runtime-kernel/heartbeat.wakeup.ts
       - server/src/services/runtime-kernel/heartbeat.recovery.ts
       - server/src/services/runtime-kernel/heartbeat.ts
@@ -94,6 +101,7 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
+      - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
   RUN.PREFLIGHT.001:
     owner: product
     domain: execution
@@ -156,10 +164,12 @@ contracts:
       - server/src/services/runtime-kernel/heartbeat.release.ts
       - server/src/services/runtime-kernel/heartbeat.recovery.ts
     related_tests:
+      - server/src/__tests__/heartbeat-run-concurrency.test.ts
       - server/src/__tests__/heartbeat-passive-issue-closeout.test.ts
       - tests/e2e/issue-passive-followup.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
   RUN.RESULT.001:
     owner: product
     domain: execution
@@ -216,14 +226,18 @@ contracts:
     docs:
       - doc/product/domains/work-routing/atomic-checkout.md
     related_code:
+      - server/src/routes/issues.ts
       - server/src/routes/issues.mutations.ts
       - server/src/routes/issues-checkout-wakeup.ts
+      - server/src/services/runtime-kernel/heartbeat.wakeup.ts
       - server/src/services/issues.ts
     related_tests:
       - server/src/__tests__/issues-checkout-wakeup.test.ts
+      - server/src/__tests__/heartbeat-run-concurrency.test.ts
       - tests/e2e/agent-detail-issues-tab.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
   ROUTING.REVIEWER.001:
     owner: product
     domain: work-routing
@@ -249,6 +263,8 @@ contracts:
     related_code:
       - server/src/routes/issues.comments-attachments.ts
       - server/src/routes/issues.mutations.ts
+      - server/src/services/issues.comments-attachments.ts
+      - server/src/services/runtime-kernel/heartbeat.wakeup.ts
       - server/src/services/runtime-kernel/heartbeat.recovery.ts
       - server/src/services/issue-review-wakeup.ts
     related_tests:
@@ -258,6 +274,7 @@ contracts:
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
+      - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
   AGENT.INSTRUCTIONS.001:
     owner: product
     domain: agents
@@ -295,6 +312,7 @@ contracts:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
       - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
+      - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
 
   ISSUE.HIERARCHY.001:
     owner: product
@@ -311,6 +329,7 @@ contracts:
       - tests/e2e/issue-detail-subissues.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
   ISSUE.COMMENTS.001:
     owner: product
     domain: issues
@@ -621,6 +640,10 @@ contracts:
       - cli/src/commands/client/browser.ts
       - packages/shared/src/browser-shortcuts.ts
       - ui/src/context/SidePanelContext.tsx
+      - ui/src/context/MainWorkbenchContext.tsx
+      - ui/src/context/LiveSurfaceRuntimeContext.tsx
+      - ui/src/components/workbench/BrowserLiveSurface.tsx
+      - ui/src/components/workbench/MessengerMainWorkbench.tsx
       - ui/src/components/DesktopBrowserLinkBridge.tsx
       - ui/src/lib/browser-side-panel.ts
       - ui/src/lib/desktop-browser-link-router.ts
@@ -666,6 +689,10 @@ contracts:
       - ui/src/components/BrowserDataImportDialog.test.tsx
       - ui/src/components/DesktopBrowserLinkBridge.test.tsx
       - ui/src/context/SidePanelContext.test.tsx
+      - ui/src/context/MainWorkbenchContext.test.tsx
+      - ui/src/context/LiveSurfaceRuntimeContext.test.tsx
+      - ui/src/components/workbench/BrowserLiveSurface.test.tsx
+      - ui/src/components/workbench/MessengerMainWorkbench.test.tsx
       - ui/src/lib/browser-side-panel.test.ts
       - ui/src/lib/desktop-browser-link-router.test.ts
       - tests/e2e/built-in-browser.spec.ts
@@ -673,6 +700,7 @@ contracts:
       - desktop/scripts/smoke.mjs
     related_plans:
       - doc/plans/2026-07-12-built-in-browser.md
+      - doc/plans/2026-07-23-messenger-main-workbench-promotion.md
   AGENT.SKILLS.001:
     owner: product
     domain: agents
@@ -1384,6 +1412,9 @@ contracts:
       - ui/src/lib/desktop-browser-link-router.ts
       - ui/src/lib/side-panel-targets.ts
       - ui/src/context/SidePanelContext.tsx
+      - ui/src/context/MainWorkbenchContext.tsx
+      - ui/src/context/LiveSurfaceRuntimeContext.tsx
+      - ui/src/context/SavedViewPromotionContext.tsx
       - ui/src/components/CommentThread.tsx
       - ui/src/components/InlineEditor.tsx
       - ui/src/components/IssueProperties.tsx
@@ -1396,6 +1427,8 @@ contracts:
       - ui/src/pages/Chat.side-panel.tsx
       - ui/src/pages/Chat.tsx
       - ui/src/pages/IssueDetail.tsx
+      - ui/src/components/workbench/MessengerMainWorkbench.tsx
+      - ui/src/pages/MessengerSavedViewWorkspace.tsx
       - desktop/scripts/smoke.mjs
     related_tests:
       - desktop/src/browser-ipc.test.ts
@@ -1414,15 +1447,22 @@ contracts:
       - ui/src/components/InlineEditor.test.tsx
       - ui/src/components/Layout.test.ts
       - ui/src/context/SidePanelContext.test.tsx
+      - ui/src/context/MainWorkbenchContext.test.tsx
+      - ui/src/context/LiveSurfaceRuntimeContext.test.tsx
+      - ui/src/context/SavedViewPromotionContext.test.tsx
       - ui/src/components/WorkspaceFilePreview.test.tsx
       - ui/src/components/WorkspaceMediaPreview.test.tsx
       - ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx
       - ui/src/components/WorkspacePdfPreview.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
+      - ui/src/components/workbench/MessengerMainWorkbench.test.tsx
+      - ui/src/pages/MessengerSavedViewWorkspace.test.tsx
       - tests/e2e/built-in-browser.spec.ts
       - tests/e2e/chat-side-panel.spec.ts
       - tests/e2e/chat-transcript-internal-events.spec.ts
       - tests/e2e/library-media-preview.spec.ts
+      - tests/e2e/messenger-saved-views.spec.ts
+      - tests/e2e/messenger-local-apps.spec.ts
     related_plans:
       - doc/plans/2026-07-01-global-side-panel-workbench.md
       - doc/plans/2026-07-07-messenger-side-panel-session-state.md
@@ -1432,6 +1472,7 @@ contracts:
       - doc/plans/2026-07-20-messenger-saved-views.md
       - doc/plans/2026-07-21-chat-local-file-side-panel.md
       - doc/plans/2026-07-21-library-media-preview.md
+      - doc/plans/2026-07-23-messenger-main-workbench-promotion.md
   MESSENGER.ATTENTION.001:
     owner: product
     domain: collaboration
@@ -1472,7 +1513,9 @@ contracts:
       - server/src/services/messenger.ts
       - ui/src/components/MessengerContextSidebar.tsx
       - ui/src/components/messenger/MessengerCustomGroupVisuals.tsx
+      - ui/src/components/messenger/MessengerSavedViewRow.tsx
       - ui/src/components/messenger/MessengerThreadListViews.tsx
+      - ui/src/context/MainWorkbenchContext.tsx
       - ui/src/lib/messenger-preferences.ts
       - ui/src/lib/messenger-thread-organization.ts
       - ui/src/pages/Messenger.tsx
@@ -1480,14 +1523,18 @@ contracts:
       - server/src/__tests__/messenger-service.test.ts
       - ui/src/components/MessengerContextSidebar.test.tsx
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
+      - ui/src/components/messenger/MessengerSavedViewRow.test.tsx
+      - ui/src/context/MainWorkbenchContext.test.tsx
       - ui/src/lib/messenger-preferences.test.ts
       - ui/src/lib/messenger-thread-organization.test.ts
       - tests/e2e/messenger-contract.spec.ts
+      - tests/e2e/messenger-saved-views.spec.ts
       - tests/e2e/onboarding.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-17-safe-change-throughput-architecture-optimization.md
       - doc/plans/2026-07-20-messenger-saved-views.md
+      - doc/plans/2026-07-23-messenger-main-workbench-promotion.md
   MESSENGER.SAVED.VIEWS.001:
     owner: product
     domain: collaboration
@@ -1505,11 +1552,19 @@ contracts:
       - server/src/services/messenger-saved-views.ts
       - ui/src/api/messenger.ts
       - ui/src/context/SidePanelContext.tsx
+      - ui/src/context/MainWorkbenchContext.tsx
+      - ui/src/context/LiveSurfaceRuntimeContext.tsx
+      - ui/src/context/SavedViewPromotionContext.tsx
       - ui/src/components/MessengerContextSidebar.tsx
+      - ui/src/components/messenger/MessengerSavedViewRow.tsx
       - ui/src/components/messenger/MessengerThreadListViews.tsx
+      - ui/src/components/workbench/BrowserLiveSurface.tsx
+      - ui/src/components/workbench/MessengerMainWorkbench.tsx
+      - ui/src/lib/main-workbench-state.ts
       - ui/src/lib/side-panel-targets.ts
       - ui/src/pages/Chat.side-panel.tsx
       - ui/src/pages/Messenger.tsx
+      - ui/src/pages/MessengerSavedViewWorkspace.tsx
       - desktop/scripts/smoke.mjs
     related_tests:
       - packages/shared/src/validators/messenger.test.ts
@@ -1517,13 +1572,63 @@ contracts:
       - server/src/__tests__/messenger-service.test.ts
       - ui/src/components/MessengerContextSidebar.test.tsx
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
+      - ui/src/components/messenger/MessengerSavedViewRow.test.tsx
       - ui/src/components/messenger/MessengerThreadListViews.test.tsx
       - ui/src/context/SidePanelContext.test.tsx
+      - ui/src/context/MainWorkbenchContext.test.tsx
+      - ui/src/context/LiveSurfaceRuntimeContext.test.tsx
+      - ui/src/context/SavedViewPromotionContext.test.tsx
+      - ui/src/components/workbench/BrowserLiveSurface.test.tsx
+      - ui/src/components/workbench/MessengerMainWorkbench.test.tsx
+      - ui/src/lib/main-workbench-state.test.ts
       - ui/src/pages/Messenger.test.tsx
+      - ui/src/pages/MessengerSavedViewWorkspace.test.tsx
       - tests/e2e/messenger-contract.spec.ts
       - tests/e2e/chat-side-panel.spec.ts
+      - tests/e2e/messenger-saved-views.spec.ts
+      - tests/e2e/messenger-local-apps.spec.ts
     related_plans:
       - doc/plans/2026-07-20-messenger-saved-views.md
+      - doc/plans/2026-07-23-messenger-work-packages-local-apps.md
+      - doc/plans/2026-07-23-messenger-main-workbench-promotion.md
+  DESKTOP.LOCAL.APPS.001:
+    owner: product
+    domain: execution
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/execution/desktop-local-apps.md
+    related_code:
+      - desktop/src/local-apps-registry.ts
+      - desktop/src/local-apps-discovery.ts
+      - desktop/src/local-apps-controller.ts
+      - desktop/src/local-apps-runtime.ts
+      - desktop/src/local-apps-ipc.ts
+      - desktop/src/desktop-runtime-shutdown.ts
+      - desktop/src/main.ts
+      - desktop/src/preload.ts
+      - packages/shared/src/types/messenger.ts
+      - packages/shared/src/validators/messenger.ts
+      - server/src/services/messenger-saved-views.ts
+      - ui/src/components/side-panel/LocalAppsPanel.tsx
+      - ui/src/components/side-panel/LocalAppPanelView.tsx
+      - ui/src/context/LiveSurfaceRuntimeContext.tsx
+      - ui/src/components/workbench/MessengerMainWorkbench.tsx
+    related_tests:
+      - desktop/src/local-apps-registry.test.ts
+      - desktop/src/local-apps-discovery.test.ts
+      - desktop/src/local-apps-controller.test.ts
+      - desktop/src/local-apps-runtime.test.ts
+      - desktop/src/local-apps-ipc.test.ts
+      - ui/src/components/side-panel/LocalAppsPanel.test.tsx
+      - ui/src/components/side-panel/LocalAppPanelView.test.tsx
+      - ui/src/context/LiveSurfaceRuntimeContext.test.tsx
+      - ui/src/lib/local-apps.test.ts
+      - tests/e2e/messenger-local-apps.spec.ts
+      - desktop/scripts/smoke.mjs
+    related_plans:
+      - doc/plans/2026-07-23-messenger-work-packages-local-apps.md
+      - doc/plans/2026-07-23-messenger-main-workbench-promotion.md
       - doc/plans/2026-07-01-global-side-panel-workbench.md
       - doc/plans/2026-07-07-messenger-side-panel-session-state.md
   IM.FEISHU.001:

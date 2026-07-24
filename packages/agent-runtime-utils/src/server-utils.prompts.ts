@@ -18,6 +18,12 @@ export function isCommentTriggeredIssueWakeReason(wakeReason: unknown): boolean 
 export const ISSUE_ASSIGNEE_EXECUTION_RAIL =
   "Before doing issue-scoped execution as the assignee, check out the assigned issue. If checkout returns `409`, do not retry; stop and report the ownership conflict.";
 
+export const ISSUE_ASSIGNEE_EXPLICIT_WORK_RAIL =
+  "You are the issue's current assignee. This explicit request is authorized by that relationship regardless of the issue's current status. This run already holds the issue execution lease: do not check out the issue, do not change assignment, and preserve its current status unless the user explicitly requests a lifecycle change.";
+
+export const ISSUE_REVIEWER_EXPLICIT_WORK_RAIL =
+  "You are the issue's current reviewer. This explicit request is authorized by that relationship regardless of the issue's current status. This run already holds the issue execution lease: do not check out the issue, do not take over the assignee's ownership, and preserve its current status unless the user explicitly requests a lifecycle change.";
+
 export const ISSUE_ASSIGN_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). You have been assigned to work on an issue.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
@@ -68,7 +74,6 @@ From: {{comment.authorLabel}} ({{comment.authorKind}})
 Please review the comment above and respond or take action as appropriate.
 A mention-triggered comment wake is a request for attention or collaboration, not an automatic transfer of issue ownership. Plain structured agent links such as \`agent://agent-id\` are reference-only. Only checkout or self-assign when the comment explicitly asks you to take ownership and the normal issue workflow allows it.
 If the issue is not assigned to you, including user-owned or unassigned issues, and the comment does not explicitly ask you to implement, modify files, close the issue, or take ownership, strictly respond to the comment's content instead of broadening the wake into issue execution. For example, answer questions, acknowledge corrections, explain status, or handle only the narrow action explicitly requested by the comment.
-${ISSUE_ASSIGNEE_EXECUTION_RAIL}
 If the issue has related attachments, such as images or articles, please ensure you have thoroughly researched and read these resources before proceeding with the next action. It's important to read all the attachments before taking any action.`;
 
 export const ISSUE_COMMENTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). There is a new comment on an issue you own.
@@ -301,9 +306,17 @@ export function selectPromptTemplate(
   // Select based on wake source/reason
   const wakeSource = String(context.wakeSource ?? "");
   const wakeReason = String(context.wakeReason ?? "");
+  const relationship = String(context.relationship ?? "");
+  const isCommentMention =
+    wakeSource === "comment.mention" || wakeReason === "issue_comment_mentioned";
+  const explicitRelationshipRail =
+    isCommentMention && relationship === "assignee"
+      ? ISSUE_ASSIGNEE_EXPLICIT_WORK_RAIL
+      : isCommentMention && relationship === "reviewer"
+        ? ISSUE_REVIEWER_EXPLICIT_WORK_RAIL
+        : null;
   const reviewerContext =
     String(context.role ?? "") === "reviewer" ||
-    String(context.relationship ?? "") === "reviewer" ||
     wakeSource === "review";
   const recovery = context.recovery;
   const hasRecoveryContext =
@@ -320,13 +333,16 @@ export function selectPromptTemplate(
     (!reviewerContext && wakeReason === "issue_passive_followup") ||
     (!reviewerContext && wakeReason === "issue_changes_requested") ||
     (!reviewerContext && (wakeSource === "assignment" || wakeReason === "issue_assigned")) ||
-    (!reviewerContext &&
+    (!reviewerContext && !explicitRelationshipRail &&
       (wakeSource === "comment.mention" ||
         wakeReason === "issue_comment_mentioned" ||
         isCommentTriggeredIssueWakeReason(wakeReason)));
 
   // Custom prompt bodies still win, but platform-owned issue execution rails do not.
   if (configuredTemplate?.trim()) {
+    if (explicitRelationshipRail && !configuredTemplate.includes(explicitRelationshipRail)) {
+      return `${configuredTemplate}\n\n${explicitRelationshipRail}`;
+    }
     if (
       isAssigneeCapableIssueScene &&
       !configuredTemplate.includes(ISSUE_ASSIGNEE_EXECUTION_RAIL)
@@ -353,7 +369,9 @@ export function selectPromptTemplate(
     return ISSUE_ASSIGN_PROMPT_TEMPLATE;
   }
   if (wakeSource === "comment.mention" || wakeReason === "issue_comment_mentioned") {
-    return COMMENT_MENTION_PROMPT_TEMPLATE;
+    return explicitRelationshipRail
+      ? `${COMMENT_MENTION_PROMPT_TEMPLATE}\n${explicitRelationshipRail}`
+      : `${COMMENT_MENTION_PROMPT_TEMPLATE}\n${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
   }
   if (isCommentTriggeredIssueWakeReason(wakeReason)) {
     return ISSUE_COMMENTED_PROMPT_TEMPLATE;

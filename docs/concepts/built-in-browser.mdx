@@ -18,7 +18,9 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/built-in-browser"
 
 Rudder Desktop has a Built-in Browser for keeping web work beside the current
 Rudder surface. Ordinary web links can open in a Browser tab in the Side Panel,
-or the operator can choose the system browser.
+the same live tab can move into the Messenger Main Workbench, or the operator
+can choose the system browser. Moving it preserves that exact tab's history,
+form state, scroll position, and zoom.
 
 The website profile belongs to the current operating-system user and canonical
 Rudder instance. It is deliberately shared across organizations in that local
@@ -43,11 +45,17 @@ cannot read an operator tab or a tab leased to another run.
 
 ## When it is useful
 
-Use the Built-in Browser when a person wants web content in the Side Panel, or
-when an eligible local Agent needs audited navigation, reading, clicking,
-typing, or screenshots. The Agent Browser capability is available only in
-Desktop `local_trusted` mode for supported Claude, Codex, OpenCode, and Pi local
-runtimes while the instance setting is enabled.
+Use the Built-in Browser when a person wants web content beside Rudder in the
+Side Panel or filling the Messenger Main Workbench, or when an eligible local
+Agent needs audited navigation, reading, clicking, typing, or screenshots. The
+Agent Browser capability is available only in Desktop `local_trusted` mode for
+supported Claude, Codex, OpenCode, and Pi local runtimes while the instance
+setting is enabled.
+
+Side and Main share a limit of eight live operator Browser tabs per
+organization. Moving an existing tab does not consume another slot and still
+works at the limit. A request for a ninth new tab fails visibly instead of
+silently replacing or evicting an unrelated tab.
 
 On macOS, the operator can import supported cookies from a selected Chrome,
 Edge, or Brave profile after confirming the instance-wide effect. The import

@@ -1,5 +1,140 @@
 import { expect, test } from "@playwright/test";
 
+test("explicit assignee and reviewer mentions work without lifecycle rollback", async ({ page }) => {
+  test.setTimeout(120_000);
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Status-Independent-Mentions-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string };
+
+  const createAgent = async (name: string) => {
+    const response = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name,
+        role: "engineer",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {
+          command: process.execPath,
+          args: ["-e", "process.exit(0)"],
+        },
+      },
+    });
+    expect(response.ok()).toBe(true);
+    return await response.json() as { id: string; name: string };
+  };
+  const mentionRuns = async (agentId: string, issueId: string) => {
+    const response = await page.request.get(
+      `/api/orgs/${organization.id}/heartbeat-runs?agentId=${agentId}&limit=50`,
+    );
+    expect(response.ok()).toBe(true);
+    const runs = await response.json() as Array<{
+      contextSnapshot?: Record<string, unknown> | null;
+    }>;
+    return runs.filter((run) =>
+      run.contextSnapshot?.issueId === issueId
+      && run.contextSnapshot?.wakeReason === "issue_comment_mentioned"
+      && run.contextSnapshot?.wakeSource === "comment.mention"
+    );
+  };
+  const waitForInitialIssueWakesToSettle = async (issueId: string, assigneeAgentId: string) => {
+    await expect.poll(async () => {
+      const [issueResponse, runsResponse] = await Promise.all([
+        page.request.get(`/api/issues/${issueId}`),
+        page.request.get(
+          `/api/orgs/${organization.id}/heartbeat-runs?agentId=${assigneeAgentId}&limit=50`,
+        ),
+      ]);
+      expect(issueResponse.ok()).toBe(true);
+      expect(runsResponse.ok()).toBe(true);
+      const issueState = await issueResponse.json() as { executionRunId: string | null };
+      const runs = await runsResponse.json() as Array<{
+        status: string;
+        contextSnapshot?: Record<string, unknown> | null;
+      }>;
+      const initialIssueRuns = runs.filter((run) =>
+        run.contextSnapshot?.issueId === issueId
+        && run.contextSnapshot?.wakeSource !== "comment.mention"
+      );
+      return {
+        hasTerminalInitialWake: initialIssueRuns.some((run) =>
+          ["succeeded", "failed", "cancelled", "timed_out"].includes(run.status)
+        ),
+        hasActiveInitialWake: initialIssueRuns.some((run) =>
+          run.status === "queued" || run.status === "running"
+        ),
+        executionRunId: issueState.executionRunId,
+      };
+    }, {
+      timeout: 30_000,
+      intervals: [250, 500, 1_000],
+    }).toEqual({
+      hasTerminalInitialWake: true,
+      hasActiveInitialWake: false,
+      executionRunId: null,
+    });
+  };
+
+  for (const status of ["in_review", "done", "cancelled"] as const) {
+    const assignee = await createAgent(`Explicit Assignee ${status}`);
+    const reviewer = await createAgent(`Explicit Reviewer ${status}`);
+
+    for (const [agent, relationship] of [
+      [assignee, "assignee"],
+      [reviewer, "reviewer"],
+    ] as const) {
+      const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+        data: {
+          title: `Explicit ${relationship} work remains available in ${status}`,
+          description: "Status must remain a lifecycle signal rather than an explicit-work permission gate.",
+          status,
+          priority: "medium",
+          assigneeAgentId: assignee.id,
+          reviewerAgentId: reviewer.id,
+        },
+      });
+      expect(issueRes.ok()).toBe(true);
+      const issue = await issueRes.json() as { id: string };
+      await waitForInitialIssueWakesToSettle(issue.id, assignee.id);
+
+      const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+        data: {
+          body: `[@${agent.name}](agent://${agent.id}?intent=wake) please verify explicit work in ${status}.`,
+        },
+      });
+      expect(commentRes.ok()).toBe(true);
+
+      await expect.poll(async () => (await mentionRuns(agent.id, issue.id)).length, {
+        timeout: 20_000,
+        intervals: [250, 500, 1_000],
+      }).toBe(1);
+      const [run] = await mentionRuns(agent.id, issue.id);
+      expect(run.contextSnapshot).toMatchObject({
+        issueId: issue.id,
+        relationship,
+        issue: {
+          status,
+          assigneeAgentId: assignee.id,
+          reviewerAgentId: reviewer.id,
+        },
+      });
+
+      const currentIssueRes = await page.request.get(`/api/issues/${issue.id}`);
+      expect(currentIssueRes.ok()).toBe(true);
+      const currentIssue = await currentIssueRes.json() as {
+        status: string;
+        assigneeAgentId: string | null;
+        reviewerAgentId: string | null;
+      };
+      expect(currentIssue).toMatchObject({
+        status,
+        assigneeAgentId: assignee.id,
+        reviewerAgentId: reviewer.id,
+      });
+    }
+  }
+});
+
 test("issue comment composer uses the chat-style mention panel without exposing mention URLs", async ({ page }) => {
   const orgRes = await page.request.post("/api/orgs", {
     data: { name: `Issue-Comment-Mentions-${Date.now()}` },

@@ -46,6 +46,7 @@ export interface HeartbeatRunContextSnapshot extends Record<string, unknown> {
   automationId?: string | null;
   wakeupRequestId?: string | null;
   issueId?: string | null;
+  relationship?: "assignee" | "reviewer" | "collaborator";
   resumeFromRunId?: string | null;
   sessionReuseSuppression?: HeartbeatSessionReuseSuppression;
   recovery?: HeartbeatRunRecoveryContext;

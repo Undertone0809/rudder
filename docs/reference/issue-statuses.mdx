@@ -51,9 +51,12 @@ review, unblocking, or no further action.
 
 ## Boundaries
 
-Status does not replace ownership, checkout, or Review. Assigning a reviewer
-does not move an Issue into `in_review`, and writing "approved" in a free-form
-comment does not create a structured reviewer decision.
+Status does not replace ownership, execution leases, checkout, or Review.
+Automatic routing remains status-sensitive, but an explicit request to the
+current assignee or reviewer can run in any status without silently changing
+that status. Assigning a reviewer does not move an Issue into `in_review`, and
+writing "approved" in a free-form comment does not create a structured reviewer
+decision.
 
 Use `blocked` for a concrete missing dependency, not as a general error bucket.
 Use `cancelled` when the work should no longer continue; it is not a substitute

@@ -223,9 +223,12 @@ Recommended cases:
   ```sh
   pnpm rudder issue context ZST-123 --wake-comment-id <comment-id> --json
   ```
-- **Governed checkout before work.** Use this before mutating files or status
-  so ownership and expected status are recorded atomically. Do not retry a
-  checkout conflict; inspect the active run instead.
+- **Governed checkout for assignment work.** Use this when accepting
+  checkout-eligible assignment or follow-up work so ownership and expected
+  status are recorded atomically. Do not retry a checkout conflict; inspect the
+  active run instead. An explicit comment wake for the current assignee or
+  reviewer already owns the Issue execution lease and must not checkout or
+  implicitly change status.
   ```sh
   pnpm rudder issue checkout ZST-123 --agent-id "$RUDDER_AGENT_ID" --expected-statuses todo,backlog,blocked --json
   ```

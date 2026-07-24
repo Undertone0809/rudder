@@ -166,16 +166,22 @@ export function issueRoutes(db: Db, storage: StorageService) {
   async function assertAgentRunCheckoutOwnership(
     req: Request,
     res: Response,
-    issue: { id: string; orgId: string; status: string; assigneeAgentId: string | null },
+    issue: {
+      id: string;
+      orgId: string;
+      status: string;
+      assigneeAgentId: string | null;
+      reviewerAgentId: string | null;
+      checkoutRunId?: string | null;
+      executionRunId?: string | null;
+    },
+    options: { allowBoundCollaborator?: boolean } = {},
   ) {
     if (req.actor.type !== "agent") return true;
     const actorAgentId = req.actor.agentId;
     if (!actorAgentId) {
       res.status(403).json({ error: "Agent authentication required" });
       return false;
-    }
-    if (issue.status !== "in_progress" || issue.assigneeAgentId !== actorAgentId) {
-      return true;
     }
     async function logOwnershipRejected(reason: string, details?: Record<string, unknown>) {
       const actor = getActorInfo(req);
@@ -198,6 +204,25 @@ export function issueRoutes(db: Db, storage: StorageService) {
         },
       });
     }
+    const isAssignee = issue.assigneeAgentId === actorAgentId;
+    const isReviewer = issue.reviewerAgentId === actorAgentId;
+    if (!isAssignee && !isReviewer) {
+      if (options.allowBoundCollaborator) {
+        const runId = requireAgentRunId(req, res);
+        if (!runId) {
+          await logOwnershipRejected("missing_agent_run_id");
+          return false;
+        }
+        return true;
+      }
+      await logOwnershipRejected("agent_not_current_assignee_or_reviewer");
+      res.status(403).json({ error: "Agent is not the current assignee or reviewer" });
+      return false;
+    }
+    // The current assignee/reviewer relationship is sufficient authority for
+    // explicit work outside active checkout. Lifecycle status is not a
+    // permission gate. Active assignee checkout remains run-owned.
+    if (issue.status !== "in_progress" || !isAssignee) return true;
     const runId = requireAgentRunId(req, res);
     if (!runId) {
       await logOwnershipRejected("missing_agent_run_id");

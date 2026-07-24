@@ -11,7 +11,10 @@ related_code:
   - server/src/routes/issues.mutations.ts
 related_tests:
   - server/src/__tests__/issue-lifecycle-routes.test.ts
+  - server/src/__tests__/heartbeat-run-concurrency.test.ts
   - tests/e2e/issue-detail-done-project-edit.spec.ts
+related_plans:
+  - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
 edit_policy: user_confirmed_only
 ---
 
@@ -29,6 +32,10 @@ Behavior:
   normalizes the status to `in_review` unless the acting agent is the reviewer
   recording an accepted decision.
 - Closed issues can be reopened by a comment with explicit reopen intent.
+- Status is a durable lifecycle and routing signal, not a permission gate for
+  an explicit request directed to the current assignee or reviewer.
+- Relationship-authorized explicit work preserves the current status unless
+  the request or a separate governed workflow explicitly changes it.
 
 Invariant:
 
@@ -36,6 +43,8 @@ Invariant:
   `done`.
 - Review decisions are structured outcomes, not only free-form comments.
 - Status changes that materially affect the issue must leave activity evidence.
+- Explicit work on `in_review`, `done`, or `cancelled` must not silently move
+  the issue to `in_progress`.
 
 Rationale:
 

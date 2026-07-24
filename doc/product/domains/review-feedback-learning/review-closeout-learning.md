@@ -17,6 +17,8 @@ related_tests:
   - server/src/__tests__/agent-inbox-reviewer.test.ts
   - server/src/__tests__/heartbeat-passive-issue-closeout.test.ts
   - tests/e2e/issue-passive-followup.spec.ts
+related_plans:
+  - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
 edit_policy: user_confirmed_only
 ---
 
@@ -44,6 +46,11 @@ Invariants:
 - Reviewer decisions require comment evidence.
 - Assignee completion cannot silently bypass reviewer.
 - Reviewer routing and reviewer decision are separate contracts.
+- An ordinary explicit comment mention of the current reviewer is
+  status-independent work authority, not formal reviewer routing. It must not
+  invent a structured decision requirement or transfer assignee ownership.
+- Structured reviewer decisions remain limited to reviewable states even
+  though the reviewer may perform other explicitly requested work in any state.
 
 Evidence:
 

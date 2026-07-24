@@ -6,6 +6,7 @@ coverage: seed
 contract_ids:
   - RUN.WAKEUP.001
 related_code:
+  - packages/shared/src/types/heartbeat.ts
   - server/src/services/runtime-kernel/heartbeat.wakeup.ts
   - server/src/services/runtime-kernel/heartbeat.recovery.ts
   - server/src/services/runtime-kernel/heartbeat.ts
@@ -13,6 +14,8 @@ related_tests:
   - packages/shared/src/agent-run.test.ts
   - server/src/__tests__/heartbeat-paused-wakeups.test.ts
   - server/src/__tests__/heartbeat-run-concurrency.test.ts
+related_plans:
+  - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
 edit_policy: user_confirmed_only
 ---
 
@@ -37,6 +40,9 @@ Behavior:
 - Non-timer wakes respect demand wake policy.
 - Same-scope queued/running wakes coalesce when safe; comment mention follow-up
   wakes may queue behind a running same-scope run instead of being swallowed.
+- A comment mention of the current assignee or reviewer remains admissible in
+  every issue status and uses the issue execution lease without changing the
+  issue status. Automatic timer and inbox discovery remain status-sensitive.
 - Queued runs are started through `startNextQueuedRunForAgent`, respecting
   `maxConcurrentRuns`.
 

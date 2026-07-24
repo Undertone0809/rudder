@@ -16,6 +16,7 @@ import {
   type LiveSurfaceTarget,
 } from "@/context/LiveSurfaceRuntimeContext";
 import { useOrganizationMainWorkbench } from "@/context/MainWorkbenchContext";
+import { useOptionalToast } from "@/context/ToastContext";
 import { useBrowserSavedViewMetadataPersister } from "@/hooks/useBrowserSavedViewMetadataPersister";
 import type { MainWorkbenchTab, MainWorkbenchTarget } from "@/lib/main-workbench-state";
 import {
@@ -238,6 +239,7 @@ function MainLiveSurfacePanel({
   tab: MainWorkbenchTab & { target: LiveSurfaceTarget };
 }) {
   const navigate = useNavigate();
+  const toast = useOptionalToast();
   const workbench = useOrganizationMainWorkbench(organizationId);
   const onCloseRef = useRef(onClose);
   const onCycleTabRef = useRef(onCycleTab);
@@ -288,6 +290,12 @@ function MainLiveSurfacePanel({
         const opened = workbench.createSessionBrowser(nextTarget);
         if (opened.admitted) {
           navigate("/messenger/workbench", { replace: true });
+        } else {
+          toast?.pushToast({
+            title: "Browser tab limit reached",
+            body: "Close a Browser tab to open another. Side Panel and Main share 8 live tabs.",
+            tone: "error",
+          });
         }
         return;
       }
@@ -318,6 +326,7 @@ function MainLiveSurfacePanel({
     organizationId,
     replaceTarget,
     tab.originContextKey,
+    toast,
     workbench.canCreateBrowser,
     workbench.createSessionBrowser,
     workbench.createSessionTab,

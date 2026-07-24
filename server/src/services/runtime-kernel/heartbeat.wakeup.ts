@@ -74,6 +74,11 @@ export function createHeartbeatWakeupHandlers(context: any) {
       issueId = readNonEmptyString(enrichedContextSnapshot.issueId) ?? issueId;
     }
     await hydrateWakeContextSnapshot(db, agent.orgId, enrichedContextSnapshot);
+    const commentMentionWake = isIssueCommentMentionWake({
+      reason,
+      contextSnapshot: enrichedContextSnapshot,
+      payload,
+    });
     const effectiveTaskKey = readNonEmptyString(enrichedContextSnapshot.taskKey) ?? taskKey;
     const resetTaskSession = shouldResetTaskSessionForWake(enrichedContextSnapshot);
     const taskSessionDisplayId = resetTaskSession
@@ -312,13 +317,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
       }
     }
 
-    const bypassIssueExecutionLock = isIssueCommentMentionWake({
-      reason,
-      contextSnapshot: enrichedContextSnapshot,
-      payload,
-    });
-
-    if (issueId && !bypassIssueExecutionLock) {
+    if (issueId) {
       const agentNameKey = normalizeAgentNameKey(agent.name);
 
       const outcome = await db.transaction(async (tx) => {
@@ -330,6 +329,8 @@ export function createHeartbeatWakeupHandlers(context: any) {
           .select({
             id: issues.id,
             orgId: issues.orgId,
+            assigneeAgentId: issues.assigneeAgentId,
+            reviewerAgentId: issues.reviewerAgentId,
             executionRunId: issues.executionRunId,
             executionAgentNameKey: issues.executionAgentNameKey,
           })
@@ -363,6 +364,18 @@ export function createHeartbeatWakeupHandlers(context: any) {
             });
           }
           return { kind: "skipped" as const };
+        }
+
+        if (commentMentionWake) {
+          enrichedContextSnapshot.relationship =
+            issue.assigneeAgentId === agentId
+              ? "assignee"
+              : issue.reviewerAgentId === agentId
+                ? "reviewer"
+                : "collaborator";
+          if (enrichedContextSnapshot.relationship === "collaborator") {
+            return { kind: "bypass" as const };
+          }
         }
 
         let activeExecutionRun = issue.executionRunId
@@ -650,25 +663,26 @@ export function createHeartbeatWakeupHandlers(context: any) {
 
       if (outcome.kind === "deferred" || outcome.kind === "skipped") return null;
       if (outcome.kind === "coalesced") return outcome.run;
+      if (outcome.kind !== "bypass") {
+        const newRun = outcome.run;
+        if (opts.terminalIssueAudit) {
+          await context.afterIssuePromotionCommitted?.({ promotedRun: newRun });
+        }
+        publishLiveEvent({
+          orgId: newRun.orgId,
+          type: "heartbeat.run.queued",
+          payload: {
+            runId: newRun.id,
+            agentId: newRun.agentId,
+            invocationSource: newRun.invocationSource,
+            triggerDetail: newRun.triggerDetail,
+            wakeupRequestId: newRun.wakeupRequestId,
+          },
+        });
 
-      const newRun = outcome.run;
-      if (opts.terminalIssueAudit) {
-        await context.afterIssuePromotionCommitted?.({ promotedRun: newRun });
+        if (opts.startImmediately !== false) await startNextQueuedRunForAgent(agent.id);
+        return newRun;
       }
-      publishLiveEvent({
-        orgId: newRun.orgId,
-        type: "heartbeat.run.queued",
-        payload: {
-          runId: newRun.id,
-          agentId: newRun.agentId,
-          invocationSource: newRun.invocationSource,
-          triggerDetail: newRun.triggerDetail,
-          wakeupRequestId: newRun.wakeupRequestId,
-        },
-      });
-
-      if (opts.startImmediately !== false) await startNextQueuedRunForAgent(agent.id);
-      return newRun;
     }
 
     const activeRuns = await db

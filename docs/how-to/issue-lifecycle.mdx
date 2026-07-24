@@ -31,9 +31,9 @@ transitions are defined in [Issue statuses](/reference/issue-statuses); this
 guide does not create another status definition.
 
 Every Issue keeps one assignee. Assignment to an Agent wakes it when the Issue
-is actionable rather than in `backlog`. Agent execution checks out the Issue
-with Run ownership, and a named reviewer cannot be bypassed by assignee
-completion.
+is actionable rather than in `backlog`. Assignment-path execution checks out
+the Issue with Run ownership, and a named reviewer cannot be bypassed by
+assignee completion.
 
 <a id="case-backed-steps" />
 
@@ -57,7 +57,12 @@ completion.
 
 A normal comment preserves context but does not wake the assignee. When a
 specific Agent must act on a comment, use an explicit wake mention. The mention
-does not reassign the Issue.
+does not reassign the Issue. A direct request to the current assignee or
+reviewer can run in any status without checkout; the Issue execution lease
+serializes it while status and ownership stay unchanged unless the request
+explicitly asks for a governed change. A mentioned collaborator may handle the
+comment itself, but gains neither ownership nor permission for protected Issue
+mutations.
 
 <a id="success-signal" />
 
