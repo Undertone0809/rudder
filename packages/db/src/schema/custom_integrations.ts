@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { mcpConnections } from "./mcp_connections.js";
 import { organizationSecrets } from "./organization_secrets.js";
@@ -46,6 +46,9 @@ export const customIntegrationTools = pgTable(
     inputSchema: jsonb("input_schema").$type<Record<string, unknown>>().notNull().default({}),
     rawOutputSchema: jsonb("raw_output_schema").$type<Record<string, unknown>>(),
     outputSchema: jsonb("output_schema").$type<Record<string, unknown>>(),
+    capabilityClass: text("capability_class").notNull().default("unknown"),
+    policyRevision: integer("policy_revision").notNull().default(1),
+    catalogRevision: integer("catalog_revision").notNull().default(1),
     config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
     status: text("status").notNull().default("active"),
     enabled: boolean("enabled").notNull().default(true),
@@ -65,6 +68,14 @@ export const customIntegrationTools = pgTable(
       "custom_integration_tools_owner_check",
       sql`${table.integrationId} is not null or ${table.connectionId} is not null`,
     ),
+    positivePolicyRevisionsCheck: check(
+      "custom_integration_tools_positive_policy_revisions_check",
+      sql`${table.policyRevision} > 0 and ${table.catalogRevision} > 0`,
+    ),
+    capabilityClassCheck: check(
+      "custom_integration_tools_capability_class_check",
+      sql`${table.capabilityClass} in ('read', 'normal_write', 'destructive', 'admin_or_billing', 'unknown')`,
+    ),
   }),
 );
 
@@ -77,6 +88,8 @@ export const agentCustomIntegrationBindings = pgTable(
     integrationId: uuid("integration_id").references(() => customIntegrations.id, { onDelete: "cascade" }),
     connectionId: uuid("connection_id").references(() => mcpConnections.id, { onDelete: "cascade" }),
     status: text("status").notNull().default("active"),
+    accessMode: text("access_mode").notNull().default("none"),
+    policyRevision: integer("policy_revision").notNull().default(1),
     enabledToolIds: jsonb("enabled_tool_ids").$type<string[]>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -97,6 +110,14 @@ export const agentCustomIntegrationBindings = pgTable(
     ownerCheck: check(
       "agent_custom_integration_bindings_owner_check",
       sql`${table.integrationId} is not null or ${table.connectionId} is not null`,
+    ),
+    positivePolicyRevisionCheck: check(
+      "agent_custom_integration_bindings_positive_policy_revision_check",
+      sql`${table.policyRevision} > 0`,
+    ),
+    accessModeCheck: check(
+      "agent_custom_integration_bindings_access_mode_check",
+      sql`${table.accessMode} in ('none', 'read_only', 'read_write', 'provider_granted', 'full')`,
     ),
   }),
 );

@@ -1,10 +1,47 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyManagedMcpTool,
+  isManagedMcpToolCapabilityAllowed,
   MCP_TOOL_DISCOVERY_LIMITS,
   normalizeMcpDiscoveredTools,
   reconcileMcpBindingToolNames,
   reconcileMcpToolCatalog,
 } from "./tool-discovery.js";
+
+describe("managed MCP capability policy", () => {
+  it("classifies known provider tools and fails closed for destructive or unknown tools", () => {
+    expect(classifyManagedMcpTool("supabase", "list_tables")).toBe("read");
+    expect(classifyManagedMcpTool("supabase", "apply_migration")).toBe("destructive");
+    expect(classifyManagedMcpTool("supabase", "apply_migrations")).toBe("destructive");
+    expect(classifyManagedMcpTool("supabase", "run_migration")).toBe("destructive");
+    expect(classifyManagedMcpTool("supabase", "execute_ddl")).toBe("destructive");
+    expect(classifyManagedMcpTool("supabase", "alter_table")).toBe("destructive");
+    expect(classifyManagedMcpTool("supabase", "delete_branch")).toBe("destructive");
+    expect(classifyManagedMcpTool("supabase", "get_publishable_keys")).toBe("admin_or_billing");
+    expect(classifyManagedMcpTool("linear", "get_issue")).toBe("read");
+    expect(classifyManagedMcpTool("linear", "create_issue")).toBe("normal_write");
+    expect(classifyManagedMcpTool("notion", "notion-search")).toBe("read");
+    expect(classifyManagedMcpTool("notion", "notion-create-pages")).toBe("normal_write");
+    expect(classifyManagedMcpTool("linear", "get_or_create_issue")).toBe("normal_write");
+    expect(classifyManagedMcpTool("linear", "search_and_update_issue")).toBe("normal_write");
+    expect(classifyManagedMcpTool("notion", "read_then_publish")).toBe("normal_write");
+    expect(classifyManagedMcpTool("custom", "search")).toBe("unknown");
+    expect(classifyManagedMcpTool("supabase", "brand_new_tool")).toBe("unknown");
+  });
+
+  it("derives the effective tool surface from coarse agent access", () => {
+    expect(isManagedMcpToolCapabilityAllowed("none", "read")).toBe(false);
+    expect(isManagedMcpToolCapabilityAllowed("read_only", "read")).toBe(true);
+    expect(isManagedMcpToolCapabilityAllowed("read_only", "normal_write")).toBe(false);
+    expect(isManagedMcpToolCapabilityAllowed("read_write", "normal_write")).toBe(true);
+    expect(isManagedMcpToolCapabilityAllowed("read_write", "destructive")).toBe(false);
+    expect(isManagedMcpToolCapabilityAllowed("read_write", "admin_or_billing")).toBe(false);
+    expect(isManagedMcpToolCapabilityAllowed("read_write", "unknown")).toBe(false);
+    expect(isManagedMcpToolCapabilityAllowed("provider_granted", "read")).toBe(true);
+    expect(isManagedMcpToolCapabilityAllowed("provider_granted", "normal_write")).toBe(true);
+    expect(isManagedMcpToolCapabilityAllowed("full", "unknown")).toBe(true);
+  });
+});
 
 describe("managed MCP tool discovery normalization", () => {
   it("keeps raw schemas, exposes sanitized schemas, and gives tools a stable connection prefix", () => {

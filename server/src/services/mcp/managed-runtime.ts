@@ -7,18 +7,116 @@ import {
   heartbeatRuns,
   mcpConnections,
 } from "@rudderhq/db";
-import { and, eq, inArray } from "drizzle-orm";
+import type {
+  McpAgentAccessMode,
+  McpConnectionAccessMode,
+  McpConnectionProvider,
+} from "@rudderhq/shared";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { forbidden } from "../../errors.js";
 import { REDACTED_EVENT_VALUE } from "../../redaction.js";
+import { effectiveManagedMcpAccess } from "./managed-bindings.js";
 import {
   ManagedMcpClientError,
   type ManagedMcpClient,
 } from "./managed-client.js";
+import { isManagedMcpToolCapabilityAllowed } from "./tool-discovery.js";
 
 type BindingRow = typeof agentCustomIntegrationBindings.$inferSelect;
 type ConnectionRow = typeof mcpConnections.$inferSelect;
 type ToolRow = typeof customIntegrationTools.$inferSelect;
+type RuntimeTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
+type RuntimeDbExecutor = Db | RuntimeTransaction;
+
+function effectiveBindingAccess(
+  binding: BindingRow,
+  connection: ConnectionRow,
+): McpAgentAccessMode {
+  return effectiveManagedMcpAccess(
+    binding.accessMode as McpAgentAccessMode,
+    connection.provider as McpConnectionProvider,
+    connection.accessMode as McpConnectionAccessMode,
+  );
+}
+
+function toolAllowed(
+  binding: BindingRow,
+  connection: ConnectionRow,
+  tool: ToolRow,
+  runAllowedToolNames: Set<string> | null,
+): boolean {
+  return binding.enabledToolIds.includes(tool.id)
+    && (runAllowedToolNames === null || runAllowedToolNames.has(tool.rudderToolName))
+    && isManagedMcpToolCapabilityAllowed(
+      effectiveBindingAccess(binding, connection),
+      tool.capabilityClass as Parameters<typeof isManagedMcpToolCapabilityAllowed>[1],
+    )
+    && tool.status === "active"
+    && tool.enabled
+    && !tool.removedAt;
+}
+
+function intersectRunAccess(
+  current: McpAgentAccessMode,
+  snapshot: unknown,
+): McpAgentAccessMode {
+  if (snapshot === "none" || current === "none") return "none";
+  if (snapshot === current) return current;
+  if (
+    (snapshot === "read_only" || snapshot === "read_write")
+    && (current === "read_only" || current === "read_write")
+  ) {
+    return snapshot === "read_only" || current === "read_only"
+      ? "read_only"
+      : "read_write";
+  }
+  return "none";
+}
+
+function runBindingSnapshot(
+  contextSnapshot: typeof heartbeatRuns.$inferSelect.contextSnapshot,
+  bindingId: string,
+): {
+  accessMode: McpAgentAccessMode;
+  allowedToolNames: Set<string>;
+} | null {
+  const snapshots = contextSnapshot?.managedMcpPolicySnapshot;
+  if (!Array.isArray(snapshots)) return null;
+  const matches = snapshots.filter((candidate) => (
+    candidate
+    && typeof candidate === "object"
+    && !Array.isArray(candidate)
+    && (candidate as Record<string, unknown>).bindingId === bindingId
+  ));
+  if (matches.length !== 1) return null;
+  const snapshot = matches[0] as Record<string, unknown>;
+  const accessMode = snapshot.accessMode;
+  if (
+    accessMode !== "none"
+    && accessMode !== "read_only"
+    && accessMode !== "read_write"
+    && accessMode !== "provider_granted"
+    && accessMode !== "full"
+  ) return null;
+  const policy = snapshot.toolPolicy;
+  const allowedToolNames = policy && typeof policy === "object" && !Array.isArray(policy)
+    ? (policy as Record<string, unknown>).allowedToolNames
+    : null;
+  if (
+    !policy
+    || typeof policy !== "object"
+    || Array.isArray(policy)
+    || (policy as Record<string, unknown>).mode !== "allowlist"
+    || !Array.isArray(allowedToolNames)
+    || !allowedToolNames
+      .every((name) => typeof name === "string")
+  ) return null;
+  return {
+    accessMode,
+    allowedToolNames: new Set(allowedToolNames as string[]),
+  };
+}
 
 export interface ManagedMcpRuntimeIdentity {
   orgId: string;
@@ -34,8 +132,16 @@ export interface ManagedMcpRuntimeTool {
 }
 
 export interface ManagedMcpRuntimeServiceOptions {
-  openClient: (orgId: string, connectionId: string) => Promise<ManagedMcpClient>;
-  requireUsableGrant: (orgId: string, connectionId: string) => Promise<unknown>;
+  openClient: (
+    orgId: string,
+    connectionId: string,
+    accessMode: McpAgentAccessMode,
+  ) => Promise<ManagedMcpClient>;
+  requireUsableGrant: (
+    orgId: string,
+    connectionId: string,
+    executor?: RuntimeTransaction,
+  ) => Promise<unknown>;
 }
 
 const SECRET_KEY_RE =
@@ -191,8 +297,19 @@ export function managedMcpRuntimeService(
   async function requireRuntimeBinding(
     identity: ManagedMcpRuntimeIdentity,
     bindingId: string,
-  ): Promise<{ binding: BindingRow; connection: ConnectionRow }> {
-    const run = await db.select({ id: heartbeatRuns.id })
+    executor: RuntimeDbExecutor = db,
+    lockConnection = false,
+    grantExecutor?: RuntimeTransaction,
+  ): Promise<{
+    binding: BindingRow;
+    connection: ConnectionRow;
+    runAllowedToolNames: Set<string> | null;
+    runAccessMode: McpAgentAccessMode;
+  }> {
+    const run = await executor.select({
+      id: heartbeatRuns.id,
+      contextSnapshot: heartbeatRuns.contextSnapshot,
+    })
       .from(heartbeatRuns)
       .where(and(
         eq(heartbeatRuns.id, identity.runId),
@@ -203,7 +320,7 @@ export function managedMcpRuntimeService(
       .then((rows) => rows[0] ?? null);
     if (!run) throw forbidden("Managed MCP runtime context is not active");
 
-    const row = await db.select({
+    const rowQuery = executor.select({
       binding: agentCustomIntegrationBindings,
       connection: mcpConnections,
     })
@@ -220,19 +337,42 @@ export function managedMcpRuntimeService(
         eq(mcpConnections.orgId, identity.orgId),
         eq(mcpConnections.enabled, true),
         eq(mcpConnections.status, "active"),
-      ))
-      .then((rows) => rows[0] ?? null);
+        or(
+          eq(mcpConnections.provider, "custom"),
+          eq(mcpConnections.canonicalState, "canonical"),
+        ),
+      ));
+    const row = await (
+      lockConnection
+        ? rowQuery.for("share", { of: mcpConnections })
+        : rowQuery
+    ).then((rows) => rows[0] ?? null);
     if (!row || row.connection.transport === "legacy_manual") {
       throw forbidden("Managed MCP binding is unavailable");
     }
     if (row.connection.provider !== "custom") {
       try {
-        await options.requireUsableGrant(identity.orgId, row.connection.id);
+        if (!grantExecutor) {
+          await options.requireUsableGrant(identity.orgId, row.connection.id);
+        } else {
+          await options.requireUsableGrant(identity.orgId, row.connection.id, grantExecutor);
+        }
       } catch {
         throw forbidden("Managed MCP binding is unavailable");
       }
     }
-    return row;
+    const snapshot = runBindingSnapshot(run.contextSnapshot, bindingId);
+    if (!snapshot) {
+      throw forbidden("Managed MCP binding is not enabled for this run");
+    }
+    return {
+      ...row,
+      runAllowedToolNames: snapshot.allowedToolNames,
+      runAccessMode: intersectRunAccess(
+        effectiveBindingAccess(row.binding, row.connection),
+        snapshot.accessMode,
+      ),
+    };
   }
 
   async function currentTools(
@@ -243,22 +383,30 @@ export function managedMcpRuntimeService(
     connection: ConnectionRow;
     tools: ToolRow[];
   }> {
-    const context = await requireRuntimeBinding(identity, bindingId);
-    const enabledIds = context.binding.enabledToolIds;
-    const tools = enabledIds.length === 0
-      ? []
-      : await db.select().from(customIntegrationTools)
-        .where(and(
-          eq(customIntegrationTools.orgId, identity.orgId),
-          eq(customIntegrationTools.connectionId, context.connection.id),
-          eq(customIntegrationTools.status, "active"),
-          eq(customIntegrationTools.enabled, true),
-          inArray(customIntegrationTools.id, enabledIds),
-        ));
-    return {
-      ...context,
-      tools: tools.filter((tool) => !tool.removedAt),
-    };
+    return db.transaction(async (tx) => {
+      const context = await requireRuntimeBinding(identity, bindingId, tx, true, tx);
+      const compatibilityIds = context.binding.enabledToolIds;
+      const tools = compatibilityIds.length === 0
+        ? []
+        : await tx.select().from(customIntegrationTools)
+          .where(and(
+            eq(customIntegrationTools.orgId, identity.orgId),
+            eq(customIntegrationTools.connectionId, context.connection.id),
+            eq(customIntegrationTools.status, "active"),
+            eq(customIntegrationTools.enabled, true),
+            inArray(customIntegrationTools.id, compatibilityIds),
+          ));
+      return {
+        ...context,
+        tools: tools.filter((tool) =>
+          toolAllowed(
+            context.binding,
+            context.connection,
+            tool,
+            context.runAllowedToolNames,
+          )),
+      };
+    });
   }
 
   async function listTools(
@@ -282,76 +430,103 @@ export function managedMcpRuntimeService(
     exposedToolName: string,
     args: Record<string, unknown>,
   ) {
-    const context = await requireRuntimeBinding(identity, bindingId);
-    const tool = await db.select().from(customIntegrationTools)
-      .where(and(
-        eq(customIntegrationTools.orgId, identity.orgId),
-        eq(customIntegrationTools.connectionId, context.connection.id),
-        eq(customIntegrationTools.rudderToolName, exposedToolName),
-      ))
-      .then((rows) => rows[0] ?? null);
-    const enabled = Boolean(
-      tool
-      && context.binding.enabledToolIds.includes(tool.id)
-      && tool.status === "active"
-      && tool.enabled
-      && !tool.removedAt,
-    );
-    if (!enabled) {
-      if (tool) {
-        await db.insert(customIntegrationToolCalls).values({
-          orgId: identity.orgId,
-          connectionId: context.connection.id,
-          toolId: tool.id,
-          agentId: identity.agentId,
-          runId: identity.runId,
-          status: "blocked",
-          sanitizedInput: boundedRedactedMcpAuditRecord(args),
-          redactedDispatchOutcome: {
+    const prepared = await db.transaction(async (tx) => {
+      const lockedContext = await requireRuntimeBinding(identity, bindingId, tx, true, tx);
+      await tx.execute(sql`
+        select pg_advisory_xact_lock(
+          hashtextextended(
+            ${`managed-mcp-binding:${identity.orgId}:${identity.agentId}:${lockedContext.connection.id}`},
+            0
+          )
+        )
+      `);
+      // The first read establishes connection-before-advisory lock order. Re-read
+      // after acquiring the advisory lock so a downgrade that committed while
+      // this dispatch was waiting is visible before dispatch-start is recorded.
+      const context = await requireRuntimeBinding(identity, bindingId, tx, false, tx);
+      const tool = await tx.select().from(customIntegrationTools)
+        .where(and(
+          eq(customIntegrationTools.orgId, identity.orgId),
+          eq(customIntegrationTools.connectionId, context.connection.id),
+          eq(customIntegrationTools.rudderToolName, exposedToolName),
+        ))
+        .then((rows) => rows[0] ?? null);
+      const enabled = Boolean(tool && toolAllowed(
+        context.binding,
+        context.connection,
+        tool,
+        context.runAllowedToolNames,
+      ));
+      if (!enabled) {
+        if (tool) {
+          await tx.insert(customIntegrationToolCalls).values({
+            orgId: identity.orgId,
+            connectionId: context.connection.id,
+            toolId: tool.id,
+            agentId: identity.agentId,
+            runId: identity.runId,
             status: "blocked",
+            sanitizedInput: boundedRedactedMcpAuditRecord(args),
+            redactedDispatchOutcome: {
+              status: "blocked",
+              errorCode: "mcp_tool_not_allowed",
+            },
             errorCode: "mcp_tool_not_allowed",
-          },
-          errorCode: "mcp_tool_not_allowed",
-          errorMessage: "Managed MCP tool is not enabled for this run",
-          completedAt: new Date(),
-        });
-      } else {
-        await db.insert(activityLog).values({
-          orgId: identity.orgId,
-          actorType: "agent",
-          actorId: identity.agentId,
-          action: "mcp_tool_call.blocked_unknown",
-          entityType: "mcp_agent_binding",
-          entityId: context.binding.id,
-          agentId: identity.agentId,
-          runId: identity.runId,
-          details: {
-            reason: "unknown_tool",
-            requestedToolSha256: createHash("sha256")
-              .update(exposedToolName)
-              .digest("hex"),
-          },
-        });
+            errorMessage: "Managed MCP tool is not enabled for this run",
+            completedAt: new Date(),
+          });
+        } else {
+          await tx.insert(activityLog).values({
+            orgId: identity.orgId,
+            actorType: "agent",
+            actorId: identity.agentId,
+            action: "mcp_tool_call.blocked_unknown",
+            entityType: "mcp_agent_binding",
+            entityId: context.binding.id,
+            agentId: identity.agentId,
+            runId: identity.runId,
+            details: {
+              reason: "unknown_tool",
+              requestedToolSha256: createHash("sha256")
+                .update(exposedToolName)
+                .digest("hex"),
+            },
+          });
+        }
+        return { kind: "blocked" as const };
       }
+
+      const audit = await tx.insert(customIntegrationToolCalls).values({
+        orgId: identity.orgId,
+        connectionId: context.connection.id,
+        toolId: tool!.id,
+        agentId: identity.agentId,
+        runId: identity.runId,
+        status: "blocked",
+        sanitizedInput: boundedRedactedMcpAuditRecord(args),
+        redactedDispatchOutcome: { status: "started" },
+      }).returning({ id: customIntegrationToolCalls.id })
+        .then((rows) => rows[0]!);
+      return {
+        kind: "ready" as const,
+        context,
+        tool: tool!,
+        audit,
+      };
+    });
+    if (prepared.kind === "blocked") {
       throw forbidden("Managed MCP tool is not enabled for this run");
     }
-
-    const audit = await db.insert(customIntegrationToolCalls).values({
-      orgId: identity.orgId,
-      connectionId: context.connection.id,
-      toolId: tool!.id,
-      agentId: identity.agentId,
-      runId: identity.runId,
-      status: "blocked",
-      sanitizedInput: boundedRedactedMcpAuditRecord(args),
-      redactedDispatchOutcome: { status: "started" },
-    }).returning({ id: customIntegrationToolCalls.id })
-      .then((rows) => rows[0]!);
+    const { audit, context, tool } = prepared;
 
     let client: ManagedMcpClient | null = null;
     try {
-      client = await options.openClient(identity.orgId, context.connection.id);
-      const result = await client.callTool(tool!.externalToolName, args);
+      client = await options.openClient(
+        identity.orgId,
+        context.connection.id,
+        context.runAccessMode,
+      );
+      const result = await client.callTool(tool.externalToolName, args);
       await db.update(customIntegrationToolCalls).set({
         status: "success",
         sanitizedResult: boundedRedactedMcpAuditRecord(result),
@@ -376,7 +551,7 @@ export function managedMcpRuntimeService(
       }).where(eq(customIntegrationToolCalls.id, audit.id));
       throw safe;
     } finally {
-      await client?.close().catch(() => undefined);
+      await Promise.resolve(client?.close()).catch(() => undefined);
     }
   }
 

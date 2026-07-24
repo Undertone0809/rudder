@@ -4,11 +4,13 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import type {
   AgentBrowserToolSummary,
@@ -21,7 +23,8 @@ import type {
   CustomIntegrationKind,
   CustomIntegrationScope,
   CustomIntegrationSummary,
-  McpAgentConnectionSummary,
+  McpAgentAccessMode,
+  McpProviderAvailability,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -37,8 +40,9 @@ import {
   Trash2,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { agentsApi } from "../api/agents";
+import { ApiError } from "../api/client";
 import { FeishuLogoIcon } from "../components/FeishuLogoIcon";
 import { McpProviderIcon } from "../components/McpProviderIcon";
 import { useToast } from "../context/ToastContext";
@@ -129,7 +133,7 @@ const MANAGED_MCP_PROVIDER_INTEGRATIONS: ManagedMcpProviderDefinition[] = [
   {
     id: "supabase",
     name: "Supabase",
-    description: "Use the organization’s connected Supabase project through explicit MCP tool access.",
+    description: "Use the organization’s Supabase account and choose the project needed for each task.",
     category: "developer",
   },
   {
@@ -244,6 +248,10 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const [customForm, setCustomForm] = useState<CustomIntegrationFormState | null>(null);
   const [integrationsView, setIntegrationsView] = useState<IntegrationsView>("discover");
   const [feishuDialogOpen, setFeishuDialogOpen] = useState(false);
+  const [managedProvider, setManagedProvider] = useState<McpProviderAvailability | null>(null);
+  const [managedProviderAccess, setManagedProviderAccess] = useState<McpAgentAccessMode>("none");
+  const [managedProviderConflict, setManagedProviderConflict] = useState("");
+  const managedProviderTriggerRef = useRef<HTMLElement | null>(null);
   const integrationsQuery = useQuery({
     queryKey: queryKeys.agents.integrations(agent.id),
     queryFn: () => agentsApi.listIntegrations(agent.id, orgId),
@@ -258,14 +266,77 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
     queryKey: queryKeys.agents.mcpConnections(agent.id),
     queryFn: () => agentsApi.listMcpConnections(agent.id, orgId),
   });
+  const managedMcpProviderStatusQuery = useQuery({
+    queryKey: queryKeys.agents.mcpProviderStatus(agent.id),
+    queryFn: () => agentsApi.listMcpProviderStatus(agent.id, orgId),
+  });
   const integrations = integrationsQuery.data ?? [];
   const customIntegrations = customIntegrationsQuery.data ?? [];
   const managedMcpConnections = managedMcpConnectionsQuery.data ?? [];
+  const managedMcpProviderStatuses = managedMcpProviderStatusQuery.data ?? [];
   const rudderTools = agent.rudderTools ?? [];
   const feishuIntegration = integrations.find((integration) => integration.provider === "feishu") ?? null;
   const state = getFeishuIntegrationState(feishuIntegration);
   const isActive = state === "active";
   const shouldShowSetupPrompt = !feishuIntegration || state !== "active";
+  const openManagedProvider = (status: McpProviderAvailability) => {
+    managedProviderTriggerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setManagedProvider(status);
+    setManagedProviderAccess(status.agent?.access ?? "none");
+    setManagedProviderConflict("");
+  };
+  const updateManagedProviderAccess = useMutation({
+    mutationFn: async () => {
+      if (!managedProvider?.organization.connectionId) {
+        throw new Error("Organization connection is unavailable");
+      }
+      const row = managedMcpConnections.find(
+        (candidate) => candidate.connection.id === managedProvider.organization.connectionId,
+      );
+      return agentsApi.updateMcpConnectionBinding(
+        agent.id,
+        managedProvider.organization.connectionId,
+        {
+          accessMode: managedProviderAccess,
+          status: managedProviderAccess === "none" ? "disabled" : "active",
+          ...(row?.binding ? { expectedRevision: row.binding.policyRevision } : {}),
+        },
+        orgId,
+      );
+    },
+    onSuccess: async () => {
+      setManagedProvider(null);
+      pushToast({ title: "Agent access updated", tone: "success" });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.mcpConnections(agent.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.mcpProviderStatus(agent.id) }),
+      ]);
+    },
+    onError: async (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        setManagedProviderConflict("Settings changed elsewhere. Review the latest access and try again.");
+        const [statusResult] = await Promise.all([
+          managedMcpProviderStatusQuery.refetch(),
+          managedMcpConnectionsQuery.refetch(),
+        ]);
+        const latest = statusResult?.data?.find(
+          (candidate) => candidate.provider === managedProvider?.provider,
+        );
+        if (latest) {
+          setManagedProvider(latest);
+          setManagedProviderAccess(latest.agent?.access ?? "none");
+        }
+        return;
+      }
+      pushToast({
+        title: "Could not update agent access",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
   const openSetup = useMutation({
     mutationFn: () => agentsApi.startFeishuSetupSession(agent.id, {
       providerRegion,
@@ -439,34 +510,40 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
     integration.status === "active" && integration.binding?.status === "active"
   ));
   const hasManagedIntegrations = rudderTools.length > 0 || Boolean(managedFeishuIntegration) || managedCustomIntegrations.length > 0;
+  const closeManagedProvider = () => {
+    setManagedProvider(null);
+    requestAnimationFrame(() => managedProviderTriggerRef.current?.focus());
+  };
 
   return (
-    <div className="max-w-5xl space-y-5">
-      <div className="inline-flex rounded-[var(--menu-radius)] border border-border bg-muted/30 p-0.5">
-        {(["discover", "manage"] as const).map((view) => (
-          <button
-            key={view}
-            type="button"
-            className={cn(
-              "h-8 rounded-[calc(var(--menu-radius)-2px)] px-3 text-sm font-medium transition-colors",
-              integrationsView === view
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-            onClick={() => setIntegrationsView(view)}
-          >
-            {view === "discover" ? "Discover" : "Manage"}
-          </button>
-        ))}
-      </div>
+    <Tabs
+      value={integrationsView}
+      onValueChange={(next) => setIntegrationsView(next as IntegrationsView)}
+      className="max-w-5xl gap-5"
+    >
+      <TabsList aria-label="Agent integrations">
+        <TabsTrigger value="discover" onClick={() => setIntegrationsView("discover")}>
+          Discover
+        </TabsTrigger>
+        <TabsTrigger value="manage" onClick={() => setIntegrationsView("manage")}>
+          Manage
+        </TabsTrigger>
+      </TabsList>
 
-      {integrationsView === "discover" ? (
+      <TabsContent value="discover">
           <div className="space-y-6">
             <IntegrationCategorySection title="Agent-scoped custom API">
               <CustomIntegrationSetupCard
                 kind="custom_api"
                 active={customForm?.kind === "custom_api"}
                 onConfigure={() => setCustomForm(defaultCustomIntegrationForm("custom_api"))}
+              />
+            </IntegrationCategorySection>
+            <IntegrationCategorySection title="Organization MCPs">
+              <AgentManagedMcpConnections
+                agentId={agent.id}
+                orgId={orgId}
+                providers={["custom"]}
               />
             </IntegrationCategorySection>
             <IntegrationCategorySection title="Message">
@@ -491,10 +568,11 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                   <ManagedMcpProviderCard
                     key={integration.id}
                     integration={integration}
-                    rows={managedMcpConnections}
-                    loading={managedMcpConnectionsQuery.isLoading}
-                    loadFailed={managedMcpConnectionsQuery.isError}
-                    onManage={() => setIntegrationsView("manage")}
+                    status={managedMcpProviderStatuses.find((status) => status.provider === integration.id)}
+                    loading={managedMcpProviderStatusQuery.isLoading}
+                    loadFailed={managedMcpProviderStatusQuery.isError}
+                    onManage={openManagedProvider}
+                    onRetry={() => void managedMcpProviderStatusQuery.refetch()}
                   />
                 ))}
               {UPCOMING_INTEGRATIONS
@@ -513,10 +591,11 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                   <ManagedMcpProviderCard
                     key={integration.id}
                     integration={integration}
-                    rows={managedMcpConnections}
-                    loading={managedMcpConnectionsQuery.isLoading}
-                    loadFailed={managedMcpConnectionsQuery.isError}
-                    onManage={() => setIntegrationsView("manage")}
+                    status={managedMcpProviderStatuses.find((status) => status.provider === integration.id)}
+                    loading={managedMcpProviderStatusQuery.isLoading}
+                    loadFailed={managedMcpProviderStatusQuery.isError}
+                    onManage={openManagedProvider}
+                    onRetry={() => void managedMcpProviderStatusQuery.refetch()}
                   />
                 ))}
               {UPCOMING_INTEGRATIONS
@@ -529,10 +608,16 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                 ))}
             </IntegrationCategorySection>
           </div>
-        ) : (
+      </TabsContent>
+      <TabsContent value="manage">
           <div className="space-y-4">
             <IntegrationManageGroup title="External MCPs">
-              <AgentManagedMcpConnections agentId={agent.id} orgId={orgId} />
+              <AgentManagedMcpConnections
+                agentId={agent.id}
+                orgId={orgId}
+                providerStatuses={managedMcpProviderStatuses}
+                showOnlyEnabled
+              />
             </IntegrationManageGroup>
             {integrationsQuery.isLoading || customIntegrationsQuery.isLoading ? (
               <IntegrationRowSkeleton />
@@ -581,7 +666,7 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
               </div>
             )}
           </div>
-        )}
+      </TabsContent>
       <Dialog
         open={Boolean(customForm)}
         onOpenChange={(open) => {
@@ -688,7 +773,16 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+      <AgentProviderAccessDialog
+        provider={managedProvider}
+        access={managedProviderAccess}
+        conflictMessage={managedProviderConflict}
+        pending={updateManagedProviderAccess.isPending}
+        onAccessChange={setManagedProviderAccess}
+        onClose={closeManagedProvider}
+        onSave={() => updateManagedProviderAccess.mutate()}
+      />
+    </Tabs>
   );
 }
 
@@ -823,46 +917,55 @@ function UpcomingIntegrationCard({ integration }: UpcomingIntegrationCardProps) 
 
 function ManagedMcpProviderCard({
   integration,
-  rows,
+  status,
   loading,
   loadFailed,
   onManage,
+  onRetry,
 }: {
   integration: ManagedMcpProviderDefinition;
-  rows: McpAgentConnectionSummary[];
+  status?: McpProviderAvailability;
   loading: boolean;
   loadFailed: boolean;
-  onManage: () => void;
+  onManage: (status: McpProviderAvailability) => void;
+  onRetry: () => void;
 }) {
-  const providerRows = rows.filter((row) => row.connection.provider === integration.id);
-  const activeBindings = providerRows.filter((row) => row.binding?.status === "active");
-  const enabledToolCount = activeBindings.reduce((count, row) => (
-    count + row.tools.filter((tool) =>
-        tool.enabled
-        && !tool.removedAt
-        && row.binding?.enabledToolIds.includes(tool.id)).length
-  ), 0);
-  const status = loadFailed
+  if (loading) {
+    return <Skeleton className="h-24 w-full" aria-label={`Loading ${integration.name} status`} />;
+  }
+  const organizationState = status?.organization.state ?? "not_connected";
+  const agentAccess = status?.agent?.access ?? "none";
+  const connected = organizationState === "connected";
+  const enabled = connected && agentAccess !== "none";
+  const displayStatus = loadFailed
     ? "Unavailable"
-    : activeBindings.length > 0
-    ? "Connected"
-    : providerRows.length > 0
+    : enabled
+      ? agentAccess === "read_only"
+        ? "Read only"
+        : agentAccess === "read_write"
+          ? "Read & write"
+          : "Provider-granted access"
+    : connected
       ? "Available"
+      : organizationState === "connecting"
+        ? "Connecting"
+        : organizationState === "needs_attention"
+          ? "Needs attention"
       : "Not connected";
   const statusTone = loadFailed
     ? "border-destructive/25 bg-destructive/10 text-destructive"
-    : activeBindings.length > 0
+    : enabled
     ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-    : providerRows.length > 0
+    : connected
       ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300"
       : "border-border bg-muted text-muted-foreground";
   const details = loadFailed
-    ? "Managed MCP status could not be loaded. Try again from Manage."
-    : activeBindings.length > 0
-    ? `${enabledToolCount} ${enabledToolCount === 1 ? "tool" : "tools"} enabled for this agent`
-    : providerRows.length > 0
-      ? `${providerRows.length} organization ${providerRows.length === 1 ? "connection" : "connections"} ready to bind`
-      : "Connect this provider in Organization Settings, then bind it to this agent.";
+    ? "Managed MCP status could not be loaded."
+    : enabled
+      ? "Available during this agent’s next run."
+      : connected
+        ? "The organization connection is ready for this agent."
+        : "Connect this provider in Organization Settings.";
 
   return (
     <div
@@ -878,31 +981,133 @@ function ManagedMcpProviderCard({
               Organization MCP
             </span>
             <span className={cn("rounded-md border px-1.5 py-0.5 text-xs", statusTone)}>
-              {loading ? "Loading" : status}
+              {displayStatus}
             </span>
           </div>
           <p className="text-sm text-muted-foreground">{integration.description}</p>
-          {!loading ? <p className="text-xs text-muted-foreground">{details}</p> : null}
+          <p className="text-xs text-muted-foreground">{details}</p>
         </div>
       </div>
-      <IntegrationActionButton
-        variant="outline"
-        size="sm"
-        disabled={loading}
-        onClick={onManage}
-        aria-label={`Manage ${integration.name} MCP connections`}
-      >
-        Manage
-      </IntegrationActionButton>
+      {loadFailed ? (
+        <IntegrationActionButton variant="outline" size="sm" onClick={onRetry}>
+          Retry
+        </IntegrationActionButton>
+      ) : connected && status ? (
+        <IntegrationActionButton
+          variant="outline"
+          size="sm"
+          onClick={() => onManage(status)}
+          aria-label={`${enabled ? "Manage" : "Set access for"} ${integration.name}`}
+        >
+          {enabled ? "Manage" : "Set access"}
+        </IntegrationActionButton>
+      ) : (
+        <IntegrationActionButton asChild variant="outline" size="sm">
+          <a href="/organization/settings">Open organization settings</a>
+        </IntegrationActionButton>
+      )}
     </div>
+  );
+}
+
+function AgentProviderAccessDialog({
+  provider,
+  access,
+  conflictMessage,
+  pending,
+  onAccessChange,
+  onClose,
+  onSave,
+}: {
+  provider: McpProviderAvailability | null;
+  access: McpAgentAccessMode;
+  conflictMessage: string;
+  pending: boolean;
+  onAccessChange: (access: McpAgentAccessMode) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  const providerName = provider
+    ? provider.provider[0]!.toUpperCase() + provider.provider.slice(1)
+    : "";
+  const originalAccess = provider?.agent?.access ?? "none";
+  const modes: McpAgentAccessMode[] = provider?.provider === "notion"
+    ? ["none", "provider_granted"]
+    : ["none", "read_only", "read_write"];
+  const label = (mode: McpAgentAccessMode) => {
+    if (mode === "read_only") return "Read only";
+    if (mode === "read_write") return "Read & write";
+    if (mode === "provider_granted") return "Provider-granted access";
+    return "No access";
+  };
+
+  return (
+    <Dialog open={Boolean(provider)} onOpenChange={(open) => {
+      if (!open && !pending) onClose();
+    }}>
+      <DialogContent className="sm:max-w-md">
+        {provider ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Manage {providerName} access</DialogTitle>
+              <DialogDescription>
+                Choose the access available to this agent.
+              </DialogDescription>
+            </DialogHeader>
+            <fieldset className="space-y-2">
+              <legend className="sr-only">Access</legend>
+              {modes.map((mode) => {
+                const blockedByOrganization = mode === "read_write"
+                  && provider.organization.maxAccess === "read_only";
+                return (
+                  <label
+                    key={mode}
+                    className={cn(
+                      "flex items-start gap-2 rounded-md border border-border px-3 py-2 text-sm",
+                      blockedByOrganization && "cursor-not-allowed opacity-60",
+                    )}
+                  >
+                    <input
+                      className="mt-0.5"
+                      type="radio"
+                      name={`agent-provider-access-${provider.provider}`}
+                      checked={access === mode}
+                      disabled={blockedByOrganization}
+                      onChange={() => onAccessChange(mode)}
+                    />
+                    <span>
+                      <span className="block">{label(mode)}</span>
+                      {blockedByOrganization ? (
+                        <span className="block text-xs text-muted-foreground">
+                          The organization connection is read only.
+                        </span>
+                      ) : null}
+                    </span>
+                  </label>
+                );
+              })}
+            </fieldset>
+            {provider.agent?.activeRunUsesOlderPolicy ? (
+              <p className="text-xs text-muted-foreground">
+                Access reductions apply immediately; increases start with the next run.
+              </p>
+            ) : null}
+            <p className="min-h-5 text-sm text-destructive" aria-live="polite">
+              {conflictMessage}
+            </p>
+            <DialogFooter>
+              <Button variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
+              <Button disabled={pending || access === originalAccess} onClick={onSave}>Save</Button>
+            </DialogFooter>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function RudderRuntimeManageRow({ integration }: { integration: RudderRuntimeIntegrationSummary }) {
   const available = integration.status === "available";
-  const toolListLabel = integration.kind === "rudder_mcp"
-    ? "Rudder MCP tools list"
-    : "Rudder Browser tools list";
   return (
     <div
       className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
@@ -910,12 +1115,9 @@ function RudderRuntimeManageRow({ integration }: { integration: RudderRuntimeInt
     >
       <div className="flex min-w-0 items-start gap-3">
         <IntegrationBrandIcon src="/rudder-logo.png" name="Rudder" />
-        <div className="min-w-0 space-y-2">
+        <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold text-foreground">{integration.displayName}</p>
-            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-              {integration.contract}
-            </span>
             <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
               Built-in
             </span>
@@ -928,27 +1130,9 @@ function RudderRuntimeManageRow({ integration }: { integration: RudderRuntimeInt
               {available ? "Available" : "Disabled"}
             </span>
           </div>
-          <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-            <IntegrationMeta label="Server" value={integration.serverName} />
-            <IntegrationMeta label="Tools" value={`${integration.toolCount} exposed`} />
-            <IntegrationMeta
-              label="Auth"
-              value={integration.authMode === "runtime_managed" ? "Runtime managed" : integration.authMode}
-            />
-          </dl>
-          <div
-            className="flex max-h-32 max-w-3xl flex-wrap gap-1 overflow-y-auto pr-1"
-            aria-label={toolListLabel}
-          >
-            {integration.tools.map((tool) => (
-              <span
-                key={tool}
-                className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] leading-5 text-muted-foreground"
-              >
-                {tool}
-              </span>
-            ))}
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Managed automatically by the Rudder runtime.
+          </p>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 md:justify-end">
@@ -1189,7 +1373,6 @@ interface CustomIntegrationRowProps {
 }
 
 function CustomIntegrationRow({ integration, disabled, onDisconnect }: CustomIntegrationRowProps) {
-  const enabledTools = integration.tools.filter((tool) => tool.enabled);
   const Icon = integration.kind === "mcp_server" ? PlugZap : Braces;
   return (
     <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
@@ -1215,8 +1398,7 @@ function CustomIntegrationRow({ integration, disabled, onDisconnect }: CustomInt
               {integration.binding?.status === "active" && integration.status === "active" ? "Connected" : "Disconnected"}
             </span>
           </div>
-          <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-            <IntegrationMeta label="Tools" value={enabledTools.length > 0 ? enabledTools.map((tool) => tool.rudderToolName).join(", ") : "No tools enabled"} />
+          <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
             <IntegrationMeta label="Credentials" value={integration.hasCredentialSecret ? "Credential stored" : "No credential"} />
             <IntegrationMeta label="Updated" value={formatDateTime(integration.updatedAt)} />
           </dl>

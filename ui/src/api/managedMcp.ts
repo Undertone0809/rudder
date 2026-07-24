@@ -3,10 +3,9 @@ import type {
   McpConnectionAccessMode,
   McpConnectionSummary,
   McpDiscoveredTool,
-  McpExternalScopeOption,
-  McpExternalScopeSelectionResponse,
   McpOAuthGrantSummary,
   McpOAuthStartResponse,
+  McpProviderAvailability,
   McpProviderCatalogEntry,
   UpdateMcpConnection,
 } from "@rudderhq/shared";
@@ -24,10 +23,22 @@ export const managedMcpApi = {
     ),
   listConnections: (orgId: string) =>
     api.get<McpConnectionSummary[]>(connectionPath(orgId)),
+  listProviderStatus: (orgId: string) =>
+    api.get<McpProviderAvailability[]>(
+      `/orgs/${encodeURIComponent(orgId)}/mcp/provider-status`,
+    ),
   getConnection: (orgId: string, connectionId: string) =>
     api.get<McpConnectionSummary>(connectionPath(orgId, connectionId)),
   createConnection: (orgId: string, input: CreateMcpConnection) =>
     api.post<McpConnectionSummary>(connectionPath(orgId), input),
+  ensureOfficialConnection: (
+    orgId: string,
+    provider: "supabase" | "linear" | "notion",
+    accessMode?: McpConnectionAccessMode,
+  ) => api.post<McpConnectionSummary>(
+    `/orgs/${encodeURIComponent(orgId)}/mcp/providers/${provider}/connect`,
+    accessMode ? { accessMode } : {},
+  ),
   updateConnection: (
     orgId: string,
     connectionId: string,
@@ -48,22 +59,23 @@ export const managedMcpApi = {
       `${connectionPath(orgId, connectionId)}/oauth/start`,
       {},
     ),
+  upgradeSupabaseAccountAccess: (orgId: string, connectionId: string) =>
+    api.post<McpOAuthStartResponse>(
+      `${connectionPath(orgId, connectionId)}/upgrade-account-access`,
+      {},
+    ),
+  reauthorizeAccess: (
+    orgId: string,
+    connectionId: string,
+    accessMode: Extract<McpConnectionAccessMode, "read_only" | "read_write">,
+  ) => api.post<McpOAuthStartResponse>(
+    `${connectionPath(orgId, connectionId)}/reauthorize-access`,
+    { accessMode },
+  ),
   getGrant: (orgId: string, connectionId: string) =>
     api.get<McpOAuthGrantSummary | null>(
       `${connectionPath(orgId, connectionId)}/oauth/grant`,
     ),
-  listScopes: (orgId: string, connectionId: string) =>
-    api.get<McpExternalScopeOption[]>(
-      `${connectionPath(orgId, connectionId)}/oauth/scopes`,
-    ),
-  selectScope: (
-    orgId: string,
-    connectionId: string,
-    input: { externalScope: string; accessMode: McpConnectionAccessMode },
-  ) => api.post<McpExternalScopeSelectionResponse>(
-    `${connectionPath(orgId, connectionId)}/oauth/scope`,
-    input,
-  ),
   refreshTools: (orgId: string, connectionId: string) =>
     api.post<McpDiscoveredTool[]>(
       `${connectionPath(orgId, connectionId)}/refresh-tools`,

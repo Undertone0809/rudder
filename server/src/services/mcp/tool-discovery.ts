@@ -1,5 +1,41 @@
+import type {
+  McpAgentAccessMode,
+  McpConnectionProvider,
+  McpToolCapabilityClass,
+} from "@rudderhq/shared";
 import Ajv from "ajv";
 import { createHash } from "node:crypto";
+
+const destructiveToolPattern = /(^|[._-])(delete|remove|drop|reset|merge|archive|cancel|revoke|destroy|purge|wipe|truncate|alter|ddl|migrate|migrates|migrated|migrating|migration|migrations)([._-]|$)/u;
+const administrativeToolPattern = /(^|[._-])(admin|billing|invoice|key|keys|secret|secrets|member|members|permission|role|roles)([._-]|$)/u;
+const readToolPattern = /(^|[._-])(get|list|search|find|fetch|read|inspect|query|lookup|describe)([._-]|$)/u;
+const writeToolPattern = /(^|[._-])(create|update|write|apply|deploy|send|add|move|rename|upsert|assign|comment|reply|publish)([._-]|$)/u;
+
+export const MCP_TOOL_POLICY_REVISION = 1;
+
+export function classifyManagedMcpTool(
+  provider: McpConnectionProvider,
+  externalToolName: string,
+): McpToolCapabilityClass {
+  if (provider === "custom") return "unknown";
+  const normalized = externalToolName.trim().toLowerCase();
+  if (destructiveToolPattern.test(normalized)) return "destructive";
+  if (administrativeToolPattern.test(normalized)) return "admin_or_billing";
+  if (writeToolPattern.test(normalized)) return "normal_write";
+  if (readToolPattern.test(normalized)) return "read";
+  return "unknown";
+}
+
+export function isManagedMcpToolCapabilityAllowed(
+  accessMode: McpAgentAccessMode,
+  capabilityClass: McpToolCapabilityClass,
+): boolean {
+  if (accessMode === "full") return true;
+  if (accessMode === "none") return false;
+  if (capabilityClass === "read") return true;
+  return capabilityClass === "normal_write"
+    && (accessMode === "read_write" || accessMode === "provider_granted");
+}
 
 export const MCP_TOOL_DISCOVERY_LIMITS = {
   maxTools: 500,

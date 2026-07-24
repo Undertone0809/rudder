@@ -102,8 +102,7 @@ export type {
   ManagedExternalMcpBinding,
   ManagedExternalMcpBindings,
   ManagedExternalMcpToolPolicy,
-  McpAgentBinding,
-  McpAgentConnectionSummary,
+  McpAgentBinding, McpAgentConnectionSummary,
   McpConnectionSafeConfig,
   McpConnectionSecretsMutation,
   McpConnectionSummary,
@@ -113,8 +112,7 @@ export type {
   McpLegacyManualSafeConfig,
   McpOAuthCallbackResult,
   McpOAuthGrantSummary,
-  McpOAuthStartResponse,
-  McpProviderCatalogEntry,
+  McpOAuthStartResponse, McpProviderAvailability, McpProviderCatalogEntry,
   McpStdioSafeConfig,
   McpStreamableHttpSafeConfig
 } from "./mcp.js";

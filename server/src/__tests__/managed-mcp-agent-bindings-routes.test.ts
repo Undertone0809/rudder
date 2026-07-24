@@ -11,6 +11,7 @@ const connectionId = "44444444-4444-4444-8444-444444444444";
 
 const bindingService = {
   listForAgent: vi.fn(),
+  listProviderAvailability: vi.fn(),
   upsert: vi.fn(),
   revoke: vi.fn(),
 };
@@ -38,6 +39,7 @@ describe("managed MCP agent binding routes", () => {
     vi.clearAllMocks();
     findAgent.mockResolvedValue({ id: agentId, orgId });
     bindingService.listForAgent.mockResolvedValue([]);
+    bindingService.listProviderAvailability.mockResolvedValue([]);
     bindingService.upsert.mockResolvedValue({ binding: { id: "binding-1" } });
     bindingService.revoke.mockResolvedValue({ binding: { status: "revoked" } });
     getMembership.mockResolvedValue({
@@ -58,9 +60,11 @@ describe("managed MCP agent binding routes", () => {
 
     expect((await request(api).get(`/api/agents/${agentId}/mcp-connections`)).status)
       .toBe(200);
+    expect((await request(api).get(`/api/agents/${agentId}/mcp-provider-status`)).status)
+      .toBe(200);
     expect((await request(api)
       .put(`/api/agents/${agentId}/mcp-connections/${connectionId}`)
-      .send({})).status).toBe(200);
+      .send({ accessMode: "read_only", expectedRevision: 2 })).status).toBe(200);
     expect((await request(api)
       .patch(`/api/agents/${agentId}/mcp-connections/${connectionId}`)
       .send({ status: "disabled", enabledToolIds: [] })).status).toBe(200);
@@ -73,7 +77,7 @@ describe("managed MCP agent binding routes", () => {
       orgId,
       agentId,
       connectionId,
-      {},
+      { accessMode: "read_only", expectedRevision: 2 },
       { userId: "owner-1", agentId: null },
     );
     expect(bindingService.revoke).toHaveBeenCalledWith(

@@ -13,6 +13,7 @@ import { markHttpRequestBodySensitive } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
   accessService,
+  managedMcpBindingService,
   managedMcpConnectionService,
   managedMcpOAuthService,
 } from "../services/index.js";
@@ -24,9 +25,11 @@ import { managedMcpRuntimeRoutes } from "./managed-mcp-runtime.js";
 const updateAccessModeSchema = z.object({
   accessMode: mcpConnectionAccessModeSchema,
 }).strict();
-const selectScopeBodySchema = z.object({
-  externalScope: z.string().trim().min(1).max(512),
-  accessMode: mcpConnectionAccessModeSchema,
+const ensureOfficialProviderSchema = z.object({
+  accessMode: mcpConnectionAccessModeSchema.optional(),
+}).strict();
+const reauthorizeAccessSchema = z.object({
+  accessMode: z.enum(["read_only", "read_write"]),
 }).strict();
 
 export interface ManagedMcpConnectionRoutesOptions
@@ -56,12 +59,13 @@ export function managedMcpConnectionRoutes(
       oauth.createCredential(orgId, connectionId),
   });
   const runtime = managedMcpRuntimeService(db, {
-    openClient: (orgId, connectionId) =>
-      svc.openRuntimeClient(orgId, connectionId),
-    requireUsableGrant: (orgId, connectionId) =>
-      oauth.requireUsableGrant(orgId, connectionId),
+    openClient: (orgId, connectionId, accessMode) =>
+      svc.openRuntimeClient(orgId, connectionId, accessMode),
+    requireUsableGrant: (orgId, connectionId, executor) =>
+      oauth.requireUsableGrant(orgId, connectionId, executor),
   });
   const access = accessService(db);
+  const bindings = managedMcpBindingService(db);
   router.use(managedMcpRuntimeRoutes(runtime));
 
   function assertCanRead(req: Request, orgId: string) {
@@ -110,10 +114,33 @@ export function managedMcpConnectionRoutes(
     res.json(svc.catalog());
   });
 
+  router.post(
+    "/orgs/:orgId/mcp/providers/:provider/connect",
+    validate(ensureOfficialProviderSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      const provider = z.enum(["supabase", "linear", "notion"])
+        .parse(req.params.provider);
+      await assertCanManage(req, orgId);
+      res.json(await svc.ensureOfficial(
+        orgId,
+        provider,
+        req.body.accessMode,
+        mutationActor(req),
+      ));
+    },
+  );
+
   router.get("/orgs/:orgId/mcp/connections", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCanRead(req, orgId);
     res.json(await svc.list(orgId));
+  });
+
+  router.get("/orgs/:orgId/mcp/provider-status", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCanRead(req, orgId);
+    res.json(await bindings.listProviderAvailability(orgId));
   });
 
   router.get("/orgs/:orgId/mcp/connections/:connectionId", async (req, res) => {
@@ -212,6 +239,41 @@ export function managedMcpConnectionRoutes(
     },
   );
 
+  router.post(
+    "/orgs/:orgId/mcp/connections/:connectionId/upgrade-account-access",
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      const connectionId = req.params.connectionId as string;
+      await assertCanManage(req, orgId);
+      const candidate = await svc.prepareSupabaseAccountUpgrade(
+        orgId,
+        connectionId,
+        mutationActor(req),
+      );
+      res.status(201).json(await oauth.start(
+        orgId,
+        candidate.id,
+        oauthActor(req),
+      ));
+    },
+  );
+
+  router.post(
+    "/orgs/:orgId/mcp/connections/:connectionId/reauthorize-access",
+    validate(reauthorizeAccessSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      const connectionId = req.params.connectionId as string;
+      await assertCanManage(req, orgId);
+      res.status(201).json(await oauth.start(
+        orgId,
+        connectionId,
+        oauthActor(req),
+        { requestedAccessMode: req.body.accessMode },
+      ));
+    },
+  );
+
   router.get(
     "/orgs/:orgId/mcp/connections/:connectionId/oauth/grant",
     async (req, res) => {
@@ -220,38 +282,6 @@ export function managedMcpConnectionRoutes(
       res.json(await oauth.getGrantSummary(
         orgId,
         req.params.connectionId as string,
-      ));
-    },
-  );
-
-  router.get(
-    "/orgs/:orgId/mcp/connections/:connectionId/oauth/scopes",
-    async (req, res) => {
-      const orgId = req.params.orgId as string;
-      assertCanRead(req, orgId);
-      res.json(await oauth.listScopeOptions(
-        orgId,
-        req.params.connectionId as string,
-      ));
-    },
-  );
-
-  router.post(
-    "/orgs/:orgId/mcp/connections/:connectionId/oauth/scope",
-    validate(selectScopeBodySchema),
-    async (req, res) => {
-      const orgId = req.params.orgId as string;
-      const connectionId = req.params.connectionId as string;
-      await assertCanManage(req, orgId);
-      res.json(await oauth.selectScope(
-        orgId,
-        connectionId,
-        {
-          connectionId,
-          externalScope: req.body.externalScope,
-          accessMode: req.body.accessMode,
-        },
-        oauthActor(req),
       ));
     },
   );
@@ -278,12 +308,6 @@ export function managedMcpConnectionRoutes(
         res.json(await svc.reconnect(orgId, connectionId, mutationActor(req)));
         return;
       }
-      await oauth.revoke(
-        orgId,
-        connectionId,
-        oauthActor(req),
-        "connection_reconnect",
-      );
       res.status(201).json(await oauth.start(orgId, connectionId, oauthActor(req)));
     },
   );

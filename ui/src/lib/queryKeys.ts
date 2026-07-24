@@ -26,6 +26,8 @@ export const queryKeys = {
       ["organizations", orgId, "workspace-backup-file", backupId, filePath] as const,
     mcpProviders: (orgId: string) => ["organizations", orgId, "mcp-providers"] as const,
     mcpConnections: (orgId: string) => ["organizations", orgId, "mcp-connections"] as const,
+    mcpProviderStatus: (orgId: string) =>
+      ["organizations", orgId, "mcp-provider-status"] as const,
     mcpConnectionTools: (orgId: string, connectionId: string) =>
       ["organizations", orgId, "mcp-connections", connectionId, "tools"] as const,
     mcpConnectionScopes: (orgId: string, connectionId: string) =>
@@ -49,6 +51,7 @@ export const queryKeys = {
     integrations: (id: string) => ["agents", "integrations", id] as const,
     customIntegrations: (id: string) => ["agents", "custom-integrations", id] as const,
     mcpConnections: (id: string) => ["agents", "mcp-connections", id] as const,
+    mcpProviderStatus: (id: string) => ["agents", "mcp-provider-status", id] as const,
     skillsAnalytics: (id: string) => ["agents", "skills-analytics", id] as const,
     instructionsBundle: (id: string) => ["agents", "instructions-bundle", id] as const,
     instructionsFile: (id: string, relativePath: string) =>

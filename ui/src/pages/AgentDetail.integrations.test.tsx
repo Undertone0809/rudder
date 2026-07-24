@@ -11,6 +11,7 @@ import {
   type AgentRudderToolSummary,
   type CustomIntegrationSummary,
   type McpAgentConnectionSummary,
+  type McpProviderAvailability,
 } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -30,18 +31,27 @@ const mockManagedMcpConnectionsData = vi.hoisted(() => ({
   rows: [] as McpAgentConnectionSummary[],
   failed: false,
 }));
+const mockManagedMcpProviderStatusData = vi.hoisted(() => ({
+  rows: [] as McpProviderAvailability[],
+  failed: false,
+}));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ initialData, queryKey }: { initialData?: unknown; queryKey?: readonly unknown[] }) => ({
     data: queryKey?.includes("custom-integrations")
       ? mockCustomIntegrationsData.rows
+      : queryKey?.includes("mcp-provider-status")
+        ? mockManagedMcpProviderStatusData.rows
       : queryKey?.includes("mcp-connections")
         ? mockManagedMcpConnectionsData.rows
         : initialData,
     isLoading: false,
-    isError: queryKey?.includes("mcp-connections")
-      ? mockManagedMcpConnectionsData.failed
-      : false,
+    isError: queryKey?.includes("mcp-provider-status")
+      ? mockManagedMcpProviderStatusData.failed
+      : queryKey?.includes("mcp-connections")
+        ? mockManagedMcpConnectionsData.failed
+        : false,
+    refetch: vi.fn(),
   }),
   useMutation: (options: { mutationFn?: (arg?: unknown) => Promise<unknown>; onSuccess?: (result: unknown) => void | Promise<void> }) => ({
     mutate: vi.fn(async (arg?: unknown) => {
@@ -99,6 +109,7 @@ vi.mock("../api/agents", () => ({
     createCustomIntegration: vi.fn(),
     revokeCustomIntegration: vi.fn(),
     listMcpConnections: vi.fn(),
+    listMcpProviderStatus: vi.fn(),
     updateMcpConnectionBinding: vi.fn(),
     revokeMcpConnectionBinding: vi.fn(),
   },
@@ -122,6 +133,8 @@ afterEach(() => {
   mockCustomIntegrationsData.rows = [];
   mockManagedMcpConnectionsData.rows = [];
   mockManagedMcpConnectionsData.failed = false;
+  mockManagedMcpProviderStatusData.rows = [];
+  mockManagedMcpProviderStatusData.failed = false;
   vi.clearAllMocks();
   vi.useRealTimers();
 });
@@ -330,6 +343,7 @@ function managedMcpConnection(
       updatedAt: now,
     },
     binding: null,
+    reviewRequired: false,
     tools: [{
       id: `${provider}-tool`,
       connectionId: `${provider}-connection`,
@@ -338,9 +352,33 @@ function managedMcpConnection(
       description: `Search ${provider}`,
       inputSchema: {},
       outputSchema: null,
+      capabilityClass: "read",
+      policyRevision: 1,
+      catalogRevision: 1,
       enabled: true,
       removedAt: null,
     }],
+    ...overrides,
+  };
+}
+
+function managedMcpProviderStatus(
+  provider: "supabase" | "linear" | "notion",
+  overrides: Partial<McpProviderAvailability> = {},
+): McpProviderAvailability {
+  return {
+    provider,
+    organization: {
+      state: "connected",
+      connectionId: `${provider}-connection`,
+      maxAccess: provider === "notion" ? "provider_granted" : "read_write",
+      scopeMode: provider === "supabase" ? "account" : "workspace",
+      revision: 3,
+    },
+    agent: {
+      access: "none",
+      activeRunUsesOlderPolicy: false,
+    },
     ...overrides,
   };
 }
@@ -371,16 +409,10 @@ describe("AgentIntegrationsTab", () => {
   });
 
   it("reuses managed organization MCP state in the Agent integration catalog", () => {
-    mockManagedMcpConnectionsData.rows = [
-      managedMcpConnection("notion"),
-      managedMcpConnection("linear", {
-        binding: {
-          id: "linear-binding",
-          connectionId: "linear-connection",
-          agentId: "agent-1",
-          status: "active",
-          enabledToolIds: ["linear-tool"],
-        },
+    mockManagedMcpProviderStatusData.rows = [
+      managedMcpProviderStatus("notion"),
+      managedMcpProviderStatus("linear", {
+        agent: { access: "read_only", activeRunUsesOlderPolicy: false },
       }),
     ];
 
@@ -391,13 +423,81 @@ describe("AgentIntegrationsTab", () => {
 
     expect(notionCard?.textContent).toContain("Available");
     expect(notionCard?.textContent).not.toContain("Coming soon");
-    expect(linearCard?.textContent).toContain("Connected");
-    expect(linearCard?.textContent).toContain("1 tool enabled");
+    expect(linearCard?.textContent).toContain("Read only");
+    expect(linearCard?.textContent).not.toContain("tool enabled");
+    expect(linearCard?.textContent).not.toContain("external.linear");
     expect(supabaseCard?.textContent).toContain("Not connected");
   });
 
+  it("offers organization Custom MCP access from Discover without exposing its tool catalog", async () => {
+    const base = managedMcpConnection("linear");
+    mockManagedMcpConnectionsData.rows = [{
+      ...base,
+      connection: {
+        ...base.connection,
+        id: "custom-connection",
+        name: "acceptance-mcp",
+        displayName: "Acceptance MCP",
+        provider: "custom",
+        transport: "stdio",
+        externalScope: null,
+        accessMode: "provider_default",
+        safeConfig: { command: "custom-mcp" },
+      },
+      tools: [{
+        ...base.tools[0]!,
+        id: "custom-tool",
+        connectionId: "custom-connection",
+        externalToolName: "inspect",
+        rudderToolName: "external.acceptance-mcp.inspect",
+        capabilityClass: "unknown",
+      }],
+    }];
+
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const row = container.querySelector('[data-testid="agent-mcp-connection-custom-connection"]')!;
+
+    expect(container.textContent).toContain("Organization MCPs");
+    expect(row.textContent).toContain("Acceptance MCP");
+    expect(row.textContent).toContain("No access");
+    expect(row.textContent).not.toContain("inspect");
+
+    const setAccess = [...row.querySelectorAll("button")]
+      .find((button) => button.textContent === "Set access");
+    act(() => {
+      setAccess?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("Manage Acceptance MCP access");
+    expect(dialog.textContent).toContain("No access");
+    expect(dialog.textContent).toContain("Full server access");
+    expect(dialog.textContent).not.toContain("inspect");
+    const full = [...dialog.querySelectorAll("label")]
+      .find((label) => label.textContent?.includes("Full server access"))
+      ?.querySelector('input[type="radio"]');
+    act(() => {
+      full?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const save = [...dialog.querySelectorAll("button")]
+      .find((button) => button.textContent === "Save");
+    await act(async () => {
+      save?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(agentsApi.updateMcpConnectionBinding).toHaveBeenCalledWith(
+      "agent-1",
+      "custom-connection",
+      {
+        accessMode: "full",
+        status: "active",
+      },
+      "org-1",
+    );
+  });
+
   it("does not misreport an unavailable managed MCP query as not connected", () => {
-    mockManagedMcpConnectionsData.failed = true;
+    mockManagedMcpProviderStatusData.failed = true;
 
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
     const notionCard = container.querySelector('[data-testid="managed-mcp-provider-notion"]');
@@ -406,44 +506,128 @@ describe("AgentIntegrationsTab", () => {
     expect(notionCard?.textContent).not.toContain("Not connected");
   });
 
-  it("aggregates enabled tools across every active binding for the same provider", () => {
-    const first = managedMcpConnection("linear", {
-      binding: {
-        id: "linear-binding-1",
-        connectionId: "linear-connection",
-        agentId: "agent-1",
-        status: "active",
-        enabledToolIds: ["linear-tool"],
-      },
-    });
-    const second = managedMcpConnection("linear");
-    second.connection = {
-      ...second.connection,
-      id: "linear-connection-2",
-      name: "linear-secondary",
-    };
-    second.tools = [{
-      ...second.tools[0]!,
-      id: "linear-tool-2",
-      connectionId: "linear-connection-2",
-    }];
-    second.binding = {
-      id: "linear-binding-2",
-      connectionId: "linear-connection-2",
-      agentId: "agent-1",
-      status: "active",
-      enabledToolIds: ["linear-tool-2"],
-    };
-    mockManagedMcpConnectionsData.rows = [first, second];
+  it("opens a focused access dialog instead of navigating to Manage", () => {
+    mockManagedMcpProviderStatusData.rows = [
+      managedMcpProviderStatus("linear", {
+        agent: { access: "read_only", activeRunUsesOlderPolicy: false },
+      }),
+    ];
 
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
     const linearCard = container.querySelector('[data-testid="managed-mcp-provider-linear"]');
+    const manageButton = [...linearCard!.querySelectorAll("button")]
+      .find((button) => button.textContent === "Manage");
 
-    expect(linearCard?.textContent).toContain("Connected");
-    expect(linearCard?.textContent).toContain("2 tools enabled");
+    act(() => {
+      manageButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("Manage Linear access");
+    expect(dialog?.textContent).toContain("No access");
+    expect(dialog?.textContent).toContain("Read only");
+    expect(dialog?.textContent).toContain("Read & write");
+    expect(dialog?.textContent).not.toContain("external.linear");
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Discover");
   });
 
-  it("renders distinct core and Browser built-ins in manage view without mixing their tools", () => {
+  it("explains immediate reductions and next-run increases for an active task", () => {
+    mockManagedMcpProviderStatusData.rows = [
+      managedMcpProviderStatus("linear", {
+        agent: { access: "read_only", activeRunUsesOlderPolicy: true },
+      }),
+    ];
+
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const linearCard = container.querySelector('[data-testid="managed-mcp-provider-linear"]');
+    const manageButton = [...linearCard!.querySelectorAll("button")]
+      .find((button) => button.textContent === "Manage");
+    act(() => {
+      manageButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("Access reductions apply immediately");
+    expect(dialog?.textContent).toContain("increases start with the next run");
+  });
+
+  it("saves one coarse access choice with the current binding revision", async () => {
+    mockManagedMcpProviderStatusData.rows = [
+      managedMcpProviderStatus("linear", {
+        agent: { access: "read_only", activeRunUsesOlderPolicy: false },
+      }),
+    ];
+    mockManagedMcpConnectionsData.rows = [
+      managedMcpConnection("linear", {
+        binding: {
+          id: "linear-binding",
+          connectionId: "linear-connection",
+          agentId: "agent-1",
+          status: "active",
+          accessMode: "read_only",
+          policyRevision: 7,
+          enabledToolIds: [],
+        },
+      }),
+    ];
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const linearCard = container.querySelector('[data-testid="managed-mcp-provider-linear"]')!;
+    const manageButton = [...linearCard.querySelectorAll("button")]
+      .find((button) => button.textContent === "Manage");
+    act(() => {
+      manageButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    const readWrite = [...dialog.querySelectorAll('input[name="agent-provider-access-linear"]')].at(-1);
+    act(() => {
+      readWrite?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const save = [...dialog.querySelectorAll("button")]
+      .find((button) => button.textContent === "Save");
+    await act(async () => {
+      save?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(agentsApi.updateMcpConnectionBinding).toHaveBeenCalledWith(
+      "agent-1",
+      "linear-connection",
+      {
+        accessMode: "read_write",
+        status: "active",
+        expectedRevision: 7,
+      },
+      "org-1",
+    );
+  });
+
+  it("shows read-write but disables it when the organization maximum is read only", () => {
+    mockManagedMcpProviderStatusData.rows = [
+      managedMcpProviderStatus("supabase", {
+        organization: {
+          state: "connected",
+          connectionId: "supabase-connection",
+          maxAccess: "read_only",
+          scopeMode: "account",
+          revision: 2,
+        },
+      }),
+    ];
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const card = container.querySelector('[data-testid="managed-mcp-provider-supabase"]')!;
+    const setAccess = [...card.querySelectorAll("button")]
+      .find((button) => button.textContent === "Set access");
+    act(() => {
+      setAccess?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    const readWrite = [...dialog.querySelectorAll('input[name="agent-provider-access-supabase"]')].at(-1);
+
+    expect(readWrite?.hasAttribute("disabled")).toBe(true);
+    expect(dialog.textContent).toContain("The organization connection is read only.");
+  });
+
+  it("renders compact built-in summaries without a tool inventory wall", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
     const manageButton = [...container.querySelectorAll("button")]
       .find((button) => button.textContent === "Manage");
@@ -454,23 +638,14 @@ describe("AgentIntegrationsTab", () => {
 
     expect(container.textContent).toContain("Rudder MCP tools");
     expect(container.textContent).toContain("Rudder Browser");
-    expect(container.textContent).toContain("rudder-tools");
-    expect(container.textContent).toContain("rudder-browser");
-    expect(container.textContent).toContain(`${RUDDER_CORE_MCP_TOOL_NAMES.length} exposed`);
-    expect(container.textContent).toContain(`${RUDDER_BROWSER_MCP_TOOL_NAMES.length} exposed`);
-    expect(container.textContent).toContain("agent-v1");
-    expect(container.textContent).toContain("browser-v1");
-    expect(container.textContent).toContain("Runtime managed");
+    expect(container.textContent).toContain("Managed automatically by the Rudder runtime.");
     expect(container.textContent).toContain("No user credential");
-    expect(container.textContent).toContain("rudder_agent_me");
-    expect(container.textContent).toContain("rudder_issue_checkout");
+    expect(container.textContent).not.toContain("rudder_agent_me");
+    expect(container.textContent).not.toContain("rudder_issue_checkout");
+    expect(container.textContent).not.toContain("exposed");
     expect(container.textContent).not.toContain("No connected integrations");
     expect(container.textContent).not.toContain("Credential stored");
     expect(container.querySelector('img[src="/rudder-logo.png"]')).toBeTruthy();
-    expect(container.querySelector('[aria-label="Rudder MCP tools list"]')?.textContent)
-      .not.toContain("rudder_browser_tabs");
-    expect(container.querySelector('[aria-label="Rudder Browser tools list"]')?.textContent)
-      .toContain("rudder_browser_tabs");
     expect(container.querySelector('[aria-label="Rudder Browser integration"]')).toBeTruthy();
     expect(container.querySelector('[aria-label="Rudder MCP tools integration"]')).toBeTruthy();
     expect(container.textContent).toContain("Built-in2");
@@ -496,9 +671,8 @@ describe("AgentIntegrationsTab", () => {
     const coreRow = container.querySelector('[aria-label="Rudder MCP tools integration"]');
     const browserRow = container.querySelector('[aria-label="Rudder Browser integration"]');
     expect(coreRow?.textContent).toContain("Available");
-    expect(coreRow?.textContent).toContain(`${RUDDER_CORE_MCP_TOOL_NAMES.length} exposed`);
     expect(browserRow?.textContent).toContain("Disabled");
-    expect(browserRow?.textContent).toContain("0 exposed");
+    expect(browserRow?.textContent).not.toContain("exposed");
     expect(browserRow?.textContent).not.toContain("rudder_browser_tabs");
   });
 
@@ -793,7 +967,7 @@ describe("AgentIntegrationsTab", () => {
 
     expect(withCustom.textContent).toContain("Linear MCP");
     expect(withCustom.textContent).toContain("This agent only");
-    expect(withCustom.textContent).toContain("custom.linear-mcp.search_issues");
+    expect(withCustom.textContent).not.toContain("custom.linear-mcp.search_issues");
     expect(withCustom.textContent).toContain("Credential stored");
   });
 

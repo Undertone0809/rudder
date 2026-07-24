@@ -20,7 +20,9 @@ import type {
   CreateCustomIntegration,
   CustomIntegrationSummary,
   HeartbeatRun,
+  McpAgentAccessMode,
   McpAgentConnectionSummary,
+  McpProviderAvailability,
   OrganizationSkillCreateRequest,
   UpdateAgentIntegrationSettings,
   UpdateCustomIntegrationBinding,
@@ -178,10 +180,17 @@ export const agentsApi = {
     ),
   listMcpConnections: (id: string, orgId?: string) =>
     api.get<McpAgentConnectionSummary[]>(agentPath(id, orgId, "/mcp-connections")),
+  listMcpProviderStatus: (id: string, orgId?: string) =>
+    api.get<McpProviderAvailability[]>(agentPath(id, orgId, "/mcp-provider-status")),
   updateMcpConnectionBinding: (
     id: string,
     connectionId: string,
-    data: { status?: "active" | "disabled" | "revoked"; enabledToolIds?: string[] },
+    data: {
+      status?: "active" | "disabled" | "revoked";
+      accessMode?: McpAgentAccessMode;
+      expectedRevision?: number;
+      enabledToolIds?: string[];
+    },
     orgId?: string,
   ) => api.put<McpAgentConnectionSummary>(
     agentPath(id, orgId, `/mcp-connections/${encodeURIComponent(connectionId)}`),

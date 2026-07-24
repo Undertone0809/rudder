@@ -8,6 +8,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import type {
   CreateMcpConnection,
@@ -15,6 +17,7 @@ import type {
   McpConnectionProvider,
   McpConnectionSummary,
   McpConnectionTransport,
+  McpProviderAvailability,
   McpProviderCatalogEntry,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -22,9 +25,7 @@ import {
   ExternalLink,
   Loader2,
   Plus,
-  RefreshCw,
   Trash2,
-  Wrench,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -32,7 +33,7 @@ import { managedMcpApi } from "../api/managedMcp";
 import { McpProviderIcon } from "../components/McpProviderIcon";
 import { SettingsGroup, SettingsSection } from "../components/settings/SettingsScaffold";
 import { useToast } from "../context/ToastContext";
-import { readDesktopShell, type DesktopShellApi } from "../lib/desktop-shell";
+import { type DesktopShellApi, readDesktopShell } from "../lib/desktop-shell";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 
@@ -52,8 +53,6 @@ export interface CustomMcpFormState {
   headers: KeyValueRow[];
   headersFromEnvironment: KeyValueRow[];
   accessMode: McpConnectionAccessMode;
-  toolAllowlistText: string;
-  toolDenylistText: string;
   enabled: boolean;
   required: boolean;
   startupTimeoutSeconds: string;
@@ -82,8 +81,6 @@ export function defaultCustomMcpForm(): CustomMcpFormState {
     headers: [row()],
     headersFromEnvironment: [row()],
     accessMode: "provider_default",
-    toolAllowlistText: "",
-    toolDenylistText: "",
     enabled: true,
     required: false,
     startupTimeoutSeconds: "10",
@@ -131,13 +128,6 @@ export function buildCustomMcpPayload(form: CustomMcpFormState): CreateMcpConnec
     startupTimeoutMs,
     toolTimeoutMs,
   };
-  const toolAllowlist = splitList(form.toolAllowlistText);
-  const toolDenylist = splitList(form.toolDenylistText);
-  const toolFilters = {
-    ...(toolAllowlist.length > 0 ? { toolAllowlist } : {}),
-    ...(toolDenylist.length > 0 ? { toolDenylist } : {}),
-  };
-
   if (form.transport === "stdio") {
     const command = form.command.trim();
     if (!command) throw new Error("Command is required");
@@ -151,7 +141,6 @@ export function buildCustomMcpPayload(form: CustomMcpFormState): CreateMcpConnec
         ...(form.cwd.trim() ? { cwd: form.cwd.trim() } : {}),
         forwardedEnv: splitList(form.forwardedEnvText),
         secretEnvNames: environment.map(([name]) => name),
-        ...toolFilters,
       },
       ...(environment.length > 0
         ? { secrets: { env: Object.fromEntries(environment) } }
@@ -185,7 +174,6 @@ export function buildCustomMcpPayload(form: CustomMcpFormState): CreateMcpConnec
       ...(headers.length > 0
         ? { secretHeaderNames: headers.map(([name]) => name) }
         : {}),
-      ...toolFilters,
     },
     ...(headers.length > 0
       ? { secrets: { headers: Object.fromEntries(headers) } }
@@ -194,6 +182,9 @@ export function buildCustomMcpPayload(form: CustomMcpFormState): CreateMcpConnec
 }
 
 function providerDescription(provider: McpProviderCatalogEntry): string {
+  if (provider.id === "supabase") {
+    return "Connect account access. Agents choose the project for each task. Starts read-only.";
+  }
   const permission = provider.defaultAccessMode === "read_only"
     ? " Starts read-only."
     : provider.accessModes.includes("read_only")
@@ -209,7 +200,7 @@ function statusCopy(status: McpConnectionSummary["status"]) {
     case "authorizing":
       return ["Authorizing", "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"];
     case "selecting_scope":
-      return ["Choose scope", "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300"];
+      return ["Connecting", "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300"];
     case "needs_reauth":
       return ["Reconnect required", "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"];
     case "error":
@@ -237,6 +228,27 @@ export function canReconnectManagedMcp(status: McpConnectionSummary["status"]): 
     "error",
     "disabled",
   ].includes(status);
+}
+
+export function officialProviderAction(
+  state: McpProviderAvailability["organization"]["state"],
+  scopeMode: McpProviderAvailability["organization"]["scopeMode"],
+) {
+  if (scopeMode === "legacy_project") return "Upgrade to account access";
+  if (state === "connected") return "Manage";
+  if (state === "connecting") return "Continue setup";
+  if (state === "needs_attention") return "Reconnect";
+  return "Connect";
+}
+
+export function officialAccessChangeRequiresAuthorization(
+  provider: McpConnectionProvider,
+  currentAccess: McpConnectionAccessMode,
+  nextAccess: McpConnectionAccessMode,
+) {
+  return currentAccess !== nextAccess
+    && (provider === "supabase" || provider === "linear")
+    && (nextAccess === "read_only" || nextAccess === "read_write");
 }
 
 export function reserveAuthorizationLauncher(input: {
@@ -279,6 +291,10 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const [customForm, setCustomForm] = useState<CustomMcpFormState | null>(null);
+  const [view, setView] = useState<"discover" | "manage">("discover");
+  const [managedConnection, setManagedConnection] = useState<McpConnectionSummary | null>(null);
+  const [managedScopeMode, setManagedScopeMode] = useState<McpProviderAvailability["organization"]["scopeMode"]>(null);
+  const managedConnectionTriggerRef = useRef<HTMLElement | null>(null);
   const customConnectionCreated = useRef(false);
   const catalogQuery = useQuery({
     queryKey: queryKeys.organizations.mcpProviders(orgId),
@@ -295,10 +311,23 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
         : false;
     },
   });
+  const providerStatusQuery = useQuery({
+    queryKey: queryKeys.organizations.mcpProviderStatus(orgId),
+    queryFn: () => managedMcpApi.listProviderStatus(orgId),
+    refetchInterval: (query) => (query.state.data ?? []).some(
+      (status) => status.organization.state === "connecting",
+    ) ? 2_000 : false,
+  });
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries({
         queryKey: queryKeys.organizations.mcpConnections(orgId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.organizations.mcpProviderStatus(orgId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: ["agents", "mcp-provider-status"],
       }),
       queryClient.invalidateQueries({
         queryKey: ["agents", "mcp-connections"],
@@ -312,21 +341,12 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
       authorizationLauncher: AuthorizationLauncher;
     }) => {
       const { provider, authorizationLauncher } = input;
-      const definition = catalogQuery.data?.find((entry) => entry.id === provider);
-      if (!definition) throw new Error(`${provider} is not available`);
       try {
-        const connection = await managedMcpApi.createConnection(orgId, {
-          name: `${provider}-${Date.now().toString(36)}`,
-          displayName: definition.label,
+        const connection = await managedMcpApi.ensureOfficialConnection(
+          orgId,
           provider,
-          transport: "streamable_http",
-          safeConfig: {},
-          accessMode: input.accessMode ?? definition.defaultAccessMode,
-          enabled: true,
-          required: false,
-          startupTimeoutMs: 10_000,
-          toolTimeoutMs: 60_000,
-        });
+          input.accessMode,
+        );
         const started = await managedMcpApi.startOAuth(orgId, connection.id);
         await authorizationLauncher.navigate(started.authorizationUrl);
         return connection;
@@ -395,6 +415,19 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
     [catalogQuery.data],
   );
   const connections = connectionsQuery.data ?? [];
+  const providerStatuses = providerStatusQuery.data ?? [];
+  const canonicalOfficialConnectionIds = new Set(
+    providerStatuses
+      .map((status) => status.organization.connectionId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const visibleConnections = connections.filter((connection) => (
+    (connection.provider === "custom" || canonicalOfficialConnectionIds.has(connection.id))
+    && connection.status !== "revoked"
+  ));
+  const managedProviderStatus = providerStatusQuery.data?.find(
+    (status) => status.organization.connectionId === managedConnection?.id,
+  );
   const beginOfficialAuthorization = (
     provider: Exclude<McpConnectionProvider, "custom">,
     accessMode?: McpConnectionAccessMode,
@@ -413,84 +446,180 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
       });
     }
   };
+  const openConnectedProvider = (status: McpProviderAvailability) => {
+    managedConnectionTriggerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const connection = connections.find(
+      (candidate) => candidate.id === status.organization.connectionId,
+    );
+    if (connection) {
+      setManagedConnection(connection);
+      setManagedScopeMode(status.organization.scopeMode);
+      return;
+    }
+    pushToast({
+      title: "Connection details are still loading",
+      body: "Try again in a moment.",
+      tone: "info",
+    });
+  };
+  const closeManagedConnection = () => {
+    setManagedConnection(null);
+    setManagedScopeMode(null);
+    requestAnimationFrame(() => managedConnectionTriggerRef.current?.focus());
+  };
+  const resumeOfficialAuthorization = (
+    provider: Exclude<McpConnectionProvider, "custom">,
+    connectionId: string | null,
+  ) => {
+    if (!connectionId) {
+      beginOfficialAuthorization(provider);
+      return;
+    }
+    let launcher: AuthorizationLauncher;
+    try {
+      launcher = reserveAuthorizationLauncher();
+    } catch (error) {
+      pushToast({
+        title: "Could not open authorization",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+      return;
+    }
+    void managedMcpApi.reconnect(orgId, connectionId).then(async (result) => {
+      if ("authorizationUrl" in result) await launcher.navigate(result.authorizationUrl);
+      await invalidate();
+    }).catch(async (error) => {
+      launcher.close();
+      await invalidate();
+      pushToast({
+        title: "Could not restart authorization",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    });
+  };
 
   return (
-    <div className="flex min-w-0 flex-col gap-6" data-testid="organization-mcp-settings">
-      <SettingsSection
-        title="Connect an MCP"
-        description="Connections belong to this organization. Agents only receive the tools you explicitly bind."
-      >
-        {catalogQuery.isError ? (
-          <div className="rounded-md border border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-            Could not load the MCP provider catalog. {catalogQuery.error instanceof Error
-              ? catalogQuery.error.message
-              : ""}
-          </div>
-        ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          {curated.map((provider) => {
-            return (
+    <Tabs
+      value={view}
+      onValueChange={(next) => setView(next as "discover" | "manage")}
+      className="min-w-0 gap-5"
+      data-testid="organization-mcp-settings"
+    >
+      <TabsList aria-label="MCP integrations">
+        <TabsTrigger value="discover" onClick={() => setView("discover")}>Discover</TabsTrigger>
+        <TabsTrigger value="manage" onClick={() => setView("manage")}>Manage</TabsTrigger>
+      </TabsList>
+      <TabsContent value="discover">
+        <SettingsSection
+          title="Connect an MCP"
+          description="Connections belong to this organization. Agent access is managed separately."
+        >
+          {catalogQuery.isLoading || providerStatusQuery.isLoading ? (
+            <div className="grid gap-3 md:grid-cols-2" aria-label="Loading MCP providers">
+              {[0, 1, 2, 3].map((item) => (
+                <Skeleton key={item} className="h-36 w-full" />
+              ))}
+            </div>
+          ) : catalogQuery.isError || providerStatusQuery.isError ? (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/25 bg-destructive/5 px-4 py-3">
+              <p className="text-sm text-destructive">Could not load MCP providers.</p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  void catalogQuery.refetch();
+                  void providerStatusQuery.refetch();
+                }}
+              >
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {curated.map((provider) => {
+                const status = providerStatuses.find((item) => item.provider === provider.id);
+                const state = status?.organization.state ?? "not_connected";
+                const actionLabel = officialProviderAction(
+                  state,
+                  status?.organization.scopeMode ?? null,
+                );
+                return (
+                  <ProviderCard
+                    key={provider.id}
+                    testId={`mcp-provider-${provider.id}`}
+                    provider={provider.id}
+                    title={provider.label}
+                    description={providerDescription(provider)}
+                    statusLabel={providerStateLabel(state)}
+                    actionLabel={actionLabel}
+                    disabled={createOfficial.isPending || (state === "connected" && connectionsQuery.isLoading)}
+                    onAction={() => {
+                      if (state === "connected") {
+                        if (status) openConnectedProvider(status);
+                        return;
+                      }
+                      if (state === "not_connected") beginOfficialAuthorization(provider.id);
+                      else resumeOfficialAuthorization(provider.id, status?.organization.connectionId ?? null);
+                    }}
+                  />
+                );
+              })}
               <ProviderCard
-                key={provider.id}
-                testId={`mcp-provider-${provider.id}`}
-                provider={provider.id}
-                title={provider.label}
-                description={providerDescription(provider)}
-                actionLabel="Connect"
-                disabled={createOfficial.isPending}
-                onAction={() => beginOfficialAuthorization(provider.id)}
-                secondaryAction={provider.defaultAccessMode !== "read_only"
-                  && provider.accessModes.includes("read_only")
-                  ? {
-                      label: "Read-only",
-                      onClick: () => beginOfficialAuthorization(provider.id, "read_only"),
-                    }
-                  : undefined}
+                testId="mcp-provider-custom"
+                provider="custom"
+                title="Custom MCP"
+                description="Connect a Codex-compatible STDIO or Streamable HTTP MCP server."
+                actionLabel="Configure"
+                onAction={() => setCustomForm(defaultCustomMcpForm())}
               />
-            );
-          })}
-          <ProviderCard
-            testId="mcp-provider-custom"
-            provider="custom"
-            title="Custom MCP"
-            description="Connect a Codex-compatible STDIO or Streamable HTTP MCP server."
-            actionLabel="Configure"
-            onAction={() => setCustomForm(defaultCustomMcpForm())}
-          />
-        </div>
-        )}
-      </SettingsSection>
-
-      <SettingsSection
-        title="Managed connections"
-        description="Credentials stay encrypted on the Rudder server and are never exposed to agent configuration."
-      >
-        <SettingsGroup>
-          {connectionsQuery.isLoading ? (
-            <div className="flex items-center gap-2 px-4 py-5 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" /> Loading connections
             </div>
-          ) : connectionsQuery.isError ? (
-            <div className="px-4 py-5 text-sm text-destructive">
-              Could not load managed MCP connections. {connectionsQuery.error instanceof Error
-                ? connectionsQuery.error.message
-                : ""}
-            </div>
-          ) : connections.length === 0 ? (
-            <div className="px-4 py-7 text-center text-sm text-muted-foreground">
-              No managed MCP connections yet.
-            </div>
-          ) : connections.map((connection) => (
-            <ConnectionRow
-              key={connection.id}
-              orgId={orgId}
-              connection={connection}
-              provider={catalogQuery.data?.find((entry) => entry.id === connection.provider)}
-              onChanged={invalidate}
-            />
-          ))}
-        </SettingsGroup>
-      </SettingsSection>
+          )}
+        </SettingsSection>
+      </TabsContent>
+      <TabsContent value="manage">
+        <SettingsSection
+          title="Managed connections"
+          description="Credentials remain encrypted and are never exposed to agents."
+        >
+          <SettingsGroup>
+            {connectionsQuery.isLoading || providerStatusQuery.isLoading ? (
+              <div className="space-y-2 p-3" aria-label="Loading managed MCP connections">
+                <Skeleton className="h-14 w-full" />
+                <Skeleton className="h-14 w-full" />
+              </div>
+            ) : connectionsQuery.isError || providerStatusQuery.isError ? (
+              <div className="flex items-center justify-between gap-3 px-4 py-5">
+                <p className="text-sm text-destructive">Could not load managed MCP connections.</p>
+                <Button size="sm" variant="outline" onClick={() => {
+                  void connectionsQuery.refetch();
+                  void providerStatusQuery.refetch();
+                }}>
+                  Retry
+                </Button>
+              </div>
+            ) : visibleConnections.length === 0 ? (
+              <div className="px-4 py-7 text-center text-sm text-muted-foreground">
+                No managed MCP connections yet.
+              </div>
+            ) : visibleConnections.map((connection) => (
+              <CompactConnectionRow
+                key={connection.id}
+                connection={connection}
+                onManage={() => {
+                  managedConnectionTriggerRef.current = document.activeElement instanceof HTMLElement
+                    ? document.activeElement
+                    : null;
+                  setManagedConnection(connection);
+                }}
+              />
+            ))}
+          </SettingsGroup>
+        </SettingsSection>
+      </TabsContent>
 
       <CustomMcpDialog
         form={customForm}
@@ -501,8 +630,41 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
           if (customForm) createCustom.mutate(customForm);
         }}
       />
-    </div>
+      <OrganizationConnectionDialog
+        orgId={orgId}
+        connection={managedConnection}
+        provider={managedConnection
+          ? catalogQuery.data?.find((entry) => entry.id === managedConnection.provider)
+          : undefined}
+        scopeMode={managedProviderStatus?.organization.scopeMode ?? managedScopeMode}
+        affectedAgentCount={managedProviderStatus?.organization.affectedAgentCount ?? null}
+        historicalGrantConnectionIds={
+          managedProviderStatus?.organization.historicalGrantConnectionIds ?? []
+        }
+        onClose={closeManagedConnection}
+        onChanged={async () => {
+          setManagedConnection(null);
+          setManagedScopeMode(null);
+          await invalidate();
+        }}
+      />
+    </Tabs>
   );
+}
+
+function providerStateLabel(state: McpProviderAvailability["organization"]["state"]) {
+  switch (state) {
+    case "connected":
+      return "Connected";
+    case "connecting":
+      return "Connecting";
+    case "needs_attention":
+      return "Needs attention";
+    case "disconnected":
+      return "Not connected";
+    default:
+      return "Not connected";
+  }
 }
 
 function ProviderCard({
@@ -511,6 +673,7 @@ function ProviderCard({
   title,
   description,
   actionLabel,
+  statusLabel,
   secondaryAction,
   disabled,
   onAction,
@@ -520,6 +683,7 @@ function ProviderCard({
   title: string;
   description: string;
   actionLabel: string;
+  statusLabel?: string;
   secondaryAction?: { label: string; onClick: () => void };
   disabled?: boolean;
   onAction: () => void;
@@ -533,6 +697,9 @@ function ProviderCard({
         <McpProviderIcon provider={provider} />
         <div className="min-w-0 space-y-1">
           <p className="text-sm font-semibold text-foreground">{title}</p>
+          {statusLabel ? (
+            <p className="text-xs font-medium text-muted-foreground">{statusLabel}</p>
+          ) : null}
           <p className="text-[13px] leading-5 text-muted-foreground">{description}</p>
         </div>
       </div>
@@ -556,114 +723,98 @@ function ProviderCard({
   );
 }
 
-function ConnectionRow({
+function CompactConnectionRow({
+  connection,
+  onManage,
+}: {
+  connection: McpConnectionSummary;
+  onManage: () => void;
+}) {
+  const [statusLabel, statusTone] = statusCopy(connection.status);
+  return (
+    <div
+      data-slot="settings-item"
+      data-testid={`mcp-connection-${connection.id}`}
+      className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <McpProviderIcon provider={connection.provider} />
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="truncate text-sm font-medium text-foreground">{connection.displayName}</p>
+            <span className={cn("rounded-md border px-1.5 py-0.5 text-xs", statusTone)}>
+              {statusLabel}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {connection.externalScope ?? (connection.provider === "supabase"
+              ? "Account access"
+              : "Organization connection")}
+            {" · "}
+            {connection.accessMode === "read_only"
+              ? "Read only"
+              : connection.accessMode === "read_write"
+                ? "Read & write"
+                : "Provider-granted access"}
+          </p>
+        </div>
+      </div>
+      <Button size="sm" variant="outline" onClick={onManage}>
+        Manage
+      </Button>
+    </div>
+  );
+}
+
+function OrganizationConnectionDialog({
   orgId,
   connection,
   provider,
+  scopeMode,
+  affectedAgentCount,
+  historicalGrantConnectionIds,
+  onClose,
   onChanged,
 }: {
   orgId: string;
-  connection: McpConnectionSummary;
+  connection: McpConnectionSummary | null;
   provider?: McpProviderCatalogEntry;
+  scopeMode: McpProviderAvailability["organization"]["scopeMode"];
+  affectedAgentCount: number | null;
+  historicalGrantConnectionIds: string[];
+  onClose: () => void;
   onChanged: () => Promise<void>;
 }) {
   const { pushToast } = useToast();
-  const queryClient = useQueryClient();
-  const [showTools, setShowTools] = useState(false);
-  const toolsQuery = useQuery({
-    queryKey: queryKeys.organizations.mcpConnectionTools(orgId, connection.id),
-    queryFn: () => managedMcpApi.listTools(orgId, connection.id),
-    enabled: showTools,
-  });
-  const scopesQuery = useQuery({
-    queryKey: queryKeys.organizations.mcpConnectionScopes(orgId, connection.id),
-    queryFn: () => managedMcpApi.listScopes(orgId, connection.id),
-    enabled: connection.status === "selecting_scope",
-  });
-  const [selectedScope, setSelectedScope] = useState("");
+  const [accessMode, setAccessMode] = useState<McpConnectionAccessMode>("provider_default");
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [confirmHistoricalDisconnect, setConfirmHistoricalDisconnect] = useState(false);
   useEffect(() => {
-    if (!selectedScope && scopesQuery.data?.[0]) setSelectedScope(scopesQuery.data[0].id);
-  }, [scopesQuery.data, selectedScope]);
-  const invalidateConnectionDetails = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.organizations.mcpConnectionTools(orgId, connection.id),
-      }),
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.organizations.mcpConnectionScopes(orgId, connection.id),
-      }),
-    ]);
-  };
-
-  const runAction = useMutation({
-    mutationFn: async (input: {
-      action: "reconnect" | "refresh" | "disconnect" | "scope";
-      authorizationLauncher?: AuthorizationLauncher;
-    }) => {
-      const { action, authorizationLauncher } = input;
-      if (action === "refresh") return managedMcpApi.refreshTools(orgId, connection.id);
-      if (action === "disconnect") return managedMcpApi.disconnect(orgId, connection.id);
-      if (action === "scope") {
-        if (!selectedScope) throw new Error(`Choose a ${provider?.scopeLabel.toLowerCase() ?? "scope"}`);
-        return managedMcpApi.selectScope(orgId, connection.id, {
-          externalScope: selectedScope,
-          accessMode: connection.accessMode,
-        });
-      }
+    if (connection) setAccessMode(connection.accessMode);
+    setConfirmDisconnect(false);
+    setConfirmHistoricalDisconnect(false);
+  }, [connection]);
+  const requiresReauthorization = Boolean(connection && officialAccessChangeRequiresAuthorization(
+    connection.provider,
+    connection.accessMode,
+    accessMode,
+  ));
+  const saveAccess = useMutation({
+    mutationFn: async (authorizationLauncher?: AuthorizationLauncher) => {
+      if (!connection) throw new Error("Connection is unavailable");
       try {
-        const result = await managedMcpApi.reconnect(orgId, connection.id);
-        if ("authorizationUrl" in result) {
+        if (requiresReauthorization) {
           if (!authorizationLauncher) throw new Error("Authorization launcher was not reserved");
-          await authorizationLauncher.navigate(result.authorizationUrl);
-        }
-        if (connection.provider === "custom") {
-          await managedMcpApi.refreshTools(orgId, connection.id);
-          return managedMcpApi.getConnection(orgId, connection.id);
-        }
-        return result;
-      } catch (error) {
-        authorizationLauncher?.close();
-        throw error;
-      }
-    },
-    onSuccess: async (_result, input) => {
-      await Promise.all([onChanged(), invalidateConnectionDetails()]);
-      if (input.action === "refresh") await toolsQuery.refetch();
-      pushToast({
-        title: input.action === "disconnect" ? "Connection disconnected" : "Connection updated",
-        tone: "success",
-      });
-    },
-    onError: async (error) => {
-      await Promise.all([onChanged(), invalidateConnectionDetails()]);
-      pushToast({
-        title: "Connection action failed",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    },
-  });
-  const updateAccess = useMutation({
-    mutationFn: async (input: {
-      accessMode: McpConnectionAccessMode;
-      authorizationLauncher?: AuthorizationLauncher;
-    }) => {
-      const { accessMode, authorizationLauncher } = input;
-      const needsLinearReauthorization = connection.provider === "linear"
-        && connection.status === "active"
-        && connection.accessMode === "read_only"
-        && accessMode === "read_write";
-      try {
-        if (needsLinearReauthorization) {
-          if (!authorizationLauncher) throw new Error("Authorization launcher was not reserved");
-          await managedMcpApi.disconnect(orgId, connection.id);
-          await managedMcpApi.updateAccessMode(orgId, connection.id, accessMode);
-          const started = await managedMcpApi.reconnect(orgId, connection.id);
-          if (!("authorizationUrl" in started)) {
-            throw new Error("Linear reauthorization did not return an authorization URL");
+          if (accessMode !== "read_only" && accessMode !== "read_write") {
+            throw new Error("Official provider access mode is invalid");
           }
-          await authorizationLauncher.navigate(started.authorizationUrl);
-          return started;
+          const result = await managedMcpApi.reauthorizeAccess(
+            orgId,
+            connection.id,
+            accessMode,
+          );
+          await authorizationLauncher.navigate(result.authorizationUrl);
+          return result;
         }
         return managedMcpApi.updateAccessMode(orgId, connection.id, accessMode);
       } catch (error) {
@@ -672,194 +823,283 @@ function ConnectionRow({
       }
     },
     onSuccess: async () => {
-      await Promise.all([onChanged(), invalidateConnectionDetails()]);
-    },
-    onError: async (error) => {
-      await Promise.all([onChanged(), invalidateConnectionDetails()]);
       pushToast({
-        title: "Permission update failed",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
+        title: requiresReauthorization ? "Authorization opened" : "Maximum access updated",
+        tone: requiresReauthorization ? "info" : "success",
       });
+      await onChanged();
     },
+    onError: (error) => pushToast({
+      title: "Could not update maximum access",
+      body: error instanceof Error ? error.message : undefined,
+      tone: "error",
+    }),
   });
-  const [statusLabel, statusTone] = statusCopy(connection.status);
-  const canReconnect = canReconnectManagedMcp(connection.status);
-  const reconnect = () => {
-    try {
-      runAction.mutate({
-        action: "reconnect",
-        ...(connection.provider === "custom"
-          ? {}
-          : { authorizationLauncher: reserveAuthorizationLauncher() }),
-      });
-    } catch (error) {
+  const reconnect = useMutation({
+    mutationFn: async () => {
+      if (!connection) throw new Error("Connection is unavailable");
+      if (connection.provider === "custom") {
+        return managedMcpApi.reconnect(orgId, connection.id);
+      }
+      const launcher = reserveAuthorizationLauncher();
+      try {
+        const result = await managedMcpApi.reconnect(orgId, connection.id);
+        if ("authorizationUrl" in result) await launcher.navigate(result.authorizationUrl);
+        return result;
+      } catch (error) {
+        launcher.close();
+        throw error;
+      }
+    },
+    onSuccess: async () => {
+      pushToast({ title: "Authorization opened", tone: "info" });
+      await onChanged();
+    },
+    onError: (error) => pushToast({
+      title: "Could not reconnect",
+      body: error instanceof Error ? error.message : undefined,
+      tone: "error",
+    }),
+  });
+  const disconnect = useMutation({
+    mutationFn: () => {
+      if (!connection) throw new Error("Connection is unavailable");
+      return managedMcpApi.disconnect(orgId, connection.id);
+    },
+    onSuccess: async () => {
+      pushToast({ title: "Connection disconnected", tone: "success" });
+      await onChanged();
+    },
+    onError: (error) => pushToast({
+      title: "Could not disconnect",
+      body: error instanceof Error ? error.message : undefined,
+      tone: "error",
+    }),
+  });
+  const disconnectHistorical = useMutation({
+    mutationFn: async () => {
+      for (const connectionId of historicalGrantConnectionIds) {
+        await managedMcpApi.disconnect(orgId, connectionId);
+      }
+    },
+    onSuccess: async () => {
+      pushToast({ title: "Historical access disconnected", tone: "success" });
+      await onChanged();
+    },
+    onError: (error) => pushToast({
+      title: "Could not disconnect historical access",
+      body: error instanceof Error ? error.message : undefined,
+      tone: "error",
+    }),
+  });
+  const upgradeAccountAccess = useMutation({
+    mutationFn: async (authorizationLauncher: AuthorizationLauncher) => {
+      if (!connection) throw new Error("Connection is unavailable");
+      try {
+        const result = await managedMcpApi.upgradeSupabaseAccountAccess(orgId, connection.id);
+        await authorizationLauncher.navigate(result.authorizationUrl);
+        return result;
+      } catch (error) {
+        authorizationLauncher.close();
+        throw error;
+      }
+    },
+    onSuccess: async () => {
       pushToast({
-        title: "Could not open authorization",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
+        title: "Account authorization opened",
+        body: "The current project connection stays active until the upgrade succeeds.",
+        tone: "info",
       });
-    }
-  };
-  const changeAccessMode = (accessMode: McpConnectionAccessMode) => {
-    const requiresAuthorization = connection.provider === "linear"
-      && connection.status === "active"
-      && connection.accessMode === "read_only"
-      && accessMode === "read_write";
-    try {
-      updateAccess.mutate({
-        accessMode,
-        ...(requiresAuthorization
-          ? { authorizationLauncher: reserveAuthorizationLauncher() }
-          : {}),
-      });
-    } catch (error) {
-      pushToast({
-        title: "Could not open authorization",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    }
-  };
+      await onChanged();
+    },
+    onError: (error) => pushToast({
+      title: "Could not start account upgrade",
+      body: error instanceof Error ? error.message : undefined,
+      tone: "error",
+    }),
+  });
+  const pending = saveAccess.isPending
+    || reconnect.isPending
+    || disconnect.isPending
+    || disconnectHistorical.isPending
+    || upgradeAccountAccess.isPending;
+  const isLegacySupabase = connection?.provider === "supabase" && scopeMode === "legacy_project";
+  const [statusLabel] = connection ? statusCopy(connection.status) : ["", ""];
 
   return (
-    <div
-      data-slot="settings-item"
-      data-testid={`mcp-connection-${connection.id}`}
-      className="flex flex-col gap-3 px-4 py-3.5"
-    >
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-medium text-foreground">{connection.displayName}</p>
-            <span className={cn("rounded-md border px-1.5 py-0.5 text-xs", statusTone)}>
-              {statusLabel}
-            </span>
-            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-              {connection.provider === "custom" ? connection.transport.replace("_", " ") : connection.provider}
-            </span>
-          </div>
-          <p className="mt-1 text-[13px] text-muted-foreground">
-            {connection.externalScope
-              ? `${connection.externalScope} · ${connection.accessMode.replace("_", " ")}`
-              : connection.accessMode.replace("_", " ")}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {provider?.curated && provider.accessModes.length > 1 ? (
-            <select
-              aria-label={`Access mode for ${connection.displayName}`}
-              className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-              value={connection.accessMode}
-              disabled={updateAccess.isPending || connection.status !== "active"}
-              onChange={(event) =>
-                changeAccessMode(event.target.value as McpConnectionAccessMode)}
-            >
-              {provider.accessModes.map((accessMode) => (
-                <option key={accessMode} value={accessMode}>
-                  {accessMode === "read_only"
-                    ? "Read only"
-                    : accessMode === "read_write"
-                      ? "Read/write"
-                      : "Provider default"}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          <Button size="sm" variant="outline" onClick={() => setShowTools((value) => !value)}>
-            <Wrench className="size-3.5" /> Tools
-          </Button>
-          {connection.status === "active" ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={runAction.isPending}
-              onClick={() => runAction.mutate({ action: "refresh" })}
-            >
-              <RefreshCw className="size-3.5" /> Refresh
-            </Button>
-          ) : null}
-          {canReconnect ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={runAction.isPending}
-              onClick={reconnect}
-            >
-              <ExternalLink className="size-3.5" /> Reconnect
-            </Button>
-          ) : null}
-          {!["revoked", "disabled"].includes(connection.status) ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={runAction.isPending}
-              onClick={() => runAction.mutate({ action: "disconnect" })}
-            >
-              <Trash2 className="size-3.5" /> Disconnect
-            </Button>
-          ) : null}
-        </div>
-      </div>
-      {connection.status === "selecting_scope" ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-sky-500/20 bg-sky-500/5 p-3">
-          {scopesQuery.isError ? (
-            <p className="text-xs text-destructive">
-              Could not load available scopes. {scopesQuery.error instanceof Error
-                ? scopesQuery.error.message
-                : ""}
-            </p>
-          ) : (
-            <>
-              <select
-                aria-label={provider?.scopeLabel ?? "External scope"}
-                className="h-9 min-w-56 flex-1 rounded-md border border-border bg-background px-2 text-sm"
-                value={selectedScope}
-                disabled={scopesQuery.isLoading}
-                onChange={(event) => setSelectedScope(event.target.value)}
-              >
-                {(scopesQuery.data ?? []).map((scope) => (
-                  <option key={scope.id} value={scope.id}>{scope.displayName}</option>
-                ))}
-              </select>
-              <Button
-                size="sm"
-                disabled={!selectedScope || runAction.isPending || scopesQuery.isLoading}
-                onClick={() => runAction.mutate({ action: "scope" })}
-              >
-                Use {provider?.scopeLabel.toLowerCase() ?? "scope"}
-              </Button>
-            </>
-          )}
-        </div>
-      ) : null}
-      {showTools ? (
-        <div className="rounded-md border border-border bg-muted/25 p-3">
-          {toolsQuery.isLoading ? (
-            <p className="text-xs text-muted-foreground">Loading tools…</p>
-          ) : toolsQuery.isError ? (
-            <p className="text-xs text-destructive">
-              Could not load discovered tools. {toolsQuery.error instanceof Error
-                ? toolsQuery.error.message
-                : ""}
-            </p>
-          ) : (toolsQuery.data ?? []).length === 0 ? (
-            <p className="text-xs text-muted-foreground">No tools discovered.</p>
-          ) : (
-            <div className="grid gap-2 md:grid-cols-2">
-              {(toolsQuery.data ?? []).map((tool) => (
-                <div key={tool.id} className="min-w-0">
-                  <p className="truncate font-mono text-xs text-foreground">{tool.rudderToolName}</p>
-                  {tool.description ? (
-                    <p className="line-clamp-2 text-xs text-muted-foreground">{tool.description}</p>
-                  ) : null}
+    <Dialog open={Boolean(connection)} onOpenChange={(open) => {
+      if (!open && !pending) onClose();
+    }}>
+      <DialogContent className="sm:max-w-lg">
+        {connection ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Manage {connection.displayName}</DialogTitle>
+              <DialogDescription>
+                Organization connection settings and the maximum access agents may receive.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <dl className="grid grid-cols-2 gap-3 rounded-md border border-border p-3 text-sm">
+                <div>
+                  <dt className="text-xs text-muted-foreground">Status</dt>
+                  <dd className="mt-1 font-medium">{statusLabel}</dd>
                 </div>
-              ))}
+                <div>
+                  <dt className="text-xs text-muted-foreground">Scope</dt>
+                  <dd className="mt-1 font-medium">
+                    {connection.externalScope ?? (connection.provider === "supabase"
+                      ? "All authorized projects"
+                      : "Organization workspace")}
+                  </dd>
+                </div>
+              </dl>
+              {historicalGrantConnectionIds.length > 0 ? (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+                  <p className="text-sm font-medium text-foreground">
+                    {historicalGrantConnectionIds.length} historical{" "}
+                    {historicalGrantConnectionIds.length === 1 ? "authorization" : "authorizations"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Older duplicate connections are disabled, but their encrypted provider access
+                    remains stored until you disconnect it.
+                  </p>
+                  {confirmHistoricalDisconnect ? (
+                    <div className="mt-3 flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={pending}
+                        onClick={() => setConfirmHistoricalDisconnect(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={pending}
+                        onClick={() => disconnectHistorical.mutate()}
+                      >
+                        Disconnect historical access
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      className="mt-3"
+                      size="sm"
+                      variant="outline"
+                      disabled={pending}
+                      onClick={() => setConfirmHistoricalDisconnect(true)}
+                    >
+                      Disconnect historical access
+                    </Button>
+                  )}
+                </div>
+              ) : null}
+              {isLegacySupabase ? (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+                  <p className="text-sm font-medium text-foreground">Upgrade to account access</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    This expands authorization from one project to all authorized projects.
+                    Existing agent access will reset to No access after a successful upgrade.
+                  </p>
+                  <Button
+                    className="mt-3"
+                    size="sm"
+                    disabled={pending}
+                    onClick={() => {
+                      try {
+                        upgradeAccountAccess.mutate(reserveAuthorizationLauncher());
+                      } catch (error) {
+                        pushToast({
+                          title: "Could not open authorization",
+                          body: error instanceof Error ? error.message : undefined,
+                          tone: "error",
+                        });
+                      }
+                    }}
+                  >
+                    Upgrade to account access
+                  </Button>
+                </div>
+              ) : null}
+              {!isLegacySupabase && provider && provider.accessModes.length > 1 ? (
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium">Maximum access</legend>
+                  {provider.accessModes.map((mode) => (
+                    <label key={mode} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                      <input
+                        type="radio"
+                        name={`organization-access-${connection.id}`}
+                        value={mode}
+                        checked={accessMode === mode}
+                        onChange={() => setAccessMode(mode)}
+                      />
+                      {mode === "read_only"
+                        ? "Read only"
+                        : mode === "read_write"
+                          ? "Read & write"
+                          : "Provider-granted access"}
+                    </label>
+                  ))}
+                  <Button
+                    size="sm"
+                    disabled={pending || accessMode === connection.accessMode}
+                    onClick={() => {
+                      if (!requiresReauthorization) {
+                        saveAccess.mutate(undefined);
+                        return;
+                      }
+                      try {
+                        saveAccess.mutate(reserveAuthorizationLauncher());
+                      } catch (error) {
+                        pushToast({
+                          title: "Could not open authorization",
+                          body: error instanceof Error ? error.message : undefined,
+                          tone: "error",
+                        });
+                      }
+                    }}
+                  >
+                    Save
+                  </Button>
+                </fieldset>
+              ) : null}
+              {confirmDisconnect ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                  <p className="text-sm font-medium text-foreground">Disconnect this organization connection?</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {affectedAgentCount === null
+                      ? "Agents using it will lose access immediately."
+                      : `${affectedAgentCount} ${affectedAgentCount === 1 ? "agent" : "agents"} currently have access and will lose it immediately.`}
+                  </p>
+                  <div className="mt-3 flex justify-end gap-2">
+                    <Button size="sm" variant="outline" disabled={pending} onClick={() => setConfirmDisconnect(false)}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" variant="destructive" disabled={pending} onClick={() => disconnect.mutate()}>
+                      Disconnect
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </div>
-          )}
-        </div>
-      ) : null}
-    </div>
+            <DialogFooter className="sm:justify-between">
+              {isLegacySupabase ? <span /> : (
+                <Button variant="outline" disabled={pending} onClick={() => reconnect.mutate()}>
+                  <ExternalLink className="size-3.5" /> Reconnect
+                </Button>
+              )}
+              {!confirmDisconnect ? (
+                <Button variant="ghost" disabled={pending} onClick={() => setConfirmDisconnect(true)}>
+                  <Trash2 className="size-3.5" /> Disconnect
+                </Button>
+              ) : null}
+            </DialogFooter>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1120,28 +1360,6 @@ function CustomMcpDialog({
                   inputMode="decimal"
                   value={form.toolTimeoutSeconds}
                   onChange={(event) => update("toolTimeoutSeconds", event.target.value)}
-                />
-              </FormField>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <FormField
-                label="Tool allowlist"
-                hint="Optional exact upstream tool names, comma-separated. Blank allows all."
-              >
-                <Input
-                  placeholder="search, list_projects"
-                  value={form.toolAllowlistText}
-                  onChange={(event) => update("toolAllowlistText", event.target.value)}
-                />
-              </FormField>
-              <FormField
-                label="Tool denylist"
-                hint="Exact upstream tool names removed after the allowlist."
-              >
-                <Input
-                  placeholder="delete_project, execute_sql"
-                  value={form.toolDenylistText}
-                  onChange={(event) => update("toolDenylistText", event.target.value)}
                 />
               </FormField>
             </div>

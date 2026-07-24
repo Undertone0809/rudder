@@ -49,6 +49,7 @@ related_plans:
   - doc/plans/2026-06-26-local-runtime-operator-home-default.md
   - doc/plans/2026-07-12-built-in-browser.md
   - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
+  - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
   - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
 edit_policy: user_confirmed_only
 ---
@@ -118,6 +119,9 @@ temporary OAuth material remain encrypted on the Rudder server. A runtime
 receives only a run-scoped proxy identity and provider-neutral tool
 descriptors; it never receives provider access/refresh tokens, PKCE verifiers,
 dynamic client secrets, or organization secret identifiers.
+The runtime authorization boundary also includes a persisted run-start policy
+snapshot. Current binding and provider policy can immediately reduce that
+snapshot, while permission increases wait for the next run.
 
 ## Actors / Objects / State
 
@@ -258,13 +262,26 @@ dynamic client secrets, or organization secret identifiers.
     adapter config, command lines, child environment variables, or audit
     outcomes.
 
+    Reauthorization is a two-phase replacement. Rudder retains the prior usable
+    grant while the new OAuth session is pending and atomically swaps credentials
+    only after successful callback validation. Cancellation, timeout, stale
+    callback, or discovery failure must not revoke the prior grant; explicit
+    Disconnect is the immediate-stop action.
+
 13. Runtime adapters receive a provider-neutral, run-scoped external MCP proxy
-    binding containing only binding id, proxy server name, explicit tool
-    allowlist policy, required behavior, startup timeout, and tool timeout. The
+    binding containing only binding id, proxy server name, server-derived tool
+    policy, policy revision, required behavior, startup timeout, and tool
+    timeout. The
     fixed Rudder proxy URL and run-owned authorization are derived outside the
     binding array. The runtime identity authorizes only the selected
     organization, agent, run, connection, binding, and enabled tools; it does
     not become the provider OAuth identity.
+
+    Rudder persists the run-start policy snapshot. Both `tools/list` and
+    `tools/call` enforce the intersection of that snapshot, the current binding,
+    and current provider policy. Reductions take effect for subsequent calls in
+    the active run; increases wait until a new run. Permission update and run
+    dispatch use one revision/locking order so a race cannot widen a snapshot.
 
 14. Arbitrary custom STDIO execution is permitted only in `local_trusted`.
     Authenticated deployments require instance-administrator allowlists for
@@ -320,6 +337,10 @@ dynamic client secrets, or organization secret identifiers.
 | Built-in Browser enabled for supported local adapter | Trusted run context enables Browser | Managed MCP/native config receives only the capability flag and runtime-owned tool identity | Adapter must not receive Browser profile paths, cookies, Broker credentials, or an agent-overridable enable flag | Adapter execute and run-context tests |
 | Browser disabled or runtime unsupported | Live setting is off, runtime is remote, or no secure managed tool path exists | Remove the managed Browser flag/tools or report capability unavailable | Inherited env or user MCP config must not expose stale Browser control | Negative adapter and MCP manifest tests |
 | Managed provider OAuth grant | Connection is active for the organization and agent | Runtime gets a run-scoped proxy identity; Rudder injects provider credentials server-side per call | OAuth tokens or secret ids must not enter adapter config, prompts, arguments, logs, or model-visible errors | Proxy authorization and secret-redaction tests |
+| Reauthorization is cancelled, expires, or fails | Existing usable grant remains active and the replacement session records failure | Pending replacement must not revoke the current grant or interrupt every bound Agent | OAuth replacement race and stale-callback tests |
+| Operator explicitly disconnects provider | Current grant is revoked and subsequent proxy calls stop | Disconnect must not be treated as a recoverable reauthorization attempt | Disconnect and proxy rejection tests |
+| Agent access is reduced during an active run | Later external MCP list/call checks apply the reduction immediately | The run-start snapshot must not preserve revoked write access | Run policy snapshot and direct-call rejection tests |
+| Agent access is increased during an active run | Increase is deferred until the next run snapshot | A long-lived run must not gain new authority mid-run | Run policy snapshot tests |
 | Custom STDIO in `local_trusted` | Operator config passes validation | Rudder may launch the configured command with bounded args, cwd, environment, timeouts, output, and cleanup | Child process must not inherit unselected secret environment or outlive required cleanup | Process allowlist, isolation, timeout, and cleanup tests |
 | Custom STDIO in authenticated deployment | Command/path/env is not instance-admin allowlisted | Discovery and dispatch are rejected with a policy error | Organization managers must not bypass deployment-admin process policy | Authenticated deployment negative tests |
 | Public HTTPS Streamable HTTP target | URL and resolved addresses remain public and headers are safe | Discovery/dispatch may proceed through the managed client | Redirects or DNS changes must not pivot into private/loopback targets | SSRF, redirect, and DNS rebinding tests |
@@ -504,6 +525,12 @@ Evidence can include:
   tool arguments.
 - Provider OAuth identity, the authorizing Rudder user, and run-scoped proxy
   identity are separate authorization boundaries.
+- OAuth replacement credentials do not become active until callback validation
+  and atomic swap complete; an in-progress replacement is not authorization to
+  destroy a usable grant.
+- External MCP run policy is monotonic within a run: live reductions may remove
+  authority, but live increases cannot add authority beyond the run-start
+  snapshot.
 - External MCP credentials remain server-side and are never materialized in
   runtime homes, generated adapter source, prompts, tool arguments, or
   redacted dispatch outcomes.
@@ -550,6 +577,7 @@ Related plans:
 - `doc/plans/2026-06-26-local-runtime-operator-home-default.md`
 - `doc/plans/2026-07-12-built-in-browser.md`
 - `doc/plans/2026-07-23-managed-mcp-oauth-integrations.md`
+- `doc/plans/2026-07-25-managed-mcp-access-and-interactions.md`
 
 Related code:
 

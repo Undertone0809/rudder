@@ -29,6 +29,7 @@ related_tests:
 related_plans:
   - doc/plans/2026-06-27-agent-custom-integrations.md
   - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
+  - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
 edit_policy: user_confirmed_only
 ---
 
@@ -46,7 +47,9 @@ bindings, and redacted dispatch evidence. OAuth grants and temporary OAuth
 sessions are separate encrypted credential records. Public connection
 summaries expose credential presence only, never secret identifiers or values.
 External MCP credentials stay server-side throughout authorization, discovery,
-and dispatch.
+and dispatch. Supabase, Linear, and Notion each have one canonical connection
+per organization; Custom MCP remains multi-instance. Operators assign
+coarse-grained Agent access instead of managing individual tool checkboxes.
 
 ### Intent / User Job
 
@@ -84,13 +87,19 @@ tool naming, identity, and fallback semantics for that built-in surface.
   display metadata, non-secret config, status, and optional credential secret.
 - Custom integration tool: Rudder-namespaced callable tool metadata owned by a
   custom integration.
-- Agent custom integration binding: per-agent status and enabled-tool allowlist.
+- Agent custom integration binding: per-agent status, coarse access mode, policy
+  revision, and a legacy enabled-tool id filter that may only narrow the
+  server-derived policy.
 - Custom integration tool call: sanitized audit evidence for attempted custom
   tool dispatch.
 - Managed MCP connection: organization-owned provider/server identity with a
   unique organization server name, transport (`stdio`, `streamable_http`, or
   `legacy_manual`), optional stable external scope, access mode, timeouts,
   enablement/required flags, and explicit lifecycle state.
+- Canonical managed connection: the single active organization/provider record
+  for Supabase, Linear, or Notion. Superseded records retain historical tools,
+  bindings, calls, and audit evidence but are not offered as new connection
+  choices.
 - OAuth grant: connection-bound provider identity and scope metadata whose
   access/refresh/client credential material exists only through an encrypted
   organization-secret reference.
@@ -112,7 +121,9 @@ tool naming, identity, and fallback semantics for that built-in surface.
   binding. Agent-scoped integrations are also revoked as definitions.
 - `POST /api/agents/:id/custom-integrations/:integrationId/tool-calls` records
   a validated blocked audit event for the first implementation slice.
-- Agent Detail Integrations exposes Custom API and MCP Server setup controls.
+- Organization and Agent Detail Integrations expose `Discover` and `Manage`
+  tabs. Provider cards and compact Manage rows open focused modals; Manage does
+  not expand a page-sized tool list.
 - Agent Detail Integrations Manage exposes a read-only built-in `Rudder MCP
   tools` row for the first-party `rudder-tools` Agent V1 MCP server.
 - Organization integration management exposes managed connection CRUD,
@@ -129,8 +140,9 @@ tool naming, identity, and fallback semantics for that built-in surface.
    credential material as an organization secret when provided.
 4. Rudder creates tool rows with organization-unique, Rudder-namespaced tool
    names such as `custom.linear-mcp.search_issues`.
-5. Rudder creates an active binding for the selected agent and stores only
-   enabled tool ids on that binding.
+5. Rudder creates an active binding for the selected agent with a coarse access
+   mode and policy revision. A retained enabled-tool id list is compatibility
+   data that may only reduce the effective server-derived policy.
 6. Runtime prompt assembly reads only active integrations with active bindings
    for the exact organization and agent.
 7. Runtime prompt text lists tool names, integration display names, kind, scope,
@@ -144,30 +156,40 @@ tool naming, identity, and fallback semantics for that built-in surface.
    Rudder logo, server name, runtime-managed auth label, and full exposed tool
    list. This row is informational and cannot be configured or disconnected
    through custom integration actions.
-10. For a managed provider, Rudder creates a `draft` connection, starts a
-    one-time 10-minute OAuth session, stores only the state hash, and keeps
-    PKCE, temporary client metadata, access tokens, and refresh tokens in
-    encrypted organization secrets.
+10. For an official provider, Rudder atomically ensures the organization's
+    canonical provider connection instead of creating timestamp-named
+    duplicates. It starts a one-time 10-minute OAuth session, stores only the
+    state hash, and keeps PKCE, temporary client metadata, access tokens, and
+    refresh tokens in encrypted organization secrets.
 11. The OAuth callback consumes the session once, associates the authorizing
     Rudder user with provider subject/scope metadata, and moves the connection
-    through `authorizing`, `selecting_scope`, `active`, `needs_reauth`,
-    `disabled`, `revoked`, or `error` without putting provider credentials in
-    connection rows or public responses.
-12. Supabase selects one project and defaults to `read_only`; a Supabase Owner
-    may explicitly enable `read_write` (read/write). Linear binds one authorized
-    workspace with `read_only` or `read_write` access. Notion supports only
-    `provider_default`: its provider-granted workspace permissions are not
-    presented as a provider-native read-only mode, while Rudder still limits
-    agent exposure through the binding tool allowlist. The existing Linear
-    issue-import plugin remains separate and unchanged.
-13. Real MCP tool discovery stores raw schemas for evidence and sanitized
-    schemas for operator/runtime exposure. Removed tools remain explicit.
-    Current discovered tools may be enabled on the first binding, but newly
-    discovered tools never auto-enable on existing agent bindings.
-14. A managed dispatch revalidates organization, agent, run, connection,
-    grant, binding, and enabled tool before forwarding. Audit evidence stores
-    sanitized input/result and a redacted dispatch outcome.
-15. Custom STDIO accepts Codex-compatible command, arguments, working
+    through `authorizing`, `active`, `needs_reauth`, `disabled`, `revoked`, or
+    `error` without putting provider credentials in connection rows or public
+    responses. Reauthorization is two-phase: an existing usable grant remains
+    active until a replacement grant succeeds and is atomically swapped in.
+12. Supabase authorizes account scope and defaults to `read_only`; setup does
+    not select or persist one project. The Agent supplies `project_id` on
+    project-specific calls, and Rudder does not inject `project_ref` into the
+    account-scoped provider endpoint. Existing project-scoped connections remain
+    `legacy_project` until the operator explicitly confirms an upgrade; the
+    upgrade resets affected Agent access to `none` to prevent silent expansion.
+    Linear binds one authorized workspace with `read_only` or `read_write`.
+    Notion exposes only provider-granted workspace access and must not be
+    mislabeled as enforceable provider-native read-only access.
+13. Real MCP tool discovery stores raw schemas for evidence, sanitized schemas
+    for exposure, a catalog revision, and a server-owned capability class:
+    `read`, `normal_write`, `destructive`, `admin_or_billing`, or `unknown`.
+14. Agent access is `none`, `read_only`, `read_write`, or
+    `provider_granted`, constrained by the organization maximum. `read_only`
+    permits only `read`; `read_write` permits `read` and `normal_write`.
+    `destructive`, `admin_or_billing`, and `unknown` fail closed in this
+    contract slice. Operators do not manage per-tool allowlists.
+15. A managed dispatch revalidates organization, agent, run, eligible
+    connection, grant, current binding, and provider policy before forwarding.
+    New bindings target only the canonical official connection; preserved legacy
+    bindings remain within their existing scope until explicitly migrated.
+    Audit evidence stores sanitized input/result and a redacted outcome.
+16. Custom STDIO accepts Codex-compatible command, arguments, working
     directory, non-sensitive static environment values, forwarded environment
     names, secret environment names, enablement, required behavior, and startup
     and tool timeouts within the deployment boundary owned by
@@ -194,11 +216,17 @@ tool naming, identity, and fallback semantics for that built-in surface.
 | Both `credential` and `credentialSecretId` are provided | Rejected. |
 | Tool dispatch targets Custom API or `legacy_manual` compatibility data | Validated and recorded as blocked; legacy data is never silently made executable. |
 | Operator opens Discover | Shows Custom API, MCP Server, fixed-provider setup, and planned provider cards; does not show built-in Rudder MCP tools. |
-| Operator opens Manage | Shows active fixed/custom integrations plus the built-in Rudder MCP tools row when available. |
+| Operator opens Manage | Shows compact active fixed/custom integration summaries plus the built-in Rudder MCP tools row when available; provider management opens a modal rather than an inline tool wall. |
+| Official provider is already connected | Discover shows `Connected` and `Manage`; another Connect attempt resolves to the canonical connection rather than creating a duplicate. |
+| Agent has no binding to a connected official provider | Agent Detail shows `Available` and offers `Set access`. |
+| Organization maximum is read-only | Agent can select `none` or `read_only`; `read_write` remains unavailable with an explanation. |
+| Notion is connected | UI and API describe its access as provider-granted, not read-only. |
+| Supabase account connection is active | No project-selection step appears; project-specific tool calls carry `project_id`. |
+| Supabase project-scoped legacy connection exists | It remains within its old boundary until explicit `Upgrade to account access`; ordinary reconnect does not broaden it. |
 | Existing `mcp_server` row is migrated | Represented by a disabled, non-executable `legacy_manual` connection; its existing row, tools, bindings, audit history, and credentials remain readable. |
 | OAuth callback state is replayed or older than 10 minutes | Rejected without exchanging or exposing credentials. |
 | Managed connection becomes unauthorized | Moves to `needs_reauth`; calls remain blocked until a valid grant is restored. |
-| Discovery finds a new tool on an existing binding | Tool is persisted but not automatically enabled for that binding. |
+| Discovery finds a destructive, administrative, billing, or unclassified tool | Tool is persisted for evidence but unavailable under V1 coarse access. |
 | Discovery no longer returns a prior tool | Tool is marked removed and cannot be dispatched; history remains. |
 | Public connection or grant response | Exposes safe config and `hasCredentials` only, never secret ids, tokens, client secrets, or PKCE material. |
 | Curated provider create or update supplies URL, headers, STDIO, legacy config, or manual secrets | Rejected; curated endpoints, transport, and OAuth credential handling are Rudder-managed. |
@@ -215,12 +243,12 @@ summaries for enabled tools.
 ### Operator-Visible Output
 
 Agent Detail Integrations shows Custom API and MCP Server setup controls,
-connected custom integration rows, scope labels, enabled tool names, credential
-presence, status, and disconnect actions. It does not display secret ids or
-secret values. The Manage view also shows built-in Rudder MCP tools with the
-Rudder logo, `rudder-tools` server name, runtime-managed auth, tool
-count, and complete tool-name list. The Discover view does not show that
-built-in row because it is not something the operator connects.
+connected custom integration summaries, actual access labels, credential
+presence, status, and disconnect actions. Provider cards derive organization
+lifecycle and Agent access separately so an organization connection immediately
+appears as `Available` on Agent Detail. Provider Manage actions open focused
+organization or Agent access modals. The UI does not display secret ids, secret
+values, or per-tool permission checkboxes.
 
 ### Persisted Evidence
 
@@ -268,8 +296,15 @@ Rudder persists:
   are organization-owned; identifiers supplied by a runtime do not establish
   organization membership or authorization.
 - Connection/server names are unique within an organization. Curated provider
-  external scopes are stable and unique within that provider; multiple custom
-  connections remain allowed.
+  canonical identity is unique by organization and provider for Supabase,
+  Linear, and Notion; multiple Custom MCP connections remain allowed.
+- Superseding a duplicate official connection must retain historical rows and
+  audit evidence. Canonicalization must not physically delete connection,
+  binding, tool, call, or secret-reference history.
+- A legacy project-scoped Supabase grant cannot become account-scoped through
+  reconnect or migration; scope expansion requires explicit operator action.
+- User-supplied tool ids cannot widen the effective coarse access or bypass
+  fail-closed capability classification.
 - Raw access tokens, refresh tokens, client secrets, PKCE verifiers, and
   temporary dynamic-client credentials never live directly in managed MCP
   connection, grant, session, tool, binding, or audit rows.
@@ -295,6 +330,7 @@ semantics remain governed by their provider contracts, not this page.
 
 - Plan: `doc/plans/2026-06-27-agent-custom-integrations.md`
 - Plan: `doc/plans/2026-07-23-managed-mcp-oauth-integrations.md`
+- Plan: `doc/plans/2026-07-25-managed-mcp-access-and-interactions.md`
 - Related active contracts:
   - `AGENT.SKILLS.001` for discovery vs runtime enablement.
   - `AGENT.INSTRUCTIONS.001` for runtime prompt assembly.

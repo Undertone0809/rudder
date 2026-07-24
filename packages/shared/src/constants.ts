@@ -389,6 +389,39 @@ export type McpConnectionTransport = (typeof MCP_CONNECTION_TRANSPORTS)[number];
 export const MCP_CONNECTION_ACCESS_MODES = ["provider_default", "read_only", "read_write"] as const;
 export type McpConnectionAccessMode = (typeof MCP_CONNECTION_ACCESS_MODES)[number];
 
+export const MCP_AGENT_ACCESS_MODES = [
+  "none",
+  "read_only",
+  "read_write",
+  "provider_granted",
+  "full",
+] as const;
+export type McpAgentAccessMode = (typeof MCP_AGENT_ACCESS_MODES)[number];
+
+export const MCP_CONNECTION_CANONICAL_STATES = ["canonical", "superseded"] as const;
+export type McpConnectionCanonicalState = (typeof MCP_CONNECTION_CANONICAL_STATES)[number];
+
+export const MCP_PROVIDER_SCOPE_MODES = ["account", "workspace", "legacy_project"] as const;
+export type McpProviderScopeMode = (typeof MCP_PROVIDER_SCOPE_MODES)[number];
+
+export const MCP_PROVIDER_ORGANIZATION_STATES = [
+  "not_connected",
+  "connecting",
+  "connected",
+  "needs_attention",
+  "disconnected",
+] as const;
+export type McpProviderOrganizationState = (typeof MCP_PROVIDER_ORGANIZATION_STATES)[number];
+
+export const MCP_TOOL_CAPABILITY_CLASSES = [
+  "read",
+  "normal_write",
+  "destructive",
+  "admin_or_billing",
+  "unknown",
+] as const;
+export type McpToolCapabilityClass = (typeof MCP_TOOL_CAPABILITY_CLASSES)[number];
+
 export const MCP_CONNECTION_STATUSES = [
   "draft",
   "authorizing",

@@ -11,7 +11,7 @@ import { assertBoard, assertCompanyAccess } from "./authz.js";
 
 type BindingService = Pick<
   ReturnType<typeof managedMcpBindingService>,
-  "listForAgent" | "upsert" | "revoke"
+  "listForAgent" | "listProviderAvailability" | "upsert" | "revoke"
 >;
 
 export interface ManagedMcpAgentBindingRoutesOptions {
@@ -65,6 +65,11 @@ export function managedMcpAgentBindingRoutes(
   router.get("/agents/:id/mcp-connections", async (req, res) => {
     const agent = await targetAgent(req);
     res.json(await bindings.listForAgent(agent.orgId, agent.id));
+  });
+
+  router.get("/agents/:id/mcp-provider-status", async (req, res) => {
+    const agent = await targetAgent(req);
+    res.json(await bindings.listProviderAvailability(agent.orgId, agent.id));
   });
 
   const upsert = async (req: Request, res: Response) => {

@@ -6,6 +6,8 @@ import type {
 import { OAuthError, OAuthErrorCode } from "@modelcontextprotocol/client";
 import {
   activityLog,
+  agentCustomIntegrationBindings,
+  agents,
   applyPendingMigrations,
   authUsers,
   createDb,
@@ -358,6 +360,7 @@ function serviceOptions(
             metadata: { workspaceName: `${provider} workspace` },
           },
         },
+    validateProviderTools: vi.fn(async () => undefined),
     refreshConnectionTools: vi.fn(async () => []),
     ...patch,
   };
@@ -386,6 +389,7 @@ describe("managedMcpOAuthService", () => {
     await db.delete(organizationMemberships);
     await db.delete(instanceUserRoles);
     await db.delete(authUsers);
+    await db.delete(agents);
     await db.delete(organizations);
   });
 
@@ -438,9 +442,10 @@ describe("managedMcpOAuthService", () => {
     expect(session.redirectUri).toBe("http://127.0.0.1:4310/api/mcp/oauth/callback");
     expect(session.statusMetadata).toEqual({
       authorization: {
-        serverUrl: "https://mcp.supabase.com/mcp",
+        serverUrl: "https://mcp.supabase.com/mcp?read_only=true",
         accessMode: "read_only",
       },
+      reauthorization: false,
     });
     expect(session.stateHash).toBe(createHash("sha256").update(rawState!).digest("hex"));
     expect(JSON.stringify(session)).not.toContain(rawState);
@@ -458,17 +463,30 @@ describe("managedMcpOAuthService", () => {
     expect(updated.status).toBe("authorizing");
   });
 
-  it("consumes callback state once and moves Supabase to selecting_scope", async () => {
+  it("activates account-scoped Supabase without discovering or selecting a project", async () => {
     const { orgId, userId } = await seedOwner(db);
     const connection = await seedConnection(db, orgId, "supabase", "read_only");
-    const svc = managedMcpOAuthService(db, serviceOptions());
+    const discoverProviderScope = vi.fn(async () => {
+      throw new Error("Supabase account connections must not list projects during OAuth");
+    });
+    const refreshConnectionTools = vi.fn(async () => []);
+    const svc = managedMcpOAuthService(db, serviceOptions({
+      discoverProviderScope,
+      refreshConnectionTools,
+    }));
     const started = await svc.start(orgId, connection.id, { userId });
     const state = new URL(started.authorizationUrl).searchParams.get("state")!;
 
     await expect(svc.callback({ state, code: "provider-code", iss: "https://oauth.example.test" }))
-      .resolves.toEqual({ connectionId: connection.id, status: "selecting_scope" });
+      .resolves.toEqual({ connectionId: connection.id, status: "active" });
     await expect(svc.callback({ state, code: "replay-code" }))
       .rejects.toMatchObject({ status: 422 });
+    expect(discoverProviderScope).not.toHaveBeenCalled();
+    expect(refreshConnectionTools).toHaveBeenCalledWith(
+      orgId,
+      connection.id,
+      { userId, agentId: null },
+    );
 
     const grant = await db.select().from(mcpOAuthGrants)
       .where(eq(mcpOAuthGrants.connectionId, connection.id))
@@ -476,45 +494,99 @@ describe("managedMcpOAuthService", () => {
     expect(grant.status).toBe("active");
     expect(grant.authorizingUserId).toBe(userId);
     expect(grant.credentialSecretId).not.toBeNull();
-    const options = await svc.listScopeOptions(orgId, connection.id);
-    expect(options).toEqual([
-      { id: "project-a", displayName: "Project A", metadata: { region: "us-east-1" } },
-      { id: "project-b", displayName: "Project B", metadata: { region: "eu-west-1" } },
-    ]);
+    expect(grant.externalScopeMetadata).toEqual({});
+    expect(grant.statusMetadata).not.toHaveProperty("scopeOptions");
+    await expect(svc.listScopeOptions(orgId, connection.id))
+      .rejects.toMatchObject({ status: 422 });
+    const activated = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id))
+      .then((rows) => rows[0]!);
+    expect(activated.externalScope).toBeNull();
+    expect(activated.status).toBe("active");
     expect(JSON.stringify(await svc.getGrantSummary(orgId, connection.id)))
       .not.toContain("snake-access-token");
   });
 
-  it("bounds and sanitizes provider scope options before persistence or API output", async () => {
+  it("atomically upgrades legacy Supabase account access and resets prior agent access", async () => {
     const { orgId, userId } = await seedOwner(db);
-    const connection = await seedConnection(db, orgId, "supabase", "read_only");
-    const svc = managedMcpOAuthService(db, serviceOptions({
-      discoverProviderScope: async () => ({
-        options: Array.from({ length: 550 }, (_, index) => ({
-          id: index === 501 ? "project-1" : `project-${index}`,
-          displayName: `Project ${index}`,
-          metadata: {
-            region: "us-east-1",
-            status: "ACTIVE",
-            access_token: "must-never-persist",
-            businessRows: [{ secret: "must-never-persist" }],
-            oversized: "x".repeat(20_000),
-          },
-        })),
-      }),
-    }));
-    const started = await svc.start(orgId, connection.id, { userId });
+    const legacy = await seedConnection(db, orgId, "supabase", "read_only");
+    await db.update(mcpConnections).set({
+      scopeMode: "legacy_project",
+      externalScope: "legacy-project-ref",
+    }).where(eq(mcpConnections.id, legacy.id));
+    const svc = managedMcpOAuthService(db, serviceOptions());
+    const legacyStart = await svc.start(orgId, legacy.id, { userId });
     await svc.callback({
-      state: new URL(started.authorizationUrl).searchParams.get("state")!,
-      code: "provider-code",
+      state: new URL(legacyStart.authorizationUrl).searchParams.get("state")!,
+      code: "legacy-code",
     });
+    const [legacyGrant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, legacy.id));
+    const agent = await db.insert(agents).values({
+      orgId,
+      name: "Legacy Supabase Agent",
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(agentCustomIntegrationBindings).values({
+      orgId,
+      agentId: agent.id,
+      connectionId: legacy.id,
+      status: "active",
+      accessMode: "read_only",
+      policyRevision: 3,
+      enabledToolIds: [],
+    });
+    const candidate = await db.insert(mcpConnections).values({
+      orgId,
+      name: `supabase-account-upgrade-${legacy.id}`,
+      displayName: "Supabase",
+      provider: "supabase",
+      transport: "streamable_http",
+      accessMode: "read_only",
+      scopeMode: "account",
+      externalScope: null,
+      status: "draft",
+      canonicalState: "superseded",
+      supersededByConnectionId: legacy.id,
+    }).returning().then((rows) => rows[0]!);
 
-    const options = await svc.listScopeOptions(orgId, connection.id);
-    expect(options).toHaveLength(500);
-    expect(new Set(options.map((option) => option.id)).size).toBe(500);
-    expect(JSON.stringify(options)).not.toContain("must-never-persist");
-    expect(JSON.stringify(options).length).toBeLessThan(200_000);
-    expect(options[0]?.metadata).toEqual({ region: "us-east-1", status: "ACTIVE" });
+    const upgradeStart = await svc.start(orgId, candidate.id, { userId });
+    await expect(svc.callback({
+      state: new URL(upgradeStart.authorizationUrl).searchParams.get("state")!,
+      code: "account-code",
+    })).resolves.toEqual({ connectionId: candidate.id, status: "active" });
+
+    const [upgraded, superseded, binding, revokedGrant] = await Promise.all([
+      db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, candidate.id)).then((rows) => rows[0]!),
+      db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, legacy.id)).then((rows) => rows[0]!),
+      db.select().from(agentCustomIntegrationBindings)
+        .where(eq(agentCustomIntegrationBindings.connectionId, legacy.id))
+        .then((rows) => rows[0]!),
+      db.select().from(mcpOAuthGrants)
+        .where(eq(mcpOAuthGrants.connectionId, legacy.id)).then((rows) => rows[0]!),
+    ]);
+    expect(upgraded).toMatchObject({
+      canonicalState: "canonical",
+      scopeMode: "account",
+      externalScope: null,
+      status: "active",
+      enabled: true,
+    });
+    expect(superseded).toMatchObject({
+      canonicalState: "superseded",
+      supersededByConnectionId: candidate.id,
+      status: "revoked",
+      enabled: false,
+    });
+    expect(binding).toMatchObject({ accessMode: "none", policyRevision: 4 });
+    expect(revokedGrant).toMatchObject({
+      status: "revoked",
+      credentialSecretId: null,
+    });
+    expect(await db.select().from(organizationSecrets)
+      .where(eq(organizationSecrets.id, legacyGrant!.credentialSecretId!)))
+      .toHaveLength(0);
   });
 
   it("rejects unknown and expired state without reflecting provider errors", async () => {
@@ -655,22 +727,7 @@ describe("managedMcpOAuthService", () => {
     expect(JSON.stringify(await db.select().from(activityLog))).not.toContain(attackerIssuer);
   });
 
-  it.each([
-    {
-      name: "scope discovery fails",
-      provider: "linear" as const,
-      accessMode: "read_write" as const,
-      discoverProviderScope: async () => {
-        throw new Error("upstream workspace identity failed");
-      },
-    },
-    {
-      name: "scope validation rejects an empty Supabase project list",
-      provider: "supabase" as const,
-      accessMode: "read_only" as const,
-      discoverProviderScope: async () => ({ options: [] }),
-    },
-  ])("best-effort revokes a token when post-exchange $name", async (fixture) => {
+  it("best-effort revokes a token when post-exchange workspace discovery fails", async () => {
     const port = await getAvailablePort();
     const receivedTokens: string[] = [];
     const revocationServer = createServer((req, res) => {
@@ -689,8 +746,8 @@ describe("managedMcpOAuthService", () => {
       const connection = await seedConnection(
         db,
         orgId,
-        fixture.provider,
-        fixture.accessMode,
+        "linear",
+        "read_write",
       );
       const upstreamOrigin = `http://callback-failure.test:${port}`;
       const oauthAuth = vi.fn(async (
@@ -722,7 +779,9 @@ describe("managedMcpOAuthService", () => {
       });
       const svc = managedMcpOAuthService(db, serviceOptions({
         oauthAuth,
-        discoverProviderScope: fixture.discoverProviderScope,
+        discoverProviderScope: async () => {
+          throw new Error("upstream workspace identity failed");
+        },
         allowlists: {
           httpOrigins: [upstreamOrigin],
           stdioCommands: [],
@@ -938,7 +997,7 @@ describe("managedMcpOAuthService", () => {
     expect(await db.select().from(mcpOAuthGrants)).toHaveLength(0);
   });
 
-  it("invalidates and deletes an active grant when a fresh authorization starts", async () => {
+  it("keeps an active grant usable until replacement authorization succeeds", async () => {
     const { orgId, userId } = await seedOwner(db);
     const connection = await seedConnection(db, orgId, "linear", "read_write");
     const svc = managedMcpOAuthService(db, serviceOptions());
@@ -950,63 +1009,216 @@ describe("managedMcpOAuthService", () => {
     const [activeGrant] = await db.select().from(mcpOAuthGrants)
       .where(eq(mcpOAuthGrants.connectionId, connection.id));
 
-    await svc.start(orgId, connection.id, { userId });
+    const replacement = await svc.start(orgId, connection.id, { userId });
 
     const [grant] = await db.select().from(mcpOAuthGrants)
       .where(eq(mcpOAuthGrants.connectionId, connection.id));
     const [updated] = await db.select().from(mcpConnections)
       .where(eq(mcpConnections.id, connection.id));
     expect(grant).toMatchObject({
-      status: "needs_reauth",
-      credentialSecretId: null,
-      statusMetadata: { reason: "authorization_restarted" },
+      status: "active",
+      credentialSecretId: activeGrant!.credentialSecretId,
     });
-    expect(updated).toMatchObject({ status: "authorizing", enabled: true });
+    expect(updated).toMatchObject({ status: "active", enabled: true });
+    expect(await db.select().from(organizationSecrets)
+      .where(eq(organizationSecrets.id, activeGrant!.credentialSecretId!)))
+      .toHaveLength(1);
+    await expect(svc.createCredential(orgId, connection.id).token())
+      .resolves.toBe("snake-access-token");
+
+    await svc.callback({
+      state: new URL(replacement.authorizationUrl).searchParams.get("state")!,
+      code: "replacement-code",
+    });
+    const [replacementGrant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, connection.id));
+    expect(replacementGrant?.status).toBe("active");
+    expect(replacementGrant?.credentialSecretId).not.toBe(activeGrant!.credentialSecretId);
     expect(await db.select().from(organizationSecrets)
       .where(eq(organizationSecrets.id, activeGrant!.credentialSecretId!)))
       .toHaveLength(0);
-    await expect(svc.createCredential(orgId, connection.id).token())
-      .rejects.toMatchObject({ status: 422 });
   });
 
-  it("validates Supabase project selection against discovered options", async () => {
+  it("keeps the old grant active when replacement tool discovery fails", async () => {
     const { orgId, userId } = await seedOwner(db);
-    const connection = await seedConnection(db, orgId, "supabase", "read_only");
-    const refreshConnectionTools = vi.fn(async () => []);
-    const svc = managedMcpOAuthService(db, serviceOptions({ refreshConnectionTools }));
-    const started = await svc.start(orgId, connection.id, { userId });
-    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
-    await svc.callback({ state, code: "provider-code" });
-
-    await expect(svc.selectScope(orgId, connection.id, {
-      connectionId: connection.id,
-      externalScope: "forged-project",
-      accessMode: "read_only",
-    }, { userId })).rejects.toMatchObject({ status: 422 });
-    await svc.selectScope(orgId, connection.id, {
-      connectionId: connection.id,
-      externalScope: "project-b",
-      accessMode: "read_write",
-    }, { userId });
-
-    const updated = await db.select().from(mcpConnections)
-      .where(eq(mcpConnections.id, connection.id))
-      .then((rows) => rows[0]!);
-    expect(updated.externalScope).toBe("project-b");
-    expect(updated.accessMode).toBe("read_write");
-    expect(updated.safeConfig).toEqual({
-      featureGroups: { mode: "provider_default", excluded: ["storage"] },
+    const connection = await seedConnection(db, orgId, "linear", "read_write");
+    const initialService = managedMcpOAuthService(db, serviceOptions());
+    const initial = await initialService.start(orgId, connection.id, { userId });
+    await initialService.callback({
+      state: new URL(initial.authorizationUrl).searchParams.get("state")!,
+      code: "initial-code",
     });
-    expect(updated.status).toBe("active");
-    const [selectedGrant] = await db.select().from(mcpOAuthGrants)
+    const [oldGrant] = await db.select().from(mcpOAuthGrants)
       .where(eq(mcpOAuthGrants.connectionId, connection.id));
-    expect(selectedGrant?.statusMetadata).toEqual({
-      authorization: {
-        serverUrl: "https://mcp.supabase.com/mcp",
-        accessMode: "read_only",
-      },
+
+    const replacementService = managedMcpOAuthService(db, serviceOptions({
+      validateProviderTools: vi.fn(async () => {
+        throw new Error("provider discovery unavailable");
+      }),
+    }));
+    const replacement = await replacementService.start(orgId, connection.id, { userId });
+    await expect(replacementService.callback({
+      state: new URL(replacement.authorizationUrl).searchParams.get("state")!,
+      code: "replacement-code",
+    })).rejects.toMatchObject({ status: 422 });
+
+    const [connectionAfter, grantAfter] = await Promise.all([
+      db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, connection.id)).then((rows) => rows[0]!),
+      db.select().from(mcpOAuthGrants)
+        .where(eq(mcpOAuthGrants.connectionId, connection.id)).then((rows) => rows[0]!),
+    ]);
+    expect(connectionAfter).toMatchObject({ status: "active", enabled: true });
+    expect(grantAfter).toMatchObject({
+      status: "active",
+      credentialSecretId: oldGrant!.credentialSecretId,
     });
-    expect(refreshConnectionTools).toHaveBeenCalledOnce();
+    await expect(replacementService.createCredential(orgId, connection.id).token())
+      .resolves.toBe("snake-access-token");
+  });
+
+  it("keeps a validated replacement active when post-swap catalog refresh fails", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "linear", "read_write");
+    const initialService = managedMcpOAuthService(db, serviceOptions());
+    const initial = await initialService.start(orgId, connection.id, { userId });
+    await initialService.callback({
+      state: new URL(initial.authorizationUrl).searchParams.get("state")!,
+      code: "initial-code",
+    });
+    const [oldGrant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, connection.id));
+    const refreshConnectionTools = vi.fn(async () => {
+      throw new Error("second discovery unavailable");
+    });
+    const replacementService = managedMcpOAuthService(db, serviceOptions({
+      validateProviderTools: vi.fn(async () => undefined),
+      refreshConnectionTools,
+    }));
+    const replacement = await replacementService.start(orgId, connection.id, { userId });
+
+    await expect(replacementService.callback({
+      state: new URL(replacement.authorizationUrl).searchParams.get("state")!,
+      code: "replacement-code",
+    })).resolves.toEqual({ connectionId: connection.id, status: "active" });
+
+    const [connectionAfter, grantAfter] = await Promise.all([
+      db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, connection.id)).then((rows) => rows[0]!),
+      db.select().from(mcpOAuthGrants)
+        .where(eq(mcpOAuthGrants.connectionId, connection.id)).then((rows) => rows[0]!),
+    ]);
+    expect(refreshConnectionTools).toHaveBeenCalledTimes(1);
+    expect(connectionAfter).toMatchObject({ status: "active", enabled: true });
+    expect(grantAfter).toMatchObject({ status: "active" });
+    expect(grantAfter.credentialSecretId).not.toBe(oldGrant!.credentialSecretId);
+  });
+
+  it("keeps the old grant active when replacement authorization loses ownership mid-callback", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "linear", "read_write");
+    const initialService = managedMcpOAuthService(db, serviceOptions());
+    const initial = await initialService.start(orgId, connection.id, { userId });
+    await initialService.callback({
+      state: new URL(initial.authorizationUrl).searchParams.get("state")!,
+      code: "initial-code",
+    });
+    const [oldGrant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, connection.id));
+    const delegate = oauthAuthStub()!;
+    const oauthAuth = vi.fn(async (
+      provider: OAuthClientProvider,
+      options: AuthOptions,
+    ): Promise<AuthResult> => {
+      if (options.authorizationCode) {
+        await db.delete(organizationMemberships)
+          .where(and(
+            eq(organizationMemberships.orgId, orgId),
+            eq(organizationMemberships.principalId, userId),
+          ));
+      }
+      return delegate(provider, options);
+    });
+    const replacementService = managedMcpOAuthService(db, serviceOptions({ oauthAuth }));
+    const replacement = await replacementService.start(orgId, connection.id, { userId });
+
+    await expect(replacementService.callback({
+      state: new URL(replacement.authorizationUrl).searchParams.get("state")!,
+      code: "replacement-code",
+    })).rejects.toMatchObject({ status: 422 });
+    const [connectionAfter, grantAfter] = await Promise.all([
+      db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, connection.id)).then((rows) => rows[0]!),
+      db.select().from(mcpOAuthGrants)
+        .where(eq(mcpOAuthGrants.connectionId, connection.id)).then((rows) => rows[0]!),
+    ]);
+    expect(connectionAfter).toMatchObject({ status: "active", enabled: true });
+    expect(grantAfter).toMatchObject({
+      status: "active",
+      credentialSecretId: oldGrant!.credentialSecretId,
+    });
+  });
+
+  it("stages organization access elevation until OAuth succeeds and preserves read-only on cancellation", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "linear", "read_only");
+    const svc = managedMcpOAuthService(db, serviceOptions());
+    const initial = await svc.start(orgId, connection.id, { userId });
+    await svc.callback({
+      state: new URL(initial.authorizationUrl).searchParams.get("state")!,
+      code: "read-only-code",
+    });
+    const [readOnlyGrant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, connection.id));
+
+    const cancelled = await svc.start(
+      orgId,
+      connection.id,
+      { userId },
+      { requestedAccessMode: "read_write" },
+    );
+    const [pendingConnection, pendingGrant] = await Promise.all([
+      db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, connection.id)).then((rows) => rows[0]!),
+      db.select().from(mcpOAuthGrants)
+        .where(eq(mcpOAuthGrants.connectionId, connection.id)).then((rows) => rows[0]!),
+    ]);
+    expect(pendingConnection).toMatchObject({
+      status: "active",
+      enabled: true,
+      accessMode: "read_only",
+    });
+    expect(pendingGrant.credentialSecretId).toBe(readOnlyGrant!.credentialSecretId);
+    await expect(svc.callback({
+      state: new URL(cancelled.authorizationUrl).searchParams.get("state")!,
+      error: "access_denied",
+    })).rejects.toMatchObject({ status: 422 });
+    const [afterCancellation] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    expect(afterCancellation).toMatchObject({
+      status: "active",
+      enabled: true,
+      accessMode: "read_only",
+    });
+
+    const staged = await svc.start(
+      orgId,
+      connection.id,
+      { userId },
+      { requestedAccessMode: "read_write" },
+    );
+    await expect(svc.callback({
+      state: new URL(staged.authorizationUrl).searchParams.get("state")!,
+      code: "read-write-code",
+    })).resolves.toEqual({ connectionId: connection.id, status: "active" });
+    const [elevated, elevatedGrant] = await Promise.all([
+      db.select().from(mcpConnections)
+        .where(eq(mcpConnections.id, connection.id)).then((rows) => rows[0]!),
+      db.select().from(mcpOAuthGrants)
+        .where(eq(mcpOAuthGrants.connectionId, connection.id)).then((rows) => rows[0]!),
+    ]);
+    expect(elevated.accessMode).toBe("read_write");
+    expect(elevatedGrant.credentialSecretId).not.toBe(readOnlyGrant!.credentialSecretId);
   });
 
   it.each([
@@ -1053,6 +1265,7 @@ describe("managedMcpOAuthService", () => {
         scope: "read",
         accessMode: "read_only",
       },
+      reauthorization: false,
     });
 
     await db.update(mcpConnections)

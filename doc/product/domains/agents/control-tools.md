@@ -42,6 +42,7 @@ related_tests:
 related_plans:
   - doc/plans/2026-06-30-agent-v1-mcp-tools.md
   - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
+  - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
   - doc/plans/2026-07-12-built-in-browser.md
   - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
   - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
@@ -112,10 +113,11 @@ current run.
   controls manifest projection, while the Browser API independently enforces
   the live instance setting and active-run/tab ownership on every call.
 - Managed external MCP binding: provider-neutral run-scoped descriptor with a
-  binding id, proxy server name, explicit allowlist tool policy, required
-  behavior, startup timeout, and tool timeout. The fixed Rudder proxy URL and
-  run-owned proxy authorization are derived outside the binding array. Provider
-  scope, connection identity, and provider credentials remain server-side.
+  binding id, proxy server name, server-derived effective tool policy, policy
+  revision, required behavior, startup timeout, and tool timeout. The fixed
+  Rudder proxy URL and run-owned proxy authorization are derived outside the
+  binding array. Provider scope, connection identity, and provider credentials
+  remain server-side.
 
 ### Entry Points / Inputs
 
@@ -169,18 +171,20 @@ current run.
 12. Browser calls additionally verify the live setting, active run, safe web
     URL, and run-owned tab before forwarding an allowed action to the in-memory
     Desktop Broker. A stale manifest cannot bypass live disablement.
-13. Separately, run context selects active organization connections and emits a
-    provider-neutral `managedExternalMcpBindings` list. Each binding contains
-    only `bindingId`, `serverName`, explicit `toolPolicy`, `required`,
-    `startupTimeoutMs`, and `toolTimeoutMs`; the allowlist names only the tools
-    enabled for that exact agent.
+13. Separately, run context selects canonical active organization connections,
+    derives the effective coarse Agent policy, and snapshots the allowed
+    external tool surface at run start. The snapshot is server-owned; legacy
+    enabled-tool ids may only narrow it.
 14. The adapter renders every external binding as its own server or generic
     native-tool group. The adapter derives the fixed Rudder proxy URL and
     run-scoped proxy authorization once outside the array. The binding never
     carries those coordinates, provider OAuth tokens, organization secret ids,
     connection ids, or provider-specific project/workspace fields.
-15. Every external tool call returns through the Rudder proxy, which
-    revalidates run and binding identity and writes redacted audit evidence.
+15. Every external `tools/list` and `tools/call` returns through the Rudder
+    proxy and evaluates `run-start snapshot ∩ current binding ∩ current
+    provider policy`. A binding reduction blocks later calls in the active run;
+    a binding increase is available only to the next run. The proxy writes
+    redacted audit evidence.
     Failure of an external server does not alter first-party `rudder-tools`
     availability or identity.
 
@@ -204,6 +208,9 @@ current run.
 | Agent Detail Manage is open and runtime metadata says MCP is available | Built-in Rudder MCP tools may be shown as a read-only runtime-managed row. |
 | One agent has two managed external MCP connections | Runtime receives two independent server/proxy entries with separate allowlists and timeouts. |
 | External connection is disabled, revoked, stale, or needs reauthorization | Binding is omitted or rejected by the proxy; `rudder-tools` remains unchanged. |
+| Agent access is reduced during a run | Subsequent list/call authorization uses the smaller current intersection and blocks removed capabilities immediately. |
+| Agent access is increased during a run | The current run remains limited to its run-start snapshot; the next run receives the increase. |
+| Tool is destructive, administrative, billing-related, or unclassified | It is absent from the effective V1 external tool policy even when Agent access is read-write. |
 | Model supplies another connection, organization, agent, run, or provider credential | Proxy rejects the call; model arguments never override runtime-owned identity. |
 | Runtime uses Pi's native bridge | External tools keep the same per-connection authorization and audit boundary without becoming first-party Rudder tools. |
 
@@ -275,6 +282,9 @@ Evidence can include:
 - `managedExternalMcpBindings` is provider-neutral. Provider-specific project,
   workspace, OAuth, and token fields must not cross the runtime adapter
   contract.
+- External MCP policy is derived server-side from coarse Agent access,
+  capability classification, provider limits, and the run-start snapshot.
+  Model arguments and legacy tool-id lists cannot expand it.
 - Model-supplied runtime identity and auth values are never trusted.
 - Tool names must remain stable for the `agent-v1` contract.
 - CLI fallback remains valid when MCP is unavailable or broken.
@@ -301,6 +311,7 @@ semantics, or related traceability.
 - Plan: `doc/plans/2026-06-30-agent-v1-mcp-tools.md`
 - Plan: `doc/plans/2026-07-12-built-in-browser.md`
 - Plan: `doc/plans/2026-07-23-managed-mcp-oauth-integrations.md`
+- Plan: `doc/plans/2026-07-25-managed-mcp-access-and-interactions.md`
 - Related active contracts:
   - `AGENT.BROWSER.001` for Browser settings, profile, tab lease, and lifecycle
     semantics.

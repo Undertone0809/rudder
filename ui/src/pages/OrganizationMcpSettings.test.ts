@@ -1,10 +1,61 @@
+// @vitest-environment jsdom
+
+import type {
+  McpConnectionSummary,
+  McpProviderAvailability,
+  McpProviderCatalogEntry,
+} from "@rudderhq/shared";
+import { act, createElement, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import {
+  OrganizationMcpSettings,
   buildCustomMcpPayload,
   canReconnectManagedMcp,
   defaultCustomMcpForm,
+  officialAccessChangeRequiresAuthorization,
+  officialProviderAction,
   reserveAuthorizationLauncher,
 } from "./OrganizationMcpSettings";
+
+const mockOrganizationMcpData = vi.hoisted(() => ({
+  catalog: [] as McpProviderCatalogEntry[],
+  statuses: [] as McpProviderAvailability[],
+  connections: [] as McpConnectionSummary[],
+}));
+
+vi.mock("@tanstack/react-query", () => ({
+  useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => ({
+    data: queryKey.includes("mcp-provider-status")
+      ? mockOrganizationMcpData.statuses
+      : queryKey.includes("mcp-connections")
+        ? mockOrganizationMcpData.connections
+        : mockOrganizationMcpData.catalog,
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+  }),
+  useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+}));
+
+vi.mock("../context/ToastContext", () => ({
+  useToast: () => ({ pushToast: vi.fn() }),
+}));
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+  .IS_REACT_ACT_ENVIRONMENT = true;
+
+function render(element: ReactNode) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => root.render(element));
+  return {
+    container,
+    cleanup: () => act(() => root.unmount()),
+  };
+}
 
 describe("managed MCP authorization launcher", () => {
   it("uses the existing Desktop external-navigation bridge without opening a popup", async () => {
@@ -71,6 +122,99 @@ describe("managed MCP authorization recovery", () => {
   });
 });
 
+describe("official provider card actions", () => {
+  it("uses one clear action for each lifecycle state", () => {
+    expect(officialProviderAction("not_connected", null)).toBe("Connect");
+    expect(officialProviderAction("connecting", "account")).toBe("Continue setup");
+    expect(officialProviderAction("connected", "account")).toBe("Manage");
+    expect(officialProviderAction("needs_attention", "workspace")).toBe("Reconnect");
+    expect(officialProviderAction("connected", "legacy_project")).toBe("Upgrade to account access");
+  });
+
+  it("stages every Supabase and Linear access change through OAuth", () => {
+    expect(officialAccessChangeRequiresAuthorization("supabase", "read_only", "read_write")).toBe(true);
+    expect(officialAccessChangeRequiresAuthorization("supabase", "read_write", "read_only")).toBe(true);
+    expect(officialAccessChangeRequiresAuthorization("linear", "read_only", "read_write")).toBe(true);
+    expect(officialAccessChangeRequiresAuthorization("linear", "read_write", "read_only")).toBe(true);
+    expect(officialAccessChangeRequiresAuthorization("notion", "provider_default", "provider_default")).toBe(false);
+    expect(officialAccessChangeRequiresAuthorization("custom", "provider_default", "read_only")).toBe(false);
+  });
+});
+
+describe("organization MCP interaction", () => {
+  it("keeps discovery and management compact and opens a provider dialog", () => {
+    const now = new Date("2026-07-25T00:00:00.000Z");
+    mockOrganizationMcpData.catalog = [{
+      id: "supabase",
+      label: "Supabase",
+      curated: true,
+      requiresOAuth: true,
+      requiresScopeSelection: false,
+      scopeLabel: "Account",
+      transports: ["streamable_http"],
+      accessModes: ["read_only", "read_write"],
+      defaultAccessMode: "read_only",
+    }];
+    mockOrganizationMcpData.statuses = [{
+      provider: "supabase",
+      organization: {
+        state: "connected",
+        connectionId: "supabase-connection",
+        maxAccess: "read_only",
+        scopeMode: "account",
+        revision: 2,
+        historicalGrantConnectionIds: [
+          "superseded-supabase-connection",
+        ],
+      },
+    }];
+    mockOrganizationMcpData.connections = [{
+      id: "supabase-connection",
+      orgId: "org-1",
+      name: "supabase",
+      displayName: "Supabase",
+      provider: "supabase",
+      transport: "streamable_http",
+      externalScope: null,
+      accessMode: "read_only",
+      status: "active",
+      safeConfig: {},
+      startupTimeoutMs: 10_000,
+      toolTimeoutMs: 60_000,
+      enabled: true,
+      required: false,
+      hasCredentials: true,
+      lastDiscoveredAt: now,
+      activatedAt: now,
+      disabledAt: null,
+      revokedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    }];
+    const { container, cleanup } = render(createElement(OrganizationMcpSettings, { orgId: "org-1" }));
+
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    expect(container.textContent).toContain("Connected");
+    expect(container.textContent).not.toContain("Tool allowlist");
+    expect(container.querySelector('select[aria-label="Project"]')).toBeNull();
+
+    const providerCard = container.querySelector('[data-testid="mcp-provider-supabase"]')!;
+    const providerManage = [...providerCard.querySelectorAll("button")]
+      .find((button) => button.textContent === "Manage");
+    act(() => providerManage?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("Manage Supabase");
+    expect(dialog?.textContent).toContain("Maximum access");
+    expect(dialog?.textContent).toContain("1 historical authorization");
+    expect(dialog?.textContent).toContain("Disconnect historical access");
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Discover");
+
+    cleanup();
+    document.body.innerHTML = "";
+  });
+});
+
 describe("custom MCP connection form", () => {
   it("stores every literal HTTP header as encrypted credential material", () => {
     const form = defaultCustomMcpForm();
@@ -85,9 +229,6 @@ describe("custom MCP connection form", () => {
     form.headersFromEnvironment = [
       { id: "3", key: "X-Region", value: "MCP_REGION" },
     ];
-    form.toolAllowlistText = "search, list_documents";
-    form.toolDenylistText = "delete_document";
-
     const payload = buildCustomMcpPayload(form);
 
     expect(payload).toMatchObject({
@@ -102,8 +243,6 @@ describe("custom MCP connection form", () => {
           "X-Access-Token",
           "X-Client-Key",
         ],
-        toolAllowlist: ["search", "list_documents"],
-        toolDenylist: ["delete_document"],
       },
       secrets: {
         headers: {
@@ -119,6 +258,8 @@ describe("custom MCP connection form", () => {
     expect(JSON.stringify(payload.safeConfig)).not.toContain("secret-token");
     expect(JSON.stringify(payload.safeConfig)).not.toContain("secondary-secret");
     expect(JSON.stringify(payload.safeConfig)).not.toContain("client-secret");
+    expect(payload.safeConfig).not.toHaveProperty("toolAllowlist");
+    expect(payload.safeConfig).not.toHaveProperty("toolDenylist");
   });
 
   it("stores STDIO values as secrets and keeps only names in safe config", () => {

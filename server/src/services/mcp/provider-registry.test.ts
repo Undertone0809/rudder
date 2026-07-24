@@ -12,7 +12,7 @@ describe("managed MCP provider registry", () => {
         endpoint: "https://mcp.supabase.com/mcp",
         oauthOrigins: ["https://mcp.supabase.com", "https://api.supabase.com"],
         requiresOAuth: true,
-        scopeSelection: "project",
+        scopeSelection: "none",
         defaultAccessMode: "read_only",
         featureGroups: {
           mode: "provider_default",
@@ -59,23 +59,34 @@ describe("managed MCP provider registry", () => {
     ]);
   });
 
-  it("requires a Supabase project and pins read-only by default", () => {
-    expect(() => resolveCuratedMcpEndpoint({
+  it("uses an account-scoped Supabase endpoint without project_ref", () => {
+    const readOnly = resolveCuratedMcpEndpoint({
       provider: "supabase",
       accessMode: "read_only",
       externalScope: null,
-    })).toThrow(/project/i);
-
-    const resolved = resolveCuratedMcpEndpoint({
+    });
+    const readWrite = resolveCuratedMcpEndpoint({
       provider: "supabase",
-      accessMode: "read_only",
-      externalScope: "project-alpha",
+      accessMode: "read_write",
+      externalScope: null,
     });
 
-    expect(resolved.href).toBe(
-      "https://mcp.supabase.com/mcp?project_ref=project-alpha&read_only=true",
-    );
-    expect(resolved.transport).toBe("streamable_http");
+    expect(readOnly.href).toBe("https://mcp.supabase.com/mcp?read_only=true");
+    expect(readWrite.href).toBe("https://mcp.supabase.com/mcp?read_only=false");
+    expect(new URL(readOnly.href).searchParams.has("project_ref")).toBe(false);
+    expect(readOnly.transport).toBe("streamable_http");
+  });
+
+  it("preserves the project boundary for a legacy Supabase reconnect", () => {
+    const endpoint = resolveCuratedMcpEndpoint({
+      provider: "supabase",
+      accessMode: "read_only",
+      externalScope: "legacy-project-ref",
+    });
+
+    expect(new URL(endpoint.href).searchParams.get("project_ref"))
+      .toBe("legacy-project-ref");
+    expect(new URL(endpoint.href).searchParams.get("read_only")).toBe("true");
   });
 
   it("selects Linear read/write and read-only endpoints without provider logic in adapters", () => {

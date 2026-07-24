@@ -32,6 +32,13 @@ active agent contracts:
 - `AGENT.RUNTIME.PERMISSIONS.001` owns OAuth token, run identity, network,
   STDIO process, and environment-variable boundaries.
 
+The approved
+`doc/plans/2026-07-25-managed-mcp-access-and-interactions.md` refinement keeps
+the same ownership split while adding official-provider canonical identity,
+Supabase account scope, Discover/Manage modal behavior, coarse Agent access,
+server-derived fail-closed capability policy, run-start policy snapshots, and
+two-phase OAuth replacement.
+
 Task 1 data-contract evidence lives in
 `packages/db/src/mcp-connections-schema.test.ts`,
 `packages/db/src/migrations/managed-mcp-connections.test.ts`,

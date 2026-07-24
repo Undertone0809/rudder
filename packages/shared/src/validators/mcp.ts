@@ -1,12 +1,17 @@
 import { z } from "zod";
 import {
+  MCP_AGENT_ACCESS_MODES,
   MCP_AGENT_BINDING_STATUSES,
   MCP_CONNECTION_ACCESS_MODES,
+  MCP_CONNECTION_CANONICAL_STATES,
   MCP_CONNECTION_PROVIDERS,
   MCP_CONNECTION_STATUSES,
   MCP_CONNECTION_TRANSPORTS,
   MCP_OAUTH_GRANT_STATUSES,
   MCP_PROVIDER_CATALOG,
+  MCP_PROVIDER_ORGANIZATION_STATES,
+  MCP_PROVIDER_SCOPE_MODES,
+  MCP_TOOL_CAPABILITY_CLASSES,
 } from "../constants.js";
 
 const uuidSchema = z.string().uuid();
@@ -29,6 +34,12 @@ const externalMcpToolFilterSchema = z.array(externalMcpToolNameSchema).max(500);
 export const mcpConnectionProviderSchema = z.enum(MCP_CONNECTION_PROVIDERS);
 export const mcpConnectionTransportSchema = z.enum(MCP_CONNECTION_TRANSPORTS);
 export const mcpConnectionAccessModeSchema = z.enum(MCP_CONNECTION_ACCESS_MODES);
+export const mcpAgentAccessModeSchema = z.enum(MCP_AGENT_ACCESS_MODES);
+export const mcpConnectionCanonicalStateSchema = z.enum(MCP_CONNECTION_CANONICAL_STATES);
+export const mcpProviderScopeModeSchema = z.enum(MCP_PROVIDER_SCOPE_MODES);
+export const mcpProviderOrganizationStateSchema = z.enum(MCP_PROVIDER_ORGANIZATION_STATES);
+export const mcpToolCapabilityClassSchema = z.enum(MCP_TOOL_CAPABILITY_CLASSES);
+export const mcpProviderMaxAccessSchema = z.enum(["read_only", "read_write", "provider_granted"]);
 export const mcpConnectionStatusSchema = z.enum(MCP_CONNECTION_STATUSES);
 export const mcpOAuthGrantStatusSchema = z.enum(MCP_OAUTH_GRANT_STATUSES);
 export const mcpAgentBindingStatusSchema = z.enum(MCP_AGENT_BINDING_STATUSES);
@@ -538,6 +549,9 @@ export const mcpDiscoveredToolSchema = z.object({
   description: z.string().max(4_000).nullable(),
   inputSchema: z.record(z.unknown()),
   outputSchema: z.record(z.unknown()).nullable(),
+  capabilityClass: mcpToolCapabilityClassSchema,
+  policyRevision: z.number().int().positive(),
+  catalogRevision: z.number().int().positive(),
   enabled: z.boolean(),
   removedAt: timestampSchema.nullable(),
 }).strict();
@@ -547,6 +561,8 @@ export const mcpAgentBindingSchema = z.object({
   connectionId: uuidSchema,
   agentId: uuidSchema,
   status: mcpAgentBindingStatusSchema,
+  accessMode: mcpAgentAccessModeSchema,
+  policyRevision: z.number().int().positive(),
   enabledToolIds: z.array(uuidSchema).max(500),
 }).strict();
 
@@ -554,15 +570,20 @@ export const mcpAgentConnectionSummarySchema = z.object({
   connection: mcpConnectionSummarySchema,
   binding: mcpAgentBindingSchema.nullable(),
   tools: z.array(mcpDiscoveredToolSchema).max(500),
+  reviewRequired: z.boolean(),
 }).strict();
 
 export const upsertMcpAgentBindingSchema = z.object({
   status: mcpAgentBindingStatusSchema.optional(),
+  accessMode: mcpAgentAccessModeSchema.optional(),
+  expectedRevision: z.number().int().positive().optional(),
   enabledToolIds: z.array(uuidSchema).max(500).optional(),
 }).strict();
 
 export const updateMcpAgentBindingSchema = z.object({
   status: mcpAgentBindingStatusSchema.optional(),
+  accessMode: mcpAgentAccessModeSchema.optional(),
+  expectedRevision: z.number().int().positive().optional(),
   enabledToolIds: z.array(uuidSchema).max(500).optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, {
   message: "At least one binding field is required",
@@ -571,6 +592,7 @@ export const updateMcpAgentBindingSchema = z.object({
 export const managedExternalMcpBindingSchema = z.object({
   bindingId: uuidSchema,
   serverName: connectionNameSchema,
+  accessMode: mcpAgentAccessModeSchema,
   toolPolicy: z.object({
     mode: z.literal("allowlist"),
     allowedToolNames: z.array(z.string().min(1).max(320)).max(500),
@@ -581,6 +603,93 @@ export const managedExternalMcpBindingSchema = z.object({
 }).strict();
 
 export const managedExternalMcpBindingsSchema = z.array(managedExternalMcpBindingSchema).max(100);
+
+export const mcpProviderAvailabilitySchema = z.object({
+  provider: z.enum(["supabase", "linear", "notion"]),
+  organization: z.object({
+    state: mcpProviderOrganizationStateSchema,
+    connectionId: uuidSchema.nullable(),
+    maxAccess: mcpProviderMaxAccessSchema.nullable(),
+    scopeMode: mcpProviderScopeModeSchema.nullable(),
+    revision: z.number().int().positive().nullable(),
+    affectedAgentCount: z.number().int().nonnegative().optional(),
+    historicalGrantConnectionIds: z.array(uuidSchema).max(100).optional(),
+  }).strict(),
+  agent: z.object({
+    access: mcpAgentAccessModeSchema,
+    activeRunUsesOlderPolicy: z.boolean(),
+  }).strict().optional(),
+}).strict().superRefine((value, ctx) => {
+  const connectedState = value.organization.state === "connected";
+  if (connectedState && (
+    value.organization.connectionId === null
+    || value.organization.maxAccess === null
+    || value.organization.scopeMode === null
+    || value.organization.revision === null
+  )) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["organization"],
+      message: "Connected providers require a connection, access, scope, and revision",
+    });
+  }
+
+  const maxAccess = value.organization.maxAccess;
+  if (
+    value.provider === "notion"
+    && maxAccess !== null
+    && maxAccess !== "provider_granted"
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["organization", "maxAccess"],
+      message: "Notion exposes provider-granted access",
+    });
+  }
+  if (
+    value.provider !== "notion"
+    && maxAccess !== null
+    && maxAccess === "provider_granted"
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["organization", "maxAccess"],
+      message: `${value.provider} requires explicit read-only or read-write access`,
+    });
+  }
+
+  const scopeMode = value.organization.scopeMode;
+  const validScope = scopeMode === null
+    || (value.provider === "supabase"
+      ? scopeMode === "account" || scopeMode === "legacy_project"
+      : scopeMode === "workspace");
+  if (!validScope) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["organization", "scopeMode"],
+      message: `${value.provider} does not support ${scopeMode}`,
+    });
+  }
+
+  const agentAccess = value.agent?.access;
+  if (agentAccess !== undefined) {
+    const validAgentAccess = agentAccess === "none"
+      || (value.provider === "notion"
+        ? agentAccess === "provider_granted"
+        : agentAccess === "read_only"
+          || (
+            agentAccess === "read_write"
+            && value.organization.maxAccess === "read_write"
+          ));
+    if (!validAgentAccess) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["agent", "access"],
+        message: `${value.provider} agent access exceeds or conflicts with organization access`,
+      });
+    }
+  }
+});
 
 export type CreateMcpConnection = z.infer<typeof createMcpConnectionSchema>;
 export type UpdateMcpConnection = z.infer<typeof updateMcpConnectionSchema>;
