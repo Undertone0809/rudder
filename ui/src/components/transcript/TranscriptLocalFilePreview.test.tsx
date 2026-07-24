@@ -61,7 +61,9 @@ describe("TranscriptLocalFilePreview", () => {
 
     expect(previewLocalFile).toHaveBeenCalledWith("/tmp/evidence.md");
     expect(container.querySelector("[data-testid='local-file-rendered-preview']")?.textContent).toContain("Evidence");
-    expect(container.textContent).toContain("/private/tmp");
+    expect(container.textContent).not.toContain("/private/tmp");
+    expect(container.querySelector("[data-testid='chat-side-panel-local-file-view'] [title='/private/tmp/evidence.md']")?.textContent)
+      .toBe("evidence.md");
   });
 
   it("shows an explicit Desktop fallback on the web", async () => {

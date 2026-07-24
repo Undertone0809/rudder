@@ -152,6 +152,7 @@ export function RunTranscriptView({
           thinkingClassName={thinkingClassName}
           showDeveloperDiagnostics={showDeveloperDiagnostics}
           onMarkdownLinkClick={handleMarkdownLinkClick}
+          onOpenFile={handleOpenFile}
         />
       </div>
     );

@@ -2027,8 +2027,9 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Read ");
-    expect(html).toContain("docs/PRODUCT.md");
-    expect(html).toContain('aria-label="Open file docs/PRODUCT.md"');
+    expect(html).toContain(">PRODUCT.md</button>");
+    expect(html).not.toContain(">docs/PRODUCT.md</button>");
+    expect(html).toContain('aria-label="Open file PRODUCT.md"');
     expect(html).toContain('data-transcript-file-target="/Users/zeeland/work/rudder/docs/PRODUCT.md"');
     expect(html).toContain("underline-offset-4");
   });

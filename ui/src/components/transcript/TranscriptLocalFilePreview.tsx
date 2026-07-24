@@ -107,8 +107,9 @@ export function TranscriptLocalFilePreview({
     <div className="flex h-full min-h-0 flex-col" data-testid="chat-side-panel-local-file-view">
       <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-foreground">{preview.fileName || label}</div>
-          <div className="truncate text-xs text-muted-foreground" title={preview.parentPath}>{preview.parentPath}</div>
+          <div className="truncate text-sm font-medium text-foreground" title={preview.canonicalPath}>
+            {preview.fileName || label}
+          </div>
         </div>
         <button
           type="button"

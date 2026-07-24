@@ -9,6 +9,8 @@ import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalO
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
 import { transcriptAgentInspectionForTool } from "./TranscriptAgentInspection";
+import { TranscriptImageArtifact } from "./TranscriptImageArtifact";
+import { TranscriptUnifiedDiff, parseUnifiedDiff } from "./TranscriptUnifiedDiff";
 
 const EMPTY_AGENT_INSPECTIONS = new Map<string, TranscriptAgentInspection>();
 
@@ -296,6 +298,8 @@ export function TranscriptChatToolActionRow({
   const canExpand = semantic.actionKind !== "skill"
     && Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
   const [open, setOpen] = useState(inline || (defaultOpenOnError && block.status === "error"));
+  const [imageOpen, setImageOpen] = useState(false);
+  const [openDiffIndexes, setOpenDiffIndexes] = useState<Set<number>>(() => new Set());
   const duration = quiet ? null : formatTranscriptDuration(block.ts, block.endTs);
   const statusText =
     block.status === "error"
@@ -312,10 +316,16 @@ export function TranscriptChatToolActionRow({
   const rowPaddingClass = compact ? "py-0.5" : "py-1.5";
   const rowAlignmentClass = compact ? "items-center" : "items-start";
   const rowGapClass = compact ? "gap-1.5" : "gap-2";
-  const trailingOffsetClass = compact ? "" : "pt-0.5";
-  const chevronOffsetClass = compact ? "" : "mt-0.5";
   const fileTargets = semantic.fileTargets ?? [];
-  const hasOpenableFileTargets = fileTargets.some((target) => target.path);
+  const fileChanges = semantic.fileChanges ?? [];
+  const image = semantic.image;
+  const hasArtifactRows = fileTargets.length > 0 || fileChanges.length > 0 || Boolean(image);
+  const inputStatus = typeof asRecord(block.input)?.status === "string"
+    ? String(asRecord(block.input)?.status).toLowerCase()
+    : null;
+  const fileChangeSucceeded = block.status === "completed"
+    && inputStatus !== "failed"
+    && inputStatus !== "error";
   const detailStateLabelId = useId();
   const summaryLabelId = useId();
   const statusLabelId = useId();
@@ -327,6 +337,56 @@ export function TranscriptChatToolActionRow({
   const inspectAgent = inspectableAgent && onOpenAgent
     ? () => onOpenAgent(inspectableAgent)
     : null;
+  const artifactRowParts = () => {
+    if (semantic.actionKind === "skill") return { prefix: "Use ", suffix: " skill" };
+    if (semantic.actionKind === "read") return { prefix: "Read ", suffix: "" };
+    return semantic.category === "edit"
+      ? { prefix: "Edited ", suffix: "" }
+      : { prefix: "Read ", suffix: "" };
+  };
+  const toggleDiff = (index: number) => {
+    setOpenDiffIndexes((current) => {
+      const next = new Set(current);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+  const renderTrailing = (isLast: boolean) => {
+    if (!isLast) return null;
+    return (
+      <span
+        className="ml-auto inline-flex h-5 shrink-0 items-center gap-1.5 self-center"
+        data-transcript-action-trailing="true"
+      >
+        {duration ? (
+          <span
+            className="inline-flex h-5 items-center text-[10px] font-medium tabular-nums text-muted-foreground"
+            data-transcript-action-duration="true"
+          >
+            {duration}
+          </span>
+        ) : null}
+        {statusText ? (
+          <span id={statusLabelId} className={cn("inline-flex h-5 items-center text-[10px] font-medium", rowTone)}>
+            {statusText}
+          </span>
+        ) : null}
+        {canExpand && !inline ? (
+          <button
+            type="button"
+            className="-my-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100"
+            onClick={toggleDetails}
+            aria-expanded={open}
+            aria-labelledby={`${detailStateLabelId} ${summaryLabelId}${statusText ? ` ${statusLabelId}` : ""}`}
+            data-transcript-action-row-disclosure="true"
+          >
+            <DisclosureChevron open={open} className="h-4 w-4" />
+          </button>
+        ) : null}
+      </span>
+    );
+  };
 
   return (
     <div
@@ -338,54 +398,112 @@ export function TranscriptChatToolActionRow({
           {open ? "Collapse" : "Expand"} {isCommand ? "command" : "tool"} details:
         </span>
       ) : null}
-      {hasOpenableFileTargets ? (
-        <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
-          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
-          <span id={summaryLabelId} className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
-            {semantic.category === "edit" ? "Edited " : "Read "}
-            {fileTargets.map((target, index) => (
-              <span key={`${target.label}-${index}`}>
-                {index > 0 ? ", " : null}
-                {target.path ? (
-                  <button
-                    type="button"
-                    className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                    aria-label={`Open file ${target.label}`}
-                    data-transcript-file-target={target.path}
-                    onClick={() => onOpenFile?.(target.path!, target.label)}
+      {hasArtifactRows ? (
+        <div>
+          <span id={summaryLabelId} className="sr-only">{displaySummary}</span>
+          {fileTargets.map((target, index) => {
+            const isLast = index === fileTargets.length - 1 && fileChanges.length === 0 && !image;
+            const { prefix, suffix } = artifactRowParts();
+            return (
+              <div
+                key={`${target.label}-${index}`}
+                className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}
+              >
+                <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
+                <span
+                  className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}
+                  title={target.label}
+                >
+                  {prefix}
+                  {target.path ? (
+                    <button
+                      type="button"
+                      className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                      aria-label={`Open file ${target.displayLabel}`}
+                      data-transcript-file-target={target.path}
+                      onClick={() => onOpenFile?.(target.path!, target.displayLabel)}
+                    >
+                      {target.displayLabel}
+                    </button>
+                  ) : (
+                    <span title={`${target.label} cannot be opened without a trusted workspace root.`}>
+                      {target.displayLabel}
+                    </span>
+                  )}
+                  {suffix}
+                </span>
+                {renderTrailing(isLast)}
+              </div>
+            );
+          })}
+          {fileChanges.map((change, index) => {
+            const parsed = change.diff ? parseUnifiedDiff(change.diff) : null;
+            const hasHistoricalDiff = Boolean(
+              fileChangeSucceeded
+              && change.diff
+              && parsed?.hasHunks
+              && !parsed.binary,
+            );
+            const isLast = index === fileChanges.length - 1 && !image;
+            const targetText = `${change.displayLabel}${change.diff ? ` +${change.additions} -${change.deletions}` : ""}`;
+            return (
+              <div key={`${change.path}-${index}`}>
+                <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
+                  <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
+                  <span
+                    className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}
+                    title={change.movePath ? `${change.path} → ${change.movePath}` : change.path}
                   >
-                    {target.label}
-                  </button>
-                ) : (
-                  <span title="This relative file path has no trusted workspace root.">{target.label}</span>
-                )}
-              </span>
-            ))}
-          </span>
-          {duration ? (
-            <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
-              {duration}
-            </span>
-          ) : null}
-          {statusText ? (
-            <span id={statusLabelId} className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
-              {statusText}
-            </span>
-          ) : null}
-          {canExpand && !inline ? (
-            <button
-              type="button"
-              className={cn(
-                "-my-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
-                chevronOffsetClass,
-              )}
-              onClick={toggleDetails}
-              aria-expanded={open}
-              aria-labelledby={`${detailStateLabelId} ${summaryLabelId}${statusText ? ` ${statusLabelId}` : ""}`}
-              data-transcript-action-row-disclosure="true"
-            >
-              <DisclosureChevron open={open} className="h-4 w-4" />
-            </button>
+                    Edited{" "}
+                    {hasHistoricalDiff ? (
+                      <button
+                        type="button"
+                        className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                        aria-label={`${openDiffIndexes.has(index) ? "Collapse" : "Expand"} historical diff for ${change.displayLabel}`}
+                        aria-expanded={openDiffIndexes.has(index)}
+                        data-transcript-diff-target={change.path}
+                        onClick={() => toggleDiff(index)}
+                      >
+                        {targetText}
+                      </button>
+                    ) : (
+                      <span>{targetText}</span>
+                    )}
+                  </span>
+                  {renderTrailing(isLast)}
+                </div>
+                {hasHistoricalDiff && openDiffIndexes.has(index) && change.diff ? (
+                  <div className="ml-5">
+                    <TranscriptUnifiedDiff
+                      fileName={change.displayLabel}
+                      diff={change.diff}
+                      truncated={change.diffTruncated}
+                      originalBytes={change.diffOriginalBytes}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+          {image ? (
+            <div>
+              <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
+                <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
+                <button
+                  type="button"
+                  className={cn("min-w-0 flex-1 rounded-sm text-left text-foreground/84 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40", compact ? "text-xs leading-5" : "text-sm leading-6")}
+                  title={image.path}
+                  aria-expanded={imageOpen}
+                  aria-label={`${imageOpen ? "Collapse" : "Preview"} image ${image.displayLabel}`}
+                  data-transcript-image-target={image.path}
+                  onClick={() => setImageOpen((value) => !value)}
+                >
+                  Viewed an image
+                </button>
+                {renderTrailing(true)}
+              </div>
+              {imageOpen ? <TranscriptImageArtifact path={image.path} displayLabel={image.displayLabel} /> : null}
+            </div>
           ) : null}
         </div>
       ) : (
@@ -434,6 +552,15 @@ export function TranscriptChatToolActionRow({
           </span>
         </button>
       )}
+      {semantic.evidenceWarning && (hasArtifactRows || open) ? (
+        <div
+          className="ml-5 mt-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-800 dark:text-amber-200"
+          role="status"
+          data-transcript-evidence-warning="true"
+        >
+          {semantic.evidenceWarning}
+        </div>
+      ) : null}
       {canExpand && open ? (
         command ? (
           <CommandTerminalDetail
@@ -614,7 +741,14 @@ export function TranscriptChatActionGroup({
     .map((action) => action.entry);
   const allToolsErrored = areAllToolEntriesErrored(toolEntries);
   const shouldInlineSingleStdoutAction = hasSingleAction && singleAction?.type === "stdout";
-  const shouldRenderSingleToolAction = hasSingleAction && singleAction?.type === "tool";
+  const singleToolSemantic = singleAction?.type === "tool"
+    ? describeToolSemanticInfo(singleAction.entry.name, singleAction.entry.input)
+    : null;
+  const singleArtifactCount = (singleToolSemantic?.fileTargets?.length ?? 0)
+    + (singleToolSemantic?.fileChanges?.length ?? 0);
+  const shouldRenderSingleToolAction = hasSingleAction
+    && singleAction?.type === "tool"
+    && singleArtifactCount <= 1;
   const summary = formatChatActionSummary(actions);
   const highlightGroupError = allToolsErrored && !detailVariant;
   const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : allToolsErrored));
