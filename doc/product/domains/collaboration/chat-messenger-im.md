@@ -3237,6 +3237,10 @@ instance into Main; it does not reopen a copy in Side.
   Browser tabs expose `Keep in Messenger`; a blank Browser tab is not durable.
 - Messenger shows Saved Views only inside custom groups. Rows share Chat/Issue
   density, focus, actions, drag handle, pointer DnD, and keyboard DnD behavior.
+- A Saved View row is selected only while the current Messenger route is
+  `/messenger/saved/:id` for that row. A live or active Main Workbench tab
+  retained behind Chat, Issue, or another Messenger route must not leave the
+  Saved View row selected.
 - Main exposes one WAI-ARIA mixed tab strip with roving keyboard focus,
   left/right/home/end navigation, close, reorder, and `+` for a Browser tab.
 
