@@ -165,7 +165,10 @@ export function KeepSidePanelViewButton({
       const intentKey = keepIntentKey(intent);
       const clientMutationId = mutationIdForIntent(mutationIdsRef.current, intentKey);
       const requestInput = { ...intent, clientMutationId };
-      const existingResult = existingSavedViewEntry && existingSavedViewGroup
+      const existingResult = existingSavedViewEntry
+        && existingSavedViewGroup
+        && placement.kind === "group"
+        && placement.groupId === existingSavedViewGroup.id
         ? {
             savedView: existingSavedViewEntry.item.savedView,
             group: {

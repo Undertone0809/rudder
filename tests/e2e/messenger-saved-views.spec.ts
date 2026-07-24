@@ -529,6 +529,7 @@ test.describe("Messenger Saved Views", () => {
     const libraryFilePath = `loose/library-${randomUUID()}.md`;
     const libraryTitle = "Loose library document";
     const browserTitle = "Loose browser reference";
+    const libraryViewInstanceId = `library-${randomUUID()}`;
     const fileResponse = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
       data: { filePath: libraryFilePath, content: "# Loose library document\n" },
     });
@@ -543,7 +544,7 @@ test.describe("Messenger Saved Views", () => {
       target: {
         kind: "library_file",
         filePath: libraryFilePath,
-        viewInstanceId: `library-${randomUUID()}`,
+        viewInstanceId: libraryViewInstanceId,
       },
     });
     const browser = await keepLooseSavedView(page, organization.id, {
@@ -568,21 +569,41 @@ test.describe("Messenger Saved Views", () => {
     const groupedLibraryRow = groupSection.locator(
       `[data-messenger-saved-view-id="${library.savedView.id}"]`,
     );
+    const looseBrowserRow = page.locator(
+      `[data-messenger-saved-view-id="${browser.savedView.id}"]`,
+    );
     await expect(groupedLibraryRow).toBeVisible({ timeout: 15_000 });
-    await groupedLibraryRow.hover();
-    await groupedLibraryRow.getByRole("button", {
-      name: `Saved View actions for ${libraryTitle}`,
-    }).click();
-    await page.getByRole("menuitem", { name: "Move to Messenger sidebar" }).click();
+    await expect(looseBrowserRow).toBeVisible();
+    await groupedLibraryRow.locator("a").click();
+    const libraryMainTab = page.locator(
+      `[data-testid="messenger-main-workbench"] [role="tab"][data-view-instance-id="${libraryViewInstanceId}"]`,
+    );
+    await expect(libraryMainTab).toBeVisible();
+
+    const groupedDragHandleBox = await groupedLibraryRow
+      .getByRole("button", { name: `Drag ${libraryTitle}` })
+      .boundingBox();
+    const initialLooseBrowserBox = await looseBrowserRow.boundingBox();
+    expect(groupedDragHandleBox).not.toBeNull();
+    expect(initialLooseBrowserBox).not.toBeNull();
+    await page.mouse.move(
+      groupedDragHandleBox!.x + groupedDragHandleBox!.width / 2,
+      groupedDragHandleBox!.y + groupedDragHandleBox!.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      initialLooseBrowserBox!.x + initialLooseBrowserBox!.width / 2,
+      initialLooseBrowserBox!.y + 4,
+      { steps: 12 },
+    );
+    await page.mouse.up();
 
     const looseLibraryRow = page.locator(
       `[data-messenger-saved-view-id="${library.savedView.id}"]`,
     );
-    const looseBrowserRow = page.locator(
-      `[data-messenger-saved-view-id="${browser.savedView.id}"]`,
-    );
     await expect(looseLibraryRow).toBeVisible();
     await expect(looseBrowserRow).toBeVisible();
+    await expect(libraryMainTab).toBeVisible();
     await expect.poll(async () => (
       (await listGroups(page, organization.id)).groups
         .find((candidate) => candidate.id === group.id)
@@ -651,6 +672,7 @@ test.describe("Messenger Saved Views", () => {
       `[data-messenger-saved-view-id="${library.savedView.id}"]`,
     )).toBeVisible();
     await expect(looseBrowserRow).toBeVisible();
+    await expect(libraryMainTab).toBeVisible();
 
     await page.reload();
     await expect(groupSection.locator(

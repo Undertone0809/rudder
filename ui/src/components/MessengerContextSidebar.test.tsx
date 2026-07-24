@@ -15,6 +15,7 @@ let chatList: any[];
 let agentList: any[];
 let projectList: any[];
 let customGroupList: any[];
+let customGroupMembershipKnown: boolean;
 let savedViewPage: any;
 let queryOptions: Array<{ queryKey?: unknown; enabled?: boolean }>;
 let localStorageValues: Record<string, string>;
@@ -36,7 +37,11 @@ vi.mock("@tanstack/react-query", () => ({
     const queryKey = Array.isArray(options.queryKey) ? options.queryKey : [];
     if (queryKey[0] === "agents") return { data: agentList };
     if (queryKey[0] === "projects") return { data: projectList };
-    if (queryKey[0] === "messenger" && queryKey[2] === "groups") return { data: { groups: customGroupList } };
+    if (queryKey[0] === "messenger" && queryKey[2] === "groups") {
+      return customGroupMembershipKnown
+        ? { data: { groups: customGroupList } }
+        : { data: undefined, isPending: true };
+    }
     if (queryKey[0] === "messenger" && queryKey[2] === "saved-views") return { data: savedViewPage };
     return { data: chatList };
   },
@@ -141,6 +146,7 @@ describe("MessengerContextSidebar", () => {
     vi.setSystemTime(new Date("2026-04-11T10:00:00.000Z"));
     queryOptions = [];
     messengerModelOptions = [];
+    customGroupMembershipKnown = true;
     localStorageValues = {};
     vi.stubGlobal("window", {
       localStorage: {
@@ -938,6 +944,50 @@ describe("MessengerContextSidebar", () => {
       queryKey: ["messenger", "org-1", "saved-views", "visible", 50, 0],
       enabled: true,
     }));
+  });
+
+  it("does not infer loose Saved Views before group membership is known", () => {
+    localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({
+      "org-1": "custom",
+    });
+    customGroupMembershipKnown = false;
+    savedViewPage = {
+      items: [{
+        id: "saved-membership-pending",
+        orgId: "org-1",
+        userId: "local-board",
+        targetKind: "browser",
+        targetPayload: {
+          kind: "browser",
+          tabId: "tab-pending",
+          url: "https://example.com/pending",
+          viewInstanceId: "view-pending",
+        },
+        resourceKey: "browser:pending",
+        instanceId: "view-pending",
+        canonicalResourceKey: "browser:pending",
+        clientMutationId: null,
+        title: "Membership pending",
+        subtitle: null,
+        favicon: null,
+        sortOrder: 0,
+        hiddenAt: null,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+      }],
+      pageInfo: {
+        limit: 50,
+        offset: 0,
+        total: 1,
+        hasMore: false,
+        nextOffset: null,
+      },
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).not.toContain('data-messenger-saved-view-id="saved-membership-pending"');
+    expect(html).not.toContain("Membership pending");
   });
 
   for (const rule of ["project", "agent", "kind", "attention"] as const) {

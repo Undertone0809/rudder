@@ -313,6 +313,52 @@ describe("KeepSidePanelViewButton mutation intents", () => {
     });
   });
 
+  it("does not reuse a grouped keep result when moving the existing view loose", async () => {
+    const target: SidePanelTarget = {
+      kind: "library_file",
+      filePath: "docs/spec.md",
+      label: "Spec",
+      viewInstanceId: "file-view-1",
+    };
+    mockListCustomGroups.mockResolvedValue({
+      groups: [{
+        ...groupA,
+        entries: [{
+          id: "entry-existing",
+          item: {
+            type: "saved_view",
+            savedView: {
+              ...savedViewResult.savedView,
+              targetPayload: target,
+            },
+          },
+        }],
+      }],
+    });
+    mockKeepSavedView.mockResolvedValue({
+      ...savedViewResult,
+      group: null,
+    });
+    renderButton({
+      contextKey: "organization:global",
+      target,
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host?.textContent).toContain(
+        `Move existing view from ${groupA.name} to Main`,
+      ));
+    });
+    const sidebar = Array.from(host!.querySelectorAll("button"))
+      .find((button) => button.textContent === "Messenger sidebar") as HTMLButtonElement;
+
+    await clickAndWait(sidebar, 1);
+
+    expect(mockPromote).toHaveBeenCalledWith(expect.objectContaining({
+      existingResult: null,
+      input: expect.objectContaining({ placement: { kind: "loose" } }),
+    }));
+  });
+
   it("bounds failed intent retention and evicts the oldest retry id", async () => {
     mockKeepSavedView.mockRejectedValue(new Error("Offline"));
     for (let index = 0; index < 33; index += 1) {

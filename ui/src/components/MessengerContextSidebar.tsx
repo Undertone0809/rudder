@@ -957,6 +957,7 @@ export function MessengerContextSidebar() {
   }, [intelligenceProfilesQuery.data]);
 
   const customGroups = customGroupsQuery.data?.groups ?? [];
+  const customGroupMembershipKnown = customGroupsQuery.data !== undefined;
   const loadedSavedViews = useMemo(() => {
     const byId = new Map<string, MessengerSavedView>();
     for (const offset of Object.keys(loadedSavedViewPages)
@@ -985,8 +986,10 @@ export function MessengerContextSidebar() {
       .map((entry) => entry.item.savedView.id),
   ), [customGroups]);
   const looseSavedViews = useMemo(
-    () => loadedSavedViews.filter((savedView) => !groupedSavedViewIds.has(savedView.id)),
-    [groupedSavedViewIds, loadedSavedViews],
+    () => customGroupMembershipKnown
+      ? loadedSavedViews.filter((savedView) => !groupedSavedViewIds.has(savedView.id))
+      : [],
+    [customGroupMembershipKnown, groupedSavedViewIds, loadedSavedViews],
   );
   const defaultCustomGroupLayout = threadOrganizationRule === "latest" || threadOrganizationRule === "custom";
   const effectiveThreadOrganizationRule: ThreadOrganizationRule = defaultCustomGroupLayout
