@@ -55,7 +55,7 @@ import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/li
 import { Link } from "@/lib/router";
 import { formatSkillReferenceDisplayLabel, parseSkillReference } from "@/lib/skill-reference";
 import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
-import { agentRouteRef, agentUrl, cn, relativeTime } from "@/lib/utils";
+import { agentUrl, cn, relativeTime } from "@/lib/utils";
 import {
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
@@ -85,12 +85,12 @@ import {
   Pencil,
   RefreshCcw,
   Repeat,
-  RotateCcw,
   Sparkles
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import { ChatFailedMessageActions } from "./Chat.failed-message-actions";
 import { chatForkSystemMessageParts, readStructuredPayloadString, sideChatStartedSystemMessageParts } from "./Chat.message-system-parts";
-import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, resolveChatMessageAgentRunTarget, shouldHideSteerFallbackAssistantBubble, statusChipClassName } from "./Chat.parts";
+import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, shouldHideSteerFallbackAssistantBubble, statusChipClassName } from "./Chat.parts";
 import { ChatInlineVisualContent } from "./ChatInlineVisual";
 
 export { readStructuredPayloadString } from "./Chat.message-system-parts";
@@ -2289,21 +2289,6 @@ export function ChatMessageItem({
   const canContinueInterrupted = Boolean(onContinueInterruptedMessage) && canContinueInterruptedChatMessage(message);
   const recoverableFailure = displayedState === "failed" ? recoverableFailureFromMessage(message) : null;
   const canRetryFailed = Boolean(onRetryFailedMessage) && canRetryFailedChatMessage(message);
-  const failedRunTarget = displayedState === "failed"
-    ? resolveChatMessageAgentRunTarget(message, conversation)
-    : null;
-  const failedRunAgent = failedRunTarget
-    ? agents?.find((agent) => agent.id === failedRunTarget.agentId)
-    : null;
-  const failedRunAgentRef = failedRunAgent
-    ? agentRouteRef(failedRunAgent)
-    : failedRunTarget?.agentId;
-  const failedRunHref = failedRunTarget
-    ? applyOrganizationPrefix(
-        `/agents/${failedRunAgentRef}/runs/${failedRunTarget.runId}`,
-        currentOrganizationPrefixFromLocation(),
-      )
-    : null;
   const failedMessageTitle = recoverableFailure?.phase === "runtime_boot" || recoverableFailure?.action === "repair_runtime"
     ? "Runtime unavailable"
     : "Response failed";
@@ -2362,28 +2347,13 @@ export function ChatMessageItem({
                   </div>
                 ) : null}
               </div>
-              {failedRunHref || canRetryFailed ? (
-                <div className="ml-7 flex shrink-0 flex-wrap items-center justify-end gap-2 sm:ml-0">
-                  {failedRunHref ? (
-                    <Link
-                      to={failedRunHref}
-                      className="inline-flex h-7 items-center rounded-md border border-border bg-background/70 px-2 text-xs font-medium text-foreground transition-colors hover:bg-background"
-                    >
-                      Open run
-                    </Link>
-                  ) : null}
-                  {canRetryFailed ? (
-                    <button
-                      type="button"
-                      className="inline-flex h-7 items-center gap-1.5 rounded-md border border-destructive/30 bg-background/70 px-2 text-xs font-medium text-destructive transition-colors hover:bg-background"
-                      onClick={() => onRetryFailedMessage?.(message)}
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" aria-hidden />
-                      Retry
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
+              <ChatFailedMessageActions
+                message={message}
+                conversation={conversation}
+                agents={agents}
+                canRetry={canRetryFailed}
+                onRetry={onRetryFailedMessage}
+              />
             </div>
           ) : null}
           {isEmptyStreamingAssistant ? (
