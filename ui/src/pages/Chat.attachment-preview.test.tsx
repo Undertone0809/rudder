@@ -4998,6 +4998,7 @@ describe("Chat route loading", () => {
     const { container } = renderChat();
 
     expect(container.querySelector("[data-testid='chat-conversation-loading-state']")).not.toBeNull();
+    expect(mockState.queryKeys).toContainEqual(["chats", "org-1", "messages", "chat-loading"]);
     expect(container.querySelectorAll("[data-slot='skeleton']")).toHaveLength(5);
     expect(container.querySelector(".chat-message-user")).not.toBeNull();
     expect(container.querySelector("[data-testid='chat-composer-toolbar']")).toBeNull();

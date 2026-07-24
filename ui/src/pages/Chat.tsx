@@ -422,20 +422,18 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryKey: queryKeys.chats.listPreview(selectedOrganizationId ?? "__none__", "active", CHAT_LIST_PREVIEW_LIMIT),
     queryFn: () => chatsApi.list(selectedOrganizationId!, "active", { limit: CHAT_LIST_PREVIEW_LIMIT }), enabled: !!selectedOrganizationId, }); const conversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
-    queryFn: () => chatsApi.get(conversationId!), enabled: !!selectedOrganizationId && !!conversationId && organizationRouteMatchesSelection, }); const activeConversationFromList = conversationsQuery.data?.find((conversation) => conversation.id === conversationId) ?? null; const activeConversationBelongsToSelectedOrganization = organizationRouteMatchesSelection && (
-    conversationQuery.data
-      ? conversationQuery.data.orgId === selectedOrganizationId
-      : activeConversationFromList?.orgId === selectedOrganizationId); const canQueryMessages = resolveChatTranscriptLoadState({
+    queryFn: () => chatsApi.get(conversationId!), enabled: !!selectedOrganizationId && !!conversationId && organizationRouteMatchesSelection, }); const activeConversationFromList = conversationsQuery.data?.find((conversation) => conversation.id === conversationId) ?? null; const conversationSnapshot = conversationQuery.data ?? activeConversationFromList; const activeConversationBelongsToSelectedOrganization = organizationRouteMatchesSelection && conversationSnapshot?.orgId === selectedOrganizationId; const canQueryMessages = resolveChatTranscriptLoadState({
     selectedOrganizationId,
     conversationId: conversationId ?? null,
     organizationRouteMatchesSelection,
+    conversationSnapshotOrganizationId: conversationSnapshot?.orgId ?? null,
     hasConversationSnapshot: activeConversationBelongsToSelectedOrganization,
     conversationDetailPending: conversationQuery.isPending,
     hasMessages: false,
     messagesPending: true,
   }).canQueryMessages; const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
-    queryFn: () => chatsApi.listMessages(conversationId!, { includeTranscript: false }), enabled: canQueryMessages, });
+    queryFn: () => chatsApi.listMessages(selectedOrganizationId!, conversationId!, { includeTranscript: false }), enabled: canQueryMessages, });
   const workManifestQuery = useQuery({
     queryKey: queryKeys.chats.workManifest(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
     queryFn: () => chatsApi.getWorkManifest(conversationId!),
@@ -643,6 +641,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     selectedOrganizationId,
     conversationId: conversationId ?? null,
     organizationRouteMatchesSelection,
+    conversationSnapshotOrganizationId: conversationSnapshot?.orgId ?? null,
     hasConversationSnapshot: Boolean(selectedConversation),
     conversationDetailPending: conversationQuery.isPending && conversationQuery.data === undefined,
     hasMessages: messagesQuery.data !== undefined,

@@ -2336,7 +2336,7 @@ describe("chat routes", () => {
     mockChatService.listMessages.mockResolvedValueOnce([interruptedMessage]);
 
     const res = await request(createApp())
-      .get("/api/chats/chat-1/messages");
+      .get("/api/chats/chat-1/messages?orgId=organization-1");
 
     expect(res.status).toBe(200);
     expect(mockChatService.markInterruptedStreamingMessages).toHaveBeenCalledWith("chat-1");
@@ -2734,12 +2734,53 @@ describe("chat routes", () => {
     mockChatService.listMessages.mockResolvedValueOnce([message]);
 
     const res = await request(createApp())
-      .get("/api/chats/chat-1/messages");
+      .get("/api/chats/chat-1/messages?orgId=organization-1");
 
     expect(res.status).toBe(200);
     expect(mockChatService.markInterruptedStreamingMessages).not.toHaveBeenCalled();
     expect(mockChatService.listMessages).toHaveBeenCalledWith("chat-1", { includeTranscript: false });
     expect(res.body[0]).toEqual(expect.objectContaining({ id: "message-feishu" }));
+  });
+
+  it("rejects a multi-organization board message read when the requested organization does not own the chat", async () => {
+    const conversation = createConversation({ orgId: "organization-2" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValueOnce([
+      createMessage("message-org-2", "assistant", "message", "Private organization 2 content"),
+    ]);
+
+    const res = await request(createApp({
+      type: "board",
+      userId: "user-1",
+      orgIds: ["organization-1", "organization-2"],
+      source: "session",
+      isInstanceAdmin: false,
+      runId: null,
+    }))
+      .get("/api/chats/chat-1/messages?orgId=organization-1");
+
+    expect(res.status).toBe(404);
+    expect(mockChatService.listMessages).not.toHaveBeenCalled();
+  });
+
+  it("rejects an agent message read when the requested organization does not own the chat", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValueOnce([
+      createMessage("message-agent", "assistant", "message", "Agent-scoped content"),
+    ]);
+
+    const res = await request(createApp({
+      type: "agent",
+      source: "agent_key",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: "run-1",
+    }))
+      .get("/api/chats/chat-1/messages?orgId=organization-2");
+
+    expect(res.status).toBe(404);
+    expect(mockChatService.listMessages).not.toHaveBeenCalled();
   });
 
   it("can include full chat transcripts when explicitly requested", async () => {
@@ -2748,7 +2789,7 @@ describe("chat routes", () => {
     mockChatService.listMessages.mockResolvedValueOnce([]);
 
     const res = await request(createApp())
-      .get("/api/chats/chat-1/messages?includeTranscript=true");
+      .get("/api/chats/chat-1/messages?orgId=organization-1&includeTranscript=true");
 
     expect(res.status).toBe(200);
     expect(mockChatService.listMessages).toHaveBeenCalledWith("chat-1", { includeTranscript: true });
@@ -2764,7 +2805,7 @@ describe("chat routes", () => {
     ]);
 
     const res = await request(createApp())
-      .get("/api/chats/chat-1/messages?envelope=true&order=newest&limit=1&cursor=message-3&includeTranscript=true");
+      .get("/api/chats/chat-1/messages?orgId=organization-1&envelope=true&order=newest&limit=1&cursor=message-3&includeTranscript=true");
 
     expect(res.status).toBe(200);
     expect(mockChatService.listMessages).toHaveBeenCalledWith("chat-1", { includeTranscript: true });

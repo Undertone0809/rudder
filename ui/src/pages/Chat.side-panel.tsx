@@ -1606,7 +1606,7 @@ export function ChatSidePanel({
   });
   const chatMessagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", chatTarget?.conversationId ?? "__none__"),
-    queryFn: () => chatsApi.listMessages(chatTarget!.conversationId),
+    queryFn: () => chatsApi.listMessages(selectedOrganizationId!, chatTarget!.conversationId),
     enabled: targetQueriesEnabled && !!selectedOrganizationId && !!chatTarget,
   });
   const libraryFileQuery = useQuery({

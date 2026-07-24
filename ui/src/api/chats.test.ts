@@ -12,6 +12,25 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("chat message history API", () => {
+  it("scopes message history requests to the selected organization", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("[]", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(chatsApi.listMessages("org-1", "chat-1", {
+      includeTranscript: false,
+    })).resolves.toEqual([]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/chats/chat-1/messages?orgId=org-1&includeTranscript=false",
+      expect.objectContaining({ credentials: "include" }),
+    );
+  });
+});
+
 describe("atomic chat draft API", () => {
   const inlineAnnotation: ChatInlineAnnotationInput = {
     id: "00000000-0000-4000-8000-000000000001",

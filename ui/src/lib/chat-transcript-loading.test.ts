@@ -9,6 +9,7 @@ describe("chat transcript loading", () => {
       selectedOrganizationId: "org-1",
       conversationId: "chat-1",
       organizationRouteMatchesSelection: true,
+      conversationSnapshotOrganizationId: null,
       hasConversationSnapshot: false,
       conversationDetailPending: true,
       hasMessages: false,
@@ -24,8 +25,22 @@ describe("chat transcript loading", () => {
       selectedOrganizationId: "org-1",
       conversationId: "chat-1",
       organizationRouteMatchesSelection: false,
+      conversationSnapshotOrganizationId: null,
       hasConversationSnapshot: false,
       conversationDetailPending: true,
+      hasMessages: false,
+      messagesPending: false,
+    }).canQueryMessages).toBe(false);
+  });
+
+  it("does not query messages when a known conversation snapshot belongs to another organization", () => {
+    expect(resolveChatTranscriptLoadState({
+      selectedOrganizationId: "org-1",
+      conversationId: "chat-1",
+      organizationRouteMatchesSelection: true,
+      conversationSnapshotOrganizationId: "org-2",
+      hasConversationSnapshot: true,
+      conversationDetailPending: false,
       hasMessages: false,
       messagesPending: false,
     }).canQueryMessages).toBe(false);
@@ -36,6 +51,7 @@ describe("chat transcript loading", () => {
       selectedOrganizationId: "org-1",
       conversationId: "chat-1",
       organizationRouteMatchesSelection: true,
+      conversationSnapshotOrganizationId: "org-1",
       hasConversationSnapshot: true,
       conversationDetailPending: true,
       hasMessages: true,

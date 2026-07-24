@@ -163,8 +163,12 @@ export const chatsApi = {
     const query = options.cancelActive ? "?cancelActive=true" : "";
     return api.delete<ChatConversation>(`/chats/${chatId}${query}`);
   },
-  listMessages: (chatId: string, options: { includeTranscript?: boolean } = {}) => {
-    const params = new URLSearchParams();
+  listMessages: (
+    orgId: string,
+    chatId: string,
+    options: { includeTranscript?: boolean } = {},
+  ) => {
+    const params = new URLSearchParams({ orgId });
     if (typeof options.includeTranscript === "boolean") {
       params.set("includeTranscript", String(options.includeTranscript));
     }

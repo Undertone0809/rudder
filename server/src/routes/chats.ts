@@ -297,9 +297,16 @@ export function chatRoutes(
     ));
   }
 
-  async function assertConversationAccess(req: Request, conversationId: string) {
+  async function assertConversationAccess(
+    req: Request,
+    conversationId: string,
+    expectedOrgId?: string,
+  ) {
     const conversation = await svc.getById(conversationId);
-    if (!conversation) return null;
+    if (
+      !conversation
+      || (expectedOrgId !== undefined && conversation.orgId !== expectedOrgId)
+    ) return null;
     assertCompanyAccess(req, conversation.orgId);
     await sideChats.assertAccessible(
       conversation as ChatConversation,
@@ -2677,7 +2684,18 @@ export function chatRoutes(
 
 
   router.get("/chats/:id/messages", async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
+    const requestedOrgId = typeof req.query.orgId === "string"
+      ? req.query.orgId.trim()
+      : undefined;
+    if (req.query.orgId !== undefined && requestedOrgId === undefined) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const conversation = await assertConversationAccess(
+      req,
+      req.params.id as string,
+      requestedOrgId,
+    );
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;

@@ -166,7 +166,7 @@ export function SideChatPanelView({
   });
   const sourceMessagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(organizationId, target.sourceConversationId),
-    queryFn: () => chatsApi.listMessages(target.sourceConversationId),
+    queryFn: () => chatsApi.listMessages(organizationId, target.sourceConversationId),
     enabled: !target.sourceMessageId || !target.sourcePreview,
   });
   const sourceMessages = sourceMessagesQuery.data ?? [];
@@ -186,7 +186,11 @@ export function SideChatPanelView({
   });
   const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(organizationId, target.conversationId ?? "__side-chat-draft__"),
-    queryFn: () => chatsApi.listMessages(target.conversationId!, { includeTranscript: true }),
+    queryFn: () => chatsApi.listMessages(
+      organizationId,
+      target.conversationId!,
+      { includeTranscript: true },
+    ),
     enabled: Boolean(target.conversationId),
   });
   const agentsQuery = useQuery({
