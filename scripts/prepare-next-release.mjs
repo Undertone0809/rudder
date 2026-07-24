@@ -70,6 +70,7 @@ function run(command, args, { capture = false, env = {} } = {}) {
 function parseArgs(argv) {
   const options = {
     base: "main",
+    branchPrefix: "automation/release-v",
     dryRun: false,
     remote: "origin",
     stableVersion: "",
@@ -83,6 +84,7 @@ function parseArgs(argv) {
     }
     const key = {
       "--base": "base",
+      "--branch-prefix": "branchPrefix",
       "--remote": "remote",
       "--stable-version": "stableVersion",
     }[arg];
@@ -126,10 +128,23 @@ function fetchBase(options) {
   ]);
 }
 
-function pushBase(options) {
+function remoteBranchExists(options, branch) {
   return spawnSync(
     "git",
-    ["push", "--porcelain", options.remote, `HEAD:refs/heads/${options.base}`],
+    ["ls-remote", "--exit-code", "--heads", options.remote, `refs/heads/${branch}`],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ).status === 0;
+}
+
+function pushBranch(options, branch) {
+  return spawnSync(
+    "git",
+    ["push", "--porcelain", options.remote, `HEAD:refs/heads/${branch}`],
     {
       cwd: repoRoot,
       encoding: "utf8",
@@ -164,53 +179,63 @@ function main() {
       writeActionOutput("version", decision.nextVersion);
       console.log(
         `Would bump ${options.remote}/${options.base} from `
-        + `${currentVersion} -> ${decision.nextVersion} and push the release-maintenance commit directly.`,
+        + `${currentVersion} -> ${decision.nextVersion} on a protected release-maintenance PR branch.`,
       );
       return;
     }
 
-    const maxPushAttempts = 3;
-    for (let attempt = 1; attempt <= maxPushAttempts; attempt += 1) {
-      fetchBase(options);
-      run("git", ["checkout", "-B", options.base, `${options.remote}/${options.base}`]);
-      shouldRestoreCheckout = false;
+    fetchBase(options);
+    run("git", ["checkout", "-B", options.base, `${options.remote}/${options.base}`]);
+    shouldRestoreCheckout = false;
 
-      const currentVersion = readWorkspaceVersion();
-      const decision = decideVersionHandoff(currentVersion, options.stableVersion);
-      writeActionOutput("version", decision.nextVersion);
-      if (decision.action !== "update") {
-        writeActionOutput("action", decision.action);
-        if (decision.action === "ready") {
-          writeActionOutput("head_sha", run("git", ["rev-parse", "HEAD"], { capture: true }));
-        }
-        console.log(`Next release base not needed: ${decision.reason}.`);
-        return;
-      }
+    const currentVersion = readWorkspaceVersion();
+    const decision = decideVersionHandoff(currentVersion, options.stableVersion);
+    writeActionOutput("version", decision.nextVersion);
+    if (decision.action !== "update") {
+      writeActionOutput("action", "skip");
+      console.log(`Next release base not needed: ${decision.reason}.`);
+      return;
+    }
 
-      run("node", ["scripts/release-package-map.mjs", "set-version", decision.nextVersion]);
-      run("git", ["add", "-u"]);
-      run("git", ["commit", "-m", `chore(release): start v${decision.nextVersion} [skip release]`]);
-
-      const headSha = run("git", ["rev-parse", "HEAD"], { capture: true });
-      const push = pushBase(options);
-      if (push.status === 0) {
-        writeActionOutput("action", "updated");
-        writeActionOutput("head_sha", headSha);
-        console.log(`Advanced ${options.remote}/${options.base} to ${decision.nextVersion} at ${headSha}.`);
-        return;
-      }
-
-      const pushError = `${push.stderr || ""}\n${push.stdout || ""}`.trim();
-      if (attempt === maxPushAttempts) {
+    const releaseBranch = `${options.branchPrefix}${decision.nextVersion}`;
+    writeActionOutput("branch", releaseBranch);
+    if (remoteBranchExists(options, releaseBranch)) {
+      run("git", [
+        "fetch",
+        options.remote,
+        `+refs/heads/${releaseBranch}:refs/remotes/${options.remote}/${releaseBranch}`,
+      ]);
+      run("git", ["checkout", "--detach", `${options.remote}/${releaseBranch}`]);
+      const branchVersion = readWorkspaceVersion();
+      if (branchVersion !== decision.nextVersion) {
         throw new Error(
-          `could not advance ${options.remote}/${options.base} after ${maxPushAttempts} attempts: ${pushError}`,
+          `${options.remote}/${releaseBranch} exists at version ${branchVersion}; `
+          + `expected ${decision.nextVersion}`,
         );
       }
-      console.warn(
-        `Push attempt ${attempt} did not advance ${options.remote}/${options.base}; `
-        + "refetching before retry.",
-      );
+      const headSha = run("git", ["rev-parse", "HEAD"], { capture: true });
+      writeActionOutput("action", "ready");
+      writeActionOutput("head_sha", headSha);
+      console.log(`Next release PR branch is already ready at ${headSha}.`);
+      return;
     }
+
+    run("git", ["checkout", "-B", releaseBranch, `${options.remote}/${options.base}`]);
+    run("node", ["scripts/release-package-map.mjs", "set-version", decision.nextVersion]);
+    run("git", ["add", "-u"]);
+    run("git", ["commit", "-m", `chore(release): start v${decision.nextVersion} [skip release]`]);
+
+    const headSha = run("git", ["rev-parse", "HEAD"], { capture: true });
+    const push = pushBranch(options, releaseBranch);
+    if (push.status !== 0) {
+      const pushError = `${push.stderr || ""}\n${push.stdout || ""}`.trim();
+      throw new Error(`could not push ${options.remote}/${releaseBranch}: ${pushError}`);
+    }
+    writeActionOutput("action", "updated");
+    writeActionOutput("head_sha", headSha);
+    console.log(
+      `Prepared ${options.remote}/${releaseBranch} for ${decision.nextVersion} at ${headSha}.`,
+    );
   } finally {
     if (shouldRestoreCheckout) restoreOriginalCheckout();
   }

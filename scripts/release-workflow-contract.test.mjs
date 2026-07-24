@@ -50,20 +50,21 @@ describe("release workflow latency contracts", () => {
     expect(releaseWorkflow).toContain("RELEASE_SAFEGUARDS_CONFIGURED");
   });
 
-  it("serializes publication and advances the next patch base directly on main", () => {
+  it("serializes publication and prepares the next patch base through a protected PR", () => {
     expect(releaseWorkflow.match(/group: release-publish/g)).toHaveLength(2);
     expect(releaseWorkflow).toMatch(/^  next-release-base:/m);
     expect(releaseWorkflow).toContain("node scripts/prepare-next-release.mjs");
-    expect(releaseWorkflow).toContain("Advance main to the next patch version");
-    expect(releaseWorkflow).toContain("Start CI for the advanced release base");
+    expect(releaseWorkflow).toContain("Prepare the next patch version branch");
+    expect(releaseWorkflow).toContain("Create or reuse the next release base PR");
     expect(releaseWorkflow).toContain("outputs.action == 'updated' || steps.next-release.outputs.action == 'ready'");
     expect(releaseWorkflow).toContain('-f source_sha="${{ steps.next-release.outputs.head_sha }}"');
     expect(ciWorkflow).toContain("source_sha:");
     expect(ciWorkflow).toContain("inputs.source_sha || github.sha");
-    expect(releaseWorkflow).not.toContain("pull-requests: write");
+    expect(releaseWorkflow).toContain("pull-requests: write");
+    expect(releaseWorkflow).toContain("gh pr create");
     expect(nextReleaseScript).toContain("[skip release]");
-    expect(nextReleaseScript).toContain("HEAD:refs/heads/${options.base}");
-    expect(nextReleaseScript).not.toContain('"pr", "create"');
+    expect(nextReleaseScript).toContain("HEAD:refs/heads/${branch}");
+    expect(nextReleaseScript).not.toContain("HEAD:refs/heads/${options.base}");
     expect(releaseWorkflow).not.toContain("continue-on-error: true");
   });
 

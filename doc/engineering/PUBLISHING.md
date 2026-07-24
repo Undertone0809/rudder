@@ -88,9 +88,10 @@ before expensive work, then promotes the verified changelog from the immutable
 stable tag to `docs.rudderhq.dev` after a separately confirmed docs deployment.
 After both the stable and public changelog deploy succeed,
 `scripts/prepare-next-release.mjs` idempotently updates current `main` to the
-next patch base, pushes one generated `[skip release]` maintenance commit, and
-explicitly dispatches CI for that SHA. Normal contributors still use pull
-requests; only this release handoff uses the narrow direct-push path.
+next patch base on a deterministic `automation/release-vX.Y.Z` branch, opens a
+pull request, and explicitly dispatches CI for that SHA. The handoff remains
+subject to the same branch protection and CODEOWNERS review as contributor
+changes.
 
 ## Version formats
 
