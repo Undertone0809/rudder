@@ -4992,15 +4992,30 @@ describe("Chat route loading", () => {
   it("shows a target conversation loading state instead of the new-chat empty state", () => {
     mockState.conversationId = "chat-loading";
     mockState.conversations = [];
-    mockState.messagesByChatId = {};
+    mockState.messagesByChatId = {
+      "chat-loading": [
+        message({
+          id: "history-user",
+          conversationId: "chat-loading",
+          role: "user",
+          body: "Loaded user history before descriptor resolution.",
+        }),
+        message({
+          id: "history-assistant",
+          conversationId: "chat-loading",
+          role: "assistant",
+          body: "Loaded assistant history before descriptor resolution.",
+        }),
+      ],
+    };
     mockState.pendingChatDetailIds = new Set(["chat-loading"]);
 
     const { container } = renderChat();
 
     expect(container.querySelector("[data-testid='chat-conversation-loading-state']")).not.toBeNull();
     expect(mockState.queryKeys).toContainEqual(["chats", "org-1", "messages", "chat-loading"]);
-    expect(container.querySelectorAll("[data-slot='skeleton']")).toHaveLength(5);
-    expect(container.querySelector(".chat-message-user")).not.toBeNull();
+    expect(container.textContent).toContain("Loaded user history before descriptor resolution.");
+    expect(container.textContent).toContain("Loaded assistant history before descriptor resolution.");
     expect(container.querySelector("[data-testid='chat-composer-toolbar']")).toBeNull();
     expect(container.querySelector("[data-testid='chat-empty-state-tabs']")).toBeNull();
     expect(container.textContent).not.toContain("Scope a new feature");

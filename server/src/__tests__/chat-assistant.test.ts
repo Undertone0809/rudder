@@ -113,7 +113,10 @@ vi.mock("../services/chat-agent-runs.js", () => ({
 }));
 
 const { chatAssistantService } = await import("../services/chat-assistant.js");
-const { validateAssistantResult } = await import("../services/chat-assistant.helpers.js");
+const {
+  ChatAssistantStreamError,
+  validateAssistantResult,
+} = await import("../services/chat-assistant.helpers.js");
 
 let currentAgentHome = "";
 const cleanupDirs = new Set<string>();
@@ -597,7 +600,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
   it("refuses to generate a reply without a preferred agent", async () => {
     const svc = chatAssistantService({} as any);
 
-    await expect(svc.generateChatAssistantReply({
+    const error = await svc.generateChatAssistantReply({
       conversation: makeConversation({
         preferredAgentId: null,
         chatRuntime: {
@@ -612,7 +615,16 @@ describe("chatAssistantService operator profile prompt injection", () => {
       }),
       messages: makeMessages(),
       contextLinks: [],
-    })).rejects.toThrow("Choose a chat agent before sending messages.");
+    }).catch((caught) => caught);
+    expect(error).toBeInstanceOf(ChatAssistantStreamError);
+    expect(error).toMatchObject({
+      message: "Choose a chat agent before sending messages.",
+      userMessage: "Choose a chat agent before sending messages.",
+      errorCode: "chat_runtime_boot_failed",
+      failurePhase: "runtime_boot",
+      action: "repair_runtime",
+      retryable: false,
+    });
     expect(mockAgentService.getInternalById).not.toHaveBeenCalled();
     expect(mockAdapter.execute).not.toHaveBeenCalled();
   });
@@ -1781,6 +1793,79 @@ describe("chatAssistantService operator profile prompt injection", () => {
         }),
       }),
     }));
+  });
+
+  it("translates runtime skill preparation failures into sanitized actionable stream errors", async () => {
+    mockRunContextService.prepareRuntimeConfig.mockRejectedValueOnce(
+      new Error(
+        "Could not install organization skill build-advisor from "
+        + "/Users/alice/.rudder/skills/build-advisor/SKILL.md?token=secret-token.json "
+        + "credential=/private/second-secret.yaml",
+      ),
+    );
+
+    const svc = chatAssistantService({} as any);
+    const error = await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(ChatAssistantStreamError);
+    expect(error).toMatchObject({
+      errorCode: "chat_runtime_preparation_failed",
+      userMessage:
+        'Could not prepare organization skill "build-advisor" file "SKILL.md". '
+        + "Check that its installed files are available, then retry.",
+      retryable: true,
+      failurePhase: "runtime_boot",
+      action: "retry",
+    });
+    expect(error.message).not.toContain("/Users/alice");
+    expect(error.message).not.toContain("secret-token.json");
+    expect(error.message).not.toContain("second-secret.yaml");
+    expect(error.userMessage).not.toContain("/Users/alice");
+    expect(error.userMessage).not.toContain("secret-token.json");
+    expect(error.userMessage).not.toContain("second-secret.yaml");
+    expect(mockChatAgentRuns.createRun).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("does not infer a preparation filename from arbitrary typed error paths", async () => {
+    mockRunContextService.prepareRuntimeConfig.mockRejectedValueOnce(
+      new ChatAssistantStreamError(
+        "Preparation failed at path=/private/secret-token.json?token=credential.yaml",
+        "",
+        [],
+        {
+          errorCode: "chat_runtime_preparation_failed",
+          userMessage: "unsafe typed message",
+          retryable: false,
+          failurePhase: "runtime_boot",
+          action: "repair_runtime",
+        },
+      ),
+    );
+
+    const svc = chatAssistantService({} as any);
+    const error = await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(ChatAssistantStreamError);
+    expect(error).toMatchObject({
+      userMessage:
+        "Could not prepare the configured runtime skills or files. "
+        + "Check the agent runtime and skill configuration, then retry.",
+      retryable: true,
+      action: "retry",
+    });
+    expect(error.message).not.toContain("secret-token.json");
+    expect(error.message).not.toContain("credential.yaml");
+    expect(error.userMessage).not.toContain("secret-token.json");
+    expect(error.userMessage).not.toContain("credential.yaml");
   });
 
   it("streams assistant progress through transcript entries and final body through deltas", async () => {

@@ -5033,14 +5033,27 @@ describe("chat routes", () => {
   it("records pre-attempt skill preparation failures as actionable failures instead of stale control", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Use the selected skill");
+    const actionableMessage =
+      'Could not prepare organization skill "build-advisor". '
+      + "Check that its installed files are available, then retry.";
     const failedMessage = {
       ...createMessage(
         "message-assistant",
         "assistant",
         "message",
-        "The assistant hit a system-level issue. Rudder saved the details for diagnostics; retry when ready.",
+        actionableMessage,
       ),
       status: "failed",
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          code: "chat_runtime_preparation_failed",
+          message: actionableMessage,
+          runId: null,
+          phase: "runtime_boot",
+          action: "retry",
+        },
+      },
     };
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
@@ -5059,9 +5072,21 @@ describe("chat routes", () => {
       controlLeaseExpiresAt: null,
     });
     mockChatService.addMessage.mockResolvedValueOnce(failedMessage);
-    mockChatAssistantService.streamChatAssistantReply.mockRejectedValueOnce(
-      new Error("Could not install organization skill build-advisor"),
-    );
+    mockChatAssistantService.streamChatAssistantReply.mockImplementationOnce(async () => {
+      const { ChatAssistantStreamError } = await import("../services/chat-assistant.js");
+      throw new ChatAssistantStreamError(
+        'Chat runtime preparation failed for organization skill "build-advisor"',
+        "",
+        [],
+        {
+          errorCode: "chat_runtime_preparation_failed",
+          userMessage: actionableMessage,
+          retryable: true,
+          failurePhase: "runtime_boot",
+          action: "retry",
+        },
+      );
+    });
 
     const res = await request(createApp())
       .post("/api/chats/chat-1/messages/stream")
@@ -5078,9 +5103,22 @@ describe("chat routes", () => {
     const events = String(res.body).trim().split("\n").map((line) => JSON.parse(line));
     expect(events.at(-1)).toMatchObject({
       type: "error",
-      errorCode: "chat_runtime_exception",
+      error: actionableMessage,
+      errorCode: "chat_runtime_preparation_failed",
       messageId: failedMessage.id,
     });
+    expect(JSON.stringify(events)).not.toContain("/Users/alice");
+    expect(JSON.stringify(events)).not.toContain("secret-token.json");
+    expect(mockChatService.addMessage).toHaveBeenCalledWith(
+      conversation.id,
+      expect.objectContaining({
+        status: "failed",
+        body: actionableMessage,
+        structuredPayload: failedMessage.structuredPayload,
+      }),
+    );
+    expect(JSON.stringify(mockChatService.addMessage.mock.calls)).not.toContain("/Users/alice");
+    expect(JSON.stringify(mockChatService.addMessage.mock.calls)).not.toContain("secret-token.json");
     expect(mockChatService.beginGenerationControlAttempt).not.toHaveBeenCalled();
     expect(mockChatService.generationProtocol.recordRuntimeTerminal).toHaveBeenCalledWith(
       expect.objectContaining({

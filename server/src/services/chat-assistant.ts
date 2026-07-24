@@ -26,6 +26,65 @@ import {
 } from "./runtime-kernel/model-fallback.js";
 export * from "./chat-assistant.helpers.js";
 
+function chatRuntimePreparationStreamError(error: unknown) {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const safeContextSource = rawMessage.replace(/[?#][^\s]*/g, "");
+  const skillMatch = safeContextSource.match(
+    /\borganization skill\s+["'`]?([a-z0-9][a-z0-9._-]{0,127})/i,
+  );
+  const skill = skillMatch?.[1]?.replace(/[.,:;]+$/, "") || null;
+  const file = /(?:^|[/\\])SKILL\.md(?=$|[\s"'`:),])/i.test(safeContextSource)
+    ? "SKILL.md"
+    : null;
+  const context = skill
+    ? `organization skill "${skill}"${file ? ` file "${file}"` : ""}`
+    : file
+      ? `runtime file "${file}"`
+      : "the configured runtime skills and files";
+  const userMessage = skill
+    ? `Could not prepare organization skill "${skill}"${file ? ` file "${file}"` : ""}. Check that its installed files are available, then retry.`
+    : file
+      ? `Could not prepare runtime file "${file}". Check that the file is available, then retry.`
+      : "Could not prepare the configured runtime skills or files. Check the agent runtime and skill configuration, then retry.";
+  return new ChatAssistantStreamError(
+    `Chat runtime preparation failed for ${context}`,
+    "",
+    [],
+    {
+      errorCode: "chat_runtime_preparation_failed",
+      userMessage,
+      retryable: true,
+      failurePhase: "runtime_boot",
+      action: "retry",
+    },
+  );
+}
+
+function chatRuntimeAvailabilityStreamError(errorMessage?: string | null) {
+  const candidate = errorMessage?.trim() ?? "";
+  const safeKnownMessage = (
+    candidate === "Choose a chat agent before sending messages."
+    || candidate === "The selected chat agent is unavailable. Choose another agent before sending messages."
+    || candidate === "The selected agent runtime is not registered with Rudder Chat."
+    || candidate === "The current user has not configured a chat model yet."
+    || /^Unknown chat adapter type: [a-z0-9_-]+$/i.test(candidate)
+  )
+    ? candidate
+    : "The assistant runtime is not configured or available. Check the selected agent runtime, then retry.";
+  return new ChatAssistantStreamError(
+    safeKnownMessage,
+    "",
+    [],
+    {
+      errorCode: "chat_runtime_boot_failed",
+      userMessage: safeKnownMessage,
+      retryable: false,
+      failurePhase: "runtime_boot",
+      action: "repair_runtime",
+    },
+  );
+}
+
 function combineChatUsage(
   primary: { inputTokens: number; outputTokens: number; cachedInputTokens?: number } | null | undefined,
   repair: { inputTokens: number; outputTokens: number; cachedInputTokens?: number } | null | undefined,
@@ -312,9 +371,13 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       contextLinks: input.contextLinks,
       materializeManagedInstructions: true,
       materializeMissingRuntimeSkills: true,
+    }).catch((error) => {
+      throw chatRuntimePreparationStreamError(error);
     });
     if (resolvedInvocation.availabilityError) {
-      throw new Error(resolvedInvocation.availabilityError);
+      throw chatRuntimeAvailabilityStreamError(
+        resolvedInvocation.availabilityError,
+      );
     }
     const {
       runtimeSource,
@@ -331,7 +394,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       !runtimeSource.agentRuntimeType ||
       !runtimeSource.descriptor.runtimeAgentId
     ) {
-      throw new Error("Chat runtime is not configured");
+      throw chatRuntimeAvailabilityStreamError();
     }
     const runtimeAgentType = runtimeSource.agentRuntimeType;
     const runtimeAgentId = runtimeSource.descriptor.runtimeAgentId;

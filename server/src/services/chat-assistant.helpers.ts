@@ -60,6 +60,7 @@ export type ChatRecoverableFailureCode =
   | "chat_result_malformed_json"
   | "chat_timed_out"
   | "chat_adapter_failed"
+  | "chat_runtime_preparation_failed"
   | "chat_runtime_boot_failed"
   | "chat_runtime_exception";
 
@@ -220,6 +221,9 @@ export function recoverableFailureMessage(code: ChatRecoverableFailureCode) {
   }
   if (code === "chat_adapter_failed") {
     return "The assistant runtime failed before finishing. Rudder saved the attempt for diagnostics; retry when ready.";
+  }
+  if (code === "chat_runtime_preparation_failed") {
+    return "The assistant runtime could not prepare its configured skills or files. Check the runtime configuration, then retry.";
   }
   if (code === "chat_runtime_boot_failed") {
     return "The assistant runtime did not start successfully. Fix the runtime command or environment, then run again.";
