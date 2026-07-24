@@ -15,7 +15,13 @@ vi.mock("@/lib/router", () => ({
 vi.mock("../ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuContent: ({ children }: { children: ReactNode }) => <>{children}</>,
-  DropdownMenuItem: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
+  DropdownMenuItem: ({
+    children,
+    onClick,
+  }: {
+    children: ReactNode;
+    onClick?: () => void;
+  }) => <button type="button" onClick={onClick}>{children}</button>,
   DropdownMenuSub: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuSubContent: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuSubTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -87,10 +93,18 @@ function savedViewEntry({
 
 function renderRow({
   active = false,
+  currentGroupId = "group-a",
   entry = savedViewEntry(),
+  groups = [],
+  onMove = vi.fn(),
+  onMoveToSidebar = vi.fn(),
 }: {
   active?: boolean;
+  currentGroupId?: string | null;
   entry?: MessengerCustomGroupHydratedSavedViewEntry;
+  groups?: Array<{ id: string; name: string }>;
+  onMove?: ReturnType<typeof vi.fn>;
+  onMoveToSidebar?: ReturnType<typeof vi.fn>;
 } = {}) {
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -99,7 +113,7 @@ function renderRow({
     root!.render(
       <MessengerSavedViewRow
         active={active}
-        currentGroupId="group-a"
+        currentGroupId={currentGroupId}
         density="compact"
         dragHandleProps={{
           attributes: {
@@ -113,8 +127,9 @@ function renderRow({
           listeners: undefined,
         }}
         entry={entry}
-        groups={[]}
-        onMove={vi.fn()}
+        groups={groups as never}
+        onMove={onMove}
+        onMoveToSidebar={onMoveToSidebar}
         onRemove={vi.fn()}
       />,
     );
@@ -244,5 +259,51 @@ describe("MessengerSavedViewRow", () => {
     expect(host!.querySelector('[data-testid="messenger-saved-view-local-app-icon"]')).not.toBeNull();
     expect(host!.textContent).toContain("MKT dashboard");
     expect(host!.textContent).not.toContain("unread");
+  });
+
+  it("renders loose and grouped placement actions without inventing group membership", () => {
+    const onMove = vi.fn();
+    const onMoveToSidebar = vi.fn();
+    const groups = [
+      { id: "group-a", name: "Launch" },
+      { id: "group-b", name: "Review" },
+    ];
+
+    renderRow({
+      currentGroupId: null,
+      groups,
+      onMove,
+      onMoveToSidebar,
+    });
+
+    expect(host!.textContent).toContain("Move to group");
+    expect(host!.textContent).toContain("Launch");
+    expect(host!.textContent).toContain("Review");
+    expect(host!.textContent).not.toContain("Move to Messenger sidebar");
+    act(() => {
+      Array.from(host!.querySelectorAll("button"))
+        .find((button) => button.textContent === "Launch")
+        ?.click();
+    });
+    expect(onMove).toHaveBeenCalledWith("group-a", "saved-view:saved-a");
+
+    act(() => root?.unmount());
+    root = null;
+    host?.remove();
+    host = null;
+    renderRow({
+      currentGroupId: "group-a",
+      groups,
+      onMove,
+      onMoveToSidebar,
+    });
+
+    expect(host!.textContent).not.toContain(">Launch<");
+    expect(host!.textContent).toContain("Review");
+    const moveLooseButton = Array.from(host!.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Move to Messenger sidebar"));
+    expect(moveLooseButton).toBeTruthy();
+    act(() => moveLooseButton?.click());
+    expect(onMoveToSidebar).toHaveBeenCalledWith("saved-view:saved-a");
   });
 });

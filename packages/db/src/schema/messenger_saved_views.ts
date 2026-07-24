@@ -54,7 +54,7 @@ export const messengerSavedViewMutations = pgTable(
     userId: text("user_id").notNull(),
     clientMutationId: uuid("client_mutation_id").notNull(),
     savedViewId: uuid("saved_view_id").notNull(),
-    groupId: uuid("group_id").notNull(),
+    groupId: uuid("group_id"),
     requestFingerprint: text("request_fingerprint").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

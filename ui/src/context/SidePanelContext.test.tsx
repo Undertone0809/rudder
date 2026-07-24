@@ -21,6 +21,7 @@ const issueTarget: SidePanelTarget = {
 
 function stubDesktopShell() {
   let closeListener: (() => void) | null = null;
+  let openEmptyListener: (() => void) | null = null;
   let browserResetListener: (() => void) | null = null;
   const desktopShell = {
     setSidePanelCloseShortcutActive: vi.fn(async () => undefined),
@@ -28,6 +29,12 @@ function stubDesktopShell() {
       closeListener = listener;
       return () => {
         closeListener = null;
+      };
+    }),
+    onOpenEmptySidePanel: vi.fn((listener: () => void) => {
+      openEmptyListener = listener;
+      return () => {
+        openEmptyListener = null;
       };
     }),
     onBrowserReset: vi.fn((listener: () => void) => {
@@ -44,6 +51,7 @@ function stubDesktopShell() {
   return {
     desktopShell,
     emitCloseActiveTab: () => closeListener?.(),
+    emitOpenEmpty: () => openEmptyListener?.(),
     emitBrowserReset: () => browserResetListener?.(),
   };
 }
@@ -634,6 +642,26 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "open")).toBe("false");
     expect(text(container, "active-key")).toBe("");
     expect(text(container, "tab-count")).toBe("0");
+  });
+
+  it("opens an empty picker from Desktop without discarding existing tabs", async () => {
+    const { desktopShell, emitOpenEmpty } = stubDesktopShell();
+    ({ container, root } = renderSidePanelProvider());
+    click(container, "Chat A");
+    click(container, "Open issue");
+    click(container, "Hide");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(desktopShell.onOpenEmptySidePanel).toHaveBeenCalled();
+    act(() => emitOpenEmpty());
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "active-key")).toBe("");
+    expect(text(container, "tab-count")).toBe("1");
+
+    act(() => emitOpenEmpty());
+    expect(text(container, "tab-count")).toBe("1");
   });
 
   it("routes Desktop close requests through the registered target lifecycle handler", async () => {

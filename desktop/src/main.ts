@@ -433,6 +433,7 @@ let currentMainWindowKind: "app" | "boot" = "boot";
 let residentTray: Tray | null = null;
 let sidePanelCloseShortcutActive = false;
 let browserSurfaceShortcutActive = false;
+let browserSurfaceShortcutOwner: "main_workbench" | "side_panel" | null = null;
 let residentControlsAvailable = false;
 let desktopWindowIcon: Electron.NativeImage | null = null;
 let latestPostUpdateReloadMarker: PostUpdateReloadMarker | null = null;
@@ -1209,6 +1210,7 @@ function handleSidePanelCloseShortcutInput(webContents: WebContents, event: Elec
     browserSurfaceActive: browserSurfaceShortcutActive
       && Boolean(mainWindow && !mainWindow.isDestroyed() && webContents === mainWindow.webContents),
     operatorBrowserGuest,
+    browserSurfaceOwner: browserSurfaceShortcutOwner,
   });
   if (!route) return;
   event.preventDefault();
@@ -1227,6 +1229,14 @@ function handleSidePanelCloseShortcutInput(webContents: WebContents, event: Elec
       return;
     }
     webContents.send("desktop:close-side-panel-active-tab");
+    return;
+  }
+  if (route.kind === "open_empty_side_panel") {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("desktop:open-empty-side-panel");
+      return;
+    }
+    webContents.send("desktop:open-empty-side-panel");
     return;
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1253,6 +1263,7 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
     if (!isMainFrame || isInPlace) return;
     sidePanelCloseShortcutActive = false;
     browserSurfaceShortcutActive = false;
+    browserSurfaceShortcutOwner = null;
   });
 }
 
@@ -2147,9 +2158,16 @@ function registerIpc(): void {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
     sidePanelCloseShortcutActive = Boolean(active);
   });
-  ipcMain.handle("desktop:set-browser-surface-shortcut-active", async (event, active: boolean) => {
+  ipcMain.handle("desktop:set-browser-surface-shortcut-active", async (
+    event,
+    active: boolean,
+    owner?: "main_workbench" | "side_panel",
+  ) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
     browserSurfaceShortcutActive = Boolean(active);
+    browserSurfaceShortcutOwner = owner === "main_workbench" || owner === "side_panel"
+      ? owner
+      : null;
   });
   ipcMain.handle("desktop:respond-deferred-update-prompt", async (event, payload: {
     promptId?: string;

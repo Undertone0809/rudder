@@ -113,7 +113,7 @@ describe("Messenger Saved View validators", () => {
     }
   });
 
-  it("validates strict Keep metadata and anchor or explicit group placement", () => {
+  it("validates strict Keep metadata and anchor, explicit group, or loose placement", () => {
     const base = {
       target: { kind: "library_file" as const, filePath: "README.md", viewInstanceId },
       title: "README",
@@ -131,6 +131,14 @@ describe("Messenger Saved View validators", () => {
       ...base,
       placement: { kind: "group", groupId: automationId },
     }).success).toBe(true);
+    expect(keepMessengerSavedViewSchema.safeParse({
+      ...base,
+      placement: { kind: "loose" },
+    }).success).toBe(true);
+    expect(keepMessengerSavedViewSchema.safeParse({
+      ...base,
+      placement: { kind: "loose", groupId: automationId },
+    }).success).toBe(false);
     expect(keepMessengerSavedViewSchema.safeParse({
       ...base,
       placement: { kind: "group", groupId: automationId, extra: true },

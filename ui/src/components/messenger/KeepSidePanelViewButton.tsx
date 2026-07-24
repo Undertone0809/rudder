@@ -31,6 +31,7 @@ function newMutationId() {
 
 const MAX_RETRYABLE_KEEP_INTENTS = 32;
 const INTENT_KEY_PLACEHOLDER_MUTATION_ID = "00000000-0000-4000-8000-000000000000";
+const LOOSE_MESSENGER_PLACEMENT = "__messenger_sidebar__";
 
 function stableIntentValue(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableIntentValue).join(",")}]`;
@@ -144,11 +145,13 @@ export function KeepSidePanelViewButton({
           result,
         };
       }
-      const placement = savedViewPlacementForSidePanelContext(
-        contextKey,
-        hostIssueQuery.data?.id ?? null,
-        groupId,
-      );
+      const placement = groupId === LOOSE_MESSENGER_PLACEMENT
+        ? { kind: "loose" as const }
+        : savedViewPlacementForSidePanelContext(
+          contextKey,
+          hostIssueQuery.data?.id ?? null,
+          groupId,
+        );
       if (!placement) {
         throw new Error(hostIssueRef
           ? "Wait for the Issue to finish loading, then try again."
@@ -162,7 +165,10 @@ export function KeepSidePanelViewButton({
       const intentKey = keepIntentKey(intent);
       const clientMutationId = mutationIdForIntent(mutationIdsRef.current, intentKey);
       const requestInput = { ...intent, clientMutationId };
-      const existingResult = existingSavedViewEntry && existingSavedViewGroup
+      const existingResult = existingSavedViewEntry
+        && existingSavedViewGroup
+        && placement.kind === "group"
+        && placement.groupId === existingSavedViewGroup.id
         ? {
             savedView: existingSavedViewEntry.item.savedView,
             group: {
@@ -206,10 +212,19 @@ export function KeepSidePanelViewButton({
           completedRetryMutationId,
         );
       }
-      await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.customGroups(organizationId ?? "__none__") });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.messenger.customGroups(organizationId ?? "__none__"),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["messenger", organizationId ?? "__none__", "saved-views"],
+        }),
+      ]);
       pushToast({
         title: "Moved to Messenger",
-        body: `Moved to ${result.group.name}.`,
+        body: result.group
+          ? `Moved to ${result.group.name}.`
+          : "Moved to Messenger sidebar.",
         tone: "success",
       });
     },
@@ -304,7 +319,7 @@ export function KeepSidePanelViewButton({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="surface-overlay w-64 text-foreground">
-        <DropdownMenuLabel>Keep in Messenger group</DropdownMenuLabel>
+        <DropdownMenuLabel>Keep in Messenger</DropdownMenuLabel>
         {groupsQuery.isError ? (
           <>
             <DropdownMenuItem disabled className="whitespace-normal text-xs leading-5">
@@ -314,21 +329,28 @@ export function KeepSidePanelViewButton({
               Retry groups
             </DropdownMenuItem>
           </>
-        ) : existingSavedViewGroup ? (
+        ) : (
+          <>
+            <DropdownMenuItem onClick={() => keepMutation.mutate(LOOSE_MESSENGER_PLACEMENT)}>
+              Messenger sidebar
+            </DropdownMenuItem>
+            {existingSavedViewGroup ? (
           <DropdownMenuItem
             className="whitespace-normal text-xs leading-5"
             onClick={() => keepMutation.mutate(existingSavedViewGroup.id)}
           >
             Move existing view from {existingSavedViewGroup.name} to Main
           </DropdownMenuItem>
-        ) : groups.length > 0 ? groups.map((group) => (
+            ) : groups.length > 0 ? groups.map((group) => (
           <DropdownMenuItem key={group.id} onClick={() => keepMutation.mutate(group.id)}>
             {group.name}
           </DropdownMenuItem>
         )) : (
           <DropdownMenuItem disabled className="whitespace-normal text-xs leading-5">
-            No groups yet. Keep a view from a Chat or Issue first to create one.
+            No groups yet.
           </DropdownMenuItem>
+            )}
+          </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

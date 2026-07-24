@@ -545,6 +545,7 @@ describe("applyPendingMigrations", () => {
           "0114_nervous_firebird.sql",
           "0115_chubby_wraith.sql",
           "0116_dark_skreet.sql",
+          "0117_reflective_namora.sql",
         ],
         reason: "pending-migrations",
       });
@@ -681,6 +682,7 @@ describe("applyPendingMigrations", () => {
           "0114_nervous_firebird.sql",
           "0115_chubby_wraith.sql",
           "0116_dark_skreet.sql",
+          "0117_reflective_namora.sql",
         ],
         reason: "pending-migrations",
       });

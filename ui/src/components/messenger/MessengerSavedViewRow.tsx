@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import type {
   MessengerCustomGroupHydratedSavedViewEntry,
   MessengerCustomGroupWithEntries,
+  MessengerSavedView,
 } from "@rudderhq/shared";
 import {
   AppWindow,
@@ -69,9 +70,9 @@ function browserTitleWithoutUrls(value: string) {
 }
 
 export function savedViewDisplayTitle(
-  entry: MessengerCustomGroupHydratedSavedViewEntry,
+  source: MessengerCustomGroupHydratedSavedViewEntry | MessengerSavedView,
 ) {
-  const savedView = entry.item.savedView;
+  const savedView = "item" in source ? source.item.savedView : source;
   const rawTitle = savedView.title.trim();
   if (savedView.targetPayload.kind !== "browser") {
     return rawTitle || "Saved View";
@@ -93,8 +94,7 @@ export function savedViewDisplayTitle(
   }
 }
 
-function SavedViewIcon({ entry }: { entry: MessengerCustomGroupHydratedSavedViewEntry }) {
-  const savedView = entry.item.savedView;
+function SavedViewIcon({ savedView }: { savedView: MessengerSavedView }) {
   const kind = savedView.targetPayload.kind;
   const acceptedFavicon = kind === "browser" ? acceptedBrowserFavicon(savedView.favicon) : null;
   const [faviconFailed, setFaviconFailed] = useState(false);
@@ -170,31 +170,40 @@ export function MessengerSavedViewRow({
   dragHandleProps,
   dragging = false,
   entry,
+  itemKey,
+  savedView: looseSavedView,
   groups,
   onMove,
+  onMoveToSidebar,
   onRemove,
   placementPending = false,
 }: {
   active?: boolean;
-  currentGroupId: string;
+  currentGroupId: string | null;
   density: MessengerThreadDensity;
   dragHandleProps?: SortableDragHandleProps;
   dragging?: boolean;
-  entry: MessengerCustomGroupHydratedSavedViewEntry;
+  entry?: MessengerCustomGroupHydratedSavedViewEntry;
+  itemKey?: string;
+  savedView?: MessengerSavedView;
   groups: MessengerCustomGroupWithEntries[];
   onMove: (groupId: string, itemKey: string) => void;
+  onMoveToSidebar?: (itemKey: string) => void;
   onRemove: (savedViewId: string) => void;
   placementPending?: boolean;
 }) {
-  const savedView = entry.item.savedView;
+  const savedView = entry?.item.savedView ?? looseSavedView;
+  if (!savedView) return null;
+  const resolvedItemKey = entry?.itemKey ?? itemKey ?? `saved-view:${savedView.id}`;
+  const rowId = entry?.id ?? `loose-${savedView.id}`;
   const otherGroups = groups.filter((group) => group.id !== currentGroupId);
   const compact = density === "compact";
   const browser = savedView.targetPayload.kind === "browser";
-  const displayTitle = savedViewDisplayTitle(entry);
+  const displayTitle = savedViewDisplayTitle(savedView);
 
   return (
     <div
-      data-testid={`messenger-saved-view-${entry.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
+      data-testid={`messenger-saved-view-${rowId.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
       data-messenger-saved-view-id={savedView.id}
       data-active={active ? "true" : "false"}
       aria-busy={placementPending || undefined}
@@ -230,7 +239,7 @@ export function MessengerSavedViewRow({
             compact ? "h-7 w-7" : "mt-0.5 h-10 w-10",
           )}
         >
-          <SavedViewIcon entry={entry} />
+          <SavedViewIcon savedView={savedView} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-medium leading-tight text-current/88">
@@ -263,12 +272,18 @@ export function MessengerSavedViewRow({
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="surface-overlay text-foreground">
               {otherGroups.map((group) => (
-                <DropdownMenuItem key={group.id} onClick={() => onMove(group.id, entry.itemKey)}>
+                <DropdownMenuItem key={group.id} onClick={() => onMove(group.id, resolvedItemKey)}>
                   {group.name}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
+          {currentGroupId && onMoveToSidebar ? (
+            <DropdownMenuItem onClick={() => onMoveToSidebar(resolvedItemKey)}>
+              <FolderInput className="h-4 w-4" />
+              Move to Messenger sidebar
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem
             className="text-destructive focus:text-destructive"
             onClick={() => onRemove(savedView.id)}

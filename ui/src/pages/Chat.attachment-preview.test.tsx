@@ -4706,7 +4706,10 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    expect(setBrowserSurfaceShortcutActive).toHaveBeenLastCalledWith(true);
+    expect(setBrowserSurfaceShortcutActive).toHaveBeenLastCalledWith(
+      true,
+      "side_panel",
+    );
   });
 
   it("hides Browser entry points outside the Desktop Browser capability", async () => {

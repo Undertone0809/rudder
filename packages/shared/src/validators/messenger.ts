@@ -70,6 +70,7 @@ export const keepMessengerSavedViewSchema = z.object({
   placement: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("anchor"), anchor: messengerSavedViewAnchorSchema }).strict(),
     z.object({ kind: z.literal("group"), groupId: uuid }).strict(),
+    z.object({ kind: z.literal("loose") }).strict(),
   ]),
 }).strict();
 

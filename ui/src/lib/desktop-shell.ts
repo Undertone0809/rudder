@@ -307,11 +307,15 @@ export type DesktopShellApi = {
   onUpdateProgress?(listener: (event: DesktopUpdateProgressEvent) => void): () => void;
   setDeferredUpdatePromptReady?(ready: boolean): Promise<void>;
   setSidePanelCloseShortcutActive?(active: boolean): Promise<void>;
-  setBrowserSurfaceShortcutActive?(active: boolean): Promise<void>;
+  setBrowserSurfaceShortcutActive?(
+    active: boolean,
+    owner?: "main_workbench" | "side_panel",
+  ): Promise<void>;
   onBrowserShortcut?(
     listener: (request: DesktopBrowserShortcutRequest) => void,
   ): () => void;
   onCloseSidePanelActiveTab?(listener: () => void): () => void;
+  onOpenEmptySidePanel?(listener: () => void): () => void;
   onDeferredUpdatePrompt?(listener: (prompt: DesktopDeferredUpdatePrompt) => void): () => void;
   respondDeferredUpdatePrompt?(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
   getSystemPermissions?(): Promise<DesktopSystemPermissions>;

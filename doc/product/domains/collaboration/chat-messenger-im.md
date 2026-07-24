@@ -2468,6 +2468,16 @@ Product model:
   not automatically open a target-type menu; target choice belongs in the picker
   page so the operator can choose Browser, Library, Issue, or another supported
   target from the panel body.
+- In Rudder Desktop, the new-tab keyboard shortcut (`Command+T` on macOS,
+  `Ctrl+T` on Windows and Linux) invokes that same add-tab behavior whenever
+  the Main Workbench Browser does not own the shortcut. If the Side Panel is
+  hidden, Rudder opens it directly into `Open a panel`; if it is visible,
+  Rudder preserves its tabs and activates the picker. Repeated shortcuts while
+  the picker is active do not create placeholder or duplicate tabs.
+- A focused Main Workbench Browser keeps priority for its existing new-Browser-
+  tab shortcut. Browser and Local App guests hosted in Side, and ordinary main
+  renderer surfaces outside that focused Main Browser, route the shortcut back
+  to the Side Panel controller instead of creating a guest-local tab.
 - In Rudder Desktop, the operator Built-in Browser loads typed URLs and search
   queries inside Side Panel Browser tabs on the dedicated instance profile,
   independently of Agent Browser access.
@@ -2511,9 +2521,10 @@ Product model:
   runtime state; the right neighbor becomes active when present, otherwise the
   left neighbor. The Side Panel closes only when the moved tab was its final
   tab.
-- Moving from a stable Chat or Issue atomically creates or reuses that work
-  item's custom group and places both the host row and Saved View there. A
-  global Side Panel target requires the operator to choose an existing group.
+- Moving from a stable Chat or Issue defaults to atomically creating or reusing
+  that work item's custom group and placing both the host row and Saved View
+  there. The placement selector also offers `Messenger sidebar`; global Side
+  Panel targets may use that loose placement or an operator-selected group.
 
 Flow:
 
@@ -2542,6 +2553,9 @@ Flow:
 7. When the operator clicks the add-tab affordance while a target is already
    open, Rudder keeps existing tabs available but sets the active panel content
    to the empty `Open a panel` picker instead of showing a dropdown menu.
+   The Desktop new-tab shortcut follows this same flow, first opening a hidden
+   Side Panel when necessary. Repeating it while the picker is active remains
+   idempotent and does not create a tab until the operator chooses a target.
 8. Lightweight mutations exposed in the panel, such as issue title,
    description, status, priority, assignee, reviewer, project, goal, parent, or
    automation status edits, call the same domain APIs and show errors in the
@@ -2598,7 +2612,7 @@ Flow:
     in-flight response must not override the operator's conflict decision.
 21. When the operator moves an eligible active target to Messenger, Rudder
     freezes its exact source context, `viewInstanceId`, and revision; performs
-    the idempotent group-only keep mutation under
+    the idempotent placement-aware keep mutation under
     `MESSENGER.SAVED.VIEWS.001`; stages the Main tab; navigates to
     `/messenger/saved/:id`; and waits for the Main anchor to claim the same live
     surface before detaching the source tab.
@@ -2744,6 +2758,10 @@ Invariants:
   transcript and composer identity, scroll context, tab state, and Browser
   webview identity. A docked/expanded transition must not reload or recreate an
   active Browser guest.
+- Side Panel shortcut routing must be independent of editable-field focus and
+  must work from the main renderer, Side Browser guests, and Side Local App
+  guests. It must not override a focused Main Workbench Browser's new-tab
+  priority or create more than one empty-picker state.
 - The panel should not show a generic full-page footer as the primary action for
   every target. Full-page navigation may remain a secondary object toolbar
   action, but the panel's job is adjacent work.
@@ -2766,6 +2784,10 @@ Evidence:
   assignee metadata, issue and automation compact views, Library previews,
   close-tab keyboard shortcuts, final-tab panel closure, and browser placeholder
   behavior.
+- Desktop shortcut, preload, Side Panel context, E2E, and packaged smoke
+  coverage prove macOS and Windows/Linux new-tab mappings, focused Main Browser
+  priority, hidden/visible Side Panel entry, repeated-shortcut idempotency, and
+  main-renderer, Browser-guest, Local-App-guest, and editable-field focus paths.
 - Promotion reducer, component, E2E, and packaged Desktop smoke cover exact-tab
   transfer, sibling preservation, neighboring selection, delayed source detach,
   Browser/Local App guest continuity, and claim-failure recovery.
@@ -2846,8 +2868,8 @@ Flow:
    so starter work does not appear as new unread attention.
 4. Opening a thread clears relevant read markers when appropriate.
 5. Actions such as pin/archive/delete route to the owning chat/thread behavior.
-6. Messenger merges Saved Views into custom groups only, without sending them
-   through read-marker or attention aggregation.
+6. Messenger merges grouped and loose Saved Views into the directory without
+   sending them through read-marker or attention aggregation.
 7. Failed-run origin hydration starts from a redacted allowlist and restores
    source entity IDs and navigation only after the source row is verified in
    the current organization.
@@ -2930,8 +2952,10 @@ Why:
 Product model:
 
 - The default `Latest activity` directory uses the Arc-style custom-group
-  layout. Custom groups and loose thread rows share one activity-ordered
-  directory; the UI does not expose a separate custom-groups mode.
+  layout. Custom groups, loose thread rows, and loose Saved Views share one
+  directory; thread activity and device-level manual placement are kept without
+  inventing activity timestamps for Saved Views. The UI does not expose a
+  separate custom-groups mode.
 - Pinned custom groups and loose pinned threads share one visible `Pinned`
   domain above unpinned groups and loose rows. The section may be absent when
   no visible thread or group is pinned.
@@ -2943,10 +2967,11 @@ Product model:
   section over hydrated directory items. Most members are thread summaries, but
   Saved Views may be mixed into the same group without becoming threads or
   owning-domain state.
-- Every visible Saved View belongs to exactly one custom group. Messenger has
-  no fixed `Saved` section and does not render a loose Saved View row. Saving
-  from a Chat or Issue creates or reuses that host's group atomically; saving
-  from a global context requires an existing group chosen by the operator.
+- A visible Saved View may be loose in the Messenger directory or belong to
+  exactly one custom group. Messenger has no fixed `Saved` section. Saving from
+  a Chat or Issue keeps the existing automatic host-group default; a global or
+  Main-session save lets the operator choose either `Messenger sidebar` for
+  loose placement or an existing group.
 - A Messenger member can belong to at most one custom group per operator.
   Moving a member into a group removes its previous custom group membership for
   that operator.
@@ -3014,6 +3039,11 @@ Flow:
 10. Saved View group order and Main Workbench tab order are independent.
     Reordering or moving a Messenger row does not move, close, focus, or
     reassign the corresponding Main tab or live runtime.
+11. Removing a Saved View's group membership, choosing `Move to Messenger
+    sidebar`, or separating/deleting its group returns the Saved View to the
+    loose directory without deleting it. A loose Saved View can then be
+    reordered, moved into an existing group, or merged with an eligible loose
+    Chat or Issue through the same pointer and keyboard placement model.
 
 Invariants:
 
@@ -3055,17 +3085,21 @@ Invariants:
 - Progressive disclosure inside a Project-organized custom group is local to
   the hydrated group. `Show more` reveals additional loaded group members and
   must not request an unrelated global Messenger thread page.
-- Removing a thread-backed item from a group returns it to the loose Messenger
-  directory with its existing read/unread and attention state intact. A Saved
-  View cannot become loose and must instead move to another group or be removed.
+- Removing a thread-backed item or Saved View from a group returns it to the
+  loose Messenger directory. Thread-backed items retain existing read/unread
+  and attention state; Saved Views retain their non-thread identity.
 - A mixed group may contain both thread-backed members and Saved Views. Saved
   View rows preserve their Saved View route, target kind, title, and manual
   order, but must not inherit unread badges, attention state, mark-read actions,
   or latest-message ordering from neighboring threads.
-- A Saved View must not be dropped into a loose directory position. Moving it
-  between groups changes only membership and group-local order; dropping it on
-  an eligible ungrouped Chat or Issue uses the atomic create/reuse-group path.
-  An invalid target rebounds without creating an orphan Saved View.
+- A Saved View may be dropped into a loose directory position, between groups,
+  into an existing group, or on an eligible ungrouped Chat or Issue. Loose
+  placement removes membership without deleting the Saved View; the Chat/Issue
+  drop uses the atomic create/reuse-group path. An invalid target rebounds
+  without losing placement or creating an orphan Saved View.
+- Loose Saved Views participate in the existing device-level manual directory
+  order and pointer/keyboard drag model, but they do not gain a pin/unpin
+  lifecycle. Group separation releases Saved View members to that loose order.
 - Deleting a Saved View removes its membership but must not delete or close the
   owning automation, Library object, Browser guest, Local App process, or active
   Main Workbench tab.
@@ -3090,8 +3124,9 @@ Evidence:
   drag/drop auto-title requests, group title regeneration actions, and
   title-generation motion states. They also cover atomic Project placement,
   non-sortable Project groups, persisted collapse state, and group-local
-  progressive disclosure, plus Saved View pointer/keyboard movement,
-  cross-group ordering, atomic Chat/Issue grouping, and invalid-drop rollback.
+  progressive disclosure, plus loose and grouped Saved View pagination,
+  pointer/keyboard movement, loose ordering, cross-group ordering, group
+  separation, atomic Chat/Issue grouping, and invalid-drop rollback.
 - Messenger route tests cover Fast Intelligence group title generation,
   fallback-on-merge failure, manual regeneration, and no mutation when
   regenerated output is unusable.
@@ -3112,10 +3147,11 @@ Evidence:
 ### Contract Summary
 
 Messenger Saved Views durably place exact Browser, Automation, Library, and
-Desktop Local App working instances inside custom groups without turning them
-into message threads. A Saved View row opens or focuses its instance in the
-Messenger Main Workbench. Moving a live Side Panel target transfers that same
-instance into Main; it does not reopen a copy in Side.
+Desktop Local App working instances as loose Messenger rows or inside custom
+groups without turning them into message threads. A Saved View row opens or
+focuses its instance in the Messenger Main Workbench. Moving a live Side Panel
+target transfers that same instance into Main; it does not reopen a copy in
+Side.
 
 ### Intent / User Job
 
@@ -3154,8 +3190,9 @@ instance into Main; it does not reopen a copy in Side.
 - A Saved View is a Messenger directory item, not a message thread. It has no
   transcript, unread state, attention state, mark-read behavior, or synthetic
   latest-message/activity time.
-- Every visible Saved View belongs to exactly one custom group. Messenger has
-  no fixed `Saved` section, loose Saved row, or normal hidden-item manager.
+- Every visible Saved View has either loose placement or exactly one custom-
+  group membership. Messenger has no fixed `Saved` section or normal hidden-item
+  manager.
 - A Saved View uses `/messenger/saved/:id` as its stable route. Selecting or
   directly loading that route opens or focuses the exact live Main tab when it
   exists, otherwise hydrates a Main tab from durable fallback data. It never
@@ -3181,6 +3218,8 @@ instance into Main; it does not reopen a copy in Side.
   installation, binding, app, and instance identity.
 - Custom-group membership keeps the existing `thread_key` database column as
   an opaque item key; Saved Views use `saved-view:<id>`.
+- Idempotent keep receipts preserve the chosen placement; their `groupId` is
+  nullable when the Saved View was kept loose.
 - Generic group API fields are canonical. Every hydrated member returns
   `itemKey` and `item`; a thread-backed member additionally returns compatible
   `threadKey` and `thread` aliases, while a Saved View never populates those
@@ -3191,11 +3230,11 @@ instance into Main; it does not reopen a copy in Side.
 
 - `Move to Messenger` on an eligible active Side Panel target.
 - `Keep in Messenger` on an eligible session-only Main Browser tab.
-- Messenger Saved View row actions: Open, Move to group, Remove from Messenger,
-  and group-local reorder.
-- Main tab actions: focus, whole-tab pointer/keyboard reorder, close, create
-  Browser tab, Browser Keep, Remove, and target-specific controls. A Local App
-  tab exposes project settings from its hover/focus More menu.
+- Messenger Saved View row actions: Open, Move to Messenger sidebar, Move to
+  group, Remove from Messenger, and loose or group-local reorder.
+- Main tab actions: focus, reorder, close, create Browser tab, Browser Keep,
+  Remove, and target-specific controls. A Local App tab exposes project
+  settings from its hover/focus More menu.
 - Direct navigation to `/messenger/saved/:id` or `/messenger/workbench`.
 - Organization-scoped Saved View list/create/get/update/reorder/delete APIs and
   generic custom-group item APIs.
@@ -3209,11 +3248,12 @@ instance into Main; it does not reopen a copy in Side.
    `viewInstanceId`, and source revision and marks only that tab as moving.
 2. One idempotent keep mutation validates the descriptor and atomically places
    it. A stable Chat or Issue creates or reuses its group and adds both host and
-   Saved View exactly once. A global source requires an operator-selected
-   existing group.
-3. Rudder writes the returned group and Saved View into the local directory
-   cache, stages the Main tab, preserves the displayed source Side context, and
-   navigates to `/messenger/saved/:id`.
+   Saved View exactly once by default. A global or Main-session source can use
+   the operator-selected `Messenger sidebar` loose placement or an existing
+   group.
+3. Rudder writes the returned nullable group and Saved View into the local
+   directory cache, stages the Main tab, preserves the displayed source Side
+   context, and navigates to `/messenger/saved/:id`.
 4. After the target Main anchor is ready, the runtime layer transfers its unique
    host lease from Side to Main. Only after a successful claim does Rudder
    detach the exact source tab and focus Main. Sibling Side tabs remain in their
@@ -3226,9 +3266,10 @@ instance into Main; it does not reopen a copy in Side.
 6. Selecting a Saved View row focuses its live Main tab by exact
    `viewInstanceId`, or cold-hydrates a Main tab when no live instance exists.
    The mixed Main tab strip remains visible even with one tab.
-7. `+` and the focused Browser new-tab shortcut create a session-only Browser
-   tab in Main. Keeping that tab requires explicit group confirmation; a recent
-   group may be preselected but is not silently committed.
+7. `+` and the focused Main Browser new-tab shortcut create a session-only
+   Browser tab in Main. Keeping that tab requires explicit placement
+   confirmation: `Messenger sidebar` creates a loose row, while a recent group
+   may be preselected but is not silently committed.
 8. `Remove from Messenger` deletes the durable Saved View and membership,
    unbinds the open Main tab, and replaces the route with
    `/messenger/workbench`. The exact Main instance remains session-only.
@@ -3238,6 +3279,13 @@ instance into Main; it does not reopen a copy in Side.
 10. Accepted Browser title, favicon, and URL events update fallback metadata
     from the runtime layer after promotion. Browser rows render only title or
     domain plus favicon/Web fallback and never show the URL.
+11. Messenger independently paginates visible Saved Views, excludes those
+    already hydrated through custom-group membership, and inserts the remainder
+    as loose rows into the unified directory and its device-level manual order.
+12. Moving a Saved View to `Messenger sidebar` or separating/deleting its group
+    removes only membership. Moving a loose Saved View into a group, or dropping
+    it on an eligible loose Chat or Issue, creates the corresponding membership
+    without replacing or closing its Main tab or live runtime.
 
 ### Decision Table
 
@@ -3255,14 +3303,17 @@ instance into Main; it does not reopen a copy in Side.
 | Capacity during cold open | Eight unrelated live Browser guests already exist | Keep row and show recoverable capacity state | Reuse or evict another exact tab silently | Reducer and UI tests |
 | Remove while open | Saved binding and live Main tab both exist | Delete row/membership; retain exact session-only tab | Close guest, stop Local App, or lose editor state | UI/E2E/Desktop |
 | Close while saved | Live Main tab has a Saved binding | Dispose tab; keep row for later cold open | Delete durable membership | UI/E2E |
+| Group to loose | Grouped Saved View is moved to Messenger sidebar or its group is separated | Keep the Saved View and return it to loose manual order | Delete the row or close/stop its runtime | Service/UI/E2E |
+| Loose to group | Loose Saved View is moved into a group or dropped on an eligible loose Chat/Issue | Assign one membership and preserve the same Saved View/runtime | Duplicate the row or restart the target | Service/UI/E2E |
 | Web/mobile Browser open | No Electron guest capability | Keep the row and ask to open in Rudder Desktop | Drop the record or fake a guest | UI E2E |
 
 ### Actor-Visible Input
 
 - Eligible Side surfaces expose `Move to Messenger`; eligible session-only Main
   Browser tabs expose `Keep in Messenger`; a blank Browser tab is not durable.
-- Messenger shows Saved Views only inside custom groups. Rows share Chat/Issue
-  density, focus, actions, drag handle, pointer DnD, and keyboard DnD behavior.
+- Messenger shows Saved Views as loose rows or inside custom groups. Rows share
+  Chat/Issue density, focus, actions, drag handle, pointer DnD, and keyboard DnD
+  behavior without acquiring pin/unpin controls.
 - A Saved View row is selected only while the current Messenger route is
   `/messenger/saved/:id` for that row. A live or active Main Workbench tab
   retained behind Chat, Issue, or another Messenger route must not leave the
@@ -3274,8 +3325,8 @@ instance into Main; it does not reopen a copy in Side.
 
 ### Operator-Visible Output
 
-- Successful promotion announces `Moved to <group>`, focuses the exact Main tab,
-  and removes only that tab from Side.
+- Successful promotion announces the selected Messenger sidebar or group
+  placement, focuses the exact Main tab, and removes only that tab from Side.
 - Main Browser and Local App surfaces fill the Main content directly beneath
   the mixed tab strip. They must not be wrapped in another card, inset frame,
   rounded inner shell, or second Browser tab strip. The Main shell and tab
@@ -3295,7 +3346,8 @@ instance into Main; it does not reopen a copy in Side.
 - `messenger_saved_views` must store the scoped typed target, presentation and
   recovery metadata, compatibility fields, and timestamps.
 - `messenger_custom_group_entries.thread_key` must store the opaque
-  `saved-view:<id>` membership and group-local order.
+  `saved-view:<id>` membership and group-local order when a Saved View is
+  grouped; a loose Saved View has no such membership.
 - Each Saved View mutation must emit an organization-scoped, operator-attributed
   activity record. Metadata refreshes do not change Messenger activity order.
 - Accepted Browser navigation/title/favicon events must be deduplicated and
@@ -3312,7 +3364,8 @@ instance into Main; it does not reopen a copy in Side.
    - Trigger: Fill a form and scroll B, then choose `Move to Messenger`.
    - Expected state/action: B's exact runtime lease transfers to Main; A and C
      stay in Side and C becomes active.
-   - Visible output: Full-bleed Browser Main content plus durable grouped row;
+   - Visible output: Full-bleed Browser Main content plus its durable loose or
+     grouped row;
      history, form, scroll, zoom, and `webContentsId` remain.
    - Evidence: Promotion E2E and packaged Desktop smoke.
 2. Recover after restart:
@@ -3328,7 +3381,7 @@ instance into Main; it does not reopen a copy in Side.
    - Expected state/action: Remove leaves the first exact tab session-only;
      Close leaves the second durable row for cold reopen.
    - Visible output: `/messenger/workbench` for the session-only tab and a
-     grouped row for the closed saved tab.
+     durable loose or grouped row for the closed saved tab.
    - Evidence: Main Workbench unit, Messenger E2E, and Desktop smoke.
 4. Open an inaccessible Automation or device-local target:
    - Trigger: The owning resource is deleted or becomes inaccessible.
@@ -3344,8 +3397,8 @@ instance into Main; it does not reopen a copy in Side.
 - Only Browser, Automation, Library document, Library entry, Library file,
   Library directory, and Desktop Local App exact targets are saveable under
   this contract.
-- Every visible Saved View has one custom-group membership. There is no fixed
-  Saved section, normal hidden manager, or loose Saved View placement.
+- Every visible Saved View is either loose or has one custom-group membership.
+  There is no fixed Saved section or normal hidden manager.
 - Missing, deleted, or inaccessible underlying targets produce an actionable
   unavailable state; they must not be silently redirected or hydrated across an
   organization boundary.
@@ -3358,6 +3411,9 @@ instance into Main; it does not reopen a copy in Side.
   lease without creating, remounting, DOM-reparenting, or disposing the
   physical guest/editor session.
 - Main Workbench tab order and Messenger group order are independent.
+- Loose Saved View order is device-level manual directory state and remains
+  independent of Main Workbench tab order. Saved Views have no pin/unpin
+  lifecycle, unread state, attention state, or synthetic activity timestamp.
 - Remove deletes durable binding only; Close disposes the current Main
   instance only. Neither action stops a Local App process.
 - Saved Views never participate in unread/attention counts, mark-read APIs, or
@@ -3375,7 +3431,7 @@ instance into Main; it does not reopen a copy in Side.
 
 ### Drift Boundaries
 
-- Adding a target kind, changing deduplication identity, group-only placement,
+- Adding a target kind, changing deduplication identity, loose/group placement,
   group membership semantics, attention exclusion, live guest ownership,
   Main/Side transfer, Remove/Close semantics, recovery guarantees, capacity, or
   web/mobile behavior requires updating this contract.
@@ -3391,6 +3447,7 @@ Related plans:
 - `doc/plans/2026-07-20-messenger-saved-views.md`
 - `doc/plans/2026-07-23-messenger-work-packages-local-apps.md`
 - `doc/plans/2026-07-23-messenger-main-workbench-promotion.md`
+- `doc/plans/2026-07-24-side-panel-new-tab-and-loose-saved-views.md`
 
 Related code:
 
@@ -3422,6 +3479,12 @@ Related tests:
 - `tests/e2e/messenger-saved-views.spec.ts`
 - `tests/e2e/messenger-local-apps.spec.ts`
 - `desktop/scripts/smoke.mjs`
+
+The Saved View E2E and packaged Desktop paths cover representative Browser,
+Library document, and Local App placement; grouped-to-loose movement, loose
+manual reorder, loose-to-group movement, and persistence after reload; and the
+independence of placement, Main tab, editor, Browser guest, and Local App
+process lifecycles.
 
 ## IM.FEISHU.001
 
