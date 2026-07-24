@@ -479,6 +479,7 @@ export function agentRunContextService(
     scene: AgentRunScene;
     agent: AgentRunContextAgent;
     baseConfig?: Record<string, unknown> | null;
+    materializeMissingRuntimeSkills?: boolean;
   }): Promise<PreparedAgentRunConfig> {
     const baseConfig =
       input.baseConfig ?? asRecord(input.agent.agentRuntimeConfig);
@@ -516,6 +517,7 @@ export function agentRunContextService(
         input.agent.agentRuntimeType,
         resolvedConfig,
         instanceDesiredSkills,
+        { materializeMissing: input.materializeMissingRuntimeSkills !== false },
       );
     const browserRuntimeSkillEntries = browserCapability.instanceEligible
       ? resolvedRuntimeSkillEntries.filter((entry) => isBrowserSkillSelectionKey(entry.key))

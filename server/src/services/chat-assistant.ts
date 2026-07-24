@@ -51,10 +51,14 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     conversation: Pick<ChatConversation, "id" | "orgId" | "preferredAgentId" | "primaryIssueId" | "contextLinks" | "planMode">;
     contextLinks: ChatContextLink[];
     materializeManagedInstructions?: boolean;
+    materializeMissingRuntimeSkills?: boolean;
   }) {
     const runtimeSource = await resolveConversationRuntime(
       input.conversation,
-      { materializeManagedInstructions: input.materializeManagedInstructions },
+      {
+        materializeManagedInstructions: input.materializeManagedInstructions,
+        materializeMissingRuntimeSkills: input.materializeMissingRuntimeSkills,
+      },
     );
     if (!runtimeSource.descriptor.available) {
       return {
@@ -135,7 +139,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   async function resolveAgentRuntime(
     orgId: string,
     agentId: string,
-    options?: { materializeManagedInstructions?: boolean },
+    options?: {
+      materializeManagedInstructions?: boolean;
+      materializeMissingRuntimeSkills?: boolean;
+    },
   ): Promise<ResolvedChatRuntimeSource | null> {
     const agent = await agentsSvc.getInternalById(agentId);
     if (!agent || agent.orgId !== orgId || agent.status === "terminated") {
@@ -217,6 +224,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       : agentAdapterConfig;
     const { runtimeConfig, runtimeSkillEntries } = await runContextSvc.prepareRuntimeConfig({
       scene: "chat",
+      materializeMissingRuntimeSkills: options?.materializeMissingRuntimeSkills !== false,
       agent: {
         id: agent.id,
         orgId: agent.orgId,
@@ -254,7 +262,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
   async function resolveConversationRuntime(
     conversation: Pick<ChatConversation, "orgId" | "preferredAgentId">,
-    options?: { materializeManagedInstructions?: boolean },
+    options?: {
+      materializeManagedInstructions?: boolean;
+      materializeMissingRuntimeSkills?: boolean;
+    },
   ) {
     if (conversation.preferredAgentId) {
       const agentRuntime = await resolveAgentRuntime(
@@ -275,7 +286,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   }
 
   async function enrichConversation<T extends ChatConversation>(conversation: T): Promise<T> {
-    const resolved = await resolveConversationRuntime(conversation);
+    const resolved = await resolveConversationRuntime(conversation, {
+      materializeMissingRuntimeSkills: false,
+    });
     return {
       ...conversation,
       chatRuntime: resolved.descriptor,
@@ -285,7 +298,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   async function enrichConversations<T extends ChatConversation>(conversations: T[]): Promise<T[]> {
     return enrichConversationRuntimeDescriptors(
       conversations,
-      async (conversation) => (await resolveConversationRuntime(conversation)).descriptor,
+      async (conversation) => (await resolveConversationRuntime(conversation, {
+        materializeMissingRuntimeSkills: false,
+      })).descriptor,
     );
   }
 
@@ -296,6 +311,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       conversation: input.conversation,
       contextLinks: input.contextLinks,
       materializeManagedInstructions: true,
+      materializeMissingRuntimeSkills: true,
     });
     if (resolvedInvocation.availabilityError) {
       throw new Error(resolvedInvocation.availabilityError);
@@ -1130,6 +1146,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       const resolved = await resolveChatInvocation({
         conversation,
         contextLinks: Array.isArray(conversation.contextLinks) ? conversation.contextLinks : [],
+        materializeMissingRuntimeSkills: false,
       });
       return resolved.runtimeSource.descriptor.available && !resolved.availabilityError
         ? {
@@ -1159,6 +1176,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           planMode: input.planMode ?? false,
         },
         contextLinks,
+        materializeMissingRuntimeSkills: false,
       });
       return resolved.runtimeSource.descriptor.available && !resolved.availabilityError
         ? { ...resolved.runtimeSource.descriptor, available: true as const }

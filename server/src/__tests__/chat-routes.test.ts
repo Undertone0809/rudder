@@ -4870,6 +4870,190 @@ describe("chat routes", () => {
     );
   });
 
+  it("starts a fresh generation when retrying a turn whose prior generation lost control", async () => {
+    const conversation = createConversation();
+    const originalUserMessage = createMessage(
+      "10000000-0000-4000-8000-000000000091",
+      "user",
+      "message",
+      "Try this work",
+    );
+    const priorFailedMessage = {
+      ...createMessage(
+        "10000000-0000-4000-8000-000000000092",
+        "assistant",
+        "message",
+        "The prior runtime owner was lost.",
+      ),
+      status: "failed",
+      generationId: "generation-control-lost",
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          code: "control_lost",
+          message: "The prior runtime owner was lost.",
+        },
+      },
+    };
+    const retryUserMessage = {
+      ...createMessage(
+        "10000000-0000-4000-8000-000000000093",
+        "user",
+        "message",
+        "Try this work",
+      ),
+      turnVariant: 1,
+    };
+    const retryAssistantMessage = {
+      ...createMessage(
+        "10000000-0000-4000-8000-000000000094",
+        "assistant",
+        "message",
+        "Fresh attempt completed.",
+      ),
+      generationId: "generation-retry",
+      turnVariant: 1,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(retryUserMessage);
+    mockChatService.listMessages.mockResolvedValue([
+      originalUserMessage,
+      priorFailedMessage,
+      retryUserMessage,
+    ]);
+    mockChatService.createGeneration.mockResolvedValueOnce({
+      id: "generation-retry",
+      attemptEpoch: 0,
+      controlVersion: 0,
+      controlOwnerToken: null,
+      controlLeaseExpiresAt: null,
+    });
+    mockChatService.getLatestGeneration.mockResolvedValue({
+      id: "generation-retry",
+      attemptEpoch: 1,
+      controlOwnerToken: "retry-runtime-owner",
+    });
+    mockChatService.addMessage.mockResolvedValueOnce(retryAssistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementationOnce(async (input) => {
+      const attempt = await input.controlCoordinator.beginAttempt({
+        attemptIndex: 0,
+        runtimeType: "codex_local",
+        model: "gpt-5.4",
+        isFallback: false,
+      });
+      await attempt.complete();
+      return {
+        outcome: "completed",
+        partialBody: retryAssistantMessage.body,
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "message",
+          body: retryAssistantMessage.body,
+          structuredPayload: null,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: originalUserMessage.body,
+        editUserMessageId: originalUserMessage.id,
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.createGeneration).toHaveBeenCalledTimes(1);
+    expect(mockChatService.beginGenerationControlAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generationId: "generation-retry",
+        attemptEpoch: 1,
+      }),
+    );
+    expect(mockChatService.beginGenerationControlAttempt).not.toHaveBeenCalledWith(
+      expect.objectContaining({ generationId: "generation-control-lost" }),
+    );
+    expect(mockChatService.generationProtocol.recordRuntimeTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generationId: "generation-retry",
+        expectedAttemptEpoch: 1,
+        finalStatus: "completed",
+      }),
+    );
+  });
+
+  it("records pre-attempt skill preparation failures as actionable failures instead of stale control", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Use the selected skill");
+    const failedMessage = {
+      ...createMessage(
+        "message-assistant",
+        "assistant",
+        "message",
+        "The assistant hit a system-level issue. Rudder saved the details for diagnostics; retry when ready.",
+      ),
+      status: "failed",
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.createGeneration.mockResolvedValueOnce({
+      id: "generation-prep-failed",
+      attemptEpoch: 0,
+      controlVersion: 0,
+      controlOwnerToken: null,
+      controlLeaseExpiresAt: null,
+    });
+    mockChatService.getLatestGeneration.mockResolvedValue({
+      id: "generation-prep-failed",
+      attemptEpoch: 0,
+      controlOwnerToken: null,
+      controlLeaseExpiresAt: null,
+    });
+    mockChatService.addMessage.mockResolvedValueOnce(failedMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockRejectedValueOnce(
+      new Error("Could not install organization skill build-advisor"),
+    );
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: userMessage.body })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(events.at(-1)).toMatchObject({
+      type: "error",
+      errorCode: "chat_runtime_exception",
+      messageId: failedMessage.id,
+    });
+    expect(mockChatService.beginGenerationControlAttempt).not.toHaveBeenCalled();
+    expect(mockChatService.generationProtocol.recordRuntimeTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generationId: "generation-prep-failed",
+        expectedAttemptEpoch: 0,
+        finalStatus: "failed",
+        terminalReason: "failed",
+      }),
+    );
+    expect(mockChatService.generationProtocol.recordRuntimeTerminal).not.toHaveBeenCalledWith(
+      expect.objectContaining({ terminalReason: "control_owner_stale" }),
+    );
+  });
+
   it("stores generated assistant images as chat attachments", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Generate a UI");

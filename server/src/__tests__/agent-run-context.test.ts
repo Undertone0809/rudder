@@ -255,6 +255,49 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     );
   });
 
+  it("materializes missing runtime skills by default and supports side-effect-free descriptor reads", async () => {
+    mockResolveAdapterConfigForRuntime.mockResolvedValue({
+      config: { model: "gpt-5.4" },
+      secretKeys: new Set<string>(),
+    });
+    mockGetEnabledSkillKeysForAgent.mockResolvedValue(["org/build-advisor"]);
+    mockListRealizedSkillEntriesForAgent.mockResolvedValue([]);
+    const agent = {
+      id: "agent-1",
+      orgId: "organization-1",
+      name: "Builder",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "gpt-5.4" },
+    };
+    const svc = agentRunContextService({} as any);
+
+    await svc.prepareRuntimeConfig({ scene: "chat", agent });
+    await svc.prepareRuntimeConfig({
+      scene: "chat",
+      agent,
+      materializeMissingRuntimeSkills: false,
+    });
+
+    expect(mockListRealizedSkillEntriesForAgent).toHaveBeenNthCalledWith(
+      1,
+      "organization-1",
+      "agent-1",
+      "codex_local",
+      { model: "gpt-5.4" },
+      ["org/build-advisor"],
+      { materializeMissing: true },
+    );
+    expect(mockListRealizedSkillEntriesForAgent).toHaveBeenNthCalledWith(
+      2,
+      "organization-1",
+      "agent-1",
+      "codex_local",
+      { model: "gpt-5.4" },
+      ["org/build-advisor"],
+      { materializeMissing: false },
+    );
+  });
+
   it("fails runtime preparation when a required managed MCP binding is unavailable", async () => {
     mockResolveAdapterConfigForRuntime.mockResolvedValue({
       config: {},

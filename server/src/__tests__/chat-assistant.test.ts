@@ -482,6 +482,12 @@ describe("chatAssistantService operator profile prompt injection", () => {
 
     expect(mockAgentService.getInternalById).toHaveBeenCalledTimes(1);
     expect(mockRunContextService.prepareRuntimeConfig).toHaveBeenCalledTimes(1);
+    expect(mockRunContextService.prepareRuntimeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scene: "chat",
+        materializeMissingRuntimeSkills: false,
+      }),
+    );
     expect(enriched.map((conversation) => conversation.id)).toEqual(["chat-list-1", "chat-list-2"]);
     enriched.forEach((conversation, index) => {
       expect(conversation).not.toBe(conversations[index]);
@@ -1766,6 +1772,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     }));
     expect(mockRunContextService.prepareRuntimeConfig).toHaveBeenCalledWith(expect.objectContaining({
       scene: "chat",
+      materializeMissingRuntimeSkills: true,
       agent: expect.objectContaining({
         workspaceKey: "chat-specialist--agent-1",
         agentRuntimeConfig: expect.objectContaining({

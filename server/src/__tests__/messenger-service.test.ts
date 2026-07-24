@@ -357,6 +357,10 @@ describe("messengerService and issue follows", () => {
         eq(chatMessages.conversationId, fixture.conversationId),
         eq(chatMessages.role, "user"),
       ));
+    const [generation] = await db
+      .select()
+      .from(chatGenerations)
+      .where(eq(chatGenerations.id, claim!.generationId));
     const activities = await db
       .select()
       .from(activityLog)
@@ -370,6 +374,12 @@ describe("messengerService and issue follows", () => {
       sourceMessageId: message?.id,
       continuationMessageId: message?.id,
       deliveredMessageId: message?.id,
+    });
+    expect(generation).toMatchObject({
+      status: "active",
+      attemptEpoch: 0,
+      controlOwnerToken: null,
+      controlLeaseExpiresAt: null,
     });
     expect(chatInlineAnnotationsFromStructuredPayload(message?.structuredPayload))
       .toEqual([fixture.annotation]);

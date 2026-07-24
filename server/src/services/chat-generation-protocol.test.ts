@@ -23,6 +23,7 @@ import {
   chatGenerationProtocolService,
   hashChatGenerationBody,
 } from "./chat-generation-protocol.js";
+import { chatService } from "./chats.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -161,6 +162,52 @@ describe("chatGenerationProtocolService", () => {
     if (!generation) throw new Error("Failed to seed generation");
     return generation;
   }
+
+  it("keeps a new generation ownerless across slow preparation until a runtime attempt begins", async () => {
+    const scope = await seedGeneration();
+    await db.delete(chatGenerations).where(eq(chatGenerations.id, scope.id));
+    const chats = chatService(db);
+
+    const generation = await chats.createGeneration(scope.orgId, scope.conversationId);
+    expect(generation).toMatchObject({
+      status: "active",
+      attemptEpoch: 1,
+      controlOwnerToken: null,
+      controlLeaseExpiresAt: null,
+    });
+
+    const beforeAttemptRecovery = await protocol.recoverStaleControlOwners({
+      now: new Date(generation.createdAt.getTime() + 31_000),
+      assumeAllOwnersStale: true,
+    });
+    expect(beforeAttemptRecovery).toEqual([]);
+
+    const started = await chats.beginGenerationControlAttempt({
+      orgId: scope.orgId,
+      conversationId: scope.conversationId,
+      generationId: generation.id,
+      attemptEpoch: 1,
+      ownerToken: "runtime-owner-1",
+      runtimeType: "codex_local",
+    });
+    expect(started).toMatchObject({
+      status: "starting",
+      attemptEpoch: 1,
+      controlOwnerToken: "runtime-owner-1",
+      controlRuntimeType: "codex_local",
+    });
+    expect(started.controlLeaseExpiresAt).toBeInstanceOf(Date);
+
+    const afterAttemptRecovery = await protocol.recoverStaleControlOwners({
+      now: new Date(started.controlLeaseExpiresAt!.getTime() + 1),
+    });
+    expect(afterAttemptRecovery.map(({ generation: recovered }) => recovered.id))
+      .toEqual([generation.id]);
+    expect(afterAttemptRecovery[0]?.generation).toMatchObject({
+      status: "control_lost",
+      terminalReason: "control_owner_stale",
+    });
+  });
 
   it("keeps streaming transcript evidence in the ledger and a reloadable visible projection", async () => {
     const generation = await seedGeneration();

@@ -116,6 +116,7 @@ import {
   shouldShowMessageDuringActiveEdit,
   shouldShowMessageDuringActiveStream,
 } from "@/lib/chat-stream-state";
+import { resolveChatTranscriptLoadState } from "@/lib/chat-transcript-loading";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { isPreviewableImage } from "@/lib/image-actions";
 import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom";
@@ -424,9 +425,17 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryFn: () => chatsApi.get(conversationId!), enabled: !!selectedOrganizationId && !!conversationId && organizationRouteMatchesSelection, }); const activeConversationFromList = conversationsQuery.data?.find((conversation) => conversation.id === conversationId) ?? null; const activeConversationBelongsToSelectedOrganization = organizationRouteMatchesSelection && (
     conversationQuery.data
       ? conversationQuery.data.orgId === selectedOrganizationId
-      : activeConversationFromList?.orgId === selectedOrganizationId); const messagesQuery = useQuery({
+      : activeConversationFromList?.orgId === selectedOrganizationId); const canQueryMessages = resolveChatTranscriptLoadState({
+    selectedOrganizationId,
+    conversationId: conversationId ?? null,
+    organizationRouteMatchesSelection,
+    hasConversationSnapshot: activeConversationBelongsToSelectedOrganization,
+    conversationDetailPending: conversationQuery.isPending,
+    hasMessages: false,
+    messagesPending: true,
+  }).canQueryMessages; const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
-    queryFn: () => chatsApi.listMessages(conversationId!, { includeTranscript: false }), enabled: !!conversationId && activeConversationBelongsToSelectedOrganization, });
+    queryFn: () => chatsApi.listMessages(conversationId!, { includeTranscript: false }), enabled: canQueryMessages, });
   const workManifestQuery = useQuery({
     queryKey: queryKeys.chats.workManifest(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
     queryFn: () => chatsApi.getWorkManifest(conversationId!),
@@ -630,9 +639,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!organizationRouteMatchesSelection || !conversationId || !conversationQuery.data || activeConversationBelongsToSelectedOrganization) return;
     navigate(chatRootPath, { replace: true });
   }, [activeConversationBelongsToSelectedOrganization, chatRootPath, conversationId, conversationQuery.data, navigate, organizationRouteMatchesSelection]);
-  const showConversationLoading = Boolean(
-    conversationId && (!organizationRouteMatchesSelection || (!selectedConversation && conversationQuery.isPending && conversationQuery.data === undefined)),
-  );
+  const transcriptLoadState = resolveChatTranscriptLoadState({
+    selectedOrganizationId,
+    conversationId: conversationId ?? null,
+    organizationRouteMatchesSelection,
+    hasConversationSnapshot: Boolean(selectedConversation),
+    conversationDetailPending: conversationQuery.isPending && conversationQuery.data === undefined,
+    hasMessages: messagesQuery.data !== undefined,
+    messagesPending: messagesQuery.isPending,
+  });
+  const showConversationLoading = transcriptLoadState.showConversationLoading;
   useEffect(() => { if (!selectedOrganizationId || !organizationRouteMatchesSelection) return; if (!relativePath.startsWith("/messenger/chat")) return; rememberMessengerPath(selectedOrganizationId, relativePath); }, [organizationRouteMatchesSelection, relativePath, selectedOrganizationId]); const refreshChat = async (chatId?: string | null) => { if (!selectedOrganizationId) return;
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(selectedOrganizationId, "active") }),
@@ -2012,7 +2028,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     });
   }, []);
   const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
-    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined); const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => projectChatQueueDelivery(item).state !== "hidden"); const agentSelectionLocked = isChatAgentSelectionLocked({
+    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = transcriptLoadState.showMessagesLoading; const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => projectChatQueueDelivery(item).state !== "hidden"); const agentSelectionLocked = isChatAgentSelectionLocked({
     hasConversation: Boolean(selectedConversation),
     preferredAgentId: selectedConversation?.preferredAgentId,
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
