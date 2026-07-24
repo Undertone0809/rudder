@@ -89,9 +89,11 @@ export function useResponseAnnotationEditorController(
       : initialAnchor?.anchorRect ?? null
   ), [initialAnchor]);
   const getBoundaryRect = useCallback(() => (
-    anchorRef.current
-      ?.closest<HTMLElement>('[data-testid="chat-main-workspace-card"]')
-      ?.getBoundingClientRect()
+    (anchorRef.current?.isConnected
+      ? anchorRef.current
+        .closest<HTMLElement>('[data-testid="chat-main-workspace-card"]')
+        ?.getBoundingClientRect()
+      : null)
       ?? initialAnchor?.boundaryRect
       ?? null
   ), [initialAnchor]);
