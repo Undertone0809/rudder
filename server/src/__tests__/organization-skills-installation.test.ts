@@ -328,6 +328,87 @@ describe("organization skill local installations", () => {
     )).rejects.toThrow("Bundled Rudder skills are read-only.");
   });
 
+  it("rejects deletion of Rudder-bundled and capability-bundled skills", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Protected Bundled Skill Org",
+      urlKey: "protected-bundled-skill-org",
+      issuePrefix: "PBS",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+    const skills = await skillSvc.list(orgId);
+    const bundled = skills.find((skill) => skill.key === "rudder/rudder-docs")!;
+    const capabilityBundled = skills.find((skill) => skill.key === "rudder/browser")!;
+
+    await expect(skillSvc.deleteSkill(orgId, bundled.id)).rejects.toThrow(
+      "Bundled Rudder skills are read-only.",
+    );
+    await expect(skillSvc.deleteSkill(orgId, capabilityBundled.id)).rejects.toThrow(
+      "Bundled Rudder skills are read-only.",
+    );
+    await expect(skillSvc.getById(bundled.id)).resolves.toMatchObject({ id: bundled.id });
+    await expect(skillSvc.getById(capabilityBundled.id)).resolves.toMatchObject({
+      id: capabilityBundled.id,
+    });
+  });
+
+  it("does not replace an existing bundled identity through package or local imports", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const localReplacementDir = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), "rudder-bundled-replacement-"),
+    );
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Bundled Replacement Org",
+      urlKey: "bundled-replacement-org",
+      issuePrefix: "BRO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const replacementMarkdown = [
+      "---",
+      "key: rudder/rudder-docs",
+      "name: Replacement Docs",
+      "---",
+      "",
+      "# Replacement",
+      "",
+    ].join("\n");
+    await fs.promises.writeFile(
+      path.join(localReplacementDir, "SKILL.md"),
+      replacementMarkdown,
+      "utf8",
+    );
+
+    try {
+      const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+      const originalListItem = (await skillSvc.list(orgId)).find(
+        (skill) => skill.key === "rudder/rudder-docs",
+      )!;
+      const original = (await skillSvc.getById(originalListItem.id))!;
+
+      await skillSvc.importPackageFiles(orgId, {
+        "skills/replacement-docs/SKILL.md": replacementMarkdown,
+      });
+      await skillSvc.importFromSource(orgId, localReplacementDir);
+
+      const preserved = await skillSvc.getById(original.id);
+      expect(preserved).toMatchObject({
+        id: original.id,
+        key: "rudder/rudder-docs",
+        sourceType: "local_path",
+        markdown: original.markdown,
+        metadata: expect.objectContaining({ sourceKind: "rudder_bundled" }),
+      });
+    } finally {
+      await fs.promises.rm(localReplacementDir, { recursive: true, force: true });
+    }
+  });
+
   it("migrates a community preset before editing without mutating its provenance source", { timeout: 30_000 }, async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -431,6 +512,153 @@ describe("organization skill local installations", () => {
     expect(installedPath).toContain(`${path.sep}__installed__${path.sep}`);
     await expect(fs.promises.readFile(path.join(installedPath!, "references", "guide.md"), "utf8"))
       .resolves.toBe("# Catalog guide\n");
+  });
+
+  it("keeps local_path imports direct and editable without managed installation", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const localSkillDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rudder-direct-local-skill-"));
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Direct Local Skill Org",
+      urlKey: "direct-local-skill-org",
+      issuePrefix: "DLS",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await fs.promises.mkdir(path.join(localSkillDir, "references"), { recursive: true });
+    await fs.promises.writeFile(
+      path.join(localSkillDir, "SKILL.md"),
+      "---\nname: Direct Local\ndescription: Direct source.\n---\n\n# Direct Local\n",
+      "utf8",
+    );
+    await fs.promises.writeFile(
+      path.join(localSkillDir, "references", "guide.md"),
+      "# Direct guide\n",
+      "utf8",
+    );
+
+    try {
+      const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+      const skill = (await skillSvc.importFromSource(orgId, localSkillDir)).imported[0]!;
+
+      expect(skill).toMatchObject({
+        sourceType: "local_path",
+        sourceLocator: path.resolve(localSkillDir),
+      });
+      expect(skill.metadata).not.toMatchObject({ installationVersion: 1 });
+
+      const runtime = await skillSvc.listRuntimeSkillEntries(orgId);
+      expect(runtime.find((entry) => entry.key === skill.key)?.source).toBe(path.resolve(localSkillDir));
+
+      const edited = "# Edited direct guide\n";
+      await skillSvc.updateFile(orgId, skill.id, "references/guide.md", edited);
+      await expect(fs.promises.readFile(path.join(localSkillDir, "references", "guide.md"), "utf8"))
+        .resolves.toBe(edited);
+    } finally {
+      await fs.promises.rm(localSkillDir, { recursive: true, force: true });
+    }
+  });
+
+  it("clears managed installation state when a local_path import replaces a remote row", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const localSkillDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rudder-local-replacement-"));
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Local Replacement Org",
+      urlKey: "local-replacement-org",
+      issuePrefix: "LRO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await fs.promises.writeFile(
+      path.join(localSkillDir, "SKILL.md"),
+      "---\nkey: acme/skills/direct-transition\nname: Direct Transition\n---\n\n# Local bytes\n",
+      "utf8",
+    );
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/git/trees/")) {
+        return new Response(JSON.stringify({
+          tree: [{ path: "skills/direct-transition/SKILL.md", type: "blob" }],
+        }));
+      }
+      if (url.endsWith("/SKILL.md")) {
+        return new Response("---\nname: Direct Transition\n---\n\n# Remote bytes\n");
+      }
+      return new Response("not found", { status: 404 });
+    }));
+
+    try {
+      const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+      const remote = (await skillSvc.importFromSource(
+        orgId,
+        `https://github.com/acme/skills/tree/${PINNED_REF}/skills/direct-transition`,
+      )).imported[0]!;
+      expect(remote.metadata).toMatchObject({ installationVersion: 1 });
+
+      const local = (await skillSvc.importFromSource(orgId, localSkillDir)).imported[0]!;
+      expect(local.id).toBe(remote.id);
+      expect(local).toMatchObject({
+        sourceType: "local_path",
+        sourceLocator: path.resolve(localSkillDir),
+      });
+      expect(local.metadata).not.toMatchObject({ installationVersion: 1 });
+      const runtime = await skillSvc.listRuntimeSkillEntries(orgId);
+      expect(runtime.find((entry) => entry.key === local.key)?.source).toBe(path.resolve(localSkillDir));
+    } finally {
+      await fs.promises.rm(localSkillDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps list and detail reconciliation free of remote installation", { timeout: 30_000 }, async () => {
+    const orgId = randomUUID();
+    const skillId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Metadata Only Org",
+      urlKey: "metadata-only-org",
+      issuePrefix: "MDO",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(organizationSkills).values({
+      id: skillId,
+      orgId,
+      key: "acme/skills/metadata-only",
+      slug: "metadata-only",
+      name: "Metadata Only",
+      description: "Must not download during metadata reads.",
+      markdown: "---\nname: Metadata Only\n---\n",
+      sourceType: "github",
+      sourceLocator: "https://github.com/acme/skills/tree/main/skills/metadata-only",
+      sourceRef: PINNED_REF,
+      trustLevel: "markdown_only",
+      compatibility: "compatible",
+      fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+      metadata: {
+        sourceKind: "github",
+        owner: "acme",
+        repo: "skills",
+        ref: PINNED_REF,
+        trackingRef: "main",
+        repoSkillDir: "skills/metadata-only",
+      },
+    });
+    const fetchMock = vi.fn(async () => {
+      throw new Error("metadata reads must stay offline");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const skillSvc = organizationSkillService(db, { deploymentMode: "local_trusted" });
+    await expect(skillSvc.list(orgId)).resolves.toContainEqual(expect.objectContaining({
+      id: skillId,
+      editable: true,
+    }));
+    await expect(skillSvc.detail(orgId, skillId)).resolves.toMatchObject({
+      id: skillId,
+      editable: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("preserves the previous installation when an update download fails", { timeout: 30_000 }, async () => {
@@ -749,6 +977,7 @@ describe("organization skill local installations", () => {
     expect(stored.sourceRef).toBe(PINNED_REF);
     expect(stored.metadata).toMatchObject({
       ref: PINNED_REF,
+      trackingRef: "main",
       installationVersion: 1,
     });
   });

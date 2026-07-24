@@ -342,6 +342,20 @@ export function organizationSkillService(
   async function installAndUpsertImportedSkills(orgId: string, skills: ImportedSkill[]) {
     const out: OrganizationSkill[] = [];
     for (const skill of skills) {
+      const existing = await getByKey(orgId, skill.key);
+      if (
+        existing
+        && isBundledRudderSourceKind(asString(getSkillMeta(existing).sourceKind))
+      ) {
+        out.push(existing);
+        continue;
+      }
+      if (skill.sourceType === "local_path") {
+        const [persisted] = await upsertImportedSkills(orgId, [skill]);
+        if (!persisted) throw notFound("Failed to persist organization skill");
+        out.push(persisted);
+        continue;
+      }
       out.push(await installImportedSkill(
         orgId,
         skill,
@@ -1512,6 +1526,8 @@ export function organizationSkillService(
             ...(imported.metadata ?? {}),
             sourceKind: asString(skill.metadata?.sourceKind)
               ?? asString(imported.metadata?.sourceKind),
+            trackingRef: asString(skill.metadata?.trackingRef)
+              ?? asString(imported.metadata?.trackingRef),
           },
         },
         async (installed) => {
@@ -1721,23 +1737,17 @@ export function organizationSkillService(
     for (const skill of imported) {
       const existing = await getByKey(orgId, skill.key);
       const existingMeta = existing ? getSkillMeta(existing) : {};
-      const incomingMeta = skill.metadata && isPlainRecord(skill.metadata) ? skill.metadata : {};
-      const incomingOwner = asString(incomingMeta.owner);
-      const incomingRepo = asString(incomingMeta.repo);
-      const incomingKind = asString(incomingMeta.sourceKind);
       if (
         existing
         && isBundledRudderSourceKind(asString(existingMeta.sourceKind))
-        && incomingKind === "github"
-        && incomingOwner === "rudder"
-        && incomingRepo === "rudder"
       ) {
         out.push(existing);
         continue;
       }
 
       const metadata = {
-        ...(existingMeta.installationVersion === ORGANIZATION_SKILL_INSTALLATION_VERSION
+        ...(skill.sourceType !== "local_path"
+          && existingMeta.installationVersion === ORGANIZATION_SKILL_INSTALLATION_VERSION
           ? { installationVersion: ORGANIZATION_SKILL_INSTALLATION_VERSION }
           : {}),
         ...(skill.metadata ?? {}),
@@ -1825,6 +1835,9 @@ export function organizationSkillService(
     if (!row) return null;
 
     const skill = toCompanySkill(row);
+    if (isBundledRudderSourceKind(asString(getSkillMeta(skill).sourceKind))) {
+      throw unprocessable("Bundled Rudder skills are read-only.");
+    }
 
     await enabledSkills.removeSkillKeys(orgId, [skill.key]);
 
