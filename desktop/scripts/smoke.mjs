@@ -48,6 +48,7 @@ const browserImportMalformedCookieName = "rudder_browser_import_malformed";
 const browserImportEncryptedCookieName = "rudder_browser_import_encrypted";
 const browserImportSmokeCookieUrl = "http://127.0.0.1/";
 const browserSmokeScreenshotPath = process.env.RUDDER_DESKTOP_SMOKE_SCREENSHOT?.trim() || null;
+const systemPermissionsScreenshotPath = process.env.RUDDER_DESKTOP_SYSTEM_PERMISSIONS_SCREENSHOT?.trim() || null;
 const localAppSmokeRootOverride = process.env.RUDDER_DESKTOP_LOCAL_APP_SMOKE_ROOT?.trim() || null;
 const localAppSmokeEnvNames = process.env.RUDDER_DESKTOP_LOCAL_APP_SMOKE_ENV_NAMES?.trim() || "";
 const localAppSmokeExpectedBody = process.env.RUDDER_DESKTOP_LOCAL_APP_SMOKE_EXPECTED_BODY?.trim() || null;
@@ -2308,6 +2309,20 @@ async function verifySettingsOverlayFlow(page, companyId, issuePrefix) {
   await modal.getByRole("heading", { name: "Issue notifications", exact: true }).waitFor({ state: "visible", timeout: 15_000 });
   await modal.getByRole("heading", { name: "Chat notifications", exact: true }).waitFor({ state: "visible", timeout: 15_000 });
   await modal.getByRole("button", { name: "Open settings" }).first().waitFor({ state: "visible", timeout: 15_000 });
+  if (process.platform === "darwin") {
+    await modal.getByRole("button", { name: "Open settings" }).first().click();
+    await page.waitForTimeout(250);
+    if (systemPermissionsScreenshotPath) {
+      await mkdir(path.dirname(systemPermissionsScreenshotPath), { recursive: true });
+      await modal.screenshot({ path: systemPermissionsScreenshotPath });
+      console.log(`[desktop-smoke] System permissions screenshot: ${systemPermissionsScreenshotPath}`);
+    }
+    assert.equal(
+      await modal.getByText("This URL protocol cannot be opened from Rudder.").count(),
+      0,
+      "macOS system permission settings should open without an in-app URL protocol error",
+    );
+  }
   assert.equal(
     await modal.getByText("Checking").count(),
     0,

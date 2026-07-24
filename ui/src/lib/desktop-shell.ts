@@ -13,6 +13,8 @@ export type DesktopSystemPermissions = {
   automation?: DesktopSystemPermissionStatus;
 };
 
+export type DesktopSystemPermissionId = keyof DesktopSystemPermissions;
+
 export type DesktopBootState = {
   capabilities?: {
     badgeCount?: boolean;
@@ -320,6 +322,7 @@ export type DesktopShellApi = {
   onDeferredUpdatePrompt?(listener: (prompt: DesktopDeferredUpdatePrompt) => void): () => void;
   respondDeferredUpdatePrompt?(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
   getSystemPermissions?(): Promise<DesktopSystemPermissions>;
+  openSystemPermissionSettings?(permission: DesktopSystemPermissionId): Promise<void>;
   sendFeedback(): Promise<void>;
   openExternal(target: string): Promise<void>;
   forceOpenExternal?(target: string): Promise<void>;

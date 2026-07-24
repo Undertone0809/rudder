@@ -11,7 +11,7 @@ import type {
 } from "./local-apps-registry.js";
 import type { LocalAppRuntimeView } from "./local-apps-runtime.js";
 import type { DesktopLocalFilePreview } from "./local-file-preview.js";
-import type { DesktopSystemPermissions } from "./system-permissions.js";
+import type { DesktopSystemPermissionId, DesktopSystemPermissions } from "./system-permissions.js";
 
 type BootState = {
   stage: string;
@@ -339,6 +339,8 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:respond-deferred-update-prompt", { promptId, decision }) as Promise<void>,
   getSystemPermissions: () =>
     ipcRenderer.invoke("desktop:get-system-permissions") as Promise<DesktopSystemPermissions>,
+  openSystemPermissionSettings: (permission: DesktopSystemPermissionId) =>
+    ipcRenderer.invoke("desktop:open-system-permission-settings", permission) as Promise<void>,
   sendFeedback: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
   openExternal: (target: string) => ipcRenderer.invoke("desktop:open-external", target) as Promise<void>,
   forceOpenExternal: (target: string) => ipcRenderer.invoke("desktop:force-open-external", target) as Promise<void>,
@@ -462,6 +464,7 @@ declare global {
       onDeferredUpdatePrompt(listener: (prompt: DesktopDeferredUpdatePrompt) => void): () => void;
       respondDeferredUpdatePrompt(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
       getSystemPermissions(): Promise<DesktopSystemPermissions>;
+      openSystemPermissionSettings(permission: DesktopSystemPermissionId): Promise<void>;
       sendFeedback(): Promise<void>;
       openExternal(target: string): Promise<void>;
       forceOpenExternal(target: string): Promise<void>;

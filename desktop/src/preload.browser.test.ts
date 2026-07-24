@@ -23,6 +23,7 @@ await import("./preload.js");
 type ExposedDesktopShell = {
   openExternal(target: string): Promise<void>;
   forceOpenExternal(target: string): Promise<void>;
+  openSystemPermissionSettings(permission: "fullDiskAccess" | "accessibility" | "automation"): Promise<void>;
   onBrowserShortcut(listener: (request: unknown) => void): () => void;
   onOpenWebLink(listener: (request: unknown) => void): () => void;
   listBrowserImportSources(): Promise<unknown[]>;
@@ -122,6 +123,7 @@ describe("Rudder Browser preload bridge", () => {
 
     await shell.openExternal("https://example.com/normal");
     await shell.forceOpenExternal("https://example.com/explicit");
+    await shell.openSystemPermissionSettings("fullDiskAccess");
     const remove = shell.onOpenWebLink(listener);
     const registration = electronMocks.on.mock.calls.find(([channel]) => channel === "desktop:open-web-link");
     const request = {
@@ -142,6 +144,7 @@ describe("Rudder Browser preload bridge", () => {
 
     expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "desktop:open-external", "https://example.com/normal");
     expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "desktop:force-open-external", "https://example.com/explicit");
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(3, "desktop:open-system-permission-settings", "fullDiskAccess");
     expect(listener).toHaveBeenCalledOnce();
     expect(listener).toHaveBeenCalledWith(request);
     remove();

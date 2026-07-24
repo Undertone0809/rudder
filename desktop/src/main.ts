@@ -92,7 +92,12 @@ import {
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
 } from "./runtime-cache.js";
-import { resolveDesktopSystemPermissions, type DesktopSystemPermissions } from "./system-permissions.js";
+import {
+  isDesktopSystemPermissionId,
+  resolveDesktopSystemPermissions,
+  resolveSystemPermissionSettingsUrl,
+  type DesktopSystemPermissions,
+} from "./system-permissions.js";
 import {
   applyThemePreferenceToNativeTheme,
   resolveAppearanceForThemePreference,
@@ -2047,6 +2052,17 @@ function registerIpc(): void {
     if (openError) throw new Error(openError);
   });
   ipcMain.handle("desktop:get-system-permissions", async () => refreshDesktopSystemPermissions());
+  ipcMain.handle("desktop:open-system-permission-settings", async (event, permission: unknown) => {
+    assertCurrentMainFrame(event, "System permission settings");
+    if (!isDesktopSystemPermissionId(permission)) {
+      throw new Error("Unknown system permission settings target.");
+    }
+    const target = resolveSystemPermissionSettingsUrl({ permission });
+    if (!target) {
+      throw new Error("System permission settings are available only on macOS.");
+    }
+    await shell.openExternal(target);
+  });
   ipcMain.handle("desktop:get-app-version", async () => resolveRudderAppVersion());
   ipcMain.handle("desktop:get-release-notes", async (): Promise<DesktopReleaseNotesResult> => {
     const version = resolveRudderAppVersion();
