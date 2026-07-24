@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -209,6 +209,52 @@ describe("next release version handoff", () => {
     );
     expect(readFileSync(outputFile, "utf8")).toContain("action=ready");
     expect(readFileSync(outputFile, "utf8")).toContain(`head_sha=${remoteHead}`);
+  }, 15_000);
+
+  it("accepts an identical deterministic branch created by a concurrent run", () => {
+    const repo = createReleaseRepo();
+    const root = dirname(repo);
+    const hook = join(repo, ".git", "hooks", "pre-push");
+    const marker = join(root, "concurrent-push-complete");
+    writeFileSync(hook, [
+      "#!/bin/sh",
+      `if [ ! -f '${marker}' ]; then`,
+      `  touch '${marker}'`,
+      "  tree=\"$(git rev-parse 'HEAD^{tree}')\"",
+      "  parent=\"$(git rev-parse 'HEAD^')\"",
+      `  concurrent_commit="$(printf '%s\\n' 'concurrent release handoff' | `
+        + `GIT_AUTHOR_NAME='Concurrent Release Test' `
+        + `GIT_AUTHOR_EMAIL='concurrent-release@example.com' `
+        + `GIT_COMMITTER_NAME='Concurrent Release Test' `
+        + `GIT_COMMITTER_EMAIL='concurrent-release@example.com' `
+        + `git commit-tree "$tree" -p "$parent")"`,
+      "  git push --no-verify origin "
+        + "\"$concurrent_commit:refs/heads/automation/release-v0.5.2\" >/dev/null 2>&1",
+      "fi",
+      "",
+    ].join("\n"));
+    chmodSync(hook, 0o755);
+
+    const outputFile = join(root, "github-output-race.txt");
+    writeFileSync(outputFile, "");
+    const result = spawnSync("node", [
+      "scripts/prepare-next-release.mjs",
+      "--stable-version", "0.5.1",
+    ], {
+      cwd: repo,
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_OUTPUT: outputFile },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("A concurrent run prepared the matching PR branch");
+    expect(readFileSync(outputFile, "utf8")).toContain("action=ready");
+    expect(exec("git", ["ls-remote", "--heads", "origin"], repo)).toContain(
+      "refs/heads/automation/release-v0.5.2",
+    );
+    expect(JSON.parse(
+      exec("git", ["show", "origin/automation/release-v0.5.2:cli/package.json"], repo),
+    ).version).toBe("0.5.2");
   }, 15_000);
 
 });

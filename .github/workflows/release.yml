@@ -62,7 +62,7 @@ jobs:
           RELEASE_SAFEGUARDS_CONFIGURED: ${{ vars.RELEASE_SAFEGUARDS_CONFIGURED }}
         run: |
           if [ "$RELEASE_SAFEGUARDS_CONFIGURED" != "true" ]; then
-            echo "Configure npm-stable reviewers, main protection with the release-workflow push path, and Actions workflow permissions, then set RELEASE_SAFEGUARDS_CONFIGURED=true." >&2
+            echo "Configure npm-stable reviewers, main protection without direct-push bypass, and Actions permission to create the version-handoff PR and dispatch CI, then set RELEASE_SAFEGUARDS_CONFIGURED=true." >&2
             exit 1
           fi
 

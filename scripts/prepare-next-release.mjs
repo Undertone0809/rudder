@@ -154,6 +154,23 @@ function pushBranch(options, branch) {
   );
 }
 
+function resolveMatchingRemoteBranch(options, branch, expectedTree) {
+  run("git", [
+    "fetch",
+    options.remote,
+    `+refs/heads/${branch}:refs/remotes/${options.remote}/${branch}`,
+  ]);
+  const remoteRef = `${options.remote}/${branch}`;
+  const remoteTree = run("git", ["rev-parse", `${remoteRef}^{tree}`], { capture: true });
+  if (remoteTree !== expectedTree) {
+    throw new Error(
+      `${remoteRef} exists but does not match the generated next-release tree; `
+      + "inspect the branch before retrying",
+    );
+  }
+  return run("git", ["rev-parse", remoteRef], { capture: true });
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const status = run("git", ["status", "--porcelain"], { capture: true });
@@ -199,35 +216,30 @@ function main() {
 
     const releaseBranch = `${options.branchPrefix}${decision.nextVersion}`;
     writeActionOutput("branch", releaseBranch);
+    run("git", ["checkout", "-B", releaseBranch, `${options.remote}/${options.base}`]);
+    run("node", ["scripts/release-package-map.mjs", "set-version", decision.nextVersion]);
+    run("git", ["add", "-u"]);
+    run("git", ["commit", "-m", `chore(release): start v${decision.nextVersion} [skip release]`]);
+
+    let headSha = run("git", ["rev-parse", "HEAD"], { capture: true });
+    const expectedTree = run("git", ["rev-parse", "HEAD^{tree}"], { capture: true });
     if (remoteBranchExists(options, releaseBranch)) {
-      run("git", [
-        "fetch",
-        options.remote,
-        `+refs/heads/${releaseBranch}:refs/remotes/${options.remote}/${releaseBranch}`,
-      ]);
-      run("git", ["checkout", "--detach", `${options.remote}/${releaseBranch}`]);
-      const branchVersion = readWorkspaceVersion();
-      if (branchVersion !== decision.nextVersion) {
-        throw new Error(
-          `${options.remote}/${releaseBranch} exists at version ${branchVersion}; `
-          + `expected ${decision.nextVersion}`,
-        );
-      }
-      const headSha = run("git", ["rev-parse", "HEAD"], { capture: true });
+      headSha = resolveMatchingRemoteBranch(options, releaseBranch, expectedTree);
       writeActionOutput("action", "ready");
       writeActionOutput("head_sha", headSha);
       console.log(`Next release PR branch is already ready at ${headSha}.`);
       return;
     }
 
-    run("git", ["checkout", "-B", releaseBranch, `${options.remote}/${options.base}`]);
-    run("node", ["scripts/release-package-map.mjs", "set-version", decision.nextVersion]);
-    run("git", ["add", "-u"]);
-    run("git", ["commit", "-m", `chore(release): start v${decision.nextVersion} [skip release]`]);
-
-    const headSha = run("git", ["rev-parse", "HEAD"], { capture: true });
     const push = pushBranch(options, releaseBranch);
     if (push.status !== 0) {
+      if (remoteBranchExists(options, releaseBranch)) {
+        headSha = resolveMatchingRemoteBranch(options, releaseBranch, expectedTree);
+        writeActionOutput("action", "ready");
+        writeActionOutput("head_sha", headSha);
+        console.log(`A concurrent run prepared the matching PR branch at ${headSha}.`);
+        return;
+      }
       const pushError = `${push.stderr || ""}\n${push.stdout || ""}`.trim();
       throw new Error(`could not push ${options.remote}/${releaseBranch}: ${pushError}`);
     }
