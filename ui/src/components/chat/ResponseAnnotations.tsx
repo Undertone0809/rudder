@@ -37,6 +37,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ClipboardEvent,
   type CSSProperties,
   type Ref,
   type RefObject,
@@ -129,9 +130,14 @@ export function placeResponseAnnotationMarker(
     - sourceRootRect.left
     - viewport.gap
     - viewport.markerSize;
-  const top = Math.max(0, finalLineRect.top - sourceRootRect.top);
-  if (right <= maxLeft) return { left: right, top };
-  if (left >= minLeft) return { left, top };
+  const centeredTop = Math.max(
+    0,
+    finalLineRect.top
+      - sourceRootRect.top
+      + (finalLineRect.height - viewport.markerSize) / 2,
+  );
+  if (right <= maxLeft) return { left: right, top: centeredTop };
+  if (left >= minLeft) return { left, top: centeredTop };
   const fallbackLeft = Math.min(Math.max(right, minLeft), maxLeft);
   const fallbackAbsoluteLeft = sourceRootRect.left + fallbackLeft;
   let fallbackAbsoluteTop = finalLineRect.bottom + viewport.gap;
@@ -267,7 +273,7 @@ export type ResponseAnnotationLabels = {
   hideAnnotations: (count: number) => string;
   clearAll: string;
   selectedText: string;
-  userComment: string;
+  comment: string;
   optionalComment: string;
   addFiles: string;
   delete: string;
@@ -284,7 +290,7 @@ const DEFAULT_LABELS: ResponseAnnotationLabels = {
   hideAnnotations: (count) => `Hide ${count} ${count === 1 ? "annotation" : "annotations"}`,
   clearAll: "Clear all annotations",
   selectedText: "Selected text:",
-  userComment: "User comment:",
+  comment: "Comment",
   optionalComment: "Add an optional comment…",
   addFiles: "Add images or files",
   delete: "Delete",
@@ -492,7 +498,7 @@ export function AnchoredResponseAnnotationMarkers({
         ordinal={annotation.ordinal ?? index + 1}
         excerpt={annotation.selectedText}
         onActivate={(anchor) => onActivate?.(annotation.id, anchor)}
-        className="absolute z-20 -translate-y-0.5"
+        className="absolute z-20"
         style={position}
       />
     );
@@ -545,11 +551,13 @@ function AnnotationContent({
   ordinal,
   attachments,
   labels,
+  showComment = true,
 }: {
   annotation: ChatInlineAnnotation | ChatInlineAnnotationInput;
   ordinal: number;
   attachments: ChatAttachment[];
   labels: ResponseAnnotationLabels;
+  showComment?: boolean;
 }) {
   return (
     <>
@@ -559,11 +567,10 @@ function AnnotationContent({
       <blockquote className="mt-1 whitespace-pre-wrap text-sm leading-5 text-foreground">
         {annotation.selectedText}
       </blockquote>
-      {annotation.comment?.trim() ? (
-        <>
-          <p className="mt-3 text-xs font-medium text-muted-foreground">{labels.userComment}</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-foreground">{annotation.comment}</p>
-        </>
+      {showComment && annotation.comment?.trim() ? (
+        <p className="mt-3 whitespace-pre-wrap text-sm leading-5 text-foreground">
+          {annotation.comment}
+        </p>
       ) : null}
       {attachments.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
@@ -814,6 +821,16 @@ export function ResponseAnnotationEditor({
     event.target.value = "";
   }
 
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const images = Array.from(event.clipboardData.files).filter(
+      (file) => file.type.startsWith("image/"),
+    );
+    if (images.length === 0) return;
+    event.preventDefault();
+    setDraftPendingFiles((current) => [...current, ...images]);
+    setValidationError(null);
+  }
+
   function handleSave() {
     const changes: ResponseAnnotationEditorChanges = {
       comment: comment.trim() || null,
@@ -867,6 +884,7 @@ export function ResponseAnnotationEditor({
         ordinal={ordinal}
         attachments={[]}
         labels={labels}
+        showComment={false}
       />
       {visibleAttachments.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
@@ -884,17 +902,19 @@ export function ResponseAnnotationEditor({
           ))}
         </div>
       ) : null}
-      <label htmlFor={`${inputId}-comment`} className="mt-3 block text-xs font-medium text-muted-foreground">
-        {labels.userComment}
+      <label htmlFor={`${inputId}-comment`} className="sr-only">
+        {labels.comment}
       </label>
       <textarea
         id={`${inputId}-comment`}
         ref={commentRef}
         value={comment}
+        aria-label={labels.comment}
         onChange={(event) => {
           setComment(event.target.value);
           setValidationError(null);
         }}
+        onPaste={handlePaste}
         placeholder={labels.optionalComment}
         maxLength={2_000}
         className="mt-1 min-h-20 w-full resize-y rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-transparent px-3 py-2 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20"

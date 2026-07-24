@@ -703,7 +703,6 @@ export const en = {
   "chat.annotations.couldNotAdd": "Could not add annotation",
   "chat.annotations.added": "Annotation added",
   "chat.annotations.removed": "Annotation removed",
-  "chat.annotations.moreDetailsPrompt": "Please explain this passage in more detail.",
 } as const;
 
 export type TranslationKey = keyof typeof en;

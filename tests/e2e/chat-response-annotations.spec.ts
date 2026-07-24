@@ -455,8 +455,16 @@ function processToggleForAssistant(page: Page, messageId: string) {
     .first();
 }
 
-async function addSelectionToChat(page: Page) {
+async function addSelectionToChat(page: Page, options: { save?: boolean } = {}) {
   await annotationToolbar(page).getByRole("button", { name: "Add to chat" }).click();
+  const editor = page.getByTestId("chat-response-annotation-editor");
+  await expect(editor).toBeVisible();
+  await expect(editor).not.toContainText("User comment:");
+  if (options.save !== false) {
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(editor).toHaveCount(0);
+  }
+  return editor;
 }
 
 function draftAnnotationChip(page: Page, count: number) {
@@ -547,41 +555,45 @@ test.describe("Chat response annotations", () => {
     );
     const toolbar = annotationToolbar(page);
     await expect(toolbar).toHaveAttribute("aria-orientation", "horizontal");
-    await expect(toolbar.getByRole("button")).toHaveCount(3);
-    await addSelectionToChat(page);
+    await expect(toolbar.getByRole("button")).toHaveCount(2);
+    const firstEditor = await addSelectionToChat(page, { save: false });
+    const firstComment = firstEditor.getByLabel("Comment");
+    await expect(firstComment).toBeFocused();
+    await firstComment.fill("Please verify this CJK and Markdown claim.");
+    await firstEditor.getByLabel("Add images or files").setInputFiles({
+      name: "annotation-notes.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("annotation-owned evidence"),
+    });
+    await firstEditor.getByLabel("Comment").evaluate((textarea, pngBytes) => {
+      const file = new File([new Uint8Array(pngBytes)], "annotation-evidence.png", {
+        type: "image/png",
+      });
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+      textarea.dispatchEvent(new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: dataTransfer,
+      }));
+    }, [...ONE_BY_ONE_PNG]);
+    await expect(firstEditor.getByTestId("chat-response-annotation-pending-attachment"))
+      .toHaveCount(2);
+    await firstEditor.getByRole("button", { name: "Save", exact: true }).click();
     await expect(draftAnnotationChip(page, 1)).toBeVisible();
     const firstMarker = finalSource
       .getByTestId("chat-response-annotation-marker")
       .filter({ hasText: "1" });
     await expect(firstMarker).toHaveText("1");
     await expectMarkerNearSelection(firstMarker, finalSource, firstSelectionGeometry);
-    await editAnnotation(page, 1, {
-      comment: "Please verify this CJK and Markdown claim.",
-      files: [
-        {
-          name: "annotation-evidence.png",
-          mimeType: "image/png",
-          buffer: ONE_BY_ONE_PNG,
-        },
-        {
-          name: "annotation-notes.txt",
-          mimeType: "text/plain",
-          buffer: Buffer.from("annotation-owned evidence"),
-        },
-      ],
-    });
-
     await selectVisibleText(
       page,
       finalSource,
       "Second paragraph keeps the selection stable across Markdown blocks.",
     );
-    await toolbar.getByRole("button", { name: "More details" }).click();
-    await expect(composer(page)).toContainText("Please explain this passage in more detail.");
+    await expect(toolbar.getByRole("button", { name: "More details" })).toHaveCount(0);
+    await addSelectionToChat(page);
     await expect(draftAnnotationChip(page, 2)).toBeVisible();
-    await composer(page).click();
-    await composer(page).press("ControlOrMeta+A");
-    await composer(page).press("Backspace");
     await expect(composer(page)).toHaveText("");
     await composer(page).blur();
 
@@ -978,10 +990,10 @@ test.describe("Chat response annotations", () => {
     await selectVisibleText(page, finalSource, "inline_code");
     const toolbar = annotationToolbar(page);
     const addButton = toolbar.getByRole("button", { name: "Add to chat" });
-    const detailsButton = toolbar.getByRole("button", { name: "More details" });
+    const sideChatButton = toolbar.getByRole("button", { name: "Ask in side chat" });
     await addButton.focus();
     await page.keyboard.press("ArrowRight");
-    await expect(detailsButton).toBeFocused();
+    await expect(sideChatButton).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(toolbar).toHaveCount(0);
     await expect(composer(page)).toBeFocused();
@@ -1006,7 +1018,6 @@ test.describe("Chat response annotations", () => {
       left: expect.any(Number),
       right: expect.any(Number),
       buttonHeights: [
-        expect.any(Number),
         expect.any(Number),
         expect.any(Number),
       ],
