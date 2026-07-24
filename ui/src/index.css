@@ -1233,6 +1233,28 @@
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
+
+  .messenger-main-workbench-surface {
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--surface-shell) 94%, transparent),
+        color-mix(in oklab, var(--surface-shell) 88%, transparent)
+      );
+    -webkit-backdrop-filter: blur(18px) saturate(116%);
+    backdrop-filter: blur(18px) saturate(116%);
+  }
+
+  html.dark.desktop-shell-macos .messenger-main-workbench-surface {
+    background:
+      linear-gradient(
+        180deg,
+        rgb(31 34 37 / 0.9) 0%,
+        rgb(24 27 30 / 0.86) 100%
+      );
+    -webkit-backdrop-filter: blur(20px) saturate(124%);
+    backdrop-filter: blur(20px) saturate(124%);
+  }
   html.desktop-shell-macos .workspace-shell {
     background: transparent;
     border: 0;

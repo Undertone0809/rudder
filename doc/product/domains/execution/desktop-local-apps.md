@@ -98,6 +98,8 @@ Saved View identity and group placement.
 
 - Desktop Local Apps catalog and reviewed-definition flow.
 - Explicit `Start & open`, `Stop`, retry, and review actions.
+- Main Workbench Local App tab hover/focus More menu and its `Project settings`
+  action.
 - Side Panel `Move to Messenger` for the active exact Local App tab.
 - Messenger Saved View row and `/messenger/saved/:savedViewId`.
 - Main Workbench tab Close, Remove from Messenger, tab switching, and reload.
@@ -132,6 +134,11 @@ Saved View identity and group placement.
 9. If listener ownership cannot be proven, the runtime enters a bounded
    unavailable or orphaned-unverified state. Rudder never guesses a PID to kill
    and never runs install, build, migration, or recovery commands automatically.
+10. `Project settings` shows the reviewed Local App definition from the Main
+    tab. A stopped or failed definition is editable and saved through the same
+    native review path as the catalog. A running, starting, or stopping
+    definition is read-only until the operator explicitly chooses `Stop &
+    edit`; opening or dismissing settings alone never stops the process.
 
 ### Decision Table
 
@@ -156,11 +163,16 @@ Saved View identity and group placement.
 - Reviewed executable, arguments, working directory, readiness endpoint, and
   open path.
 - Explicit Start, Retry & open, Stop, Move, Remove, Close, and review actions.
+- Hover/focus More menu on a Main Local App tab, with `Project settings` and an
+  explicit `Stop & edit` transition when the runtime is active.
 - Local runtime status and unavailable reason.
 
 ### Operator-Visible Output
 
 - A Local App tab in Side Panel or full-bleed Main Workbench.
+- A Main-tab project settings dialog that shows the reviewed configuration,
+  prevents active-runtime edits, and updates the tab label after a successful
+  reviewed save.
 - Stable runtime status: starting, running, stopped, failed, or
   orphaned-unverified, with unavailable presented when the local binding or
   supported Desktop environment is absent.
@@ -199,6 +211,8 @@ attempt to start anything.
 ### Invariants / Non-Goals
 
 - Start is always a direct operator action against a reviewed definition.
+- Opening or dismissing project settings never stops a Local App; changing an
+  active definition requires the operator to choose `Stop & edit` explicitly.
 - Hydration, navigation, reload, restore, Move, Remove, Close, and passive
   status/log retry do not execute commands. Explicit `Start & open` and
   `Retry & open` may execute the reviewed command.

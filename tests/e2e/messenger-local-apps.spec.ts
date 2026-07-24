@@ -476,4 +476,83 @@ test.describe("Messenger Local Apps", () => {
       fullPage: true,
     });
   });
+
+  test("edits a running Local App from the masked whole-tab workbench surface", async ({ page }, testInfo) => {
+    const organization = await createOrganization(page.request);
+    const chat = await createChat(page, organization.id);
+    await selectOrganization(page, organization.id);
+    await installLocalAppsStub(page);
+    await page.setViewportSize({ width: 1500, height: 920 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    await page.getByTestId("chat-side-panel-trigger").click();
+    await page.getByTestId("chat-side-panel-empty-local-apps-target").click();
+    await page.getByTestId("local-apps-add").click();
+    const review = page.getByTestId("local-app-definition-review");
+    await review.getByRole("button", { name: "Review & add" }).click();
+    await page.getByTestId("local-apps-open-binding-a").click();
+    const localView = page.getByTestId("local-app-view")
+      .filter({ hasText: "MKT dashboard" });
+    await localView.getByTestId("local-app-start").click();
+    await expect(localView.getByTestId("local-app-webview")).toHaveAttribute(
+      "src",
+      "http://127.0.0.1:43123/outreach",
+    );
+    await page.getByTestId("chat-side-panel-keep-in-messenger").click();
+    await expect(page.getByText("Moved to Messenger")).toBeVisible();
+
+    const main = page.getByTestId("messenger-main-workbench");
+    const localTab = main.getByRole("tab", { name: /MKT dashboard/ });
+    await expect(main).toHaveClass(/messenger-main-workbench-surface/);
+    const surface = await main.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        backgroundImage: style.backgroundImage,
+        borderRadius: style.borderRadius,
+      };
+    });
+    expect(surface.backgroundImage).not.toBe("none");
+    expect(surface.borderRadius).not.toBe("0px");
+    await expect(localTab).toHaveAttribute("aria-roledescription", "sortable");
+    await expect(main.getByRole("button", {
+      name: "Reorder MKT dashboard tab",
+    })).toHaveCount(0);
+
+    await localTab.hover();
+    const more = main.getByRole("button", {
+      name: "More options for MKT dashboard",
+    });
+    await more.click();
+    await page.getByRole("menuitem", { name: "Project settings" }).click();
+    const settings = page.getByTestId("local-app-definition-review");
+    await expect(settings.getByLabel("Working directory")).toHaveValue(
+      "/Users/zeeland/projects/uranus/rudder/mkt/dashboard",
+    );
+    await expect(settings.getByLabel("Name", { exact: true })).toBeDisabled();
+    await expect(settings).toContainText(
+      "Stop this Local App to edit project settings.",
+    );
+    await settings.getByRole("button", { name: "Cancel" }).click();
+    expect((await calls(page)).stop ?? 0).toBe(0);
+
+    await localTab.hover();
+    await more.click();
+    await page.getByRole("menuitem", { name: "Project settings" }).click();
+    const editableSettings = page.getByTestId("local-app-definition-review");
+    await editableSettings.getByRole("button", { name: "Stop & edit" }).click();
+    await expect(editableSettings.getByLabel("Name", { exact: true })).toBeEnabled();
+    await editableSettings.getByLabel("Name", { exact: true })
+      .fill("MKT command center");
+    await editableSettings.getByLabel("Page to open after readiness")
+      .fill("/overview");
+    await editableSettings.getByRole("button", { name: "Review & save" }).click();
+    await expect(main.getByRole("tab", { name: /MKT command center/ })).toBeVisible();
+    expect((await calls(page)).stop).toBe(1);
+    expect((await calls(page)).update).toBe(1);
+
+    await page.screenshot({
+      path: testInfo.outputPath("messenger-main-local-app-project-settings.png"),
+      fullPage: true,
+    });
+  });
 });
