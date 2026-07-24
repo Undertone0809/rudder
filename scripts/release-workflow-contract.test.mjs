@@ -27,7 +27,18 @@ describe("release workflow latency contracts", () => {
   it("resolves an immutable source and runs release preflight before installation", () => {
     expect(releaseWorkflow).toMatch(/^  preflight:/m);
     expect(releaseWorkflow).toContain("source_sha:");
+    expect(releaseWorkflow).toContain("Require release source from protected main history");
+    expect(releaseWorkflow).toContain('git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main');
     expect(releaseWorkflow).toContain("Require successful CI for exact source");
+    expect(releaseWorkflow).toContain('-f head_sha="$SOURCE_SHA"');
+    expect(releaseWorkflow).toContain("-f status=success");
+    expect(releaseWorkflow).toContain('.event == "push"');
+    expect(releaseWorkflow).toContain('.head_branch == "main"');
+    expect(releaseWorkflow).toContain('test "$GITHUB_REPOSITORY" = "Undertone0809/rudder"');
+    expect(releaseWorkflow).toContain(
+      "if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'",
+    );
+    expect(releaseWorkflow).toContain("environment: npm-stable");
     expect(releaseWorkflow).toContain("./scripts/release.sh canary --preflight");
     expect(releaseWorkflow).toContain("./scripts/release.sh stable --preflight");
     expect(releaseWorkflow).toContain("Locked canary preflight");
@@ -48,6 +59,10 @@ describe("release workflow latency contracts", () => {
     expect(workflowPermissions).not.toContain("id-token: write");
     expect(releaseWorkflow).toContain("Require release repository safeguards");
     expect(releaseWorkflow).toContain("RELEASE_SAFEGUARDS_CONFIGURED");
+    expect(releaseWorkflow).toContain("STABLE_RELEASE_MODE");
+    expect(releaseWorkflow).toContain("agent-automated");
+    expect(releaseWorkflow).toContain("main-only non-interactive environment");
+    expect(releaseWorkflow).not.toContain("Configure npm-stable reviewers");
   });
 
   it("serializes publication and prepares the next patch base through a protected PR", () => {
@@ -83,7 +98,7 @@ describe("release workflow latency contracts", () => {
     expect(releaseScript).toContain("Reusing workspace build from verification gate");
   });
 
-  it("makes the localized public changelog a separately approved stable release surface", () => {
+  it("keeps the localized public changelog in the stable release machine gate", () => {
     const stableDocsIndex = releaseWorkflow.indexOf("\n  stable-docs:\n");
     const nextReleaseIndex = releaseWorkflow.indexOf("\n  next-release-base:\n");
 
@@ -101,8 +116,10 @@ describe("release workflow latency contracts", () => {
 
     expect(docsProductionWorkflow).toContain("workflow_call:");
     expect(docsProductionWorkflow).toContain("release_docs_approved:");
+    expect(docsProductionWorkflow).toContain('if [ "$RELEASE_DOCS_APPROVED" = "true" ]; then');
+    expect(docsProductionWorkflow).not.toContain('if [ "$GITHUB_EVENT_NAME" = "workflow_call" ]; then');
     expect(docsProductionWorkflow).toContain("type: boolean");
-    expect(docsProductionWorkflow).toContain('test "$RELEASE_DOCS_APPROVED" = "true"');
+    expect(docsProductionWorkflow).toContain('test "$CONFIRM_DOMAIN" = "$DOCS_PRODUCTION_DOMAIN"');
     expect(docsProductionWorkflow).toContain("^docs/release/v[0-9]+");
   });
 });
