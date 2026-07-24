@@ -57,8 +57,10 @@ export type LiveSurfaceRenderer = (
 
 export type LiveSurfaceOwnerCallbacks = {
   canOpenNewTab?: boolean;
+  savedViewId?: string | null;
   onCloseTarget?: (target: SidePanelTarget) => void;
   onCycleTab?: (direction: -1 | 1) => void;
+  onLocalAppTitleChange?: (title: string) => void;
   onOpenBrowserSettings?: () => void;
   onOpenTarget?: (target: SidePanelTarget) => void;
   onRegisterShortcutController?: (
@@ -592,11 +594,17 @@ export function LiveSurfaceAnchor({
     get canOpenNewTab() {
       return callbacksRef.current.canOpenNewTab;
     },
+    get savedViewId() {
+      return callbacksRef.current.savedViewId;
+    },
     onCloseTarget: (nextTarget) => (
       callbacksRef.current.onCloseTarget?.(nextTarget)
     ),
     onCycleTab: (direction) => (
       callbacksRef.current.onCycleTab?.(direction)
+    ),
+    onLocalAppTitleChange: (title) => (
+      callbacksRef.current.onLocalAppTitleChange?.(title)
     ),
     onOpenBrowserSettings: () => (
       callbacksRef.current.onOpenBrowserSettings?.()
@@ -732,7 +740,14 @@ function RuntimeSurface({
     );
   }
   if (target.kind === "local_app") {
-    return <LocalAppPanelView active={visible} target={target} />;
+    return (
+      <LocalAppPanelView
+        active={visible}
+        savedViewId={callbacks?.savedViewId}
+        target={target}
+        onTitleChange={callbacks?.onLocalAppTitleChange}
+      />
+    );
   }
   if (renderedCustomSurface !== undefined) {
     return <>{renderedCustomSurface}</>;

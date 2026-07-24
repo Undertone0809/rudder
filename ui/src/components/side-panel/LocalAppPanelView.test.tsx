@@ -11,6 +11,10 @@ import { LocalAppPanelView } from "./LocalAppPanelView";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock("@/context/OrganizationContext", () => ({
+  useOrganization: () => ({ selectedOrganizationId: "org-a" }),
+}));
+
 const definition: DesktopLocalAppDefinition = {
   id: "definition-a",
   desktopInstallationId: "installation-a",
@@ -46,6 +50,7 @@ const list = vi.fn();
 const status = vi.fn();
 const start = vi.fn();
 const stop = vi.fn();
+const update = vi.fn();
 const logs = vi.fn();
 const attestedTarget = vi.fn();
 
@@ -67,6 +72,7 @@ function installShell() {
         status,
         start,
         stop,
+        update,
         logs,
         attestedTarget,
       },
@@ -100,11 +106,18 @@ async function settle() {
   });
 }
 
+function openMoreMenu() {
+  const trigger = host?.querySelector<HTMLButtonElement>('[data-testid="local-app-more"]');
+  trigger?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+  trigger?.click();
+}
+
 beforeEach(() => {
   list.mockReset().mockResolvedValue([definition]);
   status.mockReset().mockResolvedValue({ status: "stopped", generation: null } satisfies DesktopLocalAppRuntimeView);
   start.mockReset().mockResolvedValue({ status: "running", generation: "generation-a" } satisfies DesktopLocalAppRuntimeView);
   stop.mockReset().mockResolvedValue({ status: "stopped", generation: null } satisfies DesktopLocalAppRuntimeView);
+  update.mockReset().mockResolvedValue(definition);
   logs.mockReset().mockResolvedValue(["ready on loopback"]);
   attestedTarget.mockReset().mockResolvedValue({
     origin: "http://127.0.0.1:43123",
@@ -247,7 +260,10 @@ describe("LocalAppPanelView", () => {
     renderView();
     await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-start"]')).not.toBeNull());
     await act(async () => {
-      Array.from(host!.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Show logs")?.click();
+      openMoreMenu();
+      await vi.waitFor(() => expect(document.body.textContent).toContain("Show logs"));
+      Array.from(document.querySelectorAll<HTMLDivElement>('[role="menuitem"]'))
+        .find((item) => item.textContent?.includes("Show logs"))?.click();
       await vi.waitFor(() => expect(host?.querySelector('[role="alert"]')?.textContent ?? "").toContain("Logs bridge unavailable"));
     });
 
@@ -260,5 +276,45 @@ describe("LocalAppPanelView", () => {
       await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-logs"]')?.textContent).toContain("recovered view log"));
     });
     expect(logs).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps Stop inside the More menu", async () => {
+    status.mockResolvedValue({ status: "running", generation: "generation-a" });
+    renderView();
+    await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-webview"]')).not.toBeNull());
+
+    expect(host?.querySelector('[data-testid="local-app-stop"]')).toBeNull();
+    await act(async () => {
+      openMoreMenu();
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="local-app-stop"]')).not.toBeNull());
+      document.querySelector<HTMLElement>('[data-testid="local-app-stop"]')?.click();
+      await settle();
+    });
+    expect(stop).toHaveBeenCalledWith("definition-a");
+  });
+
+  it("opens Edit details while running and requires Stop & edit before fields unlock", async () => {
+    status.mockResolvedValue({ status: "running", generation: "generation-a" });
+    renderView();
+    await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-webview"]')).not.toBeNull());
+
+    await act(async () => {
+      openMoreMenu();
+      await vi.waitFor(() => expect(document.body.textContent).toContain("Edit details"));
+      Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+        .find((item) => item.textContent?.includes("Edit details"))?.click();
+    });
+    const dialog = document.querySelector<HTMLElement>('[data-testid="local-app-definition-review"]');
+    expect(dialog?.querySelector<HTMLInputElement>("#local-app-name")?.disabled).toBe(true);
+    const stopAndEdit = Array.from(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.textContent?.includes("Stop & edit"));
+    await act(async () => {
+      stopAndEdit?.click();
+      await settle();
+    });
+    await vi.waitFor(() => expect(
+      document.querySelector<HTMLInputElement>("#local-app-name")?.disabled,
+    ).toBe(false));
+    expect(stop).toHaveBeenCalledWith("definition-a");
   });
 });

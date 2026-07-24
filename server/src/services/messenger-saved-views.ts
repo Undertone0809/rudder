@@ -30,7 +30,9 @@ export type MessengerSavedViewListOptions = {
   visibility?: MessengerSavedViewVisibility;
   limit?: number;
   offset?: number;
+  primaryRailPinned?: boolean;
 };
+const MAX_PRIMARY_RAIL_PINS = 100;
 
 function savedViewPlacementLockKey(orgId: string, userId: string) {
   return `messenger-saved-views:${orgId}:${userId}`;
@@ -163,7 +165,11 @@ export function messengerSavedViewsService(db: Db) {
     const visibility = options.visibility ?? "visible";
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
     const offset = Math.max(options.offset ?? 0, 0);
-    const where = and(ownerWhere(orgId, userId), visibilityWhere(visibility));
+    const where = and(
+      ownerWhere(orgId, userId),
+      visibilityWhere(visibility),
+      options.primaryRailPinned ? isNotNull(messengerSavedViews.primaryRailPinnedAt) : undefined,
+    );
     const [items, totalRows] = await Promise.all([
       db
         .select()
@@ -214,6 +220,21 @@ export function messengerSavedViewsService(db: Db) {
       const txDb = tx as unknown as Db;
       await lockMessengerSavedViewPlacement(txDb, orgId, userId);
       const existing = await getWithDb(txDb, orgId, userId, validId);
+      if (patch.primaryRailPinned !== undefined && existing.targetKind !== "local_app") {
+        throw badRequest("Only Local App Saved Views can be pinned to the Primary Rail");
+      }
+      if (patch.primaryRailPinned && !existing.primaryRailPinnedAt) {
+        const [pinnedRows] = await txDb
+          .select({ value: count() })
+          .from(messengerSavedViews)
+          .where(and(
+            ownerWhere(orgId, userId),
+            isNotNull(messengerSavedViews.primaryRailPinnedAt),
+          ));
+        if ((pinnedRows?.value ?? 0) >= MAX_PRIMARY_RAIL_PINS) {
+          throw badRequest(`Primary Rail supports up to ${MAX_PRIMARY_RAIL_PINS} pinned Local Apps`);
+        }
+      }
       if (target && (
         target.viewInstanceId !== existing.instanceId
         || messengerSavedViewCanonicalResourceKey(target) !== existing.canonicalResourceKey
@@ -230,6 +251,9 @@ export function messengerSavedViewsService(db: Db) {
           ...(patch.subtitle !== undefined ? { subtitle: patch.subtitle } : {}),
           ...(patch.favicon !== undefined ? { favicon: patch.favicon } : {}),
           ...(patch.hidden !== undefined ? { hiddenAt: nextHiddenAt } : {}),
+          ...(patch.primaryRailPinned !== undefined
+            ? { primaryRailPinnedAt: patch.primaryRailPinned ? new Date() : null }
+            : {}),
           updatedAt: new Date(),
         })
         .where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, validId)))
@@ -238,7 +262,16 @@ export function messengerSavedViewsService(db: Db) {
       const action = wasHidden !== isHidden
         ? "messenger.saved_view_restored"
         : "messenger.saved_view_updated";
-      await logMutation(txDb, orgId, userId, action, updated);
+      await logMutation(
+        txDb,
+        orgId,
+        userId,
+        action,
+        updated,
+        patch.primaryRailPinned === undefined
+          ? undefined
+          : { primaryRailPinned: patch.primaryRailPinned },
+      );
       return updated;
     });
   }

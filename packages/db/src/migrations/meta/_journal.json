@@ -827,6 +827,13 @@
       "when": 1784909456936,
       "tag": "0117_reflective_namora",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1784918023143,
+      "tag": "0118_flippant_longshot",
+      "breakpoints": true
     }
   ]
 }

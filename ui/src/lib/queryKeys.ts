@@ -118,6 +118,8 @@ export const queryKeys = {
     ) => ["messenger", orgId, "saved-views", visibility, limit, offset] as const,
     savedView: (orgId: string, savedViewId: string) =>
       ["messenger", orgId, "saved-views", "detail", savedViewId] as const,
+    primaryRailPins: (orgId: string) =>
+      ["messenger", orgId, "saved-views", "primary-rail-pins"] as const,
     customGroups: (orgId: string) => ["messenger", orgId, "groups"] as const,
     issues: (orgId: string) => ["messenger", orgId, "issues"] as const,
     approvals: (orgId: string) => ["messenger", orgId, "approvals"] as const,

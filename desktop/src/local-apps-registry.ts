@@ -11,6 +11,10 @@ import {
   rm,
 } from "node:fs/promises";
 import path from "node:path";
+import {
+  discoverLocalAppIcon,
+  isSafeLocalAppIconDataUrl,
+} from "./local-app-icon-discovery.js";
 import { isSafeLocalAppProcessId } from "./local-app-process-identity.mjs";
 
 export type LocalAppDefinitionDraft = {
@@ -25,6 +29,7 @@ export type LocalAppDefinitionDraft = {
 
 export type PreparedLocalAppDefinition = LocalAppDefinitionDraft & {
   trustFingerprint: string;
+  iconDataUrl: string | null;
 };
 
 export type LocalAppDefinition = PreparedLocalAppDefinition & {
@@ -246,6 +251,8 @@ function isDefinition(value: unknown): value is LocalAppDefinition {
     && typeof definition.cwd === "string"
     && Array.isArray(definition.inheritedEnvNames)
     && typeof definition.trustFingerprint === "string"
+    && (definition.iconDataUrl === undefined || definition.iconDataUrl === null
+      || isSafeLocalAppIconDataUrl(definition.iconDataUrl))
     && (definition.approvedFingerprint === null || typeof definition.approvedFingerprint === "string")
     && typeof definition.createdAt === "string"
     && typeof definition.updatedAt === "string";
@@ -306,6 +313,10 @@ export class LocalAppRegistry {
           throw new Error("Invalid Local App trust fingerprint");
         }
       }
+      const definitions = await Promise.all(raw.definitions.map(async (definition) => ({
+        ...definition,
+        iconDataUrl: definition.iconDataUrl ?? await discoverLocalAppIcon(definition.cwd),
+      })));
 
       let runtimeDescriptorCorruption = false;
       const runtimeDescriptors: Record<string, LocalAppRuntimeDescriptor> = {};
@@ -334,7 +345,7 @@ export class LocalAppRegistry {
       const state: RegistryState = {
         version: REGISTRY_VERSION,
         installationId: this.installationId,
-        definitions: raw.definitions,
+        definitions,
         runtimeDescriptors,
       };
       if (runtimeDescriptorCorruption) {
@@ -401,7 +412,11 @@ export class LocalAppRegistry {
 
   async prepareDefinition(draft: LocalAppDefinitionDraft): Promise<PreparedLocalAppDefinition> {
     const prepared = await computeLocalAppTrustFingerprint(draft);
-    return { ...prepared.definition, trustFingerprint: prepared.fingerprint };
+    return {
+      ...prepared.definition,
+      trustFingerprint: prepared.fingerprint,
+      iconDataUrl: await discoverLocalAppIcon(prepared.definition.cwd),
+    };
   }
 
   async createDefinition(input: LocalAppDefinitionDraft & { trustFingerprint?: string }): Promise<LocalAppDefinition> {

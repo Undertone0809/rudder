@@ -728,7 +728,7 @@ describe("MessengerMainWorkbench", () => {
   it("opens editable Local App project settings from the hover More menu", async () => {
     renderWorkbench();
     openKinds(["local_app"]);
-    expect(listLocalApps).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(listLocalApps).toHaveBeenCalledOnce());
     expect(statusLocalApp).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -739,7 +739,6 @@ describe("MessengerMainWorkbench", () => {
         ?.click();
       await Promise.resolve();
     });
-    await vi.waitFor(() => expect(listLocalApps).toHaveBeenCalledOnce());
     expect(statusLocalApp).not.toHaveBeenCalled();
     await vi.waitFor(() => {
       const item = document.querySelector<HTMLButtonElement>('[role="menuitem"]');
