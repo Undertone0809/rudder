@@ -106,6 +106,15 @@ test.describe("Run transcript detail", () => {
     await expect(rudderDisclosure).toHaveCSS("opacity", "0");
     await rudderMcpRow.hover();
     await expect(rudderDisclosure).toHaveCSS("opacity", "1");
+    const rudderDuration = rudderMcpRow.locator("[data-transcript-action-duration='true']");
+    const durationBox = await rudderDuration.boundingBox();
+    const disclosureBox = await rudderDisclosure.boundingBox();
+    expect(durationBox).not.toBeNull();
+    expect(disclosureBox).not.toBeNull();
+    expect(Math.abs(
+      ((durationBox?.y ?? 0) + (durationBox?.height ?? 0) / 2)
+      - ((disclosureBox?.y ?? 0) + (disclosureBox?.height ?? 0) / 2),
+    )).toBeLessThanOrEqual(1);
     await page.mouse.move(0, 0);
     await expect(rudderDisclosure).toHaveCSS("opacity", "0");
 
@@ -129,18 +138,23 @@ test.describe("Run transcript detail", () => {
 
     await githubMcpRow.click();
     await expect(page.getByText("Undertone0809/rudder", { exact: false })).toBeVisible();
+    await expect(page.getByText("Transcript renderer discussion", { exact: false })).toBeVisible();
     await rudderMcpRow.click();
     await expect(page.getByText("eeb73ad1-e000-4dce-9d47-23106fa36bbc", { exact: false })).toBeVisible();
-    await expect(page.getByText("rudder-tools", { exact: false }).first()).toBeVisible();
+    await expect(page.getByText("Transcript loaded", { exact: false })).toBeVisible();
+    await expect(page.getByText("rudder-tools", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("structuredContent", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("_meta", { exact: false })).toHaveCount(0);
     await page.mouse.move(0, 0);
     await rudderMcpRow.blur();
     await expect(rudderDisclosure).toHaveCSS("opacity", "0");
 
-    const skillUseRow = page.getByRole("button", { name: /Expand tool details/ }).filter({ hasText: "Use flomo-local-api skill" });
-    await expect(skillUseRow).toHaveCount(1);
+    const skillSummary = page.getByTitle("/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
+    await expect(skillSummary).toBeVisible();
+    const skillUseRow = page.getByRole("button", { name: /tool details: Use flomo-local-api skill/ });
+    await expect(skillUseRow).toHaveCount(0);
     await expect(page.getByText("/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md", { exact: false })).toHaveCount(0);
-    await skillUseRow.click();
-    await expect(page.getByText("/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md", { exact: false })).toBeVisible();
+    await expect(skillSummary.locator("xpath=..").locator("[data-transcript-action-row-disclosure='true']")).toHaveCount(0);
 
     await expect(page.getByText("Agent memory updated", { exact: false })).toBeVisible();
     await expect(page.getByText("Gabriel updated stable memory instructions.", { exact: false })).toBeVisible();

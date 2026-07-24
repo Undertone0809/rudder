@@ -45,7 +45,8 @@ import {
   truncate,
 } from "./RunTranscriptView.common";
 import { formatSemanticDigest, getTodoListCompletedCount } from "./RunTranscriptView.normalize";
-import { describeToolSemanticInfo, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
+import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
+import { describeToolSemanticInfo, formatCommandTerminalOutput, isCommandTool } from "./RunTranscriptView.semantic";
 import { formatMemoryScopeLabel, stripWrappedShell } from "./RunTranscriptView.shell";
 import { getTranscriptAgentAvatarInfo, TranscriptAgentAvatarIcon } from "./TranscriptAgentAvatarIcon";
 
@@ -632,12 +633,13 @@ export function TranscriptToolCard({
         : "text-emerald-700 dark:text-emerald-300";
   const duration = formatTranscriptDuration(block.ts, block.endTs);
   const command = getToolCommand(block);
-  const requestText = command ?? (formatToolPayload(block.input) || "<empty>");
+  const requestText = command ?? formatNiceToolRequest(block.name, block.input);
   const responseText = command
     ? formatCommandTerminalOutput(block.result)
     : block.result
-      ? formatToolPayload(block.result)
+      ? formatNiceToolResponse(block.name, block.input, block.result)
       : "Waiting for result...";
+  const canExpand = semantic.actionKind !== "skill";
   const detailsClass = cn(
     "space-y-3",
     block.status === "error" && "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3",
@@ -680,17 +682,19 @@ export function TranscriptToolCard({
             {summary}
           </div>
         </div>
-        <button
-          type="button"
-          className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={open}
-          aria-label={open ? `Collapse ${isCommand ? "command" : "tool"} details` : `Expand ${isCommand ? "command" : "tool"} details`}
-        >
-          <DisclosureChevron open={open} className="h-4 w-4" />
-        </button>
+        {canExpand ? (
+          <button
+            type="button"
+            className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={open}
+            aria-label={open ? `Collapse ${isCommand ? "command" : "tool"} details` : `Expand ${isCommand ? "command" : "tool"} details`}
+          >
+            <DisclosureChevron open={open} className="h-4 w-4" />
+          </button>
+        ) : null}
       </div>
-      {open && (
+      {canExpand && open && (
         <div className="motion-disclosure-enter mt-3">
           {command ? (
             <CommandTerminalDetail command={requestText} output={responseText} status={block.status} />

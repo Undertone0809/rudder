@@ -150,7 +150,18 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
     ts: "2026-03-11T15:22:26.214Z",
     toolUseId: "mcp_fixture_pr",
     toolName: "mcp__github__fetch_pr",
-    content: "Fetched PR transcript renderer discussion",
+    content: JSON.stringify({
+      content: [{
+        type: "text",
+        text: "{\"number\":473,\"title\":\"Transcript renderer discussion\"}",
+      }],
+      structuredContent: {
+        number: 473,
+        title: "Transcript renderer discussion",
+        state: "open",
+      },
+      _meta: null,
+    }),
     isError: false,
   },
   {
@@ -181,7 +192,17 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
     ts: "2026-03-11T15:22:26.400Z",
     toolUseId: "mcp_fixture_rudder_chat",
     toolName: "mcp__rudder-tools__rudder_chat_transcript",
-    content: "Fetched Rudder chat transcript",
+    content: JSON.stringify({
+      content: [{
+        type: "text",
+        text: "{\"entryCount\":3,\"summary\":\"Transcript loaded\"}",
+      }],
+      structuredContent: {
+        entryCount: 3,
+        summary: "Transcript loaded",
+      },
+      _meta: null,
+    }),
     isError: false,
   },
   {

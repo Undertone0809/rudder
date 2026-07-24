@@ -4,7 +4,8 @@ import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
 import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptSentAnnotationContext, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
-import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, formatToolPayload, isCommandTool } from "./RunTranscriptView.semantic";
+import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
+import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
 import { transcriptAgentInspectionForTool } from "./TranscriptAgentInspection";
@@ -282,17 +283,18 @@ export function TranscriptChatToolActionRow({
   const compact = density === "compact";
   const isCommand = isCommandTool(block.name, block.input);
   const command = getToolCommand(block);
-  const requestText = command ?? (formatToolPayload(block.input) || "<empty>");
+  const requestText = command ?? formatNiceToolRequest(block.name, block.input);
   const responseText = shouldHideChatToolResult(semantic)
     ? null
     : command
       ? formatCommandTerminalOutput(block.result)
       : block.result
-        ? formatToolPayload(block.result)
+        ? formatNiceToolResponse(block.name, block.input, block.result)
         : block.status === "running"
           ? "Waiting for result..."
           : null;
-  const canExpand = Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
+  const canExpand = semantic.actionKind !== "skill"
+    && Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
   const [open, setOpen] = useState(inline || (defaultOpenOnError && block.status === "error"));
   const duration = quiet ? null : formatTranscriptDuration(block.ts, block.endTs);
   const statusText =
@@ -404,27 +406,32 @@ export function TranscriptChatToolActionRow({
           <span id={summaryLabelId} className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
             {displaySummary}
           </span>
-          {duration ? (
-            <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
-              {duration}
-            </span>
-          ) : null}
-          {statusText ? (
-            <span id={statusLabelId} className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
-              {statusText}
-            </span>
-          ) : null}
-          {canExpand && !inline && !inspectAgent ? (
-            <span
-              className={cn(
-                "inline-flex h-5 w-5 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
-                chevronOffsetClass,
-              )}
-              data-transcript-action-row-disclosure="true"
-            >
-              <DisclosureChevron open={open} className="h-4 w-4" />
-            </span>
-          ) : null}
+          <span
+            className="ml-auto inline-flex h-5 shrink-0 items-center gap-1.5 self-center"
+            data-transcript-action-trailing="true"
+          >
+            {duration ? (
+              <span
+                className="inline-flex h-5 items-center text-[10px] font-medium tabular-nums text-muted-foreground"
+                data-transcript-action-duration="true"
+              >
+                {duration}
+              </span>
+            ) : null}
+            {statusText ? (
+              <span id={statusLabelId} className={cn("inline-flex h-5 items-center text-[10px] font-medium", rowTone)}>
+                {statusText}
+              </span>
+            ) : null}
+            {canExpand && !inline && !inspectAgent ? (
+              <span
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity-row:opacity-100 group-focus-visible/activity-row:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100"
+                data-transcript-action-row-disclosure="true"
+              >
+                <DisclosureChevron open={open} className="block h-4 w-4" />
+              </span>
+            ) : null}
+          </span>
         </button>
       )}
       {canExpand && open ? (
