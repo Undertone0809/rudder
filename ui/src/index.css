@@ -1234,24 +1234,14 @@
     backdrop-filter: none;
   }
   html.desktop-shell-macos .workspace-shell {
-    background:
-      linear-gradient(
-        180deg,
-        rgb(249 247 244 / 0.08) 0%,
-        rgb(243 239 234 / 0.03) 100%
-      );
+    background: transparent;
     border: 0;
     box-shadow: none;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
   html.dark.desktop-shell-macos .workspace-shell {
-    background:
-      linear-gradient(
-        180deg,
-        rgb(16 17 20 / 0.12) 0%,
-        rgb(12 13 16 / 0.08) 100%
-      );
+    background: transparent;
     border: 0;
     box-shadow: none;
     -webkit-backdrop-filter: none;

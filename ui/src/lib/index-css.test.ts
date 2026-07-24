@@ -413,11 +413,12 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
   });
 
-  it("keeps macOS desktop glass on shell layers while limiting the glass header to active Chat cards", () => {
+  it("keeps macOS desktop glass on the app backdrop without adding a workspace wash", () => {
     const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
     const darkDesktopBackdrop = cssBlock("html.dark.desktop-shell-macos .app-shell-backdrop");
     const lightPrimaryRail = cssBlock("html.desktop-shell-macos .primary-rail-shell");
     const lightWorkspaceShell = cssBlock("html.desktop-shell-macos .workspace-shell");
+    const darkWorkspaceShell = cssBlock("html.dark.desktop-shell-macos .workspace-shell");
     const lightDesktopWorkspaceCards = cssBlock("html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
     const darkDesktopWorkspaceCards = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
     const activeChatCardSelector = 'html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"])';
@@ -436,8 +437,10 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
     expect(darkDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(138%)");
     expect(lightPrimaryRail).toContain("backdrop-filter: blur(22px) saturate(112%)");
-    expect(lightWorkspaceShell).toContain("rgb(249 247 244 / 0.08)");
-    expect(lightWorkspaceShell).toContain("rgb(243 239 234 / 0.03)");
+    expect(lightWorkspaceShell).toContain("background: transparent");
+    expect(darkWorkspaceShell).toContain("background: transparent");
+    expect(lightWorkspaceShell).not.toContain("linear-gradient");
+    expect(darkWorkspaceShell).not.toContain("linear-gradient");
 
     expect(lightDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-light)");
     expect(darkDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-dark)");
