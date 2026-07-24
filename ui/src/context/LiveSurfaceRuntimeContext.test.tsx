@@ -191,7 +191,7 @@ describe("LiveSurfaceRuntimeProvider", () => {
     expect(container?.querySelector('[data-testid="live-surface-runtime-host"]')
       ?.getAttribute("data-owner-id")).toBe("side:chat-a:view-a");
     expect(container?.querySelector('[data-testid="live-surface-runtime-host"]')
-      ?.className).not.toContain("rounded-b-[var(--desktop-workspace-radius)]");
+      ?.className).toContain("rounded-[var(--desktop-workspace-radius)]");
 
     act(() => {
       physicalBefore?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -208,6 +208,7 @@ describe("LiveSurfaceRuntimeProvider", () => {
     expect(host?.style.left).toBe("300px");
     expect(host?.style.width).toBe("900px");
     expect(host?.className).toContain("rounded-b-[var(--desktop-workspace-radius)]");
+    expect(host?.className).not.toContain("rounded-[var(--desktop-workspace-radius)]");
   });
 
   it("claims an active Side owner before its opening animation has geometry", () => {

@@ -2891,6 +2891,23 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
     }
     const browserUrlInput = browserView.getByLabel("Browser URL");
     await browserUrlInput.waitFor({ state: "visible", timeout: 15_000 });
+    const sideHostRadii = await page.evaluate(() => {
+      const host = Array.from(document.querySelectorAll(
+        "[data-testid='live-surface-runtime-host'][data-target-kind='browser']",
+      )).find((candidate) => candidate.getAttribute("data-owner-id")?.startsWith("side:"));
+      if (!host) throw new Error("Side Browser runtime host was unavailable");
+      const style = getComputedStyle(host);
+      return [
+        style.borderTopLeftRadius,
+        style.borderTopRightRadius,
+        style.borderBottomRightRadius,
+        style.borderBottomLeftRadius,
+      ];
+    });
+    assert.ok(
+      sideHostRadii.every((radius) => Number.parseFloat(radius) > 0),
+      `Side Browser runtime host must preserve all workspace-card corners (received ${sideHostRadii.join(", ")})`,
+    );
 
     const fixtureUrl = `${fixture.url}/operator`;
     await browserUrlInput.fill(fixtureUrl);
