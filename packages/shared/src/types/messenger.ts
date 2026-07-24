@@ -88,11 +88,12 @@ export interface MessengerSavedView {
 
 export type MessengerSavedViewPlacement =
   | { kind: "anchor"; anchor: { kind: "chat"; conversationId: string } | { kind: "issue"; issueId: string } }
-  | { kind: "group"; groupId: string };
+  | { kind: "group"; groupId: string }
+  | { kind: "loose" };
 
 export interface MessengerSavedViewKeepResult {
   savedView: MessengerSavedView;
-  group: Pick<MessengerCustomGroup, "id" | "name">;
+  group: Pick<MessengerCustomGroup, "id" | "name"> | null;
 }
 
 export interface MessengerSavedViewPageInfo {

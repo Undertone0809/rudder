@@ -334,11 +334,27 @@ export function messengerSavedViewsService(db: Db) {
         if (receipt.requestFingerprint !== requestFingerprint) {
           throw conflict("This Saved View mutation id was already used with different input");
         }
-        const [savedView, group, membership] = await Promise.all([
-          txDb.select().from(messengerSavedViews).where(and(
-            ownerWhere(orgId, userId),
-            eq(messengerSavedViews.id, receipt.savedViewId),
-          )).limit(1).then((rows) => rows[0] ?? null),
+        const savedView = await txDb.select().from(messengerSavedViews).where(and(
+          ownerWhere(orgId, userId),
+          eq(messengerSavedViews.id, receipt.savedViewId),
+        )).limit(1).then((rows) => rows[0] ?? null);
+        if (!savedView) {
+          throw conflict("The result of this Saved View mutation is no longer available");
+        }
+        if (receipt.groupId === null) {
+          const membership = await txDb.select({ id: messengerCustomGroupEntries.id })
+            .from(messengerCustomGroupEntries)
+            .where(and(
+              eq(messengerCustomGroupEntries.orgId, orgId),
+              eq(messengerCustomGroupEntries.userId, userId),
+              eq(messengerCustomGroupEntries.threadKey, messengerSavedViewItemKey(receipt.savedViewId)),
+            )).limit(1).then((rows) => rows[0] ?? null);
+          if (membership) {
+            throw conflict("The result of this Saved View mutation is no longer available");
+          }
+          return { savedView, group: null };
+        }
+        const [group, membership] = await Promise.all([
           txDb.select().from(messengerCustomGroups).where(and(
             eq(messengerCustomGroups.orgId, orgId),
             eq(messengerCustomGroups.userId, userId),
@@ -351,7 +367,7 @@ export function messengerSavedViewsService(db: Db) {
             eq(messengerCustomGroupEntries.threadKey, messengerSavedViewItemKey(receipt.savedViewId)),
           )).limit(1).then((rows) => rows[0] ?? null),
         ]);
-        if (!savedView || !group || !membership) {
+        if (!group || !membership) {
           throw conflict("The result of this Saved View mutation is no longer available");
         }
         return { savedView, group: { id: group.id, name: group.name } };
@@ -381,7 +397,7 @@ export function messengerSavedViewsService(db: Db) {
         throw conflict("This view instance is already associated with a different target");
       }
 
-      let group: typeof messengerCustomGroups.$inferSelect;
+      let group: typeof messengerCustomGroups.$inferSelect | null = null;
       if (input.placement.kind === "group") {
         const [ownedGroup] = await txDb.select().from(messengerCustomGroups).where(and(
           eq(messengerCustomGroups.orgId, orgId),
@@ -390,7 +406,7 @@ export function messengerSavedViewsService(db: Db) {
         )).limit(1);
         if (!ownedGroup) throw notFound("Messenger custom group not found");
         group = ownedGroup;
-      } else {
+      } else if (input.placement.kind === "anchor") {
         const anchor = input.placement.anchor;
         let anchorKey: string;
         let anchorTitle: string;
@@ -458,7 +474,7 @@ export function messengerSavedViewsService(db: Db) {
         }
       }
 
-      await lockMessengerCustomGroupPlacement(txDb, orgId, userId, group.id);
+      if (group) await lockMessengerCustomGroupPlacement(txDb, orgId, userId, group.id);
       const itemKey = existing ? messengerSavedViewItemKey(existing.id) : null;
       const existingMembership = itemKey
         ? await txDb.select({ groupId: messengerCustomGroupEntries.groupId })
@@ -469,7 +485,7 @@ export function messengerSavedViewsService(db: Db) {
             eq(messengerCustomGroupEntries.threadKey, itemKey),
           )).limit(1).then((rows) => rows[0] ?? null)
         : null;
-      if (existingMembership && existingMembership.groupId !== group.id) {
+      if (existingMembership && existingMembership.groupId !== group?.id) {
         throw conflict("Saved View already belongs to another group; move or remove it first");
       }
       if (byMutation) {
@@ -480,16 +496,22 @@ export function messengerSavedViewsService(db: Db) {
         if (!exactReplay) {
           throw conflict("This Saved View mutation id was already used with different input");
         }
-        if (!byMutation.hiddenAt && existingMembership?.groupId === group.id) {
+        const placementUnchanged = group
+          ? existingMembership?.groupId === group.id
+          : !existingMembership;
+        if (!byMutation.hiddenAt && placementUnchanged) {
           await txDb.insert(messengerSavedViewMutations).values({
             orgId,
             userId,
             clientMutationId: input.clientMutationId,
             savedViewId: byMutation.id,
-            groupId: group.id,
+            groupId: group?.id ?? null,
             requestFingerprint,
           });
-          return { savedView: byMutation, group: { id: group.id, name: group.name } };
+          return {
+            savedView: byMutation,
+            group: group ? { id: group.id, name: group.name } : null,
+          };
         }
       }
       const now = new Date();
@@ -498,7 +520,7 @@ export function messengerSavedViewsService(db: Db) {
       if (existing) {
         const wasHidden = Boolean(existing.hiddenAt);
         const unchanged = !wasHidden
-          && existingMembership?.groupId === group.id
+          && (group ? existingMembership?.groupId === group.id : !existingMembership)
           && isDeepStrictEqual(existing.targetPayload, target)
           && existing.title === input.title
           && existing.subtitle === (input.subtitle ?? null)
@@ -546,7 +568,7 @@ export function messengerSavedViewsService(db: Db) {
       if (action) await logMutation(txDb, orgId, userId, action, savedView, { source: "keep" });
 
       const savedItemKey = messengerSavedViewItemKey(savedView.id);
-      if (!existingMembership) {
+      if (group && !existingMembership) {
         const [lastEntry] = await txDb.select({ sortOrder: messengerCustomGroupEntries.sortOrder })
           .from(messengerCustomGroupEntries)
           .where(and(
@@ -573,11 +595,14 @@ export function messengerSavedViewsService(db: Db) {
         userId,
         clientMutationId: input.clientMutationId,
         savedViewId: savedView.id,
-        groupId: group.id,
+        groupId: group?.id ?? null,
         requestFingerprint,
       });
 
-      return { savedView, group: { id: group.id, name: group.name } };
+      return {
+        savedView,
+        group: group ? { id: group.id, name: group.name } : null,
+      };
     });
   }
 

@@ -10870,7 +10870,175 @@ describe("messengerService and issue follows", () => {
     expect(grouped.group.id).toBe(existing.id);
   });
 
-  it("rolls back missing or cross-organization anchors and protects groups containing Saved Views", async () => {
+  it("keeps, restores, and idempotently replays an exact loose Saved View without group membership", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-loose-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Loose Saved Views Org",
+      urlKey: deriveOrganizationUrlKey("Loose Saved Views Org"),
+      issuePrefix: "LSV",
+    });
+    const clientMutationId = randomUUID();
+    const input = {
+      target: {
+        kind: "library_file" as const,
+        filePath: "notes/loose.md",
+        viewInstanceId: "loose-library-view",
+      },
+      title: "Loose notes",
+      clientMutationId,
+      placement: { kind: "loose" as const },
+    };
+
+    const first = await savedViewsSvc.keep(orgId, userId, input);
+    expect(first.group).toBeNull();
+    expect(await db.select().from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.threadKey, `saved-view:${first.savedView.id}`))).toEqual([]);
+
+    const replay = await savedViewsSvc.keep(orgId, userId, input);
+    expect(replay).toEqual(first);
+    expect((await db.select().from(messengerSavedViewMutations)
+      .where(eq(messengerSavedViewMutations.clientMutationId, clientMutationId)))[0]).toMatchObject({
+      savedViewId: first.savedView.id,
+      groupId: null,
+    });
+
+    await expect(savedViewsSvc.keep(orgId, userId, {
+      ...input,
+      title: "Conflicting loose replay",
+    })).rejects.toMatchObject({ status: 409 });
+
+    await db.update(messengerSavedViews)
+      .set({ hiddenAt: new Date("2026-01-01T00:00:00.000Z") })
+      .where(eq(messengerSavedViews.id, first.savedView.id));
+    const restored = await savedViewsSvc.keep(orgId, userId, {
+      ...input,
+      clientMutationId: randomUUID(),
+      title: "Restored loose notes",
+    });
+    expect(restored).toMatchObject({
+      savedView: { id: first.savedView.id, title: "Restored loose notes", hiddenAt: null },
+      group: null,
+    });
+  });
+
+  it("does not silently move a grouped Saved View to loose placement", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-loose-conflict-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Loose Conflict Org",
+      urlKey: deriveOrganizationUrlKey("Loose Conflict Org"),
+      issuePrefix: "LCO",
+    });
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Pinned");
+    const target = {
+      kind: "automation" as const,
+      automationId: randomUUID(),
+      viewInstanceId: "grouped-to-loose",
+    };
+    const grouped = await savedViewsSvc.keep(orgId, userId, {
+      target,
+      title: "Grouped automation",
+      clientMutationId: randomUUID(),
+      placement: { kind: "group", groupId: group.id },
+    });
+
+    await expect(savedViewsSvc.keep(orgId, userId, {
+      target,
+      title: "Grouped automation",
+      clientMutationId: randomUUID(),
+      placement: { kind: "loose" },
+    })).rejects.toMatchObject({ status: 409 });
+    expect(await db.select().from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.threadKey, `saved-view:${grouped.savedView.id}`))).toHaveLength(1);
+  });
+
+  it("leaves Saved Views loose when membership or their containing group is removed", async () => {
+    const orgId = randomUUID();
+    const userId = "saved-view-loosen-removal-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Loose Removal Org",
+      urlKey: deriveOrganizationUrlKey("Loose Removal Org"),
+      issuePrefix: "LRO",
+    });
+    const savedView = await insertSavedViewFixture(orgId, userId, {
+      target: { kind: "automation", automationId: randomUUID(), viewInstanceId: "loosen-removal" },
+      title: "Keep this view",
+    });
+
+    const firstGroup = await messengerSvc.createCustomGroup(orgId, userId, "First");
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, firstGroup.id, `saved-view:${savedView.id}`);
+    await expect(messengerSvc.removeThreadFromCustomGroups(
+      orgId,
+      userId,
+      `saved-view:${savedView.id}`,
+    )).resolves.toEqual({ itemKey: `saved-view:${savedView.id}` });
+    await expect(savedViewsSvc.get(orgId, userId, savedView.id)).resolves.toMatchObject({ id: savedView.id });
+
+    const secondGroup = await messengerSvc.createCustomGroup(orgId, userId, "Second");
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, secondGroup.id, `saved-view:${savedView.id}`);
+    await expect(messengerSvc.separateCustomGroup(orgId, userId, secondGroup.id))
+      .resolves.toMatchObject({ id: secondGroup.id });
+    await expect(savedViewsSvc.get(orgId, userId, savedView.id)).resolves.toMatchObject({ id: savedView.id });
+
+    const thirdGroup = await messengerSvc.createCustomGroup(orgId, userId, "Third");
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, thirdGroup.id, `saved-view:${savedView.id}`);
+    await expect(messengerSvc.deleteCustomGroup(orgId, userId, thirdGroup.id))
+      .resolves.toMatchObject({ id: thirdGroup.id });
+    await expect(savedViewsSvc.get(orgId, userId, savedView.id)).resolves.toMatchObject({ id: savedView.id });
+    expect(await db.select().from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.threadKey, `saved-view:${savedView.id}`))).toEqual([]);
+    const removalEvidence = await db
+      .select()
+      .from(activityLog)
+      .where(and(
+        eq(activityLog.entityId, savedView.id),
+        eq(activityLog.action, "messenger.saved_view_group_removed"),
+      ));
+    expect(removalEvidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        orgId,
+        actorType: "user",
+        actorId: userId,
+        entityType: "messenger_saved_view",
+        entityId: savedView.id,
+        details: expect.objectContaining({
+          itemKey: `saved-view:${savedView.id}`,
+          groupId: firstGroup.id,
+          source: "item_remove",
+        }),
+      }),
+      expect.objectContaining({
+        orgId,
+        actorType: "user",
+        actorId: userId,
+        entityType: "messenger_saved_view",
+        entityId: savedView.id,
+        details: expect.objectContaining({
+          itemKey: `saved-view:${savedView.id}`,
+          groupId: secondGroup.id,
+          source: "group_separate",
+        }),
+      }),
+      expect.objectContaining({
+        orgId,
+        actorType: "user",
+        actorId: userId,
+        entityType: "messenger_saved_view",
+        entityId: savedView.id,
+        details: expect.objectContaining({
+          itemKey: `saved-view:${savedView.id}`,
+          groupId: thirdGroup.id,
+          source: "group_delete",
+        }),
+      }),
+    ]));
+  });
+
+  it("rolls back missing or cross-organization anchors and allows Saved Views to become loose", async () => {
     const orgId = randomUUID();
     const otherOrgId = randomUUID();
     const userId = "saved-view-protected-group-user";
@@ -10918,16 +11086,15 @@ describe("messengerService and issue follows", () => {
       invalidVisibilityPatch,
     )).rejects.toMatchObject({ status: 400 });
     await expect(savedViewsSvc.get(orgId, userId, kept.savedView.id)).resolves.toMatchObject({ hiddenAt: null });
-    await expect(messengerSvc.separateCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
-    await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
     await expect(messengerSvc.removeThreadFromCustomGroups(
       orgId,
       userId,
       `saved-view:${kept.savedView.id}`,
-    )).rejects.toMatchObject({ status: 409 });
-    expect(await db.select().from(messengerCustomGroupEntries).where(eq(messengerCustomGroupEntries.groupId, group.id))).toHaveLength(1);
-    await savedViewsSvc.remove(orgId, userId, kept.savedView.id);
+    )).resolves.toEqual({ itemKey: `saved-view:${kept.savedView.id}` });
+    expect(await db.select().from(messengerCustomGroupEntries).where(eq(messengerCustomGroupEntries.groupId, group.id))).toHaveLength(0);
+    await expect(savedViewsSvc.get(orgId, userId, kept.savedView.id)).resolves.toMatchObject({ id: kept.savedView.id });
     await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).resolves.toMatchObject({ id: group.id });
+    await savedViewsSvc.remove(orgId, userId, kept.savedView.id);
   });
 
   it("persists, updates, restores, and isolates Messenger Saved Views by instance identity", async () => {
@@ -10982,9 +11149,6 @@ describe("messengerService and issue follows", () => {
     expect((await savedViewsSvc.list(orgId, userId, { visibility: "visible" })).items.map((view) => view.id)).not.toContain(automation.id);
     expect((await messengerSvc.listCustomGroups(orgId, userId)).groups[0]?.entries).toEqual([]);
     expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(1);
-    await expect(messengerSvc.separateCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
-    await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
-
     const restored = await savedViewsSvc.update(orgId, userId, automation.id, {
       hidden: false,
       title: "Restored missing automation",
@@ -11333,18 +11497,33 @@ describe("messengerService and issue follows", () => {
     const group = await messengerSvc.createCustomGroup(orgId, userId, "Delete audit group");
     await messengerSvc.assignThreadToCustomGroup(orgId, userId, group.id, `saved-view:${grouped.id}`);
 
-    await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).rejects.toMatchObject({ status: 409 });
+    await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).resolves.toMatchObject({ id: group.id });
     const groupedRemovalEvents = await db
       .select()
       .from(activityLog)
       .where(eq(activityLog.entityId, grouped.id));
-    expect(groupedRemovalEvents.filter((event) => event.action === "messenger.saved_view_group_removed")).toHaveLength(0);
+    expect(groupedRemovalEvents.filter((event) => event.action === "messenger.saved_view_group_removed"))
+      .toEqual([
+        expect.objectContaining({
+          orgId,
+          actorType: "user",
+          actorId: userId,
+          entityType: "messenger_saved_view",
+          entityId: grouped.id,
+          details: expect.objectContaining({
+            itemKey: `saved-view:${grouped.id}`,
+            groupId: group.id,
+            source: "group_delete",
+          }),
+        }),
+      ]);
+    await expect(savedViewsSvc.get(orgId, userId, grouped.id)).resolves.toMatchObject({ id: grouped.id });
 
     await expect(messengerSvc.removeThreadFromCustomGroups(
       orgId,
       userId,
       `saved-view:${ungrouped.id}`,
-    )).rejects.toMatchObject({ status: 409 });
+    )).resolves.toEqual({ itemKey: `saved-view:${ungrouped.id}` });
     const missingSavedViewId = randomUUID();
     await expect(messengerSvc.removeThreadFromCustomGroups(
       orgId,
