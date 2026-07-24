@@ -1,5 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { getMentionPanelPositionForViewport } from "./mention-menu-position";
+import {
+  getMentionMenuPositionForViewport,
+  getMentionPanelPositionForViewport,
+} from "./mention-menu-position";
+
+describe("getMentionMenuPositionForViewport", () => {
+  it("opens upward before crossing the editor boundary", () => {
+    const position = getMentionMenuPositionForViewport(
+      {
+        viewportTop: 500,
+        viewportBottom: 520,
+        viewportLeft: 300,
+      },
+      1280,
+      900,
+      { boundaryBottom: 560 },
+    );
+
+    expect(position).toMatchObject({
+      left: 300,
+      width: 520,
+      bottom: 404,
+      maxHeight: 200,
+    });
+    expect("top" in position).toBe(false);
+  });
+});
 
 describe("getMentionPanelPositionForViewport", () => {
   it("caps a wide document-surface panel without moving it outside the viewport", () => {

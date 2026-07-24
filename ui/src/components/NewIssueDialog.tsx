@@ -1,8 +1,5 @@
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   Popover,
   PopoverContent,
@@ -1163,6 +1160,7 @@ export function NewIssueDialog() {
           }
         }}
       >
+        <DialogTitle className="sr-only">{isSubIssueDraft ? "New sub-issue" : "New issue"}</DialogTitle>
         {redirectingIssueRef ? (
           <div
             className="motion-new-issue-created-banner absolute left-1/2 top-4 z-10 inline-flex -translate-x-1/2 items-center gap-2 rounded-md border border-[color:color-mix(in_oklab,var(--accent-base)_42%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_82%,var(--surface-elevated))] px-3 py-1.5 text-xs font-medium text-foreground shadow-[var(--shadow-sm)]"

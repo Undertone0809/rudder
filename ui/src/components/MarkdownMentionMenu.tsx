@@ -5,7 +5,7 @@ import {
   MessageSquare,
   Repeat,
 } from "lucide-react";
-import { useMemo, type CSSProperties } from "react";
+import { useEffect, useMemo, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { cn } from "../lib/utils";
@@ -16,6 +16,7 @@ import { StatusIcon } from "./StatusIcon";
 
 interface MarkdownMentionMenuProps {
   activeIndex: number;
+  id: string;
   onActiveIndexChange: (index: number) => void;
   onSelect: (option: MentionOption) => void;
   options: MentionOption[];
@@ -154,6 +155,7 @@ function OptionContent({
 
 export function MarkdownMentionMenu({
   activeIndex,
+  id,
   onActiveIndexChange,
   onSelect,
   options,
@@ -172,12 +174,19 @@ export function MarkdownMentionMenu({
     return grouped;
   }, [options]);
   const containerMenu = placement === "container";
+  const activeOptionId = options[activeIndex]?.id;
+  useEffect(() => {
+    document.getElementById(`${id}-option-${activeIndex}`)
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [activeIndex, activeOptionId, id]);
 
   let optionIndex = 0;
   const menu = (
     <div
+      id={id}
       ref={scrollbarRef}
-      role={containerMenu ? "menu" : "listbox"}
+      role="listbox"
+      aria-label="Reference suggestions"
       data-testid="markdown-mention-menu"
       className={cn(
         "pointer-events-auto scrollbar-auto-hide fixed z-[70] overflow-y-auto rounded-lg border border-border p-1.5 shadow-lg",
@@ -203,10 +212,14 @@ export function MarkdownMentionMenu({
               || option.kind === "library_directory";
             return (
               <button
+                id={`${id}-option-${index}`}
                 key={option.id}
                 type="button"
-                role={containerMenu ? "menuitem" : "option"}
-                aria-selected={containerMenu ? undefined : index === activeIndex}
+                role="option"
+                aria-selected={index === activeIndex}
+                aria-label={option.kind === "skill"
+                  ? `${option.skillDisplayName ?? option.name}, ${option.skillCategoryLabel ?? "Skill"}`
+                  : undefined}
                 data-testid={`markdown-mention-option-${option.id}`}
                 data-mention-option-index={index}
                 data-chat-composer-menu-item={containerMenu ? true : undefined}

@@ -168,6 +168,9 @@ vi.mock("@/components/ui/dialog", () => ({
   DialogContent: ({ children, className }: { children: ReactNode; className?: string }) => (
     <div className={className}>{children}</div>
   ),
+  DialogTitle: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <h2 data-slot="dialog-title" className={className}>{children}</h2>
+  ),
 }));
 
 vi.mock("@/components/ui/popover", () => ({
@@ -378,6 +381,14 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("sm:max-w-[920px]");
     expect(html).toContain("min-h-[88px]");
     expect(html).not.toContain("min-h-[120px]");
+  });
+
+  it("gives the dialog an accessible title", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain('data-slot="dialog-title"');
+    expect(html).toContain('class="sr-only"');
+    expect(html).toContain(">New issue</h2>");
   });
 
   it("uses caret anchored description mention suggestions", () => {

@@ -28,22 +28,12 @@ import {
   keymap,
   type DecorationSet,
 } from "@codemirror/view";
-import {
-  buildAgentMentionHref,
-  buildAutomationMentionHref,
-  buildChatMentionHref,
-  buildIssueMentionHref,
-  buildLibraryDirectoryMentionHref,
-  buildLibraryDocMentionHref,
-  buildLibraryEntryMentionHref,
-  buildLibraryFileMentionHref,
-  buildProjectMentionHref,
-} from "@rudderhq/shared";
 import { basicSetup } from "codemirror";
 import {
   forwardRef,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -53,6 +43,13 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import {
+  focusAdjacentEditorControl,
+  markdownMentionCompletion,
+  mentionStateAtSelection,
+  sameMentionState,
+  type CodeMirrorMentionState,
+} from "../lib/codemirror-markdown-mentions";
 import {
   codeMirrorMarkdownEditorTheme,
   codeMirrorMarkdownHighlightStyle,
@@ -64,13 +61,13 @@ import {
   buildMarkdownLink,
   escapeMarkdownLinkLabel,
   findAtomicMarkdownReferences,
-  getMarkdownPreviewBlocks,
+  getMarkdownPreviewDocument,
   markdownPreviewSource,
-  markdownReferenceDefinitions,
   provisionalWebsiteLabel,
   readSingleHttpUrl,
   type AtomicMarkdownReference,
   type MarkdownPreviewBlock,
+  type MarkdownPreviewDocument,
 } from "../lib/markdown-live-preview";
 import {
   mentionChipNavigationPath,
@@ -142,16 +139,6 @@ interface PendingImageUpload {
   to: number;
   empty: boolean;
   expectedSource: string;
-}
-
-interface CodeMirrorMentionState {
-  trigger: "@" | "$";
-  query: string;
-  from: number;
-  to: number;
-  viewportTop: number;
-  viewportBottom: number;
-  viewportLeft: number;
 }
 
 const externalValueSync = Annotation.define<boolean>();
@@ -418,13 +405,29 @@ function sourceLineDecorations(
   state: EditorState,
 ) {
   const decorations: Range<Decoration>[] = [];
+  const headingLevel = block.kind === "line"
+    ? block.markdown.match(/^ {0,3}(#{1,6})(?:[ \t]+|$)/u)?.[1]?.length
+    : undefined;
   for (let lineNumber = block.startLine; lineNumber <= block.endLine; lineNumber += 1) {
     const line = state.doc.line(Math.min(lineNumber, state.doc.lines));
+    const blockEdge = block.startLine === block.endLine
+      ? "single"
+      : lineNumber === block.startLine
+        ? "first"
+        : lineNumber === block.endLine
+          ? "last"
+          : "middle";
     decorations.push(
       Decoration.line({
         attributes: {
           "data-markdown-preview-state": "source",
           "data-markdown-source-kind": block.kind,
+          ...(headingLevel
+            ? { "data-markdown-source-heading-level": String(headingLevel) }
+            : {}),
+          ...(block.kind === "fenced-code"
+            ? { "data-markdown-source-block-edge": blockEdge }
+            : {}),
           "data-source-line-start": String(lineNumber),
           "data-source-line-end": String(block.endLine),
         },
@@ -443,14 +446,13 @@ function activeSelectionRanges(state: EditorState) {
 
 function markdownPreviewDecorations(
   state: EditorState,
+  document: MarkdownPreviewDocument,
   focused: boolean,
   registry: PortalRegistry,
   propsRef: { current: CodeMirrorMarkdownEditorProps },
   activateBlock: (block: MarkdownPreviewBlock, view: EditorView) => void,
 ): { decorations: DecorationSet; atomic: DecorationSet } {
-  const source = state.doc.toString();
-  const blocks = getMarkdownPreviewBlocks(source);
-  const referenceDefinitions = markdownReferenceDefinitions(source);
+  const { blocks, referenceDefinitions } = document;
   const activeIds = focused
     ? activeMarkdownPreviewBlockIds(blocks, activeSelectionRanges(state))
     : new Set<string>();
@@ -510,77 +512,14 @@ function markdownPreviewDecorations(
   };
 }
 
-function markdownCompletion(option: MentionOption, intent?: "reference" | "wake") {
-  if (option.kind === "skill") {
-    if (!option.skillMarkdownTarget || !option.skillRefLabel) return "";
-    return `${buildMarkdownLink(option.skillRefLabel, option.skillMarkdownTarget)} `;
-  }
-  if (option.kind === "issue" && option.issueId) {
-    return `${buildMarkdownLink(option.name, buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null, null, option.issueStatus ?? null))} `;
-  }
-  if (option.kind === "automation" && option.automationId) {
-    const title = option.automationTitle ?? option.name;
-    return `${buildMarkdownLink(title, buildAutomationMentionHref(option.automationId, title))} `;
-  }
-  if (option.kind === "chat" && option.chatConversationId) {
-    return `${buildMarkdownLink(option.name, buildChatMentionHref(option.chatConversationId, option.chatTitle ?? option.name))} `;
-  }
-  if (option.kind === "library_doc" && option.libraryDocumentId) {
-    return `${buildMarkdownLink(option.name, buildLibraryDocMentionHref(option.libraryDocumentId, option.libraryDocumentTitle ?? option.name))} `;
-  }
-  if (option.kind === "library_file" && option.libraryFilePath) {
-    const href = option.libraryEntryId
-      ? buildLibraryEntryMentionHref(option.libraryEntryId, option.name, option.libraryFilePath)
-      : buildLibraryFileMentionHref(option.libraryFilePath, option.name);
-    return `${buildMarkdownLink(option.name, href)} `;
-  }
-  if (option.kind === "library_directory" && option.libraryDirectoryPath) {
-    return `${buildMarkdownLink(option.name, buildLibraryDirectoryMentionHref(option.libraryDirectoryPath, option.name))} `;
-  }
-  if (option.kind === "project" && option.projectId) {
-    return `${buildMarkdownLink(option.name, buildProjectMentionHref(option.projectId, option.projectColor ?? null, option.projectIcon ?? null))} `;
-  }
-  const agentId = option.agentId ?? option.id.replace(/^agent:/u, "");
-  return `${buildMarkdownLink(option.name, buildAgentMentionHref(agentId, option.agentIcon ?? null, intent))} `;
-}
-
-function mentionStateAtSelection(view: EditorView): CodeMirrorMentionState | null {
-  const selection = view.state.selection.main;
-  if (!selection.empty) return null;
-  const line = view.state.doc.lineAt(selection.head);
-  const before = view.state.sliceDoc(line.from, selection.head);
-  const match = before.match(/(?:^|[\s([{>])([@$])([^\s@$]*)$/u);
-  const trigger = match?.[1];
-  if (trigger !== "@" && trigger !== "$") return null;
-  const query = match?.[2] ?? "";
-  const from = selection.head - query.length - 1;
-  const coords = view.coordsAtPos(from)
-    ?? view.contentDOM.getBoundingClientRect();
-  return {
-    trigger,
-    query,
-    from,
-    to: selection.head,
-    viewportTop: coords.top,
-    viewportBottom: coords.bottom,
-    viewportLeft: coords.left,
-  };
-}
-
-function sameMentionState(
-  left: CodeMirrorMentionState | null,
-  right: CodeMirrorMentionState | null,
+export function previewDocumentForTransaction(
+  current: MarkdownPreviewDocument,
+  transaction: Transaction,
 ) {
-  return left === right || Boolean(
-    left
-    && right
-    && left.trigger === right.trigger
-    && left.query === right.query
-    && left.from === right.from
-    && left.to === right.to
-    && left.viewportTop === right.viewportTop
-    && left.viewportBottom === right.viewportBottom
-    && left.viewportLeft === right.viewportLeft
+  if (!transaction.docChanged) return current;
+  return getMarkdownPreviewDocument(
+    transaction.state.doc.toString(),
+    current,
   );
 }
 
@@ -754,6 +693,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [mentionState, setMentionState] = useState<CodeMirrorMentionState | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionListboxId = `markdown-reference-suggestions-${useId().replace(/[^a-zA-Z0-9_-]/gu, "")}`;
   propsRef.current = props;
 
   const registerPortal = useCallback((registration: PortalRegistration, host: HTMLElement) => {
@@ -835,7 +775,10 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       updateMentionState(view);
       return;
     }
-    const insert = markdownCompletion(option, propsRef.current.agentMentionIntent);
+    const insert = markdownMentionCompletion(
+      option,
+      propsRef.current.agentMentionIntent,
+    );
     if (!insert) return;
     mentionStateRef.current = null;
     setMentionState(null);
@@ -897,13 +840,17 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         );
       }
     }
+    const editorRect = rootRef.current?.getBoundingClientRect();
     return getMentionMenuPositionForViewport(
       mentionState,
       window.innerWidth,
       window.innerHeight,
-      props.mentionMenuSize === "compact"
-        ? { width: 320, maxHeight: 180 }
-        : undefined,
+      {
+        ...(props.mentionMenuSize === "compact"
+          ? { width: 320, maxHeight: 180 }
+          : {}),
+        boundaryBottom: editorRect?.bottom,
+      },
     );
   }, [
     mentionState,
@@ -911,6 +858,24 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     props.mentionMenuPlacement,
     props.mentionMenuSize,
   ]);
+  const mentionMenuOpen = Boolean(
+    mentionState && filteredMentions.length > 0 && mentionMenuPosition,
+  );
+  useEffect(() => {
+    const content = viewRef.current?.contentDOM;
+    if (!content) return;
+    content.setAttribute("aria-expanded", String(mentionMenuOpen));
+    if (!mentionMenuOpen) {
+      content.removeAttribute("aria-controls");
+      content.removeAttribute("aria-activedescendant");
+      return;
+    }
+    content.setAttribute("aria-controls", mentionListboxId);
+    content.setAttribute(
+      "aria-activedescendant",
+      `${mentionListboxId}-option-${mentionIndex}`,
+    );
+  }, [mentionIndex, mentionListboxId, mentionMenuOpen]);
 
   useImperativeHandle(forwardedRef, () => ({
     focus: () => {
@@ -997,13 +962,16 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     type PreviewFieldValue = {
       decorations: DecorationSet;
       atomic: DecorationSet;
+      document: MarkdownPreviewDocument;
       focused: boolean;
       composing: boolean;
     };
     const previewField = StateField.define<PreviewFieldValue>({
       create(state) {
+        const document = getMarkdownPreviewDocument(state.doc.toString());
         const result = markdownPreviewDecorations(
           state,
+          document,
           false,
           registry,
           propsRef,
@@ -1011,6 +979,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         );
         return {
           ...result,
+          document,
           focused: false,
           composing: false,
         };
@@ -1034,6 +1003,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           return {
             decorations: current.decorations.map(transaction.changes),
             atomic: current.atomic.map(transaction.changes),
+            document: current.document,
             focused,
             composing,
           };
@@ -1043,8 +1013,13 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         if (!transaction.docChanged && !selectionChanged && !effectChanged) {
           return current;
         }
+        const document = previewDocumentForTransaction(
+          current.document,
+          transaction,
+        );
         const result = markdownPreviewDecorations(
           transaction.state,
+          document,
           focused,
           registry,
           propsRef,
@@ -1052,6 +1027,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         );
         return {
           ...result,
+          document,
           focused,
           composing,
         };
@@ -1212,6 +1188,29 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       EditorView.atomicRanges.of((view) => (
         view.state.field(previewField).atomic
       )),
+      Prec.highest(EditorView.domEventHandlers({
+        keydown: (event, view) => {
+          if (!mentionStateRef.current) return false;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            mentionStateRef.current = null;
+            setMentionState(null);
+            return true;
+          }
+          if (event.key === "Tab") {
+            event.preventDefault();
+            event.stopPropagation();
+            mentionStateRef.current = null;
+            setMentionState(null);
+            requestAnimationFrame(() => {
+              focusAdjacentEditorControl(view.contentDOM, event.shiftKey);
+            });
+            return true;
+          }
+          return false;
+        },
+      })),
       Prec.highest(keymap.of([
         {
           key: "ArrowDown",
@@ -1245,15 +1244,6 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           },
         },
         {
-          key: "Escape",
-          run: () => {
-            if (!mentionStateRef.current) return false;
-            mentionStateRef.current = null;
-            setMentionState(null);
-            return true;
-          },
-        },
-        {
           key: "Backspace",
           run: (view) => deleteAtomic(view, "backward"),
         },
@@ -1283,6 +1273,8 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.contentAttributes.of({
         "aria-label": placeholder ? `${placeholder} Markdown editor` : "Markdown editor",
+        "aria-autocomplete": "list",
+        "aria-expanded": "false",
         "data-markdown-source-editor": "true",
         spellcheck: "true",
       }),
@@ -1459,6 +1451,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       {mentionState && filteredMentions.length > 0 && mentionMenuPosition ? (
         <MarkdownMentionMenu
           activeIndex={mentionIndex}
+          id={mentionListboxId}
           onActiveIndexChange={setActiveMentionIndex}
           onSelect={selectMention}
           options={filteredMentions}

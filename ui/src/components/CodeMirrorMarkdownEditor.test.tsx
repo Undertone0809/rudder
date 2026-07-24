@@ -2,6 +2,7 @@
 
 import { isolateHistory } from "@codemirror/commands";
 import { highlightingFor } from "@codemirror/language";
+import { EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import {
@@ -13,10 +14,12 @@ import {
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { codeMirrorMarkdownHighlightStyle } from "../lib/codemirror-markdown-theme";
+import { getMarkdownPreviewDocument } from "../lib/markdown-live-preview";
 import { __clearWebsiteMetadataCacheForTests } from "../lib/website-metadata-cache";
 import {
   __getCodeMirrorMarkdownViewForTests,
   CodeMirrorMarkdownEditor,
+  previewDocumentForTransaction,
 } from "./CodeMirrorMarkdownEditor";
 import type { MarkdownEditorRef } from "./MarkdownEditor";
 
@@ -257,7 +260,9 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     });
     await flushReact();
 
-    expect(container?.querySelector('[data-markdown-preview-state="source"][data-source-line-start="1"]')).toBeTruthy();
+    expect(container?.querySelector(
+      '[data-markdown-preview-state="source"][data-source-line-start="1"][data-markdown-source-heading-level="1"]',
+    )).toBeTruthy();
     expect(editorView().state.doc.toString()).toBe("# Heading\nRead [OpenAI](https://openai.com).");
     expect(onChange).not.toHaveBeenCalled();
 
@@ -268,6 +273,36 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
 
     expect(container?.querySelector('[data-markdown-preview-state="preview"][data-source-line-start="1"]')).toBeTruthy();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("marks fenced source lines so the active block keeps its visual container", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value={"```ts\nconst answer = 42;\n```"}
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const preview = container?.querySelector<HTMLElement>(
+      '[data-markdown-preview-state="preview"]',
+    );
+    act(() => {
+      preview?.dispatchEvent(new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(container?.querySelector(
+      '[data-markdown-source-kind="fenced-code"][data-markdown-source-block-edge="first"]',
+    )).toBeTruthy();
+    expect(container?.querySelector(
+      '[data-markdown-source-kind="fenced-code"][data-markdown-source-block-edge="last"]',
+    )).toBeTruthy();
   });
 
   it("applies sizing classes to the editor once instead of every preview block", async () => {
@@ -712,6 +747,222 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
       "[brief.md](library-file://file?p=docs%2Fbrief.md) ",
     );
     expect(document.querySelector('[data-testid="markdown-mention-menu"]')).toBeNull();
+  });
+
+  it("connects the source editor to its active mention option with listbox semantics", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value=""
+          onChange={() => undefined}
+          mentions={[
+            {
+              id: "skill:browser",
+              kind: "skill",
+              name: "browser",
+              skillDisplayName: "browser",
+              skillCategoryLabel: "Org skill",
+              skillDescription: "A deliberately long description that should not become the option name.",
+              skillMarkdownTarget: "skill://browser",
+            },
+            {
+              id: "agent:agent-1",
+              kind: "agent",
+              name: "Agent One",
+              agentId: "agent-1",
+            },
+          ]}
+        />,
+      );
+    });
+    await flushReact();
+
+    act(() => {
+      editorView().focus();
+      editorView().dispatch({
+        changes: { from: 0, insert: "@" },
+        selection: { anchor: 1 },
+        userEvent: "input.type",
+      });
+    });
+    await flushReact();
+
+    const content = editorView().contentDOM;
+    const menu = document.querySelector<HTMLElement>(
+      '[data-testid="markdown-mention-menu"]',
+    );
+    const firstOption = document.querySelector<HTMLElement>(
+      '[data-testid="markdown-mention-option-skill:browser"]',
+    );
+    const initiallyActiveOption = menu?.querySelector<HTMLElement>(
+      '[role="option"][aria-selected="true"]',
+    );
+    expect(menu?.getAttribute("role")).toBe("listbox");
+    expect(menu?.id).toBeTruthy();
+    expect(menu?.getAttribute("aria-label")).toBe("Reference suggestions");
+    expect(content.getAttribute("aria-autocomplete")).toBe("list");
+    expect(content.getAttribute("aria-expanded")).toBe("true");
+    expect(content.getAttribute("aria-controls")).toBe(menu?.id);
+    expect(content.getAttribute("aria-activedescendant")).toBe(initiallyActiveOption?.id);
+    expect(firstOption?.getAttribute("aria-label")).toBe("browser, Org skill");
+    expect(firstOption?.getAttribute("aria-label")).not.toContain("deliberately long");
+
+    act(() => {
+      content.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "ArrowDown",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    const nextActiveOption = menu?.querySelector<HTMLElement>(
+      '[role="option"][aria-selected="true"]',
+    );
+    expect(nextActiveOption?.id).not.toBe(initiallyActiveOption?.id);
+    expect(content.getAttribute("aria-activedescendant")).toBe(nextActiveOption?.id);
+
+    let escapeHandled = true;
+    act(() => {
+      escapeHandled = content.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(escapeHandled).toBe(false);
+    expect(document.querySelector('[data-testid="markdown-mention-menu"]')).toBeNull();
+    expect(content.getAttribute("aria-expanded")).toBe("false");
+    expect(content.hasAttribute("aria-controls")).toBe(false);
+    expect(content.hasAttribute("aria-activedescendant")).toBe(false);
+  });
+
+  it("closes mention suggestions on Tab without accepting the active option", async () => {
+    const onChange = vi.fn();
+    act(() => {
+      root?.render(
+        <>
+          <button data-testid="before-editor">Before</button>
+          <CodeMirrorMarkdownEditor
+            value=""
+            onChange={onChange}
+            mentions={[
+              {
+                id: "agent:agent-1",
+                kind: "agent",
+                name: "Agent One",
+                agentId: "agent-1",
+              },
+            ]}
+          />
+          <button data-testid="after-editor">After</button>
+        </>,
+      );
+    });
+    await flushReact();
+
+    act(() => {
+      editorView().focus();
+      editorView().dispatch({
+        changes: { from: 0, insert: "@" },
+        selection: { anchor: 1 },
+        userEvent: "input.type",
+      });
+    });
+    await flushReact();
+    expect(document.querySelector('[data-testid="markdown-mention-menu"]')).toBeTruthy();
+    const changesBeforeTab = onChange.mock.calls.length;
+
+    act(() => {
+      editorView().contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Tab",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(document.querySelector('[data-testid="markdown-mention-menu"]')).toBeNull();
+    expect(onChange).toHaveBeenCalledTimes(changesBeforeTab);
+    expect(editorView().state.doc.toString()).toBe("@");
+    expect(document.activeElement).toBe(
+      container?.querySelector('[data-testid="after-editor"]'),
+    );
+
+    act(() => {
+      editorView().focus();
+      editorView().dispatch({
+        changes: { from: 1, insert: "a" },
+        selection: { anchor: 2 },
+        userEvent: "input.type",
+      });
+    });
+    await flushReact();
+    expect(document.querySelector('[data-testid="markdown-mention-menu"]')).toBeTruthy();
+
+    act(() => {
+      editorView().contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await flushReact();
+
+    expect(document.activeElement).toBe(
+      container?.querySelector('[data-testid="before-editor"]'),
+    );
+  });
+
+  it("keeps listbox semantics when mention suggestions use container placement", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value=""
+          onChange={() => undefined}
+          mentionMenuPlacement="container"
+          mentions={[
+            {
+              id: "agent:agent-1",
+              kind: "agent",
+              name: "Agent One",
+              agentId: "agent-1",
+            },
+          ]}
+        />,
+      );
+    });
+    await flushReact();
+
+    act(() => {
+      editorView().focus();
+      editorView().dispatch({
+        changes: { from: 0, insert: "@" },
+        selection: { anchor: 1 },
+        userEvent: "input.type",
+      });
+    });
+    await flushReact();
+
+    const content = editorView().contentDOM;
+    const activeId = content.getAttribute("aria-activedescendant");
+    const activeOption = activeId ? document.getElementById(activeId) : null;
+    expect(content.getAttribute("aria-expanded")).toBe("true");
+    expect(activeOption?.getAttribute("role")).toBe("option");
+    expect(activeOption?.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("does not rebuild or stringify the preview document for selection-only transactions", () => {
+    const state = EditorState.create({ doc: "# Heading\nParagraph" });
+    const document = getMarkdownPreviewDocument(state.doc.toString());
+    const transaction = state.update({ selection: { anchor: 4 } });
+    const toString = vi.spyOn(transaction.state.doc, "toString");
+
+    expect(previewDocumentForTransaction(document, transaction)).toBe(document);
+    expect(toString).not.toHaveBeenCalled();
   });
 
   it("wraps a pasted URL, upgrades the provisional label safely, and undoes as one edit", async () => {

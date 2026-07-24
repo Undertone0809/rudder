@@ -4,6 +4,7 @@ import {
   buildMarkdownLink,
   findAtomicMarkdownReferences,
   getMarkdownPreviewBlocks,
+  getMarkdownPreviewDocument,
   markdownPreviewSource,
   markdownReferenceDefinitions,
   provisionalWebsiteLabel,
@@ -11,6 +12,16 @@ import {
 } from "./markdown-live-preview";
 
 describe("getMarkdownPreviewBlocks", () => {
+  it("reuses the parsed document model while only the selection changes", () => {
+    const first = getMarkdownPreviewDocument("# Heading\nParagraph");
+    const reused = getMarkdownPreviewDocument("# Heading\nParagraph", first);
+    const changed = getMarkdownPreviewDocument("# Changed\nParagraph", first);
+
+    expect(reused).toBe(first);
+    expect(changed).not.toBe(first);
+    expect(changed.blocks[0]?.markdown).toBe("# Changed");
+  });
+
   it("keeps ordinary source lines independently addressable", () => {
     const source = "# Heading\nA paragraph with **weight**.\n- task";
 
@@ -134,6 +145,44 @@ describe("getMarkdownPreviewBlocks", () => {
     ]);
   });
 
+  it("retains a CommonMark lazy continuation in its blockquote block", () => {
+    const source = "> quoted\ncontinued\n\noutside";
+
+    expect(getMarkdownPreviewBlocks(source)).toEqual([
+      expect.objectContaining({
+        kind: "blockquote",
+        startLine: 1,
+        endLine: 2,
+        markdown: "> quoted\ncontinued",
+      }),
+      expect.objectContaining({
+        kind: "line",
+        startLine: 4,
+        endLine: 4,
+        markdown: "outside",
+      }),
+    ]);
+  });
+
+  it("ends a lazy blockquote before a following GFM table", () => {
+    const source = "> quoted\nA | B\n--- | ---";
+
+    expect(getMarkdownPreviewBlocks(source)).toEqual([
+      expect.objectContaining({
+        kind: "blockquote",
+        startLine: 1,
+        endLine: 1,
+        markdown: "> quoted",
+      }),
+      expect.objectContaining({
+        kind: "table",
+        startLine: 2,
+        endLine: 3,
+        markdown: "A | B\n--- | ---",
+      }),
+    ]);
+  });
+
   it("ends a list before a directly following fenced code block", () => {
     const source = "- first\n```ts\nconst answer = 42;\n```";
 
@@ -149,6 +198,25 @@ describe("getMarkdownPreviewBlocks", () => {
         startLine: 2,
         endLine: 4,
         markdown: "```ts\nconst answer = 42;\n```",
+      }),
+    ]);
+  });
+
+  it("does not consume the rest of the document for an invalid backtick fence opener", () => {
+    const source = "```js`invalid\n# Heading";
+
+    expect(getMarkdownPreviewBlocks(source)).toEqual([
+      expect.objectContaining({
+        kind: "line",
+        startLine: 1,
+        endLine: 1,
+        markdown: "```js`invalid",
+      }),
+      expect.objectContaining({
+        kind: "line",
+        startLine: 2,
+        endLine: 2,
+        markdown: "# Heading",
       }),
     ]);
   });
@@ -309,6 +377,7 @@ describe("atomic Rudder Markdown references", () => {
       "[File](library-file://file?p=docs%2Ffile.md)",
       "[Directory](library-directory://directory?p=docs)",
       "[$review](/skills/review/SKILL.md)",
+      "[External spec](https://example.com/SKILL.md)",
       "[OpenAI](https://openai.com)",
     ].join(" ");
 

@@ -42,7 +42,7 @@ interface SourceLine {
   text: string;
 }
 
-const FENCE_START_RE = /^ {0,3}(`{3,}|~{3,})/u;
+const FENCE_START_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/u;
 const TABLE_DELIMITER_RE = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$/u;
 const SETEXT_DELIMITER_RE = /^ {0,3}(?:=+|-+)\s*$/u;
 const RAW_HTML_LINE_RE =
@@ -126,6 +126,15 @@ function closingFenceIndex(lines: SourceLine[], startIndex: number, opener: stri
   return lines.length - 1;
 }
 
+function fenceOpener(text: string) {
+  const match = text.match(FENCE_START_RE);
+  if (!match) return null;
+  const opener = match[1]!;
+  const info = match[2] ?? "";
+  if (opener.startsWith("`") && info.includes("`")) return null;
+  return opener;
+}
+
 function tableEndIndex(lines: SourceLine[], headerIndex: number) {
   let index = headerIndex + 2;
   while (index < lines.length) {
@@ -172,7 +181,7 @@ function listEndIndex(lines: SourceLine[], startIndex: number) {
     if (
       itemIndent <= startIndent
       && (
-        FENCE_START_RE.test(text)
+        fenceOpener(text) !== null
         || ATX_HEADING_RE.test(text)
         || BLOCKQUOTE_RE.test(text)
         || RAW_HTML_LINE_RE.test(text)
@@ -181,14 +190,6 @@ function listEndIndex(lines: SourceLine[], startIndex: number) {
     ) {
       break;
     }
-    index += 1;
-  }
-  return index - 1;
-}
-
-function blockquoteEndIndex(lines: SourceLine[], startIndex: number) {
-  let index = startIndex + 1;
-  while (index < lines.length && BLOCKQUOTE_RE.test(lines[index]!.text)) {
     index += 1;
   }
   return index - 1;
@@ -223,8 +224,9 @@ function htmlEndIndex(lines: SourceLine[], startIndex: number) {
   return lines.length - 1;
 }
 
-function rawHtmlSyntaxRanges(source: string) {
-  const ranges: Array<{ from: number; to: number }> = [];
+function markdownSyntaxRanges(source: string) {
+  const rawHtml: Array<{ from: number; to: number }> = [];
+  const blockquotes: Array<{ from: number; to: number }> = [];
   markdownLanguage.parser.parse(source).iterate({
     enter(node) {
       if (
@@ -232,11 +234,29 @@ function rawHtmlSyntaxRanges(source: string) {
         || node.name === "HTMLTag"
         || node.name === "Comment"
       ) {
-        ranges.push({ from: node.from, to: node.to });
+        rawHtml.push({ from: node.from, to: node.to });
+      }
+      if (node.name === "Blockquote") {
+        blockquotes.push({ from: node.from, to: node.to });
       }
     },
   });
-  return ranges;
+  return { rawHtml, blockquotes };
+}
+
+function sourceLineEndIndex(
+  lines: SourceLine[],
+  startIndex: number,
+  syntaxTo: number,
+) {
+  let endIndex = startIndex;
+  while (
+    endIndex + 1 < lines.length
+    && lines[endIndex + 1]!.from < syntaxTo
+  ) {
+    endIndex += 1;
+  }
+  return endIndex;
 }
 
 /**
@@ -246,7 +266,7 @@ function rawHtmlSyntaxRanges(source: string) {
  */
 export function getMarkdownPreviewBlocks(source: string): MarkdownPreviewBlock[] {
   const lines = sourceLines(source);
-  const rawHtmlRanges = rawHtmlSyntaxRanges(source);
+  const syntaxRanges = markdownSyntaxRanges(source);
   const blocks: MarkdownPreviewBlock[] = [];
 
   for (let index = 0; index < lines.length;) {
@@ -256,7 +276,7 @@ export function getMarkdownPreviewBlocks(source: string): MarkdownPreviewBlock[]
       continue;
     }
 
-    const fence = line.text.match(FENCE_START_RE)?.[1];
+    const fence = fenceOpener(line.text);
     if (fence) {
       const endIndex = closingFenceIndex(lines, index, fence);
       blocks.push(markdownBlock(source, lines, index, endIndex, "fenced-code"));
@@ -297,7 +317,12 @@ export function getMarkdownPreviewBlocks(source: string): MarkdownPreviewBlock[]
     }
 
     if (BLOCKQUOTE_RE.test(line.text)) {
-      const endIndex = blockquoteEndIndex(lines, index);
+      const syntaxRange = syntaxRanges.blockquotes.find(
+        (range) => range.from <= line.from && range.to >= line.to,
+      );
+      const endIndex = syntaxRange
+        ? sourceLineEndIndex(lines, index, syntaxRange.to)
+        : index;
       blocks.push(markdownBlock(source, lines, index, endIndex, "blockquote"));
       index = endIndex + 1;
       continue;
@@ -316,7 +341,7 @@ export function getMarkdownPreviewBlocks(source: string): MarkdownPreviewBlock[]
       index,
       index,
       "line",
-      !rawHtmlRanges.some((range) => (
+      !syntaxRanges.rawHtml.some((range) => (
         range.from < line.to && range.to > line.from
       )),
     ));
@@ -341,6 +366,24 @@ export function markdownReferenceDefinitions(source: string) {
     },
   });
   return definitions;
+}
+
+export interface MarkdownPreviewDocument {
+  source: string;
+  blocks: MarkdownPreviewBlock[];
+  referenceDefinitions: string[];
+}
+
+export function getMarkdownPreviewDocument(
+  source: string,
+  previous?: MarkdownPreviewDocument,
+): MarkdownPreviewDocument {
+  if (previous?.source === source) return previous;
+  return {
+    source,
+    blocks: getMarkdownPreviewBlocks(source),
+    referenceDefinitions: markdownReferenceDefinitions(source),
+  };
 }
 
 export function markdownPreviewSource(
@@ -416,7 +459,6 @@ function isAtomicReference(label: string, href: string) {
   const normalizedHref = href.trim();
   if (RUDDER_REFERENCE_SCHEME_RE.test(normalizedHref)) return true;
   if (/^skill:\/\//iu.test(normalizedHref)) return true;
-  if (/\/SKILL\.md(?:[#?].*)?$/iu.test(normalizedHref)) return true;
   return label.trim().startsWith("$") && /\.md(?:[#?].*)?$/iu.test(normalizedHref);
 }
 
