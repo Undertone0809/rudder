@@ -2,7 +2,7 @@
 title: Chat response annotations
 date: 2026-07-23
 kind: implementation
-status: in_progress
+status: completed
 area: chat
 entities:
   - messenger_chat
@@ -22,8 +22,20 @@ related_code:
   - ui/src/pages/Chat.tsx
   - ui/src/pages/Chat.messages.tsx
   - ui/src/components/MarkdownBody.tsx
-commit_refs: []
-updated_at: 2026-07-23
+commit_refs:
+  - 4ed984050
+  - a628cfe98
+  - e0ced9f28
+  - c9b5ab75b
+  - 90e793145
+  - 5e8d474c5
+  - 1eb4d7b2f
+  - 69f0175d5
+  - 32f5150a1
+  - be76b47ed
+  - 25e0aa635
+  - 5a65aac57
+updated_at: 2026-07-24
 ---
 
 # Chat Response Annotations
@@ -109,3 +121,24 @@ following contracts:
   Steer, Side Chat, failure recovery, and responsive screenshots.
 - Run product logic checks, lint, recursive typecheck, unit/integration tests,
   relevant E2E, and the production build before hand-off.
+
+## Completion Evidence
+
+- `pnpm product-logic:check`: 78 contracts valid.
+- `pnpm -r typecheck`: passed.
+- `pnpm build`: passed.
+- Changed-file import lint: 48 files passed; `git diff --check` passed.
+- Focused shared, server, and UI suites: 296 tests passed, including 38
+  annotation-validation cases.
+- Response annotation E2E: 10/10 passed on the final source revision.
+- Adjacent Side Chat, transcript, draft-persistence, and message-layout E2E:
+  16/16 passed.
+- Independent adversarial review found no remaining P0, P1, or P2 findings.
+- Independent real-runtime verification passed against a fresh isolated Rudder
+  instance with real API, UI, embedded PostgreSQL, annotation-only multipart
+  Send, comment plus PNG/TXT attachments, reload persistence, source navigation,
+  Queue/Steer, retry/edit/Fork, Side Chat, and responsive layouts.
+- The full repository test command reported unrelated order-dependent or
+  pre-existing failures; every feature-adjacent failure was rerun in isolation
+  and passed. Full import lint remains blocked by two unchanged baseline test
+  files outside this plan.
