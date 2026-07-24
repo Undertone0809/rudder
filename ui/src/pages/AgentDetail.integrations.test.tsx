@@ -10,6 +10,7 @@ import {
   type AgentIntegrationSummary,
   type AgentRudderToolSummary,
   type CustomIntegrationSummary,
+  type McpAgentConnectionSummary,
 } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -25,11 +26,22 @@ const mockInvalidateQueries = vi.hoisted(() => vi.fn());
 const mockCustomIntegrationsData = vi.hoisted(() => ({
   rows: [] as CustomIntegrationSummary[],
 }));
+const mockManagedMcpConnectionsData = vi.hoisted(() => ({
+  rows: [] as McpAgentConnectionSummary[],
+  failed: false,
+}));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ initialData, queryKey }: { initialData?: unknown; queryKey?: readonly unknown[] }) => ({
-    data: queryKey?.includes("custom-integrations") ? mockCustomIntegrationsData.rows : initialData,
+    data: queryKey?.includes("custom-integrations")
+      ? mockCustomIntegrationsData.rows
+      : queryKey?.includes("mcp-connections")
+        ? mockManagedMcpConnectionsData.rows
+        : initialData,
     isLoading: false,
+    isError: queryKey?.includes("mcp-connections")
+      ? mockManagedMcpConnectionsData.failed
+      : false,
   }),
   useMutation: (options: { mutationFn?: (arg?: unknown) => Promise<unknown>; onSuccess?: (result: unknown) => void | Promise<void> }) => ({
     mutate: vi.fn(async (arg?: unknown) => {
@@ -86,6 +98,9 @@ vi.mock("../api/agents", () => ({
     listCustomIntegrations: vi.fn(),
     createCustomIntegration: vi.fn(),
     revokeCustomIntegration: vi.fn(),
+    listMcpConnections: vi.fn(),
+    updateMcpConnectionBinding: vi.fn(),
+    revokeMcpConnectionBinding: vi.fn(),
   },
 }));
 
@@ -105,6 +120,8 @@ afterEach(() => {
   cleanupFn = null;
   document.body.innerHTML = "";
   mockCustomIntegrationsData.rows = [];
+  mockManagedMcpConnectionsData.rows = [];
+  mockManagedMcpConnectionsData.failed = false;
   vi.clearAllMocks();
   vi.useRealTimers();
 });
@@ -283,6 +300,51 @@ function customIntegration(overrides: Partial<CustomIntegrationSummary> = {}): C
   };
 }
 
+function managedMcpConnection(
+  provider: "supabase" | "linear" | "notion",
+  overrides: Partial<McpAgentConnectionSummary> = {},
+): McpAgentConnectionSummary {
+  const now = new Date("2026-07-24T12:00:00.000Z");
+  return {
+    connection: {
+      id: `${provider}-connection`,
+      orgId: "org-1",
+      name: `${provider}-main`,
+      displayName: provider[0]!.toUpperCase() + provider.slice(1),
+      provider,
+      transport: "streamable_http",
+      externalScope: `${provider}-workspace`,
+      accessMode: provider === "notion" ? "provider_default" : "read_only",
+      status: "active",
+      safeConfig: {},
+      startupTimeoutMs: 10_000,
+      toolTimeoutMs: 60_000,
+      enabled: true,
+      required: false,
+      hasCredentials: true,
+      lastDiscoveredAt: now,
+      activatedAt: now,
+      disabledAt: null,
+      revokedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    binding: null,
+    tools: [{
+      id: `${provider}-tool`,
+      connectionId: `${provider}-connection`,
+      externalToolName: "search",
+      rudderToolName: `external.${provider}.search`,
+      description: `Search ${provider}`,
+      inputSchema: {},
+      outputSchema: null,
+      enabled: true,
+      removedAt: null,
+    }],
+    ...overrides,
+  };
+}
+
 describe("AgentIntegrationsTab", () => {
   it("renders a stable Feishu row when the agent has no integration", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
@@ -296,13 +358,89 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).not.toContain("runtime-managed auth");
     expect(container.textContent).toContain("Custom API");
     expect(container.textContent).not.toContain("MCP Server");
-    expect(container.textContent).toContain("Managed MCP connections");
+    expect(container.textContent).toContain("Supabase");
+    expect(container.textContent).toContain("Notion");
+    expect(container.textContent).toContain("Linear");
+    expect(container.textContent?.match(/Not connected/g)?.length).toBe(3);
     expect(container.textContent).toContain("Feishu / Lark");
     expect(container.textContent).toContain("Not configured");
     expect(container.textContent).toContain("Set up");
-    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(6);
+    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(4);
     expect(container.textContent).not.toContain("0 of 10 connected");
     expect(container.textContent).not.toContain("Create a Feishu bot named Wesley - Rudder");
+  });
+
+  it("reuses managed organization MCP state in the Agent integration catalog", () => {
+    mockManagedMcpConnectionsData.rows = [
+      managedMcpConnection("notion"),
+      managedMcpConnection("linear", {
+        binding: {
+          id: "linear-binding",
+          connectionId: "linear-connection",
+          agentId: "agent-1",
+          status: "active",
+          enabledToolIds: ["linear-tool"],
+        },
+      }),
+    ];
+
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const notionCard = container.querySelector('[data-testid="managed-mcp-provider-notion"]');
+    const linearCard = container.querySelector('[data-testid="managed-mcp-provider-linear"]');
+    const supabaseCard = container.querySelector('[data-testid="managed-mcp-provider-supabase"]');
+
+    expect(notionCard?.textContent).toContain("Available");
+    expect(notionCard?.textContent).not.toContain("Coming soon");
+    expect(linearCard?.textContent).toContain("Connected");
+    expect(linearCard?.textContent).toContain("1 tool enabled");
+    expect(supabaseCard?.textContent).toContain("Not connected");
+  });
+
+  it("does not misreport an unavailable managed MCP query as not connected", () => {
+    mockManagedMcpConnectionsData.failed = true;
+
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const notionCard = container.querySelector('[data-testid="managed-mcp-provider-notion"]');
+
+    expect(notionCard?.textContent).toContain("Unavailable");
+    expect(notionCard?.textContent).not.toContain("Not connected");
+  });
+
+  it("aggregates enabled tools across every active binding for the same provider", () => {
+    const first = managedMcpConnection("linear", {
+      binding: {
+        id: "linear-binding-1",
+        connectionId: "linear-connection",
+        agentId: "agent-1",
+        status: "active",
+        enabledToolIds: ["linear-tool"],
+      },
+    });
+    const second = managedMcpConnection("linear");
+    second.connection = {
+      ...second.connection,
+      id: "linear-connection-2",
+      name: "linear-secondary",
+    };
+    second.tools = [{
+      ...second.tools[0]!,
+      id: "linear-tool-2",
+      connectionId: "linear-connection-2",
+    }];
+    second.binding = {
+      id: "linear-binding-2",
+      connectionId: "linear-connection-2",
+      agentId: "agent-1",
+      status: "active",
+      enabledToolIds: ["linear-tool-2"],
+    };
+    mockManagedMcpConnectionsData.rows = [first, second];
+
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const linearCard = container.querySelector('[data-testid="managed-mcp-provider-linear"]');
+
+    expect(linearCard?.textContent).toContain("Connected");
+    expect(linearCard?.textContent).toContain("2 tools enabled");
   });
 
   it("renders distinct core and Browser built-ins in manage view without mixing their tools", () => {
@@ -394,7 +532,7 @@ describe("AgentIntegrationsTab", () => {
     expect(dialog?.textContent).toContain("Lark Global");
   });
 
-  it("renders planned agent tool integrations as disabled coming soon actions", () => {
+  it("keeps only unavailable providers as disabled coming soon actions", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
 
     for (const name of [
@@ -410,11 +548,11 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("Read, search, draft, and send email from agent work.");
     expect(container.textContent).toContain("View and edit calendar events for scheduling work.");
     expect(container.textContent).toContain("Browse Drive files and attach workspace context.");
-    expect(container.textContent).toContain("Search pages, databases, and operating notes.");
+    expect(container.textContent).toContain("Search pages, databases, and operating notes through organization-managed MCP tools.");
     expect(container.textContent).toContain("Clone and inspect repositories during agent runs.");
-    expect(container.textContent).toContain("Link delivery issues and sync engineering work state.");
+    expect(container.textContent).toContain("Work with the organization’s Linear workspace through managed MCP tools.");
     expect(container.textContent).not.toContain("Feishu Workspace");
-    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(6);
+    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(4);
 
     const gmailButton = [...container.querySelectorAll("button")]
       .find((button) => button.getAttribute("aria-label") === "Gmail coming soon");
@@ -673,9 +811,10 @@ describe("AgentIntegrationsTab", () => {
       }),
     );
     const rendered = render(<AgentIntegrationsTab agent={agent({ integrations: [activeIntegration] })} orgId="org-1" />);
-    const manageButtons = [...rendered.querySelectorAll("button")]
-      .filter((button) => button.textContent === "Manage");
-    const configureButton = manageButtons.at(-1);
+    const configureButton = [...rendered.querySelectorAll("button")]
+      .find((button) =>
+        button.textContent === "Manage"
+        && button.closest(".grid")?.textContent?.includes("Feishu / Lark"));
 
     act(() => {
       configureButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));

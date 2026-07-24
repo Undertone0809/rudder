@@ -358,7 +358,9 @@ export async function resolveMcpHttpTarget(
   },
 ): Promise<ResolvedMcpHttpTarget> {
   const url = parseMcpTargetUrl(value);
-  if (options.curatedOrigin && url.origin !== options.curatedOrigin) {
+  const curatedOriginPinned = options.curatedOrigin !== undefined
+    && url.origin === options.curatedOrigin;
+  if (options.curatedOrigin && !curatedOriginPinned) {
     throw new Error("Managed MCP curated provider URL does not match its registry origin");
   }
 
@@ -380,7 +382,11 @@ export async function resolveMcpHttpTarget(
   if (addresses.some((answer) => isIP(answer.address) !== answer.family)) {
     throw new Error("Managed MCP DNS answer is not a valid address for its family");
   }
-  if (!explicitlyAllowed && addresses.some((answer) => isBlockedMcpNetworkAddress(answer.address))) {
+  if (
+    !explicitlyAllowed
+    && !curatedOriginPinned
+    && addresses.some((answer) => isBlockedMcpNetworkAddress(answer.address))
+  ) {
     throw new Error("Managed MCP target resolved to a blocked network address");
   }
 
