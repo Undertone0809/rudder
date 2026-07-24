@@ -444,6 +444,22 @@ test.describe("Run transcript detail", () => {
       createdAt: new Date("2026-06-26T06:15:55.226Z"),
       updatedAt: new Date("2026-06-26T06:16:31.946Z"),
     });
+    await e2eDb.insert(heartbeatRunEvents).values({
+      orgId: organization.id,
+      runId,
+      agentId: agent.id,
+      seq: 100,
+      eventType: "transcript.entry",
+      stream: "system",
+      level: "info",
+      message: "chat transcript entry",
+      payload: {
+        kind: "assistant",
+        text: "Partial assistant output preserved before the recoverable failure.",
+        ts: "2026-06-26T06:16:30.946Z",
+      },
+      createdAt: new Date("2026-06-26T06:16:30.946Z"),
+    });
 
     await page.addInitScript((orgId: string) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
@@ -456,9 +472,12 @@ test.describe("Run transcript detail", () => {
     await expect(summaryCard.getByText("Run failed")).toBeVisible({ timeout: 15_000 });
     await expect(summaryCard.getByText(userMessage)).toBeVisible();
     await expect(summaryCard.getByText("The run hit a system-level execution problem.", { exact: false })).toHaveCount(0);
+    await expect(detailPane.getByText("Transcript", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(detailPane.getByRole("button", { name: "Raw" })).toBeVisible();
+    await expect(detailPane.getByText("Failure details", { exact: true })).toHaveCount(0);
 
     const listPane = page.getByTestId("agent-runs-list-pane");
-    await expect(listPane.getByText("The assistant finished without a final Rudder reply", { exact: false })).toBeVisible();
+    await expect(listPane.getByText("The run hit a system-level execution problem.", { exact: false })).toBeVisible();
   });
 
   test("does not promote stderr excerpts for failed or successful run detail pages", async ({ page }) => {

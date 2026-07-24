@@ -4,7 +4,7 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { __clearWebsiteMetadataIconCacheForTests } from "@/components/MarkdownBody";
 import type { MentionOption } from "@/components/MarkdownEditor";
 import { ThemeProvider } from "@/context/ThemeContext";
-import { buildAgentMentionHref, buildAutomationMentionHref, buildIssueMentionHref, type ChatMessage } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildIssueMentionHref, type Agent, type ChatMessage } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -138,6 +138,37 @@ function message(overrides: Partial<ChatMessage>): ChatMessage {
   };
 }
 
+function agent(overrides: Partial<Agent> = {}): Agent {
+  return {
+    id: "agent-1",
+    orgId: "org-1",
+    name: "Chat Agent",
+    urlKey: "chat-agent",
+    role: "engineer",
+    title: null,
+    icon: "robot",
+    status: "active",
+    reportsTo: null,
+    capabilities: null,
+    agentRuntimeType: "codex_local",
+    agentRuntimeConfig: {},
+    runtimeConfig: {},
+    budgetMonthlyCents: 0,
+    spentMonthlyCents: 0,
+    pauseReason: null,
+    pausedAt: null,
+    permissions: {
+      canCreateAgents: false,
+      canManageSkills: false,
+    },
+    lastHeartbeatAt: null,
+    metadata: null,
+    createdAt: new Date("2026-06-15T10:00:00.000Z"),
+    updatedAt: new Date("2026-06-15T10:00:00.000Z"),
+    ...overrides,
+  };
+}
+
 async function waitForIssueStatus(container: HTMLElement, status: string) {
   await act(async () => {
     await vi.waitFor(() => {
@@ -146,7 +177,7 @@ async function waitForIssueStatus(container: HTMLElement, status: string) {
   });
 }
 
-function renderChatMessageItem(messageToRender: ChatMessage) {
+function renderChatMessageItem(messageToRender: ChatMessage, agents: Agent[] = []) {
   const onForkMessage = vi.fn();
   return render(
     <ThemeProvider>
@@ -199,7 +230,7 @@ function renderChatMessageItem(messageToRender: ChatMessage) {
           },
         }}
         message={messageToRender}
-        agents={[]}
+        agents={agents}
         decisionNote=""
         onDecisionNoteChange={vi.fn()}
         decisionNoteMentions={[]}
@@ -758,6 +789,63 @@ describe("assistant chat message rendering", () => {
 });
 
 describe("failed chat transcript rendering", () => {
+  function renderWithOrganizationPath(messageToRender: ChatMessage, agents: Agent[] = []) {
+    const previousLocation = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.history.replaceState({}, "", "/MARAAA/messenger/chat/chat-1");
+    try {
+      return renderChatMessageItem(messageToRender, agents);
+    } finally {
+      window.history.replaceState({}, "", previousLocation);
+    }
+  }
+
+  it("shows the exact failed-message run beside Retry", () => {
+    const container = renderWithOrganizationPath(
+      message({
+        runId: "run-failed-exact",
+        replyingAgentId: "agent-failed-exact",
+        structuredPayload: {
+          recoverableFailure: {
+            code: "chat_adapter_failed",
+            retryable: true,
+            runId: "run-failed-exact",
+          },
+        },
+      }),
+      [agent({ id: "agent-failed-exact", urlKey: "agent-failed-slug" })],
+    );
+
+    expect(container.innerHTML).toContain('href="/MARAAA/agents/agent-failed-slug/runs/run-failed-exact"');
+    expect(container.textContent).toContain("Open run");
+    expect(container.textContent).toContain("Retry");
+    expect(container.textContent).toContain("Run run-fail");
+  });
+
+  it("shows Open run for a non-retryable failure and hides it without agent identity", () => {
+    const nonRetryable = renderWithOrganizationPath(message({
+      runId: "run-boot",
+      replyingAgentId: "agent-boot",
+      structuredPayload: {
+        recoverableFailure: {
+          code: "chat_runtime_boot_failed",
+          retryable: false,
+          runId: "run-boot",
+        },
+      },
+    }));
+
+    expect(nonRetryable.innerHTML).toContain('href="/MARAAA/agents/agent-boot/runs/run-boot"');
+    expect(nonRetryable.textContent).toContain("Open run");
+    expect(nonRetryable.textContent).not.toContain("Retry");
+
+    const missingAgent = renderWithOrganizationPath(message({
+      runId: "run-orphaned",
+      replyingAgentId: null,
+    }));
+    expect(missingAgent.textContent).not.toContain("Open run");
+    expect(missingAgent.querySelector('a[href*="/runs/"]')).toBeNull();
+  });
+
   it("keeps failed process details and the failed assistant message visibly marked", () => {
     const entries: TranscriptEntry[] = [
       {

@@ -243,6 +243,10 @@ Flow:
     menu opens the newest linked Agent Run, and Agent Detail Run context links
     back to Messenger. Within a conversation group, `Chat Replies` opens each
     individual attempt without duplicating the group in Agent Runs navigation.
+16. A run-backed failed assistant message can open its exact attributed Agent
+    Run directly, independent of the conversation's newest run. Chat omits
+    the action when it cannot resolve both the message run id and agent
+    identity, so it does not render a dead run link.
 
 Invariants:
 

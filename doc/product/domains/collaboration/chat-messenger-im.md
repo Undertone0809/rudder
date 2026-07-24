@@ -215,6 +215,10 @@ Product model:
   navigation collapses matching runs with the same normalized conversation
   identity into one entry, while individual attempts remain available through
   the run detail's `Chat Replies` evidence.
+- A run-backed failed assistant message exposes `Open run` for that exact
+  message attempt, independent of the conversation's newest run. Chat omits the
+  action when either run attribution or agent identity is unavailable, so it
+  does not render a dead Agent Run link.
 - Chat and issues are parallel ways to move tasks forward. Chat organizes work
   through an ongoing conversation; issues add explicit status, ownership,
   priority, dependencies, and review structure.
@@ -342,6 +346,9 @@ Flow:
 8. The operator can open the conversation menu to inspect its newest linked
    Agent Run, then use `Chat Replies` to move between distinct attempts without
    expanding duplicate conversation entries in the Agent Runs navigation.
+   A run-backed failed assistant message instead opens that message's exact
+   Agent Run directly; retryable failures keep this action alongside Retry, and
+   failures without complete run and agent attribution expose no run action.
 9. Chat can continue executing the task conversationally or create/link an
    issue, automation, or approval when the operator asks for that additional
    structure. The assistant must not emit an issue proposal merely because the
