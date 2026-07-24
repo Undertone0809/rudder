@@ -1246,7 +1246,16 @@ async function installSharedRuntimePostgresPayload(
     await rm(previousPlatformRoot, { recursive: true, force: true });
     try {
       const temporaryRuntimeDir = temporaryPlatformRoot;
-      await cp(sourceRuntimeDir, temporaryRuntimeDir, { recursive: true, dereference: true });
+      await mkdir(temporaryRuntimeDir, { recursive: true });
+      for (const directoryName of ["bin", "lib"]) {
+        const sourceDirectory = path.join(sourceRuntimeDir, directoryName);
+        if (!await stat(sourceDirectory).catch(() => null)) continue;
+        await cp(
+          sourceDirectory,
+          path.join(temporaryRuntimeDir, directoryName),
+          { recursive: true, dereference: true },
+        );
+      }
       const temporaryShareDir = path.join(temporaryRuntimeDir, "share");
       const temporaryTemplateDir = path.join(temporaryShareDir, "postgresql");
       await rm(temporaryShareDir, { recursive: true, force: true });

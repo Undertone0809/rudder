@@ -25,6 +25,25 @@ each version shipped. For current product guidance, use the Concepts, How-to,
 and Reference pages in this site. Future release entries should use the current
 navigation names and link to the owning page when a term may be ambiguous.
 
+## v0.6.1
+
+Released: 2026-07-25
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.6.1)
+
+### New Features
+
+- Added an agent-operated stable release path that carries an explicitly requested version through npm, GitHub Release, Desktop assets, public docs, install smoke, and next-version handoff without a second-account approval step.
+
+### Improvements
+
+- Strengthened stable release automation with canonical-repository checks, exact-source CI verification, main-history validation, and non-interactive production-docs authorization.
+
+### Bug Fixes
+
+- Fixed fresh macOS installs failing while preparing PostgreSQL 18.4 when the upstream archive contains unrelated dangling symlinks inside pgAdmin.
+- Fixed stable releases failing to invoke the reusable production-docs workflow after the release request had already authorized docs publication.
+
 ## v0.6.0
 
 Released: 2026-07-25

@@ -2340,7 +2340,19 @@ describe("runtime install helpers", () => {
     try {
       delete process.env.RUDDER_POSTGRES_BIN_DIR;
       delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
-      await writeFakePostgresRuntime(archiveSource);
+      const archiveBinDir = await writeFakePostgresRuntime(archiveSource);
+      const archiveRuntimeDir = path.dirname(archiveBinDir);
+      const pgAdminFrameworksDir = path.join(
+        archiveRuntimeDir,
+        "pgAdmin 4.app",
+        "Contents",
+        "Frameworks",
+      );
+      await mkdir(pgAdminFrameworksDir, { recursive: true });
+      await symlink(
+        path.join(archiveRuntimeDir, "missing-private-headers"),
+        path.join(pgAdminFrameworksDir, "PrivateHeaders"),
+      );
       const archivePath = path.join(root, "postgresql-18.4.zip");
       const archiveResult = spawnSync("tar", ["-cf", archivePath, "pgsql"], {
         cwd: archiveSource,
@@ -2363,6 +2375,10 @@ describe("runtime install helpers", () => {
 
       expect(first.postgresPayloadBinDir).toBe(second.postgresPayloadBinDir);
       await expect(access(first.postgresPayloadBinDir!)).resolves.toBeUndefined();
+      await expect(access(path.join(
+        path.dirname(first.postgresPayloadBinDir!),
+        "pgAdmin 4.app",
+      ))).rejects.toThrow();
     } finally {
       if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
       else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
