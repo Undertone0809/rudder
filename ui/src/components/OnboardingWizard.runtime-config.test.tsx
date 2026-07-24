@@ -211,6 +211,7 @@ describe("OnboardingWizard runtime config", () => {
       id: "secret-1",
       orgId: "org-1",
       name: "onboarding-deepseek-api-key",
+      purpose: "user_managed",
       provider: "local_encrypted",
       externalRef: null,
       latestVersion: 1,

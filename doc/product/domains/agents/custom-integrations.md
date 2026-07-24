@@ -8,19 +8,27 @@ contract_ids:
   - AGENT.CUSTOM.INTEGRATIONS.001
 related_code:
   - packages/db/src/schema/custom_integrations.ts
+  - packages/db/src/schema/mcp_connections.ts
   - packages/shared/src/types/custom-integration.ts
+  - packages/shared/src/types/mcp.ts
   - packages/shared/src/validators/custom-integration.ts
+  - packages/shared/src/validators/mcp.ts
   - server/src/services/integrations/custom-integrations.ts
   - server/src/routes/agents.ts
   - server/src/services/agent-run-context.ts
   - ui/src/api/agents.ts
   - ui/src/pages/AgentDetail.integrations.tsx
 related_tests:
+  - packages/db/src/mcp-connections-schema.test.ts
+  - packages/db/src/migrations/managed-mcp-connections.test.ts
+  - packages/shared/src/validators/mcp.test.ts
+  - scripts/managed-mcp-product-contract.test.mjs
   - server/src/__tests__/custom-integrations-service.test.ts
   - ui/src/pages/AgentDetail.integrations.test.tsx
   - tests/e2e/agent-detail-integrations-tab.spec.ts
 related_plans:
   - doc/plans/2026-06-27-agent-custom-integrations.md
+  - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
 edit_policy: user_confirmed_only
 ---
 
@@ -30,11 +38,15 @@ edit_policy: user_confirmed_only
 
 ### Contract Summary
 
-Rudder supports custom agent integrations for `custom_api` and `mcp_server`
-entries. A custom integration belongs to one organization, is either
-organization-scoped or agent-scoped, stores credentials as organization secrets,
-binds an allowlist of tools to agents, and exposes only enabled tool summaries
-to runtime prompt assembly.
+Rudder supports the existing `custom_api` and legacy `mcp_server` records plus
+organization-owned managed MCP connections for Supabase, Linear, Notion, and
+custom servers. Managed connections own provider, transport, external scope,
+access mode, lifecycle, safe non-secret configuration, discovered tools, agent
+bindings, and redacted dispatch evidence. OAuth grants and temporary OAuth
+sessions are separate encrypted credential records. Public connection
+summaries expose credential presence only, never secret identifiers or values.
+External MCP credentials stay server-side throughout authorization, discovery,
+and dispatch.
 
 ### Intent / User Job
 
@@ -62,8 +74,11 @@ tool naming, identity, and fallback semantics for that built-in surface.
 
 ### Actors / Objects / State
 
-- Board operator: creates, configures, binds, and revokes custom integrations
-  from Agent Detail Integrations.
+- Organization owner or instance administrator: creates, authorizes,
+  configures, discovers, refreshes, disables, and revokes organization MCP
+  connections.
+- Board operator: continues to manage legacy custom integrations from Agent
+  Detail Integrations where current permissions allow.
 - Agent: may read its own enabled custom tools through runtime prompt context.
 - Custom integration: organization-owned definition with `kind`, `scope`,
   display metadata, non-secret config, status, and optional credential secret.
@@ -72,6 +87,16 @@ tool naming, identity, and fallback semantics for that built-in surface.
 - Agent custom integration binding: per-agent status and enabled-tool allowlist.
 - Custom integration tool call: sanitized audit evidence for attempted custom
   tool dispatch.
+- Managed MCP connection: organization-owned provider/server identity with a
+  unique organization server name, transport (`stdio`, `streamable_http`, or
+  `legacy_manual`), optional stable external scope, access mode, timeouts,
+  enablement/required flags, and explicit lifecycle state.
+- OAuth grant: connection-bound provider identity and scope metadata whose
+  access/refresh/client credential material exists only through an encrypted
+  organization-secret reference.
+- OAuth session: one-time, 10-minute authorization record with hashed state,
+  redirect URI, expiry and consumption timestamps, and encrypted PKCE or
+  temporary client metadata stored through an organization-secret reference.
 - Rudder MCP tools: built-in, runtime-managed Rudder tools represented
   as a read-only Agent Detail Manage row, not persisted custom integration rows.
 
@@ -90,6 +115,10 @@ tool naming, identity, and fallback semantics for that built-in surface.
 - Agent Detail Integrations exposes Custom API and MCP Server setup controls.
 - Agent Detail Integrations Manage exposes a read-only built-in `Rudder MCP
   tools` row for the first-party `rudder-tools` Agent V1 MCP server.
+- Organization integration management exposes managed connection CRUD,
+  provider catalog, OAuth start/callback, external-scope selection, discovery,
+  refresh, disable, and revoke actions only to organization owners and instance
+  administrators.
 
 ### Product Logic Flow
 
@@ -107,12 +136,50 @@ tool naming, identity, and fallback semantics for that built-in surface.
 7. Runtime prompt text lists tool names, integration display names, kind, scope,
    external tool names, and descriptions. It never includes credential ids,
    secret values, or raw credential material.
-8. Tool-call audit creation validates organization, agent, integration, binding,
-   and enabled-tool ownership before persisting a sanitized blocked event.
+8. Legacy Custom API and `legacy_manual` tool-call audit creation validates
+   organization, agent, integration, binding, and enabled-tool ownership before
+   persisting a sanitized blocked event; managed active connections use the
+   real discovery and dispatch lifecycle below.
 9. Separately, Agent Detail Manage can show built-in Rudder MCP tools using the
    Rudder logo, server name, runtime-managed auth label, and full exposed tool
    list. This row is informational and cannot be configured or disconnected
    through custom integration actions.
+10. For a managed provider, Rudder creates a `draft` connection, starts a
+    one-time 10-minute OAuth session, stores only the state hash, and keeps
+    PKCE, temporary client metadata, access tokens, and refresh tokens in
+    encrypted organization secrets.
+11. The OAuth callback consumes the session once, associates the authorizing
+    Rudder user with provider subject/scope metadata, and moves the connection
+    through `authorizing`, `selecting_scope`, `active`, `needs_reauth`,
+    `disabled`, `revoked`, or `error` without putting provider credentials in
+    connection rows or public responses.
+12. Supabase selects one project and defaults to `read_only`; a Supabase Owner
+    may explicitly enable `read_write` (read/write). Linear binds one authorized
+    workspace with `read_only` or `read_write` access. Notion supports only
+    `provider_default`: its provider-granted workspace permissions are not
+    presented as a provider-native read-only mode, while Rudder still limits
+    agent exposure through the binding tool allowlist. The existing Linear
+    issue-import plugin remains separate and unchanged.
+13. Real MCP tool discovery stores raw schemas for evidence and sanitized
+    schemas for operator/runtime exposure. Removed tools remain explicit.
+    Current discovered tools may be enabled on the first binding, but newly
+    discovered tools never auto-enable on existing agent bindings.
+14. A managed dispatch revalidates organization, agent, run, connection,
+    grant, binding, and enabled tool before forwarding. Audit evidence stores
+    sanitized input/result and a redacted dispatch outcome.
+15. Custom STDIO accepts Codex-compatible command, arguments, working
+    directory, non-sensitive static environment values, forwarded environment
+    names, secret environment names, enablement, required behavior, and startup
+    and tool timeouts within the deployment boundary owned by
+    `AGENT.RUNTIME.PERMISSIONS.001`. Custom Streamable HTTP keeps URLs,
+    non-sensitive static headers, header-name-to-environment-name mappings,
+    Bearer environment references, secret header names, and credential-presence
+    markers separate from encrypted credentials. Secret environment, header,
+    and direct Bearer values enter only through a mutation-only `secrets`
+    payload that the service encrypts as a whole and never returns. Manual
+    Authorization header, Bearer environment, and direct Bearer sources are
+    mutually exclusive; OAuth-grant conflicts are checked at the service
+    boundary.
 
 ### Decision Table
 
@@ -125,9 +192,18 @@ tool naming, identity, and fallback semantics for that built-in surface.
 | Disabled or non-allowlisted tool | Hidden from runtime prompts and rejected for tool-call audit. |
 | Credential value is provided on create | Stored as an organization secret; not returned in API summaries. |
 | Both `credential` and `credentialSecretId` are provided | Rejected. |
-| Tool dispatch is requested in this implementation slice | Validated and recorded as `blocked` with `dispatch_not_implemented`. |
+| Tool dispatch targets Custom API or `legacy_manual` compatibility data | Validated and recorded as blocked; legacy data is never silently made executable. |
 | Operator opens Discover | Shows Custom API, MCP Server, fixed-provider setup, and planned provider cards; does not show built-in Rudder MCP tools. |
 | Operator opens Manage | Shows active fixed/custom integrations plus the built-in Rudder MCP tools row when available. |
+| Existing `mcp_server` row is migrated | Represented by a disabled, non-executable `legacy_manual` connection; its existing row, tools, bindings, audit history, and credentials remain readable. |
+| OAuth callback state is replayed or older than 10 minutes | Rejected without exchanging or exposing credentials. |
+| Managed connection becomes unauthorized | Moves to `needs_reauth`; calls remain blocked until a valid grant is restored. |
+| Discovery finds a new tool on an existing binding | Tool is persisted but not automatically enabled for that binding. |
+| Discovery no longer returns a prior tool | Tool is marked removed and cannot be dispatched; history remains. |
+| Public connection or grant response | Exposes safe config and `hasCredentials` only, never secret ids, tokens, client secrets, or PKCE material. |
+| Curated provider create or update supplies URL, headers, STDIO, legacy config, or manual secrets | Rejected; curated endpoints, transport, and OAuth credential handling are Rudder-managed. |
+| Custom safe config marks an environment or header value secret | The public config retains only its name, mapping, or presence; the value must arrive in the mutation-only encrypted `secrets` payload. |
+| Custom HTTP config selects more than one manual Authorization/Bearer source | Rejected before persistence. |
 
 ### Actor-Visible Input
 
@@ -154,6 +230,9 @@ Rudder persists:
 - `custom_integration_tools`
 - `agent_custom_integration_bindings`
 - `custom_integration_tool_calls`
+- `mcp_connections`
+- `mcp_oauth_grants`
+- `mcp_oauth_sessions`
 - organization secret rows and versions for inline credentials
 - activity log events for create and revoke mutations
 
@@ -185,13 +264,25 @@ Rudder persists:
   trusted for authorization.
 - Tool names exposed to agents are Rudder-namespaced and organization-unique.
 - Tool-call logs and prompt text must not expose secrets.
+- Managed connections, grants, sessions, tools, bindings, and dispatch audits
+  are organization-owned; identifiers supplied by a runtime do not establish
+  organization membership or authorization.
+- Connection/server names are unique within an organization. Curated provider
+  external scopes are stable and unique within that provider; multiple custom
+  connections remain allowed.
+- Raw access tokens, refresh tokens, client secrets, PKCE verifiers, and
+  temporary dynamic-client credentials never live directly in managed MCP
+  connection, grant, session, tool, binding, or audit rows.
+- `legacy_manual` connections are compatibility records, not executable
+  managed connections. Migration must not silently activate old
+  `mcp_server` definitions.
 - First-party Rudder MCP tools are runtime-managed and must stay separate from
   Custom API / MCP Server integrations. They do not create custom integration
   rows, do not need operator-supplied credentials, and are not configurable from
   Discover.
-- The current implementation does not perform real remote MCP discovery,
-  external HTTP dispatch, server-side credential injection into outbound calls,
-  or result normalization. Those remain follow-up work.
+- Provider OAuth identity is separate from the authorizing Rudder user and from
+  run-scoped runtime identity. Revoking one boundary must not be mistaken for
+  revoking or authorizing another.
 
 ### Drift Boundaries
 
@@ -203,6 +294,7 @@ semantics remain governed by their provider contracts, not this page.
 ### Traceability
 
 - Plan: `doc/plans/2026-06-27-agent-custom-integrations.md`
+- Plan: `doc/plans/2026-07-23-managed-mcp-oauth-integrations.md`
 - Related active contracts:
   - `AGENT.SKILLS.001` for discovery vs runtime enablement.
   - `AGENT.INSTRUCTIONS.001` for runtime prompt assembly.

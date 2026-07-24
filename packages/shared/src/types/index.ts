@@ -99,6 +99,26 @@ export type {
 } from "./issue.js";
 export type { LiveEvent } from "./live.js";
 export type {
+  ManagedExternalMcpBinding,
+  ManagedExternalMcpBindings,
+  ManagedExternalMcpToolPolicy,
+  McpAgentBinding,
+  McpAgentConnectionSummary,
+  McpConnectionSafeConfig,
+  McpConnectionSecretsMutation,
+  McpConnectionSummary,
+  McpDiscoveredTool,
+  McpExternalScopeOption,
+  McpExternalScopeSelectionResponse,
+  McpLegacyManualSafeConfig,
+  McpOAuthCallbackResult,
+  McpOAuthGrantSummary,
+  McpOAuthStartResponse,
+  McpProviderCatalogEntry,
+  McpStdioSafeConfig,
+  McpStreamableHttpSafeConfig
+} from "./mcp.js";
+export type {
   IssueFollow,
   IssueFollowEntry, MessengerApprovalThreadItem,
   MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerFailedRunThreadItem, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerRunOriginDescriptor, MessengerRunOriginSource, MessengerRunOriginSourceState, MessengerSavedView, MessengerSavedViewKeepResult, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewPlacement, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadItem, MessengerSystemThreadKind,

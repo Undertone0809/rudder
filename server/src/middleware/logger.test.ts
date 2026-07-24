@@ -5,6 +5,10 @@ import {
   markBrowserHttpRequestBodySensitive,
   markHttpRequestBodySensitive,
   requestBodyForLogs,
+  requestHeadersForLogs,
+  requestQueryForLogs,
+  requestUrlForLogs,
+  serializeHttpRequestForLogs,
 } from "./logger.js";
 
 describe("HTTP request-body logging", () => {
@@ -133,5 +137,50 @@ describe("HTTP request-body logging", () => {
       .send({ function: "() => 'private-value'" });
     expect(mismatched.status).toBe(403);
     expect(loggedBody).toBe("[REDACTED]");
+  });
+
+  it("redacts OAuth callback URL and query before auth or route middleware runs", () => {
+    const req = {
+      originalUrl: "/api/mcp/oauth/callback?state=raw-state&code=raw-code&error_description=private",
+      url: "/api/mcp/oauth/callback?state=raw-state&code=raw-code&error_description=private",
+      query: {
+        state: "raw-state",
+        code: "raw-code",
+        error_description: "private",
+        iss: "https://oauth.example.test",
+      },
+      headers: {
+        referer: "https://oauth.example.test/authorize?state=referer-state&code_challenge=pkce-secret",
+        cookie: "oauth-session=cookie-secret",
+        authorization: "Bearer callback-secret",
+        "user-agent": "test",
+      },
+    };
+
+    expect(requestUrlForLogs(req)).toBe("/api/mcp/oauth/callback?[REDACTED]");
+    expect(requestQueryForLogs(req, req.query)).toBe("[REDACTED]");
+    expect(requestHeadersForLogs(req, req.headers)).toEqual({
+      referer: "[REDACTED]",
+      cookie: "[REDACTED]",
+      authorization: "[REDACTED]",
+      "user-agent": "test",
+    });
+    const serialized = serializeHttpRequestForLogs(req);
+    expect(serialized).toMatchObject({
+      url: "/api/mcp/oauth/callback?[REDACTED]",
+      query: "[REDACTED]",
+      headers: {
+        referer: "[REDACTED]",
+        cookie: "[REDACTED]",
+        authorization: "[REDACTED]",
+        "user-agent": "test",
+      },
+    });
+    expect(JSON.stringify({
+      url: requestUrlForLogs(req),
+      query: requestQueryForLogs(req, req.query),
+      headers: requestHeadersForLogs(req, req.headers),
+      serialized,
+    })).not.toMatch(/raw-state|raw-code|private|oauth\.example|referer-state|pkce-secret|cookie-secret|callback-secret/u);
   });
 });

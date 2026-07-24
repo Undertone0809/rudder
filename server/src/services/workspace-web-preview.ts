@@ -223,7 +223,7 @@ async function resolveOpenedFilePath(handle: FileHandle) {
           encoding: "utf8",
           env: { LANG: "C", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
           maxBuffer: 64 * 1024,
-          timeout: 2_000,
+          timeout: 5_000,
         },
       );
       const fields = stdout

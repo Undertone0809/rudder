@@ -44,6 +44,7 @@ import { FeishuLogoIcon } from "../components/FeishuLogoIcon";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime } from "../lib/utils";
+import { AgentManagedMcpConnections } from "./AgentManagedMcpConnections";
 
 type IntegrationState = "not_configured" | "active" | "revoked" | "error";
 
@@ -450,17 +451,19 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
 
       {integrationsView === "discover" ? (
           <div className="space-y-6">
-            <IntegrationCategorySection title="Custom tools">
+            <IntegrationCategorySection title="Agent-scoped custom API">
               <CustomIntegrationSetupCard
                 kind="custom_api"
                 active={customForm?.kind === "custom_api"}
                 onConfigure={() => setCustomForm(defaultCustomIntegrationForm("custom_api"))}
               />
-              <CustomIntegrationSetupCard
-                kind="mcp_server"
-                active={customForm?.kind === "mcp_server"}
-                onConfigure={() => setCustomForm(defaultCustomIntegrationForm("mcp_server"))}
-              />
+              <div className="rounded-md border border-dashed border-border bg-background/30 p-4">
+                <p className="text-sm font-medium text-foreground">Managed MCP connections</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Create Supabase, Linear, Notion, STDIO, or Streamable HTTP connections in
+                  Organization Settings, then bind their tools from Manage.
+                </p>
+              </div>
             </IntegrationCategorySection>
             <IntegrationCategorySection title="Message">
               <FeishuIntegrationCard
@@ -500,6 +503,9 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
           </div>
         ) : (
           <div className="space-y-4">
+            <IntegrationManageGroup title="External MCPs">
+              <AgentManagedMcpConnections agentId={agent.id} orgId={orgId} />
+            </IntegrationManageGroup>
             {integrationsQuery.isLoading || customIntegrationsQuery.isLoading ? (
               <IntegrationRowSkeleton />
             ) : hasManagedIntegrations ? (
@@ -542,8 +548,8 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
               </div>
             ) : (
               <div className="rounded-md border border-dashed border-border bg-background/30 px-4 py-8 text-center">
-                <p className="text-sm font-medium text-foreground">No connected integrations</p>
-                <p className="mt-1 text-sm text-muted-foreground">Use Discover to connect tools for this agent.</p>
+                <p className="text-sm font-medium text-foreground">No other connected integrations</p>
+                <p className="mt-1 text-sm text-muted-foreground">Use Discover to connect messaging or legacy custom tools.</p>
               </div>
             )}
           </div>
@@ -677,16 +683,18 @@ function IntegrationManageGroup({
   children,
 }: {
   title: string;
-  count: number;
+  count?: number;
   children: ReactNode;
 }) {
   return (
     <section className="space-y-3">
       <div className="flex items-center gap-2">
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-        <span className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-          {count}
-        </span>
+        {count !== undefined ? (
+          <span className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+            {count}
+          </span>
+        ) : null}
       </div>
       <div className="space-y-2">{children}</div>
     </section>

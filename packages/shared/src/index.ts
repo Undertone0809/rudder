@@ -52,7 +52,7 @@ export {
   GOAL_STATUSES, HEARTBEAT_INVOCATION_SOURCES,
   HEARTBEAT_RUN_STATUSES, INSTANCE_USER_ROLES, INVITE_JOIN_TYPES, INVITE_TYPES, ISSUE_ORIGIN_KINDS, ISSUE_PRIORITIES, ISSUE_STATUSES, JOIN_REQUEST_STATUSES, JOIN_REQUEST_TYPES, LIVE_EVENT_TYPES, MEMBERSHIP_STATUSES, MESSENGER_CUSTOM_GROUP_EMOJI_ICONS, MESSENGER_FORK_GROUP_DEFAULT_ICON, MESSENGER_SYSTEM_THREAD_KINDS, MESSENGER_THREAD_KINDS, ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES,
   ORGANIZATION_INTELLIGENCE_PROFILE_STATUSES, ORGANIZATION_RESOURCE_KINDS,
-  ORGANIZATION_RESOURCE_SOURCE_TYPES, ORGANIZATION_STATUSES, PAUSE_REASONS, PERMISSION_KEYS,
+  ORGANIZATION_RESOURCE_SOURCE_TYPES, ORGANIZATION_SECRET_PURPOSES, ORGANIZATION_STATUSES, PAUSE_REASONS, PERMISSION_KEYS,
   PLUGIN_API_VERSION, PLUGIN_BRIDGE_ERROR_CODES, PLUGIN_CAPABILITIES, PLUGIN_CATEGORIES, PLUGIN_EVENT_TYPES, PLUGIN_JOB_RUN_STATUSES,
   PLUGIN_JOB_RUN_TRIGGERS, PLUGIN_JOB_STATUSES, PLUGIN_LAUNCHER_ACTIONS,
   PLUGIN_LAUNCHER_BOUNDS, PLUGIN_LAUNCHER_PLACEMENT_ZONES, PLUGIN_LAUNCHER_RENDER_ENVIRONMENTS,
@@ -64,10 +64,29 @@ export {
   type GoalStatus, type HeartbeatInvocationSource,
   type HeartbeatRunStatus, type InstanceUserRole, type InviteJoinType, type InviteType, type IssueOriginKind, type IssuePriority, type IssueStatus, type JoinRequestStatus, type JoinRequestType, type LiveEventType, type MembershipStatus, type MessengerSystemThreadKind, type MessengerThreadKind, type OrganizationIntelligenceProfilePurpose,
   type OrganizationIntelligenceProfileStatus, type OrganizationResourceKind,
-  type OrganizationResourceSourceType, type OrganizationStatus, type PauseReason, type PermissionKey, type PluginBridgeErrorCode, type PluginCapability, type PluginCategory, type PluginEventType, type PluginJobRunStatus,
+  type OrganizationResourceSourceType, type OrganizationSecretPurpose, type OrganizationStatus, type PauseReason, type PermissionKey, type PluginBridgeErrorCode, type PluginCapability, type PluginCategory, type PluginEventType, type PluginJobRunStatus,
   type PluginJobRunTrigger, type PluginJobStatus, type PluginLauncherAction,
   type PluginLauncherBounds, type PluginLauncherPlacementZone, type PluginLauncherRenderEnvironment,
   type PluginStateScopeKind, type PluginStatus, type PluginUiSlotEntityType, type PluginUiSlotType, type PluginWebhookDeliveryStatus, type PrincipalType, type ProjectIconName, type ProjectResourceAttachmentRole, type ProjectStatus, type RudderAgentV1McpToolName, type RudderBrowserMcpToolName, type RudderCoreMcpToolName, type SecretProvider, type SideChatState, type StorageProvider, type WakeupRequestStatus, type WakeupTriggerDetail
+} from "./constants.js";
+
+export {
+  MCP_AGENT_BINDING_STATUSES,
+  MCP_CONNECTION_ACCESS_MODES,
+  MCP_CONNECTION_PROVIDERS,
+  MCP_CONNECTION_STATUSES,
+  MCP_CONNECTION_TRANSPORTS,
+  MCP_OAUTH_GRANT_STATUSES,
+  MCP_OAUTH_SESSION_STATUSES,
+  MCP_OAUTH_SESSION_TTL_MS,
+  MCP_PROVIDER_CATALOG,
+  type McpAgentBindingStatus,
+  type McpConnectionAccessMode,
+  type McpConnectionProvider,
+  type McpConnectionStatus,
+  type McpConnectionTransport,
+  type McpOAuthGrantStatus,
+  type McpOAuthSessionStatus
 } from "./constants.js";
 
 export { resolveAgentRunScene, toAgentRun, toAgentRunOrigin, toAgentRuns, toHeartbeatRun, toHeartbeatRuns, toPublicHeartbeatRunContextSnapshot } from "./agent-run.js";
@@ -87,6 +106,28 @@ export type {
   CustomIntegrationToolSummary
 } from "./types/custom-integration.js";
 
+export type {
+  ManagedExternalMcpBinding,
+  ManagedExternalMcpBindings,
+  ManagedExternalMcpToolPolicy,
+  McpAgentBinding,
+  McpAgentConnectionSummary,
+  McpConnectionSafeConfig,
+  McpConnectionSecretsMutation,
+  McpConnectionSummary,
+  McpCuratedSafeConfig,
+  McpDiscoveredTool,
+  McpExternalScopeOption,
+  McpExternalScopeSelectionResponse,
+  McpLegacyManualSafeConfig,
+  McpOAuthCallbackResult,
+  McpOAuthGrantSummary,
+  McpOAuthStartResponse,
+  McpProviderCatalogEntry,
+  McpStdioSafeConfig,
+  McpStreamableHttpSafeConfig
+} from "./types/mcp.js";
+
 export {
   createCustomIntegrationSchema,
   createCustomIntegrationToolCallSchema,
@@ -102,6 +143,40 @@ export {
   type CreateCustomIntegrationToolCall,
   type UpdateCustomIntegrationBinding
 } from "./validators/custom-integration.js";
+
+export {
+  createMcpConnectionSchema,
+  managedExternalMcpBindingSchema,
+  managedExternalMcpBindingsSchema, mcpAgentBindingSchema,
+  mcpAgentBindingStatusSchema, mcpAgentConnectionSummarySchema, mcpConnectionAccessModeSchema,
+  mcpConnectionMergedConfigSchema,
+  mcpConnectionMutationConfigSchema,
+  mcpConnectionProviderSchema,
+  mcpConnectionSafeConfigSchema,
+  mcpConnectionSecretsMutationSchema,
+  mcpConnectionStatusSchema,
+  mcpConnectionSummarySchema,
+  mcpConnectionTransportSchema,
+  mcpCuratedSafeConfigSchema,
+  mcpDiscoveredToolSchema,
+  mcpExternalScopeOptionSchema,
+  mcpLegacyManualSafeConfigSchema,
+  mcpOAuthCallbackSchema,
+  mcpOAuthGrantStatusSchema,
+  mcpOAuthGrantSummarySchema,
+  mcpOAuthStartResponseSchema,
+  mcpOAuthStartSchema,
+  mcpProviderCatalogEntrySchema,
+  mcpProviderCatalogSchema,
+  mcpScopeSelectionSchema,
+  mcpStdioSafeConfigSchema,
+  mcpStreamableHttpSafeConfigSchema,
+  updateMcpAgentBindingSchema, updateMcpConnectionSchema, upsertMcpAgentBindingSchema, type CreateMcpConnection,
+  type McpOAuthCallback,
+  type McpOAuthStart,
+  type McpScopeSelection, type UpdateMcpAgentBinding,
+  type UpdateMcpConnection, type UpsertMcpAgentBinding
+} from "./validators/mcp.js";
 
 export {
   appendChatGenerationEventSchema,

@@ -1,6 +1,11 @@
 import type { Db } from "@rudderhq/db";
 import { organizationSecrets, organizationSecretVersions } from "@rudderhq/db";
-import type { AgentEnvConfig, EnvBinding, SecretProvider } from "@rudderhq/shared";
+import type {
+  AgentEnvConfig,
+  EnvBinding,
+  OrganizationSecretPurpose,
+  SecretProvider,
+} from "@rudderhq/shared";
 import { envBindingSchema } from "@rudderhq/shared";
 import { and, desc, eq } from "drizzle-orm";
 import { conflict, notFound, unprocessable } from "../errors.js";
@@ -64,7 +69,7 @@ function canonicalizeBinding(binding: EnvBinding): CanonicalEnvBinding {
 }
 
 export function secretService(db: Db) {
-  async function getById(id: string) {
+  async function getByIdInternal(id: string) {
     return db
       .select()
       .from(organizationSecrets)
@@ -72,12 +77,40 @@ export function secretService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
-  async function getByName(orgId: string, name: string) {
+  async function getById(id: string, options: { allowManaged?: boolean } = {}) {
+    const secret = await getByIdInternal(id);
+    if (
+      secret
+      && secret.purpose !== "user_managed"
+      && options.allowManaged !== true
+    ) {
+      return null;
+    }
+    return secret;
+  }
+
+  async function getByNameInternal(orgId: string, name: string) {
     return db
       .select()
       .from(organizationSecrets)
       .where(and(eq(organizationSecrets.orgId, orgId), eq(organizationSecrets.name, name)))
       .then((rows) => rows[0] ?? null);
+  }
+
+  async function getByName(
+    orgId: string,
+    name: string,
+    options: { allowManaged?: boolean } = {},
+  ) {
+    const secret = await getByNameInternal(orgId, name);
+    if (
+      secret
+      && secret.purpose !== "user_managed"
+      && options.allowManaged !== true
+    ) {
+      return null;
+    }
+    return secret;
   }
 
   async function getSecretVersion(secretId: string, version: number) {
@@ -93,8 +126,12 @@ export function secretService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
-  async function assertSecretInCompany(orgId: string, secretId: string) {
-    const secret = await getById(secretId);
+  async function assertSecretInCompany(
+    orgId: string,
+    secretId: string,
+    options: { allowManaged?: boolean } = {},
+  ) {
+    const secret = await getById(secretId, options);
     if (!secret) throw notFound("Secret not found");
     if (secret.orgId !== orgId) throw unprocessable("Secret must belong to same organization");
     return secret;
@@ -105,7 +142,7 @@ export function secretService(db: Db) {
     secretId: string,
     version: number | "latest",
   ): Promise<string> {
-    const secret = await assertSecretInCompany(orgId, secretId);
+    const secret = await assertSecretInCompany(orgId, secretId, { allowManaged: true });
     const resolvedVersion = version === "latest" ? secret.latestVersion : version;
     const versionRow = await getSecretVersion(secret.id, resolvedVersion);
     if (!versionRow) throw notFound("Secret version not found");
@@ -181,7 +218,10 @@ export function secretService(db: Db) {
       db
         .select()
         .from(organizationSecrets)
-        .where(eq(organizationSecrets.orgId, orgId))
+        .where(and(
+          eq(organizationSecrets.orgId, orgId),
+          eq(organizationSecrets.purpose, "user_managed"),
+        ))
         .orderBy(desc(organizationSecrets.createdAt)),
 
     getById,
@@ -198,8 +238,16 @@ export function secretService(db: Db) {
         externalRef?: string | null;
       },
       actor?: { userId?: string | null; agentId?: string | null },
+      options: {
+        allowManaged?: boolean;
+        purpose?: OrganizationSecretPurpose;
+      } = {},
     ) => {
-      const existing = await getByName(orgId, input.name);
+      const purpose = options.purpose ?? "user_managed";
+      if (purpose !== "user_managed" && options.allowManaged !== true) {
+        throw unprocessable("Managed secret purposes require explicit internal access");
+      }
+      const existing = await getByNameInternal(orgId, input.name);
       if (existing) throw conflict(`Secret already exists: ${input.name}`);
 
       const provider = getSecretProvider(input.provider);
@@ -215,6 +263,7 @@ export function secretService(db: Db) {
             orgId,
             name: input.name,
             provider: input.provider,
+            purpose,
             externalRef: prepared.externalRef,
             latestVersion: 1,
             description: input.description ?? null,
@@ -241,8 +290,9 @@ export function secretService(db: Db) {
       secretId: string,
       input: { value: string; externalRef?: string | null },
       actor?: { userId?: string | null; agentId?: string | null },
+      options: { allowManaged?: boolean } = {},
     ) => {
-      const secret = await getById(secretId);
+      const secret = await getById(secretId, options);
       if (!secret) throw notFound("Secret not found");
       const provider = getSecretProvider(secret.provider as SecretProvider);
       const nextVersion = secret.latestVersion + 1;
@@ -280,12 +330,13 @@ export function secretService(db: Db) {
     update: async (
       secretId: string,
       patch: { name?: string; description?: string | null; externalRef?: string | null },
+      options: { allowManaged?: boolean } = {},
     ) => {
-      const secret = await getById(secretId);
+      const secret = await getById(secretId, options);
       if (!secret) throw notFound("Secret not found");
 
       if (patch.name && patch.name !== secret.name) {
-        const duplicate = await getByName(secret.orgId, patch.name);
+        const duplicate = await getByNameInternal(secret.orgId, patch.name);
         if (duplicate && duplicate.id !== secret.id) {
           throw conflict(`Secret already exists: ${patch.name}`);
         }
@@ -306,8 +357,8 @@ export function secretService(db: Db) {
         .then((rows) => rows[0] ?? null);
     },
 
-    remove: async (secretId: string) => {
-      const secret = await getById(secretId);
+    remove: async (secretId: string, options: { allowManaged?: boolean } = {}) => {
+      const secret = await getById(secretId, options);
       if (!secret) return null;
       await db.delete(organizationSecrets).where(eq(organizationSecrets.id, secretId));
       return secret;

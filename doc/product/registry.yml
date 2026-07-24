@@ -497,6 +497,8 @@ contracts:
     related_code:
       - packages/agent-runtime-utils/src/rudder-mcp.ts
       - packages/agent-runtime-utils/src/server-utils.cli.ts
+      - packages/shared/src/types/mcp.ts
+      - packages/shared/src/validators/mcp.ts
       - packages/agent-runtimes/claude-local/src/server/execute.ts
       - packages/agent-runtimes/codex-local/src/server/codex-home.ts
       - packages/agent-runtimes/codex-local/src/server/execute.ts
@@ -509,6 +511,8 @@ contracts:
       - desktop/scripts/after-pack.mjs
     related_tests:
       - packages/agent-runtime-utils/src/server-utils.test.ts
+      - packages/shared/src/validators/mcp.test.ts
+      - scripts/managed-mcp-product-contract.test.mjs
       - server/src/__tests__/codex-local-execute.test.ts
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/cursor-local-execute.test.ts
@@ -521,6 +525,7 @@ contracts:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-26-local-runtime-operator-home-default.md
       - doc/plans/2026-07-12-built-in-browser.md
+      - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
   AGENT.CONTROL.TOOLS.001:
     owner: product
     domain: agents
@@ -536,6 +541,8 @@ contracts:
       - packages/agent-runtime-utils/src/rudder-mcp.ts
       - packages/agent-runtime-utils/src/rudder-mcp-server.ts
       - packages/agent-runtime-utils/src/types.ts
+      - packages/shared/src/types/mcp.ts
+      - packages/shared/src/validators/mcp.ts
       - packages/agent-runtimes/claude-local/src/server/execute.ts
       - packages/agent-runtimes/codex-local/src/server/execute.ts
       - packages/agent-runtimes/opencode-local/src/server/execute.ts
@@ -549,6 +556,8 @@ contracts:
       - server/resources/bundled-skills/rudder-docs/references/cli-reference.md
       - server/resources/bundled-skills/rudder-docs/references/agent-creation.md
     related_tests:
+      - packages/shared/src/validators/mcp.test.ts
+      - scripts/managed-mcp-product-contract.test.mjs
       - cli/src/__tests__/browser-command.test.ts
       - cli/src/__tests__/agent-v1-registry.test.ts
       - cli/src/__tests__/agent-v1-mcp-server.test.ts
@@ -563,6 +572,7 @@ contracts:
     related_plans:
       - doc/plans/2026-06-30-agent-v1-mcp-tools.md
       - doc/plans/2026-07-12-built-in-browser.md
+      - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
       - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
       - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   AGENT.BROWSER.001:
@@ -734,20 +744,28 @@ contracts:
       - doc/product/domains/agents/custom-integrations.md
     related_code:
       - packages/db/src/schema/custom_integrations.ts
+      - packages/db/src/schema/mcp_connections.ts
       - packages/shared/src/types/custom-integration.ts
       - packages/shared/src/types/agent-integration.ts
+      - packages/shared/src/types/mcp.ts
       - packages/shared/src/validators/custom-integration.ts
+      - packages/shared/src/validators/mcp.ts
       - packages/shared/src/constants.ts
       - server/src/services/integrations/custom-integrations.ts
       - server/src/routes/agents.ts
       - server/src/services/agent-run-context.ts
       - ui/src/pages/AgentDetail.integrations.tsx
     related_tests:
+      - packages/db/src/mcp-connections-schema.test.ts
+      - packages/db/src/migrations/managed-mcp-connections.test.ts
+      - packages/shared/src/validators/mcp.test.ts
+      - scripts/managed-mcp-product-contract.test.mjs
       - server/src/__tests__/custom-integrations-service.test.ts
       - ui/src/pages/AgentDetail.integrations.test.tsx
       - tests/e2e/agent-detail-integrations-tab.spec.ts
     related_plans:
       - doc/plans/2026-06-27-agent-custom-integrations.md
+      - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
   ORG.GOAL.001:
     owner: product
     domain: organizations-and-goals

@@ -1,3 +1,5 @@
+import type { OrganizationSecretPurpose } from "../constants.js";
+
 export type SecretProvider =
   | "local_encrypted"
   | "aws_secrets_manager"
@@ -27,6 +29,7 @@ export interface OrganizationSecret {
   orgId: string;
   name: string;
   provider: SecretProvider;
+  purpose: OrganizationSecretPurpose;
   externalRef: string | null;
   latestVersion: number;
   description: string | null;

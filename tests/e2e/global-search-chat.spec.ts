@@ -48,6 +48,9 @@ test.describe("Global search results", () => {
     await issueSearchStarted;
 
     const commandPalette = page.locator('[data-slot="dialog-content"].command-palette-content');
+    const commandPaletteGlass = commandPalette.locator(":scope > [data-rudder-liquid-glass]");
+    await expect(commandPaletteGlass).toHaveAttribute("data-liquid-glass-variant", "modal");
+    await expect(commandPaletteGlass).toHaveCSS("pointer-events", "none");
     await expect(commandPalette).toHaveClass(/command-palette-content--searching/);
     await expect(page.getByText("Searching...")).toBeVisible();
     await expect.poll(async () => commandPalette.evaluate((element) => {

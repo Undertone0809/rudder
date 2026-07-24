@@ -3,6 +3,7 @@ import { CHAT_ANNOTATION_TEXT_IGNORE_ATTRIBUTE } from "@/lib/chat-response-annot
 import { skillTokenIconInlineStyle } from "@/lib/skill-reference";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight, Boxes } from "lucide-react";
+import { LiquidGlassSurface } from "./ui/liquid-glass-surface";
 
 export interface MarkdownSkillReferencePreview {
   href: string;
@@ -62,10 +63,11 @@ export function SkillReferenceToken({
       {hasPreview ? (
         <span
           ref={hoverCardScrollRef}
-          className="rudder-skill-hover-card scrollbar-auto-hide"
+          className="rudder-skill-hover-card scrollbar-auto-hide liquid-glass-host"
           role="tooltip"
           {...{ [CHAT_ANNOTATION_TEXT_IGNORE_ATTRIBUTE]: "" }}
         >
+          <LiquidGlassSurface variant="preview" />
           <span className="flex items-start gap-3">
             <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[#2f80ed]/10 text-[#2f80ed]">
               <Boxes className="h-4 w-4" aria-hidden />

@@ -499,6 +499,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     pickRudderMcpManagedEnv(env),
     rudderMcpCommand,
     browserMcpCommand ?? undefined,
+    config,
   );
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;

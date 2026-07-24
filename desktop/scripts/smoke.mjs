@@ -120,10 +120,10 @@ async function waitForSmokeCondition(label, check, options = {}) {
   throw new Error(`Timed out waiting for ${label}.${detail}`);
 }
 
-async function runCapturedProcess(executable, args) {
+async function runCapturedProcess(executable, args, options = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe"] });
-    const timeout = setTimeout(() => child.kill("SIGKILL"), 5_000);
+    const timeout = setTimeout(() => child.kill("SIGKILL"), options.timeoutMs ?? 5_000);
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
@@ -3436,6 +3436,22 @@ async function verifyChatSidePanelBrowser(page, baseUrl, companyId, issuePrefix,
         "Messenger Browser rows must not display the URL",
       );
       if (browserSmokeScreenshotPath) {
+        await page.evaluate(async ({ browserTabId }) => {
+          const webview = document.querySelector(
+            `[data-testid='chat-side-panel-browser-webview'][data-active='true'][data-browser-tab-id="${CSS.escape(browserTabId)}"]`,
+          );
+          if (!webview || typeof webview.executeJavaScript !== "function") {
+            throw new Error("the promoted Browser guest was unavailable for screenshot framing");
+          }
+          await webview.executeJavaScript("window.scrollTo(0, 0)");
+        }, { browserTabId: guestBeforeMove.browserTabId });
+        await page.waitForFunction(async ({ browserTabId }) => {
+          const webview = document.querySelector(
+            `[data-testid='chat-side-panel-browser-webview'][data-active='true'][data-browser-tab-id="${CSS.escape(browserTabId)}"]`,
+          );
+          if (!webview || typeof webview.executeJavaScript !== "function") return false;
+          return await webview.executeJavaScript("window.scrollY === 0");
+        }, { browserTabId: guestBeforeMove.browserTabId }, { timeout: 5_000 });
         await mkdir(path.dirname(browserSmokeScreenshotPath), { recursive: true });
         await page.screenshot({ path: browserSmokeScreenshotPath, fullPage: true });
       }
@@ -4113,10 +4129,11 @@ async function readProcessTable() {
 async function readLocalAppListeners(port) {
   const lsof = await runCapturedProcess("/usr/sbin/lsof", [
     "-nP",
+    "-a",
     `-iTCP:${port}`,
     "-sTCP:LISTEN",
     "-Fpn",
-  ]);
+  ], { timeoutMs: 20_000 });
   if (lsof.code !== 0 && lsof.code !== 1) {
     throw new Error(`lsof failed while checking the Local App listener (${lsof.code})`);
   }

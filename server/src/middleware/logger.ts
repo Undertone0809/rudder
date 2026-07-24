@@ -8,17 +8,29 @@ import { readConfigFile } from "../config-file.js";
 import { resolveDefaultLogsDir, resolveHomeAwarePath } from "../home-paths.js";
 
 const REDACTED_REQUEST_BODY = "[REDACTED]";
+const REDACTED_REQUEST_QUERY = "[REDACTED]";
 
-function isBrowserRequest(req: object): boolean {
+function requestRawUrl(req: object): string {
   const request = req as { originalUrl?: unknown; url?: unknown };
-  const rawUrl = typeof request.originalUrl === "string"
+  return typeof request.originalUrl === "string"
     ? request.originalUrl
     : typeof request.url === "string"
       ? request.url
       : "";
-  const pathname = (rawUrl.split("?", 1)[0] ?? "")
+}
+
+function requestPathname(req: object): string {
+  return (requestRawUrl(req).split(/[?#]/u, 1)[0] ?? "")
     .toLowerCase()
     .replace(/\/+$/u, "");
+}
+
+function isMcpOAuthCallbackRequest(req: object): boolean {
+  return requestPathname(req) === "/api/mcp/oauth/callback";
+}
+
+function isBrowserRequest(req: object): boolean {
+  const pathname = requestPathname(req);
   return pathname === "/api/browser"
     || pathname.startsWith("/api/browser/")
     || pathname === "/api/instance/browser/broker";
@@ -45,6 +57,50 @@ function containsInlineAnnotations(body: unknown): boolean {
     // over-redaction when it declares the sensitive annotation field.
     return /"inlineAnnotations"\s*:/u.test(payload);
   }
+}
+
+export function requestUrlForLogs(req: object): string {
+  const rawUrl = requestRawUrl(req);
+  if (!isMcpOAuthCallbackRequest(req)) return rawUrl;
+  const pathname = rawUrl.split(/[?#]/u, 1)[0] ?? "/api/mcp/oauth/callback";
+  return rawUrl.includes("?") || rawUrl.includes("#")
+    ? `${pathname}?${REDACTED_REQUEST_QUERY}`
+    : pathname;
+}
+
+export function requestQueryForLogs(req: object, query: unknown): unknown {
+  return isMcpOAuthCallbackRequest(req) ? REDACTED_REQUEST_QUERY : query;
+}
+
+export function requestHeadersForLogs(req: object, headers: unknown): unknown {
+  if (!isMcpOAuthCallbackRequest(req) || !headers || typeof headers !== "object") {
+    return headers;
+  }
+  const output = { ...(headers as Record<string, unknown>) };
+  for (const name of ["referer", "referrer", "cookie", "authorization"]) {
+    if (Object.keys(output).some((key) => key.toLowerCase() === name)) {
+      for (const key of Object.keys(output)) {
+        if (key.toLowerCase() === name) output[key] = REDACTED_REQUEST_QUERY;
+      }
+    }
+  }
+  return output;
+}
+
+export function serializeHttpRequestForLogs(
+  serializedRequest: Record<string, unknown>,
+): Record<string, unknown> {
+  const {
+    originalUrl: _originalUrl,
+    raw: _raw,
+    ...safeRequest
+  } = serializedRequest;
+  return {
+    ...safeRequest,
+    url: requestUrlForLogs(serializedRequest),
+    query: requestQueryForLogs(serializedRequest, serializedRequest.query),
+    headers: requestHeadersForLogs(serializedRequest, serializedRequest.headers),
+  };
 }
 
 export function markHttpRequestBodySensitive(req: object): void {
@@ -160,18 +216,23 @@ export const logger = pino({
 
 export const httpLogger = pinoHttp({
   logger,
+  serializers: {
+    req(serializedRequest) {
+      return serializeHttpRequestForLogs(serializedRequest);
+    },
+  },
   customLogLevel(_req, res, err) {
     if (err || res.statusCode >= 500) return "error";
     if (res.statusCode >= 400) return "warn";
     return "info";
   },
   customSuccessMessage(req, res) {
-    return `${req.method} ${req.url} ${res.statusCode}`;
+    return `${req.method} ${requestUrlForLogs(req)} ${res.statusCode}`;
   },
   customErrorMessage(req, res, err) {
     const ctx = (res as any).__errorContext;
     const errMsg = ctx?.error?.message || err?.message || (res as any).err?.message || "unknown error";
-    return `${req.method} ${req.url} ${res.statusCode} — ${errMsg}`;
+    return `${req.method} ${requestUrlForLogs(req)} ${res.statusCode} — ${errMsg}`;
   },
   customProps(req, res) {
     if (res.statusCode >= 400) {
@@ -181,7 +242,7 @@ export const httpLogger = pinoHttp({
           errorContext: ctx.error,
           reqBody: requestBodyForLogs(req, ctx.reqBody),
           reqParams: ctx.reqParams,
-          reqQuery: ctx.reqQuery,
+          reqQuery: requestQueryForLogs(req, ctx.reqQuery),
         };
       }
       const props: Record<string, unknown> = {};
@@ -193,7 +254,7 @@ export const httpLogger = pinoHttp({
         props.reqParams = params;
       }
       if (query && typeof query === "object" && Object.keys(query).length > 0) {
-        props.reqQuery = query;
+        props.reqQuery = requestQueryForLogs(req, query);
       }
       if ((req as any).route?.path) {
         props.routePath = (req as any).route.path;

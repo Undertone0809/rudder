@@ -1,0 +1,1 @@
+ALTER TABLE "mcp_connections" ADD COLUMN "lifecycle_revision" integer DEFAULT 0 NOT NULL;

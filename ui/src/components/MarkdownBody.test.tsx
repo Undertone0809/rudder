@@ -1384,7 +1384,13 @@ describe("MarkdownBody", () => {
       if (!label || !expectedPreviewRows.has(label)) continue;
       expect(row.querySelector(".rudder-entity-preview-row-value > span[aria-hidden='true']")).toBeTruthy();
     }
-    expect(document.body.querySelector(".rudder-entity-preview-card")?.classList.contains("motion-entity-preview-pop")).toBe(true);
+    const previewCard = document.body.querySelector(".rudder-entity-preview-card");
+    expect(previewCard?.classList.contains("motion-entity-preview-pop")).toBe(true);
+    expect(
+      previewCard
+        ?.querySelector("[data-rudder-liquid-glass]")
+        ?.getAttribute("data-liquid-glass-variant"),
+    ).toBe("preview");
   });
 
   it("does not load or render entity previews during quick hover passes", async () => {
@@ -1955,7 +1961,8 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain('class="rudder-skill-hover-card scrollbar-auto-hide"');
+    expect(html).toContain('class="rudder-skill-hover-card scrollbar-auto-hide liquid-glass-host"');
+    expect(html).toContain('data-liquid-glass-variant="preview"');
     expect(html).toContain("Global skill");
     expect(html).toContain("~/.agents/skills");
     expect(html).toContain("Turn vague build feedback into expert diagnosis.");
