@@ -635,6 +635,17 @@ export type ChatBranchPreview = { chatTurnId: string; turnVariant: number };
 
 export type ChatAgentRunTarget = { runId: string; agentId: string };
 
+export function resolveChatMessageAgentRunTarget(
+  message: Pick<ChatMessage, "runId" | "replyingAgentId">,
+  conversation: Pick<ChatConversation, "chatRuntime" | "preferredAgentId">,
+): ChatAgentRunTarget | null {
+  if (!message.runId) return null;
+  const agentId = message.replyingAgentId
+    ?? conversation.chatRuntime.runtimeAgentId
+    ?? conversation.preferredAgentId;
+  return agentId ? { runId: message.runId, agentId } : null;
+}
+
 export function resolveLatestChatAgentRunTarget(
   messages: readonly ChatMessage[],
   conversation: Pick<ChatConversation, "chatRuntime" | "preferredAgentId">,
@@ -646,11 +657,9 @@ export function resolveLatestChatAgentRunTarget(
       latestMessage = message;
     }
   }
-  if (!latestMessage?.runId) return null;
-  const agentId = latestMessage.replyingAgentId
-    ?? conversation.chatRuntime.runtimeAgentId
-    ?? conversation.preferredAgentId;
-  return agentId ? { runId: latestMessage.runId, agentId } : null;
+  return latestMessage
+    ? resolveChatMessageAgentRunTarget(latestMessage, conversation)
+    : null;
 }
 
 export function ChatAgentRunMenuItem({

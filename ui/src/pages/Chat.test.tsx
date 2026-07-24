@@ -65,6 +65,7 @@ import {
   parseAskUserAnswerMessage,
   rememberChatProjectId,
   rememberChatProjectIdForAgent,
+  resolveChatMessageAgentRunTarget,
   resolveDefaultDraftChatProjectId,
   resolveDraftIssueContext,
   resolveLatestChatAgentRunTarget,
@@ -279,6 +280,51 @@ function conversation(overrides: Partial<ChatConversation>): ChatConversation {
 }
 
 describe("latest Chat Agent Run target", () => {
+  it("resolves one message using the replying, runtime, then preferred agent", () => {
+    const runMessage = message({
+      role: "assistant",
+      kind: "message",
+      runId: "run-exact",
+      replyingAgentId: "agent-replying",
+    });
+    const runtimeConversation = conversation({
+      preferredAgentId: "agent-preferred",
+      chatRuntime: {
+        sourceType: "agent",
+        sourceLabel: "Runtime agent",
+        runtimeAgentId: "agent-runtime",
+        agentRuntimeType: "codex",
+        model: null,
+        available: true,
+        error: null,
+      },
+    });
+
+    expect(resolveChatMessageAgentRunTarget(runMessage, runtimeConversation)).toEqual({
+      runId: "run-exact",
+      agentId: "agent-replying",
+    });
+    expect(resolveChatMessageAgentRunTarget(
+      { ...runMessage, replyingAgentId: null },
+      runtimeConversation,
+    )).toEqual({ runId: "run-exact", agentId: "agent-runtime" });
+    expect(resolveChatMessageAgentRunTarget(
+      { ...runMessage, replyingAgentId: null },
+      conversation({ preferredAgentId: "agent-preferred" }),
+    )).toEqual({ runId: "run-exact", agentId: "agent-preferred" });
+  });
+
+  it("requires both a run and an agent for a message target", () => {
+    expect(resolveChatMessageAgentRunTarget(
+      message({ role: "assistant", runId: null, replyingAgentId: "agent-1" }),
+      conversation({}),
+    )).toBeNull();
+    expect(resolveChatMessageAgentRunTarget(
+      message({ role: "assistant", runId: "run-1", replyingAgentId: null }),
+      conversation({ preferredAgentId: null }),
+    )).toBeNull();
+  });
+
   it("selects the newest runtime-backed assistant message by createdAt across variants", () => {
     const target = resolveLatestChatAgentRunTarget([
       message({
