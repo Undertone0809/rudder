@@ -166,4 +166,3 @@ affected Main tab.
 - Final gates are lint, recursive typecheck, test suite, build, relevant E2E,
   product-logic check, Desktop verification, rendered screenshots, and two
   adversarial review/black-box verification rounds.
-
