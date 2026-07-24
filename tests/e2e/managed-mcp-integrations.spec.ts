@@ -347,6 +347,7 @@ test.describe("Managed MCP integrations", () => {
     await expect(page.getByTestId("organization-mcp-settings")).toBeVisible();
 
     await page.getByTestId("mcp-provider-supabase").getByRole("button", { name: "Connect" }).click();
+    await expect.poll(() => mock.connections.length).toBe(1);
     const supabaseRow = page.getByTestId(`mcp-connection-${mock.connections[0]!.id}`);
     await expect(supabaseRow).toContainText("Choose scope");
     await supabaseRow.getByLabel("Project").selectOption("project-memos");
@@ -355,12 +356,14 @@ test.describe("Managed MCP integrations", () => {
     await expect(supabaseRow).toContainText("project-memos");
 
     await page.getByTestId("mcp-provider-linear").getByRole("button", { name: "Read-only" }).click();
+    await expect.poll(() => mock.connections.length).toBe(2);
     const linearRow = page.getByTestId(`mcp-connection-${mock.connections[1]!.id}`);
     await expect(linearRow).toContainText("read only");
     await linearRow.getByLabel("Access mode for Linear").selectOption("read_write");
     await expect(linearRow).toContainText("read write");
 
     await page.getByTestId("mcp-provider-notion").getByRole("button", { name: "Connect" }).click();
+    await expect.poll(() => mock.connections.length).toBe(3);
     await expect(page.getByTestId(`mcp-connection-${mock.connections[2]!.id}`)).toContainText("workspace-notion");
 
     await page.getByTestId("mcp-provider-custom").getByRole("button", { name: "Configure" }).click();
