@@ -527,6 +527,12 @@ contracts:
       - packages/agent-runtimes/pi-local/src/server/execute.ts
       - server/src/services/agent-run-context.ts
       - server/src/services/managed-workspace-preflight.ts
+      - desktop/src/main.ts
+      - desktop/src/navigation-guard.ts
+      - desktop/src/preload.ts
+      - desktop/src/system-permissions.ts
+      - ui/src/lib/desktop-shell.ts
+      - ui/src/pages/InstanceNotificationsSettings.tsx
       - desktop/scripts/after-pack.mjs
     related_tests:
       - packages/agent-runtime-utils/src/server-utils.test.ts
@@ -540,6 +546,11 @@ contracts:
       - server/src/__tests__/pi-local-execute.test.ts
       - server/src/__tests__/managed-workspace-preflight.test.ts
       - server/src/__tests__/agent-run-context.test.ts
+      - desktop/src/navigation-guard.test.ts
+      - desktop/src/preload.browser.test.ts
+      - desktop/src/system-permissions.test.ts
+      - ui/src/pages/InstanceNotificationsSettings.test.tsx
+      - desktop/scripts/smoke.mjs
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-26-local-runtime-operator-home-default.md

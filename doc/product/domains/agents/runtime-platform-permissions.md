@@ -20,6 +20,12 @@ related_code:
   - packages/agent-runtimes/pi-local/src/server/execute.ts
   - server/src/services/agent-run-context.ts
   - server/src/services/managed-workspace-preflight.ts
+  - desktop/src/main.ts
+  - desktop/src/navigation-guard.ts
+  - desktop/src/preload.ts
+  - desktop/src/system-permissions.ts
+  - ui/src/lib/desktop-shell.ts
+  - ui/src/pages/InstanceNotificationsSettings.tsx
   - desktop/scripts/after-pack.mjs
 related_tests:
   - packages/agent-runtime-utils/src/server-utils.test.ts
@@ -33,6 +39,11 @@ related_tests:
   - server/src/__tests__/pi-local-execute.test.ts
   - server/src/__tests__/managed-workspace-preflight.test.ts
   - server/src/__tests__/agent-run-context.test.ts
+  - desktop/src/navigation-guard.test.ts
+  - desktop/src/preload.browser.test.ts
+  - desktop/src/system-permissions.test.ts
+  - ui/src/pages/InstanceNotificationsSettings.test.tsx
+  - desktop/scripts/smoke.mjs
 related_plans:
   - doc/plans/2026-06-21-product-logic-registry.md
   - doc/plans/2026-06-26-local-runtime-operator-home-default.md
@@ -145,6 +156,10 @@ dynamic client secrets, or organization secret identifiers.
 - Custom MCP process/network target: operator-supplied STDIO command or
   Streamable HTTP endpoint validated against the active deployment mode and
   administrator policy before discovery or dispatch.
+- Desktop shell: the privileged local bridge that reports macOS runtime
+  permission status and opens fixed operating-system permission panes.
+- Desktop permission id: one of the fixed `fullDiskAccess`, `accessibility`, or
+  `automation` identifiers accepted by the dedicated settings bridge.
 
 ## Entry Points / Inputs
 
@@ -161,6 +176,10 @@ dynamic client secrets, or organization secret identifiers.
   `RUDDER_BROWSER_ENABLED`, and `PATH`/`Path`.
 - Managed external MCP binding assembly and every proxied discovery or tool
   dispatch.
+- Desktop system-permissions settings surface, including local permission
+  status display and `Open settings` actions.
+- Desktop bridge requests for `desktop:get-system-permissions` and
+  `desktop:open-system-permission-settings`.
 
 ## Product Logic Flow
 
@@ -270,6 +289,19 @@ dynamic client secrets, or organization secret identifiers.
     unavailable; optional connections may be omitted or reported without
     exposing credentials or target-internal response data.
 
+17. Rudder Desktop exposes host permission status for Full Disk Access,
+    Accessibility, Automation, and Notifications on the system permissions
+    settings surface. The Desktop shell reports Full Disk Access,
+    Accessibility, and Automation status; the renderer reads Notifications
+    status from the platform notification API. The OS remains the source of
+    truth, and the UI must not imply that Rudder can grant a permission. On
+    macOS, the Full Disk Access, Accessibility, and Automation actions send
+    symbolic permission ids through a dedicated Desktop bridge. The main
+    process maps only those known ids to fixed macOS System Settings targets
+    before opening them. The generic external-link bridge remains restricted
+    to its existing safe web/mail protocols, and macOS-only permission actions
+    are hidden on non-macOS Desktop platforms.
+
 ## Decision Table
 
 | Case | Conditions | Product result | Must not happen | Evidence |
@@ -292,6 +324,9 @@ dynamic client secrets, or organization secret identifiers.
 | Custom STDIO in authenticated deployment | Command/path/env is not instance-admin allowlisted | Discovery and dispatch are rejected with a policy error | Organization managers must not bypass deployment-admin process policy | Authenticated deployment negative tests |
 | Public HTTPS Streamable HTTP target | URL and resolved addresses remain public and headers are safe | Discovery/dispatch may proceed through the managed client | Redirects or DNS changes must not pivot into private/loopback targets | SSRF, redirect, and DNS rebinding tests |
 | Private, loopback, HTTP, redirect, or OAuth metadata target | Deployment-admin allowlist is absent | Target is rejected before credential use | Credentials must not be sent while evaluating or reporting the blocked target | Network policy and credential non-disclosure tests |
+| Desktop macOS permission action | Operator selects Full Disk Access, Accessibility, or Automation in Desktop settings on macOS | Dedicated bridge maps the known permission id to the matching fixed System Settings pane and opens it | Renderer-supplied arbitrary protocols must not reach the generic external-link path or be treated as a successful permission grant | Desktop permission, preload, navigation-guard, UI, and packaged smoke tests |
+| Desktop non-macOS permission action | Operator views the system permissions page outside macOS | Show current supported/unsupported status without macOS-specific permission buttons | UI must not offer `x-apple.systempreferences:` actions on platforms that cannot use them | UI platform-visibility test |
+| Invalid Desktop permission target | Renderer or stale UI sends an unknown permission id, or the dedicated bridge is used outside macOS | Reject the request with a safe error and do not open an external target | Unknown ids must not be interpolated into an OS URL or bypass the current-frame and platform checks | Main-process validation path, system-permission mapping tests, and packaged smoke coverage; direct negative IPC coverage remains a known gap |
 
 ## Actor-Visible Input
 
@@ -318,6 +353,12 @@ Actor-visible input is the resulting provider environment:
 - when Browser is enabled for a supported local run, managed config exposes the
   conditional Browser skill/tools without exposing profile storage, cookies,
   Keychain material, or Desktop Broker credentials
+- Desktop system-permission status is reported from the local shell; the UI
+  distinguishes authorized, needs-access, and unsupported states without
+  claiming to change the OS grant itself
+- On macOS Desktop, a permission action identifies one of the fixed Full Disk
+  Access, Accessibility, or Automation panes; on non-macOS Desktop, those
+  macOS-specific actions are not presented
 
 If a required permission cannot be repaired or substituted, the actor should
 not receive a normal work prompt. The run should fail with configuration or
@@ -336,6 +377,13 @@ Operators and reviewers should be able to see:
   non-default mode uses them, and skill materialization warnings
 - run result/transcript metadata that separates provider failure from Rudder
   runtime setup failure
+- Desktop permission status responses and action failures are available to the
+  settings surface for the current local shell; the OS remains the authority
+  for the actual grant and no permission grant is persisted as Rudder-owned
+  runtime state
+- Preload, main-process, UI, navigation-guard, and packaged smoke evidence
+  proves that known macOS permission ids open the intended pane without
+  allowing arbitrary protocols
 
 User-facing guidance may recommend enabling Windows Developer Mode as a manual
 workaround, but the durable product contract is platform-safe fallback for
@@ -407,6 +455,24 @@ Evidence can include:
    - Visible output: no Browser tool surface or a stable disabled error.
    - Evidence: run-context, adapter, and MCP manifest negative tests.
 
+6. macOS operator repairs a missing permission:
+   - Trigger: Desktop reports Full Disk Access, Accessibility, or Automation as
+     needing access and the operator selects `Open settings`.
+   - Expected state/action: the dedicated Desktop bridge resolves the selected
+     permission id to its fixed macOS System Settings pane and opens that pane.
+   - Visible output: the settings surface remains available without the
+     generic “URL protocol cannot be opened from Rudder” error.
+   - Evidence: UI, preload, main-process mapping, and packaged Desktop smoke
+     coverage.
+
+7. Non-macOS operator views system permissions:
+   - Trigger: Desktop renders the same settings surface on Windows or Linux.
+   - Expected state/action: Rudder reports the platform-supported status and
+     hides macOS-specific permission actions.
+   - Visible output: operators are not offered unusable `x-apple` settings
+     links.
+   - Evidence: platform-visibility UI test and system-permission status tests.
+
 ## Invariants / Non-Goals
 
 - Platform-specific filesystem operations must be hidden behind runtime
@@ -427,6 +493,11 @@ Evidence can include:
   `AGENT.RUNTIME.ADAPTERS.001`.
 - This contract does not require every optional skill source to be usable on
   every platform; unavailable sources must be represented honestly.
+- The OS remains the source of truth for Desktop permission grants; Rudder
+  does not promise to grant Full Disk Access, Accessibility, Automation, or
+  Notifications itself.
+- Desktop permission settings actions must use fixed, platform-checked targets;
+  generic external navigation is not a permission-routing escape hatch.
 - Browser website identity may be shared across organizations by
   `AGENT.BROWSER.001`, but its profile data and Broker credential must never be
   copied into operator home, adapter-managed runtime state, prompts, or model
@@ -451,6 +522,10 @@ Requires updating this contract:
 - broadening or narrowing default operator-home behavior, credential bridge
   entries, shim commands, or allowed host-home access
 - changing permission/preflight error semantics for managed workspaces
+- changing Desktop system-permission status semantics, platform visibility, or
+  the fixed macOS settings targets
+- changing the Desktop bridge or external-navigation policy used to open
+  operating-system permission panes
 - changing who can set the managed Browser capability flag or exposing Browser
   profile/Broker state to a runtime process
 - changing managed external MCP OAuth/token materialization, run-scoped proxy
@@ -460,6 +535,8 @@ Requires updating this contract:
 Does not require updating this contract:
 
 - internal refactors that preserve the same platform permission semantics
+- internal Desktop IPC or UI refactors that preserve the same permission ids,
+  fixed targets, platform checks, and operator-visible outcomes
 - adding tests for an existing materialization strategy
 - changing log wording without changing operator-visible repair meaning
 - provider-specific command flag changes covered by the adapter capability
@@ -489,6 +566,12 @@ Related code:
 - `packages/agent-runtimes/pi-local/src/server/execute.ts`
 - `server/src/services/managed-workspace-preflight.ts`
 - `server/src/services/agent-run-context.ts`
+- `desktop/src/main.ts`
+- `desktop/src/navigation-guard.ts`
+- `desktop/src/preload.ts`
+- `desktop/src/system-permissions.ts`
+- `ui/src/lib/desktop-shell.ts`
+- `ui/src/pages/InstanceNotificationsSettings.tsx`
 - `desktop/scripts/after-pack.mjs`
 
 Related tests:
@@ -502,9 +585,18 @@ Related tests:
 - `server/src/__tests__/pi-local-execute.test.ts`
 - `server/src/__tests__/managed-workspace-preflight.test.ts`
 - `server/src/__tests__/agent-run-context.test.ts`
+- `desktop/src/navigation-guard.test.ts`
+- `desktop/src/preload.browser.test.ts`
+- `desktop/src/system-permissions.test.ts`
+- `ui/src/pages/InstanceNotificationsSettings.test.tsx`
+- `desktop/scripts/smoke.mjs`
 
 Known gaps:
 
+- Direct negative IPC tests for an unknown system-permission id, an unsupported
+  platform, or a non-current renderer sender are not yet present; the main
+  process validation path is covered by implementation and the valid action is
+  exercised by packaged smoke.
 - Some runtime paths still call `fs.symlink` directly. The product contract
   records the desired cross-platform behavior; follow-up implementation should
   consolidate skill and credential materialization behind a platform-aware
