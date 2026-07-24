@@ -8,7 +8,7 @@ import {
   undoDepth,
 } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import { syntaxTree } from "@codemirror/language";
+import { syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import {
   Annotation,
   Compartment,
@@ -53,7 +53,10 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { codeMirrorMarkdownEditorTheme } from "../lib/codemirror-markdown-theme";
+import {
+  codeMirrorMarkdownEditorTheme,
+  codeMirrorMarkdownHighlightStyle,
+} from "../lib/codemirror-markdown-theme";
 import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
 import { alignMarkdownSourceLine } from "../lib/markdown-editor-scroll";
 import {
@@ -940,6 +943,8 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       if (!view) return;
       const lineNumber = Math.max(1, Math.min(view.state.doc.lines, sourceLine));
       const position = view.state.doc.line(lineNumber).from;
+      const documentBeforeReveal = view.state.doc;
+      const selectionBeforeReveal = view.state.selection;
       view.focus();
       view.dispatch({
         selection: EditorSelection.cursor(position),
@@ -947,6 +952,13 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       });
       setPreviewFocusRef.current?.(view, true);
       requestAnimationFrame(() => {
+        if (viewRef.current !== view) return;
+        if (
+          view.state.doc === documentBeforeReveal
+          && view.state.selection.eq(selectionBeforeReveal)
+        ) {
+          view.dispatch({ selection: EditorSelection.cursor(position) });
+        }
         requestAnimationFrame(() => {
           if (viewRef.current !== view) return;
           alignMarkdownSourceLine(view, lineNumber);
@@ -1190,6 +1202,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       }),
       markdown(),
       codeMirrorMarkdownEditorTheme(),
+      syntaxHighlighting(codeMirrorMarkdownHighlightStyle),
       EditorView.lineWrapping,
       previewField,
       lineSeparatorCompartment.of(

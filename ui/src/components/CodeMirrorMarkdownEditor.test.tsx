@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 
 import { isolateHistory } from "@codemirror/commands";
+import { highlightingFor } from "@codemirror/language";
 import type { EditorView } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
 import {
   act,
   createRef,
@@ -10,6 +12,7 @@ import {
 } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { codeMirrorMarkdownHighlightStyle } from "../lib/codemirror-markdown-theme";
 import { __clearWebsiteMetadataCacheForTests } from "../lib/website-metadata-cache";
 import {
   __getCodeMirrorMarkdownViewForTests,
@@ -285,6 +288,34 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     expect(container?.querySelectorAll(
       ".rudder-codemirror-markdown-rendered.live-preview-min-height",
     )).toHaveLength(0);
+  });
+
+  it("installs the theme-aware URL highlight in active Markdown source", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value="Read [OpenAI](https://openai.com)."
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const preview = container?.querySelector<HTMLElement>(
+      '[data-markdown-preview-state="preview"]',
+    );
+    act(() => {
+      preview?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    });
+    await flushReact();
+
+    const urlClass = codeMirrorMarkdownHighlightStyle.style([tags.url]);
+    expect(highlightingFor(editorView().state, [tags.url])).toContain(urlClass);
+    const urlSource = Array.from(
+      container?.querySelectorAll<HTMLElement>('[data-markdown-preview-state="source"] span') ?? [],
+    ).find((element) => element.textContent === "https://openai.com");
+    expect(urlClass).toBeTruthy();
+    expect(urlSource?.classList.contains(urlClass!)).toBe(true);
   });
 
   it("uses a plain link click to reveal source while leaving keyboard Enter to the link", async () => {
@@ -1530,5 +1561,46 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     });
     expect(scrollContainer?.scrollTop).toBe(190);
     expect(editorView().contentDOM.style.paddingBottom).toBe("200px");
+  });
+
+  it("does not pull the cursor back when the user edits before outline alignment", async () => {
+    const ref = createRef<MarkdownEditorRef>();
+    act(() => {
+      root?.render(
+        <div data-markdown-scroll-container="true">
+          <CodeMirrorMarkdownEditor
+            ref={ref}
+            value={"# One\nparagraph\n## Three"}
+            onChange={() => undefined}
+          />
+        </div>,
+      );
+    });
+    await flushReact();
+
+    const frameCallbacks: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    });
+    act(() => {
+      ref.current?.revealLine?.(3);
+    });
+    const revealPosition = editorView().state.doc.line(3).from;
+    act(() => {
+      editorView().dispatch({
+        changes: { from: revealPosition, insert: "X" },
+        selection: { anchor: revealPosition + 1 },
+        userEvent: "input",
+      });
+    });
+    act(() => {
+      frameCallbacks.splice(0).forEach((callback) => callback(0));
+      frameCallbacks.splice(0).forEach((callback) => callback(0));
+    });
+    await flushReact();
+
+    expect(editorView().state.doc.line(3).text).toBe("X## Three");
+    expect(editorView().state.selection.main.head).toBe(revealPosition + 1);
   });
 });

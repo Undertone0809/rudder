@@ -1,4 +1,10 @@
+import { HighlightStyle } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
+
+export const codeMirrorMarkdownHighlightStyle = HighlightStyle.define([
+  { tag: tags.url, color: "var(--rudder-doc-link)" },
+]);
 
 export function codeMirrorMarkdownEditorTheme() {
   return EditorView.theme({
