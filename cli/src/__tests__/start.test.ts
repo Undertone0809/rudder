@@ -2375,8 +2375,21 @@ describe("runtime install helpers", () => {
 
       expect(first.postgresPayloadBinDir).toBe(second.postgresPayloadBinDir);
       await expect(access(first.postgresPayloadBinDir!)).resolves.toBeUndefined();
+      const installedRuntimeDir = path.dirname(first.postgresPayloadBinDir!);
+      await expect(readFile(
+        path.join(installedRuntimeDir, "lib", "libpq.5.dylib"),
+        "utf8",
+      )).resolves.toBe("runtime lib");
+      await expect(readFile(
+        path.join(installedRuntimeDir, "share", "postgresql", "postgres.bki"),
+        "utf8",
+      )).resolves.toBe("postgres template");
+      await expect(readFile(
+        path.join(installedRuntimeDir, "share", "postgresql", "postgresql.conf.sample"),
+        "utf8",
+      )).resolves.toBe("postgres config template");
       await expect(access(path.join(
-        path.dirname(first.postgresPayloadBinDir!),
+        installedRuntimeDir,
         "pgAdmin 4.app",
       ))).rejects.toThrow();
     } finally {
