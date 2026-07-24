@@ -194,24 +194,6 @@ function upsertSidePanelTarget(
     return { activeKey: nextKey, tabs: nextTabs, openResult: { admitted: true } };
   }
 
-  const activeBrowser = tabs.find((candidate) => (
-    candidate.kind === "browser" && sidePanelTargetKey(candidate) === activeKey
-  ));
-  const reusableBrowser = activeBrowser ?? tabs.find((candidate) => candidate.kind === "browser");
-
-  // Ordinary Rudder links carry a URL dedupe key. At capacity, navigate an
-  // existing Browser tab so the click still has a visible result.
-  if (target.dedupeKey) {
-    if (reusableBrowser?.kind === "browser") {
-      const replacement = browserTargetForPhysicalReuse(target, reusableBrowser);
-      const reusableKey = sidePanelTargetKey(reusableBrowser);
-      return {
-        activeKey: reusableKey,
-        tabs: tabs.map((candidate) => (sidePanelTargetKey(candidate) === reusableKey ? replacement : candidate)),
-        openResult: { admitted: true },
-      };
-    }
-  }
   return {
     activeKey,
     tabs,

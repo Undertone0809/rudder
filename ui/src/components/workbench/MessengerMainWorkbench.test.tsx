@@ -48,6 +48,7 @@ const keepSavedView = vi.hoisted(() => vi.fn());
 const listCustomGroups = vi.hoisted(() => vi.fn());
 const updateSavedView = vi.hoisted(() => vi.fn());
 const navigate = vi.hoisted(() => vi.fn());
+const pushToast = vi.hoisted(() => vi.fn());
 const scrollIntoView = vi.fn();
 const nativeGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
 
@@ -62,6 +63,10 @@ vi.mock("@/api/messenger", () => ({
 
 vi.mock("@/lib/router", () => ({
   useNavigate: () => navigate,
+}));
+
+vi.mock("@/context/ToastContext", () => ({
+  useOptionalToast: () => ({ pushToast }),
 }));
 
 vi.mock("@/components/ui/dialog", () => ({
@@ -208,6 +213,7 @@ beforeEach(() => {
   listCustomGroups.mockReset().mockResolvedValue({ groups: [] });
   updateSavedView.mockReset().mockResolvedValue({});
   navigate.mockReset();
+  pushToast.mockReset();
   scrollIntoView.mockReset();
   window.localStorage.clear();
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -852,6 +858,33 @@ describe("MessengerMainWorkbench", () => {
         ?.click();
     });
     expect(controls!.tabs).toHaveLength(2);
+  });
+
+  it("shows a visible failure when a Main-owned Browser popup reaches shared capacity", () => {
+    renderWorkbench({ runtimeLayer: true });
+    act(() => {
+      for (let index = 0; index < 8; index += 1) {
+        controls!.createSessionBrowser(target(
+          "browser",
+          `capacity-${index}`,
+        ) as Extract<MainWorkbenchTarget, { kind: "browser" }>);
+      }
+    });
+
+    act(() => {
+      host!
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="live-surface-runtime-host"][aria-hidden="false"] [data-testid="mock-browser-open"]',
+        )
+        ?.click();
+    });
+
+    expect(controls!.tabs).toHaveLength(8);
+    expect(pushToast).toHaveBeenCalledWith({
+      title: "Browser tab limit reached",
+      body: "Close a Browser tab to open another. Side Panel and Main share 8 live tabs.",
+      tone: "error",
+    });
   });
 
   it("opens an Automation-linked chat instead of swallowing the workbench callback", () => {

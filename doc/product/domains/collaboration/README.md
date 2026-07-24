@@ -36,6 +36,8 @@ edit_policy: user_confirmed_only
 - Issue status or assignment. See `ISSUE.*` and `ROUTING.*`.
 - Agent run execution. See `RUN.*`.
 - Automation definition. See `AUTOMATION.*`.
+- Local App command review, process authority, attestation, and shutdown. See
+  `DESKTOP.LOCAL.APPS.001`.
 
 ## Contract Index
 
@@ -61,17 +63,18 @@ edit_policy: user_confirmed_only
   normal-Chat reference titles, Side Chat privacy, and accessible one-line
   truncation.
 - `CHAT.SIDE.PANEL.001`: Side Panel is a global board workbench for opening
-  supported referenced issues, automations, Library targets, chats, and browser
-  placeholders without replacing the current route.
+  supported referenced issues, automations, Library targets, chats, Browser,
+  and Local Apps; an eligible exact target can transfer to Messenger Main while
+  its Side siblings remain in place.
 - `MESSENGER.ATTENTION.001`: Messenger aggregates chat, issue, approval, and
   run attention without becoming the source of every domain rule.
 - `MESSENGER.THREAD.PREVIEW.001`: delayed Chat and Issue detail cards expose
   truncated context while remaining mutually exclusive with row action menus.
 - `MESSENGER.CUSTOM.GROUPS.001`: Messenger custom groups organize chat, issue,
-  approval, and synthetic attention rows while preserving each row's native
-  navigation, read state, attention semantics, and pin ordering.
-- `MESSENGER.SAVED.VIEWS.001`: Messenger durably saves eligible Browser,
-  Automation, and Library Side Panel targets without treating them as message
-  threads or fabricating unread, attention, or activity time.
+  approval, synthetic attention, and Saved View rows in one sortable model
+  while preserving each row's native navigation and attention semantics.
+- `MESSENGER.SAVED.VIEWS.001`: Messenger durably binds eligible Browser,
+  Automation, Library, and Desktop Local App views to group-only rows that open
+  or focus the full-bleed Main Workbench rather than the Side Panel.
 - `IM.FEISHU.001`: Feishu inbound/outbound integration bridges external chat
   into Rudder Messenger, issue, and run records.

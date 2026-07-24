@@ -716,7 +716,7 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "tab-count")).toBe("0");
   });
 
-  it("reuses the active Browser tab for an ordinary routed link at capacity", () => {
+  it("rejects an unrelated ordinary routed link at capacity without reusing an exact tab", () => {
     ({ container, root } = renderSidePanelProvider());
 
     click(container, "Open many browsers");
@@ -724,8 +724,8 @@ describe("SidePanelProvider context visibility", () => {
 
     expect(text(container, "tab-count")).toBe("8");
     expect(text(container, "active-key")).toBe("browser-tab:browser-8");
-    expect(text(container, "tab-urls")).toContain("https://example.com/reused-link");
-    expect(text(container, "tab-urls")).not.toContain("https://example.com/8,");
+    expect(text(container, "tab-urls")).not.toContain("https://example.com/reused-link");
+    expect(text(container, "tab-urls")).toContain("https://example.com/8");
   });
 
   it("preserves one Browser logical identity and Saved recovery when a routed link dedupes", () => {
@@ -779,7 +779,7 @@ describe("SidePanelProvider context visibility", () => {
     });
   });
 
-  it("keeps Saved metadata attached to the reused active Browser identity at capacity", () => {
+  it("keeps the active Saved Browser unchanged when an unrelated routed link is rejected at capacity", () => {
     ({ container, root } = renderSidePanelProvider());
     for (let index = 1; index <= 7; index += 1) {
       act(() => sidePanelControls!.openTarget({
@@ -810,22 +810,26 @@ describe("SidePanelProvider context visibility", () => {
         },
       },
     }));
-    act(() => sidePanelControls!.openTarget({
-      kind: "browser",
-      url: "https://example.com/capacity-navigation",
-      label: "Capacity navigation",
-      tabId: "discarded-physical",
-      dedupeKey: "https://example.com/capacity-navigation",
-    }));
+    let openResult: ReturnType<NonNullable<typeof sidePanelControls>["openTarget"]> | undefined;
+    act(() => {
+      openResult = sidePanelControls!.openTarget({
+        kind: "browser",
+        url: "https://example.com/capacity-navigation",
+        label: "Capacity navigation",
+        tabId: "discarded-physical",
+        dedupeKey: "https://example.com/capacity-navigation",
+      });
+    });
 
+    expect(openResult).toEqual({ admitted: false, reason: "browser_capacity" });
     expect(sidePanelControls!.tabs).toHaveLength(8);
     expect(sidePanelControls!.activeKey).toBe("browser-tab:physical-active");
     expect(sidePanelControls!.tabs.at(-1)).toMatchObject({
       kind: "browser",
       tabId: "physical-active",
       viewInstanceId: "instance-active",
-      url: "https://example.com/capacity-navigation",
-      label: "Capacity navigation",
+      url: "https://saved.example/old",
+      label: "Saved old",
       savedViewRecovery: { id: "saved-active" },
     });
   });
