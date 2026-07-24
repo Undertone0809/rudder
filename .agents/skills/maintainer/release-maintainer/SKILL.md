@@ -44,11 +44,12 @@ cannot be safely inferred.
   explicitly dispatch `desktop-release.yml`, or the maintainer must do it.
 - Stables are manually promoted from an explicitly chosen source ref and use
   npm dist-tag `latest`.
-- Stable preflight must fail closed unless `npm-stable` has required reviewers,
-  `main` is protected for normal changes, and the release workflow has the
-  narrow direct-push and workflow-dispatch permissions needed for its generated
-  post-stable version commit. Do not bypass these checks or treat the
-  confirmation string as a substitute for the repository safeguards.
+- Stable preflight must fail closed unless `npm-stable` is a main-only,
+  non-interactive environment, `main` is protected for normal changes, and the
+  release workflow can create the generated post-stable version PR and dispatch
+  its exact CI. The explicit versioned release request is the human
+  authorization; locked source, exact CI, confirmation inputs, and repository
+  safeguards are the mandatory machine gate.
 - Stable preflight must verify matching English and Chinese public changelog
   entries before expensive work. After stable npm, GitHub Release, and Desktop
   assets succeed, `release.yml` must promote those committed entries from the
@@ -219,7 +220,8 @@ Use this when the user is preparing release automation for the first time.
    trusted publishing can be attached to those package names.
 5. Configure GitHub environments:
    - `npm-canary`: no reviewer, selected branch `main`.
-   - `npm-stable`: maintainer approval, selected branch `main`.
+   - `npm-stable`: no interactive reviewer or wait timer, selected branch
+     `main`.
 6. If trusted publishing is not ready, add an environment secret named
    `NPM_TOKEN` to both release environments as a temporary fallback, using an
    npm automation token with publish access to the `@rudderhq` packages.
@@ -438,16 +440,18 @@ node scripts/release-package-map.mjs list
    The workflow reuses the exact CI result and runs only the fast release
    preflight plus publish-payload preview; it must not repeat the full test
    matrix.
-8. If dry-run passes, present the immutable source SHA, version, npm/GitHub/
+8. If dry-run passes, record the immutable source SHA, version, npm/GitHub/
    Desktop targets, public docs target, completed checks, known failures,
-   migration/data impact, and rollback point. Obtain two fresh approvals:
-   - stable publication for that exact source and version;
-   - production deployment of that exact changelog to `docs.rudderhq.dev`.
-9. Only after both approvals, rerun with the same locked SHA using
+   migration/data impact, and rollback point. An explicit versioned stable
+   release request authorizes the standard release surfaces, including
+   `docs.rudderhq.dev`, unless the user explicitly excludes one.
+9. After that authorization, rerun with the same locked SHA using
    `dry_run: false`, `confirm_stable: PUBLISH STABLE`, and
-   `confirm_docs: PUBLISH DOCS`. The workflow input strings enforce the
-   approvals; they do not replace them.
-10. Wait for or request `npm-stable` approval.
+   `confirm_docs: PUBLISH DOCS`. The workflow input strings are mandatory
+   machine assertions that the agent may supply; they are not extra UI tasks
+   for the user.
+10. Confirm the `npm-stable` job starts automatically without an account switch
+    or interactive approval.
 11. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
     workflow, and assets.
 12. Verify the `stable-docs` job promoted the public changelog from the same
@@ -794,8 +798,8 @@ When the user asks "what do I do now?", answer in this order:
    failing checks, dirty release files, or missing Desktop artifacts.
 3. **Next Actions**: numbered, executable steps with exact commands or GitHub UI
    actions.
-4. **Human Gates**: approvals, npm login/trusted-publisher setup, GitHub
-   environment approval, announcement copy.
+4. **Authorization**: the explicit versioned release request, npm
+   login/trusted-publisher setup when missing, and announcement scope.
 5. **Verification**: exact checks that prove the release surface is complete.
 
 For hands-on release execution, keep short status updates while working, then

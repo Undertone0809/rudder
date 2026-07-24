@@ -2340,7 +2340,19 @@ describe("runtime install helpers", () => {
     try {
       delete process.env.RUDDER_POSTGRES_BIN_DIR;
       delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
-      await writeFakePostgresRuntime(archiveSource);
+      const archiveBinDir = await writeFakePostgresRuntime(archiveSource);
+      const archiveRuntimeDir = path.dirname(archiveBinDir);
+      const pgAdminFrameworksDir = path.join(
+        archiveRuntimeDir,
+        "pgAdmin 4.app",
+        "Contents",
+        "Frameworks",
+      );
+      await mkdir(pgAdminFrameworksDir, { recursive: true });
+      await symlink(
+        path.join(archiveRuntimeDir, "missing-private-headers"),
+        path.join(pgAdminFrameworksDir, "PrivateHeaders"),
+      );
       const archivePath = path.join(root, "postgresql-18.4.zip");
       const archiveResult = spawnSync("tar", ["-cf", archivePath, "pgsql"], {
         cwd: archiveSource,
@@ -2363,6 +2375,23 @@ describe("runtime install helpers", () => {
 
       expect(first.postgresPayloadBinDir).toBe(second.postgresPayloadBinDir);
       await expect(access(first.postgresPayloadBinDir!)).resolves.toBeUndefined();
+      const installedRuntimeDir = path.dirname(first.postgresPayloadBinDir!);
+      await expect(readFile(
+        path.join(installedRuntimeDir, "lib", "libpq.5.dylib"),
+        "utf8",
+      )).resolves.toBe("runtime lib");
+      await expect(readFile(
+        path.join(installedRuntimeDir, "share", "postgresql", "postgres.bki"),
+        "utf8",
+      )).resolves.toBe("postgres template");
+      await expect(readFile(
+        path.join(installedRuntimeDir, "share", "postgresql", "postgresql.conf.sample"),
+        "utf8",
+      )).resolves.toBe("postgres config template");
+      await expect(access(path.join(
+        installedRuntimeDir,
+        "pgAdmin 4.app",
+      ))).rejects.toThrow();
     } finally {
       if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
       else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;

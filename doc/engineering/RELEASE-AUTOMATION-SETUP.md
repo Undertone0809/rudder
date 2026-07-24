@@ -86,7 +86,8 @@ Environment name:
 Why:
 
 - the single `release.yml` workflow handles both canary and stable publishing
-- GitHub environments `npm-canary` and `npm-stable` still enforce different approval rules on the GitHub side
+- GitHub environments `npm-canary` and `npm-stable` still isolate publishing
+  credentials and restrict deployments to their configured branches
 - npm asks for only the workflow filename, not `.github/workflows/release.yml`
 
 ### 2.3. Verify trusted publishing before removing old auth
@@ -170,20 +171,21 @@ Reasoning:
 Required settings for `npm-stable`:
 
 - environment name: `npm-stable`
-- required reviewers: at least one maintainer other than the person triggering the workflow
-- prevent self-review: enabled
+- required reviewers: none
+- prevent self-review: disabled
 - admin bypass: disabled
-- wait timer: optional
+- wait timer: none
 - deployment branches and tags:
   - selected branches only
   - allow `main`
 
 Reasoning:
 
-- stable publishes should require an explicit human approval gate
-- the workflow is manual, but the environment should still be the real control point
-- the safeguards attestation must not be set while the environment has no
-  required-reviewer protection rule
+- an explicit versioned release request is the human authorization gate
+- locked source SHA, exact successful CI, confirmation inputs, immutable-version
+  checks, and protected `main` form the mandatory machine gate
+- the environment isolates stable credentials and limits use to `main` without
+  introducing an account switch or reviewer click
 
 ## 7. Protect `main`
 
@@ -203,13 +205,17 @@ At minimum, make sure workflow and release script changes cannot land without
 review. The stable preflight stops before executing source-ref release code
 unless all safeguards have been attested.
 
-After required reviewers, `main` protection, and Actions workflow permissions
-are all configured and manually verified, create the repository Actions variable
-`RELEASE_SAFEGUARDS_CONFIGURED` with value `true`. Manual stable preflight fails
-closed while this variable is missing. The variable is an operator attestation
-because the workflow's scoped `GITHUB_TOKEN` cannot read
-repository-administration settings; do not set it before checking all three
-controls.
+After the main-only non-interactive `npm-stable` environment, `main` protection,
+and Actions workflow permissions are all configured and manually verified,
+create these repository Actions variables:
+
+- `RELEASE_SAFEGUARDS_CONFIGURED=true`
+- `STABLE_RELEASE_MODE=agent-automated`
+
+Manual stable preflight fails closed while either variable is missing. The
+variables are operator attestations because the workflow's scoped
+`GITHUB_TOKEN` cannot read repository-administration settings; do not set them
+before checking all controls.
 
 ## 8. Enforce CODEOWNERS Review
 
@@ -292,10 +298,11 @@ After at least one good canary exists:
    - `source_ref`: the tested commit SHA or canary tag source commit
    - `dry_run`: `true`
 5. confirm the dry-run succeeds
-6. after explicitly approving the public docs deployment for this source,
+6. after an explicit versioned stable release request, let the release agent
    rerun with `dry_run: false`, `confirm_stable: PUBLISH STABLE`, and
-   `confirm_docs: PUBLISH DOCS`
-7. approve the `npm-stable` environment when prompted
+   `confirm_docs: PUBLISH DOCS`; production docs are part of the standard
+   release unless explicitly excluded
+7. confirm the `npm-stable` job starts without an interactive approval
 8. confirm npm `latest` points to the new stable version
 9. confirm git tag `v0.1.0` exists
 10. confirm the GitHub Release was created
@@ -328,10 +335,12 @@ Implementation note:
 Use this policy going forward:
 
 - canaries are automatic and cheap
-- stables are manual and approved
+- stables start from an explicit versioned request, then run end to end without
+  an interactive GitHub approval
 - only stables get public notes and announcements
 - release notes are committed before stable publish
-- stable docs deploys require their own explicit `PUBLISH DOCS` confirmation
+- stable docs deploys retain the mandatory `PUBLISH DOCS` machine assertion,
+  supplied automatically by the authorized release agent
 - rollback uses `npm dist-tag`, not unpublish
 
 ## 14. Troubleshooting
@@ -345,13 +354,15 @@ Check:
 3. the job has `id-token: write`
 4. the job is running from the expected repository, not a fork
 
-### Stable workflow runs but never asks for approval
+### Stable workflow remains queued or waiting
 
 Check:
 
 1. the `publish` job uses environment `npm-stable`
-2. the environment actually has required reviewers configured
-3. the workflow is running in the canonical repository, not a fork
+2. the environment has no required reviewers or wait timer
+3. the environment allows only `main`
+4. `STABLE_RELEASE_MODE` is `agent-automated`
+5. the workflow is running in the canonical repository, not a fork
 
 ### CODEOWNERS does not trigger
 

@@ -16,12 +16,12 @@ on:
         type: boolean
         default: true
       confirm_stable:
-        description: "For a real publish, enter PUBLISH STABLE only after explicit operator approval"
+        description: "For a real publish, the authorized release agent enters PUBLISH STABLE after an explicit versioned release request"
         required: false
         default: ""
         type: string
       confirm_docs:
-        description: "For a real stable publish, enter PUBLISH DOCS only after explicit docs.rudderhq.dev deployment approval"
+        description: "For a real stable publish, the authorized release agent enters PUBLISH DOCS for the docs surface included in the versioned release request"
         required: false
         default: ""
         type: string
@@ -53,6 +53,7 @@ jobs:
           CONFIRM_STABLE: ${{ inputs.confirm_stable }}
           CONFIRM_DOCS: ${{ inputs.confirm_docs }}
         run: |
+          test "$GITHUB_REPOSITORY" = "Undertone0809/rudder"
           test "$CONFIRM_STABLE" = "PUBLISH STABLE"
           test "$CONFIRM_DOCS" = "PUBLISH DOCS"
 
@@ -60,9 +61,10 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         env:
           RELEASE_SAFEGUARDS_CONFIGURED: ${{ vars.RELEASE_SAFEGUARDS_CONFIGURED }}
+          STABLE_RELEASE_MODE: ${{ vars.STABLE_RELEASE_MODE }}
         run: |
-          if [ "$RELEASE_SAFEGUARDS_CONFIGURED" != "true" ]; then
-            echo "Configure npm-stable reviewers, main protection without direct-push bypass, and Actions permission to create the version-handoff PR and dispatch CI, then set RELEASE_SAFEGUARDS_CONFIGURED=true." >&2
+          if [ "$RELEASE_SAFEGUARDS_CONFIGURED" != "true" ] || [ "$STABLE_RELEASE_MODE" != "agent-automated" ]; then
+            echo "Configure npm-stable as a main-only non-interactive environment, protect main without direct-push bypass, allow Actions to create the version-handoff PR and dispatch CI, then set RELEASE_SAFEGUARDS_CONFIGURED=true and STABLE_RELEASE_MODE=agent-automated." >&2
             exit 1
           fi
 
@@ -75,6 +77,17 @@ jobs:
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Require release source from protected main history
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main; then
+            echo "Release source $SOURCE_SHA is not reachable from protected main." >&2
+            exit 1
+          fi
+
       - name: Require successful CI for exact source
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -85,7 +98,7 @@ jobs:
             -f head_sha="$SOURCE_SHA" \
             -f status=success \
             -f per_page=100 \
-            --jq '.workflow_runs | length')"
+            --jq '[.workflow_runs[] | select(.event == "push" and .head_branch == "main")] | length')"
           if [ "$count" -lt 1 ]; then
             echo "No successful CI workflow found for exact source $SOURCE_SHA." >&2
             exit 1
