@@ -3374,35 +3374,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             <div className="chat-conversation-loading-offset flex min-h-0 flex-1 flex-col overflow-hidden px-4 md:px-5" data-testid="chat-conversation-loading-state">
               <div ref={chatMessagesScrollRef} data-testid="chat-messages-scroll-region" className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto">
                 <div data-testid="chat-messages-content" className="mx-auto flex w-full max-w-4xl flex-col gap-5 pr-1">
-                  {visibleMessages.length > 0 ? (
-                    <div
-                      className="flex flex-col gap-5 pb-2"
-                      data-testid="chat-pending-detail-transcript"
-                    >
-                      {visibleMessages.map((message) => (
-                        <div
-                          key={message.id}
-                          className={cn(
-                            "flex",
-                            message.role === "user" ? "justify-end" : "justify-start",
-                          )}
-                        >
-                          <div
-                            className={cn(
-                              "w-fit max-w-[min(100%,72ch)] whitespace-pre-wrap rounded-[var(--radius-xl)] px-4 py-3 text-sm",
-                              message.role === "user"
-                                ? "chat-message-user shadow-[var(--shadow-sm)]"
-                                : "text-foreground",
-                            )}
-                          >
-                            {message.body}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <ChatMessagesLoadingState />
-                  )}
+                  <ChatMessagesLoadingState />
                 </div>
               </div>
             </div> ) : selectedConversation ? ( <>

@@ -4995,7 +4995,7 @@ describe("Chat unread state", () => {
 });
 
 describe("Chat route loading", () => {
-  it("shows a target conversation loading state instead of the new-chat empty state", () => {
+  it("keeps prefetched history hidden behind the loading state until conversation detail resolves", () => {
     mockState.conversationId = "chat-loading";
     mockState.conversations = [];
     mockState.messagesByChatId = {
@@ -5004,13 +5004,13 @@ describe("Chat route loading", () => {
           id: "history-user",
           conversationId: "chat-loading",
           role: "user",
-          body: "Loaded user history before descriptor resolution.",
+          body: "**Loaded user history before descriptor resolution.**",
         }),
         message({
           id: "history-assistant",
           conversationId: "chat-loading",
           role: "assistant",
-          body: "Loaded assistant history before descriptor resolution.",
+          body: "- Loaded assistant history before descriptor resolution.",
         }),
       ],
     };
@@ -5020,10 +5020,12 @@ describe("Chat route loading", () => {
 
     expect(container.querySelector("[data-testid='chat-conversation-loading-state']")).not.toBeNull();
     expect(mockState.queryKeys).toContainEqual(["chats", "org-1", "messages", "chat-loading"]);
-    expect(container.textContent).toContain("Loaded user history before descriptor resolution.");
-    expect(container.textContent).toContain("Loaded assistant history before descriptor resolution.");
+    expect(container.querySelector("[role='status'][aria-label='Chat messages loading']")).not.toBeNull();
+    expect(container.textContent).not.toContain("Loaded user history before descriptor resolution.");
+    expect(container.textContent).not.toContain("Loaded assistant history before descriptor resolution.");
     expect(container.querySelector("[data-testid='chat-composer-toolbar']")).toBeNull();
     expect(container.querySelector("[data-testid='chat-empty-state-tabs']")).toBeNull();
+    expect(container.textContent).not.toContain("No messages yet.");
     expect(container.textContent).not.toContain("Scope a new feature");
   });
 });

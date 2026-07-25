@@ -17,6 +17,41 @@ describe("chat transcript loading", () => {
     })).toMatchObject({
       canQueryMessages: true,
       showConversationLoading: true,
+      showMessagesLoading: false,
+    });
+  });
+
+  it("keeps conversation loading active when messages resolve before detail", () => {
+    expect(resolveChatTranscriptLoadState({
+      selectedOrganizationId: "org-1",
+      conversationId: "chat-1",
+      organizationRouteMatchesSelection: true,
+      conversationSnapshotOrganizationId: null,
+      hasConversationSnapshot: false,
+      conversationDetailPending: true,
+      hasMessages: true,
+      messagesPending: false,
+    })).toEqual({
+      canQueryMessages: true,
+      showConversationLoading: true,
+      showMessagesLoading: false,
+    });
+  });
+
+  it("moves from conversation loading to message loading when detail resolves first", () => {
+    expect(resolveChatTranscriptLoadState({
+      selectedOrganizationId: "org-1",
+      conversationId: "chat-1",
+      organizationRouteMatchesSelection: true,
+      conversationSnapshotOrganizationId: "org-1",
+      hasConversationSnapshot: true,
+      conversationDetailPending: false,
+      hasMessages: false,
+      messagesPending: true,
+    })).toEqual({
+      canQueryMessages: true,
+      showConversationLoading: false,
+      showMessagesLoading: true,
     });
   });
 
