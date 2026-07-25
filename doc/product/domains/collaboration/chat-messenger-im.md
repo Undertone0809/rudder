@@ -663,9 +663,9 @@ copying context into the composer or losing the relationship to its source.
 
 - A mouse, touch, or keyboard text selection contained within one eligible
   assistant body or one eligible visible Process transcript block.
-- `Add to chat` and `More details` on every eligible selection. `Ask in side
-  chat` is additionally available when the owning assistant message satisfies
-  the completed-message anchor required by `CHAT.SIDE.CHAT.001`.
+- `Add to chat` on every eligible selection. `Ask in side chat` is additionally
+  available when the owning assistant message satisfies the completed-message
+  anchor required by `CHAT.SIDE.CHAT.001`.
 - The annotation editor's optional comment field plus image/file add and remove
   actions.
 - Existing Chat JSON, stream, multipart, Queue, and Steer message admission
@@ -684,9 +684,8 @@ copying context into the composer or losing the relationship to its source.
    selected snapshot preserves visible paragraph/list/line-break boundaries
    while offsets and hashes continue to address the persisted raw source.
 2. Rudder shows a portal-based selection toolbar positioned with flip/shift
-   collision handling. `Add to chat` adds only the annotation. `More details`
-   adds it and inserts the localized equivalent of “Please explain this in more
-   detail” at the current main-composer cursor without sending.
+   collision handling. `Add to chat` adds the annotation, immediately opens its
+   anchored editor, and focuses the optional comment field without sending.
 3. For a completed assistant anchor, `Ask in side chat` places the same
    annotation in a provisional Side Chat draft and leaves the main Chat draft
    unchanged. The action is unavailable for a stopped or failed source because
@@ -694,14 +693,17 @@ copying context into the composer or losing the relationship to its source.
    conversation; first Send follows `CHAT.SIDE.CHAT.001`.
 4. Adding the same source surface and canonical range to the same draft is
    idempotent. New distinct annotations append in order and immediately render
-   an accent marker beside the complete visual source line. A marker uses an
-   available line-end or line-start gutter and must not cover selected or
-   adjacent response text; same-line and narrow-surface collision handling
-   keeps every marker within the visible surface and clear of body text.
-   Deleting an item renumbers the remaining markers.
+   a non-interactive translucent highlight over the exact selected source text
+   plus an accent marker beside the complete visual source line. The highlight
+   does not change layout or intercept pointer input. A marker uses an available
+   line-end or line-start gutter and must not cover selected or adjacent
+   response text; same-line and narrow-surface collision handling keeps every
+   marker within the visible surface and clear of body text. Deleting an item
+   removes its highlight and renumbers the remaining markers.
 5. The composer renders an `N annotations` chip. Expanding it shows an ordered
-   list of Selected text, optional User comment, and annotation-owned files in
-   a portal above the composer, without increasing composer height. Details
+   list of Selected text, an optional operator comment without a redundant
+   `User comment` label, and annotation-owned files in a portal above the
+   composer, without increasing composer height. Details
    appear only after explicit chip activation; creating or editing an
    annotation does not automatically reveal the complete list. Draft rows
    expose edit and delete actions. Collapsing the details keeps the draft
@@ -710,7 +712,8 @@ copying context into the composer or losing the relationship to its source.
    unrelated composer attachments.
 6. Marker or row-edit activation closes the complete-list surface and opens
    only that selected annotation in an anchored editor above the composer. The
-   editor shows the selection snapshot, text comment input, an icon-only
+   exact source range remains highlighted, so the editor does not repeat the
+   selected-text snapshot. It shows only the text comment input, an icon-only
    attachment action with an accessible name, image/file removal controls,
    Delete, Cancel, and Save. Cancel restores the prior draft item; Save commits
    the local draft changes without sending. Opening and closing the list and
@@ -751,12 +754,12 @@ copying context into the composer or losing the relationship to its source.
     `RUN.RESULT.001`; prompt projection does not turn it into assistant final
     body.
 13. After Send, the user message renders a read-only count chip above the
-   message. Its card shows Selected text, optional User comment, and
-   annotation-owned files without edit/delete controls or duplicate generic
-   attachment tiles. Editing that historical user message creates a new turn
-   variant carrying the annotation semantic snapshots unchanged while remapping
-   attachment ids to the new user message; retry, queued delivery, and Steer
-   reuse the same evidence.
+   message. Its card shows Selected text, an optional operator comment without a
+   redundant `User comment` label, and annotation-owned files without
+   edit/delete controls or duplicate generic attachment tiles. Editing that
+   historical user message creates a new turn variant carrying the annotation
+   semantic snapshots unchanged while remapping attachment ids to the new user
+   message; retry, queued delivery, and Steer reuse the same evidence.
 14. Expanding historical annotations temporarily restores their numbered source
     markers. Selecting a card item reveals eligible collapsed Process details,
     scrolls to the source, and briefly highlights it. If the immutable snapshot
@@ -773,11 +776,10 @@ copying context into the composer or losing the relationship to its source.
 
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
-| Stable final-answer selection | One completed/stopped/failed assistant body; one valid range | Add one ordered annotation and source marker; expose Side Chat only for a completed owning assistant message | Select a user/system message, cross-message range, streaming content, or create a Side Chat from a stopped/failed anchor | UI, service, and E2E tests |
+| Stable final-answer selection | One completed/stopped/failed assistant body; one valid range | Add one ordered annotation, exact-range highlight, source marker, and focused comment editor; expose Side Chat only for a completed owning assistant message | Select a user/system message, cross-message range, streaming content, or create a Side Chat from a stopped/failed anchor | UI, service, and E2E tests |
 | Visible Process selection | Loaded visible assistant/thinking prose; terminal generation; one provenance range | Add one process annotation with generation sequence identity | Use transcript index/timestamp, hidden reasoning, tool payload, stdout/stderr, or lifecycle events | Provenance, service, UI, and E2E tests |
-| Comment and files | Draft annotation is editable and uploads satisfy Chat file policy | Save optional comment and annotation-owned images/files | Attach a foreign asset, duplicate the file as a generic message tile, or log its contents | Multipart, ownership, UI, and E2E tests |
-| Inspect or edit one draft | Operator explicitly opens the count chip or activates one marker/edit action | Show the ordered list above the composer, or show only the activated annotation editor | Expand details automatically, increase composer height, show unrelated annotations, or cover response text with a marker | UI and E2E tests |
-| More details | Eligible selection; main composer available | Add the annotation and insert localized detail request at the cursor | Send automatically or replace existing draft text | UI and E2E tests |
+| Comment and files | Draft annotation is editable and uploads satisfy Chat file policy | Save optional comment and annotation-owned images/files from the picker or pasted clipboard images | Attach a foreign asset, duplicate the file as a generic message tile, replace ordinary pasted text, or log file contents | Multipart, ownership, UI, and E2E tests |
+| Inspect or edit one draft | Operator adds an annotation, explicitly opens the count chip, or activates one marker/edit action | Open the new annotation editor directly, show the ordered list above the composer on request, or show only the activated annotation editor | Expand the complete list automatically, repeat selected text inside the editor, increase composer height, show unrelated annotations, or cover response text with a marker | UI and E2E tests |
 | Annotation-only Send | Existing Chat; body empty; at least one valid annotation | Persist and run one normal user turn | Reject solely for empty body or create an empty first Chat | Shared, route, and E2E tests |
 | Duplicate selection | Same source surface and canonical range already in draft | Keep one item and one marker | Add duplicate payloads or skip numbering | UI tests |
 | Send failure | Upload, validation, admission, or network failure | Preserve the complete draft and surface the failure | Clear comments/files or leave unowned staged assets | Route, UI, and E2E tests |
@@ -789,8 +791,7 @@ copying context into the composer or losing the relationship to its source.
 
 ## Actor-Visible Input
 
-- The toolbar uses the labels `Add to chat`, `More details`, and
-  `Ask in side chat`.
+- The toolbar uses the labels `Add to chat` and `Ask in side chat`.
 - Desktop controls use the normal 32–36 CSS-pixel Rudder control rhythm. Coarse
   pointer controls have at least a 44 CSS-pixel target.
 - Toolbar, marker, chip, list, and editor are keyboard operable. `Escape`
@@ -798,24 +799,27 @@ copying context into the composer or losing the relationship to its source.
   Enter/Space activates the focused command. Focus returns to the selection,
   marker, or composer that opened it.
 - The editor accepts text comments plus the same governed image/file types and
-  size limits as normal Chat attachments. The attachment picker is presented as
-  an icon-only action with an accessible label and tooltip. The editor shows
-  pending/upload failure and removal state per file.
+  size limits as normal Chat attachments. Clipboard images can be pasted
+  directly into the comment field without intercepting ordinary text paste.
+  The attachment picker is presented as an icon-only action with an accessible
+  label and tooltip. The editor shows pending/upload failure and removal state
+  per file.
 - Selection, toolbar, count changes, deletion, source-unavailable state, and
   upload failure have appropriate labels or polite live announcements. Reduced
   motion preserves the same state changes without movement-dependent meaning.
 
 ## Operator-Visible Output
 
-- Draft source text shows ordered accent markers beside, never over, response
-  text. The composer shows one compact count chip and, only after explicit
-  activation, a portaled ordered-details surface above the composer without
-  changing composer height.
-- Activating a marker or row edit shows only that annotation's anchored editor;
-  other draft details remain hidden until the operator explicitly requests
-  them.
-- Each detail distinguishes Selected text from User comment and displays its own
-  image/file attachments.
+- Draft source text shows a translucent exact-range highlight plus ordered
+  accent markers beside, never over, response text. The composer shows one
+  compact count chip and, only after explicit activation, a portaled
+  ordered-details surface above the composer without changing composer height.
+- Adding an annotation or activating its marker/row edit shows only that
+  annotation's anchored editor. The source highlight provides the selected-text
+  context, so the editor contains no duplicate quote; other draft details remain
+  hidden until the operator explicitly requests them.
+- Each detail shows Selected text, places the optional operator comment beneath
+  it without a `User comment` label, and displays its own image/file attachments.
 - Sent user messages retain the read-only chip and card after reload. Annotation
   attachments open through normal governed Chat image/file inspection.
 - Source navigation expands Process evidence when required, scrolls to the
@@ -866,11 +870,12 @@ copying context into the composer or losing the relationship to its source.
    - Evidence: shared/service/UI tests and response-annotation E2E.
 2. Ask about visible Thinking:
    - Trigger: expand completed Process details, select meaningful thinking prose,
-     and choose More details.
-   - Expected state/action: provenance uses generation sequence, and the
-     localized detail request appears in the composer.
-   - Visible output: Process marker plus composer annotation preview; prompt
-     labels the excerpt as a user quote rather than instructions.
+     choose Add to chat, and enter a focused comment.
+   - Expected state/action: provenance uses generation sequence, the exact
+     Process range remains highlighted, and the comment editor opens directly
+     without repeating the selected text.
+   - Visible output: Process highlight and marker plus composer annotation
+     preview; prompt labels the excerpt as a user quote rather than instructions.
    - Evidence: generation-provenance, prompt, UI, and E2E tests.
 3. Queue then Steer:
    - Trigger: submit an annotated follow-up with a file during an active answer,
