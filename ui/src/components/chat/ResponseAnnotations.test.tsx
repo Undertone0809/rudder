@@ -220,7 +220,7 @@ describe("response annotation components", () => {
     });
   });
 
-  it("edits a comment without a visible redundant label and accepts picked or pasted files", () => {
+  it("edits only the comment while the source owns the selected-text context", () => {
     const onSave = vi.fn();
     const onCancel = vi.fn();
     const pendingImage = new File(["image"], "screenshot.png", { type: "image/png" });
@@ -236,8 +236,8 @@ describe("response annotation components", () => {
       />,
     );
 
-    expect(host.textContent).toContain("2. Selected text:");
-    expect(host.textContent).toContain(annotation.selectedText);
+    expect(host.textContent).not.toContain("Selected text:");
+    expect(host.textContent).not.toContain(annotation.selectedText);
     expect(host.textContent).toContain("screenshot.png");
     expect(host.textContent).not.toContain("User comment:");
     const filePicker = host.querySelector<HTMLLabelElement>(

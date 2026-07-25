@@ -468,11 +468,16 @@ export function AnchoredResponseAnnotationMarkers({
   onActivate?: (annotationId: string, anchor: HTMLButtonElement) => void;
 }) {
   const [positions, setPositions] = useState<Record<string, { left: number; top: number }>>({});
+  const [highlightRects, setHighlightRects] = useState<Record<
+    string,
+    Array<{ left: number; top: number; width: number; height: number }>
+  >>({});
 
   useLayoutEffect(() => {
     const sourceRoot = sourceRootRef.current;
     if (!sourceRoot || annotations.length === 0) {
       setPositions({});
+      setHighlightRects({});
       return;
     }
     let frameId: number | null = null;
@@ -483,6 +488,10 @@ export function AnchoredResponseAnnotationMarkers({
         const rootRect = sourceRoot.getBoundingClientRect();
         const textRects = collectResponseAnnotationTextRects(sourceRoot);
         const markerSize = window.matchMedia?.("(pointer: coarse)").matches ? 44 : 28;
+        const nextHighlightRects: Record<
+          string,
+          Array<{ left: number; top: number; width: number; height: number }>
+        > = {};
         const candidates: Array<{
           id: string;
           left: number;
@@ -500,6 +509,14 @@ export function AnchoredResponseAnnotationMarkers({
           const rects = typeof range.getClientRects === "function"
             ? Array.from(range.getClientRects())
             : [];
+          nextHighlightRects[annotation.id] = rects
+            .filter((rect) => rect.width > 0 && rect.height > 0)
+            .map((rect) => ({
+              left: rect.left - rootRect.left,
+              top: rect.top - rootRect.top,
+              width: rect.width,
+              height: rect.height,
+            }));
           const anchorRect = rects.at(-1) ?? range.getBoundingClientRect();
           const lineRect = completeVisualLineRect(textRects, anchorRect) ?? anchorRect;
           const position = placeResponseAnnotationMarker(lineRect, rootRect, {
@@ -532,6 +549,7 @@ export function AnchoredResponseAnnotationMarkers({
             height: rect.height,
           })),
         ));
+        setHighlightRects(nextHighlightRects);
       });
     };
     update();
@@ -547,21 +565,43 @@ export function AnchoredResponseAnnotationMarkers({
     };
   }, [annotations, source, sourceRootRef]);
 
-  return annotations.map((annotation, index) => {
-    const position = positions[annotation.id];
-    if (!position) return null;
-    return (
-      <ResponseAnnotationMarker
-        key={annotation.id}
-        annotationId={annotation.id}
-        ordinal={annotation.ordinal ?? index + 1}
-        excerpt={annotation.selectedText}
-        onActivate={(anchor) => onActivate?.(annotation.id, anchor)}
-        className="absolute z-20"
-        style={position}
-      />
-    );
-  });
+  return (
+    <>
+      {annotations.map((annotation) => (
+        <span
+          key={`highlight-${annotation.id}`}
+          data-testid="chat-response-annotation-highlight"
+          data-annotation-id={annotation.id}
+          {...{ [CHAT_ANNOTATION_IGNORE_ATTRIBUTE]: "" }}
+          className="pointer-events-none absolute inset-0 z-10"
+          aria-hidden="true"
+        >
+          {(highlightRects[annotation.id] ?? []).map((rect, rectIndex) => (
+            <span
+              key={`${annotation.id}-${rectIndex}`}
+              className="absolute rounded-[2px] bg-primary/20"
+              style={rect}
+            />
+          ))}
+        </span>
+      ))}
+      {annotations.map((annotation, index) => {
+        const position = positions[annotation.id];
+        if (!position) return null;
+        return (
+          <ResponseAnnotationMarker
+            key={annotation.id}
+            annotationId={annotation.id}
+            ordinal={annotation.ordinal ?? index + 1}
+            excerpt={annotation.selectedText}
+            onActivate={(anchor) => onActivate?.(annotation.id, anchor)}
+            className="absolute z-20"
+            style={position}
+          />
+        );
+      })}
+    </>
+  );
 }
 
 function AnnotationAttachment({
@@ -685,7 +725,7 @@ export function ResponseAnnotationEditor({
   const [validationError, setValidationError] = useState<string | null>(null);
   const [liveAnchorRect, setLiveAnchorRect] = useState(anchorRect ?? null);
   const [liveBoundaryRect, setLiveBoundaryRect] = useState(boundaryRect ?? null);
-  const [editorSize, setEditorSize] = useState({ width: 352, height: 320 });
+  const [editorSize, setEditorSize] = useState({ width: 352, height: 224 });
   const [closing, setClosing] = useState(false);
   const inputId = useId();
   const editorRef = useRef<HTMLElement>(null);
@@ -933,18 +973,11 @@ export function ResponseAnnotationEditor({
             visibility: placement ? "visible" : "hidden",
           }
         : undefined}
-      aria-label="Edit annotation"
+      aria-label={`Edit annotation ${ordinal}`}
       onAnimationEnd={(event) => {
         if (closing && event.currentTarget === event.target) completeClose();
       }}
     >
-      <AnnotationContent
-        annotation={annotation}
-        ordinal={ordinal}
-        attachments={[]}
-        labels={labels}
-        showComment={false}
-      />
       {visibleAttachments.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {visibleAttachments.map((attachment) => (

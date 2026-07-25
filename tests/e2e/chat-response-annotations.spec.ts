@@ -774,7 +774,7 @@ test.describe("Chat response annotations", () => {
     await expect(finalSource.getByTestId("chat-response-annotation-marker")).toHaveCount(0);
   });
 
-  test("opens only the activated draft, floats details upward, keeps markers clear, and sends a soft-break partial selection", async ({ page }, testInfo) => {
+  test("highlights source text, opens only the activated draft, keeps markers clear, and sends a soft-break partial selection", async ({ page }, testInfo) => {
     const seeded = await seedAnnotationChat(
       page,
       `Response-Annotation-Draft-Interaction-${Date.now()}`,
@@ -794,6 +794,12 @@ test.describe("Chat response annotations", () => {
       .getByTestId("chat-response-annotation-marker")
       .filter({ hasText: "2" });
     await expect(secondMarker).toBeVisible();
+    const sourceHighlights = finalSource.locator(
+      `[data-testid="chat-response-annotation-highlight"][data-annotation-id]`,
+    );
+    await expect(sourceHighlights).toHaveCount(2);
+    await expect(sourceHighlights.first().locator(":scope > span")).not.toHaveCount(0);
+    await expect(sourceHighlights.last().locator(":scope > span")).not.toHaveCount(0);
     const markerBox = await secondMarker.boundingBox();
     expect(markerBox).toBeTruthy();
     const markerOverlapsSelection = !(
@@ -807,8 +813,8 @@ test.describe("Chat response annotations", () => {
     await secondMarker.click();
     const editor = page.getByTestId("chat-response-annotation-editor");
     await expect(editor).toBeVisible();
-    await expect(editor).toContainText("2. Selected text:");
-    await expect(editor).toContainText("skill-creato");
+    await expect(editor).not.toContainText("Selected text:");
+    await expect(editor).not.toContainText("skill-creato");
     await expect(editor).not.toContainText("Rudder docs");
     await expect(page.getByTestId("chat-response-annotation-card")).toHaveCount(0);
     const attachmentAction = editor.locator("label[aria-label='Add images or files']");
