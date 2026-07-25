@@ -4,6 +4,7 @@ import type { CostByAgent, CostByProject, CostTrendPoint } from "@rudderhq/share
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CostTrendChart, calculateCostTrendInitialScrollLeft } from "./Costs";
+import { buildDistributionItems } from "./Costs.distribution";
 
 describe("CostTrendChart", () => {
   it("exposes daily cost data on each trend bar", () => {
@@ -52,6 +53,31 @@ describe("CostTrendChart", () => {
     expect(html).toContain(
       'aria-label="Jun 13, 2026: 300.8M tokens (19.2M uncached input, 280.4M cached, 1.2M output), $2.30 estimated spend, 138 events"',
     );
+  });
+
+  it("renders hourly buckets with a complete local-time tooltip", () => {
+    const rows: CostTrendPoint[] = [{
+      date: "2026-06-19T01:00:00.000Z",
+      costCents: 125,
+      inputTokens: 900,
+      cachedInputTokens: 300,
+      outputTokens: 100,
+      totalTokens: 1_000,
+      eventCount: 2,
+    }];
+
+    const html = renderToStaticMarkup(
+      <CostTrendChart
+        rows={rows}
+        from="2026-06-19T01:00:00.000Z"
+        to="2026-06-19T01:59:59.999Z"
+        granularity="hour"
+      />,
+    );
+
+    expect(html).toContain("Hourly token volume");
+    expect(html).toContain("1.0K tokens");
+    expect(html).toContain("$1.25 estimated spend");
   });
 
   it("renders all agent trend series when the agent filter is selected", () => {
@@ -161,7 +187,7 @@ describe("CostTrendChart", () => {
       targetDayIndex: 24,
       scrollWidth: 1_052,
       clientWidth: 360,
-    })).toBe(534);
+    })).toBe(537);
   });
 
   it("keeps the trend chart at the left edge when the target is already visible", () => {
@@ -178,5 +204,34 @@ describe("CostTrendChart", () => {
       scrollWidth: 360,
       clientWidth: 360,
     })).toBe(0);
+  });
+});
+
+describe("buildDistributionItems", () => {
+  it("groups long tails into Other while preserving the selected metric total", () => {
+    const rows = Array.from({ length: 8 }, (_, index) => ({
+      id: `agent-${index}`,
+      label: `Agent ${index}`,
+      tokens: 800 - index * 50,
+      costCents: 80 - index * 5,
+    }));
+
+    const items = buildDistributionItems(rows, "tokens");
+
+    expect(items).toHaveLength(6);
+    expect(items.at(-1)?.label).toBe("Other (3)");
+    expect(items.reduce((sum, item) => sum + item.value, 0)).toBe(
+      rows.reduce((sum, row) => sum + row.tokens, 0),
+    );
+  });
+
+  it("keeps extremely small shares visible in accessible legend data", () => {
+    const items = buildDistributionItems([
+      { id: "large", label: "Large", tokens: 999_999, costCents: 100 },
+      { id: "tiny", label: "Tiny", tokens: 1, costCents: 1 },
+    ], "tokens");
+
+    expect(items[1]?.percentage).toBeGreaterThan(0);
+    expect(items[1]?.label).toBe("Tiny");
   });
 });

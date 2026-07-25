@@ -1,9 +1,24 @@
-export type SlidingDatePreset = "7d" | "15d" | "30d" | "mtd" | "ytd" | "all" | "custom";
+export type SlidingDatePreset = "24h" | "7d" | "15d" | "30d" | "mtd" | "ytd" | "all" | "custom";
 
 export function floorDateToMinuteIso(date: Date): string {
   const floored = new Date(date);
   floored.setSeconds(0, 0);
   return floored.toISOString();
+}
+
+function localDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function defaultCustomDateRange(now = new Date()): { from: string; to: string } {
+  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+  return {
+    from: localDateInputValue(from),
+    to: localDateInputValue(now),
+  };
 }
 
 export function resolvePresetDateRange({
@@ -22,10 +37,16 @@ export function resolvePresetDateRange({
   if (preset === "custom") {
     const fromDate = customFrom ? new Date(`${customFrom}T00:00:00`) : null;
     const toDate = customTo ? new Date(`${customTo}T23:59:59.999`) : null;
+    const valid =
+      !!fromDate
+      && !!toDate
+      && Number.isFinite(fromDate.getTime())
+      && Number.isFinite(toDate.getTime())
+      && fromDate <= toDate;
     return {
-      from: fromDate ? fromDate.toISOString() : "",
-      to: toDate ? toDate.toISOString() : "",
-      customReady: !!customFrom && !!customTo,
+      from: valid ? fromDate.toISOString() : "",
+      to: valid ? toDate.toISOString() : "",
+      customReady: valid,
     };
   }
 
@@ -34,6 +55,13 @@ export function resolvePresetDateRange({
   }
 
   const to = floorDateToMinuteIso(now);
+  if (preset === "24h") {
+    return {
+      from: new Date(new Date(to).getTime() - 24 * 60 * 60 * 1000).toISOString(),
+      to,
+      customReady: true,
+    };
+  }
   if (preset === "mtd") {
     return {
       from: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),

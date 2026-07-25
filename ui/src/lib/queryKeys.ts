@@ -214,8 +214,15 @@ export const queryKeys = {
   activity: (orgId: string, filtersKey: string = "all") => ["activity", orgId, filtersKey] as const,
   costs: (orgId: string, from?: string, to?: string) =>
     ["costs", orgId, from, to] as const,
-  costTrend: (orgId: string, from?: string, to?: string, scopeKind: string = "all", scopeId: string = "") =>
-    ["costs", "trend", orgId, from, to, scopeKind, scopeId] as const,
+  costTrend: (
+    orgId: string,
+    from?: string,
+    to?: string,
+    granularity: string = "day",
+    scopeKind: string = "all",
+    scopeId: string = "",
+  ) =>
+    ["costs", "trend", orgId, from, to, granularity, scopeKind, scopeId] as const,
   usageByProvider: (orgId: string, from?: string, to?: string) =>
     ["usage-by-provider", orgId, from, to] as const,
   usageByBiller: (orgId: string, from?: string, to?: string) =>

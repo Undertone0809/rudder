@@ -1,7 +1,7 @@
 import type { Db } from "@rudderhq/db";
-import { activityLog, agents, costEvents, costMonthlySpendRollups, issues, organizations, projects } from "@rudderhq/db";
-import { ADDITIONAL_CACHED_INPUT_TOKEN_PROVIDERS } from "@rudderhq/shared";
-import { and, desc, eq, gte, isNotNull, isNull, lt, lte, or, sql, type SQLWrapper } from "drizzle-orm";
+import { activityLog, agents, costEvents, costMonthlySpendRollups, heartbeatRuns, issues, organizations, projects } from "@rudderhq/db";
+import { ADDITIONAL_CACHED_INPUT_TOKEN_PROVIDERS, type CostTrendGranularity } from "@rudderhq/shared";
+import { and, desc, eq, gte, isNotNull, isNull, lt, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { notFound, unprocessable } from "../errors.js";
 import { budgetService, type BudgetServiceHooks } from "./budgets.js";
 
@@ -425,18 +425,54 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 
-      const [summaryRow] = await db
-        .select({
-          total: sumNumberSql(costEvents.costCents),
-          inputTokens: promptInputTokenCountSql(),
-          cachedInputTokens: sumNumberSql(costEvents.cachedInputTokens),
-          outputTokens: sumNumberSql(costEvents.outputTokens),
-          totalTokens: totalTokenCountSql(),
-          eventCount: sql<number>`count(*)::int`,
-          tokenEventCount: tokenEventCountSql(),
-        })
-        .from(costEvents)
-        .where(and(...conditions));
+      const now = new Date();
+      const activeEnd = range?.to && range.to < now ? range.to : now;
+      const activeConditions: SQL[] = [
+        eq(heartbeatRuns.orgId, orgId),
+        isNotNull(heartbeatRuns.startedAt),
+        lte(heartbeatRuns.startedAt, activeEnd),
+      ];
+      if (range?.from) {
+        activeConditions.push(
+          or(isNull(heartbeatRuns.finishedAt), gte(heartbeatRuns.finishedAt, range.from))!,
+        );
+      }
+      const nowTimestamp = sql`${now.toISOString()}::timestamptz`;
+      const clippedStart = range?.from
+        ? sql`greatest(${heartbeatRuns.startedAt}, ${range.from.toISOString()}::timestamptz)`
+        : sql`${heartbeatRuns.startedAt}`;
+      const clippedEnd = range?.to
+        ? sql`least(
+            coalesce(${heartbeatRuns.finishedAt}, ${nowTimestamp}),
+            ${range.to.toISOString()}::timestamptz,
+            ${nowTimestamp}
+          )`
+        : sql`least(coalesce(${heartbeatRuns.finishedAt}, ${nowTimestamp}), ${nowTimestamp})`;
+
+      const [[summaryRow], [durationRow]] = await Promise.all([
+        db
+          .select({
+            total: sumNumberSql(costEvents.costCents),
+            inputTokens: promptInputTokenCountSql(),
+            cachedInputTokens: sumNumberSql(costEvents.cachedInputTokens),
+            outputTokens: sumNumberSql(costEvents.outputTokens),
+            totalTokens: totalTokenCountSql(),
+            eventCount: sql<number>`count(*)::int`,
+            tokenEventCount: tokenEventCountSql(),
+          })
+          .from(costEvents)
+          .where(and(...conditions)),
+        db
+          .select({
+            activeDurationMs: sql<number>`
+              coalesce(sum(
+                greatest(extract(epoch from (${clippedEnd} - ${clippedStart})) * 1000, 0)
+              ), 0)::double precision
+            `,
+          })
+          .from(heartbeatRuns)
+          .where(and(...activeConditions)),
+      ]);
 
       const {
         total,
@@ -465,16 +501,24 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         totalTokens: Number(totalTokens),
         eventCount: Number(eventCount),
         tokenEventCount: Number(tokenEventCount),
+        activeDurationMs: Number(durationRow?.activeDurationMs ?? 0),
       };
     },
 
-    trend: async (orgId: string, range?: CostDateRange, filter: CostTrendFilter = {}) => {
+    trend: async (
+      orgId: string,
+      range?: CostDateRange,
+      granularity: CostTrendGranularity = "day",
+      filter: CostTrendFilter = {},
+    ) => {
       const conditions: ReturnType<typeof eq>[] = [eq(costEvents.orgId, orgId)];
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
       if (filter.agentId) conditions.push(eq(costEvents.agentId, filter.agentId));
 
-      const dateBucket = sql<string>`to_char(date_trunc('day', ${costEvents.occurredAt} at time zone 'UTC'), 'YYYY-MM-DD')`;
+      const dateBucket = granularity === "hour"
+        ? sql<string>`to_char(date_trunc('hour', ${costEvents.occurredAt} at time zone 'UTC'), 'YYYY-MM-DD"T"HH24:00:00.000"Z"')`
+        : sql<string>`to_char(date_trunc('day', ${costEvents.occurredAt} at time zone 'UTC'), 'YYYY-MM-DD')`;
       const costCentsExpr = sumNumberSql(costEvents.costCents);
       const inputTokensExpr = promptInputTokenCountSql();
       const cachedInputTokensExpr = sumNumberSql(costEvents.cachedInputTokens);
@@ -484,7 +528,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       if (filter.projectId) {
         const issueIdAsText = sql<string>`${issues.id}::text`;
         const runProjectLinks = db
-          .selectDistinctOn([activityLog.runId, issues.projectId], {
+          .selectDistinctOn([activityLog.runId], {
             runId: activityLog.runId,
             projectId: issues.projectId,
           })
@@ -504,7 +548,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
               isNotNull(issues.projectId),
             ),
           )
-          .orderBy(activityLog.runId, issues.projectId, desc(activityLog.createdAt))
+          .orderBy(activityLog.runId, desc(activityLog.createdAt), desc(activityLog.id))
           .as("run_project_links");
         const effectiveProjectId = sql<string | null>`coalesce(${costEvents.projectId}, ${runProjectLinks.projectId})`;
         conditions.push(sql`${effectiveProjectId} = ${filter.projectId}` as ReturnType<typeof eq>);
@@ -724,7 +768,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
     byProject: async (orgId: string, range?: CostDateRange) => {
       const issueIdAsText = sql<string>`${issues.id}::text`;
       const runProjectLinks = db
-        .selectDistinctOn([activityLog.runId, issues.projectId], {
+        .selectDistinctOn([activityLog.runId], {
           runId: activityLog.runId,
           projectId: issues.projectId,
         })
@@ -744,7 +788,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
             isNotNull(issues.projectId),
           ),
         )
-        .orderBy(activityLog.runId, issues.projectId, desc(activityLog.createdAt))
+        .orderBy(activityLog.runId, desc(activityLog.createdAt), desc(activityLog.id))
         .as("run_project_links");
 
       const effectiveProjectId = sql<string | null>`coalesce(${costEvents.projectId}, ${runProjectLinks.projectId})`;
@@ -756,7 +800,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
 
       return db
         .select({
-          projectId: effectiveProjectId,
+          projectId: projects.id,
           projectName: projects.name,
           costCents: costCentsExpr,
           inputTokens: promptInputTokenCountSql(),
@@ -765,9 +809,15 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         })
         .from(costEvents)
         .leftJoin(runProjectLinks, eq(costEvents.heartbeatRunId, runProjectLinks.runId))
-        .innerJoin(projects, sql`${projects.id} = ${effectiveProjectId}`)
-        .where(and(...conditions, sql`${effectiveProjectId} is not null`))
-        .groupBy(effectiveProjectId, projects.name)
+        .leftJoin(
+          projects,
+          and(
+            sql`${projects.id} = ${effectiveProjectId}`,
+            eq(projects.orgId, orgId),
+          ),
+        )
+        .where(and(...conditions))
+        .groupBy(projects.id, projects.name)
         .orderBy(desc(costCentsExpr));
     },
   };

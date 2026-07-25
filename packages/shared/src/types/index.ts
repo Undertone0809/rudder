@@ -66,7 +66,7 @@ export type {
   ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
   ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType
 } from "./chat.js";
-export type { CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent, CostSummary, CostTrendPoint, CostWindowSpendRow } from "./cost.js";
+export type { CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent, CostSummary, CostTrendGranularity, CostTrendPoint, CostWindowSpendRow } from "./cost.js";
 export type {
   AgentCustomIntegrationBinding,
   CustomIntegration,

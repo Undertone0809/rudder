@@ -222,7 +222,7 @@ export type {
   ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
   ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
   CostSummary,
-  CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
+  CostTrendGranularity, CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
   FinanceByKind, FinanceEvent, FinanceSummary, Goal,
   GoalDependencies,
   GoalDependencyPreview, GoogleCalendarConnectResponse, GoogleCalendarOAuthConfig, GoogleCalendarSyncResponse, HeartbeatRecoveryMode,

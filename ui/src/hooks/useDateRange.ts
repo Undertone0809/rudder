@@ -1,9 +1,11 @@
-import { floorDateToMinuteIso, resolvePresetDateRange } from "@/lib/date-range-cache";
+import { defaultCustomDateRange, floorDateToMinuteIso, resolvePresetDateRange } from "@/lib/date-range-cache";
+import type { CostTrendGranularity } from "@rudderhq/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-export type DatePreset = "mtd" | "7d" | "30d" | "ytd" | "all" | "custom";
+export type DatePreset = "24h" | "mtd" | "7d" | "30d" | "ytd" | "all" | "custom";
 
 export const PRESET_LABELS: Record<DatePreset, string> = {
+  "24h": "Last 24 Hours",
   mtd: "Month to Date",
   "7d": "Last 7 Days",
   "30d": "Last 30 Days",
@@ -12,7 +14,7 @@ export const PRESET_LABELS: Record<DatePreset, string> = {
   custom: "Custom",
 };
 
-export const PRESET_KEYS: DatePreset[] = ["mtd", "7d", "30d", "ytd", "all", "custom"];
+export const PRESET_KEYS: DatePreset[] = ["24h", "mtd", "7d", "30d", "ytd", "all", "custom"];
 
 export interface UseDateRangeResult {
   preset: DatePreset;
@@ -26,12 +28,15 @@ export interface UseDateRangeResult {
   to: string;
   /** false when preset=custom but both dates are not yet selected */
   customReady: boolean;
+  customError: string | null;
+  trendGranularity: CostTrendGranularity;
 }
 
 export function useDateRange(initialPreset: DatePreset = "mtd"): UseDateRangeResult {
   const [preset, setPreset] = useState<DatePreset>(initialPreset);
-  const [customFrom, setCustomFrom] = useState("");
-  const [customTo, setCustomTo] = useState("");
+  const [initialCustomRange] = useState(() => defaultCustomDateRange());
+  const [customFrom, setCustomFrom] = useState(initialCustomRange.from);
+  const [customTo, setCustomTo] = useState(initialCustomRange.to);
 
   // tick at the next calendar minute boundary, then every 60s, so sliding presets
   // (7d, 30d) advance their upper bound in sync with wall clock minutes rather than
@@ -65,7 +70,11 @@ export function useDateRange(initialPreset: DatePreset = "mtd"): UseDateRangeRes
   // minuteTick drives re-evaluation of sliding presets once per minute.
   }, [preset, customFrom, customTo, minuteTick]);
 
-  const customReady = preset !== "custom" || (!!customFrom && !!customTo);
+  const customReady = preset !== "custom" || (!!from && !!to);
+  const customError =
+    preset === "custom" && customFrom && customTo && !customReady
+      ? "Start date must be on or before end date."
+      : null;
 
   return {
     preset,
@@ -77,5 +86,7 @@ export function useDateRange(initialPreset: DatePreset = "mtd"): UseDateRangeRes
     from,
     to,
     customReady,
+    customError,
+    trendGranularity: preset === "24h" ? "hour" : "day",
   };
 }
