@@ -2894,6 +2894,7 @@ test.describe("Messenger unified threads contract", () => {
 
     await expect(dialog).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("approval-decision-note")).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "See full request" })).toHaveCount(0);
 
     const scrollMetrics = await scrollArea.evaluate((node) => ({
       scrollHeight: node.scrollHeight,
@@ -2917,7 +2918,7 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId("approval-decision-note")).toBeVisible();
 
     await page.getByTestId("approval-decision-note").fill("Please tighten the execution scope before resubmitting.");
-    await page.getByRole("button", { name: "Request revision" }).click();
+    await page.getByRole("button", { name: "Request changes" }).click();
 
     await expect.poll(async () => {
       const approvalStateRes = await page.request.get(`/api/approvals/${approval.id}`);

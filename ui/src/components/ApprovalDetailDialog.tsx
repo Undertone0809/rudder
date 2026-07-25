@@ -22,7 +22,7 @@ import { Link, useNavigate, useSearchParams } from "@/lib/router";
 import { formatDateTime } from "@/lib/utils";
 import type { ApprovalComment } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, ChevronRight, Sparkles } from "lucide-react";
+import { CheckCircle2, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AgentIdentity } from "./AgentAvatar";
 import { ApprovalInset, ApprovalPanel } from "./approval-ui";
@@ -59,7 +59,6 @@ export function ApprovalDetailDialog({
   const [decisionNote, setDecisionNote] = useState("");
   const [commentBody, setCommentBody] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [showRawPayload, setShowRawPayload] = useState(false);
   const [selectedChatIssueLabelIds, setSelectedChatIssueLabelIds] = useState<string[]>([]);
   const operatorDisplayName = useOperatorDisplayName();
 
@@ -124,7 +123,6 @@ export function ApprovalDetailDialog({
     setDecisionNote("");
     setCommentBody("");
     setError(null);
-    setShowRawPayload(false);
     setSelectedChatIssueLabelIds([]);
   }, [approvalId]);
 
@@ -365,20 +363,6 @@ export function ApprovalDetailDialog({
                           Decision note
                         </div>
                         <p className="mt-2 text-sm leading-6 text-foreground/90">{approval.decisionNote}</p>
-                      </ApprovalInset>
-                    ) : null}
-
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                      onClick={() => setShowRawPayload((value) => !value)}
-                    >
-                      <ChevronRight className={`h-3 w-3 transition-transform ${showRawPayload ? "rotate-90" : ""}`} />
-                      See full request
-                    </button>
-                    {showRawPayload ? (
-                      <ApprovalInset as="pre" className="overflow-x-auto p-3 text-xs">
-                        {JSON.stringify(payload, null, 2)}
                       </ApprovalInset>
                     ) : null}
                   </div>
