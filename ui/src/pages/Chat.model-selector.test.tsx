@@ -100,8 +100,10 @@ describe("chat conversation model options", () => {
 
     expect(html).toContain('data-testid="chat-model-selector"');
     expect(html).toContain('data-testid="chat-effort-selector"');
-    expect(html).toContain("Agent default · gpt-5.6-sol");
-    expect(html).toContain("Agent default · High");
+    expect(html).toContain(">gpt-5.6-sol<");
+    expect(html).toContain(">High<");
+    expect(html).toContain('aria-haspopup="listbox"');
+    expect(html).toContain("lucide-chevron-right");
     expect(html).not.toContain(">Agents<");
   });
 

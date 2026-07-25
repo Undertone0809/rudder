@@ -567,9 +567,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   useEffect(() => { setSkillMenuOpen(false); setSkillSearchQuery(""); }, [activeSkillAgentId]);
   useEffect(() => {
     if (!composerContextMenuOpen) { setComposerMenuPosition(null);
-      return; } const updatePosition = () => { const anchor = composerSurfaceRef.current; if (!anchor) return; setComposerMenuPosition(composerMenuPositionForAnchor(anchor)); }; updatePosition(); window.addEventListener("resize", updatePosition); window.addEventListener("scroll", updatePosition, true);
-    return () => { window.removeEventListener("resize", updatePosition); window.removeEventListener("scroll", updatePosition, true); }; }, [composerContextMenuOpen]);
-  useEffect(() => { if (!composerContextMenuOpen) return; const handlePointerDown = (event: PointerEvent) => { const target = event.target; if (!(target instanceof Node)) return; if (composerContextMenuRef.current?.contains(target)) return; if (composerSurfaceRef.current?.contains(target)) return; closeComposerContextMenus(); }; const handleKeyDown = (event: KeyboardEvent) => {
+      return; } const updatePosition = () => { const anchor = agentMenuOpen ? runtimeSelectorRef.current ?? composerSurfaceRef.current : composerSurfaceRef.current; if (!anchor) return; setComposerMenuPosition(composerMenuPositionForAnchor(anchor)); }; updatePosition(); window.addEventListener("resize", updatePosition); window.addEventListener("scroll", updatePosition, true);
+    return () => { window.removeEventListener("resize", updatePosition); window.removeEventListener("scroll", updatePosition, true); }; }, [agentMenuOpen, composerContextMenuOpen, runtimeSelectorRef]);
+  useEffect(() => { if (!composerContextMenuOpen) return; const handlePointerDown = (event: PointerEvent) => { const target = event.target; if (!(target instanceof Node)) return; if (target instanceof Element && target.closest("[data-chat-runtime-submenu]")) return; if (composerContextMenuRef.current?.contains(target)) return; if (composerSurfaceRef.current?.contains(target)) return; closeComposerContextMenus(); }; const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         const restoreRuntimeFocus = agentMenuOpen;
         closeComposerContextMenus();
@@ -2736,7 +2736,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         data-testid={`chat-${activeMenu}-menu`}
         role={activeMenu === "runtime" ? "dialog" : "menu"}
         aria-label={activeMenu === "runtime" ? "Conversation runtime" : undefined}
-        className="chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay fixed z-50 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
+        className={cn("chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay fixed z-50 rounded-[var(--radius-lg)] border p-1.5 text-foreground", activeMenu === "runtime" ? "overflow-visible" : "overflow-y-auto")}
         style={composerMenuPosition}
       >
         {projectMenuOpen && !projectSelectionLocked ? ( <>

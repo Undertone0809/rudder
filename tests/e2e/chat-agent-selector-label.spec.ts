@@ -47,9 +47,13 @@ test.describe("Chat runtime selector naming", () => {
     await expect(runtimeMenu).not.toContainText("Builder");
     await expect(runtimeMenu).not.toContainText("Reviewer");
     await expect(page.getByRole("menuitemradio")).toHaveCount(0);
-    await expect(page.getByTestId("chat-model-selector").locator("option").first())
-      .toHaveText("Agent default · gpt-5.4");
-    await expect(page.getByTestId("chat-effort-selector").locator("option").first())
-      .toHaveText("Agent default · High");
+    await expect(page.getByTestId("chat-model-selector"))
+      .toContainText("gpt-5.4");
+    await expect(page.getByTestId("chat-effort-selector"))
+      .toContainText("High");
+    await expect(page.getByTestId("chat-model-selector"))
+      .toHaveAttribute("aria-haspopup", "listbox");
+    await expect(page.getByTestId("chat-effort-selector"))
+      .toHaveAttribute("aria-haspopup", "listbox");
   });
 });

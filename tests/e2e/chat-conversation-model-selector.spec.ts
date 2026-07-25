@@ -31,6 +31,15 @@ function capturedEffort(capture: Capture) {
   return JSON.parse(effortArg.slice("model_reasoning_effort=".length)) as string;
 }
 
+async function chooseRuntimeOption(
+  page: import("@playwright/test").Page,
+  kind: "model" | "effort",
+  value: string | null,
+) {
+  await page.getByTestId(`chat-${kind}-selector`).click();
+  await page.getByTestId(`chat-${kind}-option-${value ?? "default"}`).click();
+}
+
 test("persists conversation runtime overrides, freezes running and queued turns, and resets new Chat", async ({ page }, testInfo) => {
   test.slow();
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-model-selector-"));
@@ -111,14 +120,14 @@ process.stdin.on("end", async () => {
     await expect(page.getByTestId("chat-runtime-menu")).not.toContainText("Conversation Model Agent");
     const modelSelector = page.getByTestId("chat-model-selector");
     const effortSelector = page.getByTestId("chat-effort-selector");
-    await expect(modelSelector).toHaveValue("");
-    await expect(modelSelector.locator("option").first()).toHaveText("Agent default · gpt-5.5");
-    await expect(effortSelector).toHaveValue("");
-    await expect(effortSelector.locator("option").first()).toHaveText("Agent default · High");
-    await modelSelector.selectOption("gpt-5.6-terra");
-    await expect(modelSelector).toHaveValue("gpt-5.6-terra");
-    await effortSelector.selectOption("xhigh");
-    await expect(effortSelector).toHaveValue("xhigh");
+    await expect(modelSelector).toHaveAttribute("data-value", "");
+    await expect(modelSelector).toContainText("gpt-5.5");
+    await expect(effortSelector).toHaveAttribute("data-value", "");
+    await expect(effortSelector).toContainText("High");
+    await chooseRuntimeOption(page, "model", "gpt-5.6-terra");
+    await expect(modelSelector).toHaveAttribute("data-value", "gpt-5.6-terra");
+    await chooseRuntimeOption(page, "effort", "xhigh");
+    await expect(effortSelector).toHaveAttribute("data-value", "xhigh");
     await runtimeSelector.click();
 
     const composer = page.getByTestId("chat-composer-editor-scroll")
@@ -158,22 +167,24 @@ process.stdin.on("end", async () => {
       response.request().method() === "PATCH"
       && response.url().includes(`/api/chats/${firstConversationId}`),
     );
-    await runningModelSelector.selectOption("gpt-5.6-luna");
+    await chooseRuntimeOption(page, "model", "gpt-5.6-luna");
     await modelPatchObserved;
     await expect(page.getByRole("button", { name: "Stop streaming" })).toBeEnabled();
     releaseModelPatch();
     expect((await modelPatchResponse).ok()).toBe(true);
     await page.unroute(`**/api/chats/${firstConversationId}`);
-    await expect(runningModelSelector).toHaveValue("gpt-5.6-luna");
+    await expect(runningModelSelector).toHaveAttribute("data-value", "gpt-5.6-luna");
     await expect(runningEffortSelector).toBeEnabled();
     const effortPatchResponse = page.waitForResponse((response) =>
       response.request().method() === "PATCH"
       && response.url().includes(`/api/chats/${firstConversationId}`),
     );
-    await runningEffortSelector.selectOption("medium");
+    await chooseRuntimeOption(page, "effort", "medium");
     expect((await effortPatchResponse).ok()).toBe(true);
-    await expect(runningEffortSelector).toHaveValue("medium");
+    await expect(runningEffortSelector).toHaveAttribute("data-value", "medium");
     await expect(runningModelSelector).toBeEnabled();
+    await runningEffortSelector.hover();
+    await expect(page.getByTestId("chat-effort-options")).toBeVisible();
     await page.screenshot({
       path: testInfo.outputPath("conversation-model-selector-running-dark.png"),
       fullPage: true,
@@ -203,7 +214,7 @@ process.stdin.on("end", async () => {
       response.request().method() === "PATCH"
       && response.url().includes(`/api/chats/${firstConversationId}`),
     );
-    await postAdmissionModelSelector.selectOption("gpt-5.6-sol");
+    await chooseRuntimeOption(page, "model", "gpt-5.6-sol");
     expect((await postAdmissionPatch).ok()).toBe(true);
     await expect(postAdmissionModelSelector).toBeEnabled();
     await expect(postAdmissionEffortSelector).toBeEnabled();
@@ -211,7 +222,7 @@ process.stdin.on("end", async () => {
       response.request().method() === "PATCH"
       && response.url().includes(`/api/chats/${firstConversationId}`),
     );
-    await postAdmissionEffortSelector.selectOption("ultra");
+    await chooseRuntimeOption(page, "effort", "ultra");
     expect((await postAdmissionEffortPatch).ok()).toBe(true);
     await runtimeSelector.click();
 
@@ -230,8 +241,10 @@ process.stdin.on("end", async () => {
 
     await page.reload();
     await runtimeSelector.click();
-    await expect(page.getByTestId("chat-model-selector")).toHaveValue("gpt-5.6-sol");
-    await expect(page.getByTestId("chat-effort-selector")).toHaveValue("ultra");
+    await expect(page.getByTestId("chat-model-selector"))
+      .toHaveAttribute("data-value", "gpt-5.6-sol");
+    await expect(page.getByTestId("chat-effort-selector"))
+      .toHaveAttribute("data-value", "ultra");
     await runtimeSelector.click();
     const persistedRes = await page.request.get(`/api/chats/${firstConversationId}`);
     expect(persistedRes.ok()).toBe(true);
@@ -243,8 +256,8 @@ process.stdin.on("end", async () => {
     await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${agent.id}`);
     await expect(runtimeSelector).toContainText("gpt-5.5 · High", { timeout: 15_000 });
     await runtimeSelector.click();
-    await expect(page.getByTestId("chat-model-selector")).toHaveValue("");
-    await expect(page.getByTestId("chat-effort-selector")).toHaveValue("");
+    await expect(page.getByTestId("chat-model-selector")).toHaveAttribute("data-value", "");
+    await expect(page.getByTestId("chat-effort-selector")).toHaveAttribute("data-value", "");
     await runtimeSelector.click();
     await composer.fill("A separate conversation uses the Agent default");
     await page.getByRole("button", { name: "Send" }).click();

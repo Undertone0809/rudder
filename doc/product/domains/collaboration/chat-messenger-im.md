@@ -194,11 +194,11 @@ Product model:
   the caller's selected organization agent when supplied and otherwise assigns
   the organization's first available agent; it rejects creation before
   persistence when the organization has no available agent.
-- A native conversation may persist one nullable primary-model override. The
-  override is scoped to that conversation, leaves the Agent runtime
-  configuration unchanged, and is cleared when the preferred Agent changes.
+- A native conversation may persist nullable primary-model and thinking-effort
+  overrides. Both are scoped to that conversation, leave the Agent runtime
+  configuration unchanged, and are cleared when the preferred Agent changes.
   New Chat drafts, other conversations, Forks, and Side Chats start from the
-  selected Agent's default model instead of inheriting it.
+  selected Agent defaults instead of inheriting either override.
 - Entry points that only establish context, such as Project `Chat`, open an
   unpersisted new-chat draft. They must not create an empty conversation merely
   because the operator opened the composer.
@@ -276,9 +276,10 @@ Product model:
 - Queued follow-ups preserve the queued body and composer context until they are
   delivered, including response annotations and their annotation-owned files.
   Operators can edit or delete ordinary queued follow-ups while they remain
-  queued. Admission snapshots the effective primary model so later
-  conversation-model changes do not retarget queued work. The server, rather
-  than the open browser, owns claiming and delivering eligible follow-ups.
+  queued. Admission snapshots the effective primary model and thinking effort
+  so later conversation-runtime changes do not retarget queued work. The
+  server, rather than the open browser, owns claiming and delivering eligible
+  follow-ups.
 - Steer is a durable operator command, not an optimistic queue label. If the
   active runtime attempt supports native steering, Rudder submits the feedback
   to that same provider turn. Otherwise Rudder interrupts the current attempt
@@ -340,18 +341,19 @@ Flow:
    preserve their selected Project without persisting a conversation.
 2. On an empty new Chat, the operator may select a compact task category and
    then a complete prompt suggestion before editing or sending the draft.
-3. Composer includes a selected agent and may include attachments, mentions,
-   rich references, selected skills, and structured proposal payloads. Its
-   selected Agent row may also choose a conversation-only primary model from
-   the runtime-owned model catalog.
+3. Composer keeps the conversation's bound Agent internal and does not expose
+   Agent choices. A compact runtime control directly shows the effective model
+   and thinking effort, with nested Model and Thinking menus backed by the
+   runtime-owned catalogs. Composer may also include attachments, mentions,
+   rich references, selected skills, and structured proposal payloads.
 4. Before the first send, the server performs a side-effect-free preflight for
    organization access, Agent/runtime/model support, context ownership, and
    attachment validity. A failure keeps the complete unpersisted draft.
 5. On the first accepted send, the server atomically persists the agent-backed
-   conversation, optional model override, context links, first message, title,
-   and activity before acknowledging the turn. Direct create callers must
-   supply a non-empty first message; the server derives its role from the
-   authenticated actor.
+   conversation, optional model and effort overrides, context links, first
+   message, title, and activity before acknowledging the turn. Direct create
+   callers must supply a non-empty first message; the server derives its role
+   from the authenticated actor.
 6. If assistant startup or generation fails after acceptance, Rudder retains
    the accepted user message and durable, visible failure evidence.
 7. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
@@ -426,15 +428,18 @@ Invariants:
   not present `No agent` as a valid chat state. Legacy or externally sourced
   records that cannot resolve an agent remain visible as `Agent unavailable`;
   legitimately unassigned split issues remain distinct as `Unassigned`.
-- Conversation model changes affect only assistant invocations admitted after
-  the change. An in-flight invocation retains its admitted runtime config, and
-  queued or fallback-continuation work retains the model snapshot stored at
-  queue admission. Restoring `Agent default` clears the persisted override.
-- A conversation model override replaces only the primary model in the derived
-  Chat runtime config. Secrets, workspace, skills, fallback models, and other
-  Agent runtime settings remain inherited. If inherited thinking effort is not
-  supported by the selected model, the derived conversation config uses Auto
-  without mutating the Agent.
+- Conversation model or effort changes affect only assistant invocations
+  admitted after the change. An in-flight invocation retains its admitted
+  runtime config, and queued or fallback-continuation work retains the model
+  and effort snapshots stored at queue admission. Restoring either control to
+  `Agent default` clears only that persisted override.
+- Conversation overrides replace only the primary model and adapter-owned
+  effort field in the derived Chat runtime config. Secrets, workspace, skills,
+  fallback models, and other Agent runtime settings remain inherited. A null
+  effort override means Agent default; explicit `Auto` clears inherited effort
+  in the derived config. If the chosen model does not support the inherited or
+  overridden effort, the derived conversation config also uses Auto without
+  mutating the Agent.
 - Chat proposals/structured payloads must not be confused with plain user
   instructions or automation run input.
 - Assistant-created issue proposals must be grounded in an explicit latest
@@ -522,7 +527,7 @@ Invariants:
   retained feedback after Stop remains steerable as a server-owned
   continuation.
 - External-bound Feishu conversations are read-only locally. They must reject
-  model-override and queued-follow-up mutations through the same
+  model/effort-override and queued-follow-up mutations through the same
   fork-to-continue boundary as normal local chat mutation APIs.
 - Agent attribution is visible enough to navigate from message to run/agent.
 - Conversation-to-run navigation chooses the newest linked assistant attempt;
@@ -563,10 +568,11 @@ Evidence:
   production-sized ceiling, Markdown-safe bounded previews, assistant context,
   and jump delegation.
 - Chat assistant tests cover runtime-backed turns.
-- Chat assistant, route, queue, and model-selector tests cover model precedence,
-  atomic first-turn persistence, Agent-switch reset, fallback preservation,
-  effort compatibility, in-flight admission, queue/Steer snapshots, refresh
-  persistence, and non-inheritance boundaries.
+- Chat assistant, route, queue, and runtime-selector tests cover model/effort
+  precedence, atomic first-turn persistence, Agent-switch reset, fallback
+  preservation, adapter effort projection and compatibility, in-flight
+  admission, queue/Steer snapshots, refresh persistence, and non-inheritance
+  boundaries.
 - Chat assistant tests cover stopped runtime turns that keep reasoning out of
   partial assistant bodies.
 - Transcript component tests and Messenger E2E cover hiding internal reasoning

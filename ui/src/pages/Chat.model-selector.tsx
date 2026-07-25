@@ -11,15 +11,18 @@ import { resolveRuntimeModels } from "@/lib/runtime-models";
 import { cn } from "@/lib/utils";
 import type { Agent, ChatConversation, ChatRuntimeDescriptor } from "@rudderhq/shared";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Bot, ChevronDown, Loader2 } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type Dispatch,
+  type KeyboardEvent,
   type Ref,
   type SetStateAction,
 } from "react";
+import { createPortal } from "react-dom";
 
 export type ChatRuntimeOverrides = {
   modelOverride: string | null;
@@ -44,7 +47,7 @@ export function useChatRuntimeSelection(input: {
   ] = useState<PendingChatRuntimeOverrides | null>(null);
   const draftRuntimeAgentScopeRef = useRef<string | null>(null);
   const runtimeSelectorRef = useRef<HTMLButtonElement>(null);
-  const runtimeModelSelectRef = useRef<HTMLSelectElement>(null);
+  const runtimeModelSelectRef = useRef<HTMLButtonElement>(null);
   const activeRuntimeOverrides: ChatRuntimeOverrides = input.selectedConversation
     ? pendingConversationRuntimeOverrides?.chatId === input.selectedConversation.id
       ? pendingConversationRuntimeOverrides
@@ -237,9 +240,15 @@ export function ChatConversationRuntimeControls(props: {
   isLoading?: boolean;
   error?: unknown;
   pending?: boolean;
-  modelSelectRef?: Ref<HTMLSelectElement>;
+  modelSelectRef?: Ref<HTMLButtonElement>;
   onChange: (overrides: ChatRuntimeOverrides) => void;
 }) {
+  const [activeSubmenu, setActiveSubmenu] = useState<"model" | "effort" | null>(null);
+  const [submenuPosition, setSubmenuPosition] = useState<CSSProperties | null>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const firstModelOptionRef = useRef<HTMLButtonElement | null>(null);
+  const firstEffortOptionRef = useRef<HTMLButtonElement | null>(null);
   const options = chatConversationModelOptions(
     props.agent,
     props.adapterModels,
@@ -271,79 +280,255 @@ export function ChatConversationRuntimeControls(props: {
       ? "Models are temporarily unavailable."
       : null;
   const disabled = props.disabled || props.pending;
-  const selectClassName = cn(
-    "h-8 min-w-0 w-full rounded-[var(--radius-sm)] border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] px-2 text-xs text-foreground outline-hidden",
-    "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30",
+  const effectiveEffort = currentEffortOverride ?? configuredEffort;
+  const setModelTriggerRefs = (node: HTMLButtonElement | null) => {
+    modelTriggerRef.current = node;
+    if (typeof props.modelSelectRef === "function") props.modelSelectRef(node);
+    else if (props.modelSelectRef) props.modelSelectRef.current = node;
+  };
+  const openSubmenu = (
+    kind: "model" | "effort",
+    trigger: HTMLButtonElement | null,
+    focusFirstOption = false,
+  ) => {
+    if (disabled || !trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const width = 256;
+    const viewportPadding = 12;
+    const availableRight = window.innerWidth - rect.right;
+    const left = availableRight >= width + viewportPadding
+      ? rect.right + 8
+      : Math.max(viewportPadding, rect.left - width - 8);
+    setSubmenuPosition({
+      left,
+      top: Math.max(
+        viewportPadding,
+        Math.min(rect.top, window.innerHeight - viewportPadding - 320),
+      ),
+    });
+    setActiveSubmenu(kind);
+    if (focusFirstOption) {
+      requestAnimationFrame(() => {
+        (kind === "model" ? firstModelOptionRef : firstEffortOptionRef).current?.focus();
+      });
+    }
+  };
+  const closeSubmenu = (kind: "model" | "effort") => {
+    setActiveSubmenu(null);
+    requestAnimationFrame(() => {
+      (kind === "model" ? modelTriggerRef : effortTriggerRef).current?.focus();
+    });
+  };
+  const handleSubmenuKeyDown = (
+    event: KeyboardEvent<HTMLDivElement>,
+    kind: "model" | "effort",
+  ) => {
+    if (event.key !== "ArrowLeft" && event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeSubmenu(kind);
+  };
+  const submenuClassName = cn(
+    "surface-overlay fixed z-[70] max-h-80 w-64 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 shadow-lg",
+  );
+  const triggerClassName = cn(
+    "chat-composer-menu-row grid min-h-10 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2",
     disabled && "cursor-not-allowed opacity-60",
   );
 
   return (
-    <div className="min-w-0 space-y-2 px-1 py-1">
-      <label className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2">
-        <span className="text-xs font-medium text-muted-foreground">Model</span>
-        <select
-          ref={props.modelSelectRef}
+    <div className="relative min-w-0">
+      <div className="relative">
+        <button
+          ref={setModelTriggerRefs}
+          type="button"
           data-testid="chat-model-selector"
           aria-label={`Model for this conversation (${props.agent.name} runtime)`}
-          className={selectClassName}
+          aria-haspopup="listbox"
+          aria-expanded={activeSubmenu === "model"}
+          className={triggerClassName}
           disabled={disabled}
           title={errorMessage ?? "Only this conversation will use the selected model."}
-          value={props.overrides.modelOverride ?? ""}
-          onChange={(event) => props.onChange(normalizedChatRuntimeOverridesForModel(
-            props.agent,
-            props.overrides,
-            event.target.value || null,
-          ))}
+          data-value={props.overrides.modelOverride ?? ""}
+          onPointerEnter={() => openSubmenu("model", modelTriggerRef.current)}
+          onClick={() => openSubmenu("model", modelTriggerRef.current, true)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+              event.preventDefault();
+              openSubmenu("model", modelTriggerRef.current, true);
+            }
+          }}
         >
-          <option value="">{`Agent default · ${configuredModel}`}</option>
-          {options.map((model) => (
-            <option key={model.id} value={model.id}>
-              {model.label}
-            </option>
-          ))}
-          {errorMessage && options.length === 0 ? (
-            <option value="__models_unavailable__" disabled>Models unavailable</option>
-          ) : null}
-        </select>
-      </label>
+          <span className="font-medium text-foreground">Model</span>
+          <span className="min-w-0 truncate text-right text-muted-foreground">
+            {effectiveModel}
+          </span>
+          {props.isLoading || props.pending ? (
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          )}
+        </button>
+        {activeSubmenu === "model" && submenuPosition && typeof document !== "undefined" ? createPortal(
+          <div
+            data-chat-runtime-submenu
+            data-testid="chat-model-options"
+            role="listbox"
+            aria-label="Conversation model"
+            className={submenuClassName}
+            style={submenuPosition}
+            onKeyDown={(event) => handleSubmenuKeyDown(event, "model")}
+          >
+            <button
+              ref={firstModelOptionRef}
+              type="button"
+              role="option"
+              aria-selected={props.overrides.modelOverride == null}
+              data-testid="chat-model-option-default"
+              className="chat-composer-menu-row"
+              onClick={() => {
+                props.onChange(normalizedChatRuntimeOverridesForModel(
+                  props.agent,
+                  props.overrides,
+                  null,
+                ));
+                setActiveSubmenu(null);
+              }}
+            >
+              <span className="min-w-0 flex-1 truncate">{`Agent default · ${configuredModel}`}</span>
+              {props.overrides.modelOverride == null ? (
+                <Check className="h-4 w-4 shrink-0" aria-hidden="true" />
+              ) : null}
+            </button>
+            {options.map((model) => {
+              const selected = props.overrides.modelOverride === model.id;
+              return (
+                <button
+                  key={model.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  data-testid={`chat-model-option-${model.id}`}
+                  className="chat-composer-menu-row"
+                  onClick={() => {
+                    props.onChange(normalizedChatRuntimeOverridesForModel(
+                      props.agent,
+                      props.overrides,
+                      model.id,
+                    ));
+                    setActiveSubmenu(null);
+                  }}
+                >
+                  <span className="min-w-0 flex-1 truncate">{model.label}</span>
+                  {selected ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
+                </button>
+              );
+            })}
+            {errorMessage && options.length === 0 ? (
+              <div className="px-2.5 py-2 text-xs text-muted-foreground">
+                Models unavailable
+              </div>
+            ) : null}
+          </div>,
+          document.body,
+        ) : null}
+      </div>
       {shouldShowThinkingEffort(props.agent.agentRuntimeType) ? (
-        <label className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2">
-          <span className="text-xs font-medium text-muted-foreground">Thinking</span>
-          <select
+        <div className="relative">
+          <button
+            ref={effortTriggerRef}
+            type="button"
             data-testid="chat-effort-selector"
             aria-label={`Thinking effort for this conversation (${props.agent.name} runtime)`}
-            className={selectClassName}
+            aria-haspopup="listbox"
+            aria-expanded={activeSubmenu === "effort"}
+            className={triggerClassName}
             disabled={disabled}
-            value={currentEffortOverride ?? ""}
-            onChange={(event) => props.onChange({
-              ...props.overrides,
-              effortOverride: event.target.value || null,
-            })}
+            data-value={currentEffortOverride ?? ""}
+            onPointerEnter={() => openSubmenu("effort", effortTriggerRef.current)}
+            onClick={() => openSubmenu("effort", effortTriggerRef.current, true)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+                event.preventDefault();
+                openSubmenu("effort", effortTriggerRef.current, true);
+              }
+            }}
           >
-            <option value="">
-              {`Agent default · ${effortLabel(configuredEffort)}`}
-            </option>
-            {effortOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            <span className="font-medium text-foreground">Thinking</span>
+            <span className="min-w-0 truncate text-right text-muted-foreground">
+              {effortLabel(effectiveEffort)}
+            </span>
+            {props.pending ? (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            )}
+          </button>
+          {activeSubmenu === "effort" && submenuPosition && typeof document !== "undefined" ? createPortal(
+            <div
+              data-chat-runtime-submenu
+              data-testid="chat-effort-options"
+              role="listbox"
+              aria-label="Conversation thinking effort"
+              className={submenuClassName}
+              style={submenuPosition}
+              onKeyDown={(event) => handleSubmenuKeyDown(event, "effort")}
+            >
+              <button
+                ref={firstEffortOptionRef}
+                type="button"
+                role="option"
+                aria-selected={currentEffortOverride == null}
+                data-testid="chat-effort-option-default"
+                className="chat-composer-menu-row"
+                onClick={() => {
+                  props.onChange({ ...props.overrides, effortOverride: null });
+                  setActiveSubmenu(null);
+                }}
+              >
+                <span className="min-w-0 flex-1 truncate">
+                  {`Agent default · ${effortLabel(configuredEffort)}`}
+                </span>
+                {currentEffortOverride == null ? (
+                  <Check className="h-4 w-4 shrink-0" aria-hidden="true" />
+                ) : null}
+              </button>
+              {effortOptions.map((option) => {
+                const selected = currentEffortOverride === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    data-testid={`chat-effort-option-${option.id}`}
+                    className="chat-composer-menu-row"
+                    onClick={() => {
+                      props.onChange({ ...props.overrides, effortOverride: option.id });
+                      setActiveSubmenu(null);
+                    }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                    {selected ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
+                  </button>
+                );
+              })}
+            </div>,
+            document.body,
+          ) : null}
+        </div>
       ) : null}
-      <div className="flex min-h-4 items-center gap-1.5 px-0.5 text-[11px] text-muted-foreground">
-        {props.isLoading || props.pending ? (
-          <Loader2
-            aria-label={props.pending ? "Saving runtime selection" : "Loading models"}
-            className="h-3.5 w-3.5 shrink-0 animate-spin"
-          />
-        ) : null}
-        <span>
-          {props.pending
-            ? "Saving for this conversation…"
-            : errorMessage ?? "Agent credentials, skills, fallbacks, and other runtime settings stay unchanged."}
-        </span>
-      </div>
+      {props.pending || errorMessage ? (
+        <div className="mt-1 flex min-h-7 items-center gap-1.5 border-t border-[color:var(--border-soft)] px-2.5 pt-1.5 text-[11px] text-muted-foreground">
+          {props.pending ? (
+            <Loader2
+              aria-label="Saving runtime selection"
+              className="h-3.5 w-3.5 shrink-0 animate-spin"
+            />
+          ) : null}
+          <span>{props.pending ? "Saving for this conversation…" : errorMessage}</span>
+        </div>
+      ) : null}
       {errorMessage ? (
         <span className="sr-only" role="status">{errorMessage}</span>
       ) : null}
@@ -359,14 +544,11 @@ export function ChatConversationRuntimeMenuContent(props: {
   isLoading?: boolean;
   error?: unknown;
   pending?: boolean;
-  modelSelectRef?: Ref<HTMLSelectElement>;
+  modelSelectRef?: Ref<HTMLButtonElement>;
   onChange: (overrides: ChatRuntimeOverrides) => void;
 }) {
   return (
     <>
-      <div className="px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
-        Conversation runtime
-      </div>
       {props.agent ? (
         <ChatConversationRuntimeControls
           agent={props.agent}

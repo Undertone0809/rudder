@@ -2,7 +2,7 @@
 title: Conversation-scoped Chat runtime selector
 date: 2026-07-25
 kind: implementation
-status: in_progress
+status: completed
 area: chat
 entities:
   - messenger_chat
@@ -66,7 +66,8 @@ conversation-level choices were added without admission snapshots.
 - Clear an incompatible inherited or overridden Codex effort to Auto only in
   the derived invocation config.
 - Reuse runtime-owned model discovery, Codex ordering, effort options, and
-  compatibility rules in a compact composer runtime selector.
+  compatibility rules in a compact composer runtime selector with nested
+  model and thinking-effort menus.
 - Remove Agent choices from the composer. The selected Agent remains an
   internal immutable binding after conversation start.
 - Keep forks, Side Chats, other conversations, and new drafts on the Agent
@@ -164,6 +165,6 @@ Out of scope:
 - Dynamic provider model discovery can fail. The selector must preserve and
   display the current effective model, surface the discovery failure, and keep
   the Agent-default restore action available.
-- The Product Logic delta for `CHAT.LIFECYCLE.001` and
-  `AGENT.RUNTIME.ADAPTERS.001` remains pending explicit operator authorization
-  under the guarded-doc workflow.
+- The operator explicitly authorized the Product Logic delta for
+  `CHAT.LIFECYCLE.001` and `AGENT.RUNTIME.ADAPTERS.001`; both contracts and
+  their registry traceability are synchronized with this implementation.

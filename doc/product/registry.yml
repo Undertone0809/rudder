@@ -475,6 +475,7 @@ contracts:
       - server/src/agent-runtimes/codex-models.ts
       - server/src/agent-runtimes/registry.ts
       - server/src/routes/agents.ts
+      - server/src/services/chat-assistant.runtime-overrides.ts
       - server/src/services/agent-runtime-availability.ts
       - server/src/services/runtime-kernel/heartbeat.execute.ts
       - ui/src/api/agents.ts
@@ -1055,7 +1056,7 @@ contracts:
       - packages/db/src/schema/chat_generation_events.ts
       - packages/db/src/schema/chat_generations.ts
       - packages/db/src/migrations/0108_atomic_chat_first_turn_cleanup.sql
-      - packages/db/src/migrations/0111_narrow_black_panther.sql
+      - packages/db/src/migrations/0119_slim_tony_stark.sql
       - packages/shared/src/types/chat.ts
       - packages/shared/src/validators/chat.ts
       - packages/agent-runtime-utils/src/rudder-mcp-contract.ts
@@ -1063,8 +1064,12 @@ contracts:
       - cli/src/agent-v1-registry.ts
       - cli/src/commands/client/chat.ts
       - server/src/routes/chats.ts
+      - server/src/routes/chats.preflight.ts
+      - server/src/routes/chats.runtime-controls.ts
       - server/src/routes/chats.stream-routes.ts
       - server/src/services/chats.ts
+      - server/src/services/chats.runtime-controls.ts
+      - server/src/services/chats.queued-message-create.ts
       - server/src/services/automation-chat-output.ts
       - server/src/services/automations.ts
       - server/src/services/integrations/feishu/inbound-dispatcher-db.ts
@@ -1074,6 +1079,7 @@ contracts:
       - server/src/services/chat-agent-runs.ts
       - server/src/services/chat-assistant.ts
       - server/src/services/chat-assistant.helpers.ts
+      - server/src/services/chat-assistant.runtime-overrides.ts
       - server/src/services/chat-assistant.runtime-batch.ts
       - ui/src/context/ChatGenerationContext.tsx
       - ui/src/api/chats.ts
