@@ -1503,9 +1503,15 @@ describe("chat routes", () => {
   });
 
   it("creates a conversation with the organization default agent and issue creation mode", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({ title: "Start with evidence" });
     const message = createMessage("message-first", "user", "message", "Start with evidence");
     mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message });
+    mockProductIntelligenceService.execute.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "\"Evidence-first kickoff\"",
+    });
 
     const res = await request(createApp())
       .post("/api/orgs/organization-1/chats")
@@ -1522,6 +1528,42 @@ describe("chat routes", () => {
         initialMessage: expect.objectContaining({ role: "user", body: "Start with evidence" }),
       }),
     );
+    await waitUntil(() => {
+      expect(mockProductIntelligenceService.execute).toHaveBeenCalledWith(expect.objectContaining({
+        orgId: "organization-1",
+        purpose: "lightweight",
+        feature: "chat_title",
+        prompt: expect.stringContaining("Start with evidence"),
+      }));
+      expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith(
+        "chat-1",
+        "Start with evidence",
+        "Start with evidence",
+      );
+      expect(mockChatService.replaceSystemGeneratedTitle).toHaveBeenCalledWith(
+        "chat-1",
+        "Start with evidence",
+        "Evidence-first kickoff",
+      );
+    });
+  });
+
+  it("preserves an explicit title during atomic chat creation", async () => {
+    const conversation = createConversation({ title: "Operator title" });
+    const message = createMessage("message-first", "user", "message", "Start with evidence");
+    mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats")
+      .send({
+        title: "Operator title",
+        initialMessage: { body: "Start with evidence" },
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockProductIntelligenceService.execute).not.toHaveBeenCalled();
+    expect(mockChatService.updateDefaultTitle).not.toHaveBeenCalled();
+    expect(mockChatService.replaceSystemGeneratedTitle).not.toHaveBeenCalled();
   });
 
   it("rejects direct chat creation without an initial message", async () => {
@@ -1550,7 +1592,7 @@ describe("chat routes", () => {
   });
 
   it("atomically accepts a first turn and includes the conversation in the stream ack", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({ title: "Start atomically" });
     const userMessage = createMessage("message-user", "user", "message", "Start atomically");
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "Ready.");
     mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message: userMessage });
@@ -1562,6 +1604,12 @@ describe("chat routes", () => {
       partialBody: "Ready.",
       replyingAgentId: "agent-1",
       reply: { kind: "message", body: "Ready.", structuredPayload: null, replyingAgentId: "agent-1" },
+    });
+    mockProductIntelligenceService.execute.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "\"Atomic chat kickoff\"",
     });
 
     const res = await request(createApp())
@@ -1584,6 +1632,51 @@ describe("chat routes", () => {
     }));
     expect(mockChatService.createWithInitialMessage).toHaveBeenCalledTimes(1);
     expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    await waitUntil(() => {
+      expect(mockProductIntelligenceService.execute).toHaveBeenCalledWith(expect.objectContaining({
+        orgId: "organization-1",
+        purpose: "lightweight",
+        feature: "chat_title",
+        prompt: expect.stringContaining("Start atomically"),
+      }));
+      expect(mockChatService.replaceSystemGeneratedTitle).toHaveBeenCalledWith(
+        "chat-1",
+        "Start atomically",
+        "Atomic chat kickoff",
+      );
+    });
+  });
+
+  it("preserves an explicit New chat title during an atomic streaming first turn", async () => {
+    const conversation = createConversation({ title: "New chat" });
+    const userMessage = createMessage("message-user", "user", "message", "Keep the explicit title");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Ready.");
+    mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message: userMessage });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addMessage.mockResolvedValue(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Ready.",
+      replyingAgentId: "agent-1",
+      reply: { kind: "message", body: "Ready.", structuredPayload: null, replyingAgentId: "agent-1" },
+    });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats/messages/stream")
+      .send({ title: "New chat", body: "Keep the explicit title" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockProductIntelligenceService.execute).not.toHaveBeenCalled();
+    expect(mockChatService.updateDefaultTitle).not.toHaveBeenCalled();
+    expect(mockChatService.replaceSystemGeneratedTitle).not.toHaveBeenCalled();
   });
 
   it("normalizes multipart draft fields before accepting an attached first turn", async () => {

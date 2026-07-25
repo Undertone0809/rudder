@@ -1723,6 +1723,13 @@ export function chatRoutes(
       },
       activity: actor,
     });
+    if (actor.actorType === "user" && !req.body.title) {
+      startChatTitleGeneration(
+        result.conversation as ChatConversation,
+        result.message,
+        { expectedCurrentTitle: result.conversation.title },
+      );
+    }
     res.status(201).json(await assistantSvc.enrichConversation(result.conversation));
   });
 

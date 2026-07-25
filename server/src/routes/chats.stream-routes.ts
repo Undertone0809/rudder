@@ -509,7 +509,13 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         });
       }
       if (!parsedBody.data.editUserMessageId) {
-        startChatTitleGeneration(conversation as ChatConversation, userMessage);
+        startChatTitleGeneration(
+          conversation as ChatConversation,
+          userMessage,
+          atomicFirstTurn
+            ? { expectedCurrentTitle: atomicFirstTurn.expectedTitleForAutomaticGeneration }
+            : undefined,
+        );
       }
       const userAttachments = atomicFirstTurn
         ? await attachFilesToUserMessage(
@@ -1019,6 +1025,9 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       conversation,
       userMessage: accepted.message,
       uploadPrepared,
+      expectedTitleForAutomaticGeneration: parsed.data.title
+        ? null
+        : accepted.conversation.title,
     };
     await handleChatMessageStream(req, res);
   });

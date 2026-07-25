@@ -72,6 +72,33 @@ async function configureFastTitleProfile(page: Page, orgId: string, title = "Gen
 }
 
 test.describe("Messenger chat title regeneration", () => {
+  test("automatically replaces the atomic first-message fallback with a Fast Intelligence title", async ({ page }) => {
+    const organization = await createOrganization(page, `Chat-Title-Atomic-${Date.now()}`);
+    const agent = await createChatAgent(page, organization.id);
+    const firstUserMessage = "Plan the launch sequence from this new chat";
+    const generatedTitle = "Launch sequence plan";
+    await configureFastTitleProfile(page, organization.id, generatedTitle);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${agent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill(firstUserMessage);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page).toHaveURL(/\/messenger\/chat\/[^/]+$/i, { timeout: 15_000 });
+
+    const chatId = new URL(page.url()).pathname.split("/").pop();
+    expect(chatId).toBeTruthy();
+    await expect(page.getByTestId(`messenger-thread-chat-${chatId}`)).toContainText(
+      generatedTitle,
+      { timeout: 15_000 },
+    );
+  });
+
   test("uses the first user message as the visible default title", async ({ page }) => {
     const organization = await createOrganization(page, `Chat-Title-Default-${Date.now()}`);
     const agent = await createChatAgent(page, organization.id);

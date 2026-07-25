@@ -20,6 +20,7 @@ export type AtomicChatFirstTurn = {
   conversation: ChatConversation;
   userMessage: ChatMessage;
   uploadPrepared: boolean;
+  expectedTitleForAutomaticGeneration: string | null;
 };
 
 export type StartingChatGenerationGate = {
