@@ -1,5 +1,62 @@
 import { expect, test } from "@playwright/test";
 
+test("long and image issue comments start folded and expand in place", async ({ page }) => {
+  await page.setViewportSize({ width: 1360, height: 920 });
+  await page.goto("/");
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Issue-Comment-Folding-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Long comment folding",
+      description: "Long thread messages should stay compact until the operator expands them.",
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier: string | null };
+
+  const body = `Long evidence ${"keeps the issue thread readable. ".repeat(55)}`;
+  const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+    data: { body },
+  });
+  expect(commentRes.ok()).toBe(true);
+  const comment = await commentRes.json() as { id: string };
+  const imageCommentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+    data: {
+      body: "Visual evidence\n\n![screenshot](https://example.com/screenshot.png)",
+    },
+  });
+  expect(imageCommentRes.ok()).toBe(true);
+  const imageComment = await imageCommentRes.json() as { id: string };
+
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+
+  const commentBlock = page.locator(`#comment-${comment.id}`);
+  await expect(commentBlock).toBeVisible();
+  await expect(commentBlock).toHaveAttribute("aria-label", "Collapsed comment");
+  await expect(commentBlock.getByRole("button", { name: "Expand comment" })).toBeVisible();
+  await expect(commentBlock.locator("[data-comment-body-collapsed]")).toHaveAttribute("aria-hidden", "true");
+  const imageCommentBlock = page.locator(`#comment-${imageComment.id}`);
+  await expect(imageCommentBlock).toHaveAttribute("aria-label", "Collapsed comment");
+  await expect(imageCommentBlock).toContainText("Visual evidence");
+
+  await commentBlock.getByRole("button", { name: "Expand comment" }).click();
+
+  await expect(commentBlock).not.toHaveAttribute("aria-label", "Collapsed comment");
+  await expect(commentBlock.locator("[data-comment-body-collapsed]")).toHaveCount(0);
+  await expect(commentBlock).toContainText("keeps the issue thread readable. keeps the issue thread readable.");
+  await expect(commentBlock.getByRole("button", { name: "Comment actions" })).toBeVisible();
+});
+
 test("issue comment actions menu copies content and direct links", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window.navigator, "clipboard", {

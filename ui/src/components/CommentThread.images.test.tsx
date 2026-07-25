@@ -126,6 +126,12 @@ describe("CommentThread markdown images", () => {
       </ThemeProvider>,
     );
 
+    const expandButton = container.querySelector('button[aria-label="Expand comment"]');
+    expect(expandButton).toBeTruthy();
+    act(() => {
+      expandButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
     const imageButton = container.querySelector(".rudder-inspectable-image-trigger");
     expect(imageButton).toBeTruthy();
 
@@ -166,6 +172,13 @@ describe("CommentThread markdown images", () => {
         </MemoryRouter>
       </ThemeProvider>,
     );
+
+    const expandButton = container.querySelector('button[aria-label="Expand comment"]');
+    expect(expandButton).toBeTruthy();
+    act(() => {
+      expandButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    parentClick.mockClear();
 
     const imageButton = container.querySelector(".rudder-inspectable-image-trigger");
     expect(imageButton).toBeTruthy();
