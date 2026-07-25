@@ -1150,21 +1150,11 @@ describe("CommentThread", () => {
     expect(commentBlock?.textContent).toContain("run run-1");
   });
 
-  it("collapses long and image comments by default while leaving short comments open", async () => {
+  it("keeps authored comments open by default and bounds the comment composer", () => {
     const container = renderInteractive(
       <MemoryRouter>
         <CommentThread
           comments={[
-            {
-              id: "short-comment",
-              issueId: "issue-1",
-              orgId: "org-1",
-              authorUserId: "user-1",
-              authorAgentId: null,
-              body: "A short comment stays open.",
-              createdAt: new Date("2026-05-07T00:00:00.000Z"),
-              updatedAt: new Date("2026-05-07T00:00:00.000Z"),
-            },
             {
               id: "long-comment",
               issueId: "issue-1",
@@ -1192,20 +1182,17 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    const shortComment = container.querySelector("#comment-short-comment");
     const longComment = container.querySelector("#comment-long-comment");
     const imageComment = container.querySelector("#comment-image-comment");
-
-    expect(shortComment?.getAttribute("aria-label")).toBeNull();
-    expect(longComment?.getAttribute("aria-label")).toBe("Collapsed comment");
-    expect(imageComment?.getAttribute("aria-label")).toBe("Collapsed comment");
-    expect(longComment?.textContent).toContain("Long comment content.");
-    expect(imageComment?.textContent).toContain("Visual evidence");
-
-    await click(longComment?.querySelector('button[aria-label="Expand comment"]') ?? null);
+    const composerScroll = container.querySelector("[data-testid='issue-comment-composer-editor-scroll']");
 
     expect(longComment?.getAttribute("aria-label")).toBeNull();
-    expect(longComment?.querySelector("[data-comment-body-collapsed]")).toBeNull();
+    expect(imageComment?.getAttribute("aria-label")).toBeNull();
+    expect(longComment?.textContent).toContain("Long comment content.");
+    expect(imageComment?.textContent).toContain("Visual evidence");
+    expect(composerScroll?.className).toContain("max-h-[min(38dvh,22rem)]");
+    expect(composerScroll?.className).toContain("overflow-y-auto");
+    expect(composerScroll?.className).toContain("overscroll-contain");
   });
 
   it("keeps collapsed comment headers compact and uses a chevron expander", async () => {

@@ -7592,6 +7592,10 @@ describe("Chat ask_user panel", () => {
     expect(panel?.textContent).toContain("Missing tests");
     expect(panel?.textContent).toContain("Include screenshot evidence");
     expect(panel?.textContent).not.toContain("Question 3 of 3");
+    const reviewScroll = panel?.querySelector("[data-testid='chat-ask-user-review-scroll']");
+    expect(reviewScroll?.className).toContain("max-h-[min(48dvh,28rem)]");
+    expect(reviewScroll?.className).toContain("overflow-y-auto");
+    expect(reviewScroll?.className).toContain("overscroll-contain");
   });
 
   it("restores unfinished ask_user selections after switching conversations and clears them on submit", async () => {

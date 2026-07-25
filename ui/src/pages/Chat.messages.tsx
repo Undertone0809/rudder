@@ -1889,7 +1889,10 @@ export function AskUserPanel({
       {reviewingAnswers ? (
         <section className="rounded-[var(--radius-md)] border border-border bg-card/85 p-3">
           <div className="text-sm font-medium text-foreground">Review answers</div>
-          <div className="mt-2 space-y-2">
+          <div
+            data-testid="chat-ask-user-review-scroll"
+            className="scrollbar-auto-hide mt-2 max-h-[min(48dvh,28rem)] space-y-2 overflow-y-auto overscroll-contain pr-1"
+          >
             {request.questions.map((question, index) => {
               const answer = answersWithAttachmentFallback[question.id];
               return (
@@ -2012,7 +2015,7 @@ export function AskUserPanel({
                   },
                 }))}
                 placeholder="Type your answer..."
-                className="min-h-20 resize-y rounded-[var(--radius-md)] bg-background text-sm"
+                className="min-h-20 max-h-[min(38dvh,22rem)] resize-y overflow-y-auto rounded-[var(--radius-md)] bg-background text-sm"
               />
               <div className="flex flex-wrap items-center gap-2">
                 <Button

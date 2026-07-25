@@ -34,9 +34,6 @@ const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markd
 const COMMENT_HASH_SCROLL_RETRY_DELAYS_MS = [120, 360, 900] as const;
 const COMMENT_SCROLL_CENTER_TOLERANCE_PX = 24;
 const COMMENT_HASH_SCROLL_CANCEL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
-const COMMENT_AUTO_COLLAPSE_CHARACTER_LIMIT = 1_200;
-const COMMENT_AUTO_COLLAPSE_LINE_LIMIT = 18;
-const COMMENT_AUTO_COLLAPSE_IMAGE_LIMIT = 1;
 
 interface CommentWithRunMeta extends IssueComment {
   runId?: string | null;
@@ -293,17 +290,6 @@ function buildCommentPreview(body: string) {
     .replace(/^[\s>*+-]+/gm, "")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-export function shouldCollapseCommentByDefault(body: string) {
-  const normalizedBody = body.trim();
-  if (normalizedBody.length >= COMMENT_AUTO_COLLAPSE_CHARACTER_LIMIT) return true;
-
-  const lineCount = normalizedBody ? normalizedBody.split(/\r?\n/).length : 0;
-  if (lineCount >= COMMENT_AUTO_COLLAPSE_LINE_LIMIT) return true;
-
-  const imageCount = normalizedBody.match(/!\[[^\]]*\]\([^)]+\)/g)?.length ?? 0;
-  return imageCount >= COMMENT_AUTO_COLLAPSE_IMAGE_LIMIT;
 }
 
 function timelineDateTime(date: Date | string) {
@@ -754,10 +740,7 @@ const TimelineList = memo(function TimelineList({
         const canEdit = !!currentUserId && !comment.authorAgentId && comment.authorUserId === currentUserId;
         const canDelete = !!currentUserId && (canEdit || !!comment.authorAgentId);
         const isEditing = editingCommentId === comment.id;
-        const commentCollapsed = (
-          commentCollapsedOverrides[comment.id]
-          ?? shouldCollapseCommentByDefault(comment.body)
-        ) && !isEditing;
+        const commentCollapsed = commentCollapsedOverrides[comment.id] === true && !isEditing;
         const commentPreview = buildCommentPreview(comment.body);
         const handleToggleCollapsed = () => {
           setCommentCollapsedOverrides((current) => ({
@@ -1438,23 +1421,28 @@ export function CommentThread({
       data-issue-detail-escape-back={escapeBackWhenEmpty ? (body.trim() ? "dirty" : "empty") : undefined}
       onMouseDown={focusComposerEditor}
     >
-      <MarkdownEditor
-        ref={editorRef}
-        engine="milkdown"
-        value={body}
-        onChange={updateBody}
-        placeholder="Leave a comment..."
-        mentions={mentions}
-        agentMentionIntent="wake"
-        onMentionQueryChange={onMentionQueryChange}
-        mentionMenuAnchorRef={composerSurfaceRef}
-        mentionMenuPlacement="container"
-        onSubmit={handleSubmit}
-        imageUploadHandler={imageUploadHandler}
-        className="rounded-[var(--radius-md)] bg-transparent"
-        contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
-        bordered={false}
-      />
+      <div
+        data-testid="issue-comment-composer-editor-scroll"
+        className="scrollbar-auto-hide max-h-[min(38dvh,22rem)] overflow-y-auto overscroll-contain pr-1"
+      >
+        <MarkdownEditor
+          ref={editorRef}
+          engine="milkdown"
+          value={body}
+          onChange={updateBody}
+          placeholder="Leave a comment..."
+          mentions={mentions}
+          agentMentionIntent="wake"
+          onMentionQueryChange={onMentionQueryChange}
+          mentionMenuAnchorRef={composerSurfaceRef}
+          mentionMenuPlacement="container"
+          onSubmit={handleSubmit}
+          imageUploadHandler={imageUploadHandler}
+          className="rounded-[var(--radius-md)] bg-transparent"
+          contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
+          bordered={false}
+        />
+      </div>
       <div className="mt-3 flex items-center justify-end gap-3">
         {(imageUploadHandler || onAttachImage) && (
           <div className="mr-auto flex items-center gap-3">
