@@ -900,6 +900,62 @@ test.describe("Chat response annotations", () => {
     });
   });
 
+  test("clips each block of a cross-container highlight to its own scrolling ancestor", async ({ page }) => {
+    const seeded = await seedAnnotationChat(
+      page,
+      `Response-Annotation-Cross-Container-${Date.now()}`,
+    );
+    const finalSource = annotationSource(page, {
+      messageId: seeded.assistantMessageId,
+      surface: "assistant_body",
+    });
+
+    await selectVisibleText(
+      page,
+      finalSource,
+      "Rudder docs",
+      "Second paragraph keeps",
+    );
+    await addSelectionToChat(page);
+    const highlight = finalSource.getByTestId("chat-response-annotation-highlight");
+    const highlightRects = highlight.locator(":scope > span");
+    await expect(highlightRects).not.toHaveCount(0);
+    const initialRectCount = await highlightRects.count();
+    expect(initialRectCount).toBeGreaterThan(1);
+
+    const clippingParagraph = finalSource.locator("p")
+      .filter({ hasText: "Rudder docs" })
+      .first();
+    await clippingParagraph.evaluate((element) => {
+      Object.assign(element.style, {
+        overflowX: "auto",
+        whiteSpace: "nowrap",
+        width: "120px",
+      });
+      element.scrollLeft = element.scrollWidth;
+    });
+    await expect.poll(() => highlightRects.count()).toBeLessThan(initialRectCount);
+    const paragraphBox = await clippingParagraph.boundingBox();
+    expect(paragraphBox).toBeTruthy();
+    const visibleRects = await highlightRects.evaluateAll((elements) => elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+      };
+    }));
+    const firstBlockRects = visibleRects.filter((rect) => (
+      rect.top < paragraphBox!.y + paragraphBox!.height
+      && rect.bottom > paragraphBox!.y
+    ));
+    expect(firstBlockRects.every((rect) => (
+      rect.left >= paragraphBox!.x - 1
+      && rect.right <= paragraphBox!.x + paragraphBox!.width + 1
+    ))).toBe(true);
+  });
+
   test("persists Process provenance and restores its exact source after reload", async ({ page }, testInfo) => {
     const seeded = await seedAnnotationChat(page, `Response-Annotation-Process-${Date.now()}`);
     await expandProcess(page, seeded.assistantMessageId);
