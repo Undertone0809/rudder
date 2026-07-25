@@ -33,7 +33,10 @@ cannot be safely inferred.
   `npx @rudderhq/cli@latest <command>` are the same CLI surface when they resolve
   to the same CLI version. The `npx` form is the first-run or explicit dist-tag
   form.
-- Canaries publish from `main` automatically and use npm dist-tag `canary`.
+- Canaries publish from `main` automatically after the exact commit's `CI`
+  workflow succeeds, and use npm dist-tag `canary`. The release workflow must
+  consume that CI result instead of repeating the full operating-system test
+  matrix.
 - Canary git tags use `canary/vX.Y.Z-canary.N`. The matching GitHub Release
   display title should be clean `vX.Y.Z-canary.N`, not the full tag name, and
   it should be marked prerelease.
@@ -42,11 +45,12 @@ cannot be safely inferred.
   explicitly dispatch `desktop-release.yml`, or the maintainer must do it.
 - Stables are manually promoted from an explicitly chosen source ref and use
   npm dist-tag `latest`.
-- Stable preflight must fail closed unless `npm-stable` has required reviewers,
-  `main` is protected for normal changes, and the release workflow has the
-  narrow direct-push and workflow-dispatch permissions needed for its generated
-  post-stable version commit. Do not bypass these checks or treat the
-  confirmation string as a substitute for the repository safeguards.
+- Stable preflight must fail closed unless `npm-stable` is a main-only,
+  non-interactive environment, `main` is protected for normal changes, and the
+  release workflow can create the generated post-stable version PR and dispatch
+  its exact CI. The explicit versioned release request is the human
+  authorization; locked source, exact CI, confirmation inputs, and repository
+  safeguards are the mandatory machine gate.
 - Stable preflight must verify matching English and Chinese public changelog
   entries before expensive work. After stable npm, GitHub Release, and Desktop
   assets succeed, `release.yml` must promote those committed entries from the
@@ -93,6 +97,15 @@ cannot be safely inferred.
   local shell can publish or repair npm state.
 - Release-maintenance commits that should not publish another canary must
   include `[skip release]`, then be verified as skipped in `release.yml`.
+- Run `./scripts/release.sh <canary|stable> --preflight` before dependency
+  installation or build work. A stale base, existing tag/npm version, or
+  missing stable notes should fail in this fast gate, not after CI or packaging.
+- Canary and stable publication share one non-cancelling `release-publish`
+  concurrency group. Never bypass it by starting a second publish path while
+  npm or Desktop orchestration is still active. GitHub concurrency is not a
+  FIFO queue and retains only one pending job; if a queued manual stable is
+  superseded by another pending run, report it and rerun that same locked
+  stable SHA after the active publish finishes.
 - After a stable publish, the matching `stable-docs` job must succeed before
   the workflow advances the next-patch base. Verify the immutable
   `docs/release/vX.Y.Z` marker and public changelog before treating the docs or
@@ -127,6 +140,7 @@ Start by reading only the context needed for the user's request:
 - `.github/workflows/npm-dist-tag.yml` when repairing `latest` or `canary`
   dist-tags through GitHub Actions.
 - `scripts/release.sh`, `scripts/release-package-map.mjs`,
+  `scripts/prepare-next-release.mjs`,
   `scripts/create-github-release.sh`, `scripts/promote-npm-dist-tag.mjs`,
   `scripts/wait-for-desktop-release-assets.mjs`, and
   `scripts/rollback-latest.sh` when you need exact command behavior.
@@ -150,7 +164,9 @@ git log --oneline --decorate --graph -8
 git tag --list 'v*' --sort=-version:refname | head -10
 node scripts/release-package-map.mjs list
 ./scripts/release.sh stable --print-version
+./scripts/release.sh stable --preflight
 ./scripts/release.sh canary --print-version
+./scripts/release.sh canary --preflight
 ```
 
 When the task depends on remote truth, also check:
@@ -164,6 +180,9 @@ gh release list --repo Undertone0809/rudder --limit 20
 git ls-remote --tags origin 'refs/tags/canary/v*'
 npm view @rudderhq/cli dist-tags --json
 npm view @rudderhq/cli versions --json
+gh api repos/Undertone0809/rudder/environments/npm-stable
+gh api repos/Undertone0809/rudder/actions/permissions/workflow
+gh api repos/Undertone0809/rudder/branches/main/protection
 ```
 
 If the worktree has unrelated dirty files, explicitly say you will ignore them
@@ -202,7 +221,8 @@ Use this when the user is preparing release automation for the first time.
    trusted publishing can be attached to those package names.
 5. Configure GitHub environments:
    - `npm-canary`: no reviewer, selected branch `main`.
-   - `npm-stable`: maintainer approval, selected branch `main`.
+   - `npm-stable`: no interactive reviewer or wait timer, selected branch
+     `main`.
 6. If trusted publishing is not ready, add an environment secret named
    `NPM_TOKEN` to both release environments as a temporary fallback, using an
    npm automation token with publish access to the `@rudderhq` packages.
@@ -259,8 +279,10 @@ NODE
 
 Canary releases should normally be automatic.
 
-1. Confirm the change is merged to `main`.
-2. Watch the `Release` workflow canary job. If the triggering commit is a
+1. Confirm the change is merged to `main` and its exact `CI` workflow succeeds.
+2. Watch the `Release` workflow started by that successful CI run. Confirm its
+   preflight source SHA matches the CI head SHA; do not accept a release run
+   that re-resolves a moving branch. If the triggering commit is a
    release-maintenance commit with `[skip release]`, verify the run is skipped
    before assuming no canary was produced. For pre-stable public canaries, the
    canary job is not complete until it has dispatched the Desktop release,
@@ -392,6 +414,7 @@ Prefer the GitHub Actions workflow over local stable publishing.
 ```bash
 node scripts/release-package-map.mjs list
 ./scripts/release.sh stable --print-version
+./scripts/release.sh stable --preflight
 ```
 
 3. Confirm `releases/vX.Y.Z.md` exists on the source ref and uses exactly this
@@ -413,18 +436,23 @@ node scripts/release-package-map.mjs list
    update drill below before real stable publish. If the drill cannot run on
    the local platform, name the missing platform and treat stable readiness as
    not fully proven.
-7. Run the `Release` workflow with `dry_run: true`, using the locked SHA as
-   `source_ref`.
-8. If dry-run passes, present the immutable source SHA, version, npm/GitHub/
+7. Confirm the locked SHA already has a successful `CI` run, then run the
+   `Release` workflow with `dry_run: true`, using that SHA as `source_ref`.
+   The workflow reuses the exact CI result and runs only the fast release
+   preflight plus publish-payload preview; it must not repeat the full test
+   matrix.
+8. If dry-run passes, record the immutable source SHA, version, npm/GitHub/
    Desktop targets, public docs target, completed checks, known failures,
-   migration/data impact, and rollback point. Obtain two fresh approvals:
-   - stable publication for that exact source and version;
-   - production deployment of that exact changelog to `docs.rudderhq.dev`.
-9. Only after both approvals, rerun with the same locked SHA using
+   migration/data impact, and rollback point. An explicit versioned stable
+   release request authorizes the standard release surfaces, including
+   `docs.rudderhq.dev`, unless the user explicitly excludes one.
+9. After that authorization, rerun with the same locked SHA using
    `dry_run: false`, `confirm_stable: PUBLISH STABLE`, and
-   `confirm_docs: PUBLISH DOCS`. The workflow input strings enforce the
-   approvals; they do not replace them.
-10. Wait for or request `npm-stable` approval.
+   `confirm_docs: PUBLISH DOCS`. The workflow input strings are mandatory
+   machine assertions that the agent may supply; they are not extra UI tasks
+   for the user.
+10. Confirm the `npm-stable` job starts automatically without an account switch
+    or interactive approval.
 11. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
     workflow, and assets.
 12. Verify the `stable-docs` job promoted the public changelog from the same
@@ -771,8 +799,8 @@ When the user asks "what do I do now?", answer in this order:
    failing checks, dirty release files, or missing Desktop artifacts.
 3. **Next Actions**: numbered, executable steps with exact commands or GitHub UI
    actions.
-4. **Human Gates**: approvals, npm login/trusted-publisher setup, GitHub
-   environment approval, announcement copy.
+4. **Authorization**: the explicit versioned release request, npm
+   login/trusted-publisher setup when missing, and announcement scope.
 5. **Verification**: exact checks that prove the release surface is complete.
 
 For hands-on release execution, keep short status updates while working, then

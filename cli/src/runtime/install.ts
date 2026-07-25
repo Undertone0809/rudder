@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveRudderHomeDir } from "../config/home.js";
-
+import { copyRuntimePostgresPayloadLibraries } from "./postgres-payload.js";
 export const RUNTIME_NPM_PACKAGE_NAME = "@rudderhq/server";
 export const NPM_PUBLIC_REGISTRY_URL = "https://registry.npmjs.org";
 export const RUNTIME_METADATA_FILE = "runtime.json";
@@ -1246,7 +1246,7 @@ async function installSharedRuntimePostgresPayload(
     await rm(previousPlatformRoot, { recursive: true, force: true });
     try {
       const temporaryRuntimeDir = temporaryPlatformRoot;
-      await cp(sourceRuntimeDir, temporaryRuntimeDir, { recursive: true, dereference: true });
+      await copyRuntimePostgresPayloadLibraries(sourceRuntimeDir, temporaryRuntimeDir);
       const temporaryShareDir = path.join(temporaryRuntimeDir, "share");
       const temporaryTemplateDir = path.join(temporaryShareDir, "postgresql");
       await rm(temporaryShareDir, { recursive: true, force: true });

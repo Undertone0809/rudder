@@ -10,14 +10,14 @@ const english = readFileSync(path.join(repoRoot, "docs", "releases.mdx"), "utf8"
 const chinese = readFileSync(path.join(repoRoot, "docs", "zh", "releases.mdx"), "utf8");
 
 describe("stable public changelog validation", () => {
-  it("accepts the checked-in English and Chinese v0.6.0 changelog entries", () => {
-    expect(validateStableChangelog({ english, version: "0.6.0", chinese })).toEqual([]);
+  it("accepts the checked-in English and Chinese v0.6.1 changelog entries", () => {
+    expect(validateStableChangelog({ english, version: "0.6.1", chinese })).toEqual([]);
   });
 
   it("keeps command-mode stdout empty for release preflight version capture", () => {
     const result = spawnSync(
       process.execPath,
-      ["scripts/verify-stable-changelog.mjs", "--version", "0.6.0"],
+      ["scripts/verify-stable-changelog.mjs", "--version", "0.6.1"],
       {
         cwd: repoRoot,
         encoding: "utf8",
@@ -27,7 +27,7 @@ describe("stable public changelog validation", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain(
-      "Verified English and Chinese public changelog entries for v0.6.0.",
+      "Verified English and Chinese public changelog entries for v0.6.1.",
     );
   });
 
@@ -35,11 +35,11 @@ describe("stable public changelog validation", () => {
     expect(
       validateStableChangelog({
         english,
-        version: "0.6.0",
-        chinese: chinese.replace(/^## v0\.6\.0$/mu, "## v0.5.0"),
+        version: "0.6.1",
+        chinese: chinese.replace(/^## v0\.6\.1$/mu, "## v0.5.0"),
       }),
     ).toEqual(
-      expect.arrayContaining(["Chinese changelog is missing the exact heading ## v0.6.0."]),
+      expect.arrayContaining(["Chinese changelog is missing the exact heading ## v0.6.1."]),
     );
   });
 
@@ -47,7 +47,7 @@ describe("stable public changelog validation", () => {
     expect(
       validateStableChangelog({
         english: english.replace("### Bug Fixes", "### Highlights"),
-        version: "0.6.0",
+        version: "0.6.1",
         chinese,
       }),
     ).toEqual(

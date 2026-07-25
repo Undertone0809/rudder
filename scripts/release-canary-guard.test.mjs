@@ -136,6 +136,24 @@ afterEach(() => {
 });
 
 describe("release canary base guard", () => {
+  it("keeps canary preflight stdout machine-readable when stable notes already exist", () => {
+    const { repo } = createReleaseRepo();
+    mkdirSync(join(repo, "releases"), { recursive: true });
+    writeJson(join(repo, "cli", "package.json"), {
+      name: "@rudderhq/cli",
+      version: "99.99.99",
+    });
+    writeFileSync(join(repo, "releases", "v99.99.99.md"), "## New Features\n\n## Improvements\n\n## Bug Fixes\n");
+    exec("git", ["add", "."], { cwd: repo });
+    exec("git", ["commit", "-m", "prepare canary fixture"], { cwd: repo });
+
+    const result = runPreflight(repo, "canary");
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("99.99.99-canary.0\n");
+    expect(result.stderr).toContain("Stable release notes already exist");
+  }, 30000);
+
   it("fails before deriving a canary when the committed base has a stable remote tag", () => {
     const { repo } = createReleaseRepo();
 
