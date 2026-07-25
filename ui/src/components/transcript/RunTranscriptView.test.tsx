@@ -2033,13 +2033,14 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Read ");
-    expect(html).toContain("docs/PRODUCT.md");
-    expect(html).toContain('aria-label="Open file docs/PRODUCT.md"');
+    expect(html).toContain(">PRODUCT.md</button>");
+    expect(html).not.toContain(">docs/PRODUCT.md</button>");
+    expect(html).toContain('aria-label="Open file PRODUCT.md"');
     expect(html).toContain('data-transcript-file-target="/Users/zeeland/work/rudder/docs/PRODUCT.md"');
     expect(html).toContain("underline-offset-4");
   });
 
-  it("wraps long readable file paths within the activity row", () => {
+  it("shows only the filename for long readable file paths while retaining the open target", () => {
     const longFileLabel =
       "/Users/operator/.rudder/instances/default/organizations/df008f574532/codex-home/agents/884d42a1-27ef-4aed-9952-46b2655ff696/models_cache.json";
     const html = renderToStaticMarkup(
@@ -2067,8 +2068,9 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("models_cache.json");
-    expect(html).toContain(`aria-label="Open file ${longFileLabel}"`);
+    expect(html).toContain(">models_cache.json</button>");
+    expect(html).not.toContain(`>${longFileLabel}</button>`);
+    expect(html).toContain('aria-label="Open file models_cache.json"');
     expect(html).toContain(`data-transcript-file-target="${longFileLabel}"`);
     expect(html).toContain("max-w-full");
     expect(html).toContain("text-left");

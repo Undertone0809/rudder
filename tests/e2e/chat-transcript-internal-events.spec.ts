@@ -359,6 +359,7 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   const filePath = `/tmp/${fileLabel}`;
   const longFileLabel =
     "/Users/operator/.rudder/instances/default/organizations/df008f574532/codex-home/agents/884d42a1-27ef-4aed-9952-46b2655ff696/models_cache.json";
+  const longFileDisplayName = "models_cache.json";
 
   await e2eDb.insert(chatMessages).values({
     id: randomUUID(),
@@ -463,11 +464,13 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   await expect(fileButton).toBeVisible();
   await expect(fileButton).toHaveAttribute("data-transcript-file-target", filePath);
   const longFileButton = transcript.getByRole("button", {
-    name: `Open file ${longFileLabel}`,
+    name: `Open file ${longFileDisplayName}`,
     exact: true,
   });
   await expect(longFileButton).toBeVisible();
   await expect(longFileButton).toHaveAttribute("data-transcript-file-target", longFileLabel);
+  await expect(longFileButton).toHaveText(longFileDisplayName);
+  await expect(transcript).not.toContainText(longFileLabel);
   await expect(longFileButton).toHaveCSS("text-align", "left");
   const longPathLayout = await longFileButton.evaluate((element) => {
     const style = window.getComputedStyle(element);
@@ -479,7 +482,7 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
     };
   });
   expect(longPathLayout.scrollWidth).toBeLessThanOrEqual(longPathLayout.clientWidth + 1);
-  expect(longPathLayout.height).toBeGreaterThan(longPathLayout.lineHeight * 1.5);
+  expect(longPathLayout.height).toBeLessThanOrEqual(longPathLayout.lineHeight * 1.5);
   await page.waitForTimeout(250);
   await page.screenshot({ path: "/tmp/rudder-transcript-activity-expanded.png", fullPage: true });
   const chatUrl = page.url();
