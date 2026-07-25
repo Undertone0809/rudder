@@ -506,18 +506,28 @@ export function AnchoredResponseAnnotationMarkers({
             end: annotation.end,
           });
           if (!range || typeof range.getBoundingClientRect !== "function") continue;
-          const rects = typeof range.getClientRects === "function"
+          const rangeRects = typeof range.getClientRects === "function"
             ? Array.from(range.getClientRects())
             : [];
+          const rangeContainer = range.commonAncestorContainer instanceof Element
+            ? range.commonAncestorContainer
+            : range.commonAncestorContainer.parentElement;
+          const rects = rangeRects
+            .map((rect) => clipAnnotationRectToScrollableAncestors(
+              rect,
+              rangeContainer,
+              sourceRoot,
+            ))
+            .filter((rect): rect is DOMRect => Boolean(rect));
           nextHighlightRects[annotation.id] = rects
-            .filter((rect) => rect.width > 0 && rect.height > 0)
             .map((rect) => ({
               left: rect.left - rootRect.left,
               top: rect.top - rootRect.top,
               width: rect.width,
               height: rect.height,
             }));
-          const anchorRect = rects.at(-1) ?? range.getBoundingClientRect();
+          const anchorRect = rects.at(-1);
+          if (!anchorRect) continue;
           const lineRect = completeVisualLineRect(textRects, anchorRect) ?? anchorRect;
           const position = placeResponseAnnotationMarker(lineRect, rootRect, {
             viewportWidth: window.innerWidth,
@@ -554,6 +564,8 @@ export function AnchoredResponseAnnotationMarkers({
     };
     update();
     window.addEventListener("resize", update);
+    sourceRoot.addEventListener("scroll", update, true);
+    sourceRoot.addEventListener("load", update, true);
     const observer = typeof ResizeObserver === "undefined"
       ? null
       : new ResizeObserver(update);
@@ -561,6 +573,8 @@ export function AnchoredResponseAnnotationMarkers({
     return () => {
       if (frameId !== null) cancelAnimationFrame(frameId);
       window.removeEventListener("resize", update);
+      sourceRoot.removeEventListener("scroll", update, true);
+      sourceRoot.removeEventListener("load", update, true);
       observer?.disconnect();
     };
   }, [annotations, source, sourceRootRef]);
@@ -602,6 +616,43 @@ export function AnchoredResponseAnnotationMarkers({
       })}
     </>
   );
+}
+
+function clipAnnotationRectToScrollableAncestors(
+  rect: DOMRect,
+  startElement: Element | null,
+  sourceRoot: HTMLElement,
+): DOMRect | null {
+  let left = rect.left;
+  let right = rect.right;
+  let top = rect.top;
+  let bottom = rect.bottom;
+  let element = startElement;
+
+  while (element && sourceRoot.contains(element)) {
+    const style = window.getComputedStyle(element);
+    const bounds = element.getBoundingClientRect();
+    const clipsX = /^(auto|clip|hidden|scroll)$/u.test(style.overflowX);
+    const clipsY = /^(auto|clip|hidden|scroll)$/u.test(style.overflowY);
+    if (clipsX) {
+      left = Math.max(left, bounds.left);
+      right = Math.min(right, bounds.right);
+    }
+    if (clipsY) {
+      top = Math.max(top, bounds.top);
+      bottom = Math.min(bottom, bounds.bottom);
+    }
+    if (right <= left || bottom <= top) return null;
+    if (element === sourceRoot) break;
+    element = element.parentElement;
+  }
+
+  return DOMRect.fromRect({
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+  });
 }
 
 function AnnotationAttachment({
@@ -694,6 +745,7 @@ export function ResponseAnnotationEditor({
   returnFocusRef,
   validateSave,
   autoFocus,
+  showSelectedTextContext = false,
   onSave,
   onCancel,
   onDelete,
@@ -711,6 +763,7 @@ export function ResponseAnnotationEditor({
   returnFocusRef?: RefObject<HTMLElement | null>;
   validateSave?: (changes: ResponseAnnotationEditorChanges) => string | null;
   autoFocus?: boolean;
+  showSelectedTextContext?: boolean;
   onSave: (changes: ResponseAnnotationEditorChanges) => void;
   onCancel: () => void;
   onDelete: () => void;
@@ -978,6 +1031,16 @@ export function ResponseAnnotationEditor({
         if (closing && event.currentTarget === event.target) completeClose();
       }}
     >
+      {showSelectedTextContext ? (
+        <div data-testid="chat-response-annotation-selected-text" className="mb-3">
+          <p className="text-xs font-medium text-muted-foreground">
+            {ordinal}. {labels.selectedText}
+          </p>
+          <blockquote className="mt-1 line-clamp-3 whitespace-pre-wrap text-sm leading-5 text-foreground">
+            {annotation.selectedText}
+          </blockquote>
+        </div>
+      ) : null}
       {visibleAttachments.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {visibleAttachments.map((attachment) => (

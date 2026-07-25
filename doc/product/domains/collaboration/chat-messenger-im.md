@@ -711,9 +711,12 @@ copying context into the composer or losing the relationship to its source.
    annotations and their draft-only files but preserves the message body and
    unrelated composer attachments.
 6. Marker or row-edit activation closes the complete-list surface and opens
-   only that selected annotation in an anchored editor above the composer. The
-   exact source range remains highlighted, so the editor does not repeat the
-   selected-text snapshot. It shows only the text comment input, an icon-only
+   only that selected annotation in an anchored editor above the composer. In
+   the main Chat draft, the exact source range remains highlighted, including
+   after descendant scrolling and clipping, so the editor does not repeat the
+   selected-text snapshot. A provisional Side Chat editor retains a compact
+   selected-text snapshot because its source highlight is not rendered in that
+   panel. The editor otherwise shows only the text comment input, an icon-only
    attachment action with an accessible name, image/file removal controls,
    Delete, Cancel, and Save. Cancel restores the prior draft item; Save commits
    the local draft changes without sending. Opening and closing the list and

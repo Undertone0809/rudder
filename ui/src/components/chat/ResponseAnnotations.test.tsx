@@ -293,6 +293,24 @@ describe("response annotation components", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
+  it("can retain a compact selected-text context when the source highlight is unavailable", () => {
+    render(
+      <ResponseAnnotationEditor
+        annotation={annotation}
+        ordinal={2}
+        pendingFiles={[]}
+        showSelectedTextContext
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(host.textContent).toContain("2. Selected text:");
+    expect(host.textContent).toContain(annotation.selectedText);
+    expect(host.textContent).not.toContain("User comment:");
+  });
+
   it("provides the pencil button as the editor anchor", () => {
     const onEdit = vi.fn();
     render(
