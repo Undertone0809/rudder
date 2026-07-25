@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { chatsApi } from "@/api/chats";
+import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import type {
   ChatConversation,
@@ -95,7 +96,7 @@ vi.mock("@/pages/Chat.messages", () => ({
       </div>
     );
   },
-  StreamTranscriptItem: () => <div>Process</div>,
+  StreamTranscriptItem: () => <div data-testid="side-chat-process">Process</div>,
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -216,6 +217,270 @@ function changeTextarea(textarea: HTMLTextAreaElement, value: string) {
     textarea.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
+
+describe("SideChatPanelView streaming reconciliation", () => {
+  it("renders one live reply when the persisted streaming assistant message is refreshed", async () => {
+    const generationId = "80000000-0000-4000-8000-000000000001";
+    const userMessage = {
+      id: "70000000-0000-4000-8000-000000000001",
+      orgId: sourceConversation.orgId,
+      conversationId: sideConversation.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Keep the live reply singular.",
+      structuredPayload: null,
+      attachments: [],
+      replyingAgentId: null,
+      chatTurnId: "90000000-0000-4000-8000-000000000001",
+      turnVariant: 0,
+      supersededAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as ChatMessage;
+    const persistedStreamingAssistant = {
+      ...userMessage,
+      id: "70000000-0000-4000-8000-000000000002",
+      role: "assistant",
+      status: "streaming",
+      body: "",
+      generationId,
+      transcript: [{
+        kind: "thinking",
+        ts: new Date().toISOString(),
+        text: "Inspecting the render path.",
+      }],
+    } as unknown as ChatMessage;
+    let releaseStream!: () => void;
+    const streamPending = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+
+    vi.mocked(chatsApi.get).mockImplementation(async (conversationId) => (
+      conversationId === sideConversation.id ? sideConversation : sourceConversation
+    ));
+    vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (
+      conversationId,
+      body,
+      options,
+    ) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: { ...userMessage, conversationId, body },
+        generationId,
+      });
+      await options.onEvent({
+        type: "transcript_entry",
+        generationId,
+        entry: {
+          kind: "thinking",
+          ts: new Date().toISOString(),
+          text: "Inspecting the render path.",
+        },
+      });
+      queryClient.setQueryData(
+        queryKeys.chats.messages(sourceConversation.orgId, sideConversation.id),
+        [userMessage, persistedStreamingAssistant],
+      );
+      await streamPending;
+    });
+
+    renderView({
+      viewTarget: {
+        ...target,
+        conversationId: sideConversation.id,
+        inlineAnnotations: [],
+      },
+    });
+    await vi.waitFor(() => expect(chatsApi.listMessages).toHaveBeenCalled());
+    const draft = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Side Chat draft"]',
+    )!;
+    changeTextarea(draft, "Keep the live reply singular.");
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side Chat message"]',
+      )?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(
+      host.querySelectorAll('[data-testid="side-chat-process"]'),
+    ).toHaveLength(1));
+
+    releaseStream();
+  });
+
+  it("replaces a refreshed streaming projection with the final message by id", async () => {
+    const generationId = "80000000-0000-4000-8000-000000000002";
+    const assistantMessageId = "70000000-0000-4000-8000-000000000004";
+    const userMessage = {
+      id: "70000000-0000-4000-8000-000000000003",
+      orgId: sourceConversation.orgId,
+      conversationId: sideConversation.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Finish without a stale projection.",
+      structuredPayload: null,
+      attachments: [],
+      replyingAgentId: null,
+      chatTurnId: "90000000-0000-4000-8000-000000000002",
+      turnVariant: 0,
+      supersededAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as ChatMessage;
+    const streamingAssistant = {
+      ...userMessage,
+      id: assistantMessageId,
+      role: "assistant",
+      status: "streaming",
+      body: "Partial reply",
+      generationId,
+      transcript: [],
+    } as unknown as ChatMessage;
+    const completedAssistant = {
+      ...streamingAssistant,
+      status: "completed",
+      body: "Authoritative final reply",
+    } as unknown as ChatMessage;
+    let releaseAfterFinal!: () => void;
+    const finalPending = new Promise<void>((resolve) => {
+      releaseAfterFinal = resolve;
+    });
+
+    vi.mocked(chatsApi.get).mockImplementation(async (conversationId) => (
+      conversationId === sideConversation.id ? sideConversation : sourceConversation
+    ));
+    vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (
+      conversationId,
+      body,
+      options,
+    ) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: { ...userMessage, conversationId, body },
+        generationId,
+      });
+      queryClient.setQueryData(
+        queryKeys.chats.messages(sourceConversation.orgId, sideConversation.id),
+        [userMessage, streamingAssistant],
+      );
+      await options.onEvent({
+        type: "final",
+        messages: [completedAssistant],
+      });
+      await finalPending;
+    });
+
+    renderView({
+      viewTarget: {
+        ...target,
+        conversationId: sideConversation.id,
+        inlineAnnotations: [],
+      },
+    });
+    await vi.waitFor(() => expect(queryClient.getQueryState(
+      queryKeys.chats.messages(sourceConversation.orgId, sideConversation.id),
+    )?.status).toBe("success"));
+    const draft = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Side Chat draft"]',
+    )!;
+    changeTextarea(draft, "Finish without a stale projection.");
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side Chat message"]',
+      )?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(host.textContent).toContain("Authoritative final reply"));
+    expect(host.textContent).not.toContain("Partial reply");
+    releaseAfterFinal();
+  });
+
+  it("prefers a refreshed authoritative failure over the local failed draft", async () => {
+    const generationId = "80000000-0000-4000-8000-000000000003";
+    const userMessage = {
+      id: "70000000-0000-4000-8000-000000000005",
+      orgId: sourceConversation.orgId,
+      conversationId: sideConversation.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Show the durable failure.",
+      structuredPayload: null,
+      attachments: [],
+      replyingAgentId: null,
+      chatTurnId: "90000000-0000-4000-8000-000000000003",
+      turnVariant: 0,
+      supersededAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as ChatMessage;
+    const failedAssistant = {
+      ...userMessage,
+      id: "70000000-0000-4000-8000-000000000006",
+      role: "assistant",
+      status: "failed",
+      body: "Durable provider failure details",
+      generationId,
+      transcript: [],
+    } as unknown as ChatMessage;
+    let authoritativeMessages: ChatMessage[] = [];
+
+    vi.mocked(chatsApi.get).mockImplementation(async (conversationId) => (
+      conversationId === sideConversation.id ? sideConversation : sourceConversation
+    ));
+    vi.mocked(chatsApi.listMessages).mockImplementation(async (_organizationId, conversationId) => (
+      conversationId === sideConversation.id ? authoritativeMessages : []
+    ));
+    vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (
+      conversationId,
+      body,
+      options,
+    ) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: { ...userMessage, conversationId, body },
+        generationId,
+      });
+      authoritativeMessages = [userMessage, failedAssistant];
+      await options.onEvent({
+        type: "error",
+        error: "The stream disconnected after persistence.",
+        messageId: failedAssistant.id,
+      });
+    });
+
+    renderView({
+      viewTarget: {
+        ...target,
+        conversationId: sideConversation.id,
+        inlineAnnotations: [],
+      },
+    });
+    await vi.waitFor(() => expect(queryClient.getQueryState(
+      queryKeys.chats.messages(sourceConversation.orgId, sideConversation.id),
+    )?.status).toBe("success"));
+    const draft = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Side Chat draft"]',
+    )!;
+    changeTextarea(draft, "Show the durable failure.");
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side Chat message"]',
+      )?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(host.textContent).toContain("Durable provider failure details"));
+    expect(host.textContent).not.toContain("Assistant draft");
+  });
+});
 
 describe("SideChatPanelView response annotations", () => {
   it("forwards a historical annotation source action from a transient Side Chat", async () => {

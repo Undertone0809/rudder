@@ -101,6 +101,7 @@ async function sendFirstSideChatMessage(page: Page, panel: Locator, sourceConver
   const sideChat = await createResponse.json() as { id: string };
   await expect(panel.getByTestId("side-chat-messages")).toContainText("What is the rollback trigger?", { timeout: 15_000 });
   await expect(panel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", { timeout: 15_000 });
+  await expect(panel.getByTestId("side-chat-messages").getByTestId("chat-transcript-item")).toHaveCount(1);
   await expect(panel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toBeVisible({ timeout: 20_000 });
   await expect(panel.getByRole("button", { name: "Done & return" })).toHaveCount(0);
   return sideChat;
