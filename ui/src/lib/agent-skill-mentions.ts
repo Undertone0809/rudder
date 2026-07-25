@@ -1,4 +1,5 @@
 import {
+  buildLibraryFileMentionHref,
   buildOrganizationSkillSearchText,
   formatOrganizationSkillPublicRef,
   type Agent,
@@ -26,6 +27,7 @@ export interface SkillMentionOption {
   skillCategoryLabel: string | null;
   skillLocationLabel: string | null;
   skillDetailsHref: string | null;
+  skillOpenHref: string | null;
 }
 
 function normalizeMarkdownTarget(candidate: string | null | undefined) {
@@ -35,6 +37,13 @@ function normalizeMarkdownTarget(candidate: string | null | undefined) {
     return trimmed;
   }
   return `${trimmed}/SKILL.md`;
+}
+
+function organizationSkillOpenHref(skill: OrganizationSkillListItem) {
+  if (skill.workspaceEditPath) {
+    return buildLibraryFileMentionHref(skill.workspaceEditPath);
+  }
+  return normalizeMarkdownTarget(skill.sourcePath);
 }
 
 function isActiveSkillEntry(entry: AgentSkillEntry) {
@@ -146,6 +155,9 @@ export function buildAgentSkillMentionOptions(params: {
         skillCategoryLabel: null,
         skillLocationLabel: null,
         skillDetailsHref: organizationSkill ? buildLibrarySkillHref(organizationSkill.id) : null,
+        skillOpenHref: organizationSkill
+          ? organizationSkillOpenHref(organizationSkill)
+          : normalizeMarkdownTarget(entry.sourcePath ?? entry.targetPath),
       });
       continue;
     }
@@ -172,6 +184,7 @@ export function buildAgentSkillMentionOptions(params: {
       skillCategoryLabel: normalizeOptionalText(entry.originLabel) ?? "Agent skill",
       skillLocationLabel: normalizeOptionalText(entry.locationLabel),
       skillDetailsHref: null,
+      skillOpenHref: sourceTarget,
     });
   }
 
@@ -216,6 +229,7 @@ export function buildOrganizationSkillMentionOptions(params: {
         skillCategoryLabel: "Org skill",
         skillLocationLabel: normalizeOptionalText(skill.sourceLabel ?? skill.sourcePath),
         skillDetailsHref: buildLibrarySkillHref(skill.id),
+        skillOpenHref: organizationSkillOpenHref(skill),
       };
     })
     .filter((option): option is SkillMentionOption => option !== null)

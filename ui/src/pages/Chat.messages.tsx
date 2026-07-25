@@ -53,7 +53,11 @@ import { mergeNativeSteerTranscriptEntries } from "@/lib/chat-stream-state";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "@/lib/mention-chips";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
 import { Link } from "@/lib/router";
-import { formatSkillReferenceDisplayLabel, parseSkillReference } from "@/lib/skill-reference";
+import {
+  formatSkillReferenceDisplayLabel,
+  parseSkillReference,
+  resolveSkillReferenceOpenHref,
+} from "@/lib/skill-reference";
 import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { agentUrl, cn, relativeTime } from "@/lib/utils";
 import {
@@ -1342,7 +1346,19 @@ export function ChatUserPlainTextBody({
             ?? skillPreviewByLabel.get(normalizeSkillReferenceLookupKey(part.label))
             ?? null;
           const skillLabel = formatSkillReferenceDisplayLabel(preview?.label) || part.label;
-          return <SkillReferenceToken key={`${part.href}-${index}`} label={skillLabel} preview={preview} />;
+          return (
+            <SkillReferenceToken
+              key={`${part.href}-${index}`}
+              label={skillLabel}
+              preview={preview}
+              fallbackOpenHref={resolveSkillReferenceOpenHref(part.href)}
+              onOpen={onMarkdownLinkClick
+                ? (event, targetHref, targetLabel) => {
+                    handlePlainTextLinkClick(event, targetHref, targetLabel);
+                  }
+                : undefined}
+            />
+          );
         }
 
         const mention = resolvedMentionFromCurrentOptions(part.mention, mentions);

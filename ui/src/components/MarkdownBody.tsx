@@ -15,7 +15,11 @@ import {
 } from "../lib/markdown-normalize";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "../lib/mention-chips";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../lib/organization-routes";
-import { formatSkillReferenceDisplayLabel, parseSkillReference } from "../lib/skill-reference";
+import {
+  formatSkillReferenceDisplayLabel,
+  parseSkillReference,
+  resolveSkillReferenceOpenHref,
+} from "../lib/skill-reference";
 import { cn } from "../lib/utils";
 import { InspectableImage } from "./InspectableImage";
 import type { MentionOption } from "./MarkdownEditor";
@@ -1131,7 +1135,13 @@ export function MarkdownBody({
           <SkillReferenceToken
             label={skillLabel}
             preview={preview}
+            fallbackOpenHref={resolveSkillReferenceOpenHref(skillReference.href)}
             sourceAttributes={sourceAttributesForNode(node)}
+            onOpen={onLinkClick
+              ? (event, targetHref, targetLabel) => {
+                  handleMarkdownLinkClick(event, targetHref, targetLabel);
+                }
+              : undefined}
           />
         );
       }

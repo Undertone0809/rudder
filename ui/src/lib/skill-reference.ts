@@ -77,6 +77,23 @@ export function isSkillReferenceHref(value: string | null | undefined) {
   return value?.trim().startsWith(SKILL_REFERENCE_SCHEME) ?? false;
 }
 
+export function resolveSkillReferenceOpenHref(value: string | null | undefined) {
+  const href = value?.trim() ?? "";
+  if (!href) return null;
+  if (isCanonicalSkillMarkdownPath(href)) return href;
+  if (!href.startsWith(`${SKILL_REFERENCE_SCHEME}local/`)) return null;
+  try {
+    const parsed = new URL(href);
+    const sourcePath = decodeSkillPathSegment(parsed.pathname.replace(/^\/+/u, ""));
+    if (!sourcePath) return null;
+    return isCanonicalSkillMarkdownPath(sourcePath)
+      ? sourcePath
+      : `${sourcePath.replace(/\/+$/u, "")}/SKILL.md`;
+  } catch {
+    return null;
+  }
+}
+
 function decodeSkillPathSegment(value: string | null | undefined) {
   const raw = value?.trim() ?? "";
   if (!raw) return "";
