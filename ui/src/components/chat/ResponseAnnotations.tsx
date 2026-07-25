@@ -295,9 +295,56 @@ function collectResponseAnnotationTextRects(
     const nodeRects = typeof range.getClientRects === "function"
       ? Array.from(range.getClientRects())
       : [];
-    rects.push(...nodeRects.filter(
-      (rect) => rect.width > 0 && rect.height > 0,
-    ));
+    rects.push(...nodeRects
+      .map((rect) => clipAnnotationRectToScrollableAncestors(
+        rect,
+        parent,
+        sourceRoot,
+      ))
+      .filter((rect): rect is DOMRect => Boolean(rect)));
+  }
+  return rects;
+}
+
+function collectVisibleAnnotationRangeRects(
+  sourceRoot: HTMLElement,
+  sourceRange: Range,
+): DOMRect[] {
+  const rects: DOMRect[] = [];
+  const walker = document.createTreeWalker(sourceRoot, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    if (
+      !node.textContent
+      || !parent
+      || parent.closest(`[${CHAT_ANNOTATION_IGNORE_ATTRIBUTE}]`)
+      || parent.closest(`[${CHAT_ANNOTATION_TEXT_IGNORE_ATTRIBUTE}]`)
+      || !sourceRange.intersectsNode(node)
+    ) {
+      continue;
+    }
+    const nodeRange = document.createRange();
+    nodeRange.setStart(
+      node,
+      node === sourceRange.startContainer ? sourceRange.startOffset : 0,
+    );
+    nodeRange.setEnd(
+      node,
+      node === sourceRange.endContainer
+        ? sourceRange.endOffset
+        : node.textContent.length,
+    );
+    if (nodeRange.collapsed) continue;
+    const nodeRects = typeof nodeRange.getClientRects === "function"
+      ? Array.from(nodeRange.getClientRects())
+      : [];
+    rects.push(...nodeRects
+      .map((rect) => clipAnnotationRectToScrollableAncestors(
+        rect,
+        parent,
+        sourceRoot,
+      ))
+      .filter((rect): rect is DOMRect => Boolean(rect)));
   }
   return rects;
 }
@@ -506,19 +553,7 @@ export function AnchoredResponseAnnotationMarkers({
             end: annotation.end,
           });
           if (!range || typeof range.getBoundingClientRect !== "function") continue;
-          const rangeRects = typeof range.getClientRects === "function"
-            ? Array.from(range.getClientRects())
-            : [];
-          const rangeContainer = range.commonAncestorContainer instanceof Element
-            ? range.commonAncestorContainer
-            : range.commonAncestorContainer.parentElement;
-          const rects = rangeRects
-            .map((rect) => clipAnnotationRectToScrollableAncestors(
-              rect,
-              rangeContainer,
-              sourceRoot,
-            ))
-            .filter((rect): rect is DOMRect => Boolean(rect));
+          const rects = collectVisibleAnnotationRangeRects(sourceRoot, range);
           nextHighlightRects[annotation.id] = rects
             .map((rect) => ({
               left: rect.left - rootRect.left,
