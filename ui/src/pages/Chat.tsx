@@ -3136,6 +3136,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           })() : null}
         </div>
       ) : null}
+      {pendingFiles.length > 0 ? (
+        <div data-testid="chat-pending-attachments" className="mb-2.5 flex flex-wrap gap-2 px-3">
+          {pendingFiles.map((file) => { const fileKey = pendingAttachmentKey(file);
+            return (
+              <div key={fileKey} data-testid="chat-pending-attachment" className="max-w-full" >
+                <PendingAttachmentPreview file={file} onRemove={() => removePendingFile(fileKey)} /> </div> );
+          })} </div> ) : null}
       <div ref={composerEditorScrollRef} data-testid="chat-composer-editor-scroll" className="chat-composer-editor-scroll scrollbar-auto-hide overflow-y-auto overscroll-contain" onKeyDownCapture={handleComposerSuggestionKeyDown} onPasteCapture={handlePendingAttachmentPasteCapture} >
         <MarkdownEditor ref={composerEditorRef} value={draft} onChange={handleComposerDraftChange}
           mentions={mentionOptions}
@@ -3265,13 +3272,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={2.25} /> ) : sendButtonMode === "stop" || sendButtonMode === "stopping" ? (
             <Square className="h-3.5 w-3.5 fill-current" /> ) : (
             <ArrowUp className="h-[18px] w-[18px]" strokeWidth={2.25} /> )} </Button> </div>
-      {pendingFiles.length > 0 ? (
-        <div data-testid="chat-pending-attachments" className="mt-2.5 flex flex-wrap gap-2">
-          {pendingFiles.map((file) => { const fileKey = pendingAttachmentKey(file);
-            return (
-              <div key={fileKey} data-testid="chat-pending-attachment" className="max-w-full" >
-                <PendingAttachmentPreview file={file} onRemove={() => removePendingFile(fileKey)} /> </div> );
-          })} </div> ) : null}
       {pendingResponseAnnotationSelection ? (
         <SelectionAnnotationToolbar
           open

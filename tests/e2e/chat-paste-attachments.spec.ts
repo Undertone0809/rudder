@@ -130,15 +130,47 @@ test("keeps multiple same-named pasted images staged independently", async ({ pa
   }, organization.id);
 
   await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${organization.chatAgent.id}`);
-  await pasteSameNamedImages(page, 4);
+  await pasteSameNamedImages(page, 10);
 
   const pendingAttachments = page.getByTestId("chat-pending-attachment");
-  await expect(pendingAttachments).toHaveCount(4);
-  await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(4);
+  await expect(pendingAttachments).toHaveCount(10);
+  await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(10);
+  await expect.poll(async () =>
+    page.locator(
+      '[data-testid="chat-pending-attachments"] ~ [data-testid="chat-composer-editor-scroll"]',
+    ).count()
+  ).toBe(1);
+  await expect.poll(async () =>
+    page.locator(
+      '[data-testid="chat-pending-attachments"] ~ [data-testid="chat-composer-toolbar"]',
+    ).count()
+  ).toBe(1);
+  await page.setViewportSize({ width: 480, height: 900 });
+  const attachmentBoxes = await pendingAttachments.evaluateAll((elements) =>
+    elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return { top: box.top, left: box.left, right: box.right, bottom: box.bottom };
+    }),
+  );
+  const pendingBox = await page.getByTestId("chat-pending-attachments").boundingBox();
+  const editorBox = await page.getByTestId("chat-composer-editor-scroll").boundingBox();
+  expect(new Set(attachmentBoxes.map(({ top }) => Math.round(top))).size).toBeGreaterThan(1);
+  expect(pendingBox).not.toBeNull();
+  expect(editorBox).not.toBeNull();
+  expect(
+    attachmentBoxes.every(({ left, right, bottom }) =>
+      pendingBox
+        ? left >= pendingBox.x &&
+          right <= pendingBox.x + pendingBox.width &&
+          bottom <= pendingBox.y + pendingBox.height
+        : false,
+    ),
+  ).toBe(true);
+  expect(pendingBox!.y + pendingBox!.height).toBeLessThanOrEqual(editorBox!.y);
 
   await page.getByRole("button", { name: "Remove image.png" }).first().click();
-  await expect(pendingAttachments).toHaveCount(3);
-  await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(3);
+  await expect(pendingAttachments).toHaveCount(9);
+  await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(9);
 });
 
 test("pastes clipboard images and files into chat as pending attachments and exposes them to the assistant", async ({ page }) => {
@@ -337,6 +369,9 @@ test("keeps pending pasted attachments scoped to the active chat conversation", 
       preferredAgentId: organization.chatAgent.id,
       issueCreationMode: "manual_approval",
       planMode: false,
+      initialMessage: {
+        body: "First attachment scope.",
+      },
     },
   });
   expect(firstChatRes.ok()).toBe(true);
@@ -348,6 +383,9 @@ test("keeps pending pasted attachments scoped to the active chat conversation", 
       preferredAgentId: organization.chatAgent.id,
       issueCreationMode: "manual_approval",
       planMode: false,
+      initialMessage: {
+        body: "Second attachment scope.",
+      },
     },
   });
   expect(secondChatRes.ok()).toBe(true);
@@ -367,7 +405,7 @@ test("keeps pending pasted attachments scoped to the active chat conversation", 
   await expect(pendingAttachments.filter({ hasText: "scope-b.txt" })).toHaveCount(0);
 
   await page.getByRole("link", { name: /Attachment scope B/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${secondChat.id}$`));
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${secondChat.id}$`));
   await expect(pendingAttachments).toHaveCount(0);
 
   await pasteTextAttachment(page, "scope-b.txt", "Attachment for the second chat only.");
@@ -376,7 +414,7 @@ test("keeps pending pasted attachments scoped to the active chat conversation", 
   await expect(pendingAttachments.filter({ hasText: "scope-a.txt" })).toHaveCount(0);
 
   await page.getByRole("link", { name: /Attachment scope A/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${firstChat.id}$`));
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${firstChat.id}$`));
   await expect(pendingAttachments).toHaveCount(1);
   await expect(pendingAttachments.filter({ hasText: "scope-a.txt" })).toBeVisible();
   await expect(pendingAttachments.filter({ hasText: "scope-b.txt" })).toHaveCount(0);

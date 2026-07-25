@@ -7203,8 +7203,22 @@ describe("Chat attachment previews", () => {
 
     const { container } = renderChat();
 
-    expect(container.querySelector("[data-testid='chat-pending-attachments']")).not.toBeNull();
+    const pendingAttachments = container.querySelector(
+      "[data-testid='chat-pending-attachments']",
+    );
+    const editorScroll = container.querySelector("[data-testid='chat-composer-editor-scroll']");
+    const toolbar = container.querySelector("[data-testid='chat-composer-toolbar']");
+
+    expect(pendingAttachments).not.toBeNull();
     expect(container.querySelector("[data-testid='chat-pending-attachment']")).not.toBeNull();
+    expect(editorScroll).not.toBeNull();
+    expect(toolbar).not.toBeNull();
+    expect(pendingAttachments?.compareDocumentPosition(editorScroll!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(pendingAttachments?.compareDocumentPosition(toolbar!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
     expect(container.querySelector("[data-testid='chat-empty-state-prompt-flow']")?.getAttribute("data-state")).toBe("hidden");
     expect(container.querySelector("[data-testid='chat-empty-state-starters']")?.getAttribute("aria-hidden")).toBe("true");
   });
