@@ -2039,6 +2039,42 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("underline-offset-4");
   });
 
+  it("wraps long readable file paths within the activity row", () => {
+    const longFileLabel =
+      "/Users/operator/.rudder/instances/default/organizations/df008f574532/codex-home/agents/884d42a1-27ef-4aed-9952-46b2655ff696/models_cache.json";
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "read_file",
+              toolUseId: "read-long-1",
+              input: { path: longFileLabel },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "read-long-1",
+              content: "model cache",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("models_cache.json");
+    expect(html).toContain(`aria-label="Open file ${longFileLabel}"`);
+    expect(html).toContain(`data-transcript-file-target="${longFileLabel}"`);
+    expect(html).toContain("max-w-full");
+    expect(html).toContain("text-left");
+    expect(html).toContain("[overflow-wrap:anywhere]");
+  });
+
   it("keeps mixed-success chat tool groups neutral and collapsed", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

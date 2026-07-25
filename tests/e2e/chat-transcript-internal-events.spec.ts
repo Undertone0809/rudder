@@ -357,6 +357,8 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   const chat = await chatRes.json() as { id: string };
   const fileLabel = "rudder-transcript-evidence.md";
   const filePath = `/tmp/${fileLabel}`;
+  const longFileLabel =
+    "/Users/operator/.rudder/instances/default/organizations/df008f574532/codex-home/agents/884d42a1-27ef-4aed-9952-46b2655ff696/models_cache.json";
 
   await e2eDb.insert(chatMessages).values({
     id: randomUUID(),
@@ -399,6 +401,20 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
         },
         {
           kind: "tool_call",
+          ts: "2026-07-21T01:00:02.030Z",
+          name: "read_file",
+          toolUseId: "read-long-1",
+          input: { path: longFileLabel },
+        },
+        {
+          kind: "tool_result",
+          ts: "2026-07-21T01:00:02.040Z",
+          toolUseId: "read-long-1",
+          content: "Model cache",
+          isError: false,
+        },
+        {
+          kind: "tool_call",
           ts: "2026-07-21T01:00:03.000Z",
           name: "command_execution",
           toolUseId: "command-1",
@@ -429,7 +445,7 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   await workedButton.click();
 
   const activityButton = transcript.getByRole("button", { name: "Expand tool activity" });
-  await expect(activityButton).toContainText("Used 1 skill, read 1 file, ran 1 command");
+  await expect(activityButton).toContainText("Used 1 skill, read 2 files, ran 1 command");
   const disclosure = activityButton.locator("[data-transcript-disclosure-chevron]");
   await expect(disclosure).toHaveCSS("opacity", "0");
   await workedButton.focus();
@@ -443,9 +459,27 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   await page.screenshot({ path: "/tmp/rudder-transcript-activity-hover.png", fullPage: true });
   await activityButton.click();
 
-  const fileButton = transcript.getByRole("button", { name: `Open file ${fileLabel}` });
+  const fileButton = transcript.getByRole("button", { name: `Open file ${fileLabel}`, exact: true });
   await expect(fileButton).toBeVisible();
   await expect(fileButton).toHaveAttribute("data-transcript-file-target", filePath);
+  const longFileButton = transcript.getByRole("button", {
+    name: `Open file ${longFileLabel}`,
+    exact: true,
+  });
+  await expect(longFileButton).toBeVisible();
+  await expect(longFileButton).toHaveAttribute("data-transcript-file-target", longFileLabel);
+  await expect(longFileButton).toHaveCSS("text-align", "left");
+  const longPathLayout = await longFileButton.evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    return {
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      height: element.getBoundingClientRect().height,
+      lineHeight: Number.parseFloat(style.lineHeight),
+    };
+  });
+  expect(longPathLayout.scrollWidth).toBeLessThanOrEqual(longPathLayout.clientWidth + 1);
+  expect(longPathLayout.height).toBeGreaterThan(longPathLayout.lineHeight * 1.5);
   await page.waitForTimeout(250);
   await page.screenshot({ path: "/tmp/rudder-transcript-activity-expanded.png", fullPage: true });
   const chatUrl = page.url();

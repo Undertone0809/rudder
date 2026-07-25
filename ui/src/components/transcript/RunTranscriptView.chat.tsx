@@ -341,26 +341,36 @@ export function TranscriptChatToolActionRow({
       {hasOpenableFileTargets ? (
         <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
           <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
-          <span id={summaryLabelId} className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
-            {semantic.category === "edit" ? "Edited " : "Read "}
-            {fileTargets.map((target, index) => (
-              <span key={`${target.label}-${index}`}>
-                {index > 0 ? ", " : null}
-                {target.path ? (
-                  <button
-                    type="button"
-                    className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                    aria-label={`Open file ${target.label}`}
-                    data-transcript-file-target={target.path}
-                    onClick={() => onOpenFile?.(target.path!, target.label)}
-                  >
-                    {target.label}
-                  </button>
-                ) : (
-                  <span title="This relative file path has no trusted workspace root.">{target.label}</span>
-                )}
-              </span>
-            ))}
+          <span
+            id={summaryLabelId}
+            className={cn(
+              "flex min-w-0 flex-1 items-baseline gap-1 text-foreground/84",
+              compact ? "text-xs leading-5" : "text-sm leading-6",
+            )}
+          >
+            <span className="shrink-0">{semantic.category === "edit" ? "Edited" : "Read"}</span>
+            <span className="min-w-0 flex-1">
+              {fileTargets.map((target, index) => (
+                <span key={`${target.label}-${index}`}>
+                  {index > 0 ? ", " : null}
+                  {target.path ? (
+                    <button
+                      type="button"
+                      className="inline-block max-w-full whitespace-normal break-words rounded-sm text-left align-top underline decoration-border underline-offset-4 transition-colors [overflow-wrap:anywhere] hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                      aria-label={`Open file ${target.label}`}
+                      data-transcript-file-target={target.path}
+                      onClick={() => onOpenFile?.(target.path!, target.label)}
+                    >
+                      {target.label}
+                    </button>
+                  ) : (
+                    <span className="[overflow-wrap:anywhere]" title="This relative file path has no trusted workspace root.">
+                      {target.label}
+                    </span>
+                  )}
+                </span>
+              ))}
+            </span>
           </span>
           {duration ? (
             <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
