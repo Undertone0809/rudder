@@ -1354,6 +1354,78 @@ test.describe("Messenger unified threads contract", () => {
     expect(sidebarEntryBounds[0]).toEqual(sidebarEntryBounds[1]);
   });
 
+  test("reveals a collapsed Messenger group surface only on hover", async ({ page }) => {
+    const organization = await createConfiguredOrganization(page, `Messenger-Collapsed-Group-${Date.now()}`);
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Collapsed group chat",
+        summary: "Verifies the collapsed group hover surface.",
+        preferredAgentId: organization.chatAgent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Keep the collapsed group visually quiet." },
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Quiet group", icon: "Q::rose" },
+    });
+    expect(groupRes.ok()).toBe(true);
+    const group = await groupRes.json() as { id: string };
+    const assignRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups/${group.id}/entries`, {
+      data: { threadKey: `chat:${chat.id}` },
+    });
+    expect(assignRes.ok()).toBe(true);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+
+    const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);
+    const groupToggle = groupSection.locator("button[aria-expanded]").first();
+    await expect(groupSection).toContainText("Quiet group", { timeout: 15_000 });
+    const collapseResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${group.id}`)
+      && response.request().method() === "PATCH",
+    );
+    await groupToggle.click();
+    expect((await collapseResponse).ok()).toBe(true);
+    await expect(groupToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(groupSection).toHaveAttribute("data-collapsed", "true");
+
+    await page.locator("#main-content").hover();
+    await expect.poll(async () => groupSection.evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return {
+        backgroundColor: style.backgroundColor,
+        borderColor: style.borderColor,
+        hasVisibleBoxShadow: style.boxShadow !== "none"
+          && style.boxShadow
+            .split(/, (?=rgba)/)
+            .some((shadow) => !shadow.startsWith("rgba(0, 0, 0, 0) ")),
+      };
+    })).toEqual({
+      backgroundColor: "rgba(0, 0, 0, 0)",
+      borderColor: "rgba(0, 0, 0, 0)",
+      hasVisibleBoxShadow: false,
+    });
+
+    await groupSection.hover();
+    await expect.poll(async () => groupSection.evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return {
+        hasBackground: style.backgroundColor !== "rgba(0, 0, 0, 0)",
+        hasBorder: style.borderColor !== "rgba(0, 0, 0, 0)",
+      };
+    })).toEqual({
+      hasBackground: true,
+      hasBorder: true,
+    });
+  });
+
   test("uses Arc-style Messenger groups without exposing a default group or custom-groups mode", async ({ page }) => {
     const organization = await createConfiguredOrganization(page, `Messenger-Arc-Groups-${Date.now()}`);
 
@@ -1362,8 +1434,10 @@ test.describe("Messenger unified threads contract", () => {
         data: {
           title,
           summary,
+          preferredAgentId: organization.chatAgent.id,
           issueCreationMode: "manual_approval",
           planMode: false,
+          initialMessage: { body: `${title} initial message.` },
         },
       });
       expect(res.ok()).toBe(true);
