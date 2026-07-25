@@ -16,7 +16,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
-import { agentTitleBadgeLabel, formatChatAgentLabel } from "../lib/agent-labels";
+import { formatChatAgentLabel } from "../lib/agent-labels";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
@@ -472,10 +472,10 @@ export function IssueProperties({
     <AssigneeLabel
       kind="agent"
       label={assignee.name}
-      badgeLabel={agentTitleBadgeLabel(assignee)}
+      agentAvatarStyle="bare"
       agentIcon={assignee.icon}
       agentRole={assignee.role}
-      layout="stacked"
+      className="w-full"
     />
   ) : assigneeUserLabel ? (
     <AssigneeLabel kind="user" label={assigneeUserLabel} />
@@ -563,10 +563,10 @@ export function IssueProperties({
     <AssigneeLabel
       kind="agent"
       label={reviewer.name}
-      badgeLabel={agentTitleBadgeLabel(reviewer)}
+      agentAvatarStyle="bare"
       agentIcon={reviewer.icon}
       agentRole={reviewer.role}
-      layout="stacked"
+      className="w-full"
     />
   ) : reviewerUserLabel ? (
     <AssigneeLabel kind="user" label={reviewerUserLabel} />
@@ -934,7 +934,7 @@ export function IssueProperties({
           open={assigneeOpen}
           onOpenChange={(open) => { setAssigneeOpen(open); if (!open) setAssigneeSearch(""); }}
           triggerContent={assigneeTrigger}
-          triggerClassName="min-w-0 w-full max-w-full justify-start"
+          triggerClassName="min-w-0 w-full max-w-full justify-start overflow-hidden"
           popoverClassName="w-[19rem]"
           popoverAlign="start"
           rowAlign="start"
@@ -948,7 +948,7 @@ export function IssueProperties({
           open={reviewerOpen}
           onOpenChange={(open) => { setReviewerOpen(open); if (!open) setReviewerSearch(""); }}
           triggerContent={reviewerTrigger}
-          triggerClassName="min-w-0 w-full max-w-full justify-start"
+          triggerClassName="min-w-0 w-full max-w-full justify-start overflow-hidden"
           popoverClassName="w-[19rem]"
           popoverAlign="start"
           rowAlign="start"
