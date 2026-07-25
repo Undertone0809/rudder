@@ -8,6 +8,7 @@ async function selectInlineEntityOption(page: Page, name: string) {
   const popover = page.locator(".motion-inline-selector-pop:visible").last();
   await expect(popover).toBeVisible();
   await popover.getByRole("button", { name }).click();
+  await expect(page.locator(".motion-inline-selector-pop:visible")).toHaveCount(0);
 }
 
 async function createSkill(request: APIRequestContext, orgId: string, name: string, slug: string) {
@@ -595,7 +596,7 @@ test.describe("Chat proposal review block", () => {
     await expect(page.getByText("Proposal Agent").first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("lets operators edit proposal owner and reviewer before approval", async ({ page }) => {
+  test("lets operators edit proposal owner and reviewer before approval", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `EditableProposal-${Date.now()}`,
@@ -607,6 +608,7 @@ test.describe("Chat proposal review block", () => {
       data: {
         name: "Editable Owner",
         role: "engineer",
+        title: "Operator Assistant",
         agentRuntimeType: "codex_local",
         agentRuntimeConfig: {},
       },
@@ -617,6 +619,7 @@ test.describe("Chat proposal review block", () => {
       data: {
         name: "Editable Reviewer",
         role: "cto",
+        title: "Independent Reviewer",
         agentRuntimeType: "codex_local",
         agentRuntimeConfig: {},
       },
@@ -648,6 +651,9 @@ test.describe("Chat proposal review block", () => {
         title: "Editable principals proposal",
         preferredAgentId: chatAgent.id,
         issueCreationMode: "manual_approval",
+        initialMessage: {
+          body: "Prepare to draft an editable routing issue.",
+        },
       },
     });
     expect(conversationRes.ok()).toBe(true);
@@ -663,11 +669,43 @@ test.describe("Chat proposal review block", () => {
     await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
     await expect(reviewBlock).toHaveAttribute("data-status", "pending");
     await reviewBlock.getByRole("button", { name: "Edit owner" }).click();
+    expect(
+      await page.locator('[data-slot="agent-menu-supporting-label"]:visible').allTextContents(),
+    ).toContain("Operator Assistant");
     await selectInlineEntityOption(page, "Editable Owner");
     await reviewBlock.getByRole("button", { name: "Edit reviewer" }).click();
+    expect(
+      await page.locator('[data-slot="agent-menu-supporting-label"]:visible').allTextContents(),
+    ).toContain("Independent Reviewer");
     await selectInlineEntityOption(page, "Editable Reviewer");
     await expect(reviewBlock).toContainText("Editable Owner");
     await expect(reviewBlock).toContainText("Editable Reviewer");
+    await expect(reviewBlock.getByText("Operator Assistant", { exact: true })).toHaveCount(0);
+    await expect(reviewBlock.getByText("Independent Reviewer", { exact: true })).toHaveCount(0);
+
+    const principalLabels = reviewBlock.locator(
+      '[data-slot="assignee-label"][data-kind="agent"][data-agent-avatar-style="bare"]',
+    );
+    await expect(principalLabels).toHaveCount(2);
+    await expect(reviewBlock.locator('[data-slot="assignee-agent-avatar-frame"]')).toHaveCount(0);
+    await expect(reviewBlock.locator('[data-slot="agent-title-badge"]')).toHaveCount(0);
+    const principalAvatars = await principalLabels.evaluateAll((labels) =>
+      labels.map((label) => {
+        const avatar = label.querySelector<HTMLElement>("svg, img");
+        return {
+          width: avatar?.getBoundingClientRect().width ?? 0,
+          height: avatar?.getBoundingClientRect().height ?? 0,
+        };
+      }),
+    );
+    expect(principalAvatars).toEqual([
+      { width: 24, height: 24 },
+      { width: 24, height: 24 },
+    ]);
+    await page.screenshot({
+      path: testInfo.outputPath("chat-proposal-selected-agents.png"),
+      fullPage: false,
+    });
 
     await reviewBlock.getByRole("button", { name: "Approve" }).click();
 

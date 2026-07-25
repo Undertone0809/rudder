@@ -7,6 +7,7 @@ area: ui
 entities:
   - issue_properties
   - assignee_labels
+  - chat_issue_proposals
 issue: R6Z-22
 related_plans:
   - 2026-07-21-responsive-issue-detail-layout.md
@@ -16,6 +17,9 @@ related_code:
   - ui/src/components/AssigneeLabel.tsx
   - ui/src/components/IssueProperties.tsx
   - ui/src/components/IssueProperties.test.tsx
+  - ui/src/pages/Chat.messages.tsx
+  - ui/src/pages/Chat.test.tsx
+  - tests/e2e/chat-proposal-review.spec.ts
   - tests/e2e/issue-detail-properties-layout.spec.ts
 commit_refs: []
 updated_at: 2026-07-25
@@ -27,9 +31,10 @@ updated_at: 2026-07-25
 
 Make the selected Assignee and Reviewer in Issue Properties easier to scan by
 showing each Agent avatar at its full 24px size without an additional framed
-wrapper and by omitting the title badge from the selected value. Keep the
-shared label's existing presentation as its default so unrelated issue lists
-and Chat proposal surfaces do not change.
+wrapper and by omitting the title badge from the selected value. Apply the same
+compact selected-value treatment to Owner and Reviewer in Chat issue proposal
+cards. Keep the shared label's existing presentation as its default so
+unrelated issue-list surfaces do not change.
 
 ## Problem
 
@@ -42,11 +47,13 @@ information because it helps distinguish candidates during selection.
 ## Scope
 
 - Add an explicit reusable bare Agent-avatar presentation to `AssigneeLabel`.
-- Use it only for selected Agent values in `IssueProperties`.
+- Use it for selected Agent values in `IssueProperties` and Chat issue proposal
+  cards.
 - Remove title badge input from the selected Assignee and Reviewer values.
 - Preserve name truncation, full-name tooltip, user principals, clearing, and
   all picker behavior.
-- Preserve the two-line Agent name and supporting title in selection menus.
+- Preserve the two-line Agent name and supporting title in both Properties and
+  proposal selection menus.
 - Update component and browser coverage across wide, compact, and mobile Issue
   Properties surfaces.
 
@@ -57,14 +64,17 @@ behavior changes are in scope.
 
 1. Extend `AssigneeLabel` with a default-preserving Agent avatar presentation
    option and expose stable data hooks for focused layout assertions.
-2. Switch only the selected Assignee and Reviewer triggers in
-   `IssueProperties` to the bare 24px avatar and single-line name treatment.
+2. Switch the selected Assignee and Reviewer triggers in `IssueProperties` and
+   Chat issue proposal cards to the bare 24px avatar and single-line name
+   treatment.
 3. Replace the component test's old stacked badge assertions with bare-avatar,
    absent-badge, truncation, and menu-supporting-title assertions.
 4. Update the existing responsive Playwright coverage to verify the same
    contract in the desktop rail, compact Issue Detail, and mobile Properties
    sheet.
-5. Run focused tests, repository checks, and real rendered visual validation;
+5. Extend Chat proposal component and E2E coverage to verify bare selected
+   avatars, absent title badges, and retained menu supporting titles.
+6. Run focused tests, repository checks, and real rendered visual validation;
    capture desktop and mobile screenshots for review.
 
 ## Design Notes
@@ -80,13 +90,17 @@ behavior changes are in scope.
 
 - Selected Agent values have a 24px avatar with no border/background wrapper.
 - Selected values contain no Agent title badge.
+- Chat issue proposal Owner and Reviewer values follow the same compact
+  presentation.
 - Long names do not create horizontal overflow in any Issue Properties surface.
-- Picker menus retain supporting titles.
+- Properties and proposal picker menus retain supporting titles.
 - User assignment, clearing, and picker behavior remain unchanged.
 
 ## Validation
 
 - `ui/src/components/IssueProperties.test.tsx`
+- `ui/src/pages/Chat.test.tsx`
+- `tests/e2e/chat-proposal-review.spec.ts`
 - `tests/e2e/issue-detail-properties-layout.spec.ts`
 - `pnpm lint`
 - `pnpm -r typecheck`
@@ -97,16 +111,19 @@ behavior changes are in scope.
 ## Validation Results
 
 - Focused `IssueProperties` Vitest: 9 tests passed.
+- Focused Chat and Issue Properties Vitest: 97 tests passed.
 - Target Chromium E2E: 1 test passed across desktop, compact, and mobile
   Properties surfaces, including long-name overflow measurements.
+- Target Chat proposal Chromium E2E passed, including menu supporting labels,
+  24px bare selected avatars, absent title badges, and the approval path.
 - Repository lint, recursive typecheck, and build passed.
 - The full Vitest run completed with 576 files passing and 63 files failing.
   Failures were outside this change and dominated by shared-runner timeouts,
   exhausted embedded-PostgreSQL shared-memory IDs, and existing assertions on
   unrelated surfaces; the focused `IssueProperties` suite passed inside that
   run.
-- Desktop and mobile screenshots were inspected for avatar sizing, removed
-  title badges, and responsive layout.
+- Desktop, mobile, and Chat proposal screenshots were inspected for avatar
+  sizing, removed title badges, menu behavior, and responsive layout.
 
 ## Open Issues
 
