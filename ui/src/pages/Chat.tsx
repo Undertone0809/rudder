@@ -98,7 +98,11 @@ import {
   type ChatResponseAnnotationState,
 } from "@/lib/chat-response-annotations";
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
-import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
+import {
+  buildChatSkillOptions,
+  buildChatSkillReferenceOptions,
+  filterChatSkillOptions,
+} from "@/lib/chat-skill-options";
 import {
   chatStopRecoveryActionKey,
   clearPendingChatStopRecovery,
@@ -2238,8 +2242,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       agent: activeSkillAgent,
       orgUrlKey: selectedOrganization?.urlKey ?? "organization",
       organizationSkills,
-      skillSnapshot: activeAgentSkillSnapshot, }), [activeAgentSkillSnapshot, activeSkillAgent, organizationSkills, selectedOrganization?.urlKey], ); const chatSkillReferences = useMemo<MarkdownSkillReferencePreview[]>(
-    () => availableChatSkills.map((skill) => ({
+      skillSnapshot: activeAgentSkillSnapshot, }), [activeAgentSkillSnapshot, activeSkillAgent, organizationSkills, selectedOrganization?.urlKey], ); const referenceChatSkills = useMemo(
+    () => buildChatSkillReferenceOptions({
+      agent: activeSkillAgent,
+      orgUrlKey: selectedOrganization?.urlKey ?? "organization",
+      organizationSkills,
+      skillSnapshot: activeAgentSkillSnapshot,
+    }),
+    [activeAgentSkillSnapshot, activeSkillAgent, organizationSkills, selectedOrganization?.urlKey],
+  ); const chatSkillReferences = useMemo<MarkdownSkillReferencePreview[]>(
+    () => referenceChatSkills.map((skill) => ({
       href: skill.skillMarkdownTarget,
       label: skill.skillRefLabel,
       displayName: skill.skillDisplayName,
@@ -2247,7 +2259,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       categoryLabel: skill.skillCategoryLabel,
       locationLabel: skill.skillLocationLabel,
       detailsHref: skill.skillDetailsHref,
-    })), [availableChatSkills], ); const chatSkillDetailsHrefByTarget = useMemo(
+      openHref: skill.skillOpenHref,
+    })), [referenceChatSkills], ); const chatSkillDetailsHrefByTarget = useMemo(
     () => new Map(
       availableChatSkills
         .filter((skill) => skill.skillMarkdownTarget && skill.skillDetailsHref)

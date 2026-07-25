@@ -5,6 +5,7 @@ import type {
 import { describe, expect, it } from "vitest";
 import {
   buildChatSkillOptions,
+  buildChatSkillReferenceOptions,
   filterChatSkillOptions,
 } from "./chat-skill-options";
 
@@ -108,6 +109,48 @@ describe("chat-skill-options", () => {
     ]);
   });
 
+  it("keeps disabled organization skills resolvable for historical messages", () => {
+    const alphaTest = makeSkill({
+      id: "org-alpha-test",
+      key: "organization/org-1/alpha-test",
+      slug: "alpha-test",
+      name: "Alpha Test",
+      sourceType: "local_path",
+      sourcePath: "/workspace/skills/alpha-test/SKILL.md",
+      workspaceEditPath: "skills/alpha-test/SKILL.md",
+    });
+    const options = buildChatSkillReferenceOptions({
+      agent: { id: "agent-1", urlKey: "nia" },
+      orgUrlKey: "acme",
+      organizationSkills: [alphaTest],
+      skillSnapshot: {
+        agentRuntimeType: "codex_local",
+        supported: true,
+        mode: "persistent",
+        desiredSkills: [],
+        entries: [{
+          key: "alpha-test",
+          selectionKey: "org:organization/org-1/alpha-test",
+          runtimeName: "alpha-test",
+          desired: false,
+          configurable: true,
+          alwaysEnabled: false,
+          managed: true,
+          state: "available",
+          sourceClass: "organization",
+          sourcePath: "/workspace/skills/alpha-test",
+        }],
+        warnings: [],
+      },
+    });
+
+    expect(options).toHaveLength(1);
+    expect(options[0]).toMatchObject({
+      skillMarkdownTarget: "skill://org/org-alpha-test?ref=alpha-test",
+      skillOpenHref: "library-file://file?p=skills%2Falpha-test%2FSKILL.md",
+    });
+  });
+
   it("filters enabled skills by search text", () => {
     const filtered = filterChatSkillOptions(
       [
@@ -123,6 +166,7 @@ describe("chat-skill-options", () => {
           skillCategoryLabel: null,
           skillLocationLabel: null,
           skillDetailsHref: "/library?skill=bundle-build-advisor&skillFile=SKILL.md",
+          skillOpenHref: "/workspace/skills/build-advisor/SKILL.md",
         },
       ],
       "advisor",
