@@ -494,6 +494,7 @@ export function SideChatPanelView({
                       annotation={annotation}
                       ordinal={annotation.ordinal}
                       pendingFiles={annotationState.pendingFilesByAnnotationId[annotation.id] ?? []}
+                      showSelectedTextContext
                       anchorRect={editorAnchor?.getBoundingClientRect() ?? null}
                       getAnchorRect={() => (
                         editorAnchor?.isConnected ? editorAnchor.getBoundingClientRect() : null

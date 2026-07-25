@@ -772,6 +772,7 @@ test.describe("Chat response annotations", () => {
     await card.getByRole("button", { name: "Delete annotation 1" }).click();
     await expect(draftAnnotationChip(page, 1)).toHaveCount(0);
     await expect(finalSource.getByTestId("chat-response-annotation-marker")).toHaveCount(0);
+    await expect(finalSource.getByTestId("chat-response-annotation-highlight")).toHaveCount(0);
   });
 
   test("highlights source text, opens only the activated draft, keeps markers clear, and sends a soft-break partial selection", async ({ page }, testInfo) => {
@@ -800,6 +801,43 @@ test.describe("Chat response annotations", () => {
     await expect(sourceHighlights).toHaveCount(2);
     await expect(sourceHighlights.first().locator(":scope > span")).not.toHaveCount(0);
     await expect(sourceHighlights.last().locator(":scope > span")).not.toHaveCount(0);
+    const secondHighlightBoxes = await sourceHighlights.last().locator(":scope > span")
+      .evaluateAll((elements) => elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+        };
+      }));
+    expect(secondHighlightBoxes.some((rect) => (
+      rect.left < secondSelection.bounds.right
+      && rect.right > secondSelection.bounds.x
+      && rect.top < secondSelection.bounds.bottom
+      && rect.bottom > secondSelection.bounds.y
+    ))).toBe(true);
+    const clippingParagraph = finalSource.locator("p")
+      .filter({ hasText: "Rudder docs" })
+      .first();
+    await clippingParagraph.evaluate((element) => {
+      Object.assign(element.style, {
+        overflowX: "auto",
+        whiteSpace: "nowrap",
+        width: "120px",
+      });
+    });
+    await expect.poll(() => clippingParagraph.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    )).toBe(true);
+    await clippingParagraph.evaluate((element) => {
+      element.scrollLeft = element.scrollWidth;
+    });
+    await expect(sourceHighlights.first().locator(":scope > span")).toHaveCount(0);
+    await clippingParagraph.evaluate((element) => {
+      element.scrollLeft = 0;
+    });
+    await expect(sourceHighlights.first().locator(":scope > span")).not.toHaveCount(0);
     const markerBox = await secondMarker.boundingBox();
     expect(markerBox).toBeTruthy();
     const markerOverlapsSelection = !(
@@ -1584,6 +1622,8 @@ test.describe("Chat response annotations", () => {
     await provisionalCard.getByRole("button", { name: "Edit annotation 1" }).click();
     const provisionalEditor = page.getByTestId("chat-response-annotation-editor");
     await expect(provisionalEditor).toBeVisible();
+    await expect(provisionalEditor).toContainText("Selected text:");
+    await expect(provisionalEditor).toContainText("Rudder docs");
     await provisionalEditor
       .getByPlaceholder("Add an optional comment…")
       .fill("Side Chat owns this comment and evidence.");
