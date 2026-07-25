@@ -1434,10 +1434,8 @@ test.describe("Messenger unified threads contract", () => {
         data: {
           title,
           summary,
-          preferredAgentId: organization.chatAgent.id,
           issueCreationMode: "manual_approval",
           planMode: false,
-          initialMessage: { body: `${title} initial message.` },
         },
       });
       expect(res.ok()).toBe(true);
