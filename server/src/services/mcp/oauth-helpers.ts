@@ -12,6 +12,7 @@ import {
   createManagedMcpClient,
   resolveMcpHttpCredentials,
 } from "./managed-client.js";
+import type { ManagedMcpOAuthMaterial } from "./oauth-provider.js";
 import {
   MCP_PROVIDER_REGISTRY,
 } from "./provider-registry.js";
@@ -19,7 +20,6 @@ import {
   type McpDeploymentAllowlists,
   type McpDnsLookup,
 } from "./security-policy.js";
-import type { ManagedMcpOAuthMaterial } from "./oauth-provider.js";
 
 type McpConnectionRow = typeof mcpConnections.$inferSelect;
 
