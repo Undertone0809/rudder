@@ -1021,7 +1021,33 @@ export function isCommandTool(name: string, input: unknown): boolean {
 
 export function describeToolSemanticInfo(name: string, input: unknown): TranscriptToolSemanticInfo {
   const normalizedName = name.trim().toLowerCase();
+  const normalizedIdentifier = normalizedName.replace(/[\s_-]+/g, "");
   const record = asRecord(input);
+
+  if (normalizedIdentifier === "imageview") {
+    const sourcePath = readStringField(record, ["path"]);
+    const status = readStringField(record, ["status"])?.toLowerCase() ?? "";
+    const failed = ["failed", "error", "errored", "cancelled", "canceled", "denied", "rejected"]
+      .includes(status);
+    const target = sourcePath ? createTranscriptFileTargets([sourcePath], record)[0] : null;
+    const displayLabel = sourcePath
+      ? sourcePath.replace(/[\\/]+$/u, "").split(/[\\/]/u).filter(Boolean).at(-1) ?? sourcePath
+      : "image";
+    return {
+      category: "image",
+      label: "View image",
+      summary: "Viewed an image",
+      bucket: "explore",
+      quantity: 1,
+      noun: "item",
+      ...(!failed && target?.path ? {
+        image: {
+          displayLabel,
+          path: target.path,
+        },
+      } : {}),
+    };
+  }
 
   const codexAgentToolInfo = describeCodexAgentToolSemanticInfo(name, input);
   if (codexAgentToolInfo) {

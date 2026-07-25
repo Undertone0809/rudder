@@ -100,6 +100,62 @@ describe("codex_local stale session detection", () => {
 });
 
 describe("codex_local ui stdout parser", () => {
+  it("preserves Codex imageView paths as paired image_view tool evidence", () => {
+    const ts = "2026-07-25T00:00:00.000Z";
+    const item = {
+      id: "image-1",
+      type: "imageView",
+      path: "/workspace/rudder/tmp/preview.png",
+      status: "completed",
+    };
+    const evidence = {
+      id: "image-1",
+      status: "completed",
+      path: "/workspace/rudder/tmp/preview.png",
+    };
+
+    expect(parseCodexStdoutLine(JSON.stringify({ type: "item.started", item }), ts)).toEqual([
+      {
+        kind: "tool_call",
+        ts,
+        name: "image_view",
+        toolUseId: "image-1",
+        input: evidence,
+      },
+    ]);
+    expect(parseCodexStdoutLine(JSON.stringify({ type: "item.completed", item }), ts)).toEqual([
+      {
+        kind: "tool_result",
+        ts,
+        toolUseId: "image-1",
+        toolName: "image_view",
+        content: JSON.stringify(evidence),
+        isError: false,
+      },
+    ]);
+  });
+
+  it.each(["cancelled", "canceled", "denied", "rejected"])(
+    "marks %s ImageView evidence as failed",
+    (status) => {
+      const ts = "2026-07-25T00:00:00.000Z";
+      const item = {
+        id: `image-${status}`,
+        type: "imageView",
+        path: "/workspace/rudder/tmp/preview.png",
+        status,
+      };
+
+      expect(parseCodexStdoutLine(JSON.stringify({ type: "item.completed", item }), ts)).toEqual([
+        expect.objectContaining({
+          kind: "tool_result",
+          toolName: "image_view",
+          isError: true,
+        }),
+      ]);
+    },
+  );
+
   it.each(["userMessage", "user_message"])("drops provider %s lifecycle items", (itemType) => {
     const ts = "2026-07-22T00:00:00.000Z";
     const item = {

@@ -75,6 +75,11 @@ function isToolError(item: Record<string, unknown>): boolean {
   );
 }
 
+function isImageViewErrorStatus(status: string): boolean {
+  return ["failed", "error", "errored", "cancelled", "canceled", "denied", "rejected"]
+    .includes(status.trim().toLowerCase());
+}
+
 function normalizeTodoStatus(item: Record<string, unknown>): TranscriptTodoItemStatus {
   const rawStatus = asString(item.status) || asString(item.state);
   const normalizedStatus = rawStatus.trim().toLowerCase().replace(/[\s-]+/g, "_");
@@ -207,6 +212,37 @@ function parseFileChangeItem(item: Record<string, unknown>, ts: string): Transcr
   const preview = entries.slice(0, 6).join(", ");
   const more = entries.length > 6 ? ` (+${entries.length - 6} more)` : "";
   return [{ kind: "system", ts, text: `file changes: ${preview}${more}` }];
+}
+
+function parseImageViewItem(
+  item: Record<string, unknown>,
+  ts: string,
+  phase: "started" | "completed",
+): TranscriptEntry[] {
+  const path = asString(item.path);
+  const status = asString(item.status, phase === "started" ? "in_progress" : "completed");
+  const id = asString(item.id);
+  const toolUseId = id || (path ? `image_view:${path}` : "image_view");
+  const evidence = { id, status, path };
+
+  if (phase === "started") {
+    return [{
+      kind: "tool_call",
+      ts,
+      name: "image_view",
+      toolUseId,
+      input: evidence,
+    }];
+  }
+
+  return [{
+    kind: "tool_result",
+    ts,
+    toolUseId,
+    toolName: "image_view",
+    content: JSON.stringify(evidence),
+    isError: isToolError(item) || isImageViewErrorStatus(status),
+  }];
 }
 
 function parseWebSearchItem(
@@ -445,6 +481,10 @@ function parseCodexItem(
 
   if (itemType === "file_change" && phase === "completed") {
     return parseFileChangeItem(item, ts);
+  }
+
+  if (itemType === "imageView" || itemType === "image_view") {
+    return parseImageViewItem(item, ts, phase);
   }
 
   if (itemType === "tool_use") {

@@ -9,6 +9,7 @@ import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalO
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
 import { transcriptAgentInspectionForTool } from "./TranscriptAgentInspection";
+import { TranscriptImageArtifact } from "./TranscriptImageArtifact";
 
 const EMPTY_AGENT_INSPECTIONS = new Map<string, TranscriptAgentInspection>();
 
@@ -301,6 +302,7 @@ export function TranscriptChatToolActionRow({
   const canExpand = semantic.category !== "skill"
     && Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
   const [open, setOpen] = useState(inline || (defaultOpenOnError && block.status === "error"));
+  const [imageOpen, setImageOpen] = useState(false);
   const duration = quiet ? null : formatTranscriptDuration(block.ts, block.endTs);
   const statusText =
     block.status === "error"
@@ -321,6 +323,7 @@ export function TranscriptChatToolActionRow({
   const chevronOffsetClass = compact ? "" : "mt-0.5";
   const fileTargets = semantic.fileTargets ?? [];
   const hasOpenableFileTargets = fileTargets.some((target) => target.path);
+  const image = block.status === "completed" ? semantic.image : undefined;
   const detailStateLabelId = useId();
   const summaryLabelId = useId();
   const statusLabelId = useId();
@@ -343,7 +346,36 @@ export function TranscriptChatToolActionRow({
           {open ? "Collapse" : "Expand"} {isCommand ? "command" : "tool"} details:
         </span>
       ) : null}
-      {hasOpenableFileTargets ? (
+      {image ? (
+        <div>
+          <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
+            <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
+            <button
+              type="button"
+              id={summaryLabelId}
+              className={cn("min-w-0 flex-1 rounded-sm text-left text-foreground/84 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40", compact ? "text-xs leading-5" : "text-sm leading-6")}
+              title={image.path}
+              aria-expanded={imageOpen}
+              aria-label={`${imageOpen ? "Collapse" : "Preview"} image ${image.displayLabel}`}
+              data-transcript-image-target={image.path}
+              onClick={() => setImageOpen((value) => !value)}
+            >
+              Viewed an image
+            </button>
+            {duration ? (
+              <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
+                {duration}
+              </span>
+            ) : null}
+            {statusText ? (
+              <span id={statusLabelId} className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
+                {statusText}
+              </span>
+            ) : null}
+          </div>
+          {imageOpen ? <TranscriptImageArtifact path={image.path} displayLabel={image.displayLabel} /> : null}
+        </div>
+      ) : hasOpenableFileTargets ? (
         <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
           <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
           <span

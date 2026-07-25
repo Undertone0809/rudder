@@ -489,6 +489,17 @@ export function normalizeTranscript(
     blocks.splice(pendingIndex, 1, block);
   };
 
+  const trustedImageResultInput = (toolName: string | undefined, content: string): unknown | null => {
+    if (toolName?.replace(/[\s_-]+/g, "").toLowerCase() !== "imageview") return null;
+    try {
+      const parsed = JSON.parse(content) as unknown;
+      const record = asRecord(parsed);
+      return typeof record?.path === "string" && record.path.trim() ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
   for (const entry of entries) {
     const previous = blocks[blocks.length - 1];
 
@@ -647,6 +658,8 @@ export function normalizeTranscript(
         ?? [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> => block.type === "tool" && block.status === "running");
 
       if (matched) {
+        const imageInput = trustedImageResultInput(matched.name, entry.content);
+        if (imageInput !== null) matched.input = imageInput;
         mergeCollaborationToolResultInput(matched, entry.content);
         matched.result = entry.content;
         matched.isError = entry.isError;
@@ -654,13 +667,14 @@ export function normalizeTranscript(
         matched.endTs = entry.ts;
         pendingToolBlocks.delete(entry.toolUseId);
       } else {
+        const imageInput = trustedImageResultInput(entry.toolName, entry.content);
         blocks.push({
           type: "tool",
           ts: entry.ts,
           endTs: entry.ts,
           name: entry.toolName ?? "tool",
           toolUseId: entry.toolUseId,
-          input: null,
+          input: imageInput,
           result: entry.content,
           isError: entry.isError,
           status: entry.isError ? "error" : "completed",
