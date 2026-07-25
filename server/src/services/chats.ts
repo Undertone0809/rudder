@@ -74,12 +74,16 @@ import {
   listRecentUserChatMessages,
   updateTrustedInlineVisualMappings,
 } from "./chats.inline-visual-persistence.js";
+import { createQueuedMessageWithStagedAttachments as createQueuedMessageWithStagedAttachmentsInDb } from "./chats.queued-message-create.js";
+import {
+  findQueuedMessageReplay,
+  updateChatAgentRuntimeInvariant,
+} from "./chats.runtime-controls.js";
 import type { ChatServerQueueClaim, ConversationSourceMetadata, ConversationSummaryCursor, MessageHydrationRow } from "./chats.types.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { organizationService } from "./orgs.js";
-import { isPostgresError } from "./postgres-errors.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -630,10 +634,6 @@ export function chatService(db: Db) {
       .from(approvals)
       .where(inArray(approvals.id, approvalIds));
     return new Map(approvalRows.map((row) => [row.id, row]));
-  }
-
-  function isQueuePositionConflict(error: unknown): boolean {
-    return isPostgresError(error, "23505");
   }
 
   async function createGeneration(orgId: string, conversationId: string): Promise<ChatGenerationRow> {
@@ -1817,144 +1817,10 @@ export function chatService(db: Db) {
     });
   }
 
-  async function createQueuedMessageWithStagedAttachments(input: {
-    orgId: string;
-    conversationId: string;
-    clientMutationId: string;
-    payload: ChatQueuedMessagePayload;
-    idempotencyPayload?: ChatQueuedMessagePayload;
-    runtimeSnapshotVersion?: 1 | null;
-    expectedGenerationId?: string | null;
-    requestActor?: ChatQueueRequestActor | null;
-    stagedAttachments: readonly StagedQueuedAnnotationAttachment[];
-    attachmentFileIndexesByAnnotationId: ReadonlyMap<string, readonly number[]>;
-  }) {
-    if ((input.payload.attachmentIds?.length ?? 0) > 0) {
-      throw unprocessable("Queued messages cannot reference client-provided attachment ids");
-    }
-    const payload = normalizeQueuedMessagePayload(input.payload as unknown as Record<string, unknown>);
-    if (!payload.body.trim() && (payload.inlineAnnotations?.length ?? 0) === 0) {
-      throw unprocessable("Queued message body or at least one inline annotation is required");
-    }
-    const fingerprint = queuedMessageMutationFingerprint({
-      payload,
-      stagedAttachments: input.stagedAttachments,
-      attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
-      runtimeSnapshotVersion: input.runtimeSnapshotVersion,
-    });
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        return await db.transaction(async (tx) => {
-          const existing = await tx
-            .select()
-            .from(chatQueuedMessages)
-            .where(
-              and(
-                eq(chatQueuedMessages.orgId, input.orgId),
-                eq(chatQueuedMessages.conversationId, input.conversationId),
-                eq(chatQueuedMessages.clientMutationId, input.clientMutationId),
-              ),
-            )
-            .limit(1)
-            .then((rows) => rows[0] ?? null);
-          if (existing) {
-            const existingPrivateState = queuedAnnotationAssetState(existing.payload);
-            const replayPayload = existing.runtimeSnapshotVersion === 1
-              ? payload
-              : normalizeQueuedMessagePayload(
-                  (input.idempotencyPayload ?? input.payload) as unknown as Record<string, unknown>,
-                );
-            const existingFingerprint = existingPrivateState?.fingerprint
-              ?? queuedMessageMutationFingerprint({
-                payload: normalizeQueuedMessagePayload(existing.payload),
-                stagedAttachments: [],
-                attachmentFileIndexesByAnnotationId: new Map(),
-                runtimeSnapshotVersion: existing.runtimeSnapshotVersion,
-              });
-            const replayFingerprint = queuedMessageMutationFingerprint({
-              payload: replayPayload,
-              stagedAttachments: input.stagedAttachments,
-              attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
-              runtimeSnapshotVersion: existing.runtimeSnapshotVersion,
-            });
-            if (existingFingerprint !== replayFingerprint) {
-              throw conflict("Queued message idempotency key reused with a different payload");
-            }
-            return {
-              item: hydrateQueuedMessage(existing),
-              accepted: false,
-              cleanupAttachments: [...input.stagedAttachments],
-            };
-          }
-
-          await validateCanonicalChatInlineAnnotations(tx, {
-            orgId: input.orgId,
-            conversationId: input.conversationId,
-            annotations: payload.inlineAnnotations ?? [],
-            uploadedFileCount: input.stagedAttachments.length,
-            attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
-          });
-          const assetIds: string[] = [];
-          for (const attachment of input.stagedAttachments) {
-            const [asset] = await tx
-              .insert(assets)
-              .values({
-                orgId: input.orgId,
-                provider: attachment.provider,
-                objectKey: attachment.objectKey,
-                contentType: attachment.contentType,
-                byteSize: attachment.byteSize,
-                sha256: attachment.sha256,
-                originalFilename: attachment.originalFilename,
-                createdByAgentId: attachment.createdByAgentId,
-                createdByUserId: attachment.createdByUserId,
-              })
-              .returning({ id: assets.id });
-            if (!asset) throw new Error("Failed to stage queued annotation asset");
-            assetIds.push(asset.id);
-          }
-          const persistedPayload = withQueuedAnnotationAssetState({
-            payload,
-            fingerprint,
-            assetIds,
-            stagedAttachments: input.stagedAttachments,
-            attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
-          });
-          const [positionRow] = await tx
-            .select({
-              nextPosition: sql<number>`coalesce(max(${chatQueuedMessages.position}), 0) + 1`,
-            })
-            .from(chatQueuedMessages)
-            .where(and(
-              eq(chatQueuedMessages.orgId, input.orgId),
-              eq(chatQueuedMessages.conversationId, input.conversationId),
-            ));
-          const [row] = await tx
-            .insert(chatQueuedMessages)
-            .values({
-              orgId: input.orgId,
-              conversationId: input.conversationId,
-              clientMutationId: input.clientMutationId,
-              position: Number(positionRow?.nextPosition ?? 1),
-              payload: persistedPayload,
-              runtimeSnapshotVersion: input.runtimeSnapshotVersion ?? null,
-              requestActor: input.requestActor ?? null,
-              expectedGenerationId: input.expectedGenerationId ?? null,
-            })
-            .returning();
-          if (!row) throw new Error("Failed to create queued chat message");
-          return {
-            item: hydrateQueuedMessage(row),
-            accepted: true,
-            cleanupAttachments: [] as StagedQueuedAnnotationAttachment[],
-          };
-        });
-      } catch (error) {
-        if (attempt < 2 && isQueuePositionConflict(error)) continue;
-        throw error;
-      }
-    }
-    throw new Error("Failed to create queued chat message");
+  async function createQueuedMessageWithStagedAttachments(
+    input: Parameters<typeof createQueuedMessageWithStagedAttachmentsInDb>[1],
+  ) {
+    return createQueuedMessageWithStagedAttachmentsInDb(db, input);
   }
 
   async function getQueuedMessageReplay(input: {
@@ -1962,39 +1828,8 @@ export function chatService(db: Db) {
     clientMutationId: string;
     payload: ChatQueuedMessagePayload;
   }) {
-    const existing = await db
-      .select()
-      .from(chatQueuedMessages)
-      .where(
-        and(
-          eq(chatQueuedMessages.conversationId, input.conversationId),
-          eq(chatQueuedMessages.clientMutationId, input.clientMutationId),
-        ),
-      )
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (!existing) return null;
-    const privateState = queuedAnnotationAssetState(existing.payload);
-    if ((privateState?.attachments.length ?? 0) > 0) {
-      throw conflict("Queued message idempotency key reused without its original attachments");
-    }
-    const emptyBindings = new Map<string, readonly number[]>();
-    const existingFingerprint = queuedMessageMutationFingerprint({
-      payload: normalizeQueuedMessagePayload(existing.payload),
-      stagedAttachments: [],
-      attachmentFileIndexesByAnnotationId: emptyBindings,
-      runtimeSnapshotVersion: existing.runtimeSnapshotVersion,
-    });
-    const replayFingerprint = queuedMessageMutationFingerprint({
-      payload: normalizeQueuedMessagePayload(input.payload as unknown as Record<string, unknown>),
-      stagedAttachments: [],
-      attachmentFileIndexesByAnnotationId: emptyBindings,
-      runtimeSnapshotVersion: existing.runtimeSnapshotVersion,
-    });
-    if (existingFingerprint !== replayFingerprint) {
-      throw conflict("Queued message idempotency key reused with a different payload");
-    }
-    return hydrateQueuedMessage(existing);
+    const existing = await findQueuedMessageReplay(db, input);
+    return existing ? hydrateQueuedMessage(existing) : null;
   }
 
   async function createQueuedMessage(input: {
@@ -4053,37 +3888,7 @@ export function chatService(db: Db) {
     patch: Partial<typeof chatConversations.$inferInsert>;
     expectedPreferredAgentId: string | null;
   }) {
-    const hasPreferredAgentPatch = Object.prototype.hasOwnProperty.call(
-      input.patch,
-      "preferredAgentId",
-    );
-    const requestedPreferredAgentId = hasPreferredAgentPatch
-      ? input.patch.preferredAgentId ?? null
-      : input.expectedPreferredAgentId;
-    const preferredAgentChanged = requestedPreferredAgentId !== input.expectedPreferredAgentId;
-    if (preferredAgentChanged && input.expectedPreferredAgentId !== null) {
-      throw conflict("Chat agent is locked after the conversation starts");
-    }
-    const patch = preferredAgentChanged
-      ? { ...input.patch, modelOverride: null, effortOverride: null }
-      : input.patch;
-    const preferredAgentCondition = input.expectedPreferredAgentId === null
-      ? isNull(chatConversations.preferredAgentId)
-      : eq(chatConversations.preferredAgentId, input.expectedPreferredAgentId);
-    const [updated] = await db
-      .update(chatConversations)
-      .set({
-        ...patch,
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(chatConversations.id, input.id),
-        preferredAgentCondition,
-      ))
-      .returning();
-    if (!updated) {
-      throw conflict("Chat agent changed while applying the conversation runtime update");
-    }
+    await updateChatAgentRuntimeInvariant(db, input);
     return getById(input.id);
   }
 

@@ -17,14 +17,19 @@ import type { StorageService } from "../storage/types.js";
 import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
-import { applyChatRuntimeOverrides, asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatEffortFromConfig, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
 import { enrichConversationRuntimeDescriptors } from "./chat-assistant.runtime-batch.js";
+import {
+  applyChatRuntimeOverrides,
+  chatEffortFromConfig,
+} from "./chat-assistant.runtime-overrides.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
 import {
   executeAdapterWithModelFallbacks,
   projectPrimaryRuntimeConfig,
 } from "./runtime-kernel/model-fallback.js";
 export * from "./chat-assistant.helpers.js";
+export * from "./chat-assistant.runtime-overrides.js";
 
 function chatRuntimePreparationStreamError(error: unknown) {
   const rawMessage = error instanceof Error ? error.message : String(error);

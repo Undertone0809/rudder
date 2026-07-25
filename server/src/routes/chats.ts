@@ -98,6 +98,13 @@ import {
   uploadedMessageFiles,
   validateUploadedMessageFiles,
 } from "./chats.helpers.js";
+import { createChatDraftPreflight } from "./chats.preflight.js";
+import {
+  chatRuntimeInvocationSnapshot,
+  chatRuntimeSnapshot,
+  prepareChatConversationPatch,
+  queuedChatRuntimeInvocationSnapshot,
+} from "./chats.runtime-controls.js";
 import { registerChatStreamRoutes } from "./chats.stream-routes.js";
 
 function chatVisibleOutputAdmissionClosed(error: unknown) {
@@ -130,6 +137,16 @@ export function chatRoutes(
   const steerMessages = chatSteerMessageService(db);
   const sideChats = sideChatService(db);
   const inlineAnnotations = chatInlineAnnotationService(db);
+  const {
+    assertContextLinksBelongToCompany,
+    preflightChatDraft,
+  } = createChatDraftPreflight({
+    organizations: organizationsSvc,
+    issues: issuesSvc,
+    projects: projectsSvc,
+    agents: agentsSvc,
+    assistant: assistantSvc,
+  });
   const {
     addAgentAuthoredMessage,
     addUserMessage,
@@ -415,92 +432,9 @@ export function chatRoutes(
     );
   }
 
-  async function assertContextLinksBelongToCompany(
-    orgId: string,
-    contextLinks: Array<{ entityType: "issue" | "project" | "agent"; entityId: string }>,
-  ) {
-    for (const link of contextLinks) {
-      if (link.entityType === "issue") {
-        const issue = await issuesSvc.getById(link.entityId);
-        if (!issue || issue.orgId !== orgId) {
-          throw new HttpError(422, "Issue context must belong to the same organization");
-        }
-        continue;
-      }
-      if (link.entityType === "project") {
-        const project = await projectsSvc.getById(link.entityId);
-        if (!project || project.orgId !== orgId) {
-          throw new HttpError(422, "Project context must belong to the same organization");
-        }
-        continue;
-      }
-      const agent = await agentsSvc.getById(link.entityId);
-      if (!agent || agent.orgId !== orgId) {
-        throw new HttpError(422, "Agent context must belong to the same organization");
-      }
-    }
-  }
-
-  async function preflightChatDraft(
-    req: Request,
-    res: Response,
-    input: {
-      preferredAgentId?: string | null;
-      modelOverride?: string | null;
-      effortOverride?: string | null;
-      planMode?: boolean;
-      contextLinks?: Array<{ entityType: "issue" | "project" | "agent"; entityId: string; metadata?: Record<string, unknown> | null }>;
-    },
-  ) {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const organization = await organizationsSvc.getById(orgId);
-    if (!organization) {
-      res.status(404).json({ error: "Organization not found" });
-      return null;
-    }
-    const contextLinks = input.contextLinks ?? [];
-    await assertContextLinksBelongToCompany(orgId, contextLinks);
-    let preferredAgentId = input.preferredAgentId ?? null;
-    if (preferredAgentId) {
-      const agent = await agentsSvc.getById(preferredAgentId);
-      if (!agent || agent.orgId !== orgId || agent.status === "terminated") {
-        res.status(422).json({ error: "Preferred agent must be available in the same organization" });
-        return null;
-      }
-    } else {
-      const [defaultAgent] = await agentsSvc.list(orgId);
-      if (!defaultAgent) {
-        res.status(422).json({ error: "Chat requires an available agent" });
-        return null;
-      }
-      preferredAgentId = defaultAgent.id;
-    }
-    const availability = await assistantSvc.getDraftChatAssistantAvailability({
-      orgId,
-      preferredAgentId,
-      modelOverride: input.modelOverride ?? null,
-      effortOverride: input.effortOverride ?? null,
-      contextLinks,
-      planMode: input.planMode ?? false,
-    });
-    return {
-      orgId,
-      organization,
-      contextLinks,
-      preferredAgentId,
-      modelOverride: input.modelOverride ?? null,
-      effortOverride: input.effortOverride ?? null,
-      availability,
-    };
-  }
-
   async function conversationRuntimeSnapshot(conversation: ChatConversation) {
     const runtime = await assistantSvc.getChatAssistantAvailability(conversation);
-    return {
-      model: runtime.model === "Default model" ? null : runtime.model,
-      effort: runtime.effort ?? null,
-    };
+    return chatRuntimeSnapshot(runtime);
   }
 
   type ActorInfo = ReturnType<typeof getActorInfo>;
@@ -1395,15 +1329,9 @@ export function chatRoutes(
           false,
         );
       };
-      const queuedRuntimeSnapshot = claim.item.runtimeSnapshotVersion === 1
-        ? {
-            modelSnapshot: claim.item.payload?.model ?? null,
-            effortSnapshot: claim.item.payload?.effort ?? null,
-          }
-        : {};
       const streamed = await assistantSvc.streamChatAssistantReply({
         ...assistantInput,
-        ...queuedRuntimeSnapshot,
+        ...queuedChatRuntimeInvocationSnapshot(claim.item),
         userMessageId: userMessage.id,
         chatTurnId: turnContext.chatTurnId,
         turnVariant: turnContext.turnVariant,
@@ -1817,28 +1745,10 @@ export function chatRoutes(
         return;
       }
     }
-    const preferredAgentChanged = typeof req.body.preferredAgentId === "string"
-      && req.body.preferredAgentId !== existing.preferredAgentId;
-    if (preferredAgentChanged && existing.preferredAgentId) {
-      throw conflict("Chat agent is locked after the conversation starts");
-    }
-    const conversationPatch = {
-      ...req.body,
-      ...(preferredAgentChanged ? { modelOverride: null, effortOverride: null } : {}),
-      ...(Object.prototype.hasOwnProperty.call(req.body, "resolvedAt")
-        ? {
-            resolvedAt: req.body.resolvedAt
-              ? new Date(req.body.resolvedAt)
-              : req.body.resolvedAt,
-          }
-        : {}),
-    };
-    const updatesAgentRuntimeInvariant = Object.prototype.hasOwnProperty.call(
-      req.body,
-      "preferredAgentId",
-    )
-      || Object.prototype.hasOwnProperty.call(req.body, "modelOverride")
-      || Object.prototype.hasOwnProperty.call(req.body, "effortOverride");
+    const {
+      patch: conversationPatch,
+      updatesAgentRuntimeInvariant,
+    } = prepareChatConversationPatch(req.body, existing.preferredAgentId);
     const updated = updatesAgentRuntimeInvariant
       ? await svc.updateAgentModelInvariant({
         id: existing.id,
@@ -2875,10 +2785,7 @@ export function chatRoutes(
           skillRefs: [],
           projectId: null,
           accessMode: null,
-          model: assistantAvailability.model === "Default model"
-            ? null
-            : assistantAvailability.model,
-          effort: assistantAvailability.effort ?? null,
+          ...chatRuntimeSnapshot(assistantAvailability),
           metadata: {
             source: "messages_endpoint_during_active_generation",
           },
@@ -2913,10 +2820,7 @@ export function chatRoutes(
           try {
             const streamed = await assistantSvc.streamChatAssistantReply({
               ...assistantInput,
-              modelSnapshot: assistantAvailability.model === "Default model"
-                ? null
-                : assistantAvailability.model,
-              effortSnapshot: assistantAvailability.effort ?? null,
+              ...chatRuntimeInvocationSnapshot(assistantAvailability),
               userMessageId: userMessage.id,
               chatTurnId: turnContext.chatTurnId,
               turnVariant: turnContext.turnVariant,

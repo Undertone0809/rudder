@@ -9,7 +9,6 @@ import {
   resolveChatOperationProposalSchema,
   setChatProjectContextSchema,
   stopChatGenerationSchema,
-  updateChatConversationUserStateSchema,
   type ChatConversation,
   type ChatMessage,
   type ChatStreamTranscriptEntry,
@@ -42,6 +41,7 @@ import { hashChatGenerationBody } from "../services/chat-generation-protocol.js"
 import { logActivity } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
+import { chatRuntimeSnapshot } from "./chats.runtime-controls.js";
 import {
   CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE,
   CHAT_ASSISTANT_STOPPED_FALLBACK_MESSAGE,
@@ -56,6 +56,7 @@ import {
   type AtomicChatFirstTurn,
   type ChatStreamRouteContext,
 } from "./chats.stream-support.js";
+import { registerChatUserStateRoutes } from "./chats.user-state-routes.js";
 
 export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   const {
@@ -187,12 +188,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         res.status(503).json({ error: assistantAvailability.error });
         return;
       }
-      runtimeSnapshot = {
-        model: assistantAvailability.model === "Default model"
-          ? null
-          : assistantAvailability.model,
-        effort: assistantAvailability.effort ?? null,
-      };
+      runtimeSnapshot = chatRuntimeSnapshot(assistantAvailability);
     }
     if (!runtimeSnapshot) throw new Error("Chat runtime snapshot is unavailable");
 
@@ -1032,13 +1028,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       conversation,
       userMessage: accepted.message,
       uploadPrepared,
-      runtimeSnapshot: {
-        model: draft.modelOverride
-          ?? (draft.availability.model === "Default model"
-            ? null
-            : draft.availability.model),
-        effort: draft.availability.effort ?? null,
-      },
+      runtimeSnapshot: chatRuntimeSnapshot(draft.availability, draft.modelOverride),
     };
     await handleChatMessageStream(req, res);
   });
@@ -1556,38 +1546,5 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     res.json(resolved ? await assistantSvc.enrichConversation(resolved as ChatConversation) : null);
   });
 
-  router.post("/chats/:id/read", async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const userId = boardUserId(req);
-    const state = await svc.markRead(conversation.id, conversation.orgId, userId);
-    res.status(201).json({
-      conversationId: conversation.id,
-      lastReadAt: state.lastReadAt,
-    });
-  });
-
-  router.post("/chats/:id/user-state", validate(updateChatConversationUserStateSchema), async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const userId = boardUserId(req);
-    if (typeof req.body.pinned === "boolean") {
-      await svc.setPinned(conversation.id, conversation.orgId, userId, req.body.pinned);
-    }
-    if (typeof req.body.unread === "boolean") {
-      if (req.body.unread) {
-        await svc.markUnread(conversation.id, conversation.orgId, userId);
-      } else {
-        await svc.markRead(conversation.id, conversation.orgId, userId);
-      }
-    }
-    const refreshed = await svc.getById(conversation.id, userId);
-    res.json(await assistantSvc.enrichConversation(refreshed as ChatConversation));
-  });
+  registerChatUserStateRoutes(ctx);
 }
