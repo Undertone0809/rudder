@@ -83,7 +83,10 @@ describe("stable public changelog validation", () => {
   it("rejects unsupported or empty sections", () => {
     expect(
       validateStableChangelog({
-        english: english.replace("### Fixed", "### Internal changes"),
+        english: english.replace(
+          /(## v0\.6\.1[\s\S]*?)### Fixed/u,
+          "$1### Internal changes",
+        ),
         version: "0.6.1",
         chinese,
         releaseNotes,
