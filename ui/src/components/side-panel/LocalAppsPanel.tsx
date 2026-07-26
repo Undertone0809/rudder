@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import {
   readDesktopShell,
   type DesktopLocalAppDefinition,
@@ -77,6 +78,7 @@ export function LocalAppDefinitionReviewDialog({
     definition ? localAppDefinitionToForm(definition) : null
   ));
   const [validationError, setValidationError] = useState<string | null>(null);
+  const formScrollRef = useScrollbarActivityRef();
   useEffect(() => {
     if (!definition) return;
     setForm(localAppDefinitionToForm(definition));
@@ -100,64 +102,73 @@ export function LocalAppDefinitionReviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen && !pending) onCancel(); }}>
-      <DialogContent className="max-h-[min(90vh,52rem)] overflow-y-auto sm:max-w-2xl" data-testid="local-app-definition-review">
-        <form onSubmit={submit}>
-          <DialogHeader>
+      <DialogContent className="flex max-h-[min(90vh,52rem)] flex-col overflow-hidden sm:max-w-2xl" data-testid="local-app-definition-review">
+        <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
+          <DialogHeader className="shrink-0">
             <DialogTitle>{title ?? (edit ? "Review Local App changes" : "Review Local App")}</DialogTitle>
             <DialogDescription>
               Rudder will ask for native confirmation before trusting these launch details on this device.
             </DialogDescription>
           </DialogHeader>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="local-app-name">Name</Label>
-              <Input id="local-app-name" disabled={!editable} value={form.title} onChange={(event) => update("title", event.target.value)} />
+          <div
+            ref={formScrollRef}
+            aria-label="Local App launch details"
+            className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1"
+            data-testid="local-app-definition-review-scroll"
+            role="region"
+            tabIndex={0}
+          >
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="local-app-name">Name</Label>
+                <Input id="local-app-name" disabled={!editable} value={form.title} onChange={(event) => update("title", event.target.value)} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="local-app-cwd">Working directory</Label>
+                <Input id="local-app-cwd" disabled={!editable} value={form.cwd} onChange={(event) => update("cwd", event.target.value)} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="local-app-executable">Resolved executable</Label>
+                <Input id="local-app-executable" disabled={!editable} value={form.executable} onChange={(event) => update("executable", event.target.value)} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="local-app-argv">Arguments · one literal argument per line</Label>
+                <Textarea id="local-app-argv" disabled={!editable} className="font-mono text-xs" value={form.argvText} onChange={(event) => update("argvText", event.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="local-app-readiness">Readiness path</Label>
+                <Input id="local-app-readiness" disabled={!editable} value={form.readinessPath} onChange={(event) => update("readinessPath", event.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="local-app-timeout">Timeout (milliseconds)</Label>
+                <Input id="local-app-timeout" disabled={!editable} inputMode="numeric" value={form.timeoutMs} onChange={(event) => update("timeoutMs", event.target.value)} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="local-app-open-path">Page to open after readiness</Label>
+                <Input id="local-app-open-path" disabled={!editable} value={form.openPath} onChange={(event) => update("openPath", event.target.value)} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="local-app-environment">Inherited environment names · one per line</Label>
+                <Textarea id="local-app-environment" disabled={!editable} className="font-mono text-xs" value={form.environmentNamesText} onChange={(event) => update("environmentNamesText", event.target.value)} />
+                <p className="text-xs leading-5 text-muted-foreground">Rudder supplies a safe PATH automatically. PATH entered here is ignored.</p>
+              </div>
             </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="local-app-cwd">Working directory</Label>
-              <Input id="local-app-cwd" disabled={!editable} value={form.cwd} onChange={(event) => update("cwd", event.target.value)} />
+            {!editable ? (
+              <p className="mt-4 text-sm text-muted-foreground">
+                Stop this Local App to edit project settings.
+              </p>
+            ) : null}
+            <div className="mt-5 flex gap-3 rounded-[var(--radius-md)] border border-amber-500/25 bg-amber-500/10 px-3 py-3 text-sm text-foreground">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+              <p>Project code runs as you and can modify local files and data. Review the directory, executable, arguments, and inherited environment names.</p>
             </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="local-app-executable">Resolved executable</Label>
-              <Input id="local-app-executable" disabled={!editable} value={form.executable} onChange={(event) => update("executable", event.target.value)} />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="local-app-argv">Arguments · one literal argument per line</Label>
-              <Textarea id="local-app-argv" disabled={!editable} className="font-mono text-xs" value={form.argvText} onChange={(event) => update("argvText", event.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="local-app-readiness">Readiness path</Label>
-              <Input id="local-app-readiness" disabled={!editable} value={form.readinessPath} onChange={(event) => update("readinessPath", event.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="local-app-timeout">Timeout (milliseconds)</Label>
-              <Input id="local-app-timeout" disabled={!editable} inputMode="numeric" value={form.timeoutMs} onChange={(event) => update("timeoutMs", event.target.value)} />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="local-app-open-path">Page to open after readiness</Label>
-              <Input id="local-app-open-path" disabled={!editable} value={form.openPath} onChange={(event) => update("openPath", event.target.value)} />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="local-app-environment">Inherited environment names · one per line</Label>
-              <Textarea id="local-app-environment" disabled={!editable} className="font-mono text-xs" value={form.environmentNamesText} onChange={(event) => update("environmentNamesText", event.target.value)} />
-              <p className="text-xs leading-5 text-muted-foreground">Rudder supplies a safe PATH automatically. PATH entered here is ignored.</p>
-            </div>
+            {validationError || error ? (
+              <p className="mt-4 text-sm text-destructive" data-testid="local-app-error" role="alert">
+                {validationError ?? message(error, "Desktop could not save this Local App.")}
+              </p>
+            ) : null}
           </div>
-          {!editable ? (
-            <p className="mt-4 text-sm text-muted-foreground">
-              Stop this Local App to edit project settings.
-            </p>
-          ) : null}
-          <div className="mt-5 flex gap-3 rounded-[var(--radius-md)] border border-amber-500/25 bg-amber-500/10 px-3 py-3 text-sm text-foreground">
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
-            <p>Project code runs as you and can modify local files and data. Review the directory, executable, arguments, and inherited environment names.</p>
-          </div>
-          {validationError || error ? (
-            <p className="mt-4 text-sm text-destructive" data-testid="local-app-error" role="alert">
-              {validationError ?? message(error, "Desktop could not save this Local App.")}
-            </p>
-          ) : null}
-          <DialogFooter className="mt-6">
+          <DialogFooter className="mt-6 shrink-0">
             <Button type="button" variant="outline" disabled={pending || requestEditPending} onClick={onCancel}>Cancel</Button>
             {editable ? (
               <Button type="submit" disabled={pending}>

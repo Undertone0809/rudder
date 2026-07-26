@@ -239,13 +239,8 @@ async function renderRudderMcpCodexConfig(
   managedEnv: RudderMcpManagedEnv = {},
   verifiedCommand?: RudderMcpCliCommand,
   verifiedBrowserCommand?: RudderMcpCliCommand,
+  includeCore = true,
 ): Promise<string> {
-  const coreServer = verifiedCommand ?? await resolveRudderMcpCliCommand(moduleDir);
-  const coreEnv = {
-    ...(coreServer.env ?? {}),
-    ...managedEnv,
-  };
-  delete coreEnv.RUDDER_BROWSER_ENABLED;
   const renderServer = (
     serverName: string,
     server: RudderMcpCliCommand,
@@ -263,7 +258,16 @@ async function renderRudderMcpCodexConfig(
       : []),
   ].join("\n");
 
-  const servers = [renderServer(RUDDER_MCP_SERVER_NAME, coreServer, coreEnv)];
+  const servers: string[] = [];
+  if (includeCore) {
+    const coreServer = verifiedCommand ?? await resolveRudderMcpCliCommand(moduleDir);
+    const coreEnv = {
+      ...(coreServer.env ?? {}),
+      ...managedEnv,
+    };
+    delete coreEnv.RUDDER_BROWSER_ENABLED;
+    servers.push(renderServer(RUDDER_MCP_SERVER_NAME, coreServer, coreEnv));
+  }
   if (managedEnv.RUDDER_BROWSER_ENABLED === "true") {
     const browserServer = verifiedBrowserCommand ?? await resolveRudderBrowserMcpCliCommand(moduleDir);
     servers.push(renderServer(RUDDER_BROWSER_MCP_SERVER_NAME, browserServer, {
@@ -277,14 +281,18 @@ async function renderRudderMcpCodexConfig(
 export function renderManagedExternalMcpCodexConfig(
   runtimeConfig: unknown,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  onFailure?: (serverName: string | null, error: Error) => void,
 ): string {
-  return resolveManagedExternalMcpBindings(runtimeConfig, env)
+  return resolveManagedExternalMcpBindings(runtimeConfig, env, { onFailure })
     .map((binding) => [
       `[mcp_servers.${binding.serverName}]`,
       `url = ${JSON.stringify(binding.proxyUrl)}`,
       `bearer_token_env_var = ${JSON.stringify(binding.bearerTokenEnvVar)}`,
-      `required = ${binding.required ? "true" : "false"}`,
-      `startup_timeout_sec = ${binding.startupTimeoutMs / 1_000}`,
+      // External MCP is a degradable capability. Codex must remain runnable
+      // when a provider or proxy is unavailable, even for operator-attention
+      // bindings persisted with required=true.
+      "required = false",
+      `startup_timeout_sec = ${Math.min(binding.startupTimeoutMs, 3_000) / 1_000}`,
       `tool_timeout_sec = ${binding.toolTimeoutMs / 1_000}`,
       `enabled_tools = ${JSON.stringify(binding.toolPolicy.allowedToolNames)}`,
     ].join("\n"))
@@ -577,6 +585,7 @@ async function syncManagedCodexConfigToml(
   verifiedMcpCommand?: RudderMcpCliCommand,
   verifiedBrowserMcpCommand?: RudderMcpCliCommand,
   runtimeConfig: unknown = {},
+  includeCoreMcp = true,
 ): Promise<void> {
   const existingTarget = await fs.lstat(target).catch(() => null);
   const existingTargetContent = existingTarget ? await fs.readFile(target, "utf8") : null;
@@ -603,8 +612,14 @@ async function syncManagedCodexConfigToml(
       mcpEnv,
       verifiedMcpCommand,
       verifiedBrowserMcpCommand,
+      includeCoreMcp,
     ),
-    renderManagedExternalMcpCodexConfig(runtimeConfig, mcpEnv),
+    renderManagedExternalMcpCodexConfig(runtimeConfig, mcpEnv, (serverName, error) => {
+      void onLog(
+        "stderr",
+        `[rudder] Managed MCP ${serverName ? `server "${serverName}"` : "configuration"} was omitted: ${error.message}\n`,
+      ).catch(() => undefined);
+    }),
     disabledSkillConfigEntries,
   ].filter((part) => part.length > 0).join("\n\n");
   const nextContent = mergedContent.length > 0 ? `${mergedContent}\n` : "";
@@ -809,6 +824,7 @@ export async function realizeManagedCodexSkillEntries(
   verifiedMcpCommand?: RudderMcpCliCommand,
   verifiedBrowserMcpCommand?: RudderMcpCliCommand,
   runtimeConfig: unknown = {},
+  includeCoreMcp = true,
 ): Promise<void> {
   await withCodexHomeMutationLock(codexHome, async () => {
     const sourceHome = resolveSharedCodexHomeDir(env);
@@ -824,6 +840,7 @@ export async function realizeManagedCodexSkillEntries(
       verifiedMcpCommand,
       verifiedBrowserMcpCommand,
       runtimeConfig,
+      includeCoreMcp,
     );
     await syncManagedCodexSkillsHome(codexHome, skillSources, onLog);
   });

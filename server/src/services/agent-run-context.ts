@@ -13,6 +13,7 @@ import {
   ensureOrganizationWorkspaceLayout,
   ensureProjectLibraryLayout,
 } from "../home-paths.js";
+import { logger } from "../middleware/logger.js";
 import { agentInstructionsService } from "./agent-instructions.js";
 import { agentStartupContextService } from "./agent-startup-context.js";
 import {
@@ -492,7 +493,13 @@ export function agentRunContextService(
     const managedExternalMcpBindings = await managedMcpBindings.listRuntimeBindings(
       input.agent.orgId,
       input.agent.id,
-    );
+    ).catch((error) => {
+      logger.warn(
+        { err: error, orgId: input.agent.orgId, agentId: input.agent.id },
+        "managed MCP binding resolution failed; continuing without external MCP capabilities",
+      );
+      return [];
+    });
     const browserCapability = resolveBrowserCapability({
       deploymentMode,
       browserEnabled: browserSettings.enabled,

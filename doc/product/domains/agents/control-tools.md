@@ -46,6 +46,7 @@ related_plans:
   - doc/plans/2026-07-12-built-in-browser.md
   - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
   - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
+  - doc/plans/2026-07-26-managed-mcp-runtime-failure-isolation.md
 edit_policy: user_confirmed_only
 ---
 
@@ -92,6 +93,11 @@ The operator does not configure its URL, credentials, binding, or allowlist from
 Agent Detail. Rudder injects it only when a supported runtime can receive
 managed MCP config or an equivalent runtime-managed native tool bridge for the
 current run.
+
+The Agent runtime remains the primary executor when this tool infrastructure is
+degraded. A failed Rudder MCP preflight disables or degrades the affected tool
+surface and emits safe diagnostics; it must not prevent model execution,
+ordinary Chat replies, or non-MCP work.
 
 ### Actors / Objects / State
 
@@ -187,6 +193,12 @@ current run.
     redacted audit evidence.
     Failure of an external server does not alter first-party `rudder-tools`
     availability or identity.
+16. A first-party Rudder MCP preflight failure is recorded as degraded tool
+    availability instead of a runtime boot failure. Supported adapters continue
+    model execution, and the Agent may use non-MCP work paths or the documented
+    CLI compatibility path where available. A failed core MCP is omitted from
+    downstream runtime configuration instead of being retried as a required
+    startup dependency.
 
 ### Decision Table
 
@@ -213,6 +225,7 @@ current run.
 | Tool is destructive, administrative, billing-related, or unclassified | It is absent from the effective V1 external tool policy even when Agent access is read-write. |
 | Model supplies another connection, organization, agent, run, or provider credential | Proxy rejects the call; model arguments never override runtime-owned identity. |
 | Runtime uses Pi's native bridge | External tools keep the same per-connection authorization and audit boundary without becoming first-party Rudder tools. |
+| First-party Rudder MCP preflight fails | Adapter records a safe degradation diagnostic and continues model execution without treating the MCP failure as Agent runtime unavailability. |
 
 ### Actor-Visible Input
 
@@ -279,6 +292,8 @@ Evidence can include:
   integrations or plugin tools.
 - External MCP proxies remain separate from `rudder-tools` in naming,
   schemas, credentials, failure handling, audit records, and runtime identity.
+- MCP availability never owns Agent runtime admission. Both first-party and
+  external MCP failures may remove tools, but must not prevent model execution.
 - `managedExternalMcpBindings` is provider-neutral. Provider-specific project,
   workspace, OAuth, and token fields must not cross the runtime adapter
   contract.

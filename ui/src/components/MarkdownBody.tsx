@@ -7,7 +7,7 @@ import { websiteMetadataApi } from "../api/websiteMetadata";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { useTheme } from "../context/ThemeContext";
 import { useResolvedIssueMention } from "../hooks/useResolvedIssueMention";
-import { resolveLocalFileTarget } from "../lib/local-file-targets";
+import { resolveLocalFileDisplayTarget } from "../lib/local-file-targets";
 import {
   createMarkdownSourceBoundaryMap,
   normalizeRenderedMarkdownSource,
@@ -1148,7 +1148,7 @@ export function MarkdownBody({
       const linkLabel = flattenText(linkChildren);
       const isExternal = isExternalMarkdownHref(href);
       const websiteUrl = websiteUrlFromMarkdownHref(href);
-      const localFilePath = resolveLocalFileTarget(href, linkLabel);
+      const localFilePath = resolveLocalFileDisplayTarget(href, linkLabel);
       const isBareUrlLink = isExternal && isBareMarkdownUrlLabel(linkLabel);
       const internalHref = href ? internalAppRouteFromHref(href, organizationPrefix) : null;
       const internalIssueMention = matchingIssueMentionFromRouteRef(issueRouteRefFromHref(href), issueMentions);

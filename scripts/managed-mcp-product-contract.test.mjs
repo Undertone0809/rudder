@@ -22,10 +22,10 @@ test("custom integration contract owns managed OAuth discovery, dispatch, and le
     "sanitized",
     "organization owner",
     "external MCP credentials",
-    "Supabase Owner",
-    "read/write",
+    "account scope",
+    "read_write",
     "Notion",
-    "provider_default",
+    "provider-granted",
   ]) {
     assert.match(contract, new RegExp(expected, "i"), `missing ${expected}`);
   }
@@ -38,6 +38,47 @@ test("control tools contract keeps external MCP proxies separate from rudder-too
   assert.match(contract, /managedExternalMcpBindings/);
   assert.match(contract, /separate from.*`rudder-tools`/is);
   assert.match(contract, /run-scoped/i);
+});
+
+test("MCP capability failures never own Agent runtime admission", () => {
+  const customIntegrations = read("doc/product/domains/agents/custom-integrations.md");
+  const controlTools = read("doc/product/domains/agents/control-tools.md");
+  const registry = read("doc/product/registry.yml");
+
+  assert.match(customIntegrations, /capability extension, not runtime-admission authority/i);
+  assert.match(
+    customIntegrations,
+    /fail closed for tool exposure but fail open for Agent\s+runtime startup/i,
+  );
+  assert.match(controlTools, /MCP availability never owns Agent runtime admission/i);
+  assert.match(registry, /2026-07-26-managed-mcp-runtime-failure-isolation/);
+
+  for (const adapterPath of [
+    "packages/agent-runtimes/codex-local/src/server/execute.ts",
+    "packages/agent-runtimes/claude-local/src/server/execute.ts",
+    "packages/agent-runtimes/opencode-local/src/server/execute.ts",
+    "packages/agent-runtimes/pi-local/src/server/execute.ts",
+  ]) {
+    const adapter = read(adapterPath);
+    assert.doesNotMatch(adapter, /assertRudderMcpCoreAvailable/);
+    assert.match(adapter, /continuing without .*Rudder MCP tools/i);
+  }
+  assert.match(
+    read("packages/agent-runtime-utils/src/rudder-mcp-preflight.ts"),
+    /PREFLIGHT_TIMEOUT_MS = 3_000/,
+  );
+  assert.match(
+    read("packages/agent-runtimes/codex-local/src/server/execute.ts"),
+    /rudderMcpPreflight\.available/,
+  );
+  assert.match(
+    read("packages/agent-runtimes/claude-local/src/server/execute.ts"),
+    /includeCore/,
+  );
+  assert.match(
+    read("packages/agent-runtimes/opencode-local/src/server/execute.ts"),
+    /includeCoreMcp/,
+  );
 });
 
 test("runtime permissions contract defines OAuth, network, STDIO, and environment boundaries", () => {
