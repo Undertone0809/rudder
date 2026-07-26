@@ -42,8 +42,10 @@ async function makePostgresBinDir(root: string, segment = desktopPostgresPlatfor
   if (options.includeTemplate !== false) {
     const templatePath = path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, segment, "share", "postgresql", "postgres.bki");
     await mkdir(path.dirname(templatePath), { recursive: true });
+    await mkdir(path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, segment, "share", "timezone"), { recursive: true });
     await writeFile(templatePath, "postgres template");
     await writeFile(path.join(path.dirname(templatePath), "postgresql.conf.sample"), "postgres config template");
+    await writeFile(path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, segment, "share", "timezone", "UTC"), "timezone data");
   }
   return binDir;
 }
@@ -109,6 +111,14 @@ describe("desktop PostgreSQL runtime payload", () => {
     expect(resolveDesktopPostgresBinDir(root, { platform: "win32", arch: "x64", validateVersion: false })).toBeNull();
   });
 
+  it("ignores PostgreSQL payload directories without timezone support files", async () => {
+    const root = await makeTempRoot();
+    const binDir = await makePostgresBinDir(root, "win32-x64");
+    await rm(path.join(binDir, "..", "share", "timezone"), { recursive: true });
+
+    expect(resolveDesktopPostgresBinDir(root, { platform: "win32", arch: "x64", validateVersion: false })).toBeNull();
+  });
+
   it("prefers external runtime cache payloads over bundled resources", async () => {
     const resourcesRoot = await makeTempRoot();
     const cacheRoot = await makeTempRoot();
@@ -120,6 +130,7 @@ describe("desktop PostgreSQL runtime payload", () => {
         isPackaged: true,
         resourcesPath: resourcesRoot,
         externalRuntimeCacheDir: cacheRoot,
+        env: { RUDDER_HOME: resourcesRoot },
         platform: "win32",
         arch: "x64",
         validateVersion: false,
@@ -413,7 +424,10 @@ describe("desktop PostgreSQL runtime payload", () => {
       "bin",
     );
     const cachedBinDir = await makePostgresBinDir(cacheRoot, "win32-x64");
-    const env = { [RUDDER_POSTGRES_BIN_DIR_ENV]: staleDesktopBinDir };
+    const env = {
+      RUDDER_HOME: resourcesRoot,
+      [RUDDER_POSTGRES_BIN_DIR_ENV]: staleDesktopBinDir,
+    };
 
     expect(
       reconcileDesktopPostgresBinDir({
@@ -441,6 +455,7 @@ describe("desktop PostgreSQL runtime payload", () => {
       "bin",
     );
     const env = {
+      RUDDER_HOME: resourcesRoot,
       [RUDDER_POSTGRES_BIN_DIR_ENV]: staleDesktopBinDir,
       [RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV]: staleDesktopBinDir,
     };
