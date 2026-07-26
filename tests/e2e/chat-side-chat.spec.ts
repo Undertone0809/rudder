@@ -26,6 +26,10 @@ async function seedSideChatSource(page: Page, name: string) {
     name: "Sidekick",
     command: E2E_CODEX_STUB,
   }) as { id: string };
+  const alternateAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Analyst",
+    command: E2E_CODEX_STUB,
+  }) as { id: string };
   const conversationId = randomUUID();
   const assistantMessageId = randomUUID();
   await e2eDb.insert(chatConversations).values({
@@ -64,7 +68,7 @@ async function seedSideChatSource(page: Page, name: string) {
   await page.setViewportSize({ width: 1500, height: 940 });
   await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`);
   await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "narrow cohort" })).toBeVisible({ timeout: 15_000 });
-  return { organization, conversationId, assistantMessageId };
+  return { organization, agent, alternateAgent, conversationId, assistantMessageId };
 }
 
 async function openFromAssistantAction(page: Page, assistantMessageId: string) {
@@ -100,12 +104,17 @@ async function sendFirstSideChatMessage(page: Page, panel: Locator, sourceConver
   const createResponse = await createResponsePromise;
   expect(createResponse.ok(), await createResponse.text()).toBe(true);
   const sideChat = await createResponse.json() as { id: string };
+  const creationPayload = createResponse.request().postDataJSON() as {
+    preferredAgentId?: string;
+    modelOverride?: string | null;
+    effortOverride?: string | null;
+  };
   await expect(panel.getByTestId("side-chat-messages")).toContainText("What is the rollback trigger?", { timeout: 15_000 });
   await expect(panel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", { timeout: 15_000 });
   await expect(panel.getByTestId("side-chat-messages").getByTestId("chat-transcript-item")).toHaveCount(1);
   await expect(panel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toBeVisible({ timeout: 20_000 });
   await expect(panel.getByRole("button", { name: "Done & return" })).toHaveCount(0);
-  return sideChat;
+  return { ...sideChat, creationPayload };
 }
 
 test("Side Chat preserves the main draft, streams like Chat, and is destroyed when closed", async ({ page }, testInfo) => {
@@ -119,11 +128,56 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await page.screenshot({ path: testInfo.outputPath("01-assistant-action-draft.png"), fullPage: true });
   await expect(panel.locator(".chat-composer")).toBeVisible();
   await expect(panel.getByTestId("side-chat-project-chip")).toBeVisible();
-  await expect(panel.getByTestId("side-chat-agent-chip")).toContainText("Sidekick");
+  const agentSelector = panel.getByTestId("side-chat-composer").getByTestId("chat-agent-selector");
+  await expect(agentSelector).toContainText("Sidekick");
   await expect(panel).not.toContainText("Enter to send · Shift+Enter for a new line");
   await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
   await expect(panel).not.toContainText("From the main chat");
+  await agentSelector.click();
+  const analystRow = panel.getByTestId(`chat-agent-option-${source.alternateAgent.id}`);
+  await expect(analystRow.getByRole("menuitemradio")).toBeEnabled();
+  await analystRow.getByRole("menuitemradio").click();
+  await expect(agentSelector).toContainText("Analyst");
+  const runtimeSelector = analystRow.getByTestId("chat-agent-runtime-selector");
+  await expect(runtimeSelector).toBeVisible();
+  await runtimeSelector.click();
+  await expect(page.getByTestId("chat-agent-runtime-panel")).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("side-chat-agent-runtime-draft.png"),
+    fullPage: true,
+  });
+  await page.getByTestId("chat-model-selector").click();
+  await page.getByTestId("chat-model-option-gpt-5.6-terra").click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
+  expect(sideChat.creationPayload).toMatchObject({
+    preferredAgentId: source.alternateAgent.id,
+    modelOverride: "gpt-5.6-terra",
+    effortOverride: null,
+  });
+
+  await agentSelector.click();
+  await expect(panel.getByTestId("chat-agent-lock-state")).toContainText("Bound to chat");
+  await expect(
+    panel
+      .getByTestId(`chat-agent-option-${source.agent.id}`)
+      .getByRole("menuitemradio"),
+  ).toBeDisabled();
+  await expect(
+    panel
+      .getByTestId(`chat-agent-option-${source.alternateAgent.id}`)
+      .getByTestId("chat-agent-runtime-selector"),
+  ).toBeVisible();
+  await expect(panel.getByTestId("side-chat-agent-menu")).toBeVisible();
+  await page.waitForTimeout(250);
+  await page.screenshot({
+    path: testInfo.outputPath(
+      "side-chat-agent-locked-runtime-available.png",
+    ),
+    fullPage: true,
+  });
+  await page.keyboard.press("Escape");
 
   const hiddenList = await page.request.get(`/api/orgs/${source.organization.id}/chats?status=all`);
   expect(hiddenList.ok()).toBe(true);
@@ -139,7 +193,7 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   );
   expect(hiddenMessengerThread.status()).toBe(404);
 
-  await page.screenshot({ path: testInfo.outputPath("02-side-chat-active.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("04-side-chat-active.png"), fullPage: true });
   const destroyResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "DELETE"
     && response.url().includes(`/api/chats/${sideChat.id}/side-chat`)
@@ -151,7 +205,7 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await expect(panel).toBeHidden();
   expect((await page.request.get(`/api/chats/${sideChat.id}`)).status()).toBe(404);
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
-  await page.screenshot({ path: testInfo.outputPath("03-side-chat-destroyed.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("05-side-chat-destroyed.png"), fullPage: true });
 });
 
 test("the /side menu matches composer popovers and can move the same Side Chat to Messenger", async ({ page }, testInfo) => {

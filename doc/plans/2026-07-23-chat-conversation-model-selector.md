@@ -103,10 +103,12 @@ Out of scope:
    `preferredAgentId`, `modelOverride`, and `effortOverride`. Reset draft
    overrides when the preferred Agent changes, and clear persisted overrides
    when repair flows change a preferred Agent.
-5. Restore the Agent pill and Agent list. Render a compact nested model/effort
-   control only on the current Agent row, retain portal-based submenus, and keep
-   the menu inspectable after Agent lock. Block Send and Queue only while a
-   runtime PATCH is unresolved; Stop remains available.
+5. Restore the Agent pill and Agent list in both normal Chat and Side Chat.
+   Render a compact nested model/effort control only on the current Agent row,
+   retain portal-based submenus, and keep the menu inspectable after Agent lock.
+   Side Chat first Send persists its provisional Agent/runtime selection
+   without copying source overrides. Block Send and Queue only while a runtime
+   PATCH is unresolved; Stop remains available.
 6. Add schema/validator, route, runtime, queue, UI, and Playwright coverage,
    then verify desktop light/dark and narrow layouts in a real browser.
 7. Synchronize `CHAT.LIFECYCLE.001` and `AGENT.RUNTIME.ADAPTERS.001`, run the
@@ -158,8 +160,9 @@ Out of scope:
   effort overrides before preflight or first-send admission.
 - A started conversation keeps its Agent pill and inspectable Agent menu, locks
   other Agents, and keeps model/effort controls usable on the bound row.
-- New conversations, forks, Side Chats, and externally bound Chats do not
-  inherit or mutate unrelated overrides.
+- New conversations, forks, and externally bound Chats do not inherit or mutate
+  unrelated overrides. Side Chats inherit only the source Agent identity, start
+  from that Agent's defaults, and persist only an explicit provisional override.
 
 ## Validation
 

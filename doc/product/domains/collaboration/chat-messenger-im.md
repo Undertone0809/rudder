@@ -210,8 +210,12 @@ Product model:
 - A native conversation may persist nullable primary-model and thinking-effort
   overrides. Both are scoped to that conversation, leave the Agent runtime
   configuration unchanged, and are cleared when the preferred Agent changes.
-  New Chat drafts, other conversations, Forks, and Side Chats start from the
-  selected Agent defaults instead of inheriting either override.
+  New Chat drafts, other conversations, and Forks start from the selected Agent
+  defaults instead of inheriting either override. A provisional Side Chat
+  likewise starts from its inherited Agent identity and that Agent's defaults,
+  but exposes the same Agent → Model / Thinking hierarchy before first Send so
+  the operator may explicitly choose a different Agent or override. The first
+  Send binds that Side Chat Agent; no source-conversation override is copied.
 - Entry points that only establish context, such as Project `Chat`, open an
   unpersisted new-chat draft. They must not create an empty conversation merely
   because the operator opened the composer.
@@ -1757,9 +1761,10 @@ before the exploration proves useful.
 - Choose `Open Side Chat` on a completed assistant message.
 - Choose `Ask in side chat` on an eligible response selection.
 - Choose `Side Chat` from the Side Panel empty/add-target surface.
-- First Send posts the exact source assistant message plus the provisional
-  mutation id to `POST /api/chats/:sourceId/side-chats`, then uses the normal
-  Chat message stream route.
+- First Send posts the exact source assistant message, provisional mutation id,
+  selected Agent, and nullable Model / Thinking overrides to
+  `POST /api/chats/:sourceId/side-chats`, then uses the normal Chat message
+  stream route.
 - Closing a persisted Side Chat posts to `DELETE /api/chats/:id/side-chat`.
 - `Move to Messenger` in the Side Chat tab context menu posts to the
   compatibility endpoint `/api/chats/:id/side-chat/keep`.
@@ -1781,13 +1786,18 @@ before the exploration proves useful.
    first user message. Creation is idempotent for the organization, owner, and
    client mutation id. The persisted title snapshots the direct source title
    with the `Side chat from: ` prefix and stays within the 200-character Chat
-   title limit.
+   title limit. The same creation boundary validates and persists the
+   provisional Agent, Model, and Thinking choice. A replay with the same
+   mutation id but different runtime input conflicts instead of silently
+   rebinding the Side Chat.
 4. The server copies source context links, messages, and message attachments
    through the anchor. Copied messages do not acquire new run, approval, turn,
    or output ownership. A boundary system event records the Side Chat source.
 5. The user message and assistant response run through the normal Chat runtime
-   and Agent Run evidence path. Each persisted send while `active` refreshes
-   the two-hour send window.
+   and Agent Run evidence path. Once created, the Side Chat Agent is locked;
+   its Agent menu remains inspectable and its Model / Thinking controls remain
+   mutable for future turns. Each persisted send while `active` refreshes the
+   two-hour send window.
 6. Hidden Side Chats are excluded from ordinary Chat lists, Messenger threads,
    recent chats, search results, and custom groups.
 7. Closing a provisional tab discards the unsent client draft. Closing a
@@ -1821,8 +1831,8 @@ before the exploration proves useful.
 
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
-| Provisional open | Valid normal Chat; completed assistant anchor available | Open one unsaved Side Panel target with an independent composer and no repeated source-answer preview card | Create a conversation before first Send, change parent state, or duplicate the source answer above the Side Chat transcript | Side Chat E2E entry screenshots |
-| First Send | Owner and organization match; anchor is completed; annotations, if any, resolve to that lineage; mutation id is new or an identical retry | Create exactly one hidden active Side Chat with the bounded direct-source title snapshot, exact quoted context/files, and ordinary Chat runtime flow | Duplicate records, mutate the parent draft, copy messages after the anchor, expose the thread in Messenger, or run automatic title generation | Service, route, and E2E tests |
+| Provisional open | Valid normal Chat; completed assistant anchor available | Open one unsaved Side Panel target with an independent composer, inherited Agent identity at that Agent's defaults, and the normal Agent → Model / Thinking controls | Create a conversation before first Send, inherit source runtime overrides, change parent state, or duplicate the source answer above the Side Chat transcript | Side Chat UI and E2E entry screenshots |
+| First Send | Owner and organization match; anchor is completed; selected Agent/runtime is valid; annotations, if any, resolve to that lineage; mutation id is new or an identical retry | Create exactly one hidden active Side Chat with the selected Agent/runtime binding, bounded direct-source title snapshot, exact quoted context/files, and ordinary Chat runtime flow | Duplicate records, rebind an idempotent replay, mutate the parent draft, copy messages after the anchor, expose the thread in Messenger, or run automatic title generation | Service, route, and E2E tests |
 | Active follow-up | Owner matches and expiry is in the future | Persist the message and refresh expiry to two hours | Let another user send or silently retain the old expiry | Service and route tests |
 | Close provisional | No persisted conversation id | Discard the client draft and close the tab | Create or retain a server record | UI and E2E tests |
 | Close persisted | Hidden Side Chat belongs to operator | Cancel any live generation, delete the temporary conversation, and close the tab | Leave a hidden recoverable thread or delete a kept Messenger Chat | Service, route, and E2E tests |
@@ -1847,6 +1857,11 @@ before the exploration proves useful.
   normal Chat visual and interaction grammar: normal user messages, assistant
   attribution, process transcript, streaming answer, editor, send affordance,
   and visible Project, Agent, and Skills chips.
+- The Side Chat Agent chip opens the same parent Agent menu used by normal
+  Chat. Before first Send, the operator may choose an organization Agent; only
+  the current row exposes its Model / Thinking child control. After first Send,
+  other Agent rows are visibly locked while the bound row's runtime control
+  remains available for future turns, including while the current turn runs.
 - The Side Chat composer does not show the redundant `Enter to send ·
   Shift+Enter for a new line` helper, and there is no Done action.
 - The Side Chat tab context menu shows `Move to Messenger`, a separator, and

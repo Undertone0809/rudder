@@ -201,6 +201,11 @@ Product model:
   defaults. A persisted unknown/custom current model may remain visible for
   compatibility, but Chat does not add a new free-input model editor or a
   second effort vocabulary.
+- The same hierarchy applies in provisional and persisted Side Chat composers.
+  A Side Chat begins from its source Agent identity at that Agent's defaults,
+  never from the source conversation's overrides. Its first Send persists the
+  explicitly selected Agent and nullable runtime overrides; afterward the Agent
+  is locked while Model / Thinking stays editable for later admissions.
 - New Codex agent configurations default to `gpt-5.6-sol`, including the
   onboarding and standard agent-creation surfaces.
 - Codex thinking effort is model-family-specific. The GPT-5.6 Codex variants

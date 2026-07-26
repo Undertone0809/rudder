@@ -141,7 +141,13 @@ export const chatsApi = {
     api.post<ChatConversation>(`/chats/${chatId}/fork`, data),
   createSideChat: (
     chatId: string,
-    data: { sourceMessageId: string; clientMutationId: string },
+    data: {
+      sourceMessageId: string;
+      clientMutationId: string;
+      preferredAgentId?: string;
+      modelOverride?: string | null;
+      effortOverride?: string | null;
+    },
   ) => api.post<ChatConversation>(`/chats/${chatId}/side-chats`, data),
   destroySideChat: (chatId: string) =>
     api.delete<{ id: string }>(`/chats/${chatId}/side-chat`),

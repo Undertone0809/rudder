@@ -385,6 +385,9 @@ export const forkChatConversationSchema = z.object({
 export const createSideChatSchema = z.object({
   sourceMessageId: z.string().uuid(),
   clientMutationId: z.string().trim().min(1).max(120),
+  preferredAgentId: z.string().uuid().optional(),
+  modelOverride: chatModelOverrideSchema.optional(),
+  effortOverride: chatEffortOverrideSchema.optional(),
 });
 
 export const addChatMessageSchema = z.object({

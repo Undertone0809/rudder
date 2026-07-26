@@ -149,6 +149,9 @@ export function sideChatService(db: Db) {
     clientMutationId: string;
     orgId: string;
     userId: string;
+    preferredAgentId?: string;
+    modelOverride?: string | null;
+    effortOverride?: string | null;
   }) {
     const createdId = await db.transaction(async (tx) => {
       const existing = await tx
@@ -165,6 +168,18 @@ export function sideChatService(db: Db) {
           existing.conversationKind !== "side_chat"
           || existing.forkedFromConversationId !== input.sourceConversationId
           || existing.forkedFromMessageId !== input.sourceMessageId
+          || (
+            input.preferredAgentId !== undefined
+            && existing.preferredAgentId !== input.preferredAgentId
+          )
+          || (
+            input.modelOverride !== undefined
+            && existing.modelOverride !== input.modelOverride
+          )
+          || (
+            input.effortOverride !== undefined
+            && existing.effortOverride !== input.effortOverride
+          )
         ) {
           throw conflict("Side Chat creation id was already used for different source context");
         }
@@ -210,10 +225,10 @@ export function sideChatService(db: Db) {
           sideChatClientMutationId: input.clientMutationId,
           title: sideChatTitleFromSource(source.title),
           summary: source.summary,
-          preferredAgentId: source.preferredAgentId,
-          modelOverride: null,
-          effortOverride: null,
-          routedAgentId: source.routedAgentId,
+          preferredAgentId: input.preferredAgentId ?? source.preferredAgentId,
+          modelOverride: input.modelOverride ?? null,
+          effortOverride: input.effortOverride ?? null,
+          routedAgentId: input.preferredAgentId ?? source.routedAgentId,
           primaryIssueId: source.primaryIssueId,
           forkedFromConversationId: source.id,
           forkedFromMessageId: anchor.id,
@@ -241,6 +256,18 @@ export function sideChatService(db: Db) {
           raced.conversationKind !== "side_chat"
           || raced.forkedFromConversationId !== input.sourceConversationId
           || raced.forkedFromMessageId !== input.sourceMessageId
+          || (
+            input.preferredAgentId !== undefined
+            && raced.preferredAgentId !== input.preferredAgentId
+          )
+          || (
+            input.modelOverride !== undefined
+            && raced.modelOverride !== input.modelOverride
+          )
+          || (
+            input.effortOverride !== undefined
+            && raced.effortOverride !== input.effortOverride
+          )
         ) {
           throw conflict("Side Chat creation id was already used for different source context");
         }

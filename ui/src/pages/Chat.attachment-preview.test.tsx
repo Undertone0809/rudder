@@ -1779,7 +1779,7 @@ describe("Chat Side Panel link handling", () => {
     });
 
     expect(mockState.previewLocalFile).toHaveBeenCalledWith(
-      "/Users/zeeland/projects/rudder-oss/ui/src/pages/Chat.parts.tsx",
+      "/Users/zeeland/projects/rudder-oss/ui/src/pages/Chat.parts.tsx:656",
     );
     expect(mockState.openPath).not.toHaveBeenCalled();
     expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Chat.parts.tsx");
@@ -1966,6 +1966,111 @@ describe("Chat Side Panel link handling", () => {
     expect(document.querySelector<HTMLElement>("[role='tooltip']")?.textContent).toContain(
       "Send a message first to create this Side Chat.",
     );
+  });
+
+  it("lets a provisional Side Chat choose an Agent and configure its Model and Thinking", async () => {
+    mockState.agents = [
+      agent({ id: "agent-1", name: "Wesley" }),
+      agent({ id: "agent-2", name: "Rowan" }),
+    ];
+    mockState.conversations = [
+      chat({ id: "chat-1", title: "Source chat", preferredAgentId: "agent-1" }),
+    ];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    await act(async () => {
+      root.render(
+        <ThemeProvider>
+          <SidePanelProvider>
+            <ChatSidePanel
+              selectedOrganizationId="org-1"
+              target={{
+                kind: "side_chat",
+                sourceConversationId: "chat-1",
+                sourceMessageId: "assistant-source",
+                sourcePreview: "Source answer",
+                conversationId: null,
+                clientMutationId: "side-chat-runtime-draft",
+                label: "Side Chat",
+              }}
+            />
+          </SidePanelProvider>
+        </ThemeProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    const selector = container.querySelector<HTMLButtonElement>(
+      "[data-testid='side-chat-composer'] [data-testid='chat-agent-selector']",
+    );
+    expect(selector?.textContent).toContain("Wesley");
+
+    await act(async () => {
+      selector?.click();
+      await Promise.resolve();
+    });
+    const rowanOption = container.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-agent-option-agent-2'] [role='menuitemradio']",
+    );
+    expect(rowanOption?.disabled).toBe(false);
+
+    await act(async () => {
+      rowanOption?.click();
+      await Promise.resolve();
+    });
+    expect(selector?.textContent).toContain("Rowan");
+    expect(container.querySelector(
+      "[data-testid='chat-agent-option-agent-2'] [data-testid='chat-agent-runtime-selector']",
+    )).not.toBeNull();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='chat-agent-option-agent-2'] [data-testid='chat-agent-runtime-selector']",
+      )?.click();
+      await Promise.resolve();
+    });
+    expect(document.querySelector("[data-testid='chat-agent-runtime-panel']")).not.toBeNull();
+    expect(document.querySelector("[data-testid='chat-model-selector']")).not.toBeNull();
+    expect(document.querySelector("[data-testid='chat-effort-selector']")).not.toBeNull();
+  });
+
+  it("locks the Agent but keeps Model and Thinking available after a Side Chat starts", async () => {
+    mockState.agents = [
+      agent({ id: "agent-1", name: "Wesley" }),
+      agent({ id: "agent-2", name: "Rowan" }),
+    ];
+    mockState.conversations = [
+      chat({ id: "chat-1", title: "Source chat", preferredAgentId: "agent-1" }),
+      chat({
+        id: "side-chat-runtime",
+        title: "Side chat from: Source chat",
+        conversationKind: "side_chat",
+        messengerVisible: false,
+        sideChatState: "active",
+        sideChatExpiresAt: new Date("2099-07-20T10:00:00.000Z"),
+        preferredAgentId: "agent-1",
+      }),
+    ];
+    const container = await renderPersistedSideChatPanel("side-chat-runtime");
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='side-chat-composer'] [data-testid='chat-agent-selector']",
+      )?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='chat-agent-lock-state']")?.textContent)
+      .toContain("Bound to chat");
+    expect(container.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-agent-option-agent-2'] [role='menuitemradio']",
+    )?.disabled).toBe(true);
+    expect(container.querySelector(
+      "[data-testid='chat-agent-option-agent-1'] [data-testid='chat-agent-runtime-selector']",
+    )).not.toBeNull();
   });
 
   it("moves an active Side Chat to Messenger with the same conversation id", async () => {

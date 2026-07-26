@@ -3,7 +3,6 @@ import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { projectsApi } from "@/api/projects";
-import { AgentIcon } from "@/components/AgentIconPicker";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import {
@@ -11,6 +10,8 @@ import {
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
 import type { ChatStreamDraftState } from "@/context/ChatGenerationContext";
+import { formatChatAgentLabel } from "@/lib/agent-labels";
+import { selectableChatAgents } from "@/lib/chat-agent-selection";
 import {
   canSubmitChatResponseAnnotations,
   createChatResponseAnnotationState,
@@ -22,6 +23,14 @@ import { queryKeys } from "@/lib/queryKeys";
 import { latestSideChatAnchor, sideChatConversationMessages, sideChatIsReadOnly } from "@/lib/side-chat";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { AssistantDraftItem, ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
+import {
+  ChatAgentMenuContent,
+  ChatAgentSelectorButton,
+  chatRuntimeSelectionLabel,
+  handleChatAgentMenuKeyDown,
+  useChatRuntimeSelection,
+  type ChatRuntimeOverrides,
+} from "@/pages/Chat.model-selector";
 import { mergeChatMessages } from "@/pages/Chat.parts";
 import type {
   Agent,
@@ -29,9 +38,17 @@ import type {
   ChatInlineAnnotation,
   ChatMessage,
 } from "@rudderhq/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Clock3, Folder, Loader2, Plus } from "lucide-react";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 
 type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
 
@@ -81,6 +98,9 @@ export function SideChatPanelView({
   const [sendError, setSendError] = useState<string | null>(null);
   const [stream, setStream] = useState<SideChatStream | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string | null>(null);
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [agentMenuPosition, setAgentMenuPosition] = useState<CSSProperties | null>(null);
   const [annotationState, dispatchAnnotation] = useReducer(
     responseAnnotationReducer,
     target.inlineAnnotations ?? [],
@@ -90,6 +110,8 @@ export function SideChatPanelView({
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const editingAnnotationAnchorRef = useRef<HTMLButtonElement | null>(null);
   const annotationDetailsChipRef = useRef<HTMLButtonElement | null>(null);
+  const agentMenuRef = useRef<HTMLDivElement | null>(null);
+  const draftAgentInitializedRef = useRef(false);
   const closeRequestedRef = useRef(false);
   const createPromiseRef = useRef<Promise<ChatConversation> | null>(null);
   const conversationIdRef = useRef(target.conversationId);
@@ -178,6 +200,37 @@ export function SideChatPanelView({
 
   const conversation = conversationQuery.data ?? null;
   const displayConversation = conversation ?? sourceConversationQuery.data ?? null;
+  const liveAgents = useMemo(
+    () => selectableChatAgents(agentsQuery.data),
+    [agentsQuery.data],
+  );
+  useEffect(() => {
+    if (conversation || draftAgentInitializedRef.current || !sourceConversationQuery.data) return;
+    const sourceAgentId = sourceConversationQuery.data.preferredAgentId;
+    const selectedAgent = liveAgents.find((agent) => agent.id === sourceAgentId) ?? liveAgents[0] ?? null;
+    setDraftPreferredAgentId(selectedAgent?.id ?? null);
+    draftAgentInitializedRef.current = true;
+  }, [conversation, liveAgents, sourceConversationQuery.data]);
+  const selectedAgentId = conversation?.preferredAgentId
+    ?? draftPreferredAgentId
+    ?? sourceConversationQuery.data?.preferredAgentId
+    ?? null;
+  const selectedAgent = selectedAgentId
+    ? liveAgents.find((agent) => agent.id === selectedAgentId) ?? null
+    : null;
+  const {
+    activeRuntimeOverrides,
+    adapterModelsQuery,
+    runtimeModelSelectRef,
+    runtimeSelectorRef,
+    setDraftRuntimeOverrides,
+    setPendingConversationRuntimeOverrides,
+  } = useChatRuntimeSelection({
+    selectedOrganizationId: organizationId,
+    selectedConversation: conversation,
+    activeAgentId: selectedAgentId,
+    activeAgent: selectedAgent,
+  });
   const messages = sideChatConversationMessages(messagesQuery.data ?? []);
   const authoritativeTerminalMessage = stream?.generationId
     ? messages.find((message) => (
@@ -197,10 +250,6 @@ export function SideChatPanelView({
   const stateLabel = readOnly
     ? "Expired · read-only"
     : expiryLabel(conversation?.sideChatExpiresAt, now);
-  const selectedAgentId = displayConversation?.preferredAgentId ?? displayConversation?.routedAgentId ?? null;
-  const selectedAgent = selectedAgentId
-    ? (agentsQuery.data ?? []).find((agent) => agent.id === selectedAgentId) ?? null
-    : null;
   const contextConversation = conversation?.contextLinks.some((link) => link.entityType === "project")
     ? conversation
     : sourceConversationQuery.data;
@@ -211,6 +260,41 @@ export function SideChatPanelView({
 
   const setConversationCache = (updated: ChatConversation) => {
     queryClient.setQueryData(queryKeys.chats.detail(organizationId, updated.id), updated);
+  };
+  const runtimeMutation = useMutation({
+    mutationFn: ({
+      chatId,
+      overrides,
+    }: {
+      chatId: string;
+      overrides: ChatRuntimeOverrides;
+    }) => chatsApi.update(chatId, overrides),
+    onMutate: ({ chatId, overrides }) => {
+      setPendingConversationRuntimeOverrides({ chatId, ...overrides });
+      setSendError(null);
+    },
+    onSuccess: (updated) => {
+      setPendingConversationRuntimeOverrides(null);
+      setConversationCache(updated);
+    },
+    onError: (error) => {
+      setPendingConversationRuntimeOverrides(null);
+      setSendError(error instanceof Error ? error.message : "Could not update Side Chat runtime.");
+    },
+  });
+  const applyRuntimeOverrides = (overrides: ChatRuntimeOverrides) => {
+    if (!selectedAgent || runtimeMutation.isPending) return;
+    if (!conversation) {
+      setDraftRuntimeOverrides(overrides);
+      return;
+    }
+    runtimeMutation.mutate({ chatId: conversation.id, overrides });
+  };
+  const applyPreferredAgent = (agentId: string) => {
+    if (conversation || runtimeMutation.isPending || agentId === selectedAgentId) return;
+    if (!liveAgents.some((agent) => agent.id === agentId)) return;
+    setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
+    setDraftPreferredAgentId(agentId);
   };
 
   const upsertMessage = (conversationId: string, message: ChatMessage) => {
@@ -248,6 +332,9 @@ export function SideChatPanelView({
         const createPromise = chatsApi.createSideChat(target.sourceConversationId, {
           sourceMessageId,
           clientMutationId: target.clientMutationId,
+          preferredAgentId: selectedAgentId ?? undefined,
+          modelOverride: activeRuntimeOverrides.modelOverride,
+          effortOverride: activeRuntimeOverrides.effortOverride,
         });
         createPromiseRef.current = createPromise;
         const created = await createPromise;
@@ -374,6 +461,64 @@ export function SideChatPanelView({
   const anchorLoading = (!target.sourceMessageId || !target.sourcePreview) && sourceMessagesQuery.isPending;
   const noAnchor = !anchorLoading && !sourceMessageId;
   const agents = agentsQuery.data as Agent[] | undefined;
+  const runtimeLabel = chatRuntimeSelectionLabel({
+    agent: selectedAgent,
+    runtime: conversation?.chatRuntime ?? null,
+    overrides: activeRuntimeOverrides,
+  });
+  const agentLabel = selectedAgent
+    ? formatChatAgentLabel(selectedAgent)
+    : agentsQuery.isPending
+      ? "Loading agents"
+      : "No agent";
+
+  useEffect(() => {
+    if (!agentMenuOpen) {
+      setAgentMenuPosition(null);
+      return;
+    }
+    const updatePosition = () => {
+      const anchor = runtimeSelectorRef.current;
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const width = Math.min(360, window.innerWidth - 24);
+      setAgentMenuPosition({
+        left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+        bottom: Math.max(12, window.innerHeight - rect.top + 8),
+        width,
+        maxHeight: Math.max(180, rect.top - 24),
+      });
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [agentMenuOpen, runtimeSelectorRef]);
+
+  useEffect(() => {
+    if (!agentMenuOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const node = event.target;
+      if (!(node instanceof Node)) return;
+      if (node instanceof Element && node.closest("[data-chat-runtime-submenu]")) return;
+      if (agentMenuRef.current?.contains(node) || runtimeSelectorRef.current?.contains(node)) return;
+      setAgentMenuOpen(false);
+    };
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setAgentMenuOpen(false);
+      requestAnimationFrame(() => runtimeSelectorRef.current?.focus());
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [agentMenuOpen, runtimeSelectorRef]);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="side-chat-panel-view">
@@ -564,10 +709,15 @@ export function SideChatPanelView({
                   <Folder className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">{selectedProject?.name ?? "No project"}</span>
                 </span>
-                <span className="inline-flex max-w-[13rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:var(--surface-active)] px-2.5 py-1.5 text-xs font-medium text-muted-foreground" data-testid="side-chat-agent-chip">
-                  <AgentIcon icon={selectedAgent?.icon} role={selectedAgent?.role} fallbackSeed={selectedAgent?.id ?? selectedAgentId} className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{selectedAgent?.name ?? displayConversation?.chatRuntime?.sourceLabel ?? "Assistant"}</span>
-                </span>
+                <ChatAgentSelectorButton
+                  buttonRef={runtimeSelectorRef}
+                  agent={selectedAgent}
+                  label={agentLabel}
+                  expanded={agentMenuOpen}
+                  locked={Boolean(conversation)}
+                  disabled={agentsQuery.isPending || sending || runtimeMutation.isPending}
+                  onClick={() => setAgentMenuOpen((open) => !open)}
+                />
                 <span className="inline-flex rounded-[var(--radius-md)] bg-[color:var(--surface-active)] px-2.5 py-1.5 text-xs font-medium text-muted-foreground">Skills</span>
               </div>
               <button
@@ -577,6 +727,8 @@ export function SideChatPanelView({
                 disabled={
                   !canSubmitChatResponseAnnotations(draft, annotationState)
                   || sending
+                  || runtimeMutation.isPending
+                  || !selectedAgentId
                   || noAnchor
                 }
                 onClick={() => void handleSend()}
@@ -585,6 +737,34 @@ export function SideChatPanelView({
               </button>
             </div>
           </div>
+          {agentMenuOpen && agentMenuPosition ? (
+            <div
+              ref={agentMenuRef}
+              role="menu"
+              aria-label="Side Chat agent"
+              data-testid="side-chat-agent-menu"
+              className="chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay fixed z-50 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
+              style={agentMenuPosition}
+              onKeyDown={handleChatAgentMenuKeyDown}
+            >
+              <ChatAgentMenuContent
+                agents={liveAgents}
+                activeAgentId={selectedAgentId ?? ""}
+                agentSelectionLocked={Boolean(conversation)}
+                runtimeSelectionPending={runtimeMutation.isPending}
+                newConversationSendInFlight={sending}
+                externalBound={false}
+                adapterModels={adapterModelsQuery.data}
+                overrides={activeRuntimeOverrides}
+                runtimeLabel={runtimeLabel}
+                isLoading={adapterModelsQuery.isPending}
+                error={adapterModelsQuery.error}
+                modelSelectRef={runtimeModelSelectRef}
+                onSelectAgent={applyPreferredAgent}
+                onChangeRuntime={applyRuntimeOverrides}
+              />
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="shrink-0 border-t border-[color:var(--border-soft)] px-4 py-3 text-sm text-muted-foreground" data-testid="side-chat-read-only">

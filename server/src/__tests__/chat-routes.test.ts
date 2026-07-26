@@ -1237,6 +1237,7 @@ describe("chat routes", () => {
   it("creates an owner-scoped hidden Side Chat from an assistant message", async () => {
     const sourceMessageId = "10000000-0000-4000-8000-000000000010";
     const clientMutationId = "side-chat-create-1";
+    const preferredAgentId = "20000000-0000-4000-8000-000000000020";
     const sourceConversation = createConversation({ id: "chat-source", title: "Original topic" });
     const sideConversation = createConversation({
       id: "chat-side",
@@ -1251,11 +1252,22 @@ describe("chat routes", () => {
       forkRootConversationId: "chat-source",
     });
     mockChatService.getById.mockResolvedValue(sourceConversation);
+    mockAgentService.getById.mockResolvedValue({
+      id: preferredAgentId,
+      orgId: "organization-1",
+      status: "idle",
+    });
     mockSideChatService.create.mockResolvedValue(sideConversation);
 
     const res = await request(createApp())
       .post("/api/chats/chat-source/side-chats")
-      .send({ sourceMessageId, clientMutationId });
+      .send({
+        sourceMessageId,
+        clientMutationId,
+        preferredAgentId,
+        modelOverride: "gpt-5.6-sol",
+        effortOverride: "high",
+      });
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({
@@ -1270,6 +1282,17 @@ describe("chat routes", () => {
       clientMutationId,
       orgId: "organization-1",
       userId: "user-1",
+      preferredAgentId,
+      modelOverride: "gpt-5.6-sol",
+      effortOverride: "high",
+    });
+    expect(mockChatAssistantService.getDraftChatAssistantAvailability).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      preferredAgentId,
+      modelOverride: "gpt-5.6-sol",
+      effortOverride: "high",
+      contextLinks: [],
+      planMode: false,
     });
     expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       action: "chat.side_chat_created",

@@ -1867,6 +1867,32 @@ export function chatRoutes(
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
+    const preferredAgentId = req.body.preferredAgentId ?? existing.preferredAgentId;
+    if (!preferredAgentId) {
+      res.status(422).json({ error: "Side Chat requires an available agent" });
+      return;
+    }
+    const preferredAgent = await agentsSvc.getById(preferredAgentId);
+    if (
+      !preferredAgent
+      || preferredAgent.orgId !== existing.orgId
+      || preferredAgent.status === "terminated"
+    ) {
+      res.status(422).json({ error: "Preferred agent must be available in the same organization" });
+      return;
+    }
+    const availability = await assistantSvc.getDraftChatAssistantAvailability({
+      orgId: existing.orgId,
+      preferredAgentId,
+      modelOverride: req.body.modelOverride ?? null,
+      effortOverride: req.body.effortOverride ?? null,
+      contextLinks: existing.contextLinks as ChatContextLink[],
+      planMode: existing.planMode,
+    });
+    if (!availability.available) {
+      res.status(503).json({ error: availability.error });
+      return;
+    }
     const userId = boardUserId(req);
     const sideChat = await sideChats.create({
       sourceConversationId: existing.id,
@@ -1874,6 +1900,9 @@ export function chatRoutes(
       clientMutationId: req.body.clientMutationId,
       orgId: existing.orgId,
       userId,
+      preferredAgentId,
+      modelOverride: req.body.modelOverride ?? null,
+      effortOverride: req.body.effortOverride ?? null,
     });
     const actor = getActorInfo(req);
     await logActivity(db, {

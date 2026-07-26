@@ -286,6 +286,30 @@ describe("sideChatService", () => {
     expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(0);
   });
 
+  it("persists the provisional runtime override and rejects an idempotent replay with different runtime input", async () => {
+    const source = await createSource();
+    const input = {
+      orgId: source.orgId,
+      userId: source.userId,
+      sourceConversationId: source.sourceConversationId,
+      sourceMessageId: source.anchorMessageId,
+      clientMutationId: "side-chat-runtime-selection",
+      modelOverride: "gpt-5.6-sol",
+      effortOverride: "high",
+    };
+
+    const created = await service.create(input);
+    expect(created).toMatchObject({
+      modelOverride: "gpt-5.6-sol",
+      effortOverride: "high",
+    });
+
+    await expect(service.create({
+      ...input,
+      modelOverride: "gpt-5.6-terra",
+    })).rejects.toThrow("Side Chat creation id was already used");
+  });
+
   it("remaps copied annotation sources and attachment ownership without exposing annotation files to the manifest", async () => {
     const source = await createSource();
     const selectedText = "Selected answer text";
