@@ -1413,6 +1413,7 @@ export function chatRoutes(
               runId: activeChatRunId,
               bodyHash: hashChatGenerationBody(partialBody),
               body: partialBody,
+              replyingAgentId: chatReplyingAgentId(assistantConversation),
               chatTurnId: turnContext.chatTurnId,
               turnVariant: turnContext.turnVariant,
             });

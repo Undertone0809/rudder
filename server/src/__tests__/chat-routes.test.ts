@@ -3798,6 +3798,7 @@ describe("chat routes", () => {
       expect(transcriptCalls).toHaveLength(2);
       expect(transcriptCalls.map(([input]) => input.payload.entry)).toEqual(transcriptEntries);
       expect(transcriptCalls.every(([input]) => !Object.hasOwn(input, "transcript"))).toBe(true);
+      expect(transcriptCalls.every(([input]) => input.replyingAgentId === "agent-1")).toBe(true);
       expect(visibleProjectionCalls.find(([input]) => input.eventKind === "runtime_output")?.[0])
         .toMatchObject({ messageId: "message-assistant" });
       expect(mockChatService.acknowledgeServerQueuedMessageDelivery).toHaveBeenCalledWith({

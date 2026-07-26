@@ -4,7 +4,7 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { __clearWebsiteMetadataIconCacheForTests } from "@/components/MarkdownBody";
 import type { MentionOption } from "@/components/MarkdownEditor";
 import { ThemeProvider } from "@/context/ThemeContext";
-import { buildAgentMentionHref, buildAutomationMentionHref, buildIssueMentionHref, type Agent, type ChatMessage } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildIssueMentionHref, type Agent, type ChatConversation, type ChatMessage } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -177,7 +177,11 @@ async function waitForIssueStatus(container: HTMLElement, status: string) {
   });
 }
 
-function renderChatMessageItem(messageToRender: ChatMessage, agents: Agent[] = []) {
+function renderChatMessageItem(
+  messageToRender: ChatMessage,
+  agents: Agent[] = [],
+  conversationOverrides: Partial<ChatConversation> = {},
+) {
   const onForkMessage = vi.fn();
   return render(
     <ThemeProvider>
@@ -228,6 +232,7 @@ function renderChatMessageItem(messageToRender: ChatMessage, agents: Agent[] = [
             available: false,
             error: null,
           },
+          ...conversationOverrides,
         }}
         message={messageToRender}
         agents={agents}
@@ -252,6 +257,41 @@ function renderChatMessageItem(messageToRender: ChatMessage, agents: Agent[] = [
     </ThemeProvider>,
   );
 }
+
+describe("assistant attribution", () => {
+  it("uses the conversation-bound agent while a queued response projection has no message identity yet", () => {
+    const noah = agent({
+      name: "Noah",
+      icon: "dicebear:notionists:cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    });
+    const container = renderChatMessageItem(
+      message({
+        status: "streaming",
+        body: "",
+        replyingAgentId: null,
+      }),
+      [noah],
+      {
+        preferredAgentId: noah.id,
+        chatRuntime: {
+          sourceType: "agent",
+          sourceLabel: "Noah",
+          runtimeAgentId: noah.id,
+          agentRuntimeType: "codex_local",
+          model: "gpt-5",
+          effort: null,
+          available: true,
+          error: null,
+        },
+      },
+    );
+
+    expect(container.textContent).toContain("Noah");
+    expect(container.textContent).not.toContain("Assistant");
+    expect(container.querySelector('a[aria-label="Open Noah agent detail"] img')).not.toBeNull();
+    expect(container.querySelector(".lucide-sparkles")).toBeNull();
+  });
+});
 
 describe("LazyStreamTranscriptItem", () => {
   it("shows process duration without exposing raw event counts", () => {

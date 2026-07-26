@@ -111,16 +111,24 @@ export function ChatAssistantAttributionRow({
   conversation: ChatConversation;
   agents: Agent[] | undefined;
 }) {
-  const agent = replyingAgentId ? agents?.find((a) => a.id === replyingAgentId) : null;
-  const fallbackLabel = replyingAgentId ? conversation.chatRuntime?.sourceLabel ?? "Unknown agent" : "Assistant";
+  const effectiveReplyingAgentId = replyingAgentId
+    ?? conversation.chatRuntime?.runtimeAgentId
+    ?? conversation.preferredAgentId
+    ?? null;
+  const agent = effectiveReplyingAgentId
+    ? agents?.find((a) => a.id === effectiveReplyingAgentId)
+    : null;
+  const fallbackLabel = effectiveReplyingAgentId
+    ? conversation.chatRuntime?.sourceLabel ?? "Unknown agent"
+    : "Assistant";
   const label = agent?.name ?? fallbackLabel;
   const content = (
     <>
-      {agent || replyingAgentId ? (
+      {agent || effectiveReplyingAgentId ? (
         <AgentIcon
           icon={agent?.icon}
           role={agent?.role}
-          fallbackSeed={agent?.id ?? replyingAgentId}
+          fallbackSeed={agent?.id ?? effectiveReplyingAgentId}
           className="h-8 w-8 shrink-0"
         />
       ) : (
