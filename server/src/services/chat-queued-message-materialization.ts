@@ -139,6 +139,7 @@ export function queuedMessageMutationFingerprint(input: {
   payload: Record<string, unknown>;
   stagedAttachments: readonly StagedQueuedAnnotationAttachment[];
   attachmentFileIndexesByAnnotationId: ReadonlyMap<string, readonly number[]>;
+  runtimeSnapshotVersion?: number | null;
 }) {
   const annotationIdByFileIndex = fileAnnotationBindings(
     input.stagedAttachments,
@@ -153,9 +154,23 @@ export function queuedMessageMutationFingerprint(input: {
     sha256: attachment.sha256,
     originalFilename: attachment.originalFilename,
   }));
+  const normalizedPayload = normalizeQueuedMessagePayload(input.payload);
+  // Version 1 marks model/effort as server-owned admission snapshots. Legacy
+  // queue rows have no marker, so their historical client-controlled fields
+  // remain part of the idempotency fingerprint for exact upgrade compatibility.
+  const clientPayload = input.runtimeSnapshotVersion === 1
+    ? (() => {
+        const {
+          model: _modelSnapshot,
+          effort: _effortSnapshot,
+          ...rest
+        } = normalizedPayload;
+        return rest;
+      })()
+    : normalizedPayload;
   return createHash("sha256")
     .update(JSON.stringify({
-      payload: normalizeQueuedMessagePayload(input.payload),
+      payload: clientPayload,
       files,
     }))
     .digest("hex");

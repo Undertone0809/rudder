@@ -2124,8 +2124,6 @@ describe("isChatAgentSelectionLocked", () => {
     expect(isChatAgentSelectionLocked({
       hasConversation: true,
       preferredAgentId: null,
-      hasLastMessageAt: true,
-      hasMessages: true,
       hasActiveStream: false,
       hasActiveSendInFlight: false,
     })).toBe(false);
@@ -2135,8 +2133,15 @@ describe("isChatAgentSelectionLocked", () => {
     expect(isChatAgentSelectionLocked({
       hasConversation: true,
       preferredAgentId: "agent-1",
-      hasLastMessageAt: true,
-      hasMessages: true,
+      hasActiveStream: false,
+      hasActiveSendInFlight: false,
+    })).toBe(true);
+  });
+
+  it("locks persisted assigned conversations before the first message", () => {
+    expect(isChatAgentSelectionLocked({
+      hasConversation: true,
+      preferredAgentId: "agent-1",
       hasActiveStream: false,
       hasActiveSendInFlight: false,
     })).toBe(true);
@@ -2146,16 +2151,12 @@ describe("isChatAgentSelectionLocked", () => {
     expect(isChatAgentSelectionLocked({
       hasConversation: true,
       preferredAgentId: null,
-      hasLastMessageAt: false,
-      hasMessages: false,
       hasActiveStream: true,
       hasActiveSendInFlight: false,
     })).toBe(true);
     expect(isChatAgentSelectionLocked({
       hasConversation: true,
       preferredAgentId: null,
-      hasLastMessageAt: false,
-      hasMessages: false,
       hasActiveStream: false,
       hasActiveSendInFlight: true,
     })).toBe(true);

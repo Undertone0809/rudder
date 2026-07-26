@@ -73,7 +73,7 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await expect(page.getByRole("button", { name: "Get a briefing on recent work" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Automate routine and recurring work" })).toBeVisible();
   await expect(page.getByTestId("chat-project-selector")).toContainText(project.name);
-  await expect(page.getByTestId("chat-agent-selector")).toContainText(agent.name);
+  await expect(page.getByTestId("chat-runtime-selector")).toBeVisible();
   await expect.poll(async () => starters.evaluate((element) => {
     const composerElement = document.querySelector(".chat-composer");
     return Boolean(composerElement && (element.compareDocumentPosition(composerElement) & Node.DOCUMENT_POSITION_FOLLOWING));
@@ -110,7 +110,7 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await expect(suggestions).toHaveAttribute("data-interactive", "true");
   await expect(suggestions.getByRole("option").first()).toBeEnabled();
   await expect(page.getByTestId("chat-project-selector")).toContainText(project.name);
-  await expect(page.getByTestId("chat-agent-selector")).toContainText(agent.name);
+  await expect(page.getByTestId("chat-runtime-selector")).toBeVisible();
 
   const chatsAfterStarterRes = await page.request.get(`/api/orgs/${organization.id}/chats?status=all&limit=40`);
   expect(chatsAfterStarterRes.ok(), await chatsAfterStarterRes.text()).toBe(true);
@@ -168,7 +168,7 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await expect(composer.locator("[data-skill-token='true']")).toHaveCount(1);
   await expect(composer).toContainText(skill.slug);
   await expect(page.getByTestId("chat-project-selector")).toContainText(project.name);
-  await expect(page.getByTestId("chat-agent-selector")).toContainText(agent.name);
+  await expect(page.getByTestId("chat-runtime-selector")).toBeVisible();
 
   await resetComposer(composer);
   await composer.fill("Automate");
@@ -198,7 +198,7 @@ test("new-chat prompt starters fill complete prompts and keep composer context",
   await composer.press("Tab");
   await expect(composer).toHaveText("what");
   await expect(page.getByTestId("chat-project-selector")).toContainText(project.name);
-  await expect(page.getByTestId("chat-agent-selector")).toContainText(agent.name);
+  await expect(page.getByTestId("chat-runtime-selector")).toBeVisible();
 
   await resetComposer(composer);
   await expect(promptFlow).toHaveAttribute("data-state", "starters");

@@ -211,6 +211,8 @@ export function sideChatService(db: Db) {
           title: sideChatTitleFromSource(source.title),
           summary: source.summary,
           preferredAgentId: source.preferredAgentId,
+          modelOverride: null,
+          effortOverride: null,
           routedAgentId: source.routedAgentId,
           primaryIssueId: source.primaryIssueId,
           forkedFromConversationId: source.id,

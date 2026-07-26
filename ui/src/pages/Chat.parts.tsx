@@ -960,15 +960,11 @@ export function withOptimisticPlanMode(conversation: ChatConversation, planMode:
 export function isChatAgentSelectionLocked({
   hasConversation,
   preferredAgentId,
-  hasLastMessageAt,
-  hasMessages,
   hasActiveStream,
   hasActiveSendInFlight,
 }: {
   hasConversation: boolean;
   preferredAgentId: string | null | undefined;
-  hasLastMessageAt: boolean;
-  hasMessages: boolean;
   hasActiveStream: boolean;
   hasActiveSendInFlight: boolean;
 }) {
@@ -977,7 +973,7 @@ export function isChatAgentSelectionLocked({
     && (
       hasActiveStream
       || hasActiveSendInFlight
-      || (preferredAgentId && (hasLastMessageAt || hasMessages))
+      || preferredAgentId
     ),
   );
 }

@@ -549,6 +549,7 @@ describe("applyPendingMigrations", () => {
           "0118_flippant_longshot.sql",
           "0119_nervous_killraven.sql",
           "0120_thick_maria_hill.sql",
+          "0121_pale_wildside.sql",
         ],
         reason: "pending-migrations",
       });
@@ -689,6 +690,7 @@ describe("applyPendingMigrations", () => {
           "0118_flippant_longshot.sql",
           "0119_nervous_killraven.sql",
           "0120_thick_maria_hill.sql",
+          "0121_pale_wildside.sql",
         ],
         reason: "pending-migrations",
       });
