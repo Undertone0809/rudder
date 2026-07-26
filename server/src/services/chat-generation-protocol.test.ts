@@ -264,6 +264,105 @@ describe("chatGenerationProtocolService", () => {
     expect(JSON.stringify(persistedEvent?.payload).length).toBeLessThan(1_024);
   });
 
+  it("persists transcript tool output containing PostgreSQL-incompatible NUL characters", async () => {
+    const generation = await seedGeneration();
+    const content = "archive: PK\u0000binary\u0000tail";
+
+    const projection = await protocol.appendVisibleEventAndProject({
+      orgId: generation.orgId,
+      conversationId: generation.conversationId,
+      generationId: generation.id,
+      expectedAttemptEpoch: generation.attemptEpoch,
+      eventKind: "transcript",
+      payload: {
+        entry: {
+          kind: "tool_result",
+          ts: "2026-07-26T13:08:32.171Z",
+          content,
+          metadata: {
+            "\u0000unsafe-key": ["nested\u0000value"],
+          },
+        },
+      },
+      bodyHash: hashChatGenerationBody(""),
+      body: "",
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    const [persistedEvent] = await db
+      .select()
+      .from(chatGenerationEvents)
+      .where(eq(chatGenerationEvents.id, projection.event.id));
+
+    expect(persistedEvent?.payload).toMatchObject({
+      entry: {
+        kind: "tool_result",
+        content: "archive: PK\uFFFDbinary\uFFFDtail",
+        metadata: {
+          "\uFFFDunsafe-key": ["nested\uFFFDvalue"],
+        },
+      },
+    });
+    expect(content).toBe("archive: PK\u0000binary\u0000tail");
+  });
+
+  it("sanitizes PostgreSQL-incompatible NUL characters in legacy generation event writes", async () => {
+    const generation = await seedGeneration();
+    const chats = chatService(db);
+
+    const event = await chats.appendGenerationEvent({
+      orgId: generation.orgId,
+      generationId: generation.id,
+      attemptEpoch: generation.attemptEpoch,
+      eventKind: "transcript",
+      payload: {
+        entry: {
+          kind: "tool_result",
+          content: "legacy\u0000output",
+        },
+      },
+    });
+
+    expect(event.payload).toMatchObject({
+      entry: {
+        kind: "tool_result",
+        content: "legacy\uFFFDoutput",
+      },
+    });
+  });
+
+  it("persists non-stream message transcripts containing NUL characters", async () => {
+    const generation = await seedGeneration();
+    const chats = chatService(db);
+
+    const message = await chats.addMessage(generation.conversationId, {
+      orgId: generation.orgId,
+      role: "assistant",
+      kind: "message",
+      body: "Completed despite binary tool output.",
+      transcript: [{
+        kind: "tool_result",
+        ts: "2026-07-26T13:08:32.171Z",
+        toolUseId: "tool-nul",
+        content: "non-stream\u0000output",
+        isError: false,
+      }],
+    });
+
+    const persistedMessage = await db
+      .select({ structuredPayload: chatMessages.structuredPayload })
+      .from(chatMessages)
+      .where(eq(chatMessages.id, message!.id))
+      .then((rows) => rows[0]);
+    expect(persistedMessage?.structuredPayload).toMatchObject({
+      __chatTranscript: [{
+        kind: "tool_result",
+        content: "non-stream\uFFFDoutput",
+      }],
+    });
+  });
+
   it("serializes visible events and applies an idempotent Stop cutoff", async () => {
     const generation = await seedGeneration();
     const bodies = ["First", "First second"];

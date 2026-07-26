@@ -11,6 +11,7 @@ import {
 } from "@rudderhq/db";
 import { formatMessengerPreview, type ChatStreamTranscriptEntry, type ChatTranscriptSummary } from "@rudderhq/shared";
 import { inArray, sql } from "drizzle-orm";
+import { sanitizePostgresJsonValue } from "./postgres-json.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -147,12 +148,12 @@ export function withPersistedTranscript(
 ) {
   const cleanPayload = stripChatMetadataFromPayload(payload);
   if (!transcript || transcript.length === 0) {
-    return cleanPayload;
+    return sanitizePostgresJsonValue(cleanPayload);
   }
-  return {
+  return sanitizePostgresJsonValue({
     ...(cleanPayload ?? {}),
     [CHAT_TRANSCRIPT_KEY]: transcript,
-  };
+  });
 }
 
 export function issueProposalFromPayload(payload: Record<string, unknown> | null | undefined): ChatIssueProposalPayload | null {

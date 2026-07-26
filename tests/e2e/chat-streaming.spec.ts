@@ -181,6 +181,50 @@ process.stdin.on("end", () => {
   return stubPath;
 }
 
+async function createNulTranscriptCodexStub() {
+  const stubDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-nul-transcript-"));
+  const stubPath = path.join(stubDir, "codex");
+  await fs.writeFile(stubPath, `#!/usr/bin/env node
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+});
+process.stdin.on("end", () => {
+  const sentinel = input.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+  const send = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
+  send({ type: "thread.started", thread_id: "nul-transcript-e2e", model: "gpt-5.4" });
+  send({
+    type: "item.started",
+    item: { type: "tool_use", id: "nul-tool", name: "command_execution", input: { command: "inspect archive" } },
+  });
+  send({
+    type: "item.completed",
+    item: {
+      type: "tool_result",
+      tool_use_id: "nul-tool",
+      content: "archive\\u0000binary\\u0000tail",
+      status: "completed",
+    },
+  });
+  const body = "NUL transcript completed.";
+  const finalText = body + "\\n" + sentinel + JSON.stringify({
+    kind: "message",
+    body,
+    structuredPayload: null,
+  });
+  send({ type: "item.completed", item: { id: "final-message", type: "agent_message", text: finalText } });
+  send({
+    type: "turn.completed",
+    result: finalText,
+    usage: { input_tokens: 2, cached_input_tokens: 0, output_tokens: 2 },
+  });
+});
+`, "utf8");
+  await fs.chmod(stubPath, 0o755);
+  return stubPath;
+}
+
 function currentChatId(pageUrl: string) {
   const chatId = new URL(pageUrl).pathname.split("/").pop();
   expect(chatId).toBeTruthy();
@@ -415,6 +459,66 @@ test.describe("Chat streaming", () => {
     await expect(transcriptItem.locator('button[aria-label="Expand command details"]').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/__RUDDER_RESULT_/)).toHaveCount(0);
     await expect(page.getByText(/"kind":"message"/)).toHaveCount(0);
+  });
+
+  test("completes and reloads when tool output contains NUL characters", async ({ page }) => {
+    const stubPath = await createNulTranscriptCodexStub();
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `NUL-Transcript-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "NUL Transcript Agent",
+      command: stubPath,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/chat?agentId=${chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await composer.fill("Inspect an archive containing binary output");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
+      "NUL transcript completed.",
+      { timeout: 30_000 },
+    );
+    await expect(page.getByText("The assistant reply could not be completed.", { exact: false })).toHaveCount(0);
+
+    const transcriptEvents = await e2eDb.query.chatGenerationEvents.findMany({
+      where: (table, { and, eq }) => and(
+        eq(table.orgId, organization.id),
+        eq(table.eventKind, "transcript"),
+      ),
+    });
+    const toolResult = transcriptEvents
+      .map((event) => event.payload?.entry)
+      .find((entry) => (
+        entry
+        && typeof entry === "object"
+        && (entry as Record<string, unknown>).kind === "tool_result"
+      )) as Record<string, unknown> | undefined;
+    expect(toolResult?.content).toBe("archive\uFFFDbinary\uFFFDtail");
+
+    const runEvents = await e2eDb.query.heartbeatRunEvents.findMany({
+      where: (table, { and, eq }) => and(
+        eq(table.orgId, organization.id),
+        eq(table.eventType, "transcript.entry"),
+      ),
+    });
+    const runToolResult = runEvents
+      .map((event) => event.payload)
+      .find((payload) => payload?.kind === "tool_result");
+    expect(runToolResult?.content).toBe("archive\uFFFDbinary\uFFFDtail");
+
+    await page.reload();
+    await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
+      "NUL transcript completed.",
+      { timeout: 15_000 },
+    );
   });
 
   test("completes and reloads a production-shaped long transcript without embedding it in the message", async ({ page }) => {
