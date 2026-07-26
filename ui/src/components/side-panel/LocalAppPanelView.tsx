@@ -421,7 +421,7 @@ export function LocalAppPanelView({
         open={editOpen}
         pending={editMutation.isPending}
         requestEditPending={stopMutation.isPending}
-        title="Edit Local App details"
+        title="Edit local app"
         onCancel={() => {
           editMutation.reset();
           setEditOpen(false);

@@ -305,6 +305,7 @@ describe("LocalAppPanelView", () => {
         .find((item) => item.textContent?.includes("Edit details"))?.click();
     });
     const dialog = document.querySelector<HTMLElement>('[data-testid="local-app-definition-review"]');
+    act(() => dialog?.querySelector<HTMLButtonElement>('[data-testid="local-app-advanced-toggle"]')?.click());
     expect(dialog?.querySelector<HTMLInputElement>("#local-app-name")?.disabled).toBe(true);
     const stopAndEdit = Array.from(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])
       .find((button) => button.textContent?.includes("Stop & edit"));
