@@ -88,6 +88,7 @@ import {
 import { PauseResumeButton, RunButton } from "../components/AgentActionButtons";
 import { AgentConfigForm } from "../components/AgentConfigForm";
 import { AgentIcon, AgentIconPicker, getAgentAvatarImageSrc } from "../components/AgentIconPicker";
+import { AgentSkillsOnboarding } from "../components/AgentSkillsOnboarding";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { DashboardDateRangeControl, type DashboardDatePreset } from "../components/DashboardDateRangeControl";
 import { EntityRow } from "../components/EntityRow";
@@ -2299,6 +2300,10 @@ function AgentSkillsTab({
 
   return (
     <div className="max-w-6xl space-y-3">
+      {skillSnapshot && skillSnapshot.mode !== "unsupported" ? (
+        <AgentSkillsOnboarding />
+      ) : null}
+
       <section className="space-y-3">
         <div className="space-y-1">
           <div className="min-w-0">
