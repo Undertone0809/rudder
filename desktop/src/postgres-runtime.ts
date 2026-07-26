@@ -36,6 +36,13 @@ function postgresConfigTemplateCandidates(binDir: string): string[] {
   ];
 }
 
+function postgresTimezoneCandidates(binDir: string): string[] {
+  return [
+    path.join(binDir, "..", "share", "postgresql", "timezone"),
+    path.join(binDir, "..", "share", "timezone"),
+  ];
+}
+
 function isCompletePostgresBinDir(binDir: string, options: {
   platform?: NodeJS.Platform;
   validateVersion?: boolean;
@@ -46,7 +53,9 @@ function isCompletePostgresBinDir(binDir: string, options: {
   }
   if (!postgresTemplateCandidates(binDir).some((candidatePath) => fs.existsSync(candidatePath))) return false;
   if (!postgresConfigTemplateCandidates(binDir).some((candidatePath) => fs.existsSync(candidatePath))) return false;
-  if (!fs.statSync(path.join(binDir, "..", "share", "timezone"), { throwIfNoEntry: false })?.isDirectory()) return false;
+  if (!postgresTimezoneCandidates(binDir).some(
+    (candidatePath) => fs.statSync(candidatePath, { throwIfNoEntry: false })?.isDirectory(),
+  )) return false;
   if (options.validateVersion === false) return true;
   try {
     for (const binary of ["initdb", "pg_ctl", "postgres"] as const) {

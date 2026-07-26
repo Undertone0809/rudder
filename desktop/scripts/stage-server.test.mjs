@@ -21,15 +21,18 @@ function writeJson(filePath, value) {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function writeFakePostgresBinDir(binDir) {
+function writeFakePostgresBinDir(binDir, timezoneLayout = "nested") {
   mkdirSync(binDir, { recursive: true });
   mkdirSync(join(binDir, "..", "lib"), { recursive: true });
   mkdirSync(join(binDir, "..", "share", "postgresql"), { recursive: true });
-  mkdirSync(join(binDir, "..", "share", "postgresql", "timezone"), { recursive: true });
+  const timezoneDir = timezoneLayout === "nested"
+    ? join(binDir, "..", "share", "postgresql", "timezone")
+    : join(binDir, "..", "share", "timezone");
+  mkdirSync(timezoneDir, { recursive: true });
   writeFileSync(join(binDir, "..", "lib", "libzstd.1.dylib"), "runtime library\n");
   writeFileSync(join(binDir, "..", "share", "postgresql", "postgres.bki"), "postgres template\n");
   writeFileSync(join(binDir, "..", "share", "postgresql", "postgresql.conf.sample"), "postgres config template\n");
-  writeFileSync(join(binDir, "..", "share", "postgresql", "timezone", "UTC"), "timezone data\n");
+  writeFileSync(join(timezoneDir, "UTC"), "timezone data\n");
   for (const binary of ["initdb", "pg_ctl", "postgres"]) {
     const binaryPath = join(binDir, process.platform === "win32" ? `${binary}.exe` : binary);
     if (process.platform === "win32") {
@@ -223,6 +226,32 @@ describe("desktop stage-server", () => {
     expect(readFileSync(join(preparedRuntimeRoot, "restored-marker"), "utf8")).toBe("restored\n");
     expect(() => readFileSync(join(interruptedWorkRoot, "stale-marker"), "utf8")).toThrow();
     expect(() => readFileSync(join(cacheDir, ".postgres-runtime.lifecycle.lock", "owner.json"), "utf8")).toThrow();
+  });
+
+  it.skipIf(process.platform === "win32")("accepts the legacy flat PostgreSQL timezone layout", () => {
+    const root = mkdtempSync(join(tmpdir(), "rudder-prepare-postgres-flat-test-"));
+    tempRoots.push(root);
+
+    const sourceRoot = join(root, "source");
+    writeFakePostgresBinDir(join(sourceRoot, "pgsql", "bin"), "flat");
+    const archivePath = join(root, "postgres-runtime.tar");
+    const tarResult = spawnSync("tar", ["-cf", archivePath, "-C", sourceRoot, "pgsql"], {
+      encoding: "utf8",
+    });
+    expect(tarResult.status, `${tarResult.stdout}\n${tarResult.stderr}`).toBe(0);
+
+    const result = spawnSync("node", [join(scriptsDir, "prepare-postgres-runtime.mjs")], {
+      env: {
+        ...process.env,
+        RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL: pathToFileURL(archivePath).href,
+        RUDDER_POSTGRES_RUNTIME_CACHE_DIR: join(root, "cache"),
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const preparedBinDir = result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+    expect(readFileSync(join(preparedBinDir, "..", "share", "timezone", "UTC"), "utf8")).toBe("timezone data\n");
   });
 
   it("does not bundle PostgreSQL runtime by default", () => {

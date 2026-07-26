@@ -44,16 +44,21 @@ async function isCompleteBinDir(candidateBinDir) {
       return false;
     }
   }
+  const shareDir = path.join(candidateBinDir, "..", "share");
   for (const candidatePath of [
-    path.join(candidateBinDir, "..", "share", "postgresql", "postgres.bki"),
-    path.join(candidateBinDir, "..", "share", "postgres.bki"),
+    path.join(shareDir, "postgresql", "postgres.bki"),
+    path.join(shareDir, "postgres.bki"),
   ]) {
     try {
       await stat(candidatePath);
       await stat(path.join(path.dirname(candidatePath), "postgresql.conf.sample"));
-      const timezoneStats = await stat(path.join(path.dirname(candidatePath), "timezone"));
-      if (!timezoneStats.isDirectory()) return false;
-      return true;
+      for (const timezonePath of [
+        path.join(path.dirname(candidatePath), "timezone"),
+        path.join(shareDir, "timezone"),
+      ]) {
+        const timezoneStats = await stat(timezonePath).catch(() => null);
+        if (timezoneStats?.isDirectory()) return true;
+      }
     } catch {
       // Try the next supported PostgreSQL archive layout.
     }
