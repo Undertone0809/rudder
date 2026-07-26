@@ -48,6 +48,22 @@ available.
   processes; runtimes receive only run-scoped proxy identity and descriptors.
   Do not copy secrets into documentation, prompts, Library files, or Issue
   comments.
+- Organization-managed external MCP access is assigned to each Agent as a
+  provider-specific coarse mode. Supabase and Linear use no access, read only,
+  or read and write; Notion uses no access or provider-granted access. The Agent
+  cannot exceed the organization's maximum. Rudder derives the tool set on the server:
+  read only permits read tools, while read and write also permits ordinary
+  writes. Destructive, administrative, billing, and unknown tools remain
+  unavailable.
+- Each Run captures the binding policy it started with. Effective access is the
+  intersection of that snapshot, the current Agent binding, and the current
+  provider policy. A downgrade blocks later calls in the active Run
+  immediately; an upgrade applies to the next Run. A call that already started
+  may finish.
+- Reconnecting an OAuth provider keeps the previous grant active until the new
+  authorization succeeds and is swapped in. Cancellation, timeout, or failed
+  discovery leaves the previous grant usable. An explicit disconnect stops
+  access immediately.
 - Rudder selects the Skills exposed to a Run. Stale, disabled, or unrelated
   Skills must not remain visible because an earlier Run materialized them.
 - Required workspace, permission, login, or Skill failures should stop with an
@@ -82,6 +98,11 @@ Rudder as administrator merely to load a selected Skill.
   the action that removes the shared website session.
 - A Windows Skill link returns `EPERM`. Rudder should use a supported fallback
   or report which path and permission need repair before provider execution.
+- A new account-scoped Supabase organization connection does not select one
+  project during setup. Project-specific calls identify the intended project at
+  call time and still pass through the Agent and server policy limits above.
+  Existing project-scoped grants retain their boundary until an explicit
+  account-access upgrade.
 
 <CardGroup cols={2}>
   <Card title="Configure an Agent runtime" icon="terminal" href="/how-to/configure-agent-runtime">
