@@ -166,12 +166,18 @@ async function verifyPostgresRuntimePayload(serverPackageDir) {
     path.join(binDir, executable("initdb")),
     path.join(binDir, executable("pg_ctl")),
     path.join(binDir, executable("postgres")),
-    path.join(runtimeDir, "share", "timezone"),
   ];
 
   const missing = [];
   for (const requiredPath of requiredPaths) {
     if (!(await exists(requiredPath))) missing.push(requiredPath);
+  }
+  const timezoneCandidates = [
+    path.join(runtimeDir, "share", "postgresql", "timezone"),
+    path.join(runtimeDir, "share", "timezone"),
+  ];
+  if (!(await Promise.all(timezoneCandidates.map((candidate) => exists(candidate)))).some(Boolean)) {
+    missing.push(timezoneCandidates.join(" or "));
   }
   for (const fileName of ["postgres.bki", "postgresql.conf.sample"]) {
     const candidates = [
