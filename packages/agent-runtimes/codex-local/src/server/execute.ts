@@ -56,6 +56,7 @@ import {
 import { estimateCodexCostUsd } from "./cost.js";
 import { captureCodexInlineVisuals, codexInlineVisualDirectiveBody } from "./inline-visuals.js";
 import { isCodexUnknownSessionError, parseCodexJsonl } from "./parse.js";
+import { resolveCodexCommand } from "./resolve-command.js";
 import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompleteLines, stripCodexBenignStderr } from "./stderr-filter.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -503,7 +504,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   );
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
-  await ensureCommandResolvable(command, cwd, runtimeEnv);
+  const executableCommand = await resolveCodexCommand(command, cwd, runtimeEnv);
+  await ensureCommandResolvable(executableCommand, cwd, runtimeEnv);
 
   await onLog(
     "stdout",
@@ -654,7 +656,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (onMeta) {
       await onMeta({
         agentRuntimeType: "codex_local",
-        command,
+        command: executableCommand,
         cwd,
         commandNotes: [
           ...commandNotes,
@@ -678,7 +680,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     try {
       const appStartedAt = new Date();
       const appResult = await executeCodexAppServerChat({
-        command,
+        command: executableCommand,
         cwd,
         env: Object.fromEntries(
           Object.entries(runtimeEnv).filter(
@@ -821,7 +823,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       }
     };
 
-    const proc = await runChildProcess(runId, command, args, {
+    const proc = await runChildProcess(runId, executableCommand, args, {
       cwd,
       env,
       stdin: prompt,

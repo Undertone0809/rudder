@@ -1,8 +1,10 @@
 import type { ProviderQuotaResult, QuotaWindow } from "@rudderhq/agent-runtime-utils";
+import { resolveSpawnTarget } from "@rudderhq/agent-runtime-utils/server-utils";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { resolveCodexCommand } from "./resolve-command.js";
 
 const CODEX_USAGE_SOURCE_RPC = "codex-rpc";
 const CODEX_USAGE_SOURCE_WHAM = "codex-wham";
@@ -407,18 +409,15 @@ type PendingRequest = {
 };
 
 class CodexRpcClient {
-  private proc = spawn(
-    "codex",
-    ["--disable", "plugins", "-s", "read-only", "-a", "untrusted", "app-server"],
-    { stdio: ["pipe", "pipe", "pipe"], env: process.env },
-  );
+  private proc;
 
   private nextId = 1;
   private buffer = "";
   private pending = new Map<number, PendingRequest>();
   private stderr = "";
 
-  constructor() {
+  constructor(command: string, args: string[]) {
+    this.proc = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: process.env });
     this.proc.stdout.setEncoding("utf8");
     this.proc.stderr.setEncoding("utf8");
     this.proc.stdout.on("data", (chunk: string) => this.onStdout(chunk));
@@ -505,7 +504,11 @@ class CodexRpcClient {
 }
 
 export async function fetchCodexRpcQuota(): Promise<CodexRpcQuotaSnapshot> {
-  const client = new CodexRpcClient();
+  const args = ["--disable", "plugins", "-s", "read-only", "-a", "untrusted", "app-server"];
+  const cwd = process.cwd();
+  const command = await resolveCodexCommand("codex", cwd, process.env);
+  const target = await resolveSpawnTarget(command, args, cwd, process.env);
+  const client = new CodexRpcClient(target.command, target.args);
   try {
     await client.initialize();
     const [limits, account] = await Promise.all([
