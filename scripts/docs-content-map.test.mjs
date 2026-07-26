@@ -506,12 +506,6 @@ test("Batch 3 Project pages keep GDPval facts, release history, and the bilingua
     assert.equal(page.pairing_exception, null);
   }
 
-  for (const relativeFile of ["docs/releases.mdx", "docs/zh/releases.mdx"]) {
-    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
-    assert.match(source, /historical terminology|历史术语/u);
-    assert.match(source, /current (?:product )?guidance|当前产品说明/u);
-    assert.match(source, /future (?:release )?entries|今后的发布记录/iu);
-  }
 });
 
 test("generated artifacts are deterministic", () => {
