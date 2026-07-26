@@ -49,8 +49,9 @@ available.
   Do not copy secrets into documentation, prompts, Library files, or Issue
   comments.
 - Organization-managed external MCP access is assigned to each Agent as a
-  coarse mode such as no access, read only, or read and write. The Agent cannot
-  exceed the organization's maximum. Rudder derives the tool set on the server:
+  provider-specific coarse mode. Supabase and Linear use no access, read only,
+  or read and write; Notion uses no access or provider-granted access. The Agent
+  cannot exceed the organization's maximum. Rudder derives the tool set on the server:
   read only permits read tools, while read and write also permits ordinary
   writes. Destructive, administrative, billing, and unknown tools remain
   unavailable.
@@ -97,10 +98,11 @@ Rudder as administrator merely to load a selected Skill.
   the action that removes the shared website session.
 - A Windows Skill link returns `EPERM`. Rudder should use a supported fallback
   or report which path and permission need repair before provider execution.
-- A Supabase organization connection grants account-level access without
-  selecting one project during setup. Project-specific calls identify the
-  intended project at call time and still pass through the Agent and server
-  policy limits above.
+- A new account-scoped Supabase organization connection does not select one
+  project during setup. Project-specific calls identify the intended project at
+  call time and still pass through the Agent and server policy limits above.
+  Existing project-scoped grants retain their boundary until an explicit
+  account-access upgrade.
 
 <CardGroup cols={2}>
   <Card title="Configure an Agent runtime" icon="terminal" href="/how-to/configure-agent-runtime">
