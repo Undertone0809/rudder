@@ -102,10 +102,6 @@ vi.mock("../services/agent-instructions.js", () => ({
   agentInstructionsService: () => agentInstructionsSvc,
 }));
 
-vi.mock("../routes/org-chart-svg.js", () => ({
-  renderOrgChartPng: vi.fn(async () => Buffer.from("png")),
-}));
-
 const { organizationPortabilityService, parseGitHubSourceUrl } = await import("../services/organization-portability.js");
 
 function asTextFile(entry: OrganizationPortabilityFileEntry | undefined) {
@@ -137,7 +133,6 @@ describe("organization portability", () => {
         role: "engineer",
         title: "Software Engineer",
         icon: "code",
-        reportsTo: null,
         capabilities: "Writes code",
         agentRuntimeType: "claude_local",
         agentRuntimeConfig: {
@@ -185,7 +180,6 @@ describe("organization portability", () => {
         role: "cmo",
         title: "Chief Marketing Officer",
         icon: "globe",
-        reportsTo: null,
         capabilities: "Owns marketing",
         agentRuntimeType: "claude_local",
         agentRuntimeConfig: {
@@ -567,6 +561,11 @@ describe("organization portability", () => {
       agents: ["claudecoder", "cmo"],
       projects: ["alpha", "zulu"],
     });
+    expect(exported.manifest.agents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reportsToSlug: null }),
+      ]),
+    );
   });
 
   it("expands referenced skills when requested", async () => {
@@ -1621,6 +1620,7 @@ describe("organization portability", () => {
             "---",
             'name: "ClaudeCoder"',
             'title: "Software Engineer"',
+            'reportsTo: "legacy-lead"',
             "---",
             "",
             "# ClaudeCoder",
@@ -1651,6 +1651,7 @@ describe("organization portability", () => {
       expect.objectContaining({
         slug: "claudecoder",
         name: "ClaudeCoder",
+        reportsToSlug: null,
         agentRuntimeType: "process",
       }),
     ]);
@@ -1675,6 +1676,7 @@ describe("organization portability", () => {
             "---",
             'name: "ClaudeCoder"',
             'title: "Software Engineer"',
+            'reportsTo: "legacy-lead"',
             "---",
             "",
             "# ClaudeCoder",
@@ -1708,6 +1710,10 @@ describe("organization portability", () => {
       name: "ClaudeCoder",
       agentRuntimeType: "process",
     }));
+    expect(agentSvc.create).toHaveBeenCalledWith(
+      "organization-imported",
+      expect.not.objectContaining({ reportsTo: expect.anything() }),
+    );
   });
 
   it("treats no-separator auth and api key env names as secrets during export", async () => {
@@ -1721,7 +1727,6 @@ describe("organization portability", () => {
         role: "engineer",
         title: "Software Engineer",
         icon: "code",
-        reportsTo: null,
         capabilities: "Writes code",
         agentRuntimeType: "claude_local",
         agentRuntimeConfig: {

@@ -1178,18 +1178,7 @@ export function OrganizationSettings() {
             <SettingsGroup>
               <SettingsItem
                 title={t("organizationSettings.section.packages")}
-                description={(
-                  <span>
-                    {t("organizationSettings.packages.description.before")}{" "}
-                    <Link
-                      to={applyOrganizationPrefix("/org", organizationRouteKey)}
-                      className="underline underline-offset-4 hover:text-foreground"
-                    >
-                      {t("organizationSettings.packages.structureLink")}
-                    </Link>{" "}
-                    {t("organizationSettings.packages.description.after")}
-                  </span>
-                )}
+                description={t("organizationSettings.packages.description")}
                 action={(
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" variant="outline" asChild>

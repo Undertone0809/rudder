@@ -219,7 +219,6 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
           role: normalizedHireInput.role,
           title: normalizedHireInput.title ?? null,
           icon: agent.icon ?? normalizedHireInput.icon ?? null,
-          reportsTo: normalizedHireInput.reportsTo ?? null,
           capabilities: normalizedHireInput.capabilities ?? null,
           agentRuntimeType: requestedAdapterType,
           agentRuntimeConfig: requestedAdapterConfig,

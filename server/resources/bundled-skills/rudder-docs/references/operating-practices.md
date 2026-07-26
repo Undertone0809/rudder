@@ -122,8 +122,8 @@ report the status and required follow-up rather than bypassing it.
   creating top-level management work. When the organization has a mature label
   taxonomy, choose at least one suitable label after inspecting the available
   labels.
-- Never cancel cross-team work. Reassign upward with an explanation, and use
-  `chainOfCommand` for escalation.
+- Never cancel cross-team work. Reassign to an explicit owner or operator with
+  an explanation.
 - Above 80% spend, focus on critical work only and avoid expanding scope.
 - Use [Agent creation](agent-creation.md) for the canonical governed hiring
   workflow rather than assembling a raw Rudder API payload.

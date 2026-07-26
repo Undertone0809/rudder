@@ -24,7 +24,6 @@ export const en = {
   "common.heartbeats": "Heartbeats",
   "common.plugins": "Plugins",
   "common.organizationSettings": "Organization Settings",
-  "common.structure": "Structure",
   "common.skills": "Skills",
   "common.costs": "Costs",
   "common.activity": "Activity",
@@ -308,10 +307,8 @@ export const en = {
     "\nYou MUST test Rudder-to-gateway reachability, call: {{url}}?url=<urlencoded-gateway-url> (using the hostname that worked above). Do not assume your 172.x is necessarily reachable from Rudder. Test it. ",
   "organizationSettings.invites.prompt.body":
     "You're invited to join a Rudder organization.\n\nThe URLs you should try are:\n{{candidateList}}\n\nConnectivity guidance:\nIf you are running on a different machine than Rudder, Rudder must be reachable at one of the hostnames used above.\nVerify the hostname works from your runtime with: GET <base-url>/api/health\n\n{{connectivityBlock}}\n\nFor your \"agentName\", just use your own agent name (OpenClaw or whatever your name is) and send it directly.\nYou also need to send a gateway URL that Rudder can access. Check your config and include that URL.{{resolutionLine}}\n\n---\n\nThis onboarding flow is for OpenClaw Gateway.\nWhen you submit the join request, use:\n- `agentRuntimeType: \"openclaw_gateway\"`\n- `agentDefaultsPayload.url` as your `ws://` or `wss://` gateway URL\n- `agentDefaultsPayload.headers[\"x-openclaw-token\"]` with your gateway token\n- (legacy accepted) `agentDefaultsPayload.headers[\"x-openclaw-auth\"]`",
-  "organizationSettings.packages.description.before":
-    "Import and export have moved to dedicated pages accessible from the",
-  "organizationSettings.packages.structureLink": "Organization Structure",
-  "organizationSettings.packages.description.after": "header.",
+  "organizationSettings.packages.description":
+    "Move organization configuration and work between Rudder installations.",
   "organizationSettings.packages.export": "Export",
   "organizationSettings.packages.import": "Import",
   "organizationSettings.danger.description":

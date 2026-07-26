@@ -86,7 +86,7 @@ describe("resolveDefaultInstanceSettingsPath", () => {
 describe("normalizeRememberedSettingsPath", () => {
   it("keeps known organization and system settings pages", () => {
     expect(normalizeRememberedSettingsPath("/organization/settings")).toBe("/organization/settings");
-    expect(normalizeRememberedSettingsPath("/org")).toBe("/org");
+    expect(normalizeRememberedSettingsPath("/org")).toBe("/organization/settings");
     expect(normalizeRememberedSettingsPath("/instance/settings/general")).toBe("/instance/settings/general");
     expect(normalizeRememberedSettingsPath("/instance/settings/appearance")).toBe(
       INSTANCE_SETTINGS_APPEARANCE_PATH,

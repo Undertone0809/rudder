@@ -692,10 +692,8 @@ function cliArgsForCapability(
       pushOptional(args, "--role", input.role);
       pushOptional(args, "--title", input.title);
       pushOptional(args, "--capabilities", input.capabilities ?? input.description);
-      pushOptional(args, "--reports-to", input.reportsTo);
       pushBoolean(args, "--clear-title", input.clearTitle);
       pushBoolean(args, "--clear-capabilities", input.clearCapabilities ?? input.clearDescription);
-      pushBoolean(args, "--clear-reports-to", input.clearReportsTo);
       return args;
     }
     case "agent.skills.create": {

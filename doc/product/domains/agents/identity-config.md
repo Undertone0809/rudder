@@ -69,15 +69,14 @@ edit_policy: user_confirmed_only
 Why:
 
 - Agents are durable team members, not throwaway runtime processes. Their role,
-  capabilities, runtime, skills, budget, reporting line, and permissions define
+  capabilities, runtime, skills, budget, and permissions define
   what work Rudder may safely route to them.
 
 Product model:
 
 - An agent belongs to one organization.
-- Agent identity includes name, role, title, capabilities, status, reporting
-  line, runtime type/config, desired skills, budget, and permission/config
-  state.
+- Agent identity includes name, role, title, capabilities, status, runtime
+  type/config, desired skills, budget, and permission/config state.
 - Agent avatar identity uses the existing `agents.icon` field. Supported
   persisted generated references are deterministic Oreo
   `oreo:<shape>:<palette>:<uuid>` values and DiceBear Notionists values;
@@ -112,7 +111,7 @@ Flow:
 
 Invariants:
 
-- Agent identity and manager relationships do not cross organization boundary.
+- Agent identity does not cross the organization boundary.
 - Terminated or pending-approval agents are not ordinary invokable agents.
 - Runtime config is not only UI preference; it is execution contract.
 - Oreo shape, palette, and UUID segments must match the IDs and UUID grammar
@@ -136,8 +135,8 @@ Evidence:
   frame for a run.
 - The bundled `rudder-docs` Agent creation reference routes explicit creation
   requests through the existing identity, `canCreateAgents`, runtime discovery,
-  role enum, reporting-line, `SOUL.md`, source-issue, canonical hire,
-  direct-create, `pending_approval`, revision, and success-evidence semantics.
+  role enum, `SOUL.md`, source-issue, canonical hire, direct-create,
+  `pending_approval`, revision, and success-evidence semantics.
 
 ## AGENT.RUNTIME.ADAPTERS.001
 

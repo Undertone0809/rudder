@@ -79,8 +79,6 @@ interface AgentUpdateOptions extends BaseClientOptions {
   descriptionFile?: string;
   clearCapabilities?: boolean;
   clearDescription?: boolean;
-  reportsTo?: string;
-  clearReportsTo?: boolean;
 }
 
 interface AgentSkillSyncOptions extends BaseClientOptions {
@@ -105,7 +103,6 @@ interface AgentConfigurationRow {
   role: string;
   title: string | null;
   status: string;
-  reportsTo: string | null;
   agentRuntimeType: string;
   agentRuntimeConfig: Record<string, unknown>;
   runtimeConfig: Record<string, unknown>;
@@ -361,7 +358,6 @@ export function registerAgentCommands(program: Command): void {
                 name: row.name,
                 role: row.role,
                 status: row.status,
-                reportsTo: row.reportsTo,
                 budgetMonthlyCents: row.budgetMonthlyCents,
                 spentMonthlyCents: row.spentMonthlyCents,
               }),
@@ -436,7 +432,6 @@ export function registerAgentCommands(program: Command): void {
                 role: row.role,
                 status: row.status,
                 agentRuntimeType: row.agentRuntimeType,
-                reportsTo: row.reportsTo,
                 updatedAt: row.updatedAt,
               }),
             );
@@ -666,8 +661,6 @@ export function registerAgentCommands(program: Command): void {
       .option("--description-file <path>", "Alias for --capabilities-file")
       .option("--clear-capabilities", "Clear the agent capabilities/description")
       .option("--clear-description", "Alias for --clear-capabilities")
-      .option("--reports-to <agent-id>", "Manager agent ID")
-      .option("--clear-reports-to", "Clear the manager relationship")
       .action(async (agentIdArg: string | undefined, opts: AgentUpdateOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -679,7 +672,7 @@ export function registerAgentCommands(program: Command): void {
           const patch = await buildAgentUpdatePatch(opts);
           if (Object.keys(patch).length === 0) {
             throw new Error(
-              "No agent fields to update. Pass --name, --role, --title, --capabilities, --description, or --reports-to.",
+              "No agent fields to update. Pass --name, --role, --title, --capabilities, or --description.",
             );
           }
 
@@ -826,12 +819,6 @@ async function buildAgentUpdatePatch(opts: AgentUpdateOptions) {
   }
   if (opts.title !== undefined) rawPatch.title = opts.title;
   if (opts.clearTitle) rawPatch.title = null;
-
-  if (opts.reportsTo !== undefined && opts.clearReportsTo) {
-    throw new Error("Pass only one of --reports-to or --clear-reports-to.");
-  }
-  if (opts.reportsTo !== undefined) rawPatch.reportsTo = opts.reportsTo;
-  if (opts.clearReportsTo) rawPatch.reportsTo = null;
 
   const capabilitiesInputs = [
     opts.capabilities !== undefined ? "--capabilities" : null,

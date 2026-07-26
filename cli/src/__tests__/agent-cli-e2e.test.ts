@@ -75,7 +75,6 @@ type AgentConfigurationSnapshot = {
   role: string;
   status: string;
   agentRuntimeType: string;
-  reportsTo: string | null;
   updatedAt: string;
 };
 
@@ -1665,7 +1664,6 @@ describe("agent CLI e2e", () => {
           role: "general",
           title: "CLI Default Creator",
           icon: "crown",
-          reportsTo: peerAgentId,
           capabilities: "Validates default agent creation permission",
           agentRuntimeType: "codex_local",
           agentRuntimeConfig: { cwd: tempRoot, model: "o4-mini" },
@@ -1730,7 +1728,6 @@ describe("agent CLI e2e", () => {
           role: "general",
           title: "CLI Should Not Exist",
           icon: "crown",
-          reportsTo: deniedAgentId,
           capabilities: "Should be blocked by explicit agent creation denial",
           agentRuntimeType: "codex_local",
           agentRuntimeConfig: { cwd: tempRoot, model: "o4-mini" },
@@ -1812,7 +1809,6 @@ describe("agent CLI e2e", () => {
           role: "general",
           title: "CLI Operator",
           icon: "crown",
-          reportsTo: agentId,
           capabilities: "Handles operational follow-through",
           agentRuntimeType: "codex_local",
           agentRuntimeConfig: { cwd: tempRoot, model: "o4-mini" },
@@ -1842,7 +1838,6 @@ describe("agent CLI e2e", () => {
           role: "general",
           title: "CLI Reviewer",
           icon: "crown",
-          reportsTo: agentId,
           capabilities: "Reviews execution quality",
           agentRuntimeType: "codex_local",
           agentRuntimeConfig: { cwd: tempRoot, model: "o4-mini" },

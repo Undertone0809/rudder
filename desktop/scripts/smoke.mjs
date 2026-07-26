@@ -2428,9 +2428,9 @@ async function verifyOrganizationWorkspacesNavigation(electronApp, page, company
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, {
     nextCompanyId: companyId,
-    nextPath: `/${issuePrefix}/org`,
+    nextPath: `/${issuePrefix}/organization/settings`,
   });
-  await page.waitForURL(new RegExp(`/${issuePrefix}/org$`), { timeout: 30_000 });
+  await page.waitForURL(new RegExp(`/${issuePrefix}/organization/settings$`), { timeout: 30_000 });
 
   await page.getByRole("link", { name: "Library" }).click();
   page = await waitForBoardWindow(electronApp, page, {

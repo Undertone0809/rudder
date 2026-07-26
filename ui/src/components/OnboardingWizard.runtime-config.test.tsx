@@ -230,7 +230,6 @@ describe("OnboardingWizard runtime config", () => {
       title: "Founder Agent",
       icon: null,
       status: "active",
-      reportsTo: null,
       capabilities: null,
       agentRuntimeType: "pi_local",
       agentRuntimeConfig: {},

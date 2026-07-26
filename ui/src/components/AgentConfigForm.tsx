@@ -45,7 +45,6 @@ import {
 import { AdapterEnvironmentError, AdapterEnvironmentResult, SortableRuntimeProviderCard } from "./AgentConfigForm.environment";
 import { AgentConfigFormProps, applyRuntimeChainOrder, createValuesForRuntime, defaultConfigForRuntime, defaultFallbackItemForChain, defaultModelForRuntime, emptyOverlay, formatRuntimeEnvironmentLabel, hasClearedConfigValue, inputClass, isOverlayDirty, LOCAL_MODEL_RUNTIME_TYPES, normalizeModelFallbacksForEditor, omitClearedConfigValues, Overlay, primaryModelFallbackKey, runtimeChainItemsFromConfig, RuntimeEnvironmentStatus, RuntimeEnvironmentTestItemResult, RuntimeEnvironmentTestTarget, runtimeProviderItemClassName, runtimeProviderRailClassName } from "./AgentConfigForm.helpers";
 import { MarkdownEditor } from "./MarkdownEditor";
-import { ReportsToPicker } from "./ReportsToPicker";
 
 /* ---- Create mode values ---- */
 
@@ -215,12 +214,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     () => resolveRuntimeModels(agentRuntimeType, fetchedModels, externalModels),
     [agentRuntimeType, fetchedModels, externalModels],
   );
-
-  const { data: companyAgents = [] } = useQuery({
-    queryKey: selectedOrganizationId ? queryKeys.agents.list(selectedOrganizationId) : ["agents", "none", "list"],
-    queryFn: () => agentsApi.list(selectedOrganizationId!),
-    enabled: Boolean(!isCreate && selectedOrganizationId),
-  });
 
   const { data: adapterAvailability = [] } = useQuery({
     queryKey: selectedOrganizationId
@@ -460,15 +453,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 immediate
                 className={inputClass}
                 placeholder="e.g. VP of Engineering"
-              />
-            </Field>
-            <Field label="Reports to" hint={help.reportsTo}>
-              <ReportsToPicker
-                agents={companyAgents}
-                value={eff("identity", "reportsTo", props.agent.reportsTo ?? null)}
-                onChange={(id) => mark("identity", "reportsTo", id)}
-                excludeAgentIds={[props.agent.id]}
-                chooseLabel="Choose manager…"
               />
             </Field>
             <Field label="Capabilities" hint={help.capabilities}>

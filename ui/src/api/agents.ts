@@ -51,14 +51,6 @@ export interface ClaudeLoginResult {
   stderr: string;
 }
 
-export interface OrgNode {
-  id: string;
-  name: string;
-  role: string;
-  status: string;
-  reports: OrgNode[];
-}
-
 export interface AgentHireResponse {
   agent: Agent;
   approval: Approval | null;
@@ -88,7 +80,6 @@ export const agentsApi = {
   list: (orgId: string) => api.get<Agent[]>(`/orgs/${orgId}/agents`),
   suggestName: (orgId: string) =>
     api.get<AgentNameSuggestion>(`/orgs/${encodeURIComponent(orgId)}/agents/name-suggestion`),
-  org: (orgId: string) => api.get<OrgNode[]>(`/orgs/${orgId}/org`),
   listConfigurations: (orgId: string) =>
     api.get<Record<string, unknown>[]>(`/orgs/${orgId}/agent-configurations`),
   get: async (id: string, orgId?: string) => {

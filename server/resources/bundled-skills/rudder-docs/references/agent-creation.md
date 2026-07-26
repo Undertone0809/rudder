@@ -71,8 +71,6 @@ defines its organizational responsibility and runnable configuration:
   `designer`, `pm`, `qa`, `devops`, `researcher`, or `general`.
 - `title` carries the specific job title. For example, use role `engineer` and
   title `Founding Engineer`, never a new `founding_engineer` role.
-- `reportsTo` identifies an in-organization manager and must preserve the
-  intended reporting line.
 - `capabilities` states the work this Agent owns and the boundaries it should
   not silently cross.
 - `agentRuntimeType`, `agentRuntimeConfig`, and `runtimeConfig` must follow the
@@ -147,7 +145,7 @@ written. Success requires the canonical hire operation to return:
 - `agent.id` for the created or pending Agent; and
 - `approval.id` when approval is required.
 
-Report the organization, Agent identity, role/title, reporting line, runtime,
+Report the organization, Agent identity, role/title, runtime,
 source issue, and direct versus approval branch without exposing secrets.
 If execution was not explicitly requested, report only the verified proposed
 configuration and the current command or capability that would govern it.

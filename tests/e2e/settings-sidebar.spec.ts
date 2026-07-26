@@ -10,6 +10,52 @@ function uniqueIssuePrefix() {
 }
 
 test.describe("Settings sidebar", () => {
+  test("keeps organization import and export in settings after Structure removal", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Portability Settings ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as {
+      id: string;
+      issuePrefix: string;
+      urlKey: string;
+    };
+
+    await page.goto(`/${organization.issuePrefix}/organization/settings`);
+
+    const settingsPage = page.getByTestId("organization-settings-page");
+    await expect(settingsPage).toBeVisible();
+    await settingsPage.getByRole("tab", { name: "Access & data" }).click();
+    await expect(settingsPage.getByRole("link", { name: "Export", exact: true })).toBeVisible();
+    await expect(settingsPage.getByRole("link", { name: "Import", exact: true })).toBeVisible();
+    await expect(page.getByTestId("workspace-sidebar").getByRole("link", { name: "Structure" })).toHaveCount(0);
+
+    await page.goto(`/${organization.issuePrefix}/org`);
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/organization/settings$`));
+    await expect(page.getByTestId("organization-settings-page")).toBeVisible();
+
+    const removedTreeResponse = await page.request.get(`/api/orgs/${organization.id}/org`);
+    expect(removedTreeResponse.status()).toBe(404);
+
+    await page.goto(`/${organization.issuePrefix}/agents/new`);
+    await expect(page.getByText("Reports to", { exact: true })).toHaveCount(0);
+
+    const agentResponse = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Independent Agent",
+        role: "general",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {},
+      },
+    });
+    expect(agentResponse.ok()).toBe(true);
+    const agent = await agentResponse.json() as Record<string, unknown>;
+    expect(agent).not.toHaveProperty("reportsTo");
+  });
+
   test("keeps fixed light mode even when the system prefers dark", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

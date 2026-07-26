@@ -36,8 +36,6 @@ Rudder turns those coordination patterns into product primitives for agent teams
 
 ![Rudder calendar](./doc/assets/readme_imgs/9.png)
 
-![Rudder organization structure](./doc/assets/readme_imgs/10.png)
-
 ![Rudder approvals](./doc/assets/readme_imgs/2.png)
 
 ![Rudder issue proposal](./doc/assets/readme_imgs/3.png)
@@ -52,19 +50,18 @@ Rudder turns those coordination patterns into product primitives for agent teams
 
 - work belongs to an organization, not a loose thread
 - every issue should trace back to a goal
-- agents have roles, runtime config, reporting lines, and skills
+- agents have roles, runtime config, capabilities, and skills
 - chat and issues provide conversational and structured ways to move work forward, with execution attached to inspectable runs, outputs, reviews, and history
 - autonomy stays legible, governable, and budget-aware
 
 ## What Rudder Is
 
-Rudder is open-source software for assigning, running, reviewing, and improving agent work. One Rudder instance can run one or many organizations, each with its own goal, org structure, agents, issues, budgets, approvals, feedback, and governance.
+Rudder is open-source software for assigning, running, reviewing, and improving agent work. One Rudder instance can run one or many organizations, each with its own goal, agents, issues, budgets, approvals, feedback, and governance.
 
 | Human team pattern | Rudder equivalent |
 | --- | --- |
 | Mission | Organization goal |
 | Employees | AI agents |
-| Org chart | Agent reporting structure |
 | Work ownership | Issues and assignments |
 | Team workflow | Workflow definitions and execution paths |
 | Operational memory | Comments, documents, run history, activity, and skills |

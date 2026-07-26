@@ -97,7 +97,6 @@ function makeAgent(id: string, overrides: Partial<Record<string, unknown>> = {})
     role: "engineer",
     title: "Engineer",
     status: "active",
-    reportsTo: null,
     capabilities: null,
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: {},

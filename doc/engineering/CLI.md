@@ -537,7 +537,7 @@ issue. Use the full UUID when a short ref is ambiguous.
 Pass `--json` if you want the raw text wrapped as a JSON string.
 `agent icons` is a legacy compatibility/debugging reference; normal hire and create payloads should omit `icon` so Rudder generates an Oreo avatar. Explicit supported Oreo, DiceBear Notionists, and uploaded `asset:<uuid>` references remain valid when preserving an operator-selected identity.
 
-`agent update` modifies an agent's identity fields. When `[agent-id]` is omitted it defaults to `RUDDER_AGENT_ID`, so an agent can update its own visible name, title, role, capabilities/description, and manager relationship after an operating-contract change. `--description` is a CLI alias for the stored `capabilities` field; `--clear-title`, `--clear-description`, and `--clear-reports-to` clear nullable fields.
+`agent update` modifies an agent's identity fields. When `[agent-id]` is omitted it defaults to `RUDDER_AGENT_ID`, so an agent can update its own visible name, title, role, and capabilities/description after an operating-contract change. `--description` is a CLI alias for the stored `capabilities` field; `--clear-title` and `--clear-description` clear nullable fields.
 
 `agent skills create` creates an agent-private skill under `AGENT_HOME/skills` for the target agent. When `[agent-id]` is omitted it defaults to `RUDDER_AGENT_ID`. Pass `--enable` to add the new private skill to the agent's enabled skill set for future runs.
 

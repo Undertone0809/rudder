@@ -64,7 +64,6 @@ describe("monthly spend hydration", () => {
         name: "Budget Agent",
         role: "general",
         title: null,
-        reportsTo: null,
         capabilities: null,
         agentRuntimeType: "claude-local",
         agentRuntimeConfig: {},

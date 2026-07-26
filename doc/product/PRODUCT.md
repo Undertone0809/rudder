@@ -31,7 +31,7 @@ Rudder should make the promotion paths explicit and reviewable. A lesson may bec
 An organization has:
 
 - a **goal** that explains why the agent team exists
-- **agents** with roles, runtimes, capabilities, budgets, and reporting lines
+- **agents** with roles, runtimes, capabilities, budgets, and permissions
 - **chat and issues** that offer conversational and structured ways to move work forward
 - **projects** that group related chats, issues, resources, and timelines
 - **reviews and approvals** for output quality and governed actions
@@ -40,12 +40,12 @@ An organization has:
 
 ### Agents
 
-Agents are durable team members, not disposable prompts. Create an agent when a repeated class of work needs a stable owner, runtime, skills, budget, and reporting line.
+Agents are durable team members, not disposable prompts. Create an agent when a repeated class of work needs a stable owner, runtime, skills, and budget.
 
 Each agent has:
 
 - **Runtime type + config** — how Rudder wakes the agent and how the runtime performs work
-- **Role and reporting** — what responsibility the agent owns and where escalation goes
+- **Role and title** — what responsibility the agent owns and how it is presented to operators
 - **Capabilities description** — what work this agent should accept and what it should not decide silently
 - **Skills and operating instructions** — reusable procedures the agent can use in future runs
 

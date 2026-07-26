@@ -339,39 +339,6 @@
   animation: rudder-card-drop-settle var(--motion-duration-emphasis) var(--motion-ease-enter) both;
 }
 
-.motion-org-viewport[data-panning="false"] .motion-org-layer {
-  transition: transform var(--motion-duration-standard) var(--motion-ease-enter);
-}
-
-.motion-org-card {
-  animation: rudder-org-card-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
-  transition:
-    border-color var(--motion-duration-fast) var(--motion-ease-standard),
-    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
-    transform var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.motion-org-card:hover {
-  transform: translateY(-1px);
-}
-
-.motion-org-edge {
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-}
-
-.motion-org-card[data-active="true"] {
-  box-shadow:
-    0 12px 32px -26px color-mix(in oklab, var(--accent-base) 64%, transparent),
-    inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 36%, transparent);
-}
-
-.motion-org-edge[data-active="true"] {
-  stroke: color-mix(in oklab, var(--accent-base) 72%, var(--border));
-  stroke-dasharray: 7 9;
-  animation: rudder-org-edge-flow 1400ms linear infinite;
-}
-
 .motion-rail-nav {
   position: relative;
   --motion-rail-item-height: 56px;
@@ -826,23 +793,6 @@
   }
 }
 
-@keyframes rudder-org-card-enter {
-  from {
-    opacity: 0;
-    transform: translateY(5px) scale(0.992);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes rudder-org-edge-flow {
-  to {
-    stroke-dashoffset: -16;
-  }
-}
-
 @keyframes rudder-chat-composer-menu-pop {
   0% {
     opacity: 0;
@@ -1075,8 +1025,6 @@
   .motion-live-dot::after,
   .motion-kanban-card[data-live="true"],
   .motion-kanban-card[data-just-dropped="true"],
-  .motion-org-card,
-  .motion-org-edge[data-active="true"],
   .motion-chat-composer-menu-pop,
   .motion-chat-composer-menu-pop [data-chat-composer-menu-item],
   .motion-chat-side-panel,
@@ -1105,8 +1053,6 @@
   .motion-kanban-lane,
   .motion-kanban-card,
   .motion-draft-issue-card,
-  .motion-org-layer,
-  .motion-org-card,
   .motion-chat-empty-recent-conversations,
   .motion-chat-prompt-flow,
   .t-page-slide .t-page,

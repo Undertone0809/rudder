@@ -72,7 +72,6 @@ const sidebarAgent: Agent = {
   title: "CEO",
   icon: null,
   status: "idle",
-  reportsTo: null,
   capabilities: null,
   agentRuntimeType: "codex_local",
   agentRuntimeConfig: {},

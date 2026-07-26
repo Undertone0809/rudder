@@ -19,7 +19,6 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     title: null,
     icon: null,
     status: "idle",
-    reportsTo: null,
     capabilities: null,
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: { model: "gpt-5.6-sol" },

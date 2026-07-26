@@ -24,7 +24,6 @@ const baseAgent = {
   title: "Builder",
   icon: null,
   status: "idle",
-  reportsTo: null,
   capabilities: null,
   agentRuntimeType: "process",
   agentRuntimeConfig: {},
@@ -47,7 +46,6 @@ const mockAgentService = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
   updatePermissions: vi.fn(),
-  getChainOfCommand: vi.fn(),
   resolveByReference: vi.fn(),
   resume: vi.fn(),
 }));
@@ -201,7 +199,6 @@ describe("agent permission routes", () => {
     vi.clearAllMocks();
     mockAgentService.getById.mockResolvedValue(baseAgent);
     mockAgentService.getInternalById.mockResolvedValue(null);
-    mockAgentService.getChainOfCommand.mockResolvedValue([]);
     mockAgentService.resolveByReference.mockResolvedValue({ ambiguous: false, agent: baseAgent });
     mockAgentService.create.mockResolvedValue(baseAgent);
     mockAgentService.resume.mockResolvedValue(baseAgent);

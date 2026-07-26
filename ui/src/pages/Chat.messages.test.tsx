@@ -148,7 +148,6 @@ function agent(overrides: Partial<Agent> = {}): Agent {
     title: null,
     icon: "robot",
     status: "active",
-    reportsTo: null,
     capabilities: null,
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: {},

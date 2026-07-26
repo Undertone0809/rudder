@@ -40,10 +40,10 @@ import {
   logActivity,
   notifyHireApproved
 } from "../services/index.js";
-import { buildInviteOnboardingManifest, buildInviteOnboardingTextDocument, grantsFromDefaults, inviteExpired, isInviteTokenHashCollisionError, isLocalImplicit, mergeInviteDefaults, normalizeAgentDefaultsForJoin, probeInviteResolutionTarget, requestIp, resolveActorEmail, resolveJoinRequestAgentManagerId, toInviteSummaryResponse } from "./access-onboarding.helpers.js";
+import { buildInviteOnboardingManifest, buildInviteOnboardingTextDocument, grantsFromDefaults, inviteExpired, isInviteTokenHashCollisionError, isLocalImplicit, mergeInviteDefaults, normalizeAgentDefaultsForJoin, probeInviteResolutionTarget, requestIp, resolveActorEmail, toInviteSummaryResponse } from "./access-onboarding.helpers.js";
 import { buildCliAuthApprovalPath, buildJoinDefaultsPayloadForAccept, canReplayOpenClawGatewayInviteAccept, companyInviteExpiresAt, createClaimSecret, createInviteToken, hashToken, INVITE_TOKEN_MAX_RETRIES, isPlainObject, JoinDiagnostic, listAvailableSkills, mergeJoinDefaultsPayloadForReplay, readSkillMarkdown, requestBaseUrl, summarizeOpenClawGatewayDefaultsForLog, toJoinRequestResponse, tokenHashesMatch } from "./access.helpers.js";
 import { assertCompanyAccess } from "./authz.js";
-export { buildInviteOnboardingTextDocument, normalizeAgentDefaultsForJoin, resolveJoinRequestAgentManagerId } from "./access-onboarding.helpers.js";
+export { buildInviteOnboardingTextDocument, normalizeAgentDefaultsForJoin } from "./access-onboarding.helpers.js";
 export { buildJoinDefaultsPayloadForAccept, canReplayOpenClawGatewayInviteAccept, companyInviteExpiresAt, mergeJoinDefaultsPayloadForReplay } from "./access.helpers.js";
 
 export function accessRoutes(
@@ -1083,13 +1083,6 @@ export function accessRoutes(
         );
       } else {
         const existingAgents = await agents.list(orgId);
-        const managerId = resolveJoinRequestAgentManagerId(existingAgents);
-        if (!managerId) {
-          throw conflict(
-            "Join request cannot be approved because this organization has no active CEO"
-          );
-        }
-
         const agentName = deduplicateAgentName(
           existing.agentName ?? "New Agent",
           existingAgents.map((a) => ({
@@ -1104,7 +1097,6 @@ export function accessRoutes(
           role: "general",
           title: null,
           status: "idle",
-          reportsTo: managerId,
           capabilities: existing.capabilities ?? null,
           agentRuntimeType: existing.agentRuntimeType ?? "process",
           agentRuntimeConfig:

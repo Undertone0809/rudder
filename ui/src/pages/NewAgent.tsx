@@ -29,7 +29,6 @@ import { defaultCreateValues } from "../components/agent-config-defaults";
 import { roleLabels } from "../components/agent-config-primitives";
 import { AgentConfigForm, type CreateConfigValues } from "../components/AgentConfigForm";
 import { defaultModelForRuntime } from "../components/AgentConfigForm.helpers";
-import { ReportsToPicker } from "../components/ReportsToPicker";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -78,7 +77,6 @@ export function NewAgent() {
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   const [role, setRole] = useState("general");
-  const [reportsTo, setReportsTo] = useState<string | null>(null);
   const [configValues, setConfigValues] = useState<CreateConfigValues>(defaultCreateValues);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [skillSearchQuery, setSkillSearchQuery] = useState("");
@@ -245,7 +243,6 @@ export function NewAgent() {
       name: trimmedName,
       role: effectiveRole,
       ...(title.trim() ? { title: title.trim() } : {}),
-      ...(reportsTo ? { reportsTo } : {}),
       ...(desiredSkills.length > 0 ? { desiredSkills } : {}),
       agentRuntimeType: configValues.agentRuntimeType,
       agentRuntimeConfig: buildAdapterConfig(),
@@ -303,7 +300,7 @@ export function NewAgent() {
           />
         </div>
 
-        {/* Property chips: Role + Reports To */}
+        {/* Property chips */}
         <div className="flex items-center gap-1.5 px-4 py-2 border-t border-border flex-wrap">
           <Popover open={roleOpen} onOpenChange={setRoleOpen}>
             <PopoverTrigger asChild>
@@ -334,12 +331,6 @@ export function NewAgent() {
             </PopoverContent>
           </Popover>
 
-          <ReportsToPicker
-            agents={agents ?? []}
-            value={reportsTo}
-            onChange={setReportsTo}
-            disabled={isFirstAgent || !hasLoadedAgents}
-          />
         </div>
 
         {/* Shared config form */}

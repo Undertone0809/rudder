@@ -305,7 +305,6 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
           title: manifestAgent.title,
           icon: manifestAgent.icon,
           capabilities: manifestAgent.capabilities,
-          reportsTo: null,
           agentRuntimeType: effectiveAdapterType,
           agentRuntimeConfig: agentRuntimeConfigWithoutSkills,
           runtimeConfig: disableImportedTimerHeartbeat(manifestAgent.runtimeConfig, {
@@ -390,20 +389,6 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
         });
       }
 
-      // Apply reporting links once all imported agent ids are available.
-      for (const manifestAgent of plan.selectedAgents) {
-        const agentId = importedSlugToAgentId.get(manifestAgent.slug);
-        if (!agentId) continue;
-        const managerSlug = manifestAgent.reportsToSlug;
-        if (!managerSlug) continue;
-        const managerId = importedSlugToAgentId.get(managerSlug) ?? existingSlugToAgentId.get(managerSlug) ?? null;
-        if (!managerId || managerId === agentId) continue;
-        try {
-          await agents.update(agentId, { reportsTo: managerId });
-        } catch {
-          warnings.push(`Could not assign manager ${managerSlug} for imported agent ${manifestAgent.slug}.`);
-        }
-      }
     }
 
     if (include.projects) {

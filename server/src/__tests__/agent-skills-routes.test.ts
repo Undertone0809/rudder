@@ -179,7 +179,6 @@ function makeAgent(agentRuntimeType: string) {
     role: "engineer",
     title: "Engineer",
     status: "active",
-    reportsTo: null,
     capabilities: null,
     agentRuntimeType,
     agentRuntimeConfig: {},

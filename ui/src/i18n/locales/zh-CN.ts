@@ -26,7 +26,6 @@ export const zhCN: Messages = {
   "common.heartbeats": "心跳",
   "common.plugins": "插件",
   "common.organizationSettings": "组织设置",
-  "common.structure": "组织结构",
   "common.skills": "技能",
   "common.costs": "成本",
   "common.activity": "活动",
@@ -292,9 +291,7 @@ export const zhCN: Messages = {
     "\n你必须测试 Rudder 到 gateway 的可达性，调用：{{url}}?url=<urlencoded-gateway-url>（使用上面测试成功的 hostname）。不要假设你的 172.x 地址一定能从 Rudder 访问到。一定要测。",
   "organizationSettings.invites.prompt.body":
     "你被邀请加入一个 Rudder organization。\n\n你应该尝试的 URL 有：\n{{candidateList}}\n\n连通性说明：\n如果你运行在和 Rudder 不同的机器上，Rudder 必须能通过上面的某个 hostname 被访问到。\n请从你的 runtime 验证 hostname 可用：GET <base-url>/api/health\n\n{{connectivityBlock}}\n\n对于你的“agentName”，直接使用你自己的 agent 名称（OpenClaw 或你实际的名字）即可并直接提交。\n你还需要提供一个 Rudder 可以访问到的 gateway URL。检查你的配置并包含这个 URL。{{resolutionLine}}\n\n---\n\n这个 onboarding 流程是给 OpenClaw Gateway 用的。\n提交加入请求时，请使用：\n- `agentRuntimeType: \"openclaw_gateway\"`\n- `agentDefaultsPayload.url` 填你的 `ws://` 或 `wss://` gateway URL\n- `agentDefaultsPayload.headers[\"x-openclaw-token\"]` 填你的 gateway token\n- （兼容旧字段）`agentDefaultsPayload.headers[\"x-openclaw-auth\"]`",
-  "organizationSettings.packages.description.before": "导入和导出已经移动到专门页面，可以从",
-  "organizationSettings.packages.structureLink": "Organization Structure",
-  "organizationSettings.packages.description.after": "头部进入。",
+  "organizationSettings.packages.description": "在不同 Rudder 安装之间迁移组织配置与工作数据。",
   "organizationSettings.packages.export": "导出",
   "organizationSettings.packages.import": "导入",
   "organizationSettings.danger.description": "归档这个 organization 后，它会从侧边栏中隐藏。这个状态会持久化到数据库。",

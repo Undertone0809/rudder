@@ -45,7 +45,7 @@ operating-practices guide for operating behavior:
 
 | MCP Tool | CLI Fallback | Description | Mutating | Org | Agent | Run ID |
 | --- | --- | --- | --- | --- | --- | --- |
-| `rudder_agent_me` | `rudder agent me` | Show the authenticated agent identity, budget, and chain of command. | no | no | no | no |
+| `rudder_agent_me` | `rudder agent me` | Show the authenticated agent identity and budget. | no | no | no | no |
 | `rudder_agent_inbox` | `rudder agent inbox` | List the compact assignee and reviewer work inbox for the authenticated agent. | no | no | no | no |
 | `rudder_agent_capabilities` | `rudder agent capabilities` | List the stable Rudder agent command contract. | no | no | no | no |
 | `rudder_agent_update` | `rudder agent update [agent-id] [--title <title>] [--description <text>]` | Update an agent's identity fields; defaults to the authenticated agent. | yes | no | no | attached when available |

@@ -29,7 +29,7 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 
 ### How-to guides
 - [Run an Issue from intake to done](https://docs.rudderhq.dev/how-to/issue-lifecycle): Move one Issue through assignment, Agent execution, evidence, structured review, and accepted close-out.
-- [Create an Agent](https://docs.rudderhq.dev/how-to/create-agent): Create a durable Agent with a clear role, capability boundary, runtime, reporting line, and low-risk verification run.
+- [Create an Agent](https://docs.rudderhq.dev/how-to/create-agent): Create a durable Agent with a clear role, capability boundary, runtime, and low-risk verification run.
 - [Create an Automation](https://docs.rudderhq.dev/how-to/create-automation): Create a repeatable Automation with a stable owner, trigger, context, concurrency policy, and verified output route.
 - [Review Agent work](https://docs.rudderhq.dev/how-to/review-agent-work): Inspect one Agent output and its Run evidence, record a structured decision, and route the next action.
 - [Manage Workspaces and Library](https://docs.rudderhq.dev/how-to/manage-workspaces-and-library): Curate project context, keep durable output in Library, inspect files safely, and recover organization workspace state.
@@ -76,7 +76,7 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 
 ### How-to guides
 - [让 Issue 从接收走到完成](https://docs.rudderhq.dev/zh/how-to/issue-lifecycle): 把一条 Issue 依次推进到分配、Agent 执行、证据、结构化评审和接受完成。
-- [创建 Agent](https://docs.rudderhq.dev/zh/how-to/create-agent): 创建一名职责、能力边界、运行环境和汇报关系都清楚的长期 Agent，并完成低风险验证。
+- [创建 Agent](https://docs.rudderhq.dev/zh/how-to/create-agent): 创建一名职责、能力边界和运行环境都清楚的长期 Agent，并完成低风险验证。
 - [创建自动化](https://docs.rudderhq.dev/zh/how-to/create-automation): 创建一项负责人、触发方式、上下文、并发策略和结果去向都稳定的自动化，并验证真实结果。
 - [评审 Agent 工作](https://docs.rudderhq.dev/zh/how-to/review-agent-work): 检查一项 Agent 产物和运行证据，记录结构化结论，并把下一步交给正确负责人。
 - [管理工作区和 Library](https://docs.rudderhq.dev/zh/how-to/manage-workspaces-and-library): 筛选项目上下文，把持久产物留在 Library，安全检查文件，并恢复组织工作区。

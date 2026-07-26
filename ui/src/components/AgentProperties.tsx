@@ -1,13 +1,7 @@
 import { Separator } from "@/components/ui/separator";
-import { Link } from "@/lib/router";
 import { AGENT_ROLE_LABELS, type Agent, type AgentRuntimeState } from "@rudderhq/shared";
-import { useQuery } from "@tanstack/react-query";
-import { agentsApi } from "../api/agents";
-import { useOrganization } from "../context/OrganizationContext";
-import { queryKeys } from "../lib/queryKeys";
-import { agentUrl, formatDate } from "../lib/utils";
+import { formatDate } from "../lib/utils";
 import { adapterLabels } from "./agent-config-primitives";
-import { AgentIdentity } from "./AgentAvatar";
 import { StatusBadge } from "./StatusBadge";
 
 interface AgentPropertiesProps {
@@ -27,16 +21,6 @@ function PropertyRow({ label, children }: { label: string; children: React.React
 }
 
 export function AgentProperties({ agent, runtimeState }: AgentPropertiesProps) {
-  const { selectedOrganizationId } = useOrganization();
-
-  const { data: agents } = useQuery({
-    queryKey: queryKeys.agents.list(selectedOrganizationId!),
-    queryFn: () => agentsApi.list(selectedOrganizationId!),
-    enabled: !!selectedOrganizationId && !!agent.reportsTo,
-  });
-
-  const reportsToAgent = agent.reportsTo ? agents?.find((a) => a.id === agent.reportsTo) : null;
-
   return (
     <div className="space-y-4">
       <div className="space-y-1">
@@ -74,17 +58,6 @@ export function AgentProperties({ agent, runtimeState }: AgentPropertiesProps) {
         {agent.lastHeartbeatAt && (
           <PropertyRow label="Last Heartbeat">
             <span className="text-sm">{formatDate(agent.lastHeartbeatAt)}</span>
-          </PropertyRow>
-        )}
-        {agent.reportsTo && (
-          <PropertyRow label="Reports To">
-            {reportsToAgent ? (
-              <Link to={agentUrl(reportsToAgent)} className="hover:underline">
-                <AgentIdentity name={reportsToAgent.name} icon={reportsToAgent.icon} role={reportsToAgent.role} size="sm" />
-              </Link>
-            ) : (
-              <span className="text-sm font-mono">{agent.reportsTo.slice(0, 8)}</span>
-            )}
           </PropertyRow>
         )}
         <PropertyRow label="Created">

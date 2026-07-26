@@ -53,7 +53,7 @@ export const portabilityAgentManifestEntrySchema = z.object({
   title: z.string().nullable(),
   icon: z.string().nullable(),
   capabilities: z.string().nullable(),
-  reportsToSlug: z.string().min(1).nullable(),
+  reportsToSlug: z.string().min(1).nullable().optional().default(null),
   agentRuntimeType: z.string().min(1),
   agentRuntimeConfig: z.record(z.unknown()),
   runtimeConfig: z.record(z.unknown()),

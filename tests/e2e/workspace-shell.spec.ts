@@ -941,7 +941,7 @@ test.describe("Workspace shell", () => {
     await expect(page.getByTestId("org-workspaces-show-sidebar-button")).toHaveCount(0);
   });
 
-  test("surfaces Library in the shared three-column shell", async ({ page }, testInfo) => {
+  test("surfaces organization navigation without Structure in the shared three-column shell", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Workspace-Shell-Org-${Date.now()}`,
@@ -950,7 +950,7 @@ test.describe("Workspace shell", () => {
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
 
-    await gotoOrganizationPath(page, organization, "/org");
+    await gotoOrganizationPath(page, organization, "/heartbeats");
 
     const shell = page.getByTestId("workspace-shell");
     const sidebar = page.getByTestId("workspace-sidebar");
@@ -965,7 +965,7 @@ test.describe("Workspace shell", () => {
     await expect(contextCard).toBeVisible();
     await expect(mainHeader).toBeVisible();
     await expect(mainCard).toBeVisible();
-    await expect(sidebar.getByRole("link", { name: "Structure" })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Structure" })).toHaveCount(0);
     await expect(sidebar.getByRole("link", { name: "Library" })).toHaveCount(0);
     await expect(sidebar.getByRole("link", { name: "Heartbeats" })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Workspaces" })).toHaveCount(0);
@@ -989,7 +989,7 @@ test.describe("Workspace shell", () => {
     expect(mainCardBox!.x).toBeGreaterThan(contextCardBox!.x + contextCardBox!.width - 4);
 
     await page.screenshot({
-      path: testInfo.outputPath("workspace-shell-org.png"),
+      path: testInfo.outputPath("workspace-shell-heartbeats.png"),
       fullPage: true,
     });
   });

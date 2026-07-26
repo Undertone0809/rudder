@@ -58,13 +58,6 @@ export interface AgentAccessState {
   grants: PrincipalPermissionGrant[];
 }
 
-export interface AgentChainOfCommandEntry {
-  id: string;
-  name: string;
-  role: AgentRole;
-  title: string | null;
-}
-
 export interface Agent {
   id: string;
   shortRef?: string;
@@ -75,7 +68,6 @@ export interface Agent {
   title: string | null;
   icon: string | null;
   status: AgentStatus;
-  reportsTo: string | null;
   capabilities: string | null;
   agentRuntimeType: AgentRuntimeType;
   agentRuntimeConfig: Record<string, unknown>;
@@ -92,7 +84,6 @@ export interface Agent {
 }
 
 export interface AgentDetail extends Agent {
-  chainOfCommand: AgentChainOfCommandEntry[];
   access: AgentAccessState;
   instructionsLibraryPath: string | null;
   rudderTools?: Array<AgentRudderToolSummary | AgentBrowserToolSummary>;

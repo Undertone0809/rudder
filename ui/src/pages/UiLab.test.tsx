@@ -24,7 +24,6 @@ describe("UiLab coverage registry", () => {
       "AgentIdentity",
       "AgentAvatar",
       "AssigneeLabel",
-      "ReportsToPicker",
       "IssueLabelChip",
       "ActivityRow",
       "IssueRow",

@@ -104,6 +104,5 @@ test.describe("Agents workspace entry", () => {
     await expect(page.getByRole("button", { name: "Filters" })).toHaveCount(0);
     await expect(page.getByText("Nothing here yet", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Create your first agent to get started.", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("No Organization Structure defined.", { exact: true })).toHaveCount(0);
   });
 });

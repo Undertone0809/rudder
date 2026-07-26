@@ -1,6 +1,6 @@
 ---
 title: "Create an Agent"
-description: "Create a durable Agent with a clear role, capability boundary, runtime, reporting line, and low-risk verification run."
+description: "Create a durable Agent with a clear role, capability boundary, runtime, and low-risk verification run."
 icon: "bot"
 keywords:
   - "create Rudder Agent"
@@ -17,8 +17,8 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/create-agent"
 ## Completed state
 
 At the end of this guide, the organization has one new active Agent with a
-recognizable responsibility, valid reporting line, bounded capabilities, saved
-runtime configuration, and one inspectable low-risk run.
+recognizable responsibility, bounded capabilities, saved runtime configuration,
+and one inspectable low-risk run.
 
 Create a durable Agent for repeated ownership. A one-off prompt that fits an
 existing role does not need a new Agent.
@@ -39,8 +39,7 @@ task.
 1. Open **Agents** and choose **New Agent**.
 2. Name the Agent `Launch Writer` and give it a title that describes its
    position, such as `Release Communications Writer`.
-3. Choose the role used by the organization structure and set **Reports to** to
-   an active Agent in the same organization.
+3. Choose the role that best matches the Agent's responsibility.
 4. Select and configure the runtime, then run **Test runtime chain**.
 5. For a local runtime, write the prompt template that frames the role and its
    boundaries. Set the run policy, and enable only the optional Skills this
@@ -59,8 +58,8 @@ task.
 
 ## Success signal
 
-Agent detail shows the intended role, reporting line, capabilities, permissions,
-runtime, Skills, and budget. The low-risk run uses that runtime and leaves an
+Agent detail shows the intended role, capabilities, permissions, runtime,
+Skills, and budget. The low-risk run uses that runtime and leaves an
 output plus a clear completion or blocker signal on its source Chat or Issue.
 
 <a id="recovery" />
@@ -68,7 +67,7 @@ output plus a clear completion or blocker signal on its source Chat or Issue.
 ## Recovery
 
 If creation is blocked, check organization scope, create-Agent permission,
-reporting-line eligibility, and runtime test output. Pending-approval, paused,
+and runtime test output. Pending-approval, paused,
 terminated, and revoked-access Agents are not ordinary invokable Agents.
 
 If the first run accepts the wrong work, tighten the capability statement and

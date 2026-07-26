@@ -138,7 +138,7 @@ After the script prints `baseUrl` and the org prefix, useful routes include:
 - `/<org-prefix>/heartbeats`
 - `/<org-prefix>/costs`
 - `/<org-prefix>/calendar`
-- `/<org-prefix>/org`
+- `/<org-prefix>/organization/settings`
 
 Prefer `127.0.0.1` if browser automation has trouble with `localhost`.
 

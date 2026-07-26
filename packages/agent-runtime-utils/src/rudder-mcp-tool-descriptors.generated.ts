@@ -3,7 +3,7 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
   {
     "capabilityId": "agent.me",
     "name": "rudder_agent_me",
-    "description": "Show the authenticated agent identity, budget, and chain of command.",
+    "description": "Show the authenticated agent identity and budget.",
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
@@ -847,5 +847,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "998b5f7a23d57634148a59a04f002b46b480570952d9f7eb4a9fa559f756cb7c";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "a0c3df3a89ce6d150af3300507f6093ee85c66ff8a22d7cf628ab3d415e6e6b3";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

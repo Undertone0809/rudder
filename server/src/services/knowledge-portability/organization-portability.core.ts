@@ -28,7 +28,6 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
-import { type OrgNode } from "../../routes/org-chart-svg.js";
 import { automationService } from "../automations.js";
 import { validateCron } from "../cron.js";
 
@@ -41,51 +40,6 @@ export interface OrganizationPortabilityExportOptions {
     total: number;
     fileCount?: number | null;
   }) => void;
-}
-
-/** Build OrgNode tree from manifest agent list (slug + reportsToSlug). */
-export function buildOrgTreeFromManifest(agents: OrganizationPortabilityManifest["agents"]): OrgNode[] {
-  const ROLE_LABELS: Record<string, string> = {
-    ceo: "Chief Executive", cto: "Technology", cmo: "Marketing",
-    cfo: "Finance", coo: "Operations", vp: "VP", manager: "Manager",
-    engineer: "Engineer", agent: "Agent",
-  };
-  const bySlug = new Map(agents.map((a) => [a.slug, a]));
-  const childrenOf = new Map<string | null, typeof agents>();
-  for (const a of agents) {
-    const parent = a.reportsToSlug ?? null;
-    const list = childrenOf.get(parent) ?? [];
-    list.push(a);
-    childrenOf.set(parent, list);
-  }
-  const build = (parentSlug: string | null): OrgNode[] => {
-    const members = childrenOf.get(parentSlug) ?? [];
-    return members.map((m) => ({
-      id: m.slug,
-      name: m.name,
-      role: ROLE_LABELS[m.role] ?? m.role,
-      status: "active",
-      reports: build(m.slug),
-    }));
-  };
-  // Find roots: agents whose reportsToSlug is null or points to a non-existent slug
-  const roots = agents.filter((a) => !a.reportsToSlug || !bySlug.has(a.reportsToSlug));
-  const rootSlugs = new Set(roots.map((r) => r.slug));
-  // Start from null parent, but also include orphans
-  const tree = build(null);
-  for (const root of roots) {
-    if (root.reportsToSlug && !bySlug.has(root.reportsToSlug)) {
-      // Orphan root (parent slug doesn't exist)
-      tree.push({
-        id: root.slug,
-        name: root.name,
-        role: ROLE_LABELS[root.role] ?? root.role,
-        status: "active",
-        reports: build(root.slug),
-      });
-    }
-  }
-  return tree;
 }
 
 export const DEFAULT_INCLUDE: OrganizationPortabilityInclude = {

@@ -55,7 +55,7 @@ The fixture source lives in `data/rudder-studio/`:
 
 - `scenario.json`: org metadata, fixed time window, goals, projects, and
   generation settings
-- `agents.json`: stable agent keys, roles, reporting lines, budgets, and
+- `agents.json`: stable agent keys, roles, budgets, and
   capabilities
 - `issues.json`: work items with project/goal/assignee links, lifecycle state,
   billing code, and run generation profiles

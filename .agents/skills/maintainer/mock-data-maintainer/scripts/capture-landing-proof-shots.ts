@@ -414,7 +414,6 @@ async function createAgent(
     name: string;
     role: string;
     title: string;
-    reportsTo?: string | null;
     capabilities: string;
     status: string;
     intervalSec: number;
@@ -427,7 +426,6 @@ async function createAgent(
         name: input.name,
         role: input.role,
         title: input.title,
-        reportsTo: input.reportsTo ?? null,
         capabilities: input.capabilities,
         agentRuntimeType: "codex_local",
         agentRuntimeConfig: {
@@ -611,7 +609,6 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
     name: "Founding Engineer",
     role: "engineer",
     title: "Founding Engineer",
-    reportsTo: ceo.id,
     capabilities: "Own core desktop reliability, implementation delivery, and issue execution for product-critical work.",
     status: "active",
     intervalSec: 1800,
@@ -621,7 +618,6 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
     name: "Design Engineer",
     role: "designer",
     title: "Design Engineer",
-    reportsTo: foundingEngineer.id,
     capabilities: "Refine product hierarchy, launch surfaces, and visual consistency across the desktop workflow.",
     status: "active",
     intervalSec: 7200,
@@ -631,7 +627,6 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
     name: "Release Engineer",
     role: "devops",
     title: "Release Engineer",
-    reportsTo: foundingEngineer.id,
     capabilities: "Package builds, run smoke checks, and keep the beta release train healthy.",
     status: "active",
     intervalSec: 14400,
@@ -641,7 +636,6 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
     name: "Growth Lead",
     role: "general",
     title: "Growth Lead",
-    reportsTo: ceo.id,
     capabilities: "Own launch messaging, landing copy, pricing narrative, and beta funnel work.",
     status: "idle",
     intervalSec: 0,
@@ -651,7 +645,6 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
     name: "Support Ops",
     role: "general",
     title: "Support Ops",
-    reportsTo: growthLead.id,
     capabilities: "Handle onboarding feedback, support issue triage, and close the loop on launch blockers.",
     status: "paused",
     intervalSec: 3600,
@@ -1701,15 +1694,6 @@ async function captureCalendar(page: Page, orgPrefix: string) {
   await captureViewport(page, "calendar-work-history.png");
 }
 
-async function captureOrgChart(page: Page, orgPrefix: string) {
-  console.log("capture: org chart");
-  await page.goto(orgRoute(orgPrefix, "/org"));
-  const main = page.locator("#main-content");
-  await expect(main).toBeVisible({ timeout: 30_000 });
-  await page.waitForTimeout(1200);
-  await captureLocator(page, main, "org-structure.png", { x: 18, y: 18 });
-}
-
 async function captureAgentDetail(page: Page, seed: SeedContext) {
   console.log("capture: agent detail");
   await page.goto(orgRoute(seed.org.issuePrefix, "/agents/founding-engineer/skills"));
@@ -1891,7 +1875,6 @@ async function main() {
         "costs-budget-control.png",
         "cost-visibility.png",
         "calendar-work-history.png",
-        "org-structure.png",
         "agent-detail.png",
         "agent-run-detail.png",
         "organization-work.png",
@@ -1932,7 +1915,6 @@ async function main() {
         await captureHeartbeats(page, seed.org.issuePrefix);
         await captureCosts(page, seed.org.issuePrefix);
         await captureCalendar(page, seed.org.issuePrefix);
-        await captureOrgChart(page, seed.org.issuePrefix);
         await captureAgentDetail(page, seed);
         await captureAgentRunDetail(page, seed);
         await captureWorkspaces(page, seed.org.issuePrefix);

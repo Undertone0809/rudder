@@ -35,7 +35,6 @@ import { PriorityIcon } from "@/components/PriorityIcon";
 import { ProjectIcon } from "@/components/ProjectIdentity";
 import { ProjectProperties } from "@/components/ProjectProperties";
 import { QuotaBar } from "@/components/QuotaBar";
-import { ReportsToPicker } from "@/components/ReportsToPicker";
 import { ResourceLocatorField } from "@/components/ResourceLocatorField";
 import { RudderLogo } from "@/components/RudderLogo";
 import { ScheduleEditor } from "@/components/ScheduleEditor";
@@ -246,7 +245,6 @@ export const uiLabCoverage: CoverageEntry[] = [
   { componentId: "AgentIdentity", category: "product", sourcePath: "ui/src/components/AgentAvatar.tsx", status: "covered", exampleKind: "direct" },
   { componentId: "AgentAvatar", category: "product", sourcePath: "ui/src/components/AgentAvatar.tsx", status: "covered", exampleKind: "direct" },
   { componentId: "AssigneeLabel", category: "product", sourcePath: "ui/src/components/AssigneeLabel.tsx", status: "covered", exampleKind: "direct" },
-  { componentId: "ReportsToPicker", category: "product", sourcePath: "ui/src/components/ReportsToPicker.tsx", status: "covered", exampleKind: "direct" },
   { componentId: "IssueLabelChip", category: "product", sourcePath: "ui/src/components/IssueLabelChip.tsx", status: "covered", exampleKind: "direct" },
   { componentId: "ActivityRow", category: "product", sourcePath: "ui/src/components/ActivityRow.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "IssueRow", category: "product", sourcePath: "ui/src/components/IssueRow.tsx", status: "fixture-backed", exampleKind: "fixture" },
@@ -378,7 +376,6 @@ const fixtureAgent: Agent = {
   title: "UI Systems",
   icon: null,
   status: "active",
-  reportsTo: null,
   capabilities: "Reviews product UI and keeps reusable components aligned.",
   agentRuntimeType: "process",
   agentRuntimeConfig: {},
@@ -1197,7 +1194,6 @@ function CommonComponentsSection() {
   const [expandedDirs, setExpandedDirs] = useState(() => new Set(["ui", "ui/src", "ui/src/components"]));
   const [checkedFiles, setCheckedFiles] = useState(() => new Set(["ui/src/components/StatusBadge.tsx", "ui/src/pages/UiLab.tsx"]));
   const [selectedEntity, setSelectedEntity] = useState("issue-ui-lab");
-  const [reportsTo, setReportsTo] = useState<string | null>("agent-cto");
   const [chatDecisionNote, setChatDecisionNote] = useState("");
   const pendingChatFile = useMemo(() => {
     if (typeof File === "undefined") return null;
@@ -1231,16 +1227,6 @@ function CommonComponentsSection() {
     ]),
     [chartDays],
   );
-  const managerAgent = useMemo<Agent>(() => ({
-    ...fixtureAgent,
-    id: "agent-cto",
-    name: "CTO",
-    urlKey: "cto",
-    role: "cto",
-    title: "Technical Lead",
-    icon: "person:bg-sky",
-  }), []);
-
   const toggleDir = (path: string) => {
     setExpandedDirs((current) => {
       const next = new Set(current);
@@ -1776,7 +1762,7 @@ function CommonComponentsSection() {
 
         <LabExample title="Charts, selectors, and sidebar rows">
           <div className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3">
               <ChartCard title="Issue priority mix" subtitle="Fixture data rendered through the dashboard chart primitives.">
                 <PriorityChart issues={chartIssues} days={chartDays} />
               </ChartCard>
@@ -1797,12 +1783,6 @@ function CommonComponentsSection() {
                 emptyMessage="No entities match."
                 onChange={setSelectedEntity}
                 variant="field"
-              />
-              <ReportsToPicker
-                agents={[managerAgent, fixtureAgent]}
-                value={reportsTo}
-                onChange={setReportsTo}
-                excludeAgentIds={[fixtureAgent.id]}
               />
             </div>
             <div className="rounded-md border border-border p-2">

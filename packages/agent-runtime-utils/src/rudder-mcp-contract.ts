@@ -336,7 +336,6 @@ export function rudderMcpInputSchemaForCapability(id: string): {
     slug: "Slug.",
     markdown: "Direct Markdown content.",
     role: "Agent role.",
-    reportsTo: "Manager or reporting agent reference.",
     capabilities: "Agent capability summary.",
     wakeCommentId: "Issue comment id that triggered the wake.",
     expectedStatuses: "Comma-separated checkout precondition statuses.",

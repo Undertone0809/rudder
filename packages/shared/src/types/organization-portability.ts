@@ -115,7 +115,11 @@ export interface OrganizationPortabilityAgentManifestEntry {
   title: string | null;
   icon: string | null;
   capabilities: string | null;
-  reportsToSlug: string | null;
+  /**
+   * Deprecated v4 compatibility field. New exports always write null and
+   * imports ignore historical relationships.
+   */
+  reportsToSlug?: string | null;
   agentRuntimeType: string;
   agentRuntimeConfig: Record<string, unknown>;
   runtimeConfig: Record<string, unknown>;

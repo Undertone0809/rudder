@@ -8,8 +8,7 @@ interface PageSkeletonProps {
     | "dashboard"
     | "approvals"
     | "costs"
-    | "inbox"
-    | "org-chart";
+    | "inbox";
 }
 
 export function PageSkeleton({ variant = "list" }: PageSkeletonProps) {
@@ -92,14 +91,6 @@ export function PageSkeleton({ variant = "list" }: PageSkeletonProps) {
             </div>
           ))}
         </div>
-      </div>
-    );
-  }
-
-  if (variant === "org-chart") {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-[calc(100vh-4rem)] w-full rounded-lg border border-border" />
       </div>
     );
   }

@@ -5,7 +5,7 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     id: "agent.me",
     command: "rudder agent me",
     category: "agent",
-    description: "Show the authenticated agent identity, budget, and chain of command.",
+    description: "Show the authenticated agent identity and budget.",
     mutating: false,
     contract: "agent-v1",
     requiresOrgId: false,

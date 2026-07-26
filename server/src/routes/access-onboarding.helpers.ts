@@ -823,25 +823,6 @@ export function grantsFromDefaults(
   return result;
 }
 
-export type JoinRequestManagerCandidate = {
-  id: string;
-  role: string;
-  reportsTo: string | null;
-};
-
-export function resolveJoinRequestAgentManagerId(
-  candidates: JoinRequestManagerCandidate[]
-): string | null {
-  const ceoCandidates = candidates.filter(
-    (candidate) => candidate.role === "ceo"
-  );
-  if (ceoCandidates.length === 0) return null;
-  const rootCeo = ceoCandidates.find(
-    (candidate) => candidate.reportsTo === null
-  );
-  return (rootCeo ?? ceoCandidates[0] ?? null)?.id ?? null;
-}
-
 export function isInviteTokenHashCollisionError(error: unknown) {
   return isPostgresError(error, "23505", "invites_token_hash_unique_idx");
 }

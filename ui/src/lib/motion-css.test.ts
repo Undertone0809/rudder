@@ -36,7 +36,6 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("@media (prefers-reduced-motion: reduce)");
     expect(motionCss).toContain(".motion-live-surface::before");
     expect(motionCss).toContain('.motion-kanban-card[data-live="true"]');
-    expect(motionCss).toContain('.motion-org-edge[data-active="true"]');
     expect(motionCss).toContain(".motion-chat-composer-menu-pop");
     expect(motionCss).toContain(".motion-chat-empty-heading");
     expect(motionCss).toContain(".motion-chat-empty-recent-conversations");
@@ -115,12 +114,6 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-context-nav--agent-list");
     expect(motionCss).toContain(".motion-context-nav--project-card-list");
     expect(motionCss).toContain("transform var(--motion-duration-standard) var(--motion-ease-enter)");
-  });
-
-  it("keeps organization structure edges stable while zooming", () => {
-    expect(motionCss).toContain(".motion-org-edge");
-    expect(motionCss).toContain("stroke-linecap: round");
-    expect(motionCss).toContain("vector-effect: non-scaling-stroke");
   });
 
   it("highlights kanban card borders on hover and keyboard focus", () => {

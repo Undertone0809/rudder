@@ -57,7 +57,6 @@ describe("translateMessage", () => {
     expect(translateLegacyString("zh-CN", "Finished 2d ago")).toBe("2 天前完成");
     expect(translateLegacyString("zh-CN", "1 live")).toBe("1 个运行中");
     expect(translateLegacyString("zh-CN", "Messenger")).toBe("消息");
-    expect(translateLegacyString("zh-CN", "Structure")).toBe("组织结构");
     expect(translateLegacyString("zh-CN", "Resources")).toBe("资源");
     expect(
       translateLegacyString("zh-CN", "Top-ups, fees, credits, commitments, and other non-request charges."),
