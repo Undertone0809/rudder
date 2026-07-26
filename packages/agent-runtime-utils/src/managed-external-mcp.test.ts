@@ -121,31 +121,57 @@ describe("managed external MCP runtime bindings", () => {
     },
   );
 
-  it("fails closed for malformed descriptors, unknown provider data, and duplicates", () => {
+  it("fails closed per malformed descriptor without blocking healthy bindings", () => {
+    const failures: ManagedExternalMcpConfigurationError[] = [];
     for (const managedExternalMcpBindings of [
       [binding({ provider: "supabase" })],
       [binding({ bindingId: "not-a-uuid" })],
       [binding({ serverName: "rudder-tools" })],
-      [binding(), binding({ bindingId: SECOND_BINDING_ID })],
-      [binding(), binding({ serverName: "linear", bindingId: FIRST_BINDING_ID })],
       [binding({ toolPolicy: { mode: "allowlist", allowedToolNames: ["same", "same"] } })],
       [binding({ toolPolicy: { mode: "allowlist", allowedToolNames: ["rudder_issue_get"] } })],
     ]) {
-      expect(() => resolveManagedExternalMcpBindings(
+      expect(resolveManagedExternalMcpBindings(
         { managedExternalMcpBindings },
         {
           RUDDER_API_URL: "https://rudder.example.test",
           RUDDER_API_KEY: "run-token",
         },
-      )).toThrow(ManagedExternalMcpConfigurationError);
+        { onFailure: (_serverName, error) => failures.push(error) },
+      )).toEqual([]);
     }
+    expect(failures).toHaveLength(5);
+
+    expect(resolveManagedExternalMcpBindings(
+      {
+        managedExternalMcpBindings: [
+          binding({ provider: "supabase" }),
+          binding({
+            bindingId: SECOND_BINDING_ID,
+            serverName: "linear-product",
+            toolPolicy: {
+              mode: "allowlist",
+              allowedToolNames: ["external.linear-product.list_issues"],
+            },
+          }),
+        ],
+      },
+      {
+        RUDDER_API_URL: "https://rudder.example.test",
+        RUDDER_API_KEY: "run-token",
+      },
+    )).toEqual([
+      expect.objectContaining({ bindingId: SECOND_BINDING_ID }),
+    ]);
   });
 
-  it("fails required bindings and omits optional bindings when runtime auth is missing", () => {
-    expect(() => resolveManagedExternalMcpBindings(
+  it("omits every binding without blocking the runtime when run auth is missing", () => {
+    const failures: ManagedExternalMcpConfigurationError[] = [];
+    expect(resolveManagedExternalMcpBindings(
       { managedExternalMcpBindings: [binding()] },
       { RUDDER_API_URL: "https://rudder.example.test" },
-    )).toThrow(/required managed MCP binding/i);
+      { onFailure: (_serverName, error) => failures.push(error) },
+    )).toEqual([]);
+    expect(failures[0]?.message).toMatch(/run authentication is unavailable/i);
 
     expect(resolveManagedExternalMcpBindings(
       {
@@ -254,12 +280,13 @@ describe("managed external MCP runtime bindings", () => {
     }
   });
 
-  it("fails a required binding when its real proxy preflight fails", async () => {
+  it("omits a required binding when its real proxy preflight fails", async () => {
     const { server, origin } = await listen((_req, res) => {
       res.statusCode = 503;
       res.end();
     });
     try {
+      const failures: ManagedExternalMcpConfigurationError[] = [];
       await expect(preflightManagedExternalMcpBindings(
         {
           managedExternalMcpBindings: [
@@ -270,7 +297,13 @@ describe("managed external MCP runtime bindings", () => {
           RUDDER_API_URL: origin,
           RUDDER_API_KEY: "run-secret",
         },
-      )).rejects.toThrow(/required managed MCP binding.*preflight failed/i);
+        {
+          onFailure: (_serverName, error) => {
+            failures.push(error);
+          },
+        },
+      )).resolves.toEqual([]);
+      expect(failures[0]?.message).toMatch(/managed MCP binding.*preflight failed/i);
     } finally {
       await close(server);
     }

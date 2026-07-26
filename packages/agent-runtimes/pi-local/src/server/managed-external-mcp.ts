@@ -1,4 +1,5 @@
 import {
+  MANAGED_EXTERNAL_MCP_ADMISSION_TIMEOUT_MS,
   resolveManagedExternalMcpBindings,
   type ResolvedManagedExternalMcpBinding,
 } from "@rudderhq/agent-runtime-utils";
@@ -172,16 +173,33 @@ export async function discoverPiManagedExternalMcpBindings(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
   options: {
     signal?: AbortSignal;
+    onFailure?: (serverName: string | null, error: Error) => void | Promise<void>;
     onOptionalFailure?: (serverName: string, error: Error) => void | Promise<void>;
   } = {},
 ): Promise<PiManagedExternalMcpBinding[]> {
-  const bindings = resolveManagedExternalMcpBindings(runtimeConfig, env);
+  const reportFailure = async (serverName: string | null, error: Error): Promise<void> => {
+    try {
+      await options.onFailure?.(serverName, error);
+    } catch {
+      // Diagnostics cannot regain runtime-admission authority.
+    }
+  };
+  const resolutionFailures: Array<{ serverName: string | null; error: Error }> = [];
+  const bindings = resolveManagedExternalMcpBindings(runtimeConfig, env, {
+    onFailure: (serverName, error) => resolutionFailures.push({ serverName, error }),
+  });
+  for (const failure of resolutionFailures) {
+    await reportFailure(failure.serverName, failure.error);
+  }
   const discovered = await Promise.all(bindings.map(async (binding) => {
     try {
       const result = await postManagedExternalMcpRequest({
         proxyUrl: binding.proxyUrl,
         method: "tools/list",
-        timeoutMs: binding.startupTimeoutMs,
+        timeoutMs: Math.min(
+          binding.startupTimeoutMs,
+          MANAGED_EXTERNAL_MCP_ADMISSION_TIMEOUT_MS,
+        ),
         env,
         signal: options.signal,
       });
@@ -191,8 +209,12 @@ export async function discoverPiManagedExternalMcpBindings(
       };
     } catch (error) {
       const safeError = error instanceof Error ? error : new Error("Managed MCP discovery failed");
-      if (binding.required) throw safeError;
-      await options.onOptionalFailure?.(binding.serverName, safeError);
+      await reportFailure(binding.serverName, safeError);
+      try {
+        await options.onOptionalFailure?.(binding.serverName, safeError);
+      } catch {
+        // Legacy diagnostic sinks are non-authoritative too.
+      }
       return null;
     }
   }));
@@ -200,19 +222,23 @@ export async function discoverPiManagedExternalMcpBindings(
   const active = discovered.filter(
     (binding): binding is PiManagedExternalMcpBinding => binding !== null,
   );
+  const accepted: PiManagedExternalMcpBinding[] = [];
   const toolOwners = new Map<string, string>();
   for (const binding of active) {
-    for (const tool of binding.tools) {
-      const owner = toolOwners.get(tool.name);
-      if (owner) {
-        throw new Error(
-          `Managed MCP tool name "${tool.name}" is duplicated by "${owner}" and "${binding.serverName}"`,
-        );
-      }
-      toolOwners.set(tool.name, binding.serverName);
+    const conflict = binding.tools.find((tool) => toolOwners.has(tool.name));
+    if (conflict) {
+      await reportFailure(
+        binding.serverName,
+        new Error(
+          `Managed MCP tool name "${conflict.name}" conflicts with another binding and was omitted`,
+        ),
+      );
+      continue;
     }
+    accepted.push(binding);
+    for (const tool of binding.tools) toolOwners.set(tool.name, binding.serverName);
   }
-  return active;
+  return accepted;
 }
 
 export async function callManagedExternalMcpProxy(input: {

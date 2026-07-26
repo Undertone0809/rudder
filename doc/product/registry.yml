@@ -584,6 +584,7 @@ contracts:
       - packages/agent-runtime-utils/src/rudder-mcp.ts
       - packages/agent-runtime-utils/src/rudder-mcp-server.ts
       - packages/agent-runtime-utils/src/types.ts
+      - packages/agent-runtime-utils/src/managed-external-mcp.ts
       - packages/shared/src/types/mcp.ts
       - packages/shared/src/validators/mcp.ts
       - packages/agent-runtimes/claude-local/src/server/execute.ts
@@ -600,6 +601,7 @@ contracts:
       - server/resources/bundled-skills/rudder-docs/references/agent-creation.md
     related_tests:
       - packages/shared/src/validators/mcp.test.ts
+      - packages/agent-runtime-utils/src/managed-external-mcp.test.ts
       - scripts/managed-mcp-product-contract.test.mjs
       - cli/src/__tests__/browser-command.test.ts
       - cli/src/__tests__/agent-v1-registry.test.ts
@@ -617,6 +619,7 @@ contracts:
       - doc/plans/2026-07-12-built-in-browser.md
       - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
       - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
+      - doc/plans/2026-07-26-managed-mcp-runtime-failure-isolation.md
       - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
       - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
   AGENT.BROWSER.001:
@@ -803,16 +806,27 @@ contracts:
       - packages/shared/src/types/mcp.ts
       - packages/shared/src/validators/custom-integration.ts
       - packages/shared/src/validators/mcp.ts
+      - packages/agent-runtime-utils/src/managed-external-mcp.ts
+      - packages/agent-runtimes/codex-local/src/server/codex-home.ts
+      - packages/agent-runtimes/claude-local/src/server/execute.ts
+      - packages/agent-runtimes/opencode-local/src/server/execute.ts
+      - packages/agent-runtimes/pi-local/src/server/managed-external-mcp.ts
       - packages/shared/src/constants.ts
       - server/src/services/integrations/custom-integrations.ts
       - server/src/routes/agents.ts
       - server/src/services/agent-run-context.ts
+      - server/src/services/mcp/managed-bindings.ts
       - ui/src/pages/AgentDetail.integrations.tsx
     related_tests:
       - packages/db/src/mcp-connections-schema.test.ts
       - packages/db/src/migrations/managed-mcp-connections.test.ts
       - packages/db/src/migrations/managed-mcp-canonicalization.test.ts
       - packages/shared/src/validators/mcp.test.ts
+      - packages/agent-runtime-utils/src/managed-external-mcp.test.ts
+      - packages/agent-runtimes/codex-local/src/server/managed-external-mcp.test.ts
+      - packages/agent-runtimes/claude-local/src/server/managed-external-mcp.test.ts
+      - packages/agent-runtimes/opencode-local/src/server/managed-external-mcp.test.ts
+      - packages/agent-runtimes/pi-local/src/server/managed-external-mcp.test.ts
       - scripts/managed-mcp-product-contract.test.mjs
       - server/src/__tests__/custom-integrations-service.test.ts
       - ui/src/pages/AgentDetail.integrations.test.tsx
@@ -821,6 +835,7 @@ contracts:
       - doc/plans/2026-06-27-agent-custom-integrations.md
       - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
       - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
+      - doc/plans/2026-07-26-managed-mcp-runtime-failure-isolation.md
   ORG.GOAL.001:
     owner: product
     domain: organizations-and-goals

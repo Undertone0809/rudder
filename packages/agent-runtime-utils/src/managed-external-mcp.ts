@@ -5,6 +5,7 @@ const MAX_BINDINGS = 100;
 const MAX_TOOLS = 500;
 const MAX_PREFLIGHT_RESPONSE_BYTES = 2 * 1024 * 1024;
 const PREFLIGHT_PROTOCOL_VERSION = "2025-06-18";
+export const MANAGED_EXTERNAL_MCP_ADMISSION_TIMEOUT_MS = 3_000;
 const MANAGED_MCP_ACCESS_MODES = new Set([
   "none",
   "read_only",
@@ -200,18 +201,74 @@ function resolveProxyBaseUrl(env: NodeJS.ProcessEnv | Record<string, string | un
 export function resolveManagedExternalMcpBindings(
   runtimeConfig: unknown,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  options: {
+    onFailure?: (
+      serverName: string | null,
+      error: ManagedExternalMcpConfigurationError,
+    ) => void;
+  } = {},
 ): ResolvedManagedExternalMcpBinding[] {
-  const bindings = parseManagedExternalMcpBindings(runtimeConfig);
+  if (!isRecord(runtimeConfig) || runtimeConfig.managedExternalMcpBindings === undefined) {
+    return [];
+  }
+  if (!Array.isArray(runtimeConfig.managedExternalMcpBindings)) {
+    options.onFailure?.(
+      null,
+      new ManagedExternalMcpConfigurationError("managedExternalMcpBindings must be an array"),
+    );
+    return [];
+  }
+  if (runtimeConfig.managedExternalMcpBindings.length > MAX_BINDINGS) {
+    options.onFailure?.(
+      null,
+      new ManagedExternalMcpConfigurationError("managedExternalMcpBindings has too many entries"),
+    );
+    return [];
+  }
+
+  const bindings: ManagedExternalMcpBinding[] = [];
+  const bindingIds = new Set<string>();
+  const serverNames = new Set<string>();
+  for (const [index, candidate] of runtimeConfig.managedExternalMcpBindings.entries()) {
+    const candidateServerName = isRecord(candidate) && typeof candidate.serverName === "string"
+      ? candidate.serverName
+      : null;
+    try {
+      const binding = parseBinding(candidate, index);
+      if (bindingIds.has(binding.bindingId)) {
+        throw new ManagedExternalMcpConfigurationError(
+          `Duplicate managed MCP binding ID: ${binding.bindingId}`,
+        );
+      }
+      if (serverNames.has(binding.serverName)) {
+        throw new ManagedExternalMcpConfigurationError(
+          `Duplicate managed MCP server name: ${binding.serverName}`,
+        );
+      }
+      bindingIds.add(binding.bindingId);
+      serverNames.add(binding.serverName);
+      bindings.push(binding);
+    } catch (error) {
+      options.onFailure?.(
+        candidateServerName,
+        error instanceof ManagedExternalMcpConfigurationError
+          ? error
+          : new ManagedExternalMcpConfigurationError("Managed MCP binding is invalid"),
+      );
+    }
+  }
   if (bindings.length === 0) return [];
 
   const apiBaseUrl = resolveProxyBaseUrl(env);
   const hasRunToken = typeof env.RUDDER_API_KEY === "string"
     && env.RUDDER_API_KEY.trim().length > 0;
   if (!apiBaseUrl || !hasRunToken) {
-    const required = bindings.find((binding) => binding.required);
-    if (required) {
-      throw new ManagedExternalMcpConfigurationError(
-        `Required managed MCP binding "${required.serverName}" cannot be configured because run authentication is unavailable`,
+    for (const binding of bindings) {
+      options.onFailure?.(
+        binding.serverName,
+        new ManagedExternalMcpConfigurationError(
+          `Managed MCP binding "${binding.serverName}" cannot be configured because run authentication is unavailable`,
+        ),
       );
     }
     return [];
@@ -322,7 +379,9 @@ async function preflightBinding(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
   parentSignal?: AbortSignal,
 ): Promise<void> {
-  const timeoutSignal = AbortSignal.timeout(binding.startupTimeoutMs);
+  const timeoutSignal = AbortSignal.timeout(
+    Math.min(binding.startupTimeoutMs, MANAGED_EXTERNAL_MCP_ADMISSION_TIMEOUT_MS),
+  );
   const signal = parentSignal
     ? AbortSignal.any([parentSignal, timeoutSignal])
     : timeoutSignal;
@@ -370,23 +429,51 @@ export async function preflightManagedExternalMcpBindings(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
   options: {
     signal?: AbortSignal;
+    onFailure?: (
+      serverName: string | null,
+      error: ManagedExternalMcpConfigurationError,
+    ) => void | Promise<void>;
     onOptionalFailure?: (
       serverName: string,
       error: ManagedExternalMcpConfigurationError,
     ) => void | Promise<void>;
   } = {},
 ): Promise<ResolvedManagedExternalMcpBinding[]> {
-  const bindings = resolveManagedExternalMcpBindings(runtimeConfig, env);
+  const reportFailure = async (
+    serverName: string | null,
+    error: ManagedExternalMcpConfigurationError,
+  ): Promise<void> => {
+    try {
+      await options.onFailure?.(serverName, error);
+    } catch {
+      // Diagnostics are part of the degraded capability boundary and must
+      // never regain authority over Agent runtime admission.
+    }
+  };
+  const resolutionFailures: Array<{
+    serverName: string | null;
+    error: ManagedExternalMcpConfigurationError;
+  }> = [];
+  const bindings = resolveManagedExternalMcpBindings(runtimeConfig, env, {
+    onFailure: (serverName, error) => resolutionFailures.push({ serverName, error }),
+  });
+  for (const failure of resolutionFailures) {
+    await reportFailure(failure.serverName, failure.error);
+  }
   const checked = await Promise.all(bindings.map(async (binding) => {
     try {
       await preflightBinding(binding, env, options.signal);
       return binding;
     } catch {
       const error = new ManagedExternalMcpConfigurationError(
-        `${binding.required ? "Required" : "Optional"} managed MCP binding "${binding.serverName}" proxy preflight failed`,
+        `Managed MCP binding "${binding.serverName}" proxy preflight failed`,
       );
-      if (binding.required) throw error;
-      await options.onOptionalFailure?.(binding.serverName, error);
+      await reportFailure(binding.serverName, error);
+      try {
+        await options.onOptionalFailure?.(binding.serverName, error);
+      } catch {
+        // Legacy diagnostic sinks are non-authoritative too.
+      }
       return null;
     }
   }));

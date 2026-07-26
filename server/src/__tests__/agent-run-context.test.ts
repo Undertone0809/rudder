@@ -216,6 +216,7 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     mockListManagedRuntimeBindings.mockResolvedValue([{
       bindingId: "22222222-2222-4222-8222-222222222222",
       serverName: "team-tools",
+      accessMode: "read_only",
       toolPolicy: {
         mode: "allowlist",
         allowedToolNames: ["external.team-tools.search"],
@@ -239,6 +240,7 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     expect(prepared.runtimeConfig.managedExternalMcpBindings).toEqual([{
       bindingId: "22222222-2222-4222-8222-222222222222",
       serverName: "team-tools",
+      accessMode: "read_only",
       toolPolicy: {
         mode: "allowlist",
         allowedToolNames: ["external.team-tools.search"],
@@ -298,7 +300,7 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     );
   });
 
-  it("fails runtime preparation when a required managed MCP binding is unavailable", async () => {
+  it("keeps runtime preparation available when managed MCP binding resolution fails", async () => {
     mockResolveAdapterConfigForRuntime.mockResolvedValue({
       config: {},
       secretKeys: new Set<string>(),
@@ -318,9 +320,11 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
         agentRuntimeType: "codex_local",
         agentRuntimeConfig: {},
       },
-    })).rejects.toThrow(
-      "Required managed MCP connection supabase-main is unavailable",
-    );
+    })).resolves.toMatchObject({
+      runtimeConfig: {
+        managedExternalMcpBindings: [],
+      },
+    });
   });
 
   it.each([

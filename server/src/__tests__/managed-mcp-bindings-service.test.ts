@@ -731,7 +731,7 @@ describe("managedMcpBindingService", () => {
       .toBeLessThanOrEqual(24 * 1_024);
   });
 
-  it("omits unavailable optional bindings, fails unavailable required bindings, and returns exact neutral DTOs", async () => {
+  it("omits unavailable bindings regardless of required metadata and returns exact neutral DTOs", async () => {
     const fixture = await seed(db);
     const svc = managedMcpBindingService(db);
     await svc.upsert(fixture.orgId, fixture.agentId, fixture.first.id, {});
@@ -775,8 +775,7 @@ describe("managedMcpBindingService", () => {
 
     await db.update(mcpConnections).set({ required: true })
       .where(eq(mcpConnections.id, fixture.first.id));
-    await expect(svc.listRuntimeBindings(fixture.orgId, fixture.agentId))
-      .rejects.toThrow("Required managed MCP connection alpha is unavailable");
+    expect(await svc.listRuntimeBindings(fixture.orgId, fixture.agentId)).toEqual([]);
   });
 
   it("revokes bindings without deleting the organization connection", async () => {

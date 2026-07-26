@@ -60,8 +60,9 @@ describe("Codex managed external MCP config", () => {
       'url = "https://rudder.example.test/api/mcp/runtime/bindings/22222222-2222-4222-8222-222222222222"',
     );
     expect(config.match(/bearer_token_env_var = "RUDDER_API_KEY"/g)).toHaveLength(2);
-    expect(config).toContain("required = true");
-    expect(config).toContain("startup_timeout_sec = 10");
+    expect(config).not.toContain("required = true");
+    expect(config.match(/required = false/g)).toHaveLength(2);
+    expect(config.match(/startup_timeout_sec = 3/g)).toHaveLength(2);
     expect(config).toContain("tool_timeout_sec = 60");
     expect(config).toContain(
       'enabled_tools = ["external.supabase-memos.list_tables"]',
@@ -117,18 +118,42 @@ describe("Codex managed external MCP config", () => {
     expect(readCoreTable(external)).toBe(readCoreTable(baseline));
     expect(external).toContain("[mcp_servers.supabase-memos]");
     expect(external).toContain("[mcp_servers.linear-product]");
+    expect(external).not.toContain("required = true");
+    expect(external.match(/required = false/g)).toHaveLength(2);
     expect(readCoreTable(external)).not.toContain("external.");
   });
 
-  it("fails a required setup and omits an optional setup without run auth", () => {
-    expect(() => renderManagedExternalMcpCodexConfig(
+  it("omits managed MCP setup without run auth regardless of required metadata", () => {
+    expect(renderManagedExternalMcpCodexConfig(
       { managedExternalMcpBindings: [bindings[0]] },
       { RUDDER_API_URL: "https://rudder.example.test" },
-    )).toThrow(/required managed MCP binding/i);
+    )).toBe("");
 
     expect(renderManagedExternalMcpCodexConfig(
       { managedExternalMcpBindings: [{ ...bindings[1], required: false }] },
       {},
     )).toBe("");
+  });
+
+  it("omits the first-party MCP table after a failed core preflight", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-core-mcp-"));
+    tempRoots.push(root);
+    const home = path.join(root, "managed");
+    await realizeManagedCodexSkillEntries(
+      { CODEX_HOME: path.join(root, "operator") },
+      home,
+      [],
+      async () => {},
+      { disabledSkillPaths: [] },
+      root,
+      {},
+      undefined,
+      undefined,
+      {},
+      false,
+    );
+
+    const config = await readFile(path.join(home, "config.toml"), "utf8");
+    expect(config).not.toContain("[mcp_servers.rudder-tools]");
   });
 });

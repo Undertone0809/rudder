@@ -97,11 +97,11 @@ function loadGeneratedCallManagedMcp(source: string): (
 }
 
 describe("Pi managed external MCP bridge", () => {
-  it("enforces required/optional setup when run authentication is missing", async () => {
+  it("omits managed MCP setup without run auth regardless of required metadata", async () => {
     await expect(discoverPiManagedExternalMcpBindings(
       { managedExternalMcpBindings: [binding()] },
       {},
-    )).rejects.toThrow(/required managed MCP binding/i);
+    )).resolves.toEqual([]);
 
     await expect(discoverPiManagedExternalMcpBindings(
       { managedExternalMcpBindings: [binding({ required: false })] },
@@ -355,7 +355,7 @@ describe("Pi managed external MCP bridge", () => {
     }
   });
 
-  it("fails required schema discovery and omits optional discovery failures", async () => {
+  it("omits schema discovery failures regardless of required metadata", async () => {
     const { server, origin } = await listen((_req, res) => {
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({
@@ -377,7 +377,7 @@ describe("Pi managed external MCP bridge", () => {
       await expect(discoverPiManagedExternalMcpBindings(
         { managedExternalMcpBindings: [binding()] },
         env,
-      )).rejects.toThrow(/schema/i);
+      )).resolves.toEqual([]);
 
       await expect(discoverPiManagedExternalMcpBindings(
         { managedExternalMcpBindings: [binding({ required: false })] },
