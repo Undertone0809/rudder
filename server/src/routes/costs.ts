@@ -99,7 +99,16 @@ export function costRoutes(db: Db) {
     const to = toRaw ? new Date(toRaw) : undefined;
     if (from && isNaN(from.getTime())) throw badRequest("invalid 'from' date");
     if (to && isNaN(to.getTime())) throw badRequest("invalid 'to' date");
+    if (from && to && from > to) throw badRequest("'from' date must not be later than 'to' date");
     return (from || to) ? { from, to } : undefined;
+  }
+
+  function parseTrendGranularity(query: Record<string, unknown>) {
+    const granularity = firstQueryValue(query.granularity) ?? "day";
+    if (granularity !== "hour" && granularity !== "day") {
+      throw badRequest("invalid 'granularity' value");
+    }
+    return granularity;
   }
 
   function parseLimit(query: Record<string, unknown>) {
@@ -145,8 +154,9 @@ export function costRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const range = parseDateRange(req.query);
+    const granularity = parseTrendGranularity(req.query);
     const filter = parseTrendFilter(req.query);
-    const rows = await costs.trend(orgId, range, filter);
+    const rows = await costs.trend(orgId, range, granularity, filter);
     res.json(rows);
   });
 

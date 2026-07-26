@@ -260,10 +260,10 @@ export function AgentDetail() {
       resolvedCompanyId ?? "__none__",
       from,
       to,
-      "agent",
+      "day", "agent",
       resolvedAgentId ?? routeAgentRef,
     ),
-    queryFn: () => costsApi.trend(resolvedCompanyId!, from, to, { agentId: resolvedAgentId! }),
+    queryFn: () => costsApi.trend(resolvedCompanyId!, from, to, "day", { agentId: resolvedAgentId! }),
     enabled: Boolean(resolvedCompanyId) && Boolean(resolvedAgentId) && needsDashboardData && (datePreset !== "custom" || customReady),
     placeholderData: keepPreviousData,
   });
