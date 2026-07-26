@@ -73,7 +73,8 @@ async function openFromAssistantAction(page: Page, assistantMessageId: string) {
   await assistant.getByRole("button", { name: "Open Side Chat" }).click();
   const panel = page.getByTestId("chat-side-panel");
   await expect(panel).toBeVisible();
-  await expect(panel.getByTestId("side-chat-anchor-preview")).toContainText("narrow cohort");
+  await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
+  await expect(panel).not.toContainText("From the main chat");
   return panel;
 }
 
@@ -120,7 +121,8 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await expect(panel.getByTestId("side-chat-project-chip")).toBeVisible();
   await expect(panel.getByTestId("side-chat-agent-chip")).toContainText("Sidekick");
   await expect(panel).not.toContainText("Enter to send · Shift+Enter for a new line");
-  await expect(panel.getByTestId("side-chat-icon")).toHaveClass(/lucide-circle-plus/);
+  await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
+  await expect(panel).not.toContainText("From the main chat");
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
 
   const hiddenList = await page.request.get(`/api/orgs/${source.organization.id}/chats?status=all`);
@@ -298,7 +300,8 @@ test("the Side Panel empty state opens the same provisional Side Chat flow", asy
 
   await panel.getByTestId("chat-side-panel-empty-side-chat-target").click();
   await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
-  await expect(panel.getByTestId("side-chat-anchor-preview")).toContainText("narrow cohort");
+  await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
+  await expect(panel).not.toContainText("From the main chat");
   await expect(sideComposerEditor(panel)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("09-side-panel-entry-draft.png"), fullPage: true });
 

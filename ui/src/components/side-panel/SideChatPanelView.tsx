@@ -4,7 +4,6 @@ import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { projectsApi } from "@/api/projects";
 import { AgentIcon } from "@/components/AgentIconPicker";
-import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import {
@@ -31,7 +30,7 @@ import type {
   ChatMessage,
 } from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, CirclePlus, Clock3, Folder, Loader2, Plus } from "lucide-react";
+import { ArrowUp, Clock3, Folder, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
@@ -380,32 +379,17 @@ export function SideChatPanelView({
     <div className="flex h-full min-h-0 flex-col" data-testid="side-chat-panel-view">
       <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
-          <section className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <CirclePlus className="h-4 w-4 text-[color:var(--accent-base)]" data-testid="side-chat-icon" />
-                Side Chat
-              </div>
-              {stateLabel ? (
-                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground" data-testid="side-chat-state">
-                  <Clock3 className="h-3 w-3" />
-                  {stateLabel}
-                </span>
-              ) : null}
+          {stateLabel ? (
+            <div className="flex justify-end">
+              <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground" data-testid="side-chat-state">
+                <Clock3 className="h-3 w-3" />
+                {stateLabel}
+              </span>
             </div>
-            <div className="mt-3 border-l-2 border-[color:var(--accent-base)] pl-3">
-              <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.13em] text-muted-foreground">From the main chat</div>
-              {anchorLoading ? (
-                <div className="h-10 animate-pulse rounded bg-[color:var(--surface-active)]" />
-              ) : noAnchor ? (
-                <p className="text-sm text-destructive">The main chat needs a completed assistant response first.</p>
-              ) : (
-                <div className="line-clamp-5 text-sm leading-6 text-muted-foreground" data-testid="side-chat-anchor-preview">
-                  <MarkdownBody>{sourcePreview ?? "Assistant response"}</MarkdownBody>
-                </div>
-              )}
-            </div>
-          </section>
+          ) : null}
+          {noAnchor ? (
+            <p className="text-sm text-destructive">The main chat needs a completed assistant response first.</p>
+          ) : null}
 
           <div className="flex min-h-[12rem] flex-col gap-5" data-testid="side-chat-messages">
             {displayConversation ? visibleMessages.map((message) => {
