@@ -195,9 +195,13 @@ Product model:
   custom model values may still be preserved where the editor supports them.
 - Chat conversation model and thinking-effort selection reuses the same
   runtime-owned catalogs, Codex fixed ordering, dynamic runtime discovery, and
-  adapter-specific effort fields. It may display a persisted unknown/custom
-  current model for compatibility, but it does not add a new free-input model
-  editor or a second effort vocabulary.
+  adapter-specific effort fields. The controls are nested under the currently
+  selected or bound Agent; they never replace Agent identity or create a
+  runtime choice outside that Agent's adapter capabilities. Switching the
+  draft Agent clears conversation overrides before deriving the new Agent's
+  defaults. A persisted unknown/custom current model may remain visible for
+  compatibility, but Chat does not add a new free-input model editor or a
+  second effort vocabulary.
 - New Codex agent configurations default to `gpt-5.6-sol`, including the
   onboarding and standard agent-creation surfaces.
 - Codex thinking effort is model-family-specific. The GPT-5.6 Codex variants

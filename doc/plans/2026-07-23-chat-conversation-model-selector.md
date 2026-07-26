@@ -1,7 +1,7 @@
 ---
-title: Conversation-scoped Chat runtime selector
+title: Agent-scoped Chat runtime selector
 date: 2026-07-25
-kind: implementation
+kind: fix-plan
 status: completed
 area: chat
 entities:
@@ -30,28 +30,28 @@ related_code:
   - ui/src/pages/Chat.workspace-helpers.ts
   - tests/e2e/chat-conversation-model-selector.spec.ts
 commit_refs: []
-updated_at: 2026-07-25
+updated_at: 2026-07-26
 ---
 
-# Conversation-scoped Chat Runtime Selector
+# Agent-scoped Chat Runtime Selector
 
 ## Summary
 
-Replace the composer Agent picker with direct model and thinking-effort
-controls scoped to one Chat conversation. The internally bound Agent remains
-the owner of runtime type, credentials, workspace, skills, fallbacks, and other
-configuration; the conversation may replace only the primary model and effort
-used by future turns. Both overrides are durable for that conversation, while
-queued messages preserve the effective model and effort captured when they
-entered the queue.
+Keep the composer Agent picker as the first-level task-routing control and place
+conversation-scoped model and thinking-effort controls inside the current
+Agent row. The selected Agent owns runtime type, credentials, workspace,
+instructions, skills, fallbacks, and other configuration; the conversation may
+replace only the primary model and effort used by future turns. Both overrides
+are durable for that conversation, while queued messages preserve the effective
+Agent, model, and effort captured when they entered the queue.
 
 ## Problem
 
-Chat currently exposes the Agent identity in the composer even though the
-operator's turn-by-turn choice is the runtime model. Operators cannot try a
-different primary model or reasoning effort for one conversation without
-modifying the durable Agent, and queued continuations would drift if
-conversation-level choices were added without admission snapshots.
+The first implementation replaced the Agent picker with a direct runtime
+selector. That flattened two different decisions: which durable Agent should
+own the task, and which supported model/effort that Agent should use for the
+next turn. New Chats therefore lost their explicit Agent choice and existing
+Chats could no longer inspect the binding as a first-class locked relationship.
 
 ## Scope
 
@@ -66,10 +66,13 @@ conversation-level choices were added without admission snapshots.
 - Clear an incompatible inherited or overridden Codex effort to Auto only in
   the derived invocation config.
 - Reuse runtime-owned model discovery, Codex ordering, effort options, and
-  compatibility rules in a compact composer runtime selector with nested
-  model and thinking-effort menus.
-- Remove Agent choices from the composer. The selected Agent remains an
-  internal immutable binding after conversation start.
+  compatibility rules in a compact nested selector shown only on the current
+  Agent row.
+- Preserve explicit Agent choices before the first message. Switching the draft
+  Agent clears both runtime overrides and restores the new Agent defaults.
+- Lock Agent selection after the first accepted message while keeping the Agent
+  menu inspectable. Other Agent rows are visibly disabled and only the bound
+  row exposes the runtime selector.
 - Keep forks, Side Chats, other conversations, and new drafts on the Agent
   defaults unless the operator explicitly chooses overrides in that surface.
 - Reject override mutation for externally bound or otherwise read-only
@@ -79,7 +82,7 @@ Out of scope:
 
 - Adding a free-form model input.
 - Copying model or effort overrides into a fork or Side Chat.
-- Changing the bound Agent from the composer.
+- Changing the bound Agent after the conversation starts.
 - Replacing the Agent's runtime type, fallbacks, credentials, or workspace from
   Chat.
 
@@ -91,18 +94,18 @@ Out of scope:
    effort and invocation config applies only the winning values. Include both
    queue snapshots as explicit invocation options so an already-running turn
    remains immutable.
-3. Snapshot the effective model and effort at every queue admission path and
-   mark those server-owned snapshots with an explicit version. Restore both in
+3. Snapshot the effective Agent, model, and effort at every queue admission
+   path and mark those server-owned snapshots with an explicit version. Restore all three in
    ordinary dequeue and fallback Steer continuations, while treating unversioned
    legacy rows as conversation-runtime work rather than trusted snapshots.
-4. Extend draft preflight and atomic first-turn requests with
-   `modelOverride` and `effortOverride`. Reset draft overrides when the internal
-   Agent scope changes, and clear persisted overrides when a preferred Agent
-   changes.
-5. Replace the composer Agent pill/menu with one keyboard-accessible runtime
-   pill/menu containing model and thinking controls. Block Send and Queue only
-   while a runtime PATCH is unresolved; Stop remains available. Move focus to
-   the model control on open and restore the trigger on Escape.
+4. Keep draft preflight and atomic first-turn requests parameterized by
+   `preferredAgentId`, `modelOverride`, and `effortOverride`. Reset draft
+   overrides when the preferred Agent changes, and clear persisted overrides
+   when repair flows change a preferred Agent.
+5. Restore the Agent pill and Agent list. Render a compact nested model/effort
+   control only on the current Agent row, retain portal-based submenus, and keep
+   the menu inspectable after Agent lock. Block Send and Queue only while a
+   runtime PATCH is unresolved; Stop remains available.
 6. Add schema/validator, route, runtime, queue, UI, and Playwright coverage,
    then verify desktop light/dark and narrow layouts in a real browser.
 7. Synchronize `CHAT.LIFECYCLE.001` and `AGENT.RUNTIME.ADAPTERS.001`, run the
@@ -114,17 +117,22 @@ Out of scope:
 - `ChatRuntimeDescriptor.model` and `.effort` expose effective values.
   `ChatConversation.modelOverride` and `.effortOverride` retain whether the
   conversation inherits or overrides Agent defaults.
-- A queue item stores its effective model and effort at admission. Later edits
-  may change message content but must retain both snapshots. Lost-response
+- A queue item stores its effective Agent, model, and effort at admission.
+  Later edits may change message content but must retain all three snapshots. Lost-response
   replay also returns the original snapshots even if conversation controls
   changed meanwhile.
 - Only queue items carrying the server-written snapshot version may restore
-  model and effort into an invocation. Pre-existing unversioned rows ignore
-  those historically client-controlled fields and retain their original
-  idempotency fingerprint algorithm.
+  runtime fields into an invocation. Historical v1 rows without an Agent
+  snapshot restore model/effort while falling back to the conversation's bound
+  Agent; pre-existing unversioned rows ignore historically client-controlled
+  runtime fields and retain their original idempotency fingerprint algorithm.
 - A runtime PATCH does not interrupt or rewrite the invocation config already
   resolved for an active response. It affects only future turns admitted after
   the PATCH commits.
+- The first accepted send atomically binds the draft Agent and snapshots the
+  effective model and effort. The picker cannot mutate that Agent afterward.
+- Locked menus keep all organization Agents visible for orientation, but
+  non-bound rows expose an explicit locked affordance and cannot be selected.
 - Switching the preferred Agent through non-composer repair flows clears both
   conversation overrides atomically to prevent provider-specific values from
   leaking across runtime boundaries.
@@ -143,9 +151,12 @@ Out of scope:
 - Restoring either `Agent default` clears that stored override.
 - A running reply continues with its start-time model and effort.
 - A queued ordinary continuation and fallback Steer continuation use their
-  queue-time model and effort even after conversation overrides change.
-- The composer exposes no Agent choices and keeps the model/effort controls
-  usable after the first turn.
+  queue-time Agent, model, and effort even after conversation overrides change
+  or the Agent becomes unavailable.
+- A draft composer exposes Agent choices; switching Agent clears stale model and
+  effort overrides before preflight or first-send admission.
+- A started conversation keeps its Agent pill and inspectable Agent menu, locks
+  other Agents, and keeps model/effort controls usable on the bound row.
 - New conversations, forks, Side Chats, and externally bound Chats do not
   inherit or mutate unrelated overrides.
 
@@ -165,6 +176,21 @@ Out of scope:
 - Dynamic provider model discovery can fail. The selector must preserve and
   display the current effective model, surface the discovery failure, and keep
   the Agent-default restore action available.
-- The operator explicitly authorized the Product Logic delta for
-  `CHAT.LIFECYCLE.001` and `AGENT.RUNTIME.ADAPTERS.001`; both contracts and
-  their registry traceability are synchronized with this implementation.
+- The Issue revision explicitly authorizes correcting `CHAT.LIFECYCLE.001` and
+  `AGENT.RUNTIME.ADAPTERS.001` from the flattened runtime-only composer back to
+  the Agent → Model / Thinking hierarchy.
+
+## Validation Result
+
+- Focused shared, route, queue, runtime, and UI suites passed, including
+  server-owned Agent/model/effort queue snapshots and immutable queue edits.
+- Isolated Playwright coverage passed for draft Agent switching, keyboard
+  traversal, nested runtime controls, post-start Agent lock, running/queued
+  snapshots, persistence, dark theme, and a 640px viewport.
+- Workspace typecheck, production build, import lint, Product Logic, and docs
+  integrity passed.
+- The architecture comparison reports no regression against `origin/main`;
+  its remaining exit failure is the unrelated pre-existing missing debt
+  exception for `ui/src/pages/AgentDetail.integrations.tsx`.
+- Independent review and black-box verification completed; both original review
+  findings were addressed before handoff.

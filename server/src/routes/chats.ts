@@ -2107,7 +2107,7 @@ export function chatRoutes(
         payload: {
           ...parsed.data.payload,
           inlineAnnotations: preparedAnnotations.annotations,
-          model: runtimeSnapshot.model,
+          agentId: runtimeSnapshot.agentId, model: runtimeSnapshot.model,
           effort: runtimeSnapshot.effort,
         },
         idempotencyPayload: {

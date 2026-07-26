@@ -1918,9 +1918,8 @@ export function chatService(db: Db) {
         inlineAnnotations: input.payload.inlineAnnotations === undefined
           ? currentPayload.inlineAnnotations
           : input.payload.inlineAnnotations,
-        // Editing a queued message changes its content, not the runtime
-        // admission snapshot captured when the item entered the queue.
-        model: currentPayload.model,
+        // Editing changes content, not the Agent/runtime admission snapshot.
+        agentId: currentPayload.agentId, model: currentPayload.model,
         effort: currentPayload.effort,
       });
       if (!payload.body.trim() && (payload.inlineAnnotations?.length ?? 0) === 0) {

@@ -63,6 +63,7 @@ export function normalizeQueuedMessagePayload(
       ? payload.skillRefs.filter((ref): ref is string => typeof ref === "string")
       : [],
     accessMode: typeof payload.accessMode === "string" ? payload.accessMode : null,
+    agentId: typeof payload.agentId === "string" ? payload.agentId : null,
     model: typeof payload.model === "string" ? payload.model : null,
     effort: typeof payload.effort === "string" ? payload.effort : null,
     metadata:
@@ -155,12 +156,13 @@ export function queuedMessageMutationFingerprint(input: {
     originalFilename: attachment.originalFilename,
   }));
   const normalizedPayload = normalizeQueuedMessagePayload(input.payload);
-  // Version 1 marks model/effort as server-owned admission snapshots. Legacy
+  // Version 1 marks Agent/model/effort as server-owned admission snapshots. Legacy
   // queue rows have no marker, so their historical client-controlled fields
   // remain part of the idempotency fingerprint for exact upgrade compatibility.
   const clientPayload = input.runtimeSnapshotVersion === 1
     ? (() => {
         const {
+          agentId: _agentIdSnapshot,
           model: _modelSnapshot,
           effort: _effortSnapshot,
           ...rest

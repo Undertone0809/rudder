@@ -234,6 +234,7 @@ export interface ChatQueuedMessagePayload {
   projectId?: string | null;
   skillRefs?: string[];
   accessMode?: string | null;
+  agentId?: string | null;
   model?: string | null;
   effort?: string | null;
   metadata?: Record<string, unknown> | null;

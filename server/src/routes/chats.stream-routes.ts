@@ -226,7 +226,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
             skillRefs: [],
             projectId: null,
             accessMode: null,
-            model: runtimeSnapshot.model,
+            agentId: runtimeSnapshot.agentId, model: runtimeSnapshot.model,
             effort: runtimeSnapshot.effort,
             metadata: {
               source: "stream_endpoint_during_active_generation",
@@ -560,7 +560,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           try {
             const streamed = await assistantSvc.streamChatAssistantReply({
               ...assistantInput,
-              modelSnapshot: runtimeSnapshot.model,
+              agentIdSnapshot: runtimeSnapshot.agentId, modelSnapshot: runtimeSnapshot.model,
               effortSnapshot: runtimeSnapshot.effort,
               userMessageId: userMessage.id,
               chatTurnId: turnContextForPartial.chatTurnId,

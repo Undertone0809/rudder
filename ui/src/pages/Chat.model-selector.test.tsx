@@ -2,6 +2,7 @@ import type { Agent } from "@rudderhq/shared";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+  ChatAgentRuntimeSelector,
   ChatConversationRuntimeControls,
   chatConversationModelOptions,
   chatRuntimeSelectionLabel,
@@ -83,7 +84,7 @@ describe("chat conversation model options", () => {
     expect(html).toContain("Model discovery failed");
   });
 
-  it("renders model and thinking controls without an Agent picker", () => {
+  it("renders model and thinking controls for the current Agent row", () => {
     const html = renderToStaticMarkup(
       <ChatConversationRuntimeControls
         agent={makeAgent({
@@ -104,7 +105,24 @@ describe("chat conversation model options", () => {
     expect(html).toContain(">High<");
     expect(html).toContain('aria-haspopup="listbox"');
     expect(html).toContain("lucide-chevron-right");
-    expect(html).not.toContain(">Agents<");
+  });
+
+  it("renders the compact current-Agent runtime entry", () => {
+    const html = renderToStaticMarkup(
+      <ChatAgentRuntimeSelector
+        agent={makeAgent()}
+        adapterModels={[]}
+        overrides={{ modelOverride: null, effortOverride: null }}
+        label="gpt-5.6-sol · Medium"
+        onChange={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="chat-agent-runtime-selector"');
+    expect(html).toContain('role="menuitem"');
+    expect(html).toContain("data-chat-composer-menu-item");
+    expect(html).toContain("gpt-5.6-sol · Medium");
+    expect(html).toContain("Configure model and thinking for Noah");
   });
 
   it("preserves Agent effort inheritance when runtime derivation must fall back to Auto", () => {
@@ -125,7 +143,7 @@ describe("chat conversation model options", () => {
     });
   });
 
-  it("summarizes the effective conversation model and effort for the composer pill", () => {
+  it("summarizes the effective model and effort for the current Agent row", () => {
     expect(chatRuntimeSelectionLabel({
       agent: makeAgent(),
       runtime: {

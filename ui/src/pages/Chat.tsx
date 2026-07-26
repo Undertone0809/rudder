@@ -45,11 +45,13 @@ import { useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
+import { formatChatAgentLabel } from "@/lib/agent-labels";
 import {
   NO_CHAT_AGENT_ID,
   isSelectableChatAgentId,
   rememberChatAgentId,
   resolveDefaultChatAgentId,
+  selectableChatAgents,
 } from "@/lib/chat-agent-selection";
 import {
   chatClientCheckpointKey,
@@ -187,13 +189,14 @@ import { PendingAttachmentPreview } from "./Chat.attachments";
 import { ChatComposerFileDropOverlay, useChatComposerFileDrop } from "./Chat.file-drop";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
 import {
-  ChatConversationRuntimeMenuContent,
-  ChatRuntimeSelectorButton,
+  ChatAgentMenuContent,
+  ChatAgentSelectorButton,
   chatRuntimeSelectionLabel,
+  handleChatAgentMenuKeyDown,
   useChatRuntimeMutation,
   useChatRuntimeSelection,
 } from "./Chat.model-selector";
-import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatAgentRunMenuItem, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_PROJECT_ID, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDisplay, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
+import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatAgentRunMenuItem, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDisplay, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
 import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-controls";
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
@@ -443,7 +446,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const serverActiveGenerationId = activeGenerationIdFromSnapshot(queueQuery.data);
   const { data: agents, error: agentsError } = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId ?? "__none__"),
-    queryFn: () => agentsApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, });
+    queryFn: () => agentsApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, }); const liveAgents = useMemo(() => selectableChatAgents(agents), [agents]);
   const { data: projects, error: projectsError } = useQuery({
     queryKey: queryKeys.projects.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => projectsApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, }); const visibleProjects = useMemo(
@@ -584,11 +587,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         if (restoreRuntimeFocus) {
           requestAnimationFrame(() => runtimeSelectorRef.current?.focus());
         }
-      } }; document.addEventListener("pointerdown", handlePointerDown, true); document.addEventListener("keydown", handleKeyDown, true);
-    return () => { document.removeEventListener("pointerdown", handlePointerDown, true); document.removeEventListener("keydown", handleKeyDown, true); }; }, [agentMenuOpen, closeComposerContextMenus, composerContextMenuOpen]);
-  useEffect(() => { if (!agentMenuOpen) return;
-    requestAnimationFrame(() => runtimeModelSelectRef.current?.focus());
-  }, [agentMenuOpen]);
+      } }; document.addEventListener("pointerdown", handlePointerDown, true); document.addEventListener("keydown", handleKeyDown);
+    return () => { document.removeEventListener("pointerdown", handlePointerDown, true); document.removeEventListener("keydown", handleKeyDown); }; }, [agentMenuOpen, closeComposerContextMenus, composerContextMenuOpen]);
+  useEffect(() => { if (!agentMenuOpen) return; requestAnimationFrame(() => { composerContextMenuRef.current?.querySelector<HTMLButtonElement>("[data-chat-composer-menu-item]")?.focus(); }); }, [agentMenuOpen]);
   useEffect(() => { if (!skillMenuOpen) return;
     requestAnimationFrame(() => { skillSearchInputRef.current?.focus(); }); }, [skillMenuOpen]);
   useEffect(() => { if (!selectedOrganizationId) return;
@@ -2034,7 +2035,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     });
   }, []);
   const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
-    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = transcriptLoadState.showMessagesLoading; const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => projectChatQueueDelivery(item).state !== "hidden"); const projectSelectionLocked = isChatProjectSelectionLocked({
+    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = transcriptLoadState.showMessagesLoading; const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => projectChatQueueDelivery(item).state !== "hidden"); const agentSelectionLocked = isChatAgentSelectionLocked({ hasConversation: Boolean(selectedConversation), preferredAgentId: selectedConversation?.preferredAgentId, hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const projectSelectionLocked = isChatProjectSelectionLocked({
     hasConversation: Boolean(selectedConversation),
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
     hasMessages: rawMessages.length > 0,
@@ -2247,7 +2248,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     agent: activeSkillAgent,
     runtime: selectedConversation?.chatRuntime ?? draftPreflightQuery.data ?? null,
     overrides: activeRuntimeOverrides,
-  }); const activeProjectContextLink = selectedConversation?.contextLinks.find((link) => link.entityType === "project") ?? null; const activeProject = activeProjectId === NO_PROJECT_ID ? null : visibleProjects.find((project) => project.id === activeProjectId) ?? null; const hasSelectedProject = activeProjectId !== NO_PROJECT_ID; const projectPillLabel = activeProject ? projectDisplayName(activeProject) : activeProjectId === NO_PROJECT_ID ? "No project" : activeProjectContextLink?.entity?.label ?? "Unknown project"; const showProjectSelector = !selectedConversation || activeProjectId !== NO_PROJECT_ID || !projectSelectionLocked; const allRecentProjectConversations = useMemo(() => {
+  }); const agentPillLabel = activeAgentId === NO_CHAT_AGENT_ID ? (agents ? NO_CHAT_AGENT_LABEL : "Loading agents") : activeSkillAgent ? formatChatAgentLabel(activeSkillAgent) : "Unknown agent"; const activeProjectContextLink = selectedConversation?.contextLinks.find((link) => link.entityType === "project") ?? null; const activeProject = activeProjectId === NO_PROJECT_ID ? null : visibleProjects.find((project) => project.id === activeProjectId) ?? null; const hasSelectedProject = activeProjectId !== NO_PROJECT_ID; const projectPillLabel = activeProject ? projectDisplayName(activeProject) : activeProjectId === NO_PROJECT_ID ? "No project" : activeProjectContextLink?.entity?.label ?? "Unknown project"; const showProjectSelector = !selectedConversation || activeProjectId !== NO_PROJECT_ID || !projectSelectionLocked; const allRecentProjectConversations = useMemo(() => {
     if (!activeProject) return [];
     return [...(projectConversationsQuery.data ?? [])]
       .filter((conversation) => projectContextId(conversation) === activeProject.id)
@@ -2337,7 +2338,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pushToast({
         title: "Selected skills already in message",
         tone: "success",
-      }); } }, [pushToast, readComposerDraft]); const applyProjectContext = (value: string) => {
+      }); } }, [pushToast, readComposerDraft]); const applyPreferredAgent = (value: string) => { if (agentSelectionLocked || runtimeSelectionPending || !isSelectableChatAgentId(value, agents) || value === activeAgentId) return; setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null }); setDraftPreferredAgentId(value); if (selectedOrganizationId) rememberChatAgentId(selectedOrganizationId, value); if (selectedConversation) updateConversationMutation.mutate({ chatId: selectedConversation.id, data: { preferredAgentId: value, modelOverride: null, effortOverride: null, }, }); }; const applyProjectContext = (value: string) => {
     if (projectSelectionLocked) { setProjectMenuOpen(false);
       return; } const projectId = value === NO_PROJECT_ID ? null : value; const previousProjectId = selectedConversation ? selectedConversationProjectId : draftProjectId === NO_PROJECT_ID ? null : draftProjectId; setDraftProjectId(value); draftProjectManuallySelectedRef.current = true; draftProjectDefaultKeyRef.current = draftProjectDefaultKey; setProjectMenuOpen(false);
     if (selectedOrganizationId) {
@@ -2747,14 +2748,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!showEmptyStateSupplementalContent) {
       setRecentProjectConversationLimit(RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT);
     }
-  }, [showEmptyStateSupplementalContent]); const renderComposerContextMenu = () => { if (!composerContextMenuOpen || !composerMenuPosition || typeof document === "undefined") return null; const activeMenu = projectMenuOpen ? "project" : agentMenuOpen ? "runtime" : "skill";
+  }, [showEmptyStateSupplementalContent]); const renderComposerContextMenu = () => { if (!composerContextMenuOpen || !composerMenuPosition || typeof document === "undefined") return null; const activeMenu = projectMenuOpen ? "project" : agentMenuOpen ? "agent" : "skill";
     return createPortal(
       <div
         ref={composerContextMenuRef}
         data-testid={`chat-${activeMenu}-menu`}
-        role={activeMenu === "runtime" ? "dialog" : "menu"}
-        aria-label={activeMenu === "runtime" ? "Conversation runtime" : undefined}
-        className={cn("chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay fixed z-50 rounded-[var(--radius-lg)] border p-1.5 text-foreground", activeMenu === "runtime" ? "overflow-visible" : "overflow-y-auto")}
+        role="menu"
+        aria-label={activeMenu === "agent" ? "Chat agent" : undefined}
+        onKeyDown={agentMenuOpen ? handleChatAgentMenuKeyDown : undefined}
+        className="chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay fixed z-50 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
         style={composerMenuPosition}
       >
         {projectMenuOpen && !projectSelectionLocked ? ( <>
@@ -2774,9 +2776,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     </span> </button>
                 ))} </div> ) : null} </> ) : null}
         {agentMenuOpen ? (
-          <ChatConversationRuntimeMenuContent agent={activeSkillAgent} adapterModels={adapterModelsQuery.data} overrides={activeRuntimeOverrides}
-            disabled={selectedConversationExternalBound || (!selectedConversation && newConversationSendInFlight)} isLoading={adapterModelsQuery.isPending}
-            error={adapterModelsQuery.error} pending={runtimeSelectionPending} modelSelectRef={runtimeModelSelectRef} onChange={applyRuntimeOverrides} />
+          <ChatAgentMenuContent agents={liveAgents} activeAgentId={activeAgentId} agentSelectionLocked={agentSelectionLocked} runtimeSelectionPending={runtimeSelectionPending} newConversationSendInFlight={newConversationSendInFlight} externalBound={selectedConversationExternalBound} adapterModels={adapterModelsQuery.data} overrides={activeRuntimeOverrides} runtimeLabel={runtimePillLabel} isLoading={adapterModelsQuery.isPending} error={adapterModelsQuery.error} modelSelectRef={runtimeModelSelectRef} onSelectAgent={applyPreferredAgent} onChangeRuntime={applyRuntimeOverrides} />
         ) : null}
         {skillMenuOpen ? ( <>
             <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Skills</div>
@@ -3228,8 +3228,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               ) : null}
             </div>
           ) : null}
-          <ChatRuntimeSelectorButton buttonRef={runtimeSelectorRef} label={runtimePillLabel} expanded={agentMenuOpen}
-            disabled={!activeSkillAgent || selectedConversationExternalBound || (!selectedConversation && newConversationSendInFlight)} onClick={() => {
+          <ChatAgentSelectorButton buttonRef={runtimeSelectorRef} agent={activeSkillAgent} label={agentPillLabel} expanded={agentMenuOpen} locked={agentSelectionLocked} disabled={!agents || (!selectedConversation && newConversationSendInFlight)} onClick={() => {
               if (agentMenuOpen) { closeComposerContextMenus();
                 return; } openComposerContextMenu("agent");
             }} />

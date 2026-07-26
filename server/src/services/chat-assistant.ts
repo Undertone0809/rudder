@@ -116,6 +116,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     contextLinks: ChatContextLink[];
     materializeManagedInstructions?: boolean;
     materializeMissingRuntimeSkills?: boolean;
+    agentIdSnapshot?: string | null;
     modelSnapshot?: string | null;
     effortSnapshot?: string | null;
   }) {
@@ -124,6 +125,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       {
         materializeManagedInstructions: input.materializeManagedInstructions,
         materializeMissingRuntimeSkills: input.materializeMissingRuntimeSkills,
+        ...(input.agentIdSnapshot !== undefined ? { agentIdSnapshot: input.agentIdSnapshot } : {}),
         ...(input.modelSnapshot !== undefined ? { modelSnapshot: input.modelSnapshot } : {}),
         ...(input.effortSnapshot !== undefined ? { effortSnapshot: input.effortSnapshot } : {}),
       },
@@ -334,14 +336,18 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     options?: {
       materializeManagedInstructions?: boolean;
       materializeMissingRuntimeSkills?: boolean;
+      agentIdSnapshot?: string | null;
       modelSnapshot?: string | null;
       effortSnapshot?: string | null;
     },
   ) {
-    if (conversation.preferredAgentId) {
+    const preferredAgentId = options && Object.prototype.hasOwnProperty.call(options, "agentIdSnapshot")
+      ? safeTrim(options.agentIdSnapshot)
+      : conversation.preferredAgentId;
+    if (preferredAgentId) {
       const agentRuntime = await resolveAgentRuntime(
         conversation.orgId,
-        conversation.preferredAgentId,
+        preferredAgentId,
         options,
       );
       if (
@@ -417,6 +423,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       contextLinks: input.contextLinks,
       materializeManagedInstructions: true,
       materializeMissingRuntimeSkills: true,
+      agentIdSnapshot: input.agentIdSnapshot,
       modelSnapshot: input.modelSnapshot,
       effortSnapshot: input.effortSnapshot,
     }).catch((error) => {

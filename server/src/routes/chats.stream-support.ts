@@ -22,6 +22,7 @@ export type AtomicChatFirstTurn = {
   uploadPrepared: boolean;
   expectedTitleForAutomaticGeneration: string | null;
   runtimeSnapshot: {
+    agentId: string | null;
     model: string | null;
     effort: string | null;
   };

@@ -3113,6 +3113,7 @@ describe("chat routes", () => {
       runtimeSnapshotVersion: 1,
       payload: expect.objectContaining({
         body: "Use the admitted model",
+        agentId: conversation.preferredAgentId,
         model: "gpt-5.6-terra",
         effort: "high",
       }),

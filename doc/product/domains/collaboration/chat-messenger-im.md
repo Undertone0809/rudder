@@ -194,6 +194,11 @@ Product model:
   the caller's selected organization agent when supplied and otherwise assigns
   the organization's first available agent; it rejects creation before
   persistence when the organization has no available agent.
+- A new-chat draft exposes the organization Agent choice before the first
+  message. The first accepted message atomically binds that Agent to the
+  conversation. Afterward the Agent identity is locked, while its menu remains
+  inspectable and its conversation-scoped Model / Thinking controls remain
+  available on the bound Agent row.
 - A native conversation may persist nullable primary-model and thinking-effort
   overrides. Both are scoped to that conversation, leave the Agent runtime
   configuration unchanged, and are cleared when the preferred Agent changes.
@@ -276,8 +281,9 @@ Product model:
 - Queued follow-ups preserve the queued body and composer context until they are
   delivered, including response annotations and their annotation-owned files.
   Operators can edit or delete ordinary queued follow-ups while they remain
-  queued. Admission snapshots the effective primary model and thinking effort
-  so later conversation-runtime changes do not retarget queued work. The
+  queued. Admission snapshots the effective Agent, primary model, and thinking
+  effort so later conversation-runtime changes or Agent availability changes
+  do not retarget queued work. The
   server, rather than the open browser, owns claiming and delivering eligible
   follow-ups.
 - Steer is a durable operator command, not an optimistic queue label. If the
@@ -341,17 +347,19 @@ Flow:
    preserve their selected Project without persisting a conversation.
 2. On an empty new Chat, the operator may select a compact task category and
    then a complete prompt suggestion before editing or sending the draft.
-3. Composer keeps the conversation's bound Agent internal and does not expose
-   Agent choices. A compact runtime control directly shows the effective model
-   and thinking effort, with nested Model and Thinking menus backed by the
-   runtime-owned catalogs. Composer may also include attachments, mentions,
-   rich references, selected skills, and structured proposal payloads.
+3. Composer's primary identity control is the Agent. Before the first send the
+   operator may choose another available organization Agent; changing it clears
+   draft model and effort overrides and restores that Agent's defaults. The
+   current Agent row alone exposes a compact Model / Thinking entry backed by
+   that Agent's runtime-owned catalogs.
 4. Before the first send, the server performs a side-effect-free preflight for
    organization access, Agent/runtime/model support, context ownership, and
    attachment validity. A failure keeps the complete unpersisted draft.
-5. On the first accepted send, the server atomically persists the agent-backed
-   conversation, optional model and effort overrides, context links, first
-   message, title, and activity before acknowledging the turn. Direct create
+5. On the first accepted send, the server atomically persists the selected
+   Agent binding, optional model and effort overrides, context links, first
+   message, title, and activity before acknowledging the turn. The Agent then
+   becomes immutable for the conversation; other Agent rows remain visible but
+   disabled, while the bound row's runtime entry stays editable. Direct create
    callers must supply a non-empty first message; the server derives its role
    from the authenticated actor.
 6. If assistant startup or generation fails after acceptance, Rudder retains
@@ -378,8 +386,10 @@ Flow:
    variant shows the live stream draft again.
 12. If the operator sends another local follow-up while the selected chat has an
    active generation, Rudder creates a queued follow-up with the current draft,
-   attachments, selected project, skills, admitted effective primary model,
-   effort, access mode, and expected active generation id.
+   attachments, selected project, skills, admitted Agent, effective primary
+   model, effort, access mode, and expected active generation id. The queued
+   Agent/model/effort snapshot remains authoritative even if conversation
+   configuration or Agent availability changes before dequeue.
 13. The queue renders beside the composer with stable ordering. The first queued
    item is marked as next, later items show their queue position, and editable
    queued items expose edit/delete controls.
@@ -430,9 +440,9 @@ Invariants:
   legitimately unassigned split issues remain distinct as `Unassigned`.
 - Conversation model or effort changes affect only assistant invocations
   admitted after the change. An in-flight invocation retains its admitted
-  runtime config, and queued or fallback-continuation work retains the model
-  and effort snapshots stored at queue admission. Restoring either control to
-  `Agent default` clears only that persisted override.
+  runtime config, and queued or fallback-continuation work retains the Agent,
+  model, and effort snapshots stored at queue admission. Restoring either
+  control to `Agent default` clears only that persisted override.
 - Conversation overrides replace only the primary model and adapter-owned
   effort field in the derived Chat runtime config. Secrets, workspace, skills,
   fallback models, and other Agent runtime settings remain inherited. A null

@@ -137,6 +137,7 @@ export interface GenerateChatAssistantReplyInput {
   contextLinks: ChatContextLink[];
   issueLabels?: IssueLabel[] | null;
   operatorProfile?: OperatorProfileSettings | null;
+  agentIdSnapshot?: string | null;
   modelSnapshot?: string | null;
   effortSnapshot?: string | null;
 }

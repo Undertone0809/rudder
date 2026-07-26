@@ -6,12 +6,14 @@ import {
   thinkingEffortKeyForRuntime,
   thinkingEffortOptionsForRuntime,
 } from "@/components/AgentConfigForm.helpers";
+import { AgentIcon } from "@/components/AgentIconPicker";
+import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { queryKeys } from "@/lib/queryKeys";
 import { resolveRuntimeModels } from "@/lib/runtime-models";
 import { cn } from "@/lib/utils";
 import type { Agent, ChatConversation, ChatRuntimeDescriptor } from "@rudderhq/shared";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Bot, Check, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { Bot, Check, ChevronLeft, ChevronRight, Loader2, Lock } from "lucide-react";
 import {
   useEffect,
   useRef,
@@ -536,10 +538,11 @@ export function ChatConversationRuntimeControls(props: {
   );
 }
 
-export function ChatConversationRuntimeMenuContent(props: {
+export function ChatAgentRuntimeSelector(props: {
   agent: Agent | null;
   adapterModels: readonly AgentRuntimeModel[] | null | undefined;
   overrides: ChatRuntimeOverrides;
+  label: string;
   disabled?: boolean;
   isLoading?: boolean;
   error?: unknown;
@@ -547,43 +550,241 @@ export function ChatConversationRuntimeMenuContent(props: {
   modelSelectRef?: Ref<HTMLButtonElement>;
   onChange: (overrides: ChatRuntimeOverrides) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<CSSProperties | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const openPanel = () => {
+    if (!props.agent || props.disabled || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const width = 304;
+    const viewportPadding = 12;
+    const availableRight = window.innerWidth - rect.right;
+    setPosition({
+      left: availableRight >= width + viewportPadding
+        ? rect.right + 8
+        : Math.max(viewportPadding, rect.left - width - 8),
+      top: Math.max(
+        viewportPadding,
+        Math.min(rect.top, window.innerHeight - viewportPadding - 360),
+      ),
+    });
+    setOpen(true);
+  };
+  useEffect(() => {
+    if (!open || !props.modelSelectRef || typeof props.modelSelectRef !== "object") return;
+    const modelSelectRef = props.modelSelectRef;
+    requestAnimationFrame(() => modelSelectRef.current?.focus());
+  }, [open, props.modelSelectRef]);
+
   return (
     <>
-      {props.agent ? (
-        <ChatConversationRuntimeControls
-          agent={props.agent}
-          adapterModels={props.adapterModels}
-          overrides={props.overrides}
-          disabled={props.disabled}
-          isLoading={props.isLoading}
-          error={props.error}
-          pending={props.pending}
-          modelSelectRef={props.modelSelectRef}
-          onChange={props.onChange}
-        />
-      ) : (
-        <div className="flex items-center gap-2 rounded-[var(--radius-md)] px-3 py-2 text-sm text-muted-foreground">
-          <Bot className="h-4 w-4 shrink-0" />
-          <span>Create or activate an agent before sending messages.</span>
-        </div>
-      )}
+      <button
+        ref={triggerRef}
+        type="button"
+        role="menuitem"
+        data-chat-composer-menu-item
+        data-testid="chat-agent-runtime-selector"
+        aria-label={`Configure model and thinking for ${props.agent?.name ?? "selected agent"}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        disabled={!props.agent || props.disabled}
+        className={cn(
+          "inline-flex min-w-0 max-w-44 items-center gap-1 rounded-[var(--radius-sm)] px-2 py-1",
+          "text-[11px] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground",
+          "disabled:cursor-not-allowed disabled:opacity-55",
+        )}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (open) {
+            setOpen(false);
+            return;
+          }
+          openPanel();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowRight" || event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            openPanel();
+          }
+        }}
+      >
+        <span className="min-w-0 truncate">{props.label}</span>
+        {props.pending ? (
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        )}
+      </button>
+      {open && position && props.agent && typeof document !== "undefined" ? createPortal(
+        <div
+          data-chat-runtime-submenu
+          data-testid="chat-agent-runtime-panel"
+          role="dialog"
+          aria-label={`Model and thinking for ${props.agent.name}`}
+          className="surface-overlay fixed z-[65] w-[19rem] max-w-[calc(100vw-1.5rem)] rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
+          style={position}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape" && event.key !== "ArrowLeft") return;
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
+            requestAnimationFrame(() => triggerRef.current?.focus());
+          }}
+        >
+          <button
+            type="button"
+            className="chat-composer-menu-row mb-1"
+            onClick={() => {
+              setOpen(false);
+              requestAnimationFrame(() => triggerRef.current?.focus());
+            }}
+          >
+            <ChevronLeft className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate font-medium">{props.agent.name}</span>
+          </button>
+          <div className="border-t border-[color:var(--border-soft)] pt-1">
+            <ChatConversationRuntimeControls
+              agent={props.agent}
+              adapterModels={props.adapterModels}
+              overrides={props.overrides}
+              disabled={props.disabled}
+              isLoading={props.isLoading}
+              error={props.error}
+              pending={props.pending}
+              modelSelectRef={props.modelSelectRef}
+              onChange={props.onChange}
+            />
+          </div>
+        </div>,
+        document.body,
+      ) : null}
     </>
   );
 }
 
-export function ChatRuntimeSelectorButton(props: {
-  buttonRef?: Ref<HTMLButtonElement>;
+export function handleChatAgentMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  if (event.target instanceof Element && event.target.closest("[data-chat-runtime-submenu]")) return;
+  const items = Array.from(
+    event.currentTarget.querySelectorAll<HTMLButtonElement>("[data-chat-composer-menu-item]:not(:disabled)"),
+  );
+  if (items.length === 0) return;
+  event.preventDefault();
+  const currentIndex = items.findIndex((item) => item === document.activeElement);
+  const nextIndex = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? items.length - 1
+      : event.key === "ArrowUp"
+        ? (currentIndex <= 0 ? items.length - 1 : currentIndex - 1)
+        : (currentIndex < 0 || currentIndex === items.length - 1 ? 0 : currentIndex + 1);
+  items[nextIndex]?.focus();
+}
+
+export function ChatAgentMenuContent(props: {
+  agents: readonly Agent[];
+  activeAgentId: string;
+  agentSelectionLocked: boolean;
+  runtimeSelectionPending: boolean;
+  newConversationSendInFlight: boolean;
+  externalBound: boolean;
+  adapterModels: readonly AgentRuntimeModel[] | null | undefined;
+  overrides: ChatRuntimeOverrides;
+  runtimeLabel: string;
+  isLoading?: boolean;
+  error?: unknown;
+  modelSelectRef?: Ref<HTMLButtonElement>;
+  onSelectAgent: (agentId: string) => void;
+  onChangeRuntime: (overrides: ChatRuntimeOverrides) => void;
+}) {
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs font-medium text-muted-foreground">
+        <span>Agents</span>
+        {props.agentSelectionLocked ? (
+          <span className="inline-flex items-center gap-1" data-testid="chat-agent-lock-state">
+            <Lock className="h-3 w-3" aria-hidden="true" />
+            Bound to chat
+          </span>
+        ) : null}
+      </div>
+      {props.agents.length === 0 ? (
+        <div className="flex items-center gap-2 rounded-[var(--radius-md)] px-3 py-2 text-sm text-muted-foreground">
+          <Bot className="h-4 w-4 shrink-0" />
+          <span>Create or activate an agent before sending messages.</span>
+        </div>
+      ) : props.agents.map((agent) => {
+        const selected = props.activeAgentId === agent.id;
+        const choiceDisabled = props.runtimeSelectionPending
+          || props.newConversationSendInFlight
+          || (props.agentSelectionLocked && !selected)
+          || props.externalBound;
+        return (
+          <div
+            key={agent.id}
+            data-testid={`chat-agent-option-${agent.id}`}
+            data-selected={selected ? "true" : undefined}
+            className={cn(
+              "flex min-h-10 items-center gap-1 rounded-[var(--radius-md)]",
+              selected && "bg-[color:var(--surface-active)]",
+            )}
+          >
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={selected}
+              aria-disabled={choiceDisabled || selected}
+              disabled={choiceDisabled && !selected}
+              data-chat-composer-menu-item
+              className="chat-composer-menu-row min-w-0 flex-1 disabled:cursor-default disabled:opacity-100"
+              onClick={() => props.onSelectAgent(agent.id)}
+            >
+              <AgentIcon icon={agent.icon} role={agent.role} className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-left font-medium">
+                {formatChatAgentLabel(agent)}
+              </span>
+              {props.agentSelectionLocked && !selected ? (
+                <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Unavailable after chat starts" />
+              ) : null}
+            </button>
+            {selected ? (
+              <ChatAgentRuntimeSelector
+                agent={agent}
+                adapterModels={props.adapterModels}
+                overrides={props.overrides}
+                label={props.runtimeLabel}
+                disabled={props.externalBound || props.newConversationSendInFlight}
+                isLoading={props.isLoading}
+                error={props.error}
+                pending={props.runtimeSelectionPending}
+                modelSelectRef={props.modelSelectRef}
+                onChange={props.onChangeRuntime}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+export function ChatAgentSelectorButton(props: {
+  agent: Agent | null;
   label: string;
   expanded: boolean;
+  locked: boolean;
   disabled: boolean;
+  buttonRef?: Ref<HTMLButtonElement>;
   onClick: () => void;
 }) {
   return (
     <button
       ref={props.buttonRef}
       type="button"
-      data-testid="chat-runtime-selector"
-      aria-label={`Conversation runtime: ${props.label}`}
+      data-testid="chat-agent-selector"
+      aria-label={`Chat agent: ${props.label}`}
       aria-expanded={props.expanded}
       disabled={props.disabled}
       className={cn(
@@ -593,8 +794,15 @@ export function ChatRuntimeSelectorButton(props: {
       )}
       onClick={props.onClick}
     >
+      {props.agent ? (
+        <span data-testid="chat-agent-selector-icon" className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
+          <AgentIcon icon={props.agent.icon} role={props.agent.role} className="h-3.5 w-3.5" />
+        </span>
+      ) : null}
       <span className="min-w-0 truncate">{props.label}</span>
-      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+      {props.locked ? (
+        <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Agent is bound to this chat" />
+      ) : null}
     </button>
   );
 }

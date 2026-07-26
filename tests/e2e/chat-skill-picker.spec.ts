@@ -66,19 +66,20 @@ test.describe("Chat skill picker", () => {
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat`);
 
-    await expect(page.getByTestId("chat-runtime-selector")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-agent-selector")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "Skills" })).toBeVisible();
 
     const composerSurface = page.locator(".chat-composer").first();
-    await page.getByTestId("chat-runtime-selector").click();
-    const runtimeMenu = page.getByTestId("chat-runtime-menu");
-    await expect(runtimeMenu).toBeVisible();
+    await page.getByTestId("chat-agent-selector").click();
+    const agentMenu = page.getByTestId("chat-agent-menu");
+    await expect(agentMenu).toBeVisible();
     const composerSurfaceBox = await composerSurface.boundingBox();
-    const runtimeMenuBox = await runtimeMenu.boundingBox();
+    const runtimeMenuBox = await agentMenu.boundingBox();
     expect(composerSurfaceBox).not.toBeNull();
     expect(runtimeMenuBox).not.toBeNull();
     expect(runtimeMenuBox!.y + runtimeMenuBox!.height).toBeLessThanOrEqual(composerSurfaceBox!.y + 1);
-    await expect(runtimeMenu).not.toContainText(agent.name);
+    await expect(agentMenu).toContainText(agent.name);
+    await page.getByTestId("chat-agent-runtime-selector").click();
     await expect(page.getByTestId("chat-model-selector")).toBeVisible();
     await expect(page.getByTestId("chat-effort-selector")).toBeVisible();
   });

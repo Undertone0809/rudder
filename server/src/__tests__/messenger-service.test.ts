@@ -342,9 +342,10 @@ describe("messengerService and issue follows", () => {
     expect(replaced).toMatchObject({ annotationCount: 0 });
   });
 
-  it("treats model and effort as immutable server-owned queue admission snapshots", async () => {
+  it("treats Agent, model, and effort as immutable server-owned queue admission snapshots", async () => {
     const fixture = await createQueuedAnnotationFixture({ body: "fixture" });
     const clientMutationId = randomUUID();
+    const admittedAgentId = randomUUID();
     const created = await chatSvc.createQueuedMessage({
       orgId: fixture.orgId,
       conversationId: fixture.conversationId,
@@ -352,6 +353,7 @@ describe("messengerService and issue follows", () => {
       runtimeSnapshotVersion: 1,
       payload: {
         body: "Run with this admitted runtime",
+        agentId: admittedAgentId,
         model: "gpt-5.6-terra",
         effort: "xhigh",
       },
@@ -363,6 +365,7 @@ describe("messengerService and issue follows", () => {
       clientMutationId,
       payload: {
         body: "Run with this admitted runtime",
+        agentId: randomUUID(),
         model: "gpt-5.5",
         effort: "low",
       },
@@ -371,6 +374,7 @@ describe("messengerService and issue follows", () => {
       id: created.id,
       payload: {
         body: "Run with this admitted runtime",
+        agentId: admittedAgentId,
         model: "gpt-5.6-terra",
         effort: "xhigh",
       },
@@ -383,12 +387,14 @@ describe("messengerService and issue follows", () => {
       version: created.version,
       payload: {
         body: "Edited prose keeps the admitted runtime",
+        agentId: randomUUID(),
         model: "client-forged-model",
         effort: "client-forged-effort",
       },
     });
     expect(edited.payload).toMatchObject({
       body: "Edited prose keeps the admitted runtime",
+      agentId: admittedAgentId,
       model: "gpt-5.6-terra",
       effort: "xhigh",
     });

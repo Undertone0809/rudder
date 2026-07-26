@@ -8176,7 +8176,7 @@ describe("Chat project context selector", () => {
     expect(projectSelector).not.toBeNull();
     expect(projectSelector?.querySelector("[data-testid='chat-project-icon']")).toBeNull();
     expect(
-      container.querySelector("[data-testid='chat-runtime-selector'] .lucide-chevron-down"),
+      container.querySelector("[data-testid='chat-agent-selector'] [data-testid='chat-agent-selector-icon']"),
     ).not.toBeNull();
 
     act(() => {
