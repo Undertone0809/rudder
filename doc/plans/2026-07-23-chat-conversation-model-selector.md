@@ -29,7 +29,8 @@ related_code:
   - ui/src/pages/Chat.tsx
   - ui/src/pages/Chat.workspace-helpers.ts
   - tests/e2e/chat-conversation-model-selector.spec.ts
-commit_refs: []
+commit_refs:
+  - 4b71b9830
 updated_at: 2026-07-26
 ---
 
