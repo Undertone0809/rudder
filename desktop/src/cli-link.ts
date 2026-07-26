@@ -134,11 +134,29 @@ export async function resolveDesktopCliExecutablePath(
   return path.resolve(execPathValue);
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll(`'`, `'\"'\"'`)}'`;
+}
+
 function buildUnixWrapper(executablePath: string): string {
-  const escaped = executablePath.replaceAll(`'`, `'\"'\"'`);
   return `#!/bin/sh
 # ${MANAGED_MARKER}
-exec '${escaped}' ${DESKTOP_CLI_FLAG} "$@"
+exec ${shellQuote(executablePath)} ${DESKTOP_CLI_FLAG} "$@"
+`;
+}
+
+function buildMacWrapper(executablePath: string): string {
+  const cliRunner = path.resolve(
+    path.dirname(executablePath),
+    "..",
+    "Resources",
+    "server-package",
+    "desktop-cli-runner.js",
+  );
+  return `#!/bin/sh
+# ${MANAGED_MARKER}
+export ELECTRON_RUN_AS_NODE=1
+exec ${shellQuote(executablePath)} ${shellQuote(cliRunner)} "$@"
 `;
 }
 
@@ -151,9 +169,9 @@ rem ${MANAGED_MARKER}\r
 }
 
 export function buildDesktopCliWrapper(executablePath: string, platform: NodeJS.Platform = process.platform): string {
-  return platform === "win32"
-    ? buildWindowsWrapper(executablePath)
-    : buildUnixWrapper(executablePath);
+  if (platform === "win32") return buildWindowsWrapper(executablePath);
+  if (platform === "darwin") return buildMacWrapper(executablePath);
+  return buildUnixWrapper(executablePath);
 }
 
 export function shouldInstallDesktopCliLink(

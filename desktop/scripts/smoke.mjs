@@ -565,6 +565,7 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
     : path.resolve(path.dirname(executablePath), "resources");
   const serverPackageDir = path.join(resourcesDir, "server-package");
   const cliEntry = path.join(serverPackageDir, "desktop-cli.js");
+  const cliRunner = path.join(serverPackageDir, "desktop-cli-runner.js");
   const serverManifest = JSON.parse(await readFile(path.join(serverPackageDir, "package.json"), "utf8"));
   const serverEntrypoint = path.resolve(serverPackageDir, serverManifest.main ?? "dist/index.js");
   const runtimeCacheDir = path.join(resolveInstancePaths(userDataDir).rudderHome, "runtimes", serverManifest.version);
@@ -657,6 +658,7 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
 
   return {
     cliEntry,
+    cliRunner,
     codexAdapterEntry: path.join(runtimeCodexAdapterDir, "dist", "server", "index.js"),
     executablePath,
     loadedMarker,
@@ -878,11 +880,20 @@ function createSmokeAgentJwt(agentId, orgId, runId) {
 
 async function createSmokeMcpClient(env, surface = "browser") {
   const executablePath = smokeMode === "packaged" ? await resolvePackagedExecutablePath() : process.execPath;
-  const args = smokeMode === "packaged"
-    ? ["--desktop-cli", "mcp-server", "--server", surface]
+  const packagedMacRunner = smokeMode === "packaged" && process.platform === "darwin"
+    ? path.resolve(path.dirname(executablePath), "..", "Resources", "server-package", "desktop-cli-runner.js")
+    : null;
+  const args = packagedMacRunner
+    ? [packagedMacRunner, "mcp-server", "--server", surface]
+    : smokeMode === "packaged"
+      ? ["--desktop-cli", "mcp-server", "--server", surface]
     : [path.resolve(repoRoot, "cli/dist/index.js"), "mcp-server", "--server", surface];
   const child = spawn(executablePath, args, {
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      ...env,
+      ...(packagedMacRunner ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const lines = readline.createInterface({ input: child.stdout });
@@ -981,7 +992,7 @@ async function writePackagedCodexMcpProbe(commandPath) {
 const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
-const { spawn } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 
 function parseManagedMcpConfig(configPath, serverName) {
   const lines = fs.readFileSync(configPath, "utf8").split(/\\r?\\n/u);
@@ -1050,6 +1061,7 @@ function createMcpClient(config) {
     pending.clear();
   });
   return {
+    pid: child.pid,
     request(method, params) {
       const id = nextId++;
       return new Promise((resolve, reject) => {
@@ -1098,14 +1110,28 @@ async function main() {
   const controlConfig = parseManagedMcpConfig(configPath, "rudder-tools");
   const browserConfig = parseManagedMcpConfig(configPath, "rudder-browser");
   const expectedCommand = process.env.RUDDER_TEST_EXPECTED_MCP_COMMAND;
+  const expectedRunner = process.env.RUDDER_TEST_EXPECTED_MCP_RUNNER;
+  const expectsNodeMode = process.platform === "darwin" || process.platform === "win32";
+  const expectedControlArgs = expectsNodeMode
+    ? [expectedRunner, "mcp-server"]
+    : ["--desktop-cli", "mcp-server"];
+  const expectedBrowserArgs = expectsNodeMode
+    ? [expectedRunner, "mcp-server", "--server", "browser"]
+    : ["--desktop-cli", "mcp-server", "--server", "browser"];
   if (controlConfig.command !== expectedCommand || browserConfig.command !== expectedCommand) {
     throw new Error("managed Codex MCP command mismatch: " + controlConfig.command + " / " + browserConfig.command);
   }
-  if (JSON.stringify(controlConfig.args) !== JSON.stringify(["--desktop-cli", "mcp-server"])) {
+  if (JSON.stringify(controlConfig.args) !== JSON.stringify(expectedControlArgs)) {
     throw new Error("managed Codex control MCP args mismatch: " + JSON.stringify(controlConfig.args));
   }
-  if (JSON.stringify(browserConfig.args) !== JSON.stringify(["--desktop-cli", "mcp-server", "--server", "browser"])) {
+  if (JSON.stringify(browserConfig.args) !== JSON.stringify(expectedBrowserArgs)) {
     throw new Error("managed Codex Browser MCP args mismatch: " + JSON.stringify(browserConfig.args));
+  }
+  if (expectsNodeMode && (
+    controlConfig.env.ELECTRON_RUN_AS_NODE !== "1"
+    || browserConfig.env.ELECTRON_RUN_AS_NODE !== "1"
+  )) {
+    throw new Error("managed Codex MCP config did not enable Electron Node mode");
   }
   if (desktopCliEntryVisible) throw new Error("provider inherited RUDDER_DESKTOP_CLI_ENTRY");
 
@@ -1126,6 +1152,14 @@ async function main() {
     });
     browserClient.notify("notifications/initialized", {});
     const listed = await browserClient.request("tools/list", {});
+    if (process.platform === "darwin") {
+      const runningApps = execFileSync("/usr/bin/lsappinfo", ["list"], { encoding: "utf8" });
+      for (const pid of [controlClient.pid, browserClient.pid]) {
+        if (runningApps.includes("pid = " + pid + " ")) {
+          throw new Error("managed MCP process registered as a foreground macOS app: " + pid);
+        }
+      }
+    }
     const browserToolNames = listed.result.tools
       .map((tool) => tool.name)
       .filter((name) => name.startsWith("rudder_browser_"));
@@ -1241,6 +1275,7 @@ async function verifyPackagedExternalRuntimeAdapterBrowser(input) {
           RUDDER_TEST_BROWSER_URL: `${input.fixtureUrl}/agent`,
           RUDDER_TEST_CAPTURE_PATH: capturePath,
           RUDDER_TEST_EXPECTED_MCP_COMMAND: input.packagedRuntime.executablePath,
+          RUDDER_TEST_EXPECTED_MCP_RUNNER: input.packagedRuntime.cliRunner,
         },
         promptTemplate: "Verify the packaged Rudder MCP provider wiring.",
       },
@@ -1766,8 +1801,17 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
 
 async function runDesktopCliCommand(executablePath, args, env) {
   return await new Promise((resolve, reject) => {
-    const child = spawn(executablePath, ["--desktop-cli", ...args], {
-      env,
+    const packagedMacRunner = process.platform === "darwin"
+      ? path.resolve(path.dirname(executablePath), "..", "Resources", "server-package", "desktop-cli-runner.js")
+      : null;
+    const child = spawn(executablePath, [
+      ...(packagedMacRunner ? [packagedMacRunner] : ["--desktop-cli"]),
+      ...args,
+    ], {
+      env: {
+        ...env,
+        ...(packagedMacRunner ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
 
