@@ -25,11 +25,11 @@ function writeFakePostgresBinDir(binDir) {
   mkdirSync(binDir, { recursive: true });
   mkdirSync(join(binDir, "..", "lib"), { recursive: true });
   mkdirSync(join(binDir, "..", "share", "postgresql"), { recursive: true });
-  mkdirSync(join(binDir, "..", "share", "timezone"), { recursive: true });
+  mkdirSync(join(binDir, "..", "share", "postgresql", "timezone"), { recursive: true });
   writeFileSync(join(binDir, "..", "lib", "libzstd.1.dylib"), "runtime library\n");
   writeFileSync(join(binDir, "..", "share", "postgresql", "postgres.bki"), "postgres template\n");
   writeFileSync(join(binDir, "..", "share", "postgresql", "postgresql.conf.sample"), "postgres config template\n");
-  writeFileSync(join(binDir, "..", "share", "timezone", "UTC"), "timezone data\n");
+  writeFileSync(join(binDir, "..", "share", "postgresql", "timezone", "UTC"), "timezone data\n");
   for (const binary of ["initdb", "pg_ctl", "postgres"]) {
     const binaryPath = join(binDir, process.platform === "win32" ? `${binary}.exe` : binary);
     if (process.platform === "win32") {
@@ -195,7 +195,7 @@ describe("desktop stage-server", () => {
     expect(readFileSync(join(preparedBinDir, "..", "lib", "libzstd.1.dylib"), "utf8")).toBe("runtime library via symlink\n");
     expect(readFileSync(join(preparedBinDir, "..", "share", "postgresql", "postgres.bki"), "utf8")).toBe("postgres template\n");
     expect(readFileSync(join(preparedBinDir, "..", "share", "postgresql", "postgresql.conf.sample"), "utf8")).toBe("postgres config template\n");
-    expect(readFileSync(join(preparedBinDir, "..", "share", "timezone", "UTC"), "utf8")).toBe("timezone data\n");
+    expect(readFileSync(join(preparedBinDir, "..", "share", "postgresql", "timezone", "UTC"), "utf8")).toBe("timezone data\n");
     expect(() => readFileSync(join(preparedBinDir, "..", "pgAdmin 4.app"))).toThrow();
 
     const preparedRuntimeRoot = dirname(preparedBinDir);
@@ -301,6 +301,7 @@ describe("desktop stage-server", () => {
       "desktop/.packaged/postgres-18.4",
       `${process.platform}-${process.arch}`,
       "share",
+      "postgresql",
       "timezone",
       "UTC",
     ), "utf8")).toBe("timezone data\n");
