@@ -224,6 +224,7 @@ describe("ChatWorkManifest", () => {
     expect(issueIcon?.getAttribute("data-issue-status")).toBe("blocked");
     expect(issueIcon?.getAttribute("title")).toBe("Issue status: Blocked");
     expect(issueIcon?.getAttribute("aria-hidden")).toBe("true");
+    expect(issueIcon?.querySelector("[data-issue-type-icon='true']")).not.toBeNull();
     expect(issueIcon?.querySelector("[data-slot='issue-status-icon']")?.getAttribute("data-status"))
       .toBe("blocked");
     const issueRow = rowFor("ZST-1");

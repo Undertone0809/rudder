@@ -96,13 +96,16 @@ function ManifestItemIcon({ item }: { item: ChatWorkManifestItem }) {
       const statusLabel = `Issue status: ${issueStatusLabel(issueStatus)}`;
       return (
         <span
-          className="inline-flex size-3.5 shrink-0"
+          className="relative inline-flex size-3.5 shrink-0"
           data-file-icon="issue"
           data-issue-status={issueStatus}
           aria-hidden="true"
           title={statusLabel}
         >
-          <StatusIcon status={issueStatus} className="size-3.5" />
+          <ClipboardList className="size-3.5 text-muted-foreground" data-issue-type-icon="true" />
+          <span className="absolute -bottom-1 -right-1 grid size-3 place-items-center rounded-full bg-background ring-1 ring-border/80">
+            <StatusIcon status={issueStatus} className="size-2.5" />
+          </span>
         </span>
       );
     }
@@ -175,6 +178,7 @@ function ManifestRow({
     <div className="group flex min-h-10 items-center gap-1">
       <button
         type="button"
+        data-target-type={item.targetType}
         className="flex min-w-0 flex-1 items-center gap-2 rounded-[var(--radius-sm)] px-1.5 py-1.5 text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
         onClick={onOpen}
         title={item.title}

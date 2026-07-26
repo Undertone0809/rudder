@@ -6,6 +6,7 @@ import {
   chatMessages,
   chatWorkManifestItems,
   heartbeatRuns,
+  issueComments,
   issues,
   organizationResources,
   projectResourceAttachments,
@@ -17,6 +18,7 @@ import {
   extractVisibleChatWorkTargets,
   isUuidLike,
   normalizeChatWorkExternalUrl,
+  parseShortRef,
   preferChatWorkManifestCategory,
   rudderInlineVisualMappingsFromStructuredPayload,
   type ChatWorkManifestCategory,
@@ -24,7 +26,7 @@ import {
   type ChatWorkManifestResponse,
   type ChatWorkManifestTargetType,
 } from "@rudderhq/shared";
-import { and, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 
 type ManifestCandidate = {
   orgId: string;
@@ -51,6 +53,30 @@ function artifactPath(metadata: Record<string, unknown>) {
 
 function normalizeIssueAlias(value: string) {
   return value.trim().toLowerCase();
+}
+
+type ResolvedManifestIssue = {
+  id: string;
+  identifier: string | null;
+  title: string;
+  status: string;
+};
+
+function resolvedIssueMetadata(
+  issue: ResolvedManifestIssue,
+  metadata: Record<string, unknown> | null,
+  commentId?: string,
+) {
+  const issueRef = issue.identifier ?? issue.id;
+  return {
+    ...(metadata ?? {}),
+    issueId: issue.id,
+    issueIdentifier: issue.identifier,
+    issueTitle: issue.title,
+    ref: issueRef,
+    issueStatus: issue.status,
+    ...(commentId ? { commentId } : {}),
+  };
 }
 
 function mergeCandidate(targets: Map<string, ManifestCandidate>, candidate: ManifestCandidate) {
@@ -209,11 +235,7 @@ export function chatWorkManifestService(db: Db) {
           sourceRole: sourceMessage?.role === "user" ? "user" : "assistant",
           createdByAgentId: issue.createdByAgentId,
           createdByUserId: issue.createdByUserId,
-          metadata: {
-            issueId: issue.id,
-            ref: issueRef,
-            issueStatus: issue.status,
-          },
+          metadata: resolvedIssueMetadata(issue, null),
         });
       }
     }
@@ -290,10 +312,16 @@ export function chatWorkManifestService(db: Db) {
     const referencedIssueIdentifiers = referencedIssueAliases
       .filter((alias) => !isUuidLike(alias))
       .map((alias) => alias.toUpperCase());
+    const issueSelection = {
+      id: issues.id,
+      identifier: issues.identifier,
+      title: issues.title,
+      status: issues.status,
+    };
     const [referencedIssuesById, referencedIssuesByIdentifier] = await Promise.all([
       referencedIssueIds.length > 0
         ? db
-          .select({ id: issues.id, identifier: issues.identifier, status: issues.status })
+          .select(issueSelection)
           .from(issues)
           .where(and(
             eq(issues.orgId, conversation.orgId),
@@ -302,7 +330,7 @@ export function chatWorkManifestService(db: Db) {
         : Promise.resolve([]),
       referencedIssueIdentifiers.length > 0
         ? db
-          .select({ id: issues.id, identifier: issues.identifier, status: issues.status })
+          .select(issueSelection)
           .from(issues)
           .where(and(
             eq(issues.orgId, conversation.orgId),
@@ -310,21 +338,110 @@ export function chatWorkManifestService(db: Db) {
           ))
         : Promise.resolve([]),
     ]);
-    const issueStatusByAlias = new Map<string, string>();
+    const issueByAlias = new Map<string, ResolvedManifestIssue>();
     for (const issue of [...referencedIssuesById, ...referencedIssuesByIdentifier]) {
-      issueStatusByAlias.set(normalizeIssueAlias(issue.id), issue.status);
-      if (issue.identifier) issueStatusByAlias.set(normalizeIssueAlias(issue.identifier), issue.status);
+      issueByAlias.set(normalizeIssueAlias(issue.id), issue);
+      if (issue.identifier) issueByAlias.set(normalizeIssueAlias(issue.identifier), issue);
     }
+
+    const issueCommentCandidates = [...candidates.values()]
+      .filter((candidate) => candidate.targetType === "issue_comment")
+      .map((candidate) => {
+        const issueAlias = typeof candidate.metadata?.issueId === "string"
+          ? candidate.metadata.issueId.trim()
+          : "";
+        const commentRef = typeof candidate.metadata?.commentId === "string"
+          ? candidate.metadata.commentId.trim()
+          : "";
+        return {
+          issue: issueByAlias.get(normalizeIssueAlias(issueAlias)) ?? null,
+          commentRef,
+          shortRef: parseShortRef(commentRef),
+        };
+      });
+    const exactCommentIds = [...new Set(
+      issueCommentCandidates
+        .map(({ commentRef }) => commentRef)
+        .filter((commentRef) => isUuidLike(commentRef)),
+    )];
+    const shortCommentPrefixes = [...new Set(
+      issueCommentCandidates
+        .map(({ shortRef }) => shortRef?.kind === "issue_comment" ? shortRef.prefix : "")
+        .filter(Boolean),
+    )];
+    const candidateIssueIds = [...new Set(
+      issueCommentCandidates
+        .map(({ issue }) => issue?.id ?? "")
+        .filter(Boolean),
+    )];
+    const commentReferenceConditions = [
+      ...(exactCommentIds.length > 0 ? [inArray(issueComments.id, exactCommentIds)] : []),
+      ...shortCommentPrefixes.map((prefix) =>
+        sql<boolean>`lower(replace(cast(${issueComments.id} as text), '-', '')) like ${`${prefix}%`}`
+      ),
+    ];
+    const referencedComments = candidateIssueIds.length > 0 && commentReferenceConditions.length > 0
+      ? await db
+        .select({ id: issueComments.id, issueId: issueComments.issueId })
+        .from(issueComments)
+        .where(and(
+          eq(issueComments.orgId, conversation.orgId),
+          inArray(issueComments.issueId, candidateIssueIds),
+          isNull(issueComments.deletedAt),
+          or(...commentReferenceConditions),
+        ))
+      : [];
+
+    const hydratedCandidates = new Map<string, ManifestCandidate>();
     for (const candidate of candidates.values()) {
-      if (candidate.targetType !== "issue" && candidate.targetType !== "issue_comment") continue;
+      if (candidate.targetType !== "issue" && candidate.targetType !== "issue_comment") {
+        mergeCandidate(hydratedCandidates, candidate);
+        continue;
+      }
       const issueAlias = typeof candidate.metadata?.issueId === "string"
         ? candidate.metadata.issueId.trim()
         : "";
-      const issueStatus = issueStatusByAlias.get(normalizeIssueAlias(issueAlias));
-      if (issueStatus) {
-        candidate.metadata = { ...(candidate.metadata ?? {}), issueStatus };
+      const issue = issueByAlias.get(normalizeIssueAlias(issueAlias));
+      if (!issue) {
+        mergeCandidate(hydratedCandidates, candidate);
+        continue;
       }
+      const issueRef = issue.identifier ?? issue.id;
+      if (candidate.targetType === "issue") {
+        mergeCandidate(hydratedCandidates, {
+          ...candidate,
+          targetKey: `issue:${issue.id}`,
+          title: `${issueRef} · ${issue.title}`,
+          metadata: resolvedIssueMetadata(issue, candidate.metadata),
+        });
+        continue;
+      }
+      const commentRef = typeof candidate.metadata?.commentId === "string"
+        ? candidate.metadata.commentId.trim()
+        : "";
+      const normalizedCommentRef = commentRef.toLowerCase();
+      const shortRef = parseShortRef(commentRef);
+      const commentMatches = referencedComments.filter((comment) =>
+        comment.issueId === issue.id && (
+          comment.id.toLowerCase() === normalizedCommentRef ||
+          (shortRef?.kind === "issue_comment" &&
+            comment.id.replaceAll("-", "").toLowerCase().startsWith(shortRef.prefix))
+        )
+      );
+      if (commentMatches.length !== 1) {
+        mergeCandidate(hydratedCandidates, candidate);
+        continue;
+      }
+      const commentId = commentMatches[0]!.id;
+      mergeCandidate(hydratedCandidates, {
+        ...candidate,
+        targetKey: `issue-comment:${issue.id}:${commentId}`,
+        title: `${issueRef} · ${issue.title}`,
+        metadata: resolvedIssueMetadata(issue, candidate.metadata, commentId),
+      });
     }
+    candidates.clear();
+    for (const [targetKey, candidate] of hydratedCandidates) candidates.set(targetKey, candidate);
 
     if (projectId) {
       const projectRuns = await db

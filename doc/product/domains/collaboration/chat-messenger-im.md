@@ -2129,13 +2129,16 @@ them through `CONTEXT.RESOURCES.001`.
 - Reference: deduplicated external HTTP(S) website or typed Rudder entity
   reference in a visible user or assistant message that is not promoted by the
   category precedence rules, plus the current conversation's same-organization
-  primary issue after successful creation/conversion. A normal Chat reference
-  uses the referenced conversation's current title when that conversation can
-  be resolved inside the same organization. Side Chats are deliberately
-  excluded because their titles are owner-private while manifest rows are
+  primary issue after successful creation/conversion. Every safely resolvable
+  Issue or Issue Comment reference uses its same-organization canonical Issue
+  id, identifier, title, and current status; Issue Comments retain their
+  canonical comment id and parent Issue identity. A normal Chat reference uses
+  the referenced conversation's current title when that conversation can be
+  resolved inside the same organization. Side Chats are deliberately excluded
+  because their titles are owner-private while manifest rows are
   conversation-scoped shared state. Unresolved, invalid, Side Chat, or
   cross-organization targets retain their visible message label, or the safe
-  generic `Chat` label when the message provides no usable label.
+  generic typed label when the message provides no usable label.
 
 ## Entry Points / Inputs
 
@@ -2180,7 +2183,16 @@ them through `CONTEXT.RESOURCES.001`.
    `sourceMessageId` still belongs to the active visible message set. Pending,
    rejected, or revision-requested proposals have no primary issue and add
    nothing.
-8. Before persistence, Chat reference candidates with UUID-like conversation
+8. Before persistence, typed Issue and Issue Comment candidates are resolved in
+   organization-scoped batches by id or identifier. Resolved rows use target
+   keys built from the canonical Issue id (and canonical comment id for Issue
+   Comments), a title of `<identifier> · <title>`, and current Issue status
+   metadata. Issue Comment hydration additionally verifies that the active
+   comment belongs to that Issue. Canonicalization deduplicates primary
+   association and explicit message references to the same Issue. Missing,
+   deleted, malformed, ambiguous, or cross-organization targets retain only
+   their safe message-derived fallback and never disclose stored Issue data.
+9. Before persistence, Chat reference candidates with UUID-like conversation
    ids are resolved in one organization-scoped lookup that excludes Side Chats.
    A same-organization normal conversation's current stored title replaces
    stale, empty, or generic link text. Missing, malformed, Side Chat, or
@@ -2188,21 +2200,21 @@ them through `CONTEXT.RESOURCES.001`.
    label or generic `Chat` fallback. Reconciliation refreshes the persisted
    manifest title after a referenced normal Chat is renamed and overwrites any
    previously persisted Side Chat title with the safe message-derived label.
-9. Rudder canonicalizes target keys, removes URL fragments/default ports,
+10. Rudder canonicalizes target keys, removes URL fragments/default ports,
    deduplicates candidates, and applies `output > source > reference` so one
    target appears once in its strongest supported category. The canonical
    primary-issue target key also deduplicates an explicit visible link to the
    same issue.
-10. Reconciliation removes stale derived Sources/References from superseded or
+11. Reconciliation removes stale derived Sources/References from superseded or
    edited visible messages, but it does not silently delete a durable Output
    merely because the message that announced it was refreshed. A historical row
    now proven to be trusted inline visual presentation is removed because it
    was never production evidence. A primary-issue Reference is also removed
    when the association is cleared or the issue is deleted.
-11. The API returns the current Chat sections. It may continue returning a
+12. The API returns the current Chat sections. It may continue returning a
    Project id/count as compatibility metadata, but Chat does not render it or
    include it in the visible category count.
-12. When at least one current-thread item exists, wide Chat renders the compact
+13. When at least one current-thread item exists, wide Chat renders the compact
     shelf. Its fixed top row renders the first non-empty category in
     `Outputs > Sources > References` order as a normal category header, with
     the same icon, label, count, height, background, and typography used by
@@ -2217,7 +2229,7 @@ them through `CONTEXT.RESOURCES.001`.
     `32rem` (512 CSS pixels) on normal viewports, shrink to the available
     viewport allowance when necessary, and keep longer lists internally
     scrollable.
-13. Opening an image attachment uses the application-level image preview shared
+14. Opening an image attachment uses the application-level image preview shared
     with Chat message and Markdown images. The overlay exposes an explicit close
     control plus copy/download actions, closes on `Escape`, and does not create a
     Browser Side Panel tab. Non-image attachments keep their normal file-open
@@ -2236,6 +2248,7 @@ them through `CONTEXT.RESOURCES.001`.
 | Agent recommends a website | Visible assistant HTTP(S) link with no production evidence | One Reference | Rudder must not claim the website was created by the Run | Extraction/service tests |
 | Chat issue proposal is pending, rejected, or revision requested | Conversation has no successfully created primary issue | No issue Reference from the proposal | A proposed issue must not appear as if it already exists | Service tests and proposal-review E2E |
 | Chat creates or converts to an issue | Current conversation has a same-organization `primaryIssueId` | One issue Reference with identifier/title and valid proposal provenance when available | The issue must not be labeled Output or duplicated by an explicit visible issue link | Service tests and proposal-review E2E |
+| Message references an Issue or Issue Comment | Typed target resolves in the current organization; a comment also resolves to that parent Issue | One canonical Reference titled `<identifier> · <title>` with Issue type, current status, canonical Issue identity, and canonical comment identity when applicable | Stale link text, a foreign title/status, a deleted comment, or duplicate id/identifier aliases must not become trusted manifest identity | Service, component, and Chat Work Manifest E2E |
 | Primary issue association becomes stale | Association is cleared, issue is deleted, or id does not resolve in the conversation organization | Derived primary-issue Reference is removed | A foreign, deleted, or detached issue must not remain in the current Chat manifest | Service tests |
 | Message references another normal Chat | Visible `chat://` target resolves to a normal conversation in the same organization | The Reference uses the target conversation's current complete title and refreshes after rename; the compact row visually truncates it to one line while preserving the complete title for hover and accessibility | Stale link text must not replace the stored title, long text must not widen the shelf, and title lookup must not cross organization boundaries | Service, component, and Chat Work Manifest E2E |
 | Chat reference cannot be resolved safely | Target id is malformed, missing, a Side Chat in any lifecycle state, or belongs to another organization | Keep the visible message label, or generic `Chat` when none is usable, plus normal typed target metadata; reconciliation repairs any previously hydrated Side Chat title | Rudder must not load or persist the private or cross-organization conversation title | Service tests |
@@ -2258,8 +2271,10 @@ icon. Normal Chat Reference rows expose the current same-organization
 conversation title; the complete title remains the row's text, hover title,
 and accessible name while compact layout applies a one-line ellipsis. Website
 rows expose the normalized URL and website icon instead of a generic link icon
-or redundant `From Agent` origin label. A successfully created primary issue
-appears in References with its identifier, title, and current status icon.
+or redundant `From Agent` origin label. A safely resolved Issue or Issue Comment
+appears in References with the parent Issue identifier/title, an explicit Issue
+type icon, and a simultaneous current-status affordance with an accessible
+status description.
 
 ## Operator-Visible Output
 
@@ -2291,8 +2306,9 @@ appears in References with its identifier, title, and current status icon.
 - External websites: normalized URL text and website icon/fallback behavior from
   `CHAT.WEBSITE.LINK.ICON.001`, with safe link routing under
   `CHAT.SIDE.PANEL.001`.
-- Primary issue References: the existing issue Side Panel target under
-  `CHAT.SIDE.PANEL.001`, without replacing the current Chat route.
+- Issue and Issue Comment References: the existing issue Side Panel target
+  under `CHAT.SIDE.PANEL.001`, without replacing the current Chat route; Comment
+  references keep their canonical comment target.
 - Provenance action: jump to the source message when a message id exists.
 - Side Panel open: the compact shelf yields to the workbench and returns when
   the panel is hidden.
@@ -2309,7 +2325,10 @@ issue context link is optional provenance, not authority.
 
 For normal Chat References, reconciliation persists the latest safely resolved
 full title; visual truncation does not shorten the stored value. Side Chat
-titles are not persisted into manifest rows.
+titles are not persisted into manifest rows. Issue and Issue Comment rows are
+also reconciled on every manifest read so historical generic rows and cached
+title/status metadata are lazily replaced with the latest safely resolved
+canonical values.
 
 ## Canonical Scenarios
 
@@ -2370,7 +2389,11 @@ titles are not persisted into manifest rows.
   current Chat manifest.
 - Only the current conversation's same-organization primary issue may be
   projected from durable Chat association state; Project peers and other Chats'
-  issues are excluded.
+  issues are excluded. Visible typed references may point to any safely
+  resolvable Issue or Issue Comment in the same organization.
+- Issue and Issue Comment hydration is organization-scoped. Missing, deleted,
+  invalid, ambiguous, or cross-organization targets keep safe generic/message
+  fallbacks and never disclose canonical title or status.
 - A primary issue is a Reference, never an Output, and unresolved proposals do
   not create an issue row.
 - One target appears once per conversation under its strongest supported

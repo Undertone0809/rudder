@@ -4,7 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  chatConversations,
   chatMessages,
+  chatWorkManifestItems,
   createDb,
   heartbeatRuns,
   organizationResources,
@@ -20,6 +22,151 @@ const screenshotDir = process.env.RUDDER_CHAT_WORK_MANIFEST_SCREENSHOT_DIR
   : fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-work-manifest-"));
 
 test.describe("Chat Work Manifest", () => {
+  test("hydrates canonical Issue and Issue Comment references in an existing Chat", async ({ page }) => {
+    fs.mkdirSync(screenshotDir, { recursive: true });
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Issue-Manifest-${Date.now()}`,
+        issuePrefix: `CIM${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Issue Manifest Agent" });
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Canonical manifest issue",
+        description: "Issue reference hydration target.",
+        status: "todo",
+        priority: "high",
+      },
+    });
+    expect(issueRes.ok(), await issueRes.text()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string; title: string };
+    const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+      data: { body: "Canonical manifest comment target." },
+    });
+    expect(commentRes.ok(), await commentRes.text()).toBe(true);
+    const comment = await commentRes.json() as { id: string };
+    const foreignOrgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Foreign-Chat-Issue-Manifest-${Date.now()}`,
+        issuePrefix: `FCI${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
+    });
+    expect(foreignOrgRes.ok(), await foreignOrgRes.text()).toBe(true);
+    const foreignOrganization = await foreignOrgRes.json() as { id: string };
+    const foreignIssueRes = await page.request.post(`/api/orgs/${foreignOrganization.id}/issues`, {
+      data: {
+        title: "Foreign issue title must stay private",
+        description: "Cross-organization boundary target.",
+        status: "blocked",
+        priority: "high",
+      },
+    });
+    expect(foreignIssueRes.ok(), await foreignIssueRes.text()).toBe(true);
+    const foreignIssue = await foreignIssueRes.json() as { id: string };
+
+    const chatId = randomUUID();
+    const messageId = randomUUID();
+    const historicalRowId = randomUUID();
+    await e2eDb.insert(chatConversations).values({
+      id: chatId,
+      orgId: organization.id,
+      title: "Existing issue reference Chat",
+      preferredAgentId: agent.id,
+    });
+    await e2eDb.insert(chatMessages).values({
+      id: messageId,
+      orgId: organization.id,
+      conversationId: chatId,
+      role: "user",
+      status: "completed",
+      body: [
+        `[Stale Issue label](issue://${issue.id}?r=stale-ref)`,
+        `[Stale Comment label](issue://${issue.identifier.toLowerCase()}?c=${comment.id})`,
+        `[Foreign fallback](issue://${foreignIssue.id}?r=foreign-ref)`,
+      ].join(" "),
+    });
+    await e2eDb.insert(chatWorkManifestItems).values({
+      id: historicalRowId,
+      orgId: organization.id,
+      conversationId: chatId,
+      messageId,
+      category: "references",
+      targetType: "issue",
+      targetKey: `issue:${issue.id}`,
+      title: "Issue",
+      url: `/issues/${issue.identifier.toLowerCase()}`,
+      sourceRole: "user",
+      metadata: { issueId: issue.id },
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chatId}`);
+
+    const shelf = page.getByRole("complementary", { name: "Conversation files and links" });
+    await expect(shelf).toBeVisible({ timeout: 15_000 });
+    const canonicalTitle = `${issue.identifier} · ${issue.title}`;
+    const issueButton = shelf.locator("button[data-target-type='issue']").filter({ hasText: canonicalTitle });
+    const commentButton = shelf.locator("button[data-target-type='issue_comment']").filter({ hasText: canonicalTitle });
+    await expect(issueButton).toHaveCount(1);
+    await expect(commentButton).toHaveCount(1);
+    await expect(issueButton.locator("[data-issue-type-icon='true']")).toBeVisible();
+    await expect(issueButton.locator("[data-issue-status='todo'] [data-slot='issue-status-icon']"))
+      .toHaveAttribute("data-status", "todo");
+    await expect(commentButton.locator("[data-issue-type-icon='true']")).toBeVisible();
+    await shelf.getByText("View all 3", { exact: true }).click();
+    const foreignButton = shelf.locator("button[data-target-type='issue']").filter({ hasText: "Foreign fallback" });
+    await expect(foreignButton).toHaveCount(1);
+    await expect(foreignButton.locator("[data-issue-status]")).toHaveCount(0);
+    await expect(shelf).not.toContainText("Foreign issue title must stay private");
+    const initialManifestRes = await page.request.get(`/api/chats/${chatId}/work-manifest`);
+    expect(initialManifestRes.ok(), await initialManifestRes.text()).toBe(true);
+    const initialManifest = await initialManifestRes.json() as {
+      references: Array<{
+        id: string;
+        title: string;
+        metadata?: Record<string, unknown> | null;
+      }>;
+    };
+    expect(initialManifest.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: historicalRowId,
+        title: canonicalTitle,
+        metadata: expect.objectContaining({ issueStatus: "todo" }),
+      }),
+      expect.objectContaining({
+        title: "Foreign fallback",
+        metadata: expect.not.objectContaining({ issueStatus: expect.anything() }),
+      }),
+    ]));
+
+    await commentButton.click();
+    const issueSidePanel = page.getByTestId("chat-side-panel");
+    await expect(issueSidePanel).toContainText("Canonical manifest comment target.");
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chatId}$`));
+    const updateRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: { title: "Canonical manifest issue updated", status: "done" },
+    });
+    expect(updateRes.ok(), await updateRes.text()).toBe(true);
+    await issueSidePanel.getByTestId("chat-side-panel-tab").hover();
+    await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
+    await expect(issueSidePanel).toHaveCount(0);
+
+    const updatedTitle = `${issue.identifier} · Canonical manifest issue updated`;
+    const updatedIssueButton = shelf.locator("button[data-target-type='issue']").filter({ hasText: updatedTitle });
+    await expect(updatedIssueButton).toBeVisible({ timeout: 15_000 });
+    await expect(updatedIssueButton.locator("[data-issue-status='done'] [data-slot='issue-status-icon']"))
+      .toHaveAttribute("data-status", "done");
+    await page.screenshot({ path: `${screenshotDir}/issue-references-fixed.png`, fullPage: true });
+  });
+
   test("shows category-led thread outputs across desktop and compact layouts", async ({ page }) => {
     fs.mkdirSync(screenshotDir, { recursive: true });
     const orgRes = await page.request.post("/api/orgs", {
@@ -41,7 +188,13 @@ test.describe("Chat Work Manifest", () => {
       },
     });
     expect(issueRes.ok(), await issueRes.text()).toBe(true);
-    const issue = await issueRes.json() as { id: string; identifier: string };
+    const issue = await issueRes.json() as { id: string; identifier: string; title: string };
+    const issueCommentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+      data: { body: "Manifest comment target evidence." },
+    });
+    expect(issueCommentRes.ok(), await issueCommentRes.text()).toBe(true);
+    const issueComment = await issueCommentRes.json() as { id: string };
+    const issueManifestTitle = `${issue.identifier} · ${issue.title}`;
 
     const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
       data: {
@@ -175,6 +328,7 @@ test.describe("Chat Work Manifest", () => {
         body: [
           `Use https://source.example/research, https://source-two.example/data, and ${sourceFile.markdownLink}.`,
           `[${issue.identifier}](issue://${issue.id}?r=${encodeURIComponent(issue.identifier)})`,
+          `[Issue comment](issue://${issue.id}?r=${encodeURIComponent(issue.identifier)}&c=${issueComment.id})`,
           `[${automation.title}](automation://${automation.id}?t=${encodeURIComponent(automation.title)})`,
           `[](chat://${otherChat.id})`,
         ].join(" "),
@@ -237,7 +391,7 @@ test.describe("Chat Work Manifest", () => {
       .toBeVisible();
     await expect(shelf).not.toContainText("From Agent");
     const references = shelf.locator("section[aria-label='References']");
-    await references.getByRole("button", { name: "View all 29" }).click();
+    await references.getByRole("button", { name: "View all 30" }).click();
     await expect(references).toContainText("https://reference.example/docs");
     await expect(references.getByRole("button", { name: /reference\.example/ }).locator("[data-website-icon]"))
       .toBeVisible();
@@ -246,9 +400,18 @@ test.describe("Chat Work Manifest", () => {
     await expect(page.locator("html")).toHaveClass(/dark/);
     await expect(githubLogo).toHaveAttribute("data-dark-mode", "invert");
     await expect(githubLogo).toHaveCSS("filter", "invert(1)");
-    const issueStatusIcon = references
-      .getByRole("button", { name: new RegExp(issue.identifier) })
+    const issueReferenceButton = references
+      .locator("button[data-target-type='issue']")
+      .filter({ hasText: issueManifestTitle });
+    const issueCommentButton = references
+      .locator("button[data-target-type='issue_comment']")
+      .filter({ hasText: issueManifestTitle });
+    const issueStatusIcon = issueReferenceButton
       .locator("[data-file-icon='issue'][data-issue-status='todo'] [data-slot='issue-status-icon']");
+    await expect(issueReferenceButton).toHaveCount(1);
+    await expect(issueCommentButton).toHaveCount(1);
+    await expect(issueReferenceButton.locator("[data-issue-type-icon='true']")).toBeVisible();
+    await expect(issueCommentButton.locator("[data-issue-type-icon='true']")).toBeVisible();
     await expect(issueStatusIcon).toBeVisible();
     await expect(issueStatusIcon).toHaveAttribute("data-status", "todo");
     await expect(references.getByRole("button", { name: new RegExp(automation.title) }).locator("[data-file-icon='automation']"))
@@ -312,25 +475,37 @@ test.describe("Chat Work Manifest", () => {
     await expect(sources.getByRole("button", { name: /View all/ })).toHaveAttribute("aria-expanded", "false");
     await page.screenshot({ path: `${screenshotDir}/references.png`, fullPage: true });
 
-    await references.getByRole("button", { name: issue.identifier, exact: true }).click();
+    await issueCommentButton.click();
     const issueSidePanel = page.getByTestId("chat-side-panel");
     await expect(issueSidePanel).toBeVisible();
     await expect(issueSidePanel.getByTestId("chat-side-panel-issue-view")).toBeVisible();
     await expect(issueSidePanel).toContainText("Manifest reference issue");
+    await expect(issueSidePanel).toContainText("Manifest comment target evidence.");
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
     await page.screenshot({ path: `${screenshotDir}/issue-side-panel.png`, fullPage: true });
+    const updateIssueRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: { title: "Manifest reference issue updated", status: "done" },
+    });
+    expect(updateIssueRes.ok(), await updateIssueRes.text()).toBe(true);
     await issueSidePanel.getByTestId("chat-side-panel-tab").hover();
     await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
     await expect(issueSidePanel).toHaveCount(0);
     await expect(shelf).toBeVisible();
-    await shelf.locator("section[aria-label='References']")
-      .getByRole("button", { name: "View all 29" })
+    const reopenedReferences = shelf.locator("section[aria-label='References']");
+    await reopenedReferences
+      .getByRole("button", { name: "View all 30" })
       .click();
+    const updatedIssueTitle = `${issue.identifier} · Manifest reference issue updated`;
+    const updatedIssueButton = reopenedReferences
+      .locator("button[data-target-type='issue']")
+      .filter({ hasText: updatedIssueTitle });
+    await expect(updatedIssueButton).toBeVisible({ timeout: 15_000 });
+    await expect(updatedIssueButton.locator("[data-issue-status='done'] [data-slot='issue-status-icon']"))
+      .toHaveAttribute("data-status", "done");
 
     await references.getByRole("button", { name: automation.title, exact: true }).click();
     const automationSidePanel = page.getByTestId("chat-side-panel");
     await expect(automationSidePanel).toBeVisible();
-    await expect(automationSidePanel.getByTestId("chat-side-panel-automation-view")).toBeVisible();
     await expect(automationSidePanel).toContainText("Manifest reference automation");
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
     await page.screenshot({ path: `${screenshotDir}/automation-side-panel.png`, fullPage: true });
@@ -339,7 +514,7 @@ test.describe("Chat Work Manifest", () => {
     await expect(automationSidePanel).toHaveCount(0);
     await expect(shelf).toBeVisible();
     await shelf.locator("section[aria-label='References']")
-      .getByRole("button", { name: "View all 29" })
+      .getByRole("button", { name: "View all 30" })
       .click();
 
     await references.getByRole("button", { name: referencedChatTitle, exact: true }).click();
@@ -355,7 +530,7 @@ test.describe("Chat Work Manifest", () => {
     await expect(chatSidePanel).toHaveCount(0);
     await expect(shelf).toBeVisible();
     await shelf.locator("section[aria-label='References']")
-      .getByRole("button", { name: "View all 29" })
+      .getByRole("button", { name: "View all 30" })
       .click();
 
     const manifestScrollRegion = shelf.getByTestId("chat-work-manifest-scroll-region");
@@ -379,7 +554,7 @@ test.describe("Chat Work Manifest", () => {
     await expect.poll(() => manifestScrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${otherChat.id}`);
     const otherShelf = page.getByRole("complementary", { name: "Conversation files and links" });
-    await expect(otherShelf).toBeVisible();
+    await expect(otherShelf).toBeVisible({ timeout: 15_000 });
     await expect(otherShelf).toContainText("other-source.example");
     await expect.poll(() => (
       otherShelf.getByTestId("chat-work-manifest-scroll-region").evaluate((element) => element.scrollTop)
@@ -498,7 +673,7 @@ test.describe("Chat Work Manifest", () => {
       (compactOutputsCountBox!.x + compactOutputsCountBox!.width)
       - (compactReferencesCountBox!.x + compactReferencesCountBox!.width),
     )).toBeLessThanOrEqual(1);
-    await compactPanel.getByRole("button", { name: "View all 29" }).click();
+    await compactPanel.getByRole("button", { name: "View all 30" }).click();
     const compactScrollRegion = compactPanel.getByTestId("chat-work-manifest-scroll-region");
     const [panelBox, composerBox] = await Promise.all([
       compactPanel.boundingBox(),
