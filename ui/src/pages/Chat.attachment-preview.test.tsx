@@ -2665,7 +2665,7 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel?.textContent).toContain("High");
     expect(sidePanel?.textContent).toContain("Assignee");
     expect(sidePanel?.textContent).toContain("Wesley");
-    expect(sidePanel?.textContent).toContain("Founding Engineer");
+    expect(sidePanel?.textContent).not.toContain("Founding Engineer");
     expect(sidePanel?.textContent).toContain("Reviewer");
     expect(sidePanel?.textContent).toContain("Project");
     expect(sidePanel?.textContent).toContain("Make the issue reference read like a task detail panel.");
@@ -2916,10 +2916,10 @@ describe("Chat Side Panel link handling", () => {
 
     const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.textContent).toContain("Wesley");
-    expect(sidePanel?.textContent).toContain("Founding Engineer");
+    expect(sidePanel?.textContent).not.toContain("Founding Engineer");
 
     const assigneeButton = Array.from(sidePanel?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
-      (candidate) => candidate.textContent?.includes("Wesley") && candidate.textContent?.includes("Founding Engineer"),
+      (candidate) => candidate.textContent?.includes("Wesley"),
     );
     expect(assigneeButton).not.toBeUndefined();
     await act(async () => {
@@ -2945,7 +2945,7 @@ describe("Chat Side Panel link handling", () => {
       },
     });
     expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Ada");
-    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Review Lead");
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).not.toContain("Review Lead");
   });
 
   it("keeps multiple Side Panel chat targets as deduplicated focusable tabs", async () => {
