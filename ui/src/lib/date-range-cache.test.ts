@@ -34,6 +34,18 @@ describe("date range cache helpers", () => {
     });
   });
 
+  it("resolves One Day from local midnight through the current moment", () => {
+    const now = new Date(2026, 5, 19, 13, 24, 37, 432);
+    expect(resolvePresetDateRange({
+      preset: "1d",
+      now,
+    })).toEqual({
+      from: new Date(2026, 5, 19, 0, 0, 0, 0).toISOString(),
+      to: now.toISOString(),
+      customReady: true,
+    });
+  });
+
   it("defaults Custom to the latest seven local calendar days", () => {
     expect(defaultCustomDateRange(new Date(2026, 5, 19, 13, 24))).toEqual({
       from: "2026-06-13",

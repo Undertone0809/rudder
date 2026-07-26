@@ -3,9 +3,10 @@ import { CalendarDays } from "lucide-react";
 import { useSlidingIndicator } from "../hooks/useSlidingIndicator";
 import { cn } from "../lib/utils";
 
-export type DashboardDatePreset = "7d" | "15d" | "30d" | "custom";
+export type DashboardDatePreset = "1d" | "7d" | "15d" | "30d" | "custom";
 
 const DASHBOARD_DATE_PRESETS: Array<{ key: DashboardDatePreset; label: string }> = [
+  { key: "1d", label: "1D" },
   { key: "7d", label: "7D" },
   { key: "15d", label: "15D" },
   { key: "30d", label: "1M" },
@@ -22,6 +23,7 @@ interface DashboardDateRangeControlProps {
   onCustomFromChange: (value: string) => void;
   onCustomToChange: (value: string) => void;
   description?: string;
+  showOneDay?: boolean;
 }
 
 export function DashboardDateRangeControl({
@@ -34,7 +36,11 @@ export function DashboardDateRangeControl({
   onCustomFromChange,
   onCustomToChange,
   description = "Filter charts, skills analytics, and recent lists by a specific date window.",
+  showOneDay = false,
 }: DashboardDateRangeControlProps) {
+  const visiblePresets = DASHBOARD_DATE_PRESETS.filter(
+    (option) => showOneDay || option.key !== "1d",
+  );
   const {
     containerRef,
     indicatorReady,
@@ -42,7 +48,7 @@ export function DashboardDateRangeControl({
     setItemRef,
   } = useSlidingIndicator<HTMLButtonElement>(
     preset,
-    DASHBOARD_DATE_PRESETS.map((option) => option.key),
+    visiblePresets.map((option) => option.key),
   );
 
   const buttonClassName = (active: boolean) => cn(
@@ -66,7 +72,7 @@ export function DashboardDateRangeControl({
           )}
           style={indicatorStyle}
         />
-        {DASHBOARD_DATE_PRESETS.filter((option) => option.key !== "custom").map((option) => (
+        {visiblePresets.filter((option) => option.key !== "custom").map((option) => (
           <button
             key={option.key}
             ref={setItemRef(option.key)}

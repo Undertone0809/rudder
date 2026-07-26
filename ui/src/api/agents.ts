@@ -255,12 +255,25 @@ export const agentsApi = {
     api.get<AgentSkillSnapshot>(agentPath(id, orgId, "/skills")),
   skillsAnalytics: (
     id: string,
-    options?: { orgId?: string; windowDays?: number; startDate?: string; endDate?: string },
+    options?: {
+      orgId?: string;
+      windowDays?: number;
+      startDate?: string;
+      endDate?: string;
+      from?: string;
+      to?: string;
+      timezoneOffsetMinutes?: number;
+    },
   ) => {
     const params = new URLSearchParams();
     if (options?.windowDays) params.set("windowDays", String(options.windowDays));
     if (options?.startDate) params.set("startDate", options.startDate);
     if (options?.endDate) params.set("endDate", options.endDate);
+    if (options?.from) params.set("from", options.from);
+    if (options?.to) params.set("to", options.to);
+    if (options?.timezoneOffsetMinutes != null) {
+      params.set("timezoneOffsetMinutes", String(options.timezoneOffsetMinutes));
+    }
     const suffix = params.size > 0 ? `/skills/analytics?${params.toString()}` : "/skills/analytics";
     return api.get<AgentSkillAnalytics>(agentPath(id, options?.orgId, suffix));
   },

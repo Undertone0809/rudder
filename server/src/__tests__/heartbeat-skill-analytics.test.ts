@@ -514,6 +514,29 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
       },
     ]);
 
+    const exactLocalDayAnalytics = await svc.getAgentSkillAnalytics(agentId, {
+      startDate: "2026-04-18",
+      endDate: "2026-04-18",
+      from: "2026-04-18T12:00:00.000Z",
+      to: "2026-04-19T11:59:59.999Z",
+      timezoneOffsetMinutes: 720,
+    });
+
+    expect(exactLocalDayAnalytics.totalCount).toBe(2);
+    expect(exactLocalDayAnalytics.totalRunsWithSkills).toBe(1);
+    expect(exactLocalDayAnalytics.days).toEqual([
+      {
+        date: "2026-04-18",
+        totalCount: 2,
+        runCount: 1,
+        evidenceCounts: { used: 2, requested: 0, loaded: 0 },
+        skills: [
+          { key: "runtime-used", label: "runtime-used", count: 1, evidence: "used", evidenceCounts: { used: 1, requested: 0, loaded: 0 } },
+          { key: "skill-read", label: "skill-read", count: 1, evidence: "used", evidenceCounts: { used: 1, requested: 0, loaded: 0 } },
+        ],
+      },
+    ]);
+
     const organizationAnalytics = await svc.getOrganizationSkillAnalytics(orgId, {
       now: new Date("2026-04-22T12:00:00.000Z"),
     });

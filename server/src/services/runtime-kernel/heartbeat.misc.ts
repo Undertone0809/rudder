@@ -372,7 +372,15 @@ export function createHeartbeatMiscHandlers(context: any) {
 
   async function buildSkillAnalytics(
     scope: { orgId: string; agentId?: string },
-    opts?: { windowDays?: number; now?: Date; startDate?: string; endDate?: string },
+    opts?: {
+      windowDays?: number;
+      now?: Date;
+      startDate?: string;
+      endDate?: string;
+      from?: string;
+      to?: string;
+      timezoneOffsetMinutes?: number;
+    },
   ): Promise<AgentSkillAnalytics> {
     const now = opts?.now ?? new Date();
     const customDateKeys = opts?.startDate && opts?.endDate
@@ -386,8 +394,20 @@ export function createHeartbeatMiscHandlers(context: any) {
       : buildRecentDateKeys(windowDays, now);
     const startDate = dateKeys[0]!;
     const endDate = dateKeys.at(-1)!;
-    const windowStart = new Date(`${startDate}T00:00:00.000Z`);
-    const windowEnd = new Date(`${endDate}T23:59:59.999Z`);
+    const exactWindowStart = opts?.from ? new Date(opts.from) : null;
+    const exactWindowEnd = opts?.to ? new Date(opts.to) : null;
+    const hasExactWindow = exactWindowStart != null
+      && exactWindowEnd != null
+      && Number.isFinite(exactWindowStart.getTime())
+      && Number.isFinite(exactWindowEnd.getTime())
+      && exactWindowStart <= exactWindowEnd;
+    const windowStart = hasExactWindow ? exactWindowStart : new Date(`${startDate}T00:00:00.000Z`);
+    const windowEnd = hasExactWindow ? exactWindowEnd : new Date(`${endDate}T23:59:59.999Z`);
+    const dateKeyForTimestamp = (value: string | Date) => {
+      const timestamp = new Date(value).getTime();
+      const timezoneOffsetMs = (opts?.timezoneOffsetMinutes ?? 0) * 60_000;
+      return new Date(timestamp - timezoneOffsetMs).toISOString().slice(0, 10);
+    };
 
     const rows = await db
       .select({
@@ -545,7 +565,7 @@ export function createHeartbeatMiscHandlers(context: any) {
     }
 
     for (const row of rows) {
-      const date = new Date(row.createdAt).toISOString().slice(0, 10);
+      const date = dateKeyForTimestamp(row.createdAt);
       const payload = parseObject(row.payload);
       addRunSkillEvidence(row.runId, date, readSkillEvidenceFromPayload(payload));
     }
@@ -573,7 +593,7 @@ export function createHeartbeatMiscHandlers(context: any) {
     for (const row of runRows) {
       const usedSkills = await inferUsedSkillsFromStoredRunLog(row);
       if (usedSkills.length === 0) continue;
-      addRunSkillEvidence(row.id, new Date(row.createdAt).toISOString().slice(0, 10), {
+      addRunSkillEvidence(row.id, dateKeyForTimestamp(row.createdAt), {
         evidence: "used",
         skills: usedSkills,
       });
