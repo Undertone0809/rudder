@@ -1313,6 +1313,27 @@ function dispatchPasteFiles(target: Element, files: File[], options: { clipboard
   target.dispatchEvent(pasteEvent);
 }
 
+function dispatchComposerDrag(
+  target: Element,
+  type: "dragenter" | "dragover" | "dragleave" | "drop",
+  files: File[],
+  options: { fileDrag?: boolean } = {},
+) {
+  const fileDrag = options.fileDrag ?? true;
+  const dragEvent = new Event(type, { bubbles: true, cancelable: true });
+  const dataTransfer = {
+    types: fileDrag ? ["Files"] : ["text/plain"],
+    items: fileDrag
+      ? files.map(() => ({ kind: "file" }))
+      : [{ kind: "string" }],
+    files,
+    dropEffect: "none",
+  };
+  Object.defineProperty(dragEvent, "dataTransfer", { value: dataTransfer });
+  target.dispatchEvent(dragEvent);
+  return { dragEvent, dataTransfer };
+}
+
 async function clickEnabledButton(container: Element, label: string) {
   await act(async () => {
     await Promise.resolve();
@@ -7259,6 +7280,73 @@ describe("Chat attachment previews", () => {
     expect(container.querySelectorAll("[data-testid='chat-pending-attachment']")).toHaveLength(3);
   });
 
+  it("shows stable file-drop feedback and stages every dropped file", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "plain-user-message", body: "Drop the supporting files." })],
+    };
+
+    const { container } = renderChat();
+    const dropTarget = container.querySelector("[data-testid='chat-composer-file-drop-target']");
+    expect(dropTarget).not.toBeNull();
+
+    const files = [
+      new File(["design"], "design.png", { type: "image/png" }),
+      new File(["notes"], "notes.txt", { type: "text/plain" }),
+    ];
+    act(() => {
+      dispatchComposerDrag(dropTarget!, "dragenter", files);
+      dispatchComposerDrag(dropTarget!, "dragenter", files);
+    });
+    expect(container.querySelector("[data-testid='chat-composer-file-drop-overlay']")).not.toBeNull();
+
+    act(() => {
+      dispatchComposerDrag(dropTarget!, "dragleave", files);
+    });
+    expect(container.querySelector("[data-testid='chat-composer-file-drop-overlay']")).not.toBeNull();
+
+    act(() => {
+      dispatchComposerDrag(dropTarget!, "dragleave", files);
+    });
+    expect(container.querySelector("[data-testid='chat-composer-file-drop-overlay']")).toBeNull();
+
+    act(() => {
+      dispatchComposerDrag(dropTarget!, "dragenter", files);
+    });
+    const dragOver = dispatchComposerDrag(dropTarget!, "dragover", files);
+    expect(dragOver.dragEvent.defaultPrevented).toBe(true);
+    expect(dragOver.dataTransfer.dropEffect).toBe("copy");
+
+    await act(async () => {
+      dispatchComposerDrag(dropTarget!, "drop", files);
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='chat-composer-file-drop-overlay']")).toBeNull();
+    expect(container.querySelectorAll("[data-testid='chat-pending-attachment']")).toHaveLength(2);
+    expect(container.querySelector("[data-testid='chat-pending-attachments']")?.textContent)
+      .toContain("notes.txt");
+  });
+
+  it("preserves native editor behavior for non-file drags", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "plain-user-message", body: "Reorder this text." })],
+    };
+
+    const { container } = renderChat();
+    const dropTarget = container.querySelector("[data-testid='chat-composer-file-drop-target']");
+    expect(dropTarget).not.toBeNull();
+
+    const dragEnter = dispatchComposerDrag(dropTarget!, "dragenter", [], { fileDrag: false });
+    const dragOver = dispatchComposerDrag(dropTarget!, "dragover", [], { fileDrag: false });
+    const drop = dispatchComposerDrag(dropTarget!, "drop", [], { fileDrag: false });
+
+    expect(dragEnter.dragEvent.defaultPrevented).toBe(false);
+    expect(dragOver.dragEvent.defaultPrevented).toBe(false);
+    expect(drop.dragEvent.defaultPrevented).toBe(false);
+    expect(container.querySelector("[data-testid='chat-composer-file-drop-overlay']")).toBeNull();
+    expect(container.querySelector("[data-testid='chat-pending-attachment']")).toBeNull();
+  });
+
   it("approves issue proposals with the operator-selected issue status", async () => {
     const { container } = renderChat();
 
@@ -7452,6 +7540,37 @@ describe("Chat ask_user panel", () => {
     expect(sentFiles).toHaveLength(1);
     expect(sentFiles?.[0]?.name).toBe("receipt.txt");
     expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).toBeNull();
+  });
+
+  it("lets pending ask_user panels stage dropped attachments", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingAskUser(),
+      ],
+    };
+
+    const { container } = renderChat();
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+
+    const attachments = [
+      new File(["diagram"], "answer-diagram.png", { type: "image/png" }),
+      new File(["notes"], "answer-notes.txt", { type: "text/plain" }),
+    ];
+    act(() => {
+      dispatchComposerDrag(panel!, "dragenter", attachments);
+    });
+    expect(panel?.querySelector("[data-testid='chat-composer-file-drop-overlay']")).not.toBeNull();
+
+    await act(async () => {
+      dispatchComposerDrag(panel!, "drop", attachments);
+      await Promise.resolve();
+    });
+
+    expect(panel?.querySelector("[data-testid='chat-composer-file-drop-overlay']")).toBeNull();
+    expect(container.querySelectorAll("[data-testid='chat-ask-user-pending-attachment']")).toHaveLength(2);
+    expect(panel?.textContent).toContain("answer-notes.txt");
   });
 
   it("dedupes pasted attachments exposed through both clipboard items and files", async () => {

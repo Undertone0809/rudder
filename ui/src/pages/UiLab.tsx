@@ -1728,6 +1728,7 @@ function CommonComponentsSection() {
               disabled={false}
               pendingFiles={pendingChatFile ? [pendingChatFile] : []}
               onAddAttachment={() => {}}
+              onDropAttachments={() => {}}
               onRemovePendingFile={() => {}}
               onPasteAttachment={() => {}}
               onSubmit={() => {}}

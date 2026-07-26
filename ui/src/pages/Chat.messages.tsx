@@ -61,6 +61,10 @@ import {
 import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { agentUrl, cn, relativeTime } from "@/lib/utils";
 import {
+  ChatComposerFileDropOverlay,
+  useChatComposerFileDrop,
+} from "@/pages/Chat.file-drop";
+import {
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
   chatInlineAnnotationsFromStructuredPayload,
@@ -1743,6 +1747,7 @@ export function AskUserPanel({
   disabled,
   pendingFiles,
   onAddAttachment,
+  onDropAttachments,
   onRemovePendingFile,
   onPasteAttachment,
   onSubmit,
@@ -1752,6 +1757,7 @@ export function AskUserPanel({
   disabled: boolean;
   pendingFiles: File[];
   onAddAttachment: () => void;
+  onDropAttachments: (files: Iterable<File>) => void | Promise<void>;
   onRemovePendingFile: (fileKey: string) => void;
   onPasteAttachment: (event: ReactClipboardEvent<HTMLDivElement>) => void;
   onSubmit: (body: string) => void;
@@ -1768,6 +1774,10 @@ export function AskUserPanel({
   const freeformByQuestionId = activeDraftState.freeformByQuestionId;
   const currentQuestionIndex = activeDraftState.currentQuestionIndex;
   const reviewingAnswers = activeDraftState.reviewingAnswers;
+  const {
+    active: fileDragActive,
+    targetProps: fileDropTargetProps,
+  } = useChatComposerFileDrop(onDropAttachments);
 
   useEffect(() => {
     setDraftState(normalizeAskUserPanelDraft(
@@ -1893,8 +1903,13 @@ export function AskUserPanel({
     <div
       data-testid="chat-ask-user-panel"
       onPasteCapture={onPasteAttachment}
-      className="rounded-[var(--radius-lg)] border border-[color:color-mix(in_oklab,var(--accent-base)_35%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_28%,var(--surface-elevated))] p-3 shadow-[var(--shadow-sm)]"
+      {...fileDropTargetProps}
+      className={cn(
+        "relative rounded-[var(--radius-lg)] border border-[color:color-mix(in_oklab,var(--accent-base)_35%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_28%,var(--surface-elevated))] p-3 shadow-[var(--shadow-sm)]",
+        fileDragActive && "ring-2 ring-[color:var(--accent-base)] ring-offset-2 ring-offset-background",
+      )}
     >
+      {fileDragActive ? <ChatComposerFileDropOverlay /> : null}
       {hasMultipleQuestions ? (
         <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span>{reviewingAnswers ? "Review answers" : `Question ${boundedQuestionIndex + 1} of ${questionCount}`}</span>
