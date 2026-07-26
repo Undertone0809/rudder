@@ -413,7 +413,7 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
   });
 
-  it("keeps macOS desktop glass on the app backdrop without adding a workspace wash", () => {
+  it("keeps macOS desktop glass on the app backdrop and active Chat header without adding a workspace wash", () => {
     const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
     const darkDesktopBackdrop = cssBlock("html.dark.desktop-shell-macos .app-shell-backdrop");
     const lightPrimaryRail = cssBlock("html.desktop-shell-macos .primary-rail-shell");
@@ -421,7 +421,16 @@ describe("index.css motion rules", () => {
     const darkWorkspaceShell = cssBlock("html.dark.desktop-shell-macos .workspace-shell");
     const lightDesktopWorkspaceCards = cssBlock("html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
     const darkDesktopWorkspaceCards = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
-    const chatMessages = cssBlock(".chat-messages-scroll-content");
+    const activeChatCardSelector = 'html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"])';
+    const chatHeaderSelector = 'html.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
+    const darkChatHeaderSelector = 'html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
+    const activeChatCard = cssBlock(activeChatCardSelector);
+    const lightChatHeader = cssBlock(chatHeaderSelector);
+    const darkChatHeader = cssBlock(darkChatHeaderSelector);
+    const chatMessages = cssBlock('html.desktop-shell-macos [data-testid="chat-main-workspace-card"] .chat-messages-scroll-content');
+    const chatLoadError = cssBlock(`${activeChatCardSelector} > [data-testid="chat-load-error"]`);
+    const chatLoadingState = cssBlock(`${activeChatCardSelector} > [data-testid="chat-conversation-loading-state"]`);
+    const chatToolbarClearance = cssBlock(".chat-desktop-toolbar-clearance");
     const chatLoadErrorOffset = cssBlock(".chat-load-error-offset");
     const chatLoadingOffset = cssBlock(".chat-conversation-loading-offset");
 
@@ -437,11 +446,19 @@ describe("index.css motion rules", () => {
     expect(darkDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-dark)");
     expect(lightDesktopWorkspaceCards).not.toContain("backdrop-filter");
     expect(darkDesktopWorkspaceCards).not.toContain("backdrop-filter");
-    expect(chatMessages).toContain("padding-top: 1rem");
+    expect(activeChatCard).toContain("isolation: isolate");
+    expect(activeChatCard).not.toContain("linear-gradient");
+    expect(chatToolbarClearance).toContain("height: 2.75rem");
+    expect(lightChatHeader).toContain("position: absolute");
+    expect(lightChatHeader).toContain("height: 2.75rem");
+    expect(lightChatHeader).toContain("backdrop-filter: blur(18px) saturate(128%)");
+    expect(darkChatHeader).toContain("backdrop-filter: blur(18px) saturate(132%)");
+    expect(chatMessages).toContain("padding-top: calc(2.75rem + 1rem)");
+    expect(chatLoadError).toContain("margin-top: calc(2.75rem + 1.5rem)");
+    expect(chatLoadingState).toContain("padding-top: calc(2.75rem + 1rem)");
     expect(chatLoadErrorOffset).toContain("margin-top: 1.5rem");
     expect(chatLoadingOffset).toContain("padding-top: 1rem");
     expect(chatLoadingOffset).toContain("padding-bottom: 1rem");
-    expect(indexCss).not.toContain("chat-desktop-toolbar-clearance");
     expect(indexCss).not.toContain("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
   });
 
