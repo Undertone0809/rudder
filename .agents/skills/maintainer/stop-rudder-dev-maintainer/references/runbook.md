@@ -15,6 +15,8 @@ The job is usually simple:
 - confirm whether anything was actually running
 
 Do not broaden that into generic process cleanup for the whole machine.
+Port ownership alone is never sufficient evidence that a process belongs to
+this checkout.
 
 ## Fast Applicability Check
 
@@ -34,6 +36,10 @@ task:
 Packaged Desktop, `pnpm prod`, `pnpm rudder run`, and embedded Postgres owned by
 `/Applications/Rudder.app` are out of scope. Leave them running unless the user
 explicitly asks to stop the production/local-prod runtime.
+
+If the bundled script cannot prove that a process is a dev entrypoint for the
+current checkout, leave it running. Do not compensate with a manual `kill`
+based on a port, process name, or repo working directory alone.
 
 ## Scope
 
@@ -79,14 +85,15 @@ The script is allowed to stop only repo-local Rudder dev processes such as:
 
 It must not kill unrelated `pnpm`, `node`, `vite`, or Electron work from other repos.
 It must not stop packaged Desktop or local production runtime processes.
+It targets verified dev entrypoints and lets their graceful shutdown handlers
+stop owned children; it does not recursively signal every descendant PID.
 
 ### 3. Verification
 
 After stopping processes, verify with focused checks:
 
 ```bash
-ps -Ao pid=,command= | rg 'scripts/dev-shell\.mjs|scripts/dev-runner\.mjs|electron/cli\.js dist/main\.js'
-lsof -nP -iTCP:3100 -sTCP:LISTEN
+bash .agents/skills/maintainer/stop-rudder-dev-maintainer/scripts/stop_rudder_dev.sh --dry-run
 ```
 
 Use the verification to distinguish these cases clearly:
@@ -98,6 +105,10 @@ Use the verification to distinguish these cases clearly:
 Run these verification checks after the script stops something or reports
 survivors. For a simple "nothing was running" result, the script output is
 enough unless the user asked for a deeper diagnosis.
+
+`lsof` may be used as read-only diagnostic context, but never turn a listener
+PID into a stop target unless the bundled script independently verifies it as
+the current checkout's dev entrypoint.
 
 ## Escalation Rules
 
