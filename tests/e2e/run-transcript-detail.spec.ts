@@ -371,6 +371,92 @@ test.describe("Run transcript detail", () => {
     });
   });
 
+  test("loads a complete conversation transcript across multiple event pages", async ({ page }) => {
+    const organization = await createOrganization(page, `Run-Detail-Long-Conversation-${Date.now()}`);
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Long Conversation Transcript Tester",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const runId = randomUUID();
+    const conversationId = randomUUID();
+    const createdAt = new Date("2026-07-26T08:00:00.000Z");
+    await e2eDb.insert(chatConversations).values({
+      id: conversationId,
+      orgId: organization.id,
+      title: "Long conversation transcript",
+      preferredAgentId: agent.id,
+      routedAgentId: agent.id,
+      createdAt,
+      updatedAt: createdAt,
+    });
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "chat",
+      triggerDetail: "chat_assistant_reply_stream",
+      status: "succeeded",
+      startedAt: createdAt,
+      finishedAt: new Date(createdAt.getTime() + 60_000),
+      contextSnapshot: {
+        scene: "chat",
+        targetType: "chat_conversation",
+        conversationId,
+        messageId: randomUUID(),
+      },
+      createdAt,
+      updatedAt: new Date(createdAt.getTime() + 60_000),
+    });
+
+    const transcriptEntries = Array.from({ length: 1_205 }, (_, index) => ({
+      orgId: organization.id,
+      runId,
+      agentId: agent.id,
+      seq: index + 1,
+      eventType: "transcript.entry",
+      stream: "system" as const,
+      level: "info" as const,
+      message: "chat transcript entry",
+      payload: {
+        kind: index === 0 || index === 1_204 ? "assistant" : "system",
+        text: index === 0 || index === 1_204
+          ? `Conversation transcript marker ${index + 1}`
+          : "reasoning started",
+        ts: new Date(createdAt.getTime() + index).toISOString(),
+      },
+      createdAt: new Date(createdAt.getTime() + index),
+    }));
+    await e2eDb.insert(heartbeatRunEvents).values(transcriptEntries);
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
+
+    await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
+
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(detailPane.getByText("1205 entries", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(detailPane).toContainText("Conversation transcript marker 1");
+    await expect(detailPane).toContainText("Conversation transcript marker 1205");
+
+    await page.screenshot({
+      path: "/tmp/rudder-agent-run-complete-conversation-transcript.png",
+      fullPage: true,
+    });
+  });
+
   test("does not promote long stderr excerpts into the run detail summary", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-Long-Stderr-${Date.now()}`);
 

@@ -32,6 +32,7 @@ export const AGENT_RUN_LIST_DEFAULT_LIMIT = 100;
 export const AGENT_RUN_LIST_COMPACT_LIMIT = 50;
 export const AGENT_RUN_LIST_AGENT_LIMIT = 200;
 export const AGENT_RUN_LIST_HISTORY_LIMIT = 1000;
+export const AGENT_RUN_EVENTS_PAGE_LIMIT = 1000;
 
 export interface AgentRunListFilters {
   startDate?: string;
@@ -58,6 +59,22 @@ export const agentRunsApi = {
     api.get<HeartbeatRunEvent[]>(
       `/agent-runs/${runId}/events?afterSeq=${encodeURIComponent(String(afterSeq))}&limit=${encodeURIComponent(String(limit))}`,
     ),
+  allEvents: async (runId: string) => {
+    const events: HeartbeatRunEvent[] = [];
+    let afterSeq = 0;
+
+    while (true) {
+      const page = await api.get<HeartbeatRunEvent[]>(
+        `/agent-runs/${runId}/events?afterSeq=${encodeURIComponent(String(afterSeq))}&limit=${AGENT_RUN_EVENTS_PAGE_LIMIT}`,
+      );
+      events.push(...page);
+      if (page.length < AGENT_RUN_EVENTS_PAGE_LIMIT) return events;
+
+      const nextAfterSeq = page[page.length - 1]?.seq;
+      if (typeof nextAfterSeq !== "number" || nextAfterSeq <= afterSeq) return events;
+      afterSeq = nextAfterSeq;
+    }
+  },
   log: (runId: string, offset = 0, limitBytes = 256000) =>
     api.get<{ runId: string; store: string; logRef: string; content: string; endOffset?: number; eof?: boolean; nextOffset?: number }>(
       `/agent-runs/${runId}/log?offset=${encodeURIComponent(String(offset))}&limitBytes=${encodeURIComponent(String(limitBytes))}`,
