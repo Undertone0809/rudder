@@ -11,10 +11,14 @@ import {
 } from "./cli-link.js";
 
 describe("desktop cli link helpers", () => {
-  it("builds a unix wrapper that routes through the desktop executable", () => {
-    const wrapper = buildDesktopCliWrapper("/Applications/Rudder.app/Contents/MacOS/Rudder", "darwin");
+  it("builds a macOS wrapper that keeps the packaged CLI out of LaunchServices", () => {
+    const executable = "/Applications/Rudder.app/Contents/MacOS/Rudder";
+    const wrapper = buildDesktopCliWrapper(executable, "darwin");
     expect(wrapper).toContain("# rudder-desktop-cli-managed");
-    expect(wrapper).toContain(`'${"/Applications/Rudder.app/Contents/MacOS/Rudder"}' ${DESKTOP_CLI_FLAG} "$@"`);
+    expect(wrapper).toContain("export ELECTRON_RUN_AS_NODE=1");
+    expect(wrapper).toContain(
+      `'${executable}' '/Applications/Rudder.app/Contents/Resources/server-package/desktop-cli-runner.js' "$@"`,
+    );
   });
 
   it("builds a windows wrapper that preserves argv passthrough", () => {
@@ -84,6 +88,7 @@ describe("desktop cli link helpers", () => {
     const executable = path.join(os.homedir(), "Applications", "Rudder.app", "Contents", "MacOS", "Rudder");
     const wrapper = buildDesktopCliWrapper(executable, "darwin");
     expect(wrapper).toContain("exec '");
-    expect(wrapper).toContain(DESKTOP_CLI_FLAG);
+    expect(wrapper).toContain("desktop-cli-runner.js");
+    expect(wrapper).toContain("ELECTRON_RUN_AS_NODE=1");
   });
 });

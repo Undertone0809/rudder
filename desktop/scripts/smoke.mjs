@@ -880,11 +880,20 @@ function createSmokeAgentJwt(agentId, orgId, runId) {
 
 async function createSmokeMcpClient(env, surface = "browser") {
   const executablePath = smokeMode === "packaged" ? await resolvePackagedExecutablePath() : process.execPath;
-  const args = smokeMode === "packaged"
-    ? ["--desktop-cli", "mcp-server", "--server", surface]
+  const packagedMacRunner = smokeMode === "packaged" && process.platform === "darwin"
+    ? path.resolve(path.dirname(executablePath), "..", "Resources", "server-package", "desktop-cli-runner.js")
+    : null;
+  const args = packagedMacRunner
+    ? [packagedMacRunner, "mcp-server", "--server", surface]
+    : smokeMode === "packaged"
+      ? ["--desktop-cli", "mcp-server", "--server", surface]
     : [path.resolve(repoRoot, "cli/dist/index.js"), "mcp-server", "--server", surface];
   const child = spawn(executablePath, args, {
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      ...env,
+      ...(packagedMacRunner ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const lines = readline.createInterface({ input: child.stdout });
@@ -1792,8 +1801,17 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
 
 async function runDesktopCliCommand(executablePath, args, env) {
   return await new Promise((resolve, reject) => {
-    const child = spawn(executablePath, ["--desktop-cli", ...args], {
-      env,
+    const packagedMacRunner = process.platform === "darwin"
+      ? path.resolve(path.dirname(executablePath), "..", "Resources", "server-package", "desktop-cli-runner.js")
+      : null;
+    const child = spawn(executablePath, [
+      ...(packagedMacRunner ? [packagedMacRunner] : ["--desktop-cli"]),
+      ...args,
+    ], {
+      env: {
+        ...env,
+        ...(packagedMacRunner ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
 
