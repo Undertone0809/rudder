@@ -1030,6 +1030,11 @@ describe("ProposalCard", () => {
     expect(html).toContain("Reviewer · CTO");
     expect(html).toContain("Owner");
     expect(html).toContain('data-slot="assignee-label"');
+    expect(html).toContain('data-agent-avatar-style="bare"');
+    expect(html).not.toContain('data-slot="assignee-agent-avatar-frame"');
+    expect(html).not.toContain('data-slot="agent-title-badge"');
+    expect(html).not.toContain("Founding Engineer");
+    expect(html).not.toContain("Chief Technology Officer");
   });
 
   it("highlights the proposal review surface while an approval action is pending", () => {
