@@ -140,39 +140,60 @@ test.describe("Organization and agent skills", () => {
     }, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
-    const agentMain = page.locator("#main-content");
+    const onboardingDialog = page.getByRole("dialog", {
+      name: "Build your agent's skill set",
+    });
+    await expect(onboardingDialog).toBeVisible();
     await expect(
-      agentMain.getByRole("heading", { name: "Build your agent's skill set" }),
+      onboardingDialog.getByRole("heading", { name: "Build your agent's skill set" }),
     ).toBeVisible();
     await expect(
-      agentMain.getByText(/local runtimes such as Codex and Claude Code/),
+      onboardingDialog.getByText(/local runtimes such as Codex and Claude Code/),
     ).toBeVisible();
 
     await page.setViewportSize({ width: 420, height: 800 });
-    const onboardingTitleBox = await agentMain
-      .getByRole("heading", { name: "Build your agent's skill set" })
-      .boundingBox();
-    const onboardingDismissBox = await agentMain
-      .getByRole("button", { name: "Got it" })
-      .boundingBox();
-    expect(onboardingTitleBox).not.toBeNull();
-    expect(onboardingDismissBox).not.toBeNull();
-    expect(onboardingDismissBox!.y).toBeGreaterThan(
-      onboardingTitleBox!.y + onboardingTitleBox!.height,
-    );
+    const onboardingDialogBox = await onboardingDialog.boundingBox();
+    expect(onboardingDialogBox).not.toBeNull();
+    expect(onboardingDialogBox!.x).toBeGreaterThanOrEqual(0);
+    expect(onboardingDialogBox!.y).toBeGreaterThanOrEqual(0);
+    expect(onboardingDialogBox!.x + onboardingDialogBox!.width).toBeLessThanOrEqual(420);
+    expect(onboardingDialogBox!.y + onboardingDialogBox!.height).toBeLessThanOrEqual(800);
+    await expect(onboardingDialog.getByRole("button", { name: "Got it" })).toBeVisible();
 
-    await agentMain.getByRole("button", { name: "Got it" }).click();
-    await expect(
-      agentMain.getByRole("heading", { name: "Build your agent's skill set" }),
-    ).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(onboardingDialog).toHaveCount(0);
     await expect.poll(
       () => page.evaluate(() => window.localStorage.getItem("rudder:agent-skills:onboarding:v1")),
     ).toBe("dismissed");
 
     await page.reload();
     await expect(
-      page.locator("#main-content").getByRole("heading", { name: "Build your agent's skill set" }),
+      page.getByRole("dialog", { name: "Build your agent's skill set" }),
     ).toHaveCount(0);
+
+    await page.evaluate(() => {
+      window.localStorage.removeItem("rudder:agent-skills:onboarding:v1");
+    });
+    await page.reload();
+    await expect(onboardingDialog).toBeVisible();
+    await page.locator("[data-slot='dialog-overlay']").click({ position: { x: 4, y: 4 } });
+    await expect(onboardingDialog).toHaveCount(0);
+    await expect.poll(
+      () => page.evaluate(() => window.localStorage.getItem("rudder:agent-skills:onboarding:v1")),
+    ).toBe("dismissed");
+    await page.reload();
+    await expect(onboardingDialog).toHaveCount(0);
+
+    await page.evaluate(() => {
+      window.localStorage.removeItem("rudder:agent-skills:onboarding:v1");
+    });
+    await page.reload();
+    await expect(onboardingDialog).toBeVisible();
+    await onboardingDialog.getByRole("button", { name: "Got it" }).click();
+    await expect(onboardingDialog).toHaveCount(0);
+    await expect.poll(
+      () => page.evaluate(() => window.localStorage.getItem("rudder:agent-skills:onboarding:v1")),
+    ).toBe("dismissed");
   });
 
   test("shows seeded community presets in the new-agent picker while keeping bundled defaults hidden", async ({ page }) => {

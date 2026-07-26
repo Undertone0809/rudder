@@ -1,4 +1,12 @@
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Search, Shapes } from "lucide-react";
 import { useState } from "react";
 
@@ -17,8 +25,6 @@ function hasDismissedAgentSkillsOnboarding() {
 export function AgentSkillsOnboarding() {
   const [visible, setVisible] = useState(() => !hasDismissedAgentSkillsOnboarding());
 
-  if (!visible) return null;
-
   const dismiss = () => {
     try {
       window.localStorage.setItem(AGENT_SKILLS_ONBOARDING_STORAGE_KEY, "dismissed");
@@ -29,42 +35,43 @@ export function AgentSkillsOnboarding() {
   };
 
   return (
-    <section
-      aria-labelledby="agent-skills-onboarding-title"
-      className="motion-content-reveal rounded-xl border border-border bg-[color:var(--surface-elevated)] px-4 py-4"
+    <Dialog
+      open={visible}
+      onOpenChange={(open) => {
+        if (!open) dismiss();
+      }}
     >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-3.5">
-        <div className="flex min-w-0 flex-1 items-start gap-3.5">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-foreground text-background">
+      <DialogContent
+        className="gap-0 overflow-hidden p-0 sm:max-w-[30rem]"
+        showCloseButton={false}
+      >
+        <div className="flex items-start gap-3 border-b border-border/70 px-5 pb-4 pt-5">
+          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-foreground text-background">
             <Shapes className="h-4.5 w-4.5" aria-hidden />
           </div>
-          <div className="min-w-0 flex-1">
-            <h3
-              id="agent-skills-onboarding-title"
-              className="text-sm font-semibold text-foreground"
-            >
+          <DialogHeader className="min-w-0 gap-1 text-left">
+            <DialogTitle className="text-base leading-6">
               Build your agent&apos;s skill set
-            </h3>
-            <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
+            </DialogTitle>
+            <DialogDescription className="text-sm leading-5">
               Manage which skills this agent can load for its work.
+            </DialogDescription>
+          </DialogHeader>
+        </div>
+        <div className="px-5 py-4">
+          <div className="flex items-start gap-3 rounded-[var(--radius-md)] bg-muted/55 px-3.5 py-3">
+            <Search className="mt-0.5 h-4 w-4 shrink-0 text-foreground/70" aria-hidden />
+            <p className="text-sm leading-5 text-muted-foreground">
+              {EXTERNAL_SKILLS_ONBOARDING_COPY}
             </p>
-            <div className="mt-3 flex max-w-4xl items-start gap-2.5 rounded-lg bg-muted/45 px-3 py-2.5">
-              <Search className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/70" aria-hidden />
-              <p className="text-xs leading-5 text-muted-foreground">
-                {EXTERNAL_SKILLS_ONBOARDING_COPY}
-              </p>
-            </div>
           </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="ml-[3.125rem] shrink-0 self-start sm:ml-0"
-          onClick={dismiss}
-        >
-          Got it
-        </Button>
-      </div>
-    </section>
+        <DialogFooter className="border-t border-border/70 px-5 py-4">
+          <Button type="button" onClick={dismiss}>
+            Got it
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

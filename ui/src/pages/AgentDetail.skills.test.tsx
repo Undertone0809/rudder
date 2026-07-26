@@ -241,6 +241,8 @@ describe("AgentDetail skills tab", () => {
     renderAgentDetail();
     await flushQueries();
 
+    const dialog = document.querySelector("[role='dialog']");
+    expect(dialog).not.toBeNull();
     expect(document.body.textContent).toContain("Build your agent's skill set");
     expect(document.body.textContent).toContain(
       "Manage which skills this agent can load for its work.",
