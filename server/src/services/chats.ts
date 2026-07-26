@@ -84,6 +84,7 @@ import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { organizationService } from "./orgs.js";
+import { sanitizePostgresJsonValue } from "./postgres-json.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -1139,7 +1140,7 @@ export function chatService(db: Db) {
           generationSeq: nextSeq,
           attemptEpoch: input.attemptEpoch,
           eventKind: input.eventKind,
-          payload: input.payload ?? {},
+          payload: sanitizePostgresJsonValue(input.payload ?? {}),
           controlActionId: input.controlActionId ?? null,
           queueItemId: input.queueItemId ?? null,
           emittedAt: input.emittedAt ?? null,

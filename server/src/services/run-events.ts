@@ -1,6 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import { heartbeatRunEvents } from "@rudderhq/db";
 import { and, eq, sql } from "drizzle-orm";
+import { sanitizePostgresJsonValue } from "./postgres-json.js";
 
 type NewRunEvent = Omit<typeof heartbeatRunEvents.$inferInsert, "id" | "seq" | "createdAt">;
 
@@ -27,7 +28,11 @@ export async function appendHeartbeatRunEvent(db: Db, event: NewRunEvent) {
     const seq = Number(current?.maxSeq ?? 0) + 1;
     return tx
       .insert(heartbeatRunEvents)
-      .values({ ...event, seq })
+      .values({
+        ...event,
+        payload: sanitizePostgresJsonValue(event.payload),
+        seq,
+      })
       .onConflictDoNothing()
       .returning()
       .then(async (rows) => rows[0] ?? tx

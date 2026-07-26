@@ -30,6 +30,7 @@ import {
 } from "./chat-generation-provenance.js";
 import { withPersistedTranscript } from "./chats.helpers.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
+import { sanitizePostgresJsonValue } from "./postgres-json.js";
 
 export { hashChatGenerationBody } from "./chat-generation-protocol.helpers.js";
 
@@ -78,7 +79,7 @@ async function appendEventLocked(
       generationSeq,
       attemptEpoch: input.attemptEpoch,
       eventKind: input.eventKind,
-      payload: input.payload ?? {},
+      payload: sanitizePostgresJsonValue(input.payload ?? {}),
       bodyOffset: input.bodyOffset ?? null,
       bodyLength: input.bodyLength ?? null,
       assistantMessageId: input.assistantMessageId ?? null,
