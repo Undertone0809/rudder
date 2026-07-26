@@ -32,6 +32,7 @@ async function makeTempRoot(): Promise<string> {
 
 async function makePostgresBinDir(root: string, segment = desktopPostgresPlatformSegment(), options: {
   includeTemplate?: boolean;
+  timezoneLayout?: "flat" | "nested";
 } = {}): Promise<string> {
   const binDir = path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, segment, "bin");
   await mkdir(binDir, { recursive: true });
@@ -42,10 +43,13 @@ async function makePostgresBinDir(root: string, segment = desktopPostgresPlatfor
   if (options.includeTemplate !== false) {
     const templatePath = path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, segment, "share", "postgresql", "postgres.bki");
     await mkdir(path.dirname(templatePath), { recursive: true });
-    await mkdir(path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, segment, "share", "timezone"), { recursive: true });
+    const timezoneDir = options.timezoneLayout === "nested"
+      ? path.join(path.dirname(templatePath), "timezone")
+      : path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, segment, "share", "timezone");
+    await mkdir(timezoneDir, { recursive: true });
     await writeFile(templatePath, "postgres template");
     await writeFile(path.join(path.dirname(templatePath), "postgresql.conf.sample"), "postgres config template");
-    await writeFile(path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, segment, "share", "timezone", "UTC"), "timezone data");
+    await writeFile(path.join(timezoneDir, "UTC"), "timezone data");
   }
   return binDir;
 }
@@ -86,6 +90,19 @@ describe("desktop PostgreSQL runtime payload", () => {
     const binDir = await makePostgresBinDir(root, "win32-x64");
 
     expect(resolveDesktopPostgresBinDir(root, { platform: "win32", arch: "x64", validateVersion: false })).toBe(binDir);
+  });
+
+  it("resolves the official PostgreSQL layout with nested timezone data", async () => {
+    const root = await makeTempRoot();
+    const binDir = await makePostgresBinDir(root, "darwin-arm64", {
+      timezoneLayout: "nested",
+    });
+
+    expect(resolveDesktopPostgresBinDir(root, {
+      platform: "darwin",
+      arch: "arm64",
+      validateVersion: false,
+    })).toBe(binDir);
   });
 
   it("ignores incomplete PostgreSQL payload directories", async () => {

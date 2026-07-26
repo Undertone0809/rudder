@@ -29,7 +29,10 @@ vi.mock("electron", () => ({
   },
 }));
 
-const { createDesktopUpdateFlow } = await import("./desktop-update-flow.js");
+const {
+  createDesktopUpdateFlow,
+  resolveDesktopUpdateChildLaunch,
+} = await import("./desktop-update-flow.js");
 
 class MockReadableStream extends EventEmitter {
   setEncoding = vi.fn();
@@ -107,6 +110,42 @@ describe("desktop update flow", () => {
   beforeEach(() => {
     spawnMock.mockReset();
     fs.rmSync("/tmp/rudder-desktop-test/post-update-reload.json", { force: true });
+  });
+
+  it("uses the Node-mode CLI runner for macOS update children", () => {
+    const launch = resolveDesktopUpdateChildLaunch({
+      cliArgs: ["start", "--target-version", "0.6.2"],
+      childEnv: { RUDDER_HOME: "/tmp/rudder-home" },
+      execPath: "/Applications/Rudder.app/Contents/MacOS/Rudder",
+      resourcesPath: "/Applications/Rudder.app/Contents/Resources",
+      platform: "darwin",
+    });
+
+    expect(launch.command).toBe("/Applications/Rudder.app/Contents/MacOS/Rudder");
+    expect(launch.args).toEqual([
+      "/Applications/Rudder.app/Contents/Resources/server-package/desktop-cli-runner.js",
+      "start",
+      "--target-version",
+      "0.6.2",
+    ]);
+    expect(launch.env.ELECTRON_RUN_AS_NODE).toBe("1");
+  });
+
+  it("keeps the desktop CLI flag for non-macOS update children", () => {
+    const launch = resolveDesktopUpdateChildLaunch({
+      cliArgs: ["start", "--target-version", "0.6.2"],
+      childEnv: {},
+      execPath: "/opt/Rudder/rudder",
+      platform: "linux",
+    });
+
+    expect(launch.args).toEqual([
+      "--desktop-cli",
+      "start",
+      "--target-version",
+      "0.6.2",
+    ]);
+    expect(launch.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
   });
 
   it("waits for child close before publishing final failed update diagnostics", async () => {
