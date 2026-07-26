@@ -215,6 +215,18 @@ async function resolvePostgresTemplateDir(sourceBinDir) {
   return null;
 }
 
+function resolvePostgresShareDir(sourceBinDir, templateDir) {
+  const adjacentShareDir = path.resolve(sourceBinDir, "..", "share");
+  const relative = path.relative(adjacentShareDir, path.resolve(templateDir));
+  return relative === "" || (
+    relative !== ".."
+    && !relative.startsWith(`..${path.sep}`)
+    && !path.isAbsolute(relative)
+  )
+    ? adjacentShareDir
+    : templateDir;
+}
+
 async function assertPostgresBinDirComplete(sourceBinDir) {
   const requiredBinaries = ["initdb", "pg_ctl", "postgres"];
   const missing = [];
@@ -238,6 +250,13 @@ async function assertPostgresBinDirComplete(sourceBinDir) {
     } catch {
       missing.push(configTemplatePath);
     }
+    const shareDir = resolvePostgresShareDir(sourceBinDir, templateDir);
+    try {
+      const timezoneStats = await fs.stat(path.join(shareDir, "timezone"));
+      if (!timezoneStats.isDirectory()) missing.push(path.join(shareDir, "timezone"));
+    } catch {
+      missing.push(path.join(shareDir, "timezone"));
+    }
   }
   if (missing.length > 0) {
     const hasMissingTemplate = missing.includes(expectedTemplatePath);
@@ -246,7 +265,9 @@ async function assertPostgresBinDirComplete(sourceBinDir) {
       : "initdb, pg_ctl, and postgres binaries";
     throw new Error(`RUDDER_POSTGRES_BIN_DIR must include PostgreSQL 18.4 ${requirement}; missing ${missing.join(", ")}`);
   }
-  return { templateDir };
+  return {
+    shareDir: resolvePostgresShareDir(sourceBinDir, templateDir),
+  };
 }
 
 async function stagePostgresRuntimePayload() {
@@ -266,7 +287,7 @@ async function stagePostgresRuntimePayload() {
     sourceBinDir = await preparePostgresRuntimeBinDir();
   }
 
-  const { templateDir } = await assertPostgresBinDirComplete(sourceBinDir);
+  const { shareDir } = await assertPostgresBinDirComplete(sourceBinDir);
   for (const binary of ["initdb", "pg_ctl", "postgres"]) {
     const binaryPath = path.join(
       sourceBinDir,
@@ -285,10 +306,8 @@ async function stagePostgresRuntimePayload() {
   await fs.mkdir(path.dirname(targetRuntimeDir), { recursive: true });
   await fs.cp(path.resolve(sourceBinDir, ".."), targetRuntimeDir, { recursive: true, dereference: true });
   const targetShareDir = path.join(targetRuntimeDir, "share");
-  const targetTemplateDir = path.join(targetShareDir, "postgresql");
   await fs.rm(targetShareDir, { recursive: true, force: true });
-  await fs.mkdir(path.dirname(targetTemplateDir), { recursive: true });
-  await fs.cp(templateDir, targetTemplateDir, { recursive: true, dereference: true });
+  await fs.cp(shareDir, targetShareDir, { recursive: true, dereference: true });
 }
 
 async function rewriteInternalPackages(targetDir) {

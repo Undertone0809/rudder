@@ -50,8 +50,9 @@ RUDDER_POSTGRES_BIN_DIR=/path/to/postgresql-18.4/bin pnpm rudder run
 ```
 
 When `RUDDER_POSTGRES_BIN_DIR` is set, Rudder validates `initdb`, `pg_ctl`,
-`postgres`, and the initdb templates `postgres.bki` and
-`postgresql.conf.sample`; all three binaries must report PostgreSQL 18.4.
+`postgres`, the initdb templates `postgres.bki` and
+`postgresql.conf.sample`, and runtime support files such as the timezone
+database; all three binaries must report PostgreSQL 18.4.
 Rudder then manages the local cluster with those production binaries. If the
 variable is unset, development shells can still fall back to the legacy
 `embedded-postgres` wrapper for compatibility.
@@ -67,8 +68,10 @@ Linux keeps system or explicit PostgreSQL precedence; its embedded fallback is
 removed only when a verified shared payload is already available.
 
 The shared payload is prepared under an install lock and published by atomic
-rename only after all three binaries, both templates, and the exact 18.4
-version have been verified. Interrupted temporary or previous generations are
+rename only after the complete `bin`, `lib`, and `share` directories, all three
+binaries, both templates, timezone data, and the exact 18.4 version have been
+verified. Existing caches missing runtime support files are rebuilt before use.
+Interrupted temporary or previous generations are
 recovered or removed under that same lock. Runtime startup through descriptor
 publication and post-health cleanup share a separate lifecycle lock, preventing
 cleanup from racing a new runtime start. After a packaged Desktop cold start

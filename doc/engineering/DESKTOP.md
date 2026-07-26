@@ -406,7 +406,9 @@ paths without storing another runtime-cache copy. For targeted staging,
 setting `RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME=1` prepares the full portable
 bootstrap payload under `desktop/.packaged/postgres-18.4/`; that explicit mode
 fails when `initdb`, `pg_ctl`, or `postgres` are missing, or when
-any of those binaries is not PostgreSQL 18.4.
+any of those binaries is not PostgreSQL 18.4. Packaging and runtime selection
+also require the complete PostgreSQL `share` resources, including timezone
+data, so a partial cache cannot pass staging and then fail during database boot.
 `desktop/scripts/stage-server.mjs` runs `pnpm deploy` with the legacy deploy
 config scoped to that child process so pnpm 10+ and 11+ can still package the
 server from a workspace that does not use injected workspace packages.

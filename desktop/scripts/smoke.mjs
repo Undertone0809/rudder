@@ -4934,6 +4934,11 @@ async function runPostgresRuntimeHandoffScenario(mode) {
   const packagedRuntime = await preparePackagedExternalRuntimeFixture(scenarioRoot);
   const run = await launchDesktop(scenarioRoot, mode, ports, packagedRuntime.env);
   try {
+    assert.equal(
+      await pathExists(path.join(packagedRuntime.postgresBinDir, "..", "share", "timezone")),
+      true,
+      "packaged PostgreSQL payload should include timezone support files",
+    );
     assert.equal(await pathExists(packagedRuntime.loadedMarker), true, "packaged Desktop should load the external runtime cache");
     assert.equal(
       (await readFile(packagedRuntime.postgresBinDirMarker, "utf8")).trim(),

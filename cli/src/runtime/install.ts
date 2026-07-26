@@ -1,11 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import type { Stats } from "node:fs";
-import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveRudderHomeDir } from "../config/home.js";
-import { copyRuntimePostgresPayloadLibraries } from "./postgres-payload.js";
+import { copyRuntimePostgresPayload } from "./postgres-payload.js";
 export const RUNTIME_NPM_PACKAGE_NAME = "@rudderhq/server";
 export const NPM_PUBLIC_REGISTRY_URL = "https://registry.npmjs.org";
 export const RUNTIME_METADATA_FILE = "runtime.json";
@@ -821,6 +821,13 @@ async function resolveRuntimePostgresTemplateDir(binDir: string): Promise<string
   }
 }
 
+function resolveRuntimePostgresShareDir(binDir: string, templateDir: string): string {
+  const adjacentShareDir = path.resolve(binDir, "..", "share");
+  return pathIsInside(templateDir, adjacentShareDir)
+    ? adjacentShareDir
+    : templateDir;
+}
+
 async function assertRuntimePostgresBinDirComplete(cacheDir: string, binDir: string): Promise<void> {
   const requiredBinaries = ["initdb", "pg_ctl", "postgres"] as const;
   const missing: string[] = [];
@@ -841,10 +848,17 @@ async function assertRuntimePostgresBinDirComplete(cacheDir: string, binDir: str
     } catch {
       missing.push(path.join(templateDir, "postgresql.conf.sample"));
     }
+    const shareDir = resolveRuntimePostgresShareDir(binDir, templateDir);
+    try {
+      const timezoneStats = await stat(path.join(shareDir, "timezone"));
+      if (!timezoneStats.isDirectory()) missing.push(path.join(shareDir, "timezone"));
+    } catch {
+      missing.push(path.join(shareDir, "timezone"));
+    }
   }
   if (missing.length > 0) {
     throw new RuntimeInstallError(
-      `${RUDDER_POSTGRES_BIN_DIR_ENV} must contain PostgreSQL 18.4 initdb, pg_ctl, postgres binaries, and initdb template files; missing ${missing.join(", ")}`,
+      `${RUDDER_POSTGRES_BIN_DIR_ENV} must contain PostgreSQL 18.4 initdb, pg_ctl, postgres binaries, initdb templates, and runtime support files; missing ${missing.join(", ")}`,
       { cacheDir, command: "validate PostgreSQL 18.4 runtime payload", output: "" },
     );
   }
@@ -1246,12 +1260,12 @@ async function installSharedRuntimePostgresPayload(
     await rm(previousPlatformRoot, { recursive: true, force: true });
     try {
       const temporaryRuntimeDir = temporaryPlatformRoot;
-      await copyRuntimePostgresPayloadLibraries(sourceRuntimeDir, temporaryRuntimeDir);
-      const temporaryShareDir = path.join(temporaryRuntimeDir, "share");
-      const temporaryTemplateDir = path.join(temporaryShareDir, "postgresql");
-      await rm(temporaryShareDir, { recursive: true, force: true });
-      await mkdir(path.dirname(temporaryTemplateDir), { recursive: true });
-      await cp(sourceTemplateDir, temporaryTemplateDir, { recursive: true });
+      const sourceShareDir = resolveRuntimePostgresShareDir(sourceBinDir, sourceTemplateDir);
+      await copyRuntimePostgresPayload(
+        sourceRuntimeDir,
+        temporaryRuntimeDir,
+        sourceShareDir,
+      );
       const temporaryBinDir = path.join(temporaryRuntimeDir, "bin");
       await validateRuntimePostgresVersion(cacheDir, temporaryBinDir, postgresVersionProbe);
       try {
