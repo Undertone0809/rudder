@@ -55,6 +55,13 @@ Rudder-managed tools through their supported MCP or native bridge. Cursor and
 Gemini have their own adapter behavior. Remote or unsupported adapters must not
 claim a managed tool path that they do not have.
 
+Organization-managed external MCP tools remain separate from first-party
+Rudder control tools. A supported runtime receives only a run-scoped proxy
+catalog. Both tool listing and tool calls are filtered by the Run's starting
+policy snapshot, the current Agent binding, and the provider policy. A
+downgrade applies immediately to later calls; an upgrade starts with the next
+Run.
+
 Model discovery, session reuse, Skill synchronization, transcript parsing,
 cost metadata, and mid-turn controls are adapter-specific. A fallback runtime
 is another explicit attempt, not proof that the primary runtime has the same
