@@ -61,6 +61,17 @@ Rudder supplies first-party control tools automatically to supported local
 runtimes. Do not add a second custom Rudder MCP server. Browser tools appear
 only for an eligible local run while the Built-in Browser setting is enabled.
 
+Organization-managed external MCP integrations are configured separately on
+the Agent's Integrations tab. Use Discover to find an available provider and
+Manage to choose that provider's coarse access mode; Supabase and Linear offer
+no access, read only, or read and write, while Notion uses no access or
+provider-granted access. There is no per-tool checklist. The server derives the allowed catalog and keeps
+destructive, administrative, billing, and unknown tools unavailable. Supabase
+connections created with account scope let project-specific calls choose their
+project when the tool runs rather than during OAuth setup. Existing
+project-scoped grants keep that boundary until an explicit account-access
+upgrade.
+
 <a id="success-signal" />
 
 ## Success signal
@@ -83,3 +94,7 @@ host permissions before retrying.
 If a `warn` becomes a failed real run, use the Run's terminal error and raw
 evidence to repair the exact provider, model, endpoint, or permission. Do not
 switch the Agent to active recurring work until the low-risk run succeeds.
+
+After changing external MCP access, start a new Run to test an upgrade.
+Downgrades block later calls in an already-active Run immediately, while
+upgrades intentionally wait for the next Run.

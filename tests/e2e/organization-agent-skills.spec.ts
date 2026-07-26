@@ -104,6 +104,98 @@ async function readNamedSkillSwitchOrder(root: Locator, skillNames: string[]) {
 }
 
 test.describe("Organization and agent skills", () => {
+  test("shows the Agent Skills introduction once and remembers dismissal", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Org-Skills-Onboarding-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as {
+      id: string;
+      issuePrefix: string;
+    };
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Skills Explorer",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          command: E2E_CODEX_STUB,
+          model: "gpt-5.4",
+          env: {
+            CODEX_HOME: path.join(E2E_HOME, ".codex"),
+          },
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.removeItem("rudder:agent-skills:onboarding:v1");
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
+    const onboardingDialog = page.getByRole("dialog", {
+      name: "Build your agent's skill set",
+    });
+    await expect(onboardingDialog).toBeVisible();
+    await expect(
+      onboardingDialog.getByRole("heading", { name: "Build your agent's skill set" }),
+    ).toBeVisible();
+    await expect(
+      onboardingDialog.getByText(/local runtimes such as Codex and Claude Code/),
+    ).toBeVisible();
+
+    await page.setViewportSize({ width: 420, height: 800 });
+    const onboardingDialogBox = await onboardingDialog.boundingBox();
+    expect(onboardingDialogBox).not.toBeNull();
+    expect(onboardingDialogBox!.x).toBeGreaterThanOrEqual(0);
+    expect(onboardingDialogBox!.y).toBeGreaterThanOrEqual(0);
+    expect(onboardingDialogBox!.x + onboardingDialogBox!.width).toBeLessThanOrEqual(420);
+    expect(onboardingDialogBox!.y + onboardingDialogBox!.height).toBeLessThanOrEqual(800);
+    await expect(onboardingDialog.getByRole("button", { name: "Got it" })).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(onboardingDialog).toHaveCount(0);
+    await expect.poll(
+      () => page.evaluate(() => window.localStorage.getItem("rudder:agent-skills:onboarding:v1")),
+    ).toBe("dismissed");
+
+    await page.reload();
+    await expect(
+      page.getByRole("dialog", { name: "Build your agent's skill set" }),
+    ).toHaveCount(0);
+
+    await page.evaluate(() => {
+      window.localStorage.removeItem("rudder:agent-skills:onboarding:v1");
+    });
+    await page.reload();
+    await expect(onboardingDialog).toBeVisible();
+    await page.locator("[data-slot='dialog-overlay']").click({ position: { x: 4, y: 4 } });
+    await expect(onboardingDialog).toHaveCount(0);
+    await expect.poll(
+      () => page.evaluate(() => window.localStorage.getItem("rudder:agent-skills:onboarding:v1")),
+    ).toBe("dismissed");
+    await page.reload();
+    await expect(onboardingDialog).toHaveCount(0);
+
+    await page.evaluate(() => {
+      window.localStorage.removeItem("rudder:agent-skills:onboarding:v1");
+    });
+    await page.reload();
+    await expect(onboardingDialog).toBeVisible();
+    await onboardingDialog.getByRole("button", { name: "Got it" }).click();
+    await expect(onboardingDialog).toHaveCount(0);
+    await expect.poll(
+      () => page.evaluate(() => window.localStorage.getItem("rudder:agent-skills:onboarding:v1")),
+    ).toBe("dismissed");
+  });
+
   test("shows seeded community presets in the new-agent picker while keeping bundled defaults hidden", async ({ page }) => {
     const organizationName = `Org-New-Agent-Skills-${Date.now()}`;
     const orgRes = await page.request.post("/api/orgs", {

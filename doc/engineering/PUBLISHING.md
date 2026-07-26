@@ -86,6 +86,10 @@ or building the workspace. Stable preflight additionally requires matching
 English and Chinese public changelog entries. GitHub release automation runs it
 before expensive work, then promotes the verified changelog from the immutable
 stable tag to `docs.rudderhq.dev` after a separately confirmed docs deployment.
+The public entries are product communication: they require a short user-facing
+summary, locale-appropriate headings, and only non-empty categories. CI,
+workflow, branch, source-locking, approval, and deployment mechanics belong in
+maintainer records rather than the public changelog.
 After both the stable and public changelog deploy succeed,
 `scripts/prepare-next-release.mjs` idempotently updates current `main` to the
 next patch base on a deterministic `automation/release-vX.Y.Z` branch, opens a

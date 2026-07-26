@@ -292,7 +292,9 @@ After at least one good canary exists:
 
 1. confirm the committed public package version on the source ref is the stable version you want to ship
 2. prepare `releases/v0.1.0.md`, `docs/releases.mdx`, and
-   `docs/zh/releases.mdx` on the source commit you want to promote
+   `docs/zh/releases.mdx` on the source commit you want to promote; write a
+   concise user-facing summary, use localized headings, omit empty categories,
+   and keep release-engineering details out of the public entries
 3. open `Actions` -> `Release`
 4. run it with:
    - `source_ref`: the tested commit SHA or canary tag source commit

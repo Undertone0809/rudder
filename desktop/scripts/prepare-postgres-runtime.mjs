@@ -51,6 +51,8 @@ async function isCompleteBinDir(candidateBinDir) {
     try {
       await stat(candidatePath);
       await stat(path.join(path.dirname(candidatePath), "postgresql.conf.sample"));
+      const timezoneStats = await stat(path.join(candidateBinDir, "..", "share", "timezone"));
+      if (!timezoneStats.isDirectory()) return false;
       return true;
     } catch {
       // Try the next supported PostgreSQL archive layout.

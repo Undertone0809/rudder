@@ -86,6 +86,16 @@ describe("translateMessage", () => {
     expect(translateLegacyString("zh-CN", "Attach from Library")).toBe("Attach from Library");
     expect(translateLegacyString("zh-CN", "No Library files available.")).toBe("No Library files available.");
     expect(translateLegacyString("zh-CN", "Edit in Library")).toBe("Edit in Library");
+    expect(translateLegacyString("zh-CN", "Build your agent's skill set")).toBe("构建你的智能体技能集");
+    expect(translateLegacyString("zh-CN", "Manage which skills this agent can load for its work.")).toBe(
+      "管理这个智能体在工作中可以加载哪些技能。",
+    );
+    expect(translateLegacyString(
+      "zh-CN",
+      "Rudder also discovers compatible skills already installed for local runtimes such as Codex and Claude Code. Search this page to find them under External skills, then enable the ones this agent should load.",
+    )).toBe(
+      "Rudder 也会发现本机 Codex、Claude Code 等运行时中已经安装的兼容技能。你可以在本页搜索，并在“外部技能”中找到它们，再按需为这个智能体启用。",
+    );
     expect(translateLegacyString("zh-CN", "Import or scan skills into Library first, then enable them here.")).toBe(
       "Import or scan skills into Library first, then enable them here.",
     );

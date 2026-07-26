@@ -105,6 +105,7 @@ async function writeFakePostgresRuntime(root: string): Promise<string> {
   await mkdir(binDir, { recursive: true });
   await mkdir(path.join(root, "pgsql", "lib"), { recursive: true });
   await mkdir(path.join(root, "pgsql", "share", "postgresql"), { recursive: true });
+  await mkdir(path.join(root, "pgsql", "share", "timezone"), { recursive: true });
   for (const binary of ["initdb", "pg_ctl"]) {
     await writeFile(path.join(binDir, process.platform === "win32" ? `${binary}.exe` : binary), "", "utf8");
   }
@@ -118,6 +119,7 @@ async function writeFakePostgresRuntime(root: string): Promise<string> {
   await writeFile(path.join(root, "pgsql", "lib", "libpq.5.dylib"), "runtime lib", "utf8");
   await writeFile(path.join(root, "pgsql", "share", "postgresql", "postgres.bki"), "postgres template", "utf8");
   await writeFile(path.join(root, "pgsql", "share", "postgresql", "postgresql.conf.sample"), "postgres config template", "utf8");
+  await writeFile(path.join(root, "pgsql", "share", "timezone", "UTC"), "timezone data", "utf8");
   return binDir;
 }
 
@@ -1978,6 +1980,7 @@ describe("runtime install helpers", () => {
       await expect(access(path.join(payloadBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"))).resolves.toBeUndefined();
       await expect(access(path.join(payloadBinDir, "..", "share", "postgresql", "postgres.bki"))).resolves.toBeUndefined();
       await expect(access(path.join(payloadBinDir, "..", "share", "postgresql", "postgresql.conf.sample"))).resolves.toBeUndefined();
+      await expect(access(path.join(payloadBinDir, "..", "share", "timezone", "UTC"))).resolves.toBeUndefined();
       await expect(access(path.join(compatibilityBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"))).resolves.toBeUndefined();
       await expect(readFile(otherPlatformMarker, "utf8")).resolves.toBe("preserve");
       await expectRuntimePostgresCompatibilityLink(
@@ -1999,6 +2002,45 @@ describe("runtime install helpers", () => {
       } else {
         process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
       }
+      if (previousManagedPostgresBinDir === undefined) {
+        delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      } else {
+        process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuilds a shared PostgreSQL payload that is missing timezone support files", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-postgres-timezone-repair-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+    try {
+      const sourceBinDir = await writeFakePostgresRuntime(path.join(root, "source"));
+      process.env.RUDDER_POSTGRES_BIN_DIR = sourceBinDir;
+      process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = sourceBinDir;
+
+      const sharedBinDir = resolveSharedRuntimePostgresPayloadBinDir(root);
+      await mkdir(path.dirname(sharedBinDir), { recursive: true });
+      await cp(path.dirname(sourceBinDir), path.dirname(sharedBinDir), { recursive: true });
+      await rm(path.join(sharedBinDir, "..", "share", "timezone"), { recursive: true });
+      await writeFile(path.join(sharedBinDir, "damaged-generation"), "replace");
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" })) as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+      });
+
+      expect(result.postgresPayloadBinDir).toBe(sharedBinDir);
+      await expect(access(path.join(sharedBinDir, "..", "share", "timezone", "UTC"))).resolves.toBeUndefined();
+      await expect(access(path.join(sharedBinDir, "damaged-generation"))).rejects.toThrow();
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
       if (previousManagedPostgresBinDir === undefined) {
         delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
       } else {

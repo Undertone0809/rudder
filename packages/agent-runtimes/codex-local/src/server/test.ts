@@ -16,6 +16,7 @@ import {
 import path from "node:path";
 import { prepareManagedCodexHome } from "./codex-home.js";
 import { parseCodexJsonl } from "./parse.js";
+import { resolveCodexCommand } from "./resolve-command.js";
 
 function summarizeStatus(checks: AgentRuntimeEnvironmentCheck[]): AgentRuntimeEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -51,7 +52,7 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
 
 const CODEX_AUTH_REQUIRED_RE =
   /(?:not\s+logged\s+in|login\s+required|authentication\s+required|unauthorized|invalid(?:\s+or\s+missing)?\s+api(?:[_\s-]?key)?|openai[_\s-]?api[_\s-]?key|api[_\s-]?key.*required|please\s+run\s+`?codex\s+login`?)/i;
-const DEFAULT_CODEX_HELLO_PROBE_TIMEOUT_SEC = 90;
+export const DEFAULT_CODEX_HELLO_PROBE_TIMEOUT_SEC = 180;
 
 export async function testEnvironment(
   ctx: AgentRuntimeEnvironmentTestContext,
@@ -83,12 +84,13 @@ export async function testEnvironment(
     if (typeof value === "string") env[key] = value;
   }
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
+  const executableCommand = await resolveCodexCommand(command, cwd, runtimeEnv);
   try {
-    await ensureCommandResolvable(command, cwd, runtimeEnv);
+    await ensureCommandResolvable(executableCommand, cwd, runtimeEnv);
     checks.push({
       code: "codex_command_resolvable",
       level: "info",
-      message: `Command is executable: ${command}`,
+      message: `Command is executable: ${executableCommand}`,
     });
   } catch (err) {
     checks.push({
@@ -166,7 +168,7 @@ export async function testEnvironment(
 
       const probe = await runChildProcess(
         `codex-envtest-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        command,
+        executableCommand,
         args,
         {
           cwd,
