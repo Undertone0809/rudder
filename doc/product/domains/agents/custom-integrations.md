@@ -13,7 +13,13 @@ related_code:
   - packages/shared/src/types/mcp.ts
   - packages/shared/src/validators/custom-integration.ts
   - packages/shared/src/validators/mcp.ts
+  - packages/agent-runtime-utils/src/managed-external-mcp.ts
+  - packages/agent-runtimes/codex-local/src/server/codex-home.ts
+  - packages/agent-runtimes/claude-local/src/server/execute.ts
+  - packages/agent-runtimes/opencode-local/src/server/execute.ts
+  - packages/agent-runtimes/pi-local/src/server/managed-external-mcp.ts
   - server/src/services/integrations/custom-integrations.ts
+  - server/src/services/mcp/managed-bindings.ts
   - server/src/routes/agents.ts
   - server/src/services/agent-run-context.ts
   - ui/src/api/agents.ts
@@ -22,6 +28,11 @@ related_tests:
   - packages/db/src/mcp-connections-schema.test.ts
   - packages/db/src/migrations/managed-mcp-connections.test.ts
   - packages/shared/src/validators/mcp.test.ts
+  - packages/agent-runtime-utils/src/managed-external-mcp.test.ts
+  - packages/agent-runtimes/codex-local/src/server/managed-external-mcp.test.ts
+  - packages/agent-runtimes/claude-local/src/server/managed-external-mcp.test.ts
+  - packages/agent-runtimes/opencode-local/src/server/managed-external-mcp.test.ts
+  - packages/agent-runtimes/pi-local/src/server/managed-external-mcp.test.ts
   - scripts/managed-mcp-product-contract.test.mjs
   - server/src/__tests__/custom-integrations-service.test.ts
   - ui/src/pages/AgentDetail.integrations.test.tsx
@@ -30,6 +41,7 @@ related_plans:
   - doc/plans/2026-06-27-agent-custom-integrations.md
   - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
   - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
+  - doc/plans/2026-07-26-managed-mcp-runtime-failure-isolation.md
 edit_policy: user_confirmed_only
 ---
 
@@ -66,6 +78,14 @@ Feishu because fixed providers may have provider-specific identity, chat, and
 runtime semantics. Custom integrations need explicit organization, owner-agent,
 binding, tool, credential, and audit records so Rudder can enforce scope before
 any prompt or tool-call surface sees them.
+
+An integration is a capability extension, not runtime-admission authority.
+Invalid configuration, unavailable credentials, provider outages, proxy
+preflight failures, and schema-discovery failures must fail closed for the
+affected MCP capability while the Agent runtime continues without it. A
+persisted `required` flag raises the importance of operator attention; it does
+not make an external provider authoritative over whether an Agent may think or
+reply.
 
 Rudder's first-party Rudder MCP server is not a custom integration. It is
 runtime-owned built-in infrastructure exposed as `rudder-tools` during
@@ -202,6 +222,14 @@ tool naming, identity, and fallback semantics for that built-in surface.
     Authorization header, Bearer environment, and direct Bearer sources are
     mutually exclusive; OAuth-grant conflicts are checked at the service
     boundary.
+17. Run-context preparation and runtime adapters isolate each managed MCP
+    binding from Agent startup. A malformed descriptor is omitted without
+    widening its policy; missing run authentication, an unavailable grant,
+    failed proxy preflight, or failed schema discovery removes only that
+    binding. Model execution and unrelated tools continue. Codex renders
+    external MCP servers as non-blocking even when the persisted connection is
+    marked `required`. Admission checks use a runtime-owned short budget rather
+    than the provider's operational startup timeout.
 
 ### Decision Table
 
@@ -226,6 +254,9 @@ tool naming, identity, and fallback semantics for that built-in surface.
 | Existing `mcp_server` row is migrated | Represented by a disabled, non-executable `legacy_manual` connection; its existing row, tools, bindings, audit history, and credentials remain readable. |
 | OAuth callback state is replayed or older than 10 minutes | Rejected without exchanging or exposing credentials. |
 | Managed connection becomes unauthorized | Moves to `needs_reauth`; calls remain blocked until a valid grant is restored. |
+| Managed MCP descriptor is malformed | Omit that binding, preserve a bounded diagnostic, and continue Agent runtime startup without accepting unknown fields. |
+| Managed MCP authentication, proxy preflight, or schema discovery fails | Omit the affected tool surface and continue model execution; `required` changes operator attention, not runtime admission. |
+| Managed MCP admission check reaches its short runtime-owned budget | Stop waiting, omit the affected tool surface, record a bounded secret-free diagnostic, and start the Agent without it. |
 | Discovery finds a destructive, administrative, billing, or unclassified tool | Tool is persisted for evidence but unavailable under V1 coarse access. |
 | Discovery no longer returns a prior tool | Tool is marked removed and cannot be dispatched; history remains. |
 | Public connection or grant response | Exposes safe config and `hasCredentials` only, never secret ids, tokens, client secrets, or PKCE material. |
@@ -274,6 +305,8 @@ Rudder persists:
   integration id and receives no usable integration.
 - Runtime prompt assembly includes an enabled tool and excludes disabled,
   revoked, or non-allowlisted tools.
+- A Chat run whose Agent has an unavailable or malformed managed MCP binding
+  still reaches model execution and can reply without that MCP capability.
 - Agent Detail Integrations shows Custom API and MCP Server controls alongside
   fixed-provider setup rows, and E2E covers agent-scoped, organization-scoped,
   and cross-organization boundary behavior from that surface.
@@ -305,6 +338,9 @@ Rudder persists:
   reconnect or migration; scope expansion requires explicit operator action.
 - User-supplied tool ids cannot widen the effective coarse access or bypass
   fail-closed capability classification.
+- Managed MCP failures fail closed for tool exposure but fail open for Agent
+  runtime startup. No external provider, binding, grant, proxy, or schema
+  discovery result may prevent the model from running.
 - Raw access tokens, refresh tokens, client secrets, PKCE verifiers, and
   temporary dynamic-client credentials never live directly in managed MCP
   connection, grant, session, tool, binding, or audit rows.
@@ -331,6 +367,7 @@ semantics remain governed by their provider contracts, not this page.
 - Plan: `doc/plans/2026-06-27-agent-custom-integrations.md`
 - Plan: `doc/plans/2026-07-23-managed-mcp-oauth-integrations.md`
 - Plan: `doc/plans/2026-07-25-managed-mcp-access-and-interactions.md`
+- Plan: `doc/plans/2026-07-26-managed-mcp-runtime-failure-isolation.md`
 - Related active contracts:
   - `AGENT.SKILLS.001` for discovery vs runtime enablement.
   - `AGENT.INSTRUCTIONS.001` for runtime prompt assembly.

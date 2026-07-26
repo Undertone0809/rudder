@@ -64,28 +64,24 @@ function decodeLocalPath(filePath: string) {
   }
 }
 
-function stripSourceLocation(filePath: string, label?: string) {
+function stripSourceLocation(filePath: string) {
   const match = /^(.*?):\d+(?::\d+)?$/u.exec(filePath);
-  if (!match || !label?.trim()) return filePath;
-
-  const targetBasename = match[1].split(/[\\/]/u).at(-1);
-  const labelBasename = label.trim().split(/[\\/]/u).at(-1);
-  return targetBasename === labelBasename ? match[1] : filePath;
+  return match?.[1] ?? filePath;
 }
 
 export function resolveLocalFileTarget(
   href: string | null | undefined,
-  label?: string,
+  _label?: string,
 ): string | null {
   const value = href?.trim();
   if (!value) return null;
 
   const fileUrlPath = /^file:/i.test(value) ? decodeFileUrlPath(value) : null;
-  if (fileUrlPath) return stripSourceLocation(fileUrlPath, label);
+  if (fileUrlPath) return fileUrlPath;
 
   const decodedValue = decodeLocalPath(value);
-  if (/^[A-Za-z]:[\\/]/.test(decodedValue)) return stripSourceLocation(decodedValue, label);
-  if (/^\\\\[^\\]+\\[^\\]+/.test(decodedValue)) return stripSourceLocation(decodedValue, label);
+  if (/^[A-Za-z]:[\\/]/.test(decodedValue)) return decodedValue;
+  if (/^\\\\[^\\]+\\[^\\]+/.test(decodedValue)) return decodedValue;
   if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return null;
   if (value.startsWith("//")) return null;
   if (
@@ -93,7 +89,15 @@ export function resolveLocalFileTarget(
     && !isRudderRoutePath(decodedValue)
     && isRecognizablePosixFilePath(decodedValue)
   ) {
-    return stripSourceLocation(decodedValue, label);
+    return decodedValue;
   }
   return null;
+}
+
+export function resolveLocalFileDisplayTarget(
+  href: string | null | undefined,
+  _label?: string,
+): string | null {
+  const targetPath = resolveLocalFileTarget(href);
+  return targetPath ? stripSourceLocation(targetPath) : null;
 }

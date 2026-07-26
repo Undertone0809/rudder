@@ -14,6 +14,7 @@ const bindings = [
   {
     bindingId: "11111111-1111-4111-8111-111111111111",
     serverName: "supabase-memos",
+    accessMode: "read_only",
     toolPolicy: {
       mode: "allowlist",
       allowedToolNames: ["external.supabase-memos.list_tables"],
@@ -25,6 +26,7 @@ const bindings = [
   {
     bindingId: "22222222-2222-4222-8222-222222222222",
     serverName: "linear-product",
+    accessMode: "read_write",
     toolPolicy: {
       mode: "allowlist",
       allowedToolNames: ["external.linear-product.list_issues"],
@@ -89,6 +91,16 @@ function healthyProxy(
 }
 
 describe("OpenCode managed external MCP config", () => {
+  it("omits the first-party MCP server after a failed core preflight", async () => {
+    await expect(resolveRudderOpenCodeMcpConfigs(
+      {},
+      undefined,
+      undefined,
+      {},
+      { includeCore: false },
+    )).resolves.not.toHaveProperty("rudder-tools");
+  });
+
   it("adds two remote servers without changing the first-party server", async () => {
     const { server, origin } = await listen(healthyProxy);
     const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
@@ -128,8 +140,7 @@ describe("OpenCode managed external MCP config", () => {
           timeout: 45_000,
         },
       });
-      expect(timeoutSpy).toHaveBeenCalledWith(10_000);
-      expect(timeoutSpy).toHaveBeenCalledWith(12_000);
+      expect(timeoutSpy).toHaveBeenCalledWith(3_000);
       expect(Object.keys(combined)).toEqual([
         "rudder-tools",
         "supabase-memos",
@@ -143,18 +154,18 @@ describe("OpenCode managed external MCP config", () => {
     }
   });
 
-  it("enforces required/optional missing-auth behavior", async () => {
+  it("omits managed MCP configs without run auth regardless of required metadata", async () => {
     await expect(resolveManagedExternalOpenCodeMcpConfigs(
       { managedExternalMcpBindings: [bindings[0]] },
       {},
-    )).rejects.toThrow(/required managed MCP binding/i);
+    )).resolves.toEqual({});
     await expect(resolveManagedExternalOpenCodeMcpConfigs(
       { managedExternalMcpBindings: [{ ...bindings[1], required: false }] },
       {},
     )).resolves.toEqual({});
   });
 
-  it("fails a required unreachable proxy and omits an optional one", async () => {
+  it("omits an unreachable proxy regardless of required metadata", async () => {
     const { server, origin } = await listen((_req, res) => {
       res.statusCode = 503;
       res.end();
@@ -167,7 +178,7 @@ describe("OpenCode managed external MCP config", () => {
       await expect(resolveManagedExternalOpenCodeMcpConfigs(
         { managedExternalMcpBindings: [bindings[0]] },
         env,
-      )).rejects.toThrow(/required managed MCP binding.*preflight failed/i);
+      )).resolves.toEqual({});
       await expect(resolveManagedExternalOpenCodeMcpConfigs(
         { managedExternalMcpBindings: [{ ...bindings[1], required: false }] },
         env,

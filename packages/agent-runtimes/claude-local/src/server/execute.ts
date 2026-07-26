@@ -16,7 +16,6 @@ import {
 } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
-  assertRudderMcpCoreAvailable,
   preflightRudderBrowserMcpServer,
   preflightRudderMcpServer,
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
@@ -209,10 +208,18 @@ export async function resolveRudderMcpServerConfigs(
   verifiedCommand?: RudderMcpCliCommand,
   verifiedBrowserCommand?: RudderMcpCliCommand,
   runtimeConfig: unknown = {},
+  options: {
+    includeCore?: boolean;
+    onFailure?: (serverName: string | null, error: Error) => void | Promise<void>;
+  } = {},
 ): Promise<Record<string, Record<string, unknown>>> {
-  const configs: Record<string, Record<string, unknown>> = {
-    [RUDDER_MCP_SERVER_NAME]: await resolveRudderMcpServerConfig(managedEnv, verifiedCommand),
-  };
+  const configs: Record<string, Record<string, unknown>> = {};
+  if (options.includeCore !== false) {
+    configs[RUDDER_MCP_SERVER_NAME] = await resolveRudderMcpServerConfig(
+      managedEnv,
+      verifiedCommand,
+    );
+  }
   if (managedEnv.RUDDER_BROWSER_ENABLED === "true") {
     const browserMcp = verifiedBrowserCommand ?? await resolveRudderBrowserMcpCliCommand(__moduleDir);
     const env = { ...(browserMcp.env ?? {}), ...managedEnv };
@@ -225,7 +232,7 @@ export async function resolveRudderMcpServerConfigs(
   }
   Object.assign(
     configs,
-    await resolveManagedExternalClaudeMcpConfigs(runtimeConfig, managedEnv),
+    await resolveManagedExternalClaudeMcpConfigs(runtimeConfig, managedEnv, options.onFailure),
   );
   return configs;
 }
@@ -233,9 +240,10 @@ export async function resolveRudderMcpServerConfigs(
 export async function resolveManagedExternalClaudeMcpConfigs(
   runtimeConfig: unknown,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  onFailure?: (serverName: string | null, error: Error) => void | Promise<void>,
 ): Promise<Record<string, Record<string, unknown>>> {
   return Object.fromEntries(
-    (await preflightManagedExternalMcpBindings(runtimeConfig, env)).map((binding) => [
+    (await preflightManagedExternalMcpBindings(runtimeConfig, env, { onFailure })).map((binding) => [
       binding.serverName,
       {
         type: "http",
@@ -274,6 +282,8 @@ async function writeManagedClaudeMcpConfig(
   verifiedCommand?: RudderMcpCliCommand,
   verifiedBrowserCommand?: RudderMcpCliCommand,
   runtimeConfig: unknown = {},
+  includeCore = true,
+  onLog: AgentRuntimeExecutionContext["onLog"] = async () => {},
 ): Promise<string> {
   const configPath = path.join(targetHome, ".claude", "rudder-mcp.json");
   await writePrivateJsonFile(configPath, {
@@ -282,6 +292,15 @@ async function writeManagedClaudeMcpConfig(
       verifiedCommand,
       verifiedBrowserCommand,
       runtimeConfig,
+      {
+        includeCore,
+        onFailure: async (serverName, error) => {
+          await onLog(
+            "stderr",
+            `[rudder] Managed MCP ${serverName ? `server "${serverName}"` : "configuration"} was omitted: ${error.message}\n`,
+          );
+        },
+      },
     ),
   });
   return configPath;
@@ -593,21 +612,43 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   applyGitCredentialHelperPolicyEnv(env);
 
   const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env }));
-  const rudderMcpCommand = await resolveRudderMcpCliCommand(__moduleDir);
-  const rudderMcpPreflight = await preflightRudderMcpServer({
-    command: rudderMcpCommand,
-    runtimeEnv,
-    managedEnv: pickRudderMcpManagedEnv(env),
-    browserEnabled: false,
-  });
-  assertRudderMcpCoreAvailable(rudderMcpPreflight);
-  const browserMcpCommand = browserEnabled ? await resolveRudderBrowserMcpCliCommand(__moduleDir) : null;
+  let rudderMcpCommand: RudderMcpCliCommand | undefined;
+  let rudderMcpPreflight: RudderMcpPreflightResult;
+  try {
+    rudderMcpCommand = await resolveRudderMcpCliCommand(__moduleDir);
+    rudderMcpPreflight = await preflightRudderMcpServer({
+      command: rudderMcpCommand,
+      runtimeEnv,
+      managedEnv: pickRudderMcpManagedEnv(env),
+      browserEnabled: false,
+    });
+  } catch {
+    rudderMcpPreflight = {
+      available: false,
+      provenance: "repo",
+      version: null,
+      contractVersion: null,
+      coreContractHash: null,
+      diagnosticCode: "core_bundle_handshake_failed",
+      diagnostic: "Rudder MCP capability preparation failed.",
+      tools: [],
+    };
+  }
+  if (!rudderMcpPreflight.available) {
+    await (input.onLog ?? (async () => {}))(
+      "stderr",
+      `[rudder] Rudder MCP is unavailable; continuing without Rudder MCP tools: ${rudderMcpPreflight.diagnostic}\n`,
+    );
+  }
+  const browserMcpCommand = browserEnabled
+    ? await resolveRudderBrowserMcpCliCommand(__moduleDir).catch(() => null)
+    : null;
   const browserMcpPreflight = browserMcpCommand
     ? await preflightRudderBrowserMcpServer({
         command: browserMcpCommand,
         runtimeEnv,
         managedEnv: pickRudderMcpManagedEnv(env),
-      })
+      }).catch(() => null)
     : null;
   if (browserEnabled && !browserMcpPreflight?.browserAvailable) {
     browserEnabled = false;
@@ -621,6 +662,8 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     rudderMcpCommand,
     browserMcpCommand ?? undefined,
     input.config,
+    rudderMcpPreflight.available,
+    input.onLog,
   );
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;

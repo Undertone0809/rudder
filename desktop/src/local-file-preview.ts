@@ -194,6 +194,26 @@ function resolveAbsoluteTargetPath(targetPath: string): string {
   return resolvedTargetPath;
 }
 
+function sourceLocationBasePath(filePath: string): string | null {
+  return /^(.*?):\d+(?::\d+)?$/u.exec(filePath)?.[1] ?? null;
+}
+
+function isMissingPathError(cause: unknown): cause is NodeJS.ErrnoException {
+  return cause instanceof Error
+    && "code" in cause
+    && cause.code === "ENOENT";
+}
+
+async function resolveCanonicalPreviewPath(resolvedTargetPath: string): Promise<string> {
+  try {
+    return await fs.realpath(resolvedTargetPath);
+  } catch (cause) {
+    const fallbackPath = sourceLocationBasePath(resolvedTargetPath);
+    if (!isMissingPathError(cause) || !fallbackPath) throw cause;
+    return await fs.realpath(fallbackPath);
+  }
+}
+
 async function readTextContent(
   canonicalPath: string,
   sizeBytes: number,
@@ -230,12 +250,12 @@ async function readTextContent(
 
 export async function previewLocalFile(targetPath: string): Promise<DesktopLocalFilePreview> {
   const resolvedTargetPath = resolveAbsoluteTargetPath(targetPath);
-  const canonicalPath = await fs.realpath(resolvedTargetPath);
+  const canonicalPath = await resolveCanonicalPreviewPath(resolvedTargetPath);
   const stats = await fs.stat(canonicalPath);
   if (!stats.isFile()) {
     throw new Error("Local file preview only supports regular files.");
   }
-  const classification = classifyPreview(canonicalPath);
+  const classification = classifyPreview(sourceLocationBasePath(canonicalPath) ?? canonicalPath);
   if (!classification) {
     throw new Error("This file type is not supported for local preview.");
   }

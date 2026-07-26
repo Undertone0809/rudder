@@ -8,10 +8,11 @@ import {
   type AgentRuntimeControlHandleLease,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
+  type RudderMcpCliCommand,
+  type RudderMcpPreflightResult,
 } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
-  assertRudderMcpCoreAvailable,
   preflightRudderBrowserMcpServer,
   preflightRudderMcpServer,
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
@@ -451,21 +452,43 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   );
   const billingType = resolveCodexBillingType(effectiveEnv);
   const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv));
-  const rudderMcpCommand = await resolveRudderMcpCliCommand(__moduleDir);
-  const rudderMcpPreflight = await preflightRudderMcpServer({
-    command: rudderMcpCommand,
-    runtimeEnv,
-    managedEnv: pickRudderMcpManagedEnv(env),
-    browserEnabled: false,
-  });
-  assertRudderMcpCoreAvailable(rudderMcpPreflight);
-  const browserMcpCommand = browserEnabled ? await resolveRudderBrowserMcpCliCommand(__moduleDir) : null;
+  let rudderMcpCommand: RudderMcpCliCommand | undefined;
+  let rudderMcpPreflight: RudderMcpPreflightResult;
+  try {
+    rudderMcpCommand = await resolveRudderMcpCliCommand(__moduleDir);
+    rudderMcpPreflight = await preflightRudderMcpServer({
+      command: rudderMcpCommand,
+      runtimeEnv,
+      managedEnv: pickRudderMcpManagedEnv(env),
+      browserEnabled: false,
+    });
+  } catch {
+    rudderMcpPreflight = {
+      available: false,
+      provenance: "repo",
+      version: null,
+      contractVersion: null,
+      coreContractHash: null,
+      diagnosticCode: "core_bundle_handshake_failed",
+      diagnostic: "Rudder MCP capability preparation failed.",
+      tools: [],
+    };
+  }
+  if (!rudderMcpPreflight.available) {
+    await onLog(
+      "stderr",
+      `[rudder] Rudder MCP is unavailable; continuing without Rudder MCP tools: ${rudderMcpPreflight.diagnostic}\n`,
+    );
+  }
+  const browserMcpCommand = browserEnabled
+    ? await resolveRudderBrowserMcpCliCommand(__moduleDir).catch(() => null)
+    : null;
   const browserMcpPreflight = browserMcpCommand
     ? await preflightRudderBrowserMcpServer({
         command: browserMcpCommand,
         runtimeEnv,
         managedEnv: pickRudderMcpManagedEnv(env),
-      })
+      }).catch(() => null)
     : null;
   if (browserEnabled && !browserMcpPreflight?.browserAvailable) {
     browserEnabled = false;
@@ -501,6 +524,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     rudderMcpCommand,
     browserMcpCommand ?? undefined,
     config,
+    rudderMcpPreflight.available,
   );
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;

@@ -6,6 +6,7 @@ export {
   redactTranscriptEntryPaths
 } from "./log-redaction.js";
 export {
+  MANAGED_EXTERNAL_MCP_ADMISSION_TIMEOUT_MS,
   ManagedExternalMcpConfigurationError,
   parseManagedExternalMcpBindings,
   preflightManagedExternalMcpBindings,

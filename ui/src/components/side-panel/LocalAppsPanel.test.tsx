@@ -149,6 +149,17 @@ describe("LocalAppsPanel", () => {
     expect(create).not.toHaveBeenCalled();
     expect(document.querySelector<HTMLInputElement>("#local-app-cwd")?.value).toBe(discovered.cwd);
     expect(document.body.textContent).toContain("can modify local files and data");
+    const review = document.querySelector<HTMLElement>('[data-testid="local-app-definition-review"]');
+    const scrollRegion = review?.querySelector<HTMLElement>('[data-testid="local-app-definition-review-scroll"]');
+    expect(review?.className).toContain("overflow-hidden");
+    expect(scrollRegion?.className).toContain("scrollbar-auto-hide");
+    expect(scrollRegion?.className).toContain("overflow-y-auto");
+    expect(scrollRegion?.className).toContain("overscroll-contain");
+    expect(scrollRegion?.getAttribute("role")).toBe("region");
+    expect(scrollRegion?.getAttribute("aria-label")).toBe("Local App launch details");
+    expect(scrollRegion?.getAttribute("tabindex")).toBe("0");
+    act(() => scrollRegion?.dispatchEvent(new Event("scroll")));
+    expect(scrollRegion?.classList.contains("is-scrolling")).toBe(true);
     await act(async () => {
       buttonByText("Review & add")?.click();
       await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(1));

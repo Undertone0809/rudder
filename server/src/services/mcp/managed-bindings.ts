@@ -725,9 +725,6 @@ export function managedMcpBindingService(db: Db) {
         )
       );
       if (!available) {
-        if (connection.required) {
-          throw new RequiredManagedMcpConnectionUnavailableError(connection.name);
-        }
         continue;
       }
       const enabledIds = new Set(binding.enabledToolIds);

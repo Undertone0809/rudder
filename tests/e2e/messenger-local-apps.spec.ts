@@ -362,6 +362,13 @@ test.describe("Messenger Local Apps", () => {
     );
     await page.getByTestId("local-apps-add").click();
     const review = page.getByTestId("local-app-definition-review");
+    const reviewScroll = review.getByTestId("local-app-definition-review-scroll");
+    await expect(review).toHaveClass(/overflow-hidden/);
+    await expect(reviewScroll).toHaveClass(/scrollbar-auto-hide/);
+    await expect(reviewScroll).toHaveCSS("overflow-y", "auto");
+    await expect(review.getByRole("button", { name: "Review & add" })).toBeVisible();
+    await reviewScroll.evaluate((element) => element.dispatchEvent(new Event("scroll")));
+    await expect(reviewScroll).toHaveClass(/is-scrolling/);
     await expect(review.getByLabel("Working directory")).toHaveValue(
       "/Users/zeeland/projects/uranus/rudder/mkt/dashboard",
     );
@@ -545,6 +552,48 @@ test.describe("Messenger Local Apps", () => {
       path: testInfo.outputPath("messenger-main-mkt-local-app.png"),
       fullPage: true,
     });
+  });
+
+  test("keeps Local App details scrollable inside the modal on a narrow viewport", async ({ page }) => {
+    const organization = await createOrganization(page.request);
+    const chat = await createChat(page, organization.id);
+    await selectOrganization(page, organization.id);
+    await installLocalAppsStub(page);
+    await page.setViewportSize({ width: 460, height: 820 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    await page.getByTestId("chat-side-panel-trigger").click();
+    await page.getByTestId("chat-side-panel-empty-local-apps-target").click();
+    await page.getByTestId("local-apps-add").click();
+
+    const review = page.getByTestId("local-app-definition-review");
+    const reviewScroll = review.getByTestId("local-app-definition-review-scroll");
+    const geometry = await reviewScroll.evaluate((element) => {
+      const dialog = element.closest("[data-testid='local-app-definition-review']");
+      if (!dialog) throw new Error("Expected Local App review dialog");
+      const dialogRect = dialog.getBoundingClientRect();
+      const scrollRect = element.getBoundingClientRect();
+      return {
+        dialog: { left: dialogRect.left, right: dialogRect.right, top: dialogRect.top, bottom: dialogRect.bottom },
+        scroll: { left: scrollRect.left, right: scrollRect.right, top: scrollRect.top, bottom: scrollRect.bottom },
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+      };
+    });
+
+    expect(geometry.scrollHeight).toBeGreaterThan(geometry.clientHeight);
+    expect(geometry.scroll.left).toBeGreaterThan(geometry.dialog.left);
+    expect(geometry.scroll.right).toBeLessThan(geometry.dialog.right);
+    expect(geometry.scroll.top).toBeGreaterThan(geometry.dialog.top);
+    expect(geometry.scroll.bottom).toBeLessThan(geometry.dialog.bottom);
+    await expect(review.getByRole("region", { name: "Local App launch details" })).toHaveAttribute("tabindex", "0");
+    await expect(review.getByRole("button", { name: "Review & add" })).toBeVisible();
+
+    await reviewScroll.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    await expect(reviewScroll).toHaveClass(/is-scrolling/);
   });
 
   test("edits a running Local App from the masked whole-tab workbench surface", async ({ page }, testInfo) => {
