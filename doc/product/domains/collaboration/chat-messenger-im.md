@@ -46,6 +46,9 @@ related_code:
   - server/src/routes/chats.stream-routes.ts
   - server/src/services/product-intelligence.ts
   - server/src/services/chats.ts
+  - server/src/services/chats.helpers.ts
+  - server/src/services/postgres-json.ts
+  - server/src/services/run-events.ts
   - server/src/services/chat-work-manifest.ts
   - server/src/services/chat-agent-runs.ts
   - server/src/services/chat-assistant.helpers.ts
@@ -129,6 +132,7 @@ related_tests:
   - packages/shared/src/chat-transcript-provenance.test.ts
   - server/src/services/chat-assistant.annotations.test.ts
   - server/src/services/chat-inline-annotations.test.ts
+  - server/src/services/postgres-json.test.ts
   - ui/src/lib/side-panel-targets.test.ts
   - ui/src/lib/side-chat.test.ts
   - ui/src/context/SidePanelContext.test.tsx
@@ -251,6 +255,10 @@ Product model:
   transcript evidence such as thinking/reasoning entries, scratchpad text, tool
   logs, and incomplete adapter summaries remain run evidence, not chat bubble
   body content.
+- Runtime transcript evidence may contain NUL characters. Rudder replaces those
+  characters deterministically while preserving the rest of the evidence across
+  the generation ledger, linked Agent Run events, and streaming or non-streaming
+  message transcript state.
 - Chat process details expose meaningful thinking and tool activity, not raw
   provider lifecycle bookkeeping. Empty lifecycle events such as
   `reasoning started` / `reasoning completed` and Rudder result-envelope
@@ -437,6 +445,9 @@ Invariants:
 - After the first message is accepted, runtime startup and generation failures
   are real work evidence: the Chat, accepted message, and durable visible error
   remain inspectable.
+- NUL characters in transcript evidence alone must not fail a Chat turn that
+  otherwise completed. The completed reply and its normalized generation, Agent
+  Run, and message transcript evidence must remain inspectable after reload.
 - Production code may create `chat_conversations` only through approved
   lifecycle services. Automation and IM bindings must share the atomic first
   event transaction; Fork and Side Chat must copy history or add a system event

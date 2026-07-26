@@ -184,6 +184,10 @@ contracts:
       - server/src/services/heartbeat-run-reference.ts
       - server/src/routes/chats.stream-routes.ts
       - server/src/services/chat-generation-protocol.ts
+      - server/src/services/chats.ts
+      - server/src/services/chats.helpers.ts
+      - server/src/services/postgres-json.ts
+      - server/src/services/run-events.ts
       - ui/src/components/transcript/RunTranscriptView.common.tsx
       - ui/src/components/transcript/RunTranscriptView.normalize.tsx
       - ui/src/components/transcript/RunTranscriptView.tsx
@@ -195,8 +199,10 @@ contracts:
       - server/src/__tests__/heartbeat-run-summary.test.ts
       - server/src/__tests__/chat-routes.test.ts
       - server/src/services/chat-generation-protocol.test.ts
+      - server/src/services/postgres-json.test.ts
       - tests/e2e/run-transcript-detail.spec.ts
       - tests/e2e/chat-concurrent-streaming.spec.ts
+      - tests/e2e/chat-streaming.spec.ts
       - ui/src/components/transcript/RunTranscriptView.test.tsx
       - ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx
       - tests/e2e/chat-transcript-internal-events.spec.ts
@@ -1083,6 +1089,9 @@ contracts:
       - server/src/routes/chats.runtime-controls.ts
       - server/src/routes/chats.stream-routes.ts
       - server/src/services/chats.ts
+      - server/src/services/chats.helpers.ts
+      - server/src/services/postgres-json.ts
+      - server/src/services/run-events.ts
       - server/src/services/chats.runtime-controls.ts
       - server/src/services/chats.queued-message-create.ts
       - server/src/services/automation-chat-output.ts
@@ -1123,6 +1132,7 @@ contracts:
       - cli/src/__tests__/agent-v1-registry.test.ts
       - server/src/services/chat-generation-locks.test.ts
       - server/src/services/chat-generation-protocol.test.ts
+      - server/src/services/postgres-json.test.ts
       - server/src/__tests__/chat-assistant.test.ts
       - server/src/__tests__/side-chats.test.ts
       - ui/src/pages/Chat.empty-state.test.tsx

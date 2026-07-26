@@ -13,6 +13,10 @@ related_code:
   - server/src/services/heartbeat-run-reference.ts
   - server/src/routes/chats.stream-routes.ts
   - server/src/services/chat-generation-protocol.ts
+  - server/src/services/chats.ts
+  - server/src/services/chats.helpers.ts
+  - server/src/services/postgres-json.ts
+  - server/src/services/run-events.ts
   - server/src/services/chat-inline-annotations.ts
   - packages/shared/src/chat-transcript-provenance.ts
   - ui/src/components/transcript/RunTranscriptView.common.tsx
@@ -24,10 +28,12 @@ related_tests:
   - server/src/__tests__/heartbeat-run-summary.test.ts
   - server/src/__tests__/chat-routes.test.ts
   - server/src/services/chat-generation-protocol.test.ts
+  - server/src/services/postgres-json.test.ts
   - server/src/services/chat-inline-annotations.test.ts
   - packages/shared/src/chat-transcript-provenance.test.ts
   - tests/e2e/run-transcript-detail.spec.ts
   - tests/e2e/chat-concurrent-streaming.spec.ts
+  - tests/e2e/chat-streaming.spec.ts
   - ui/src/components/transcript/RunTranscriptView.test.tsx
   - tests/e2e/chat-transcript-internal-events.spec.ts
 edit_policy: user_confirmed_only
@@ -44,6 +50,12 @@ Behavior:
 - Stdout and stderr excerpts are persisted on the run.
 - Adapter transcript parsing builds structured transcript entries when the
   adapter supplies a parser.
+- Before transcript-derived structured evidence is persisted as generation
+  events, Agent Run events, or message transcript state, Rudder
+  deterministically replaces NUL characters with visible replacement
+  characters. A provider tool result that contains NUL must not turn an
+  otherwise valid run into a persistence failure, and normalization must retain
+  colliding object fields instead of silently overwriting evidence.
 - When a provider exposes readable summary and raw streams for the same
   reasoning item, the adapter projects at most one representation for that
   item. Streaming fragments retain delta semantics, raw-only reasoning remains
@@ -95,6 +107,10 @@ Invariant:
 - The operator must be able to inspect a run outcome without reading raw
   process logs only.
 - Usage/session metadata must stay connected to the run that produced it.
+- NUL characters in structured transcript evidence must not break run
+  completion or detach transcript evidence. The normalized generation ledger,
+  Agent Run event, and message transcript must remain attributable to the same
+  run and conversation.
 - Transcript evidence and chat-visible assistant content are separate surfaces:
   reasoning/thinking evidence may be inspectable as transcript entries, but it
   must not become assistant message body text or a completed result summary.
@@ -132,6 +148,10 @@ Related code:
 - `server/src/services/heartbeat-run-reference.ts`
 - `server/src/routes/chats.stream-routes.ts`
 - `server/src/services/chat-generation-protocol.ts`
+- `server/src/services/chats.ts`
+- `server/src/services/chats.helpers.ts`
+- `server/src/services/postgres-json.ts`
+- `server/src/services/run-events.ts`
 - `server/src/services/chat-inline-annotations.ts`
 - `packages/shared/src/chat-transcript-provenance.ts`
 - `ui/src/components/transcript/RunTranscriptView.common.tsx`
@@ -149,6 +169,7 @@ Related tests:
 - `server/src/__tests__/heartbeat-run-summary.test.ts`
 - `server/src/__tests__/chat-routes.test.ts`
 - `server/src/services/chat-generation-protocol.test.ts`
+- `server/src/services/postgres-json.test.ts`
 - `server/src/services/chat-inline-annotations.test.ts`
 - `packages/shared/src/chat-transcript-provenance.test.ts`
 - `packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts`
@@ -156,6 +177,7 @@ Related tests:
 - `packages/agent-runtimes/claude-local/src/server/parse.test.ts`
 - `tests/e2e/run-transcript-detail.spec.ts`
 - `tests/e2e/chat-concurrent-streaming.spec.ts`
+- `tests/e2e/chat-streaming.spec.ts`
 - `ui/src/components/transcript/RunTranscriptView.test.tsx`
 - `ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx`
 - `tests/e2e/chat-transcript-internal-events.spec.ts`
