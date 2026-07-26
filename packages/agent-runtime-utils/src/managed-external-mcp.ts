@@ -5,10 +5,18 @@ const MAX_BINDINGS = 100;
 const MAX_TOOLS = 500;
 const MAX_PREFLIGHT_RESPONSE_BYTES = 2 * 1024 * 1024;
 const PREFLIGHT_PROTOCOL_VERSION = "2025-06-18";
+const MANAGED_MCP_ACCESS_MODES = new Set([
+  "none",
+  "read_only",
+  "read_write",
+  "provider_granted",
+  "full",
+]);
 
 export interface ManagedExternalMcpBinding {
   bindingId: string;
   serverName: string;
+  accessMode: "none" | "read_only" | "read_write" | "provider_granted" | "full";
   toolPolicy: {
     mode: "allowlist";
     allowedToolNames: string[];
@@ -65,6 +73,7 @@ function parseBinding(value: unknown, index: number): ManagedExternalMcpBinding 
     [
       "bindingId",
       "serverName",
+      "accessMode",
       "toolPolicy",
       "required",
       "startupTimeoutMs",
@@ -86,6 +95,11 @@ function parseBinding(value: unknown, index: number): ManagedExternalMcpBinding 
     || RESERVED_SERVER_NAMES.has(serverName)
   ) {
     throw new ManagedExternalMcpConfigurationError(`${label}.serverName is invalid or reserved`);
+  }
+
+  const accessMode = value.accessMode;
+  if (typeof accessMode !== "string" || !MANAGED_MCP_ACCESS_MODES.has(accessMode)) {
+    throw new ManagedExternalMcpConfigurationError(`${label}.accessMode is invalid`);
   }
 
   if (!isRecord(value.toolPolicy)) {
@@ -124,6 +138,7 @@ function parseBinding(value: unknown, index: number): ManagedExternalMcpBinding 
   return {
     bindingId,
     serverName,
+    accessMode: accessMode as ManagedExternalMcpBinding["accessMode"],
     toolPolicy: {
       mode: "allowlist",
       allowedToolNames,

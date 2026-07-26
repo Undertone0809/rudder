@@ -19,6 +19,7 @@ function binding(overrides: Record<string, unknown> = {}) {
   return {
     bindingId: FIRST_BINDING_ID,
     serverName: "supabase-memos",
+    accessMode: "read_only" as const,
     toolPolicy: {
       mode: "allowlist",
       allowedToolNames: ["external.supabase-memos.list_tables"],

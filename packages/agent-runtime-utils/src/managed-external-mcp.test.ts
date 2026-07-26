@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   ManagedExternalMcpConfigurationError,
+  parseManagedExternalMcpBindings,
   preflightManagedExternalMcpBindings,
   resolveManagedExternalMcpBindings,
 } from "./managed-external-mcp.js";
@@ -18,6 +19,7 @@ function binding(overrides: Record<string, unknown> = {}) {
   return {
     bindingId: FIRST_BINDING_ID,
     serverName: "supabase-memos",
+    accessMode: "read_only",
     toolPolicy: {
       mode: "allowlist",
       allowedToolNames: ["external.supabase-memos.list_tables"],
@@ -79,6 +81,7 @@ describe("managed external MCP runtime bindings", () => {
       expect.objectContaining({
         bindingId: FIRST_BINDING_ID,
         serverName: "supabase-memos",
+        accessMode: "read_only",
         proxyUrl: `https://rudder.example.test/api/mcp/runtime/bindings/${FIRST_BINDING_ID}`,
         bearerTokenEnvVar: "RUDDER_API_KEY",
       }),
@@ -91,6 +94,32 @@ describe("managed external MCP runtime bindings", () => {
     ]);
     expect(JSON.stringify(resolved)).not.toContain("run-secret-must-not-leak");
   });
+
+  it.each([
+    "none",
+    "read_only",
+    "read_write",
+    "provider_granted",
+    "full",
+  ])("accepts the supported access mode %s", (accessMode) => {
+    const resolved = resolveManagedExternalMcpBindings(
+      { managedExternalMcpBindings: [binding({ accessMode })] },
+      {
+        RUDDER_API_URL: "https://rudder.example.test",
+        RUDDER_API_KEY: "run-token",
+      },
+    );
+    expect(resolved[0]?.accessMode).toBe(accessMode);
+  });
+
+  it.each([undefined, "administrator"])(
+    "rejects the unsupported access mode %s",
+    (accessMode) => {
+      expect(() => parseManagedExternalMcpBindings({
+        managedExternalMcpBindings: [binding({ accessMode })],
+      })).toThrow(/accessMode is invalid/i);
+    },
+  );
 
   it("fails closed for malformed descriptors, unknown provider data, and duplicates", () => {
     for (const managedExternalMcpBindings of [

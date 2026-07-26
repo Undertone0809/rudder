@@ -14,6 +14,7 @@ const bindings = [
   {
     bindingId: "11111111-1111-4111-8111-111111111111",
     serverName: "supabase-memos",
+    accessMode: "read_only",
     toolPolicy: {
       mode: "allowlist",
       allowedToolNames: ["external.supabase-memos.list_tables"],
@@ -25,6 +26,7 @@ const bindings = [
   {
     bindingId: "22222222-2222-4222-8222-222222222222",
     serverName: "notion-docs",
+    accessMode: "provider_granted",
     toolPolicy: {
       mode: "allowlist",
       allowedToolNames: ["external.notion-docs.search"],

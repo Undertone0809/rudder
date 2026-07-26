@@ -11,6 +11,7 @@ const bindings = [
   {
     bindingId: "11111111-1111-4111-8111-111111111111",
     serverName: "supabase-memos",
+    accessMode: "read_only",
     toolPolicy: {
       mode: "allowlist",
       allowedToolNames: ["external.supabase-memos.list_tables"],
@@ -22,6 +23,7 @@ const bindings = [
   {
     bindingId: "22222222-2222-4222-8222-222222222222",
     serverName: "linear-product",
+    accessMode: "read_write",
     toolPolicy: {
       mode: "allowlist",
       allowedToolNames: ["external.linear-product.list_issues"],
