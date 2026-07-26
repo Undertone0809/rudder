@@ -137,6 +137,8 @@ export interface GenerateChatAssistantReplyInput {
   contextLinks: ChatContextLink[];
   issueLabels?: IssueLabel[] | null;
   operatorProfile?: OperatorProfileSettings | null;
+  modelSnapshot?: string | null;
+  effortSnapshot?: string | null;
 }
 
 export interface StreamChatAssistantReplyInput extends GenerateChatAssistantReplyInput {

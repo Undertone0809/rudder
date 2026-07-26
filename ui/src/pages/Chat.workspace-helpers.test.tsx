@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canQueueComposerDraft,
+  chatSendButtonDisabled,
   createQueuedComposerMessage,
   projectChatQueueDelivery,
   queuedMessagePayloadForBodyEdit,
@@ -247,6 +248,30 @@ describe("canQueueComposerDraft", () => {
       annotationCount: 1,
       pendingRegularFileCount: 1,
       newConversationSendInFlight: false,
+    })).toBe(false);
+  });
+});
+
+describe("chatSendButtonDisabled", () => {
+  it("blocks Send and Queue while a runtime selection is saving", () => {
+    for (const sendButtonMode of ["send", "queue"] as const) {
+      expect(chatSendButtonDisabled({
+        selectedConversationExternalBound: false,
+        modelSelectionPending: true,
+        composerUnavailable: false,
+        sendButtonMode,
+        hasDraft: true,
+      })).toBe(true);
+    }
+  });
+
+  it("keeps Stop enabled while a runtime selection is saving", () => {
+    expect(chatSendButtonDisabled({
+      selectedConversationExternalBound: false,
+      modelSelectionPending: true,
+      composerUnavailable: false,
+      sendButtonMode: "stop",
+      hasDraft: false,
     })).toBe(false);
   });
 });

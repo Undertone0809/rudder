@@ -20,6 +20,8 @@ export const chatConversations = pgTable(
     title: text("title").notNull().default("New chat"),
     summary: text("summary"),
     preferredAgentId: uuid("preferred_agent_id").references(() => agents.id, { onDelete: "set null" }),
+    modelOverride: text("model_override"),
+    effortOverride: text("effort_override"),
     routedAgentId: uuid("routed_agent_id").references(() => agents.id, { onDelete: "set null" }),
     primaryIssueId: uuid("primary_issue_id").references(() => issues.id, { onDelete: "set null" }),
     forkedFromConversationId: uuid("forked_from_conversation_id").references((): AnyPgColumn => chatConversations.id, { onDelete: "set null" }),

@@ -511,7 +511,7 @@ export function RunsTab({
         {activeFilterChips.length > 0 && (
           <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
         )}
-        <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
+        <div className="border border-border rounded-lg overflow-clip" data-testid="agent-runs-list-pane">
           {railEntries.length > 0 ? (
             <RunRailList entries={railEntries} agentId={agentRouteId} />
           ) : (
@@ -529,7 +529,7 @@ export function RunsTab({
         {activeFilterChips.length > 0 && (
           <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
         )}
-        <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
+        <div className="border border-border rounded-lg overflow-clip" data-testid="agent-runs-list-pane">
           {railEntries.length > 0 ? (
             <RunRailList entries={railEntries} agentId={agentRouteId} />
           ) : (
@@ -553,7 +553,7 @@ export function RunsTab({
         </div>
 
         <div
-          className="w-[clamp(18rem,24vw,24rem)] shrink-0 border border-border rounded-lg"
+          className="w-[clamp(18rem,24vw,24rem)] shrink-0 border border-border rounded-lg overflow-clip"
           data-testid="agent-runs-list-pane"
         >
           <div className="sticky top-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 2rem)" }}>

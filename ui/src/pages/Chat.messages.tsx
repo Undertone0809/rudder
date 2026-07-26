@@ -29,7 +29,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { type ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { useMarkdownMentions } from "@/context/MarkdownMentionsContext";
 import { useResolvedIssueMention } from "@/hooks/useResolvedIssueMention";
-import { agentTitleBadgeLabel } from "@/lib/agent-labels";
 import {
   assigneeValueFromSelection,
   currentUserAssigneeOption,
@@ -325,7 +324,7 @@ function ProposalPrincipalLabel({ principal }: { principal: ProposalPrincipalDis
       <AssigneeLabel
         kind="agent"
         label={principal.label}
-        badgeLabel={principal.agent ? agentTitleBadgeLabel(principal.agent) : null}
+        agentAvatarStyle="bare"
         agentIcon={principal.agent?.icon ?? null}
         agentRole={principal.agent?.role ?? null}
       />

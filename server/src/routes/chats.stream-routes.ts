@@ -9,7 +9,6 @@ import {
   resolveChatOperationProposalSchema,
   setChatProjectContextSchema,
   stopChatGenerationSchema,
-  updateChatConversationUserStateSchema,
   type ChatConversation,
   type ChatMessage,
   type ChatStreamTranscriptEntry,
@@ -42,6 +41,7 @@ import { hashChatGenerationBody } from "../services/chat-generation-protocol.js"
 import { logActivity } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
+import { chatRuntimeSnapshot } from "./chats.runtime-controls.js";
 import {
   CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE,
   CHAT_ASSISTANT_STOPPED_FALLBACK_MESSAGE,
@@ -56,6 +56,7 @@ import {
   type AtomicChatFirstTurn,
   type ChatStreamRouteContext,
 } from "./chats.stream-support.js";
+import { registerChatUserStateRoutes } from "./chats.user-state-routes.js";
 
 export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   const {
@@ -180,13 +181,16 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         editUserMessageId: parsedBody.data.editUserMessageId ?? null,
       })
       : null;
+    let runtimeSnapshot = atomicFirstTurn?.runtimeSnapshot ?? null;
     if (!atomicFirstTurn) {
       const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
       if (!assistantAvailability.available) {
         res.status(503).json({ error: assistantAvailability.error });
         return;
       }
+      runtimeSnapshot = chatRuntimeSnapshot(assistantAvailability);
     }
+    if (!runtimeSnapshot) throw new Error("Chat runtime snapshot is unavailable");
 
     const abortController = new AbortController();
     const releaseGeneration = claimChatGeneration(conversation.id, abortController, null);
@@ -210,6 +214,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           orgId: conversation.orgId,
           conversationId: conversation.id,
           clientMutationId,
+          runtimeSnapshotVersion: 1,
           expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
           requestActor: queueRequestActor(req),
           payload: {
@@ -221,8 +226,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
             skillRefs: [],
             projectId: null,
             accessMode: null,
-            model: null,
-            effort: null,
+            model: runtimeSnapshot.model,
+            effort: runtimeSnapshot.effort,
             metadata: {
               source: "stream_endpoint_during_active_generation",
             },
@@ -555,6 +560,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           try {
             const streamed = await assistantSvc.streamChatAssistantReply({
               ...assistantInput,
+              modelSnapshot: runtimeSnapshot.model,
+              effortSnapshot: runtimeSnapshot.effort,
               userMessageId: userMessage.id,
               chatTurnId: turnContextForPartial.chatTurnId,
               turnVariant: turnContextForPartial.turnVariant,
@@ -1007,6 +1014,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       title: parsed.data.title,
       summary: parsed.data.summary ?? null,
       preferredAgentId: draft.preferredAgentId,
+      modelOverride: draft.modelOverride,
+      effortOverride: draft.effortOverride,
       issueCreationMode: parsed.data.issueCreationMode ?? draft.organization.defaultChatIssueCreationMode,
       planMode: parsed.data.planMode ?? false,
       createdByUserId: actor.actorId,
@@ -1028,6 +1037,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       expectedTitleForAutomaticGeneration: parsed.data.title
         ? null
         : accepted.conversation.title,
+      runtimeSnapshot: chatRuntimeSnapshot(draft.availability, draft.modelOverride),
     };
     await handleChatMessageStream(req, res);
   });
@@ -1545,38 +1555,5 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     res.json(resolved ? await assistantSvc.enrichConversation(resolved as ChatConversation) : null);
   });
 
-  router.post("/chats/:id/read", async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const userId = boardUserId(req);
-    const state = await svc.markRead(conversation.id, conversation.orgId, userId);
-    res.status(201).json({
-      conversationId: conversation.id,
-      lastReadAt: state.lastReadAt,
-    });
-  });
-
-  router.post("/chats/:id/user-state", validate(updateChatConversationUserStateSchema), async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const userId = boardUserId(req);
-    if (typeof req.body.pinned === "boolean") {
-      await svc.setPinned(conversation.id, conversation.orgId, userId, req.body.pinned);
-    }
-    if (typeof req.body.unread === "boolean") {
-      if (req.body.unread) {
-        await svc.markUnread(conversation.id, conversation.orgId, userId);
-      } else {
-        await svc.markRead(conversation.id, conversation.orgId, userId);
-      }
-    }
-    const refreshed = await svc.getById(conversation.id, userId);
-    res.json(await assistantSvc.enrichConversation(refreshed as ChatConversation));
-  });
+  registerChatUserStateRoutes(ctx);
 }

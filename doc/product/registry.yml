@@ -475,6 +475,7 @@ contracts:
       - server/src/agent-runtimes/codex-models.ts
       - server/src/agent-runtimes/registry.ts
       - server/src/routes/agents.ts
+      - server/src/services/chat-assistant.runtime-overrides.ts
       - server/src/services/agent-runtime-availability.ts
       - server/src/services/runtime-kernel/heartbeat.execute.ts
       - ui/src/api/agents.ts
@@ -485,6 +486,7 @@ contracts:
       - ui/src/components/NewIssueDialog.tsx
       - ui/src/lib/runtime-models.ts
       - ui/src/lib/runtime-thinking-effort.ts
+      - ui/src/pages/Chat.model-selector.tsx
     related_tests:
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/codex-local-execute.test.ts
@@ -496,17 +498,21 @@ contracts:
       - server/src/__tests__/agent-runtime-availability.test.ts
       - server/src/__tests__/agent-run-context.test.ts
       - server/src/__tests__/heartbeat-process-recovery.test.ts
+      - server/src/__tests__/chat-assistant.test.ts
       - ui/src/components/agent-config-defaults.test.ts
       - ui/src/components/AgentConfigForm.advanced.test.tsx
       - ui/src/components/AgentConfigForm.helpers.test.ts
       - ui/src/components/AgentConfigForm.model-dropdown.test.tsx
       - ui/src/lib/runtime-models.test.ts
+      - ui/src/pages/Chat.model-selector.test.tsx
       - tests/e2e/agent-config-advanced-options.spec.ts
       - tests/e2e/codex-model-order.spec.ts
+      - tests/e2e/chat-conversation-model-selector.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-12-built-in-browser.md
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
+      - doc/plans/2026-07-23-chat-conversation-model-selector.md
   AGENT.RUNTIME.PERMISSIONS.001:
     owner: product
     domain: agents
@@ -1065,6 +1071,7 @@ contracts:
       - packages/db/src/schema/chat_generation_events.ts
       - packages/db/src/schema/chat_generations.ts
       - packages/db/src/migrations/0108_atomic_chat_first_turn_cleanup.sql
+      - packages/db/src/migrations/0121_pale_wildside.sql
       - packages/shared/src/types/chat.ts
       - packages/shared/src/validators/chat.ts
       - packages/agent-runtime-utils/src/rudder-mcp-contract.ts
@@ -1072,8 +1079,12 @@ contracts:
       - cli/src/agent-v1-registry.ts
       - cli/src/commands/client/chat.ts
       - server/src/routes/chats.ts
+      - server/src/routes/chats.preflight.ts
+      - server/src/routes/chats.runtime-controls.ts
       - server/src/routes/chats.stream-routes.ts
       - server/src/services/chats.ts
+      - server/src/services/chats.runtime-controls.ts
+      - server/src/services/chats.queued-message-create.ts
       - server/src/services/automation-chat-output.ts
       - server/src/services/automations.ts
       - server/src/services/integrations/feishu/inbound-dispatcher-db.ts
@@ -1083,12 +1094,16 @@ contracts:
       - server/src/services/chat-agent-runs.ts
       - server/src/services/chat-assistant.ts
       - server/src/services/chat-assistant.helpers.ts
+      - server/src/services/chat-assistant.runtime-overrides.ts
+      - server/src/services/chat-assistant.runtime-batch.ts
       - ui/src/context/ChatGenerationContext.tsx
       - ui/src/api/chats.ts
       - ui/src/motion.css
       - ui/src/pages/Chat.parts.tsx
       - ui/src/pages/Chat.scroll-map.tsx
       - ui/src/pages/Chat.tsx
+      - ui/src/pages/Chat.model-selector.tsx
+      - ui/src/pages/Chat.workspace-helpers.ts
       - ui/src/lib/chat-stream-state.ts
       - ui/src/components/MarkdownEditor.tsx
       - ui/src/lib/chat-client-checkpoints.ts
@@ -1109,11 +1124,14 @@ contracts:
       - server/src/services/chat-generation-locks.test.ts
       - server/src/services/chat-generation-protocol.test.ts
       - server/src/__tests__/chat-assistant.test.ts
+      - server/src/__tests__/side-chats.test.ts
       - ui/src/pages/Chat.empty-state.test.tsx
       - ui/src/pages/Chat.scroll-map.test.tsx
       - ui/src/pages/Chat.test.tsx
       - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/api/chats.test.ts
+      - ui/src/pages/Chat.model-selector.test.tsx
+      - ui/src/pages/Chat.workspace-helpers.test.tsx
       - ui/src/context/ChatGenerationContext.test.tsx
       - ui/src/lib/chat-stream-state.test.ts
       - ui/src/lib/chat-client-checkpoints.test.ts
@@ -1123,6 +1141,7 @@ contracts:
       - tests/e2e/chat-error-toast.spec.ts
       - tests/e2e/chat-composer-at-mentions.spec.ts
       - tests/e2e/chat-concurrent-streaming.spec.ts
+      - tests/e2e/chat-conversation-model-selector.spec.ts
       - tests/e2e/chat-explicit-agent-settings.spec.ts
       - tests/e2e/chat-edit-stream-layout.spec.ts
       - tests/e2e/chat-options-menu.spec.ts
@@ -1138,6 +1157,7 @@ contracts:
       - doc/plans/2026-07-17-safe-change-throughput-architecture-optimization.md
       - doc/plans/2026-07-20-atomic-chat-first-turn.md
       - doc/plans/2026-07-21-chat-agent-run-conversation-grouping.md
+      - doc/plans/2026-07-23-chat-conversation-model-selector.md
       - doc/plans/2026-07-23-plan-mode-steer-queue-simplification.md
       - doc/plans/2026-07-23-chat-response-annotations.md
   CHAT.RESPONSE.ANNOTATION.001:
