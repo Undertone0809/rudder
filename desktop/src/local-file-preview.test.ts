@@ -57,6 +57,42 @@ describe("previewLocalFile", () => {
     });
   });
 
+  it("falls back from a missing source location suffix to the existing file", async () => {
+    const directoryPath = await createTemporaryDirectory();
+    const targetPath = path.join(directoryPath, "transcripts-and-results.md");
+    await fs.writeFile(targetPath, "# Transcripts And Results\n");
+
+    const preview = await previewLocalFile(`${targetPath}:40`);
+
+    expect(preview.canonicalPath).toBe(await fs.realpath(targetPath));
+    expect(preview.fileName).toBe("transcripts-and-results.md");
+  });
+
+  it("falls back from a file URL with a line and column suffix", async () => {
+    const directoryPath = await createTemporaryDirectory();
+    const targetPath = path.join(directoryPath, "transcripts-and-results.md");
+    await fs.writeFile(targetPath, "# Transcripts And Results\n");
+
+    const preview = await previewLocalFile(`${pathToFileURL(targetPath).href}:40:7`);
+
+    expect(preview.canonicalPath).toBe(await fs.realpath(targetPath));
+    expect(preview.fileName).toBe("transcripts-and-results.md");
+  });
+
+  it("prefers an existing literal colon-number filename over source location fallback", async () => {
+    const directoryPath = await createTemporaryDirectory();
+    const sourcePath = path.join(directoryPath, "report.md");
+    const literalPath = `${sourcePath}:2026`;
+    await fs.writeFile(sourcePath, "# Source location candidate\n");
+    await fs.writeFile(literalPath, "# Literal filename\n");
+
+    const preview = await previewLocalFile(literalPath);
+
+    expect(preview.canonicalPath).toBe(await fs.realpath(literalPath));
+    expect(preview.fileName).toBe("report.md:2026");
+    expect(preview.content).toBe("# Literal filename\n");
+  });
+
   it("decodes an absolute file URL before resolving the canonical path", async () => {
     const directoryPath = await createTemporaryDirectory();
     const targetPath = path.join(directoryPath, "release notes.md");

@@ -86,8 +86,13 @@ async function installDesktopShellFileLauncherStub(page: Page) {
   });
 }
 
-async function installDesktopShellLocalFilePreviewStub(page: Page, expectedPath: string) {
-  await page.addInitScript((targetPath) => {
+async function installDesktopShellLocalFilePreviewStub(
+  page: Page,
+  canonicalPath: string,
+  expectedFileName = "Chat.parts.tsx",
+  sourceLocation?: string,
+) {
+  await page.addInitScript(({ targetPath, fileName, requestedPath }) => {
     const previewCalls: string[] = [];
     Object.defineProperty(window, "__rudderLocalFilePreviewCalls", {
       configurable: true,
@@ -99,10 +104,10 @@ async function installDesktopShellLocalFilePreviewStub(page: Page, expectedPath:
         openPath: async () => {},
         previewLocalFile: async (filePath: string) => {
           previewCalls.push(filePath);
-          if (filePath !== targetPath) throw new Error(`Unexpected local file path: ${filePath}`);
+          if (filePath !== requestedPath) throw new Error(`Unexpected local file path: ${filePath}`);
           return {
             canonicalPath: targetPath,
-            fileName: "Chat.parts.tsx",
+            fileName,
             parentPath: targetPath.slice(0, targetPath.lastIndexOf("/")),
             contentType: "text/plain; charset=utf-8",
             previewKind: "text",
@@ -116,7 +121,11 @@ async function installDesktopShellLocalFilePreviewStub(page: Page, expectedPath:
         setSidePanelCloseShortcutActive: async () => {},
       },
     });
-  }, expectedPath);
+  }, {
+    targetPath: canonicalPath,
+    fileName: expectedFileName,
+    requestedPath: sourceLocation ? `${canonicalPath}:${sourceLocation}` : canonicalPath,
+  });
 }
 
 async function installBrowserDesktopStub(page: Page) {
@@ -160,9 +169,9 @@ async function installEnabledBrowserSettingsStub(page: Page) {
 }
 
 test.describe("Chat Side Panel", () => {
-  test("opens source-located local file links in the Side Panel with a file icon", async ({ page }, testInfo) => {
-    const localFilePath = "/Users/zeeland/projects/rudder-oss/ui/src/pages/Chat.parts.tsx";
-    await installDesktopShellLocalFilePreviewStub(page, localFilePath);
+  test("opens titled source-located local file links in the Side Panel with a file icon", async ({ page }, testInfo) => {
+    const localFilePath = "/Users/zeeland/projects/rudder-oss/doc/product/domains/execution/transcripts-and-results.md";
+    await installDesktopShellLocalFilePreviewStub(page, localFilePath, "transcripts-and-results.md", "40");
 
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -191,7 +200,7 @@ test.describe("Chat Side Panel", () => {
       role: "assistant",
       kind: "message",
       status: "completed",
-      body: `Inspect [Chat.parts.tsx](${localFilePath}:656).`,
+      body: `Inspect [Transcripts And Results](${localFilePath}:40).`,
       structuredPayload: null,
       replyingAgentId: null,
       chatTurnId: randomUUID(),
@@ -205,20 +214,20 @@ test.describe("Chat Side Panel", () => {
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
 
     const assistantMessage = page.getByTestId("chat-assistant-message").last();
-    const localFileLink = assistantMessage.getByRole("link", { name: "Chat.parts.tsx" });
+    const localFileLink = assistantMessage.getByRole("link", { name: "Transcripts And Results" });
     await expect(localFileLink).toBeVisible({ timeout: 15_000 });
-    await expect(localFileLink.locator('[data-local-file-icon="code"]')).toBeVisible();
+    await expect(localFileLink.locator('[data-local-file-icon="document"]')).toBeVisible();
     await localFileLink.click();
 
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel.getByTestId("chat-side-panel-local-file-view")).toBeVisible({ timeout: 15_000 });
-    await expect(sidePanel).toContainText("Chat.parts.tsx");
-    await expect(sidePanel.getByTestId("transcript-local-file-code-preview")).toContainText(
+    await expect(sidePanel).toContainText("transcripts-and-results.md");
+    await expect(sidePanel.getByTestId("transcript-local-file-markdown-preview")).toContainText(
       "localFileSidePanelEvidence",
     );
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __rudderLocalFilePreviewCalls?: string[] }).__rudderLocalFilePreviewCalls ?? []
-    ))).toEqual(expect.arrayContaining([localFilePath]));
+    ))).toEqual(expect.arrayContaining([`${localFilePath}:40`]));
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
 
     await page.screenshot({
