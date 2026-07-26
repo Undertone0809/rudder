@@ -122,7 +122,9 @@
     {"reminder":"chat-messenger: reviewer should compare English and Chinese counterparts","fingerprint":"7eaf03f9d63f3609b14eea904221205d741ce73c769ec36bb972822e9adba1db","classification":"fixed","reviewed_revision":"managed-mcp-main-rebase-review-2026-07-26"},
     {"reminder":"chat-messenger: reviewer should compare public facts with INBOX.ATTENTION.001, MESSENGER.ATTENTION.001, CHAT.RESPONSE.ANNOTATION.001","fingerprint":"7eaf03f9d63f3609b14eea904221205d741ce73c769ec36bb972822e9adba1db","classification":"fixed","reviewed_revision":"managed-mcp-main-rebase-review-2026-07-26"},
     {"reminder":"configure-feishu-integration: reviewer should compare English and Chinese counterparts","fingerprint":"da562e6bf969e48ded9c0de25413d8e2da530fad71b6bbe373ab3531f25a042e","classification":"false-positive","reviewed_revision":"managed-mcp-main-rebase-review-2026-07-26"},
-    {"reminder":"configure-feishu-integration: reviewer should compare public facts with IM.FEISHU.001","fingerprint":"da562e6bf969e48ded9c0de25413d8e2da530fad71b6bbe373ab3531f25a042e","classification":"false-positive","reviewed_revision":"managed-mcp-main-rebase-review-2026-07-26"}
+    {"reminder":"configure-feishu-integration: reviewer should compare public facts with IM.FEISHU.001","fingerprint":"da562e6bf969e48ded9c0de25413d8e2da530fad71b6bbe373ab3531f25a042e","classification":"false-positive","reviewed_revision":"managed-mcp-main-rebase-review-2026-07-26"},
+    {"reminder":"chat-messenger: reviewer should compare English and Chinese counterparts","fingerprint":"c97ec43b5d7eacd50b595f916744574a5781e1c6badc15c48e8d406499d26bd5","classification":"fixed","reviewed_revision":"response-annotation-final-main-integration-2026-07-26"},
+    {"reminder":"chat-messenger: reviewer should compare public facts with INBOX.ATTENTION.001, MESSENGER.ATTENTION.001, CHAT.RESPONSE.ANNOTATION.001","fingerprint":"c97ec43b5d7eacd50b595f916744574a5781e1c6badc15c48e8d406499d26bd5","classification":"fixed","reviewed_revision":"response-annotation-final-main-integration-2026-07-26"}
   ],
   "allowed_classifications": ["fixed", "intentional", "false-positive"]
 }
