@@ -140,7 +140,8 @@
     {"reminder":"configure-feishu-integration: reviewer should compare public facts with IM.FEISHU.001","fingerprint":"09b9d43cb0e20d446c56bdd3574fbd94ce2079332ba5dcdc65670312884d69dd","classification":"false-positive","reviewed_revision":"c74d3b66-user-facing-changelog-rebase-review-2026-07-26"},
     {"reminder":"configure-agent-runtime: reviewer should compare English and Chinese counterparts","fingerprint":"8259205d249e170f2bb4b53e56622fa347aedc3cbd5833a7fbd0e4404ec7271c","classification":"false-positive","reviewed_revision":"c74d3b66-user-facing-changelog-rebase-review-2026-07-26"},
     {"reminder":"configure-agent-runtime: reviewer should compare public facts with AGENT.CONTROL.TOOLS.001, AGENT.RUNTIME.ADAPTERS.001, AGENT.RUNTIME.PERMISSIONS.001, RUN.RESULT.001","fingerprint":"8259205d249e170f2bb4b53e56622fa347aedc3cbd5833a7fbd0e4404ec7271c","classification":"false-positive","reviewed_revision":"c74d3b66-user-facing-changelog-rebase-review-2026-07-26"},
-    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"18f7a919c10736d54b4df80a682216b0911a9fa6f1b79a520256bfdc973c3abd","classification":"intentional","reviewed_revision":"remove-changelog-preface-2026-07-26"}
+    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"18f7a919c10736d54b4df80a682216b0911a9fa6f1b79a520256bfdc973c3abd","classification":"intentional","reviewed_revision":"remove-changelog-preface-2026-07-26"},
+    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"547fdbd61d1bb038ecf5b45e0950fee02393c521154c3b1c95ce575fcf8187ab","classification":"intentional","reviewed_revision":"v0.6.0-changelog-screenshot-2026-07-26"}
   ],
   "allowed_classifications": ["fixed", "intentional", "false-positive"]
 }
