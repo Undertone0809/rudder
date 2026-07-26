@@ -69,11 +69,13 @@ cannot be safely inferred.
   the user explicitly asks to retarget the release.
 - A stable release is not done until verification, npm, GitHub Release, Desktop
   assets, and public notes/announcement are all handled.
-- Stable release notes use the standard changelog categories `New Features`,
-  `Improvements`, and `Bug Fixes`, in that order. GitHub Release source files
-  use those categories as `##` headings. Public docs changelog entries keep
-  `## vX.Y.Z` as the version heading, then use the same category labels inside
-  the entry.
+- Stable release notes are user-facing product communication. Start each entry
+  with a one-sentence value summary. GitHub Release source files use the
+  optional `New`, `Improved`, and `Fixed` headings; omit empty categories.
+  Public docs keep `## vX.Y.Z`, localize headings naturally (`New`, `Improved`,
+  `Fixed` in English; `新功能`, `改进`, `问题修复` in Chinese), and add upgrade
+  notes only when users must act. Keep CI, workflow, source-locking, approval,
+  deployment, and maintainer-cleanup details out of public notes.
 - Pre-stable public canaries may temporarily be the default `latest` install
   path if there is no stable npm version yet and the user explicitly wants
   `npx @rudderhq/cli@latest start` or bare `npx @rudderhq/cli start` to work
@@ -417,13 +419,13 @@ node scripts/release-package-map.mjs list
 ./scripts/release.sh stable --preflight
 ```
 
-3. Confirm `releases/vX.Y.Z.md` exists on the source ref and uses exactly this
-   changelog section order: `## New Features`, `## Improvements`, then
-   `## Bug Fixes`.
+3. Confirm `releases/vX.Y.Z.md` exists on the source ref, starts with a concise
+   user-facing summary, and contains only non-empty `## New`, `## Improved`,
+   and `## Fixed` sections in that order.
 4. Confirm `docs/releases.mdx` and `docs/zh/releases.mdx` are updated for the
-   stable version with the same `New Features`, `Improvements`, and
-   `Bug Fixes` grouping. Keep `## vX.Y.Z` as the version heading in docs, then
-   nest the changelog categories under that version entry.
+   stable version. Keep `## vX.Y.Z` as the version heading, use localized
+   section names, omit empty categories, and describe only changes users can
+   see, use, or need to respond to.
 5. Check recent and in-progress `release.yml` runs. If there are unrelated
    `main` push canaries in progress, decide whether they are true blockers:
    - before npm stable exists, they can temporarily move `latest` to a canary,

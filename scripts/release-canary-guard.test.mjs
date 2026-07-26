@@ -58,20 +58,32 @@ function createReleaseRepo() {
     name: "@rudderhq/cli",
     version: "0.2.2",
   });
-  const stableChangelog = [
+  const englishChangelog = [
     "## v0.2.2",
     "",
     "[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.2)",
     "",
-    "### New Features",
+    "This release improves installation.",
     "",
-    "### Improvements",
+    "### Improved",
     "",
-    "### Bug Fixes",
+    "- Improved installation.",
     "",
   ].join("\n");
-  writeFileSync(join(repo, "docs", "releases.mdx"), stableChangelog);
-  writeFileSync(join(repo, "docs", "zh", "releases.mdx"), stableChangelog);
+  const chineseChangelog = [
+    "## v0.2.2",
+    "",
+    "[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.2)",
+    "",
+    "这个版本改善安装体验。",
+    "",
+    "### 改进",
+    "",
+    "- 改善安装体验。",
+    "",
+  ].join("\n");
+  writeFileSync(join(repo, "docs", "releases.mdx"), englishChangelog);
+  writeFileSync(join(repo, "docs", "zh", "releases.mdx"), chineseChangelog);
 
   exec("git", ["init", "--bare", remote], { cwd: root });
   exec("git", ["init"], { cwd: repo });
@@ -143,7 +155,10 @@ describe("release canary base guard", () => {
       name: "@rudderhq/cli",
       version: "99.99.99",
     });
-    writeFileSync(join(repo, "releases", "v99.99.99.md"), "## New Features\n\n## Improvements\n\n## Bug Fixes\n");
+    writeFileSync(
+      join(repo, "releases", "v99.99.99.md"),
+      "This release improves installation.\n\n## Improved\n\n- Improved installation.\n",
+    );
     exec("git", ["add", "."], { cwd: repo });
     exec("git", ["commit", "-m", "prepare canary fixture"], { cwd: repo });
 
@@ -217,7 +232,10 @@ describe("release fast preflight", () => {
   it("rejects an already published stable before dependency installation or build", () => {
     const { repo } = createReleaseRepo();
     mkdirSync(join(repo, "releases"), { recursive: true });
-    writeFileSync(join(repo, "releases", "v0.2.2.md"), "# v0.2.2\n");
+    writeFileSync(
+      join(repo, "releases", "v0.2.2.md"),
+      "This release improves installation.\n\n## Improved\n\n- Improved installation.\n",
+    );
     exec("git", ["add", "releases/v0.2.2.md"], { cwd: repo });
     exec("git", ["commit", "-m", "notes"], { cwd: repo });
     exec("git", ["push", "origin", "main"], { cwd: repo });

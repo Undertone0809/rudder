@@ -126,6 +126,8 @@ Canaries cover verification, npm, a traceability tag, and Desktop portable asset
 - stable notes are always `releases/vX.Y.Z.md`
 - stable public changelog entries are always present in both `docs/releases.mdx`
   and `docs/zh/releases.mdx`
+- public changelog entries describe user-visible outcomes, omit empty
+  categories, and keep release-engineering details in maintainer documentation
 - stable docs production is promoted from the matching immutable `vX.Y.Z` tag
   only after explicit docs-domain authorization
 - canary GitHub Releases are only for traceability and Desktop portable assets
@@ -313,32 +315,36 @@ Canaries do not get changelog files.
 
 `./scripts/release.sh stable --preflight` fails closed unless all three stable
 release narratives exist on the selected source: `releases/vX.Y.Z.md`, the
-English `## vX.Y.Z` entry, and the Chinese `## vX.Y.Z` entry. The public entries
-must include the version's GitHub Release link and the `New Features`,
-`Improvements`, and `Bug Fixes` sections in that order.
+English `## vX.Y.Z` entry, and the Chinese `## vX.Y.Z` entry. Each public entry
+must include the version's GitHub Release link, a one-sentence user-facing
+summary, and at least one non-empty change category.
 
 Use this body shape for `releases/vX.Y.Z.md` because GitHub already renders the
 release title, tag, author, and publish date around the notes:
 
 ```md
-## New Features
+This release helps users ...
+
+## New
 
 - ...
 
-## Improvements
+## Improved
 
 - ...
 
-## Bug Fixes
+## Fixed
 
 - ...
 ```
 
 Do not add an initial `# Rudder vX.Y.Z` heading, `Released: YYYY-MM-DD` line, or
-standalone prose summary before `## New Features`.
+installation instructions. Omit any category that has no user-facing item.
 
-For the public docs changelog, keep `## vX.Y.Z` as the version heading, then
-use the same changelog categories inside that version entry:
+For public docs, keep `## vX.Y.Z` as the version heading and write each locale
+naturally. English uses `New`, `Improved`, `Fixed`, and optional
+`Upgrade notes`; Chinese uses `新功能`, `改进`, `问题修复`, and optional `升级说明`.
+Only include categories that contain meaningful user-facing changes:
 
 ```md
 ## vX.Y.Z
@@ -347,29 +353,46 @@ Released: YYYY-MM-DD
 
 [GitHub Release](...)
 
-### New Features
+One sentence describing the release's value to users.
+
+### New
 
 - ...
 
-### Improvements
-
-- ...
-
-### Bug Fixes
+### Fixed
 
 - ...
 ```
 
-Do not use release-section labels such as `Highlights`, `Install`, or
-`重点变化` in `releases/vX.Y.Z.md`, `docs/releases.mdx`, or
-`docs/zh/releases.mdx`. The stable changelog taxonomy is always `New Features`,
-`Improvements`, and `Bug Fixes`, in that order.
+```md
+## vX.Y.Z
+
+发布时间：YYYY-MM-DD
+
+[GitHub Release](...)
+
+一句话说明这个版本为用户带来的价值。
+
+### 新功能
+
+- ...
+
+### 问题修复
+
+- ...
+```
+
+Write from the user's perspective: what they can now do, what became easier or
+more reliable, and whether they need to take action. Do not expose release
+plumbing such as CI checks, source locking, branch history, workflow inputs,
+account approvals, deployment authorization, or maintainer-only cleanup.
+Put those details in engineering docs or the release closeout record.
 
 Recommended local generation flow:
 
 ```bash
 VERSION="$(./scripts/release.sh stable --print-version)"
-claude --print --output-format stream-json --verbose --dangerously-skip-permissions --model claude-opus-4-6 "Use the release-changelog skill to draft or update releases/v${VERSION}.md for Rudder. Read doc/engineering/RELEASING.md and .agents/skills/release-changelog/SKILL.md, then generate the stable changelog for v${VERSION} from commits since the last stable tag. Use exactly these top-level sections in order: ## New Features, ## Improvements, ## Bug Fixes. Do not create a canary changelog."
+claude --print --output-format stream-json --verbose --dangerously-skip-permissions --model claude-opus-4-6 "Draft user-facing stable notes for v${VERSION}. Read doc/engineering/RELEASING.md, summarize only changes users can see or act on, add a one-sentence value summary, use New/Improved/Fixed only when non-empty, and keep CI, workflow, source-locking, approval, and deployment details out of public notes. Do not create a canary changelog."
 ```
 
 The repo intentionally does not run this through GitHub Actions because:
