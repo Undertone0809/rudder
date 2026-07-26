@@ -600,7 +600,7 @@ describe("resolveRudderDesiredSkillNames", () => {
 });
 
 describe("ensureRudderCliInPath", () => {
-  it("runs the packaged Windows CLI in Electron's Node mode so stdio remains available", () => {
+  it("runs packaged Windows and macOS CLIs in Electron's Node mode", () => {
     const cliEntry = String.raw`C:\Program Files\Rudder\resources\server-package\desktop-cli.js`;
     const cliRunner = String.raw`C:\Program Files\Rudder\resources\server-package\desktop-cli-runner.js`;
     const executable = String.raw`C:\Program Files\Rudder\Rudder.exe`;
@@ -610,9 +610,10 @@ describe("ensureRudderCliInPath", () => {
       args: [cliRunner],
       env: { ELECTRON_RUN_AS_NODE: "1" },
     });
-    expect(resolveDesktopCliSpawnTarget(cliEntry, executable, "darwin")).toEqual({
+    expect(resolveDesktopCliSpawnTarget(cliEntry, executable, "darwin", cliRunner)).toEqual({
       command: executable,
-      args: ["--desktop-cli"],
+      args: [cliRunner],
+      env: { ELECTRON_RUN_AS_NODE: "1" },
     });
     expect(resolveDesktopCliSpawnTarget(cliEntry, executable, "win32")).toEqual({
       command: executable,
@@ -713,7 +714,7 @@ describe("ensureRudderCliInPath", () => {
       const firstPathEntry = readPathValue(env).split(path.delimiter)[0];
       const shim = await fs.readFile(path.join(firstPathEntry!, shimName()), "utf8");
 
-      expect(target).toMatchObject(process.platform === "win32"
+      expect(target).toMatchObject(process.platform === "win32" || process.platform === "darwin"
         ? {
             command: desktopExecutable,
             args: [path.join(path.dirname(desktopCli), "desktop-cli-runner.js")],
@@ -729,7 +730,7 @@ describe("ensureRudderCliInPath", () => {
           });
       expect(firstPathEntry).not.toBe(staleBinDir);
       expect(shim).toContain(desktopExecutable);
-      if (process.platform === "win32") {
+      if (process.platform === "win32" || process.platform === "darwin") {
         expect(shim).toContain("ELECTRON_RUN_AS_NODE=1");
         expect(shim).toContain("desktop-cli-runner.js");
       } else {
