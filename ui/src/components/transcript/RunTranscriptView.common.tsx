@@ -12,6 +12,7 @@ import {
   FileText,
   FolderOpen,
   Globe,
+  Images,
   ListTree,
   Logs,
   Plug,
@@ -42,7 +43,8 @@ export type TranscriptToolCategory =
   | "skill"
   | "mcp"
   | "list"
-  | "inspect";
+  | "inspect"
+  | "image";
 
 export type TranscriptDigestBucket =
   | "explore"
@@ -69,11 +71,17 @@ export interface TranscriptToolSemanticInfo {
   quantity: number;
   noun: "file" | "location" | "item" | "tool" | "command" | "skill";
   fileTargets?: TranscriptFileTarget[];
+  image?: TranscriptImageEvidence;
 }
 
 export interface TranscriptFileTarget {
   label: string;
   path: string | null;
+}
+
+export interface TranscriptImageEvidence {
+  displayLabel: string;
+  path: string;
 }
 
 export interface TranscriptToolCardEntry {
@@ -571,6 +579,8 @@ export function getTranscriptActionIconTreatment(category: TranscriptActionIconC
       return { key: "edit", label: "Edit", Icon: FileDiff };
     case "inspect":
       return { key: "inspect", label: "Inspect", Icon: ListTree };
+    case "image":
+      return { key: "image", label: "Image", Icon: Images };
     case "list":
       return { key: "list", label: "Explore files", Icon: FolderOpen };
     case "mcp":

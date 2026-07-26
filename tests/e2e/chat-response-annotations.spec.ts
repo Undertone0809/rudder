@@ -1666,8 +1666,8 @@ test.describe("Chat response annotations", () => {
 
     const panel = page.getByTestId("chat-side-panel");
     await expect(panel).toBeVisible();
-    await expect(panel.getByTestId("side-chat-anchor-preview")).toContainText("Rudder docs");
-    await expect(panel.getByTestId("side-chat-anchor-preview")).not.toContainText("list target beta");
+    await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
+    await expect(panel).not.toContainText("From the main chat");
     await expect(panel.getByRole("button", { name: "Show 1 annotation" })).toBeVisible();
     await expect(composer(page)).toHaveText("Keep this unfinished main-chat draft");
 

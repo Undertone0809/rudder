@@ -1,10 +1,14 @@
 import type {
+  McpAgentAccessMode,
   McpAgentBindingStatus,
   McpConnectionAccessMode,
   McpConnectionProvider,
   McpConnectionStatus,
   McpConnectionTransport,
   McpOAuthGrantStatus,
+  McpProviderOrganizationState,
+  McpProviderScopeMode,
+  McpToolCapabilityClass,
 } from "../constants.js";
 
 export interface McpStdioSafeConfig {
@@ -132,6 +136,9 @@ export interface McpDiscoveredTool {
   description: string | null;
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown> | null;
+  capabilityClass: McpToolCapabilityClass;
+  policyRevision: number;
+  catalogRevision: number;
   enabled: boolean;
   removedAt: Date | null;
 }
@@ -141,6 +148,12 @@ export interface McpAgentBinding {
   connectionId: string;
   agentId: string;
   status: McpAgentBindingStatus;
+  accessMode: McpAgentAccessMode;
+  policyRevision: number;
+  /**
+   * Compatibility-only exact tool filter. It may further restrict the
+   * coarse access mode but must never grant a capability denied by it.
+   */
   enabledToolIds: string[];
 }
 
@@ -148,6 +161,28 @@ export interface McpAgentConnectionSummary {
   connection: McpConnectionSummary;
   binding: McpAgentBinding | null;
   tools: McpDiscoveredTool[];
+  reviewRequired: boolean;
+}
+
+export interface McpProviderAvailability {
+  provider: Exclude<McpConnectionProvider, "custom">;
+  organization: {
+    state: McpProviderOrganizationState;
+    connectionId: string | null;
+    maxAccess: Extract<McpAgentAccessMode, "read_only" | "read_write" | "provider_granted"> | null;
+    scopeMode: McpProviderScopeMode | null;
+    revision: number | null;
+    affectedAgentCount?: number;
+    /**
+     * Superseded official connections whose encrypted OAuth grant is still
+     * active. They remain disabled until an owner explicitly disconnects them.
+     */
+    historicalGrantConnectionIds?: string[];
+  };
+  agent?: {
+    access: Exclude<McpAgentAccessMode, "full">;
+    activeRunUsesOlderPolicy: boolean;
+  };
 }
 
 /**
@@ -166,6 +201,7 @@ export interface ManagedExternalMcpToolPolicy {
 export interface ManagedExternalMcpBinding {
   bindingId: string;
   serverName: string;
+  accessMode: McpAgentAccessMode;
   toolPolicy: ManagedExternalMcpToolPolicy;
   required: boolean;
   startupTimeoutMs: number;

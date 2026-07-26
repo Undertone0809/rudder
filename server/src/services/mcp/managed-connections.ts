@@ -1,6 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import {
   activityLog,
+  agentCustomIntegrationBindings,
   customIntegrationTools,
   mcpConnections,
   mcpOAuthGrants,
@@ -14,6 +15,9 @@ import {
   mcpConnectionMutationConfigSchema,
   updateMcpConnectionSchema,
   type CreateMcpConnection,
+  type McpAgentAccessMode,
+  type McpConnectionAccessMode,
+  type McpConnectionProvider,
   type McpConnectionSafeConfig,
   type McpConnectionSecretsMutation,
   type McpConnectionSummary,
@@ -45,6 +49,8 @@ import {
   type McpDnsLookup,
 } from "./security-policy.js";
 import {
+  classifyManagedMcpTool,
+  MCP_TOOL_POLICY_REVISION,
   normalizeMcpDiscoveredTools,
   reconcileMcpToolCatalog,
 } from "./tool-discovery.js";
@@ -362,6 +368,9 @@ function publicTool(row: McpToolRow): McpDiscoveredTool {
     description: row.description,
     inputSchema: row.inputSchema,
     outputSchema: row.outputSchema,
+    capabilityClass: row.capabilityClass as McpDiscoveredTool["capabilityClass"],
+    policyRevision: row.policyRevision,
+    catalogRevision: row.catalogRevision,
     enabled: row.enabled,
     removedAt: row.removedAt,
   };
@@ -532,12 +541,20 @@ export function managedMcpConnectionService(
     );
   }
 
-  async function buildClientOptions(row: McpConnectionRow): Promise<ManagedMcpClientOptions> {
+  async function buildClientOptions(
+    row: McpConnectionRow,
+    agentAccessMode?: McpAgentAccessMode,
+  ): Promise<ManagedMcpClientOptions> {
+    const effectiveAccessMode = row.provider === "notion"
+      ? "provider_default"
+      : agentAccessMode === "read_only" || agentAccessMode === "read_write"
+        ? agentAccessMode
+        : row.accessMode;
     assertLegacyMutable(row);
     await validateBoundary({
       provider: row.provider,
       transport: row.transport,
-      accessMode: row.accessMode,
+      accessMode: effectiveAccessMode,
       externalScope: row.externalScope,
       safeConfig: row.safeConfig,
     });
@@ -587,7 +604,7 @@ export function managedMcpConnectionService(
     } else {
       const endpoint = resolveCuratedMcpEndpoint({
         provider: row.provider as "supabase" | "linear" | "notion",
-        accessMode: row.accessMode as "provider_default" | "read_only" | "read_write",
+        accessMode: effectiveAccessMode as "provider_default" | "read_only" | "read_write",
         externalScope: row.externalScope,
       });
       url = endpoint.href;
@@ -663,7 +680,147 @@ export function managedMcpConnectionService(
     get: async (orgId: string, connectionId: string) =>
       publicSummary(await findRow(orgId, connectionId)),
 
-    openRuntimeClient: async (orgId: string, connectionId: string) => {
+    ensureOfficial: async (
+      orgId: string,
+      provider: Exclude<McpConnectionProvider, "custom">,
+      requestedAccessMode: McpConnectionAccessMode | undefined,
+      actor: ManagedMcpMutationActor = {},
+    ) => {
+      const definition = MCP_PROVIDER_REGISTRY[provider];
+      const catalog = MCP_PROVIDER_CATALOG.find((entry) => entry.id === provider);
+      if (!catalog) {
+        throw unprocessable("Official MCP provider is invalid");
+      }
+      const accessMode = requestedAccessMode ?? definition.defaultAccessMode;
+      const accessModeIsValid = provider === "notion"
+        ? accessMode === "provider_default"
+        : accessMode === "read_only" || accessMode === "read_write";
+      if (!accessModeIsValid) {
+        throw unprocessable("Official MCP access mode is invalid");
+      }
+      const row = await db.transaction(async (tx) => {
+        await tx.execute(sql`
+          select pg_advisory_xact_lock(
+            hashtextextended(${`managed-mcp-official:${orgId}:${provider}`}, 0)
+          )
+        `);
+        const existing = await tx.select().from(mcpConnections)
+          .where(and(
+            eq(mcpConnections.orgId, orgId),
+            eq(mcpConnections.provider, provider),
+            eq(mcpConnections.canonicalState, "canonical"),
+          ))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (existing) return existing;
+        const created = await tx.insert(mcpConnections).values({
+          orgId,
+          name: provider,
+          displayName: catalog.label,
+          provider,
+          transport: "streamable_http",
+          externalScope: null,
+          scopeMode: provider === "supabase" ? "account" : "workspace",
+          accessMode,
+          status: "draft",
+          safeConfig: "featureGroups" in definition
+            ? { featureGroups: definition.featureGroups }
+            : {},
+          enabled: true,
+          required: false,
+          canonicalState: "canonical",
+        }).returning().then((rows) => rows[0]!);
+        await tx.insert(activityLog).values(managedMcpActivityValues({
+          orgId,
+          connectionId: created.id,
+          action: "mcp_connection.created",
+          actor,
+          details: {
+            provider,
+            transport: created.transport,
+            status: created.status,
+          },
+        }));
+        return created;
+      });
+      return publicSummary(row);
+    },
+
+    prepareSupabaseAccountUpgrade: async (
+      orgId: string,
+      legacyConnectionId: string,
+      actor: ManagedMcpMutationActor = {},
+    ) => {
+      const row = await db.transaction(async (tx) => {
+        await tx.execute(sql`
+          select pg_advisory_xact_lock(
+            hashtextextended(${`managed-mcp-supabase-upgrade:${orgId}`}, 0)
+          )
+        `);
+        const legacy = await tx.select().from(mcpConnections)
+          .where(and(
+            eq(mcpConnections.orgId, orgId),
+            eq(mcpConnections.id, legacyConnectionId),
+          ))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!legacy) throw notFound("MCP connection not found");
+        if (
+          legacy.provider !== "supabase"
+          || legacy.scopeMode !== "legacy_project"
+          || legacy.canonicalState !== "canonical"
+          || !legacy.externalScope
+        ) {
+          throw unprocessable(
+            "Only a canonical project-scoped Supabase connection can be upgraded",
+          );
+        }
+        const existing = await tx.select().from(mcpConnections)
+          .where(and(
+            eq(mcpConnections.orgId, orgId),
+            eq(mcpConnections.provider, "supabase"),
+            eq(mcpConnections.scopeMode, "account"),
+            eq(mcpConnections.canonicalState, "superseded"),
+            eq(mcpConnections.supersededByConnectionId, legacy.id),
+          ))
+          .then((rows) => rows[0] ?? null);
+        if (existing) return existing;
+        const created = await tx.insert(mcpConnections).values({
+          orgId,
+          name: `supabase-account-upgrade-${legacy.id}`,
+          displayName: "Supabase",
+          provider: "supabase",
+          transport: "streamable_http",
+          externalScope: null,
+          scopeMode: "account",
+          accessMode: "read_only",
+          status: "draft",
+          safeConfig: {},
+          enabled: true,
+          required: legacy.required,
+          canonicalState: "superseded",
+          supersededByConnectionId: legacy.id,
+        }).returning().then((rows) => rows[0]!);
+        await tx.insert(activityLog).values(managedMcpActivityValues({
+          orgId,
+          connectionId: created.id,
+          action: "mcp_connection.account_upgrade_prepared",
+          actor,
+          details: {
+            provider: "supabase",
+            legacyConnectionId: legacy.id,
+          },
+        }));
+        return created;
+      });
+      return publicSummary(row);
+    },
+
+    openRuntimeClient: async (
+      orgId: string,
+      connectionId: string,
+      agentAccessMode?: McpAgentAccessMode,
+    ) => {
       const connection = await findRow(orgId, connectionId);
       if (
         connection.status !== "active"
@@ -672,7 +829,7 @@ export function managedMcpConnectionService(
       ) {
         throw unprocessable("Managed MCP connection is unavailable");
       }
-      return createClient(await buildClientOptions(connection));
+      return createClient(await buildClientOptions(connection, agentAccessMode));
     },
 
     create: async (
@@ -728,6 +885,11 @@ export function managedMcpConnectionService(
             provider: input.provider,
             transport: input.transport,
             externalScope: input.externalScope ?? null,
+            scopeMode: input.provider === "supabase"
+              ? "account"
+              : input.provider === "custom"
+                ? null
+                : "workspace",
             accessMode: input.accessMode,
             status: "draft",
             safeConfig: input.safeConfig,
@@ -771,6 +933,23 @@ export function managedMcpConnectionService(
       assertLegacyMutable(existing);
       const patch = updateMcpConnectionSchema.parse(rawPatch);
       if (
+        existing.provider === "supabase"
+        && existing.scopeMode === "legacy_project"
+        && patch.externalScope !== undefined
+        && patch.externalScope !== existing.externalScope
+      ) {
+        throw unprocessable(
+          "Legacy Supabase project scope can only change through Upgrade to account access",
+        );
+      }
+      if (
+        patch.enabled === true
+        && existing.provider !== "custom"
+        && existing.canonicalState !== "canonical"
+      ) {
+        throw unprocessable("Superseded official MCP connections cannot be re-enabled");
+      }
+      if (
         patch.enabled === true
         && RECONNECT_REQUIRED_STATUSES.has(existing.status)
       ) {
@@ -794,13 +973,13 @@ export function managedMcpConnectionService(
         );
       }
       if (
-        existing.provider === "linear"
+        existing.provider !== "custom"
         && patch.accessMode !== undefined
         && patch.accessMode !== existing.accessMode
         && (existing.status === "active" || existing.status === "authorizing")
       ) {
         throw unprocessable(
-          "Linear access-mode changes require reauthorization: disconnect, select the new access mode, then reconnect OAuth",
+          "Official provider access-mode changes require staged OAuth reauthorization",
         );
       }
 
@@ -852,18 +1031,25 @@ export function managedMcpConnectionService(
         }
         if (
           patch.enabled === true
+          && locked.provider !== "custom"
+          && locked.canonicalState !== "canonical"
+        ) {
+          throw unprocessable("Superseded official MCP connections cannot be re-enabled");
+        }
+        if (
+          patch.enabled === true
           && RECONNECT_REQUIRED_STATUSES.has(locked.status)
         ) {
           throw reconnectRequiredError();
         }
         if (
-          locked.provider === "linear"
+          locked.provider !== "custom"
           && patch.accessMode !== undefined
           && patch.accessMode !== locked.accessMode
           && (locked.status === "active" || locked.status === "authorizing")
         ) {
           throw unprocessable(
-            "Linear access-mode changes require reauthorization: disconnect, select the new access mode, then reconnect OAuth",
+            "Official provider access-mode changes require staged OAuth reauthorization",
           );
         }
         if (replacement) {
@@ -1040,9 +1226,6 @@ export function managedMcpConnectionService(
     ) => {
       const existing = await findRow(orgId, connectionId);
       assertLegacyMutable(existing);
-      if (existing.provider === "supabase" && !existing.externalScope) {
-        throw unprocessable("Supabase MCP connections require a selected project before discovery");
-      }
       if (!canDiscoverTools(existing)) {
         throw discoveryNotReadyError();
       }
@@ -1073,6 +1256,20 @@ export function managedMcpConnectionService(
               eq(customIntegrationTools.orgId, orgId),
               eq(customIntegrationTools.connectionId, connectionId),
             ));
+          const previousActiveToolIds = existingTools
+            .filter((tool) => tool.status === "active" && tool.enabled && !tool.removedAt)
+            .map((tool) => tool.id);
+          const derivedBindings = locked.provider === "custom"
+            || previousActiveToolIds.length === 0
+            ? []
+            : (await tx.select().from(agentCustomIntegrationBindings).where(and(
+                eq(agentCustomIntegrationBindings.orgId, orgId),
+                eq(agentCustomIntegrationBindings.connectionId, connectionId),
+                eq(agentCustomIntegrationBindings.status, "active"),
+              ))).filter((binding) =>
+                previousActiveToolIds.every((toolId) =>
+                  binding.enabledToolIds.includes(toolId)),
+              );
           const reconciled = reconcileMcpToolCatalog(existingTools, normalized);
           const existingByName = new Map(
             existingTools.map((tool) => [tool.externalToolName, tool]),
@@ -1091,6 +1288,12 @@ export function managedMcpConnectionService(
                     inputSchema: current.inputSchema,
                     rawOutputSchema: current.rawOutputSchema,
                     outputSchema: current.outputSchema,
+                    capabilityClass: classifyManagedMcpTool(
+                      locked.provider as McpConnectionSummary["provider"],
+                      current.externalToolName,
+                    ),
+                    policyRevision: MCP_TOOL_POLICY_REVISION,
+                    catalogRevision: prior.catalogRevision + 1,
                     discoveredAt: now,
                   } : {}),
                   status: tool.status,
@@ -1110,10 +1313,36 @@ export function managedMcpConnectionService(
                 inputSchema: current.inputSchema,
                 rawOutputSchema: current.rawOutputSchema,
                 outputSchema: current.outputSchema,
+                capabilityClass: classifyManagedMcpTool(
+                  locked.provider as McpConnectionSummary["provider"],
+                  current.externalToolName,
+                ),
                 status: "active",
                 enabled: true,
                 discoveredAt: now,
               });
+            }
+          }
+          if (derivedBindings.length > 0) {
+            const nextActiveToolIds = await tx.select({ id: customIntegrationTools.id })
+              .from(customIntegrationTools)
+              .where(and(
+                eq(customIntegrationTools.orgId, orgId),
+                eq(customIntegrationTools.connectionId, connectionId),
+                eq(customIntegrationTools.status, "active"),
+                eq(customIntegrationTools.enabled, true),
+              ))
+              .then((rows) => rows.map((tool) => tool.id));
+            for (const binding of derivedBindings) {
+              const unchanged = nextActiveToolIds.length === binding.enabledToolIds.length
+                && nextActiveToolIds.every((toolId) =>
+                  binding.enabledToolIds.includes(toolId));
+              if (unchanged) continue;
+              await tx.update(agentCustomIntegrationBindings).set({
+                enabledToolIds: nextActiveToolIds,
+                policyRevision: binding.policyRevision + 1,
+                updatedAt: now,
+              }).where(eq(agentCustomIntegrationBindings.id, binding.id));
             }
           }
           await tx
@@ -1154,17 +1383,23 @@ export function managedMcpConnectionService(
           if (!locked) throw notFound("MCP connection not found");
           assertDiscoverySnapshot(locked, snapshot);
           const now = nextConnectionMutationTime(locked);
-          await tx
-            .update(mcpConnections)
-            .set({
-              status: "error",
-              lifecycleRevision: locked.lifecycleRevision + 1,
-              updatedAt: now,
-            })
-            .where(and(
-              eq(mcpConnections.orgId, orgId),
-              eq(mcpConnections.id, connectionId),
-            ));
+          const preserveLastKnownGood = locked.provider !== "custom"
+            && locked.canonicalState === "canonical"
+            && locked.status === "active"
+            && locked.enabled;
+          if (!preserveLastKnownGood) {
+            await tx
+              .update(mcpConnections)
+              .set({
+                status: "error",
+                lifecycleRevision: locked.lifecycleRevision + 1,
+                updatedAt: now,
+              })
+              .where(and(
+                eq(mcpConnections.orgId, orgId),
+                eq(mcpConnections.id, connectionId),
+              ));
+          }
           await tx.insert(activityLog).values(managedMcpActivityValues({
             orgId,
             connectionId,
@@ -1173,6 +1408,7 @@ export function managedMcpConnectionService(
             details: {
               provider: locked.provider,
               reason: "upstream_discovery_failed",
+              preservedLastKnownGood: preserveLastKnownGood,
             },
           }));
         });

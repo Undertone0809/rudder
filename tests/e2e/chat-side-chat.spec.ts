@@ -73,7 +73,8 @@ async function openFromAssistantAction(page: Page, assistantMessageId: string) {
   await assistant.getByRole("button", { name: "Open Side Chat" }).click();
   const panel = page.getByTestId("chat-side-panel");
   await expect(panel).toBeVisible();
-  await expect(panel.getByTestId("side-chat-anchor-preview")).toContainText("narrow cohort");
+  await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
+  await expect(panel).not.toContainText("From the main chat");
   return panel;
 }
 
@@ -101,6 +102,7 @@ async function sendFirstSideChatMessage(page: Page, panel: Locator, sourceConver
   const sideChat = await createResponse.json() as { id: string };
   await expect(panel.getByTestId("side-chat-messages")).toContainText("What is the rollback trigger?", { timeout: 15_000 });
   await expect(panel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", { timeout: 15_000 });
+  await expect(panel.getByTestId("side-chat-messages").getByTestId("chat-transcript-item")).toHaveCount(1);
   await expect(panel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toBeVisible({ timeout: 20_000 });
   await expect(panel.getByRole("button", { name: "Done & return" })).toHaveCount(0);
   return sideChat;
@@ -119,7 +121,8 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await expect(panel.getByTestId("side-chat-project-chip")).toBeVisible();
   await expect(panel.getByTestId("side-chat-agent-chip")).toContainText("Sidekick");
   await expect(panel).not.toContainText("Enter to send · Shift+Enter for a new line");
-  await expect(panel.getByTestId("side-chat-icon")).toHaveClass(/lucide-circle-plus/);
+  await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
+  await expect(panel).not.toContainText("From the main chat");
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
 
   const hiddenList = await page.request.get(`/api/orgs/${source.organization.id}/chats?status=all`);
@@ -297,7 +300,8 @@ test("the Side Panel empty state opens the same provisional Side Chat flow", asy
 
   await panel.getByTestId("chat-side-panel-empty-side-chat-target").click();
   await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
-  await expect(panel.getByTestId("side-chat-anchor-preview")).toContainText("narrow cohort");
+  await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
+  await expect(panel).not.toContainText("From the main chat");
   await expect(sideComposerEditor(panel)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("09-side-panel-entry-draft.png"), fullPage: true });
 

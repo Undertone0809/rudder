@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import {
   chatConversations,
@@ -9,6 +9,20 @@ import {
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
+
+async function expectRoundedClip(locator: Locator) {
+  await expect(locator).toHaveCSS("overflow-x", "clip");
+  await expect(locator).toHaveCSS("overflow-y", "clip");
+  await expect.poll(() => locator.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    return [
+      computed.borderTopLeftRadius,
+      computed.borderTopRightRadius,
+      computed.borderBottomRightRadius,
+      computed.borderBottomLeftRadius,
+    ].every((value) => Number.parseFloat(value) > 0);
+  })).toBe(true);
+}
 
 test.afterAll(async () => {
   await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
@@ -37,7 +51,8 @@ test.describe("Agent Run conversation grouping", () => {
     const runIds = [randomUUID(), randomUUID(), randomUUID()];
     const turnIds = [randomUUID(), randomUUID(), randomUUID()];
     const userMessageIds = [randomUUID(), randomUUID(), randomUUID()];
-    const unlinkedRunId = randomUUID();
+    const standaloneRunIds = Array.from({ length: 24 }, () => randomUUID());
+    const unlinkedRunId = standaloneRunIds[0];
     const baseTime = Date.parse("2026-07-21T08:00:00.000Z");
 
     await e2eDb.insert(chatConversations).values({
@@ -74,20 +89,20 @@ test.describe("Agent Run conversation grouping", () => {
         createdAt: new Date(baseTime + (index * 2 + 1) * 60_000),
         updatedAt: new Date(baseTime + (index * 2 + 2) * 60_000),
       })),
-      {
-        id: unlinkedRunId,
+      ...standaloneRunIds.map((runId, index) => ({
+        id: runId,
         orgId: organization.id,
         agentId: agent.id,
-        invocationSource: "on_demand",
+        invocationSource: "on_demand" as const,
         triggerDetail: "manual",
-        status: "succeeded",
-        startedAt: new Date(baseTime - 2 * 60_000),
-        finishedAt: new Date(baseTime - 60_000),
-        resultJson: { summary: "Standalone inspection run" },
-        resultSummaryJson: { summary: "Standalone inspection run" },
-        createdAt: new Date(baseTime - 2 * 60_000),
-        updatedAt: new Date(baseTime - 60_000),
-      },
+        status: "succeeded" as const,
+        startedAt: new Date(baseTime - (index + 2) * 60_000),
+        finishedAt: new Date(baseTime - (index + 1) * 60_000),
+        resultJson: { summary: `Standalone inspection run ${index + 1}` },
+        resultSummaryJson: { summary: `Standalone inspection run ${index + 1}` },
+        createdAt: new Date(baseTime - (index + 2) * 60_000),
+        updatedAt: new Date(baseTime - (index + 1) * 60_000),
+      })),
     ]);
 
     await e2eDb.insert(chatMessages).values(
@@ -143,8 +158,27 @@ test.describe("Agent Run conversation grouping", () => {
     await expect(conversationRows).toContainText("3 runs");
     await expect(conversationRows).toContainText("Persisted conversation result 3");
     await expect(conversationRows).toHaveAttribute("aria-current", "page");
-    await expect(rail.getByRole("link")).toHaveCount(2);
+    await expect(rail.getByRole("link")).toHaveCount(standaloneRunIds.length + 1);
     await expect(rail.getByText(unlinkedRunId.slice(0, 8), { exact: true })).toBeVisible();
+    await expectRoundedClip(rail);
+
+    const railScroller = rail.locator(":scope > div");
+    await expect(railScroller).toHaveCSS("position", "sticky");
+    await expect(railScroller).toHaveCSS("overflow-y", "auto");
+    const scrollMetrics = await railScroller.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        clientHeight: element.clientHeight,
+        maxHeight: computed.maxHeight,
+        scrollHeight: element.scrollHeight,
+      };
+    });
+    expect(scrollMetrics.maxHeight).not.toBe("none");
+    expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+    await railScroller.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect.poll(() => railScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 
     const detail = page.getByTestId("agent-runs-detail-pane");
     await expect(detail.getByRole("link", { name: /Reply 3 Current/ })).toBeVisible();
@@ -155,7 +189,12 @@ test.describe("Agent Run conversation grouping", () => {
     await expect(conversationRows).toHaveCount(1);
     await expect(conversationRows).toHaveAttribute("aria-current", "page");
     await expect(conversationRows).toContainText("Persisted conversation result 1");
-    await expect(rail.getByRole("link")).toHaveCount(2);
+    await expect(rail.getByRole("link")).toHaveCount(standaloneRunIds.length + 1);
+
+    await page.goto(`/agents/${agent.id}/runs?runScene=chat`, { waitUntil: "domcontentloaded" });
+    const singleEntryRail = page.getByTestId("agent-runs-list-pane");
+    await expect(singleEntryRail.getByRole("link")).toHaveCount(1);
+    await expectRoundedClip(singleEntryRail);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/agents/${agent.id}/runs`, { waitUntil: "domcontentloaded" });
@@ -163,7 +202,8 @@ test.describe("Agent Run conversation grouping", () => {
     const mobileRail = page.getByTestId("agent-runs-list-pane");
     await expect(mobileRail.getByTestId("agent-run-conversation-group-row")).toHaveCount(1);
     await expect(mobileRail.getByTestId("agent-run-conversation-group-row")).toContainText("3 runs");
-    await expect(mobileRail.getByRole("link")).toHaveCount(2);
+    await expect(mobileRail.getByRole("link")).toHaveCount(standaloneRunIds.length + 1);
     await expect(mobileRail.getByText(unlinkedRunId.slice(0, 8), { exact: true })).toBeVisible();
+    await expectRoundedClip(mobileRail);
   });
 });

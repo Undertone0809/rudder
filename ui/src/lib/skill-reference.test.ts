@@ -6,6 +6,7 @@ import {
   isMarkdownSkillPath,
   parseSkillReference,
   removeSkillReferenceFromMarkdown,
+  resolveSkillReferenceOpenHref,
 } from "./skill-reference";
 
 describe("skill-reference", () => {
@@ -71,6 +72,16 @@ describe("skill-reference", () => {
       href: "skill://agent/agent-1/agent%3Ahelper?ref=agent-helper",
       label: "agent-helper",
     });
+  });
+
+  it("recovers an openable SKILL.md path from historical local references", () => {
+    expect(resolveSkillReferenceOpenHref(
+      "skill://local/%2Fworkspace%2F.agents%2Fskills%2Flocal-helper?ref=local-helper",
+    )).toBe("/workspace/.agents/skills/local-helper/SKILL.md");
+    expect(resolveSkillReferenceOpenHref(
+      "/workspace/.agents/skills/local-helper/SKILL.md",
+    )).toBe("/workspace/.agents/skills/local-helper/SKILL.md");
+    expect(resolveSkillReferenceOpenHref("skill://org/skill-123?ref=build-advisor")).toBeNull();
   });
 
   it("removes a skill reference as a whole markdown token", () => {

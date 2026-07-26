@@ -3004,11 +3004,15 @@ export function MessengerContextSidebar() {
       return (
         <div
           data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
+          data-collapsed={collapsed ? "true" : "false"}
           data-drag-move-target={isMoveIntoGroupTarget ? "true" : undefined}
           data-drag-intent={isMoveIntoGroupTarget ? "move-into-group" : undefined}
           className={cn(
-            "group/custom-group relative mx-0.5 rounded-[calc(var(--radius-md)-1px)] border p-1 text-[color:var(--messenger-group-text)] shadow-[0_8px_20px_-18px_rgba(15,23,42,0.45)] transition-[background-color,border-color] duration-150 bg-[color:var(--messenger-group-bg)] border-[color:var(--messenger-group-border)] hover:bg-[color:var(--messenger-group-bg-hover)] dark:bg-[color:var(--messenger-group-bg-dark)] dark:text-[color:var(--messenger-group-text-dark)] dark:border-[color:var(--messenger-group-border-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)]",
-            isMoveIntoGroupTarget && "bg-[color:var(--messenger-group-bg-hover)] ring-2 ring-[color:color-mix(in_oklab,var(--messenger-group-text)_34%,transparent)]",
+            "group/custom-group relative mx-0.5 rounded-[calc(var(--radius-md)-1px)] border p-1 text-[color:var(--messenger-group-text)] transition-[background-color,border-color,box-shadow] duration-150 dark:text-[color:var(--messenger-group-text-dark)]",
+            collapsed && !isMoveIntoGroupTarget
+              ? "border-transparent bg-transparent shadow-none hover:border-[color:var(--messenger-group-border)] hover:bg-[color:var(--messenger-group-bg-hover)] has-[:focus-visible]:border-[color:var(--messenger-group-border)] has-[:focus-visible]:bg-[color:var(--messenger-group-bg-hover)] dark:border-transparent dark:bg-transparent dark:hover:border-[color:var(--messenger-group-border-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)] dark:has-[:focus-visible]:border-[color:var(--messenger-group-border-dark)] dark:has-[:focus-visible]:bg-[color:var(--messenger-group-bg-hover-dark)]"
+              : "border-[color:var(--messenger-group-border)] bg-[color:var(--messenger-group-bg)] shadow-[0_8px_20px_-18px_rgba(15,23,42,0.45)] hover:bg-[color:var(--messenger-group-bg-hover)] dark:border-[color:var(--messenger-group-border-dark)] dark:bg-[color:var(--messenger-group-bg-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)]",
+            isMoveIntoGroupTarget && "ring-2 ring-[color:color-mix(in_oklab,var(--messenger-group-text)_34%,transparent)]",
           )}
           style={customGroupStyle(displayedCustomGroup)}
         >

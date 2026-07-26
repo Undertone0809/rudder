@@ -3,7 +3,71 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { resolveDevScriptEnvironment } from "./dev-local-env.mjs";
+import {
+  isolateDevShellFromParentRuntime,
+  resolveDevScriptEnvironment,
+} from "./dev-local-env.mjs";
+
+test("drops inherited production runtime identity before resolving pnpm dev", () => {
+  const isolated = isolateDevShellFromParentRuntime({
+    PATH: "/usr/bin",
+    RUDDER_OPERATOR_HOME: "/Users/operator",
+    RUDDER_LOCAL_ENV: "prod_local",
+    RUDDER_INSTANCE_ID: "default",
+    RUDDER_RUNTIME_OWNER_KIND: "desktop",
+    RUDDER_HOME: "/tmp/production-home",
+    RUDDER_CONFIG: "/tmp/production-config.json",
+    RUDDER_DESKTOP_USER_DATA_DIR: "/tmp/production-user-data",
+    RUDDER_ORGANIZATION_WORKSPACE_HOME: "/tmp/production-workspaces",
+    PORT: "3200",
+    RUDDER_EMBEDDED_POSTGRES_PORT: "54339",
+    DATABASE_URL: "postgres://production",
+  });
+
+  assert.equal(isolated.PATH, "/usr/bin");
+  assert.equal(isolated.RUDDER_OPERATOR_HOME, "/Users/operator");
+  assert.equal(isolated.RUDDER_LOCAL_ENV, undefined);
+  assert.equal(isolated.RUDDER_INSTANCE_ID, undefined);
+  assert.equal(isolated.RUDDER_RUNTIME_OWNER_KIND, undefined);
+  assert.equal(isolated.RUDDER_HOME, undefined);
+  assert.equal(isolated.RUDDER_CONFIG, undefined);
+  assert.equal(isolated.RUDDER_DESKTOP_USER_DATA_DIR, undefined);
+  assert.equal(isolated.RUDDER_ORGANIZATION_WORKSPACE_HOME, undefined);
+  assert.equal(isolated.PORT, undefined);
+  assert.equal(isolated.RUDDER_EMBEDDED_POSTGRES_PORT, undefined);
+  assert.equal(isolated.DATABASE_URL, undefined);
+});
+
+test("resolves the dev profile after removing inherited production runtime identity", () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-dev-parent-runtime-"));
+  const { env } = resolveDevScriptEnvironment({
+    repoRoot,
+    baseEnv: isolateDevShellFromParentRuntime({
+      RUDDER_LOCAL_ENV: "prod_local",
+      RUDDER_INSTANCE_ID: "default",
+      RUDDER_RUNTIME_OWNER_KIND: "desktop",
+      PORT: "3200",
+      RUDDER_EMBEDDED_POSTGRES_PORT: "54339",
+    }),
+  });
+
+  assert.equal(env.RUDDER_LOCAL_ENV, "dev");
+  assert.equal(env.RUDDER_INSTANCE_ID, "dev");
+  assert.equal(env.PORT, "3100");
+  assert.equal(env.RUDDER_EMBEDDED_POSTGRES_PORT, "54329");
+});
+
+test("drops a protected default instance even when other runtime markers are absent", () => {
+  const isolated = isolateDevShellFromParentRuntime({
+    PATH: "/usr/bin",
+    RUDDER_INSTANCE_ID: "default",
+    PORT: "3200",
+  });
+
+  assert.equal(isolated.PATH, "/usr/bin");
+  assert.equal(isolated.RUDDER_INSTANCE_ID, undefined);
+  assert.equal(isolated.PORT, undefined);
+});
 
 test("auto-isolates Codex-managed worktrees without repo-local Rudder config", () => {
   const repoRoot = path.join(os.homedir(), ".codex", "worktrees", "1f39", "rudder-oss");

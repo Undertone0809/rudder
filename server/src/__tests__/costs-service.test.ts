@@ -179,7 +179,7 @@ describe("cost routes", () => {
     expect(mockCostService.trend).toHaveBeenCalledWith("organization-1", {
       from: new Date("2026-03-01T00:00:00.000Z"),
       to: new Date("2026-03-07T23:59:59.999Z"),
-    }, undefined);
+    }, "day", undefined);
   });
 
   it("passes agent and project filters to cost trend routes", async () => {
@@ -190,16 +190,38 @@ describe("cost routes", () => {
         from: "2026-03-01T00:00:00.000Z",
         agentId: "agent-1",
         projectId: "project-1",
+        granularity: "hour",
       });
 
     expect(res.status).toBe(200);
     expect(mockCostService.trend).toHaveBeenCalledWith("organization-1", {
       from: new Date("2026-03-01T00:00:00.000Z"),
       to: undefined,
-    }, {
+    }, "hour", {
       agentId: "agent-1",
       projectId: "project-1",
     });
+  });
+
+  it("rejects unsupported trend granularities", async () => {
+    const app = await createApp();
+    const res = await request(app)
+      .get("/api/orgs/organization-1/costs/trend")
+      .query({ granularity: "minute" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/granularity/i);
+    expect(mockCostService.trend).not.toHaveBeenCalled();
+  });
+
+  it("rejects reversed date ranges", async () => {
+    const app = await createApp();
+    const res = await request(app)
+      .get("/api/orgs/organization-1/costs/summary")
+      .query({ from: "2026-03-08T00:00:00.000Z", to: "2026-03-01T00:00:00.000Z" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/must not be later/i);
   });
 
   it("returns finance summary rows for valid requests", async () => {

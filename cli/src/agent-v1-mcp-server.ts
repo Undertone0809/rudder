@@ -444,6 +444,7 @@ async function callToolDirectlyIfSupported(
   const capabilityId = toolNameToCapabilityId(toolName);
   if (!capabilityId) return null;
   const input = isRecord(rawArgs) ? rawArgs : {};
+  if (hasLocalImageInputs(input.images)) return null;
   const api = mcpApiClient(env, signal);
   const success = (data: unknown) => mcpSuccess(
     data,
@@ -563,6 +564,11 @@ async function callToolDirectlyIfSupported(
     default:
       return null;
   }
+}
+
+function hasLocalImageInputs(value: unknown): boolean {
+  return Array.isArray(value)
+    && value.some((entry) => typeof entry === "string" && entry.trim().length > 0);
 }
 
 function mcpApiClient(env: McpServerEnv, signal?: AbortSignal): RudderApiClient {

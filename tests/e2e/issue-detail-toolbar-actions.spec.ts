@@ -67,7 +67,7 @@ test.describe("Issue detail toolbar actions", () => {
     expect(redirectedUrl.searchParams.has("prefill")).toBe(false);
     await expect(page.locator('[contenteditable="true"]').first()).toHaveText("");
     await expect(page.getByText(`Ask about ${issue.identifier ?? issue.title}`, { exact: true })).toBeVisible();
-    await expect(page.getByTestId("chat-agent-selector")).toContainText("Issue Chat Agent");
+    await expect(page.getByTestId("chat-agent-selector")).toBeVisible();
 
     const chatsRes = await page.request.get(`/api/orgs/${organization.id}/chats?status=all`);
     expect(chatsRes.ok()).toBe(true);

@@ -11,6 +11,7 @@ import {
 import type { Db } from "@rudderhq/db";
 import {
   activityLog,
+  agentCustomIntegrationBindings,
   instanceUserRoles,
   mcpConnections,
   mcpOAuthGrants,
@@ -100,6 +101,12 @@ export interface ManagedMcpOAuthServiceOptions {
     material: ManagedMcpOAuthMaterial;
     endpoint: string;
   }) => Promise<ManagedMcpProviderScopeResult>;
+  validateProviderTools?: (input: {
+    provider: "supabase" | "linear" | "notion";
+    connection: McpConnectionRow;
+    material: ManagedMcpOAuthMaterial;
+    endpoint: string;
+  }) => Promise<void>;
   refreshConnectionTools?: (
     orgId: string,
     connectionId: string,
@@ -127,14 +134,12 @@ function createOAuthAuthorizationSnapshot(
   if (connection.provider === "custom") {
     throw unprocessable("Managed MCP OAuth only supports curated providers");
   }
-  const serverUrl = connection.provider === "supabase"
-    ? MCP_PROVIDER_REGISTRY.supabase.endpoint
-    : resolveCuratedMcpEndpoint({
-        provider: connection.provider as "linear" | "notion",
-        accessMode: connection.accessMode as
-          "provider_default" | "read_only" | "read_write",
-        externalScope: connection.externalScope,
-      }).href;
+  const serverUrl = resolveCuratedMcpEndpoint({
+    provider: connection.provider as "supabase" | "linear" | "notion",
+    accessMode: connection.accessMode as
+      "provider_default" | "read_only" | "read_write",
+    externalScope: connection.externalScope,
+  }).href;
   return {
     serverUrl,
     ...(connection.provider === "linear" && connection.accessMode === "read_only"
@@ -142,6 +147,16 @@ function createOAuthAuthorizationSnapshot(
       : {}),
     accessMode: connection.accessMode as McpConnectionSummary["accessMode"],
   };
+}
+
+function isSupabaseAccountUpgradeCandidate(
+  connection: McpConnectionRow,
+): boolean {
+  return connection.provider === "supabase"
+    && connection.scopeMode === "account"
+    && connection.externalScope === null
+    && connection.canonicalState === "superseded"
+    && connection.supersededByConnectionId !== null;
 }
 
 function readOAuthAuthorizationSnapshot(
@@ -503,6 +518,34 @@ async function defaultDiscoverProviderScope(input: {
   }
 }
 
+async function defaultValidateProviderTools(input: {
+  provider: "supabase" | "linear" | "notion";
+  connection: McpConnectionRow;
+  material: ManagedMcpOAuthMaterial;
+  endpoint: string;
+  allowlists: McpDeploymentAllowlists;
+  dnsLookup?: McpDnsLookup;
+}): Promise<void> {
+  const curatedOrigin = new URL(MCP_PROVIDER_REGISTRY[input.provider].endpoint).origin;
+  const client = await createManagedMcpClient({
+    transport: "streamable_http",
+    url: input.endpoint,
+    credentials: resolveMcpHttpCredentials({ bearerToken: accessToken(input.material) }),
+    network: {
+      allowedOrigins: input.allowlists.httpOrigins,
+      curatedOrigin,
+      lookup: input.dnsLookup,
+    },
+    startupTimeoutMs: input.connection.startupTimeoutMs,
+    toolTimeoutMs: input.connection.toolTimeoutMs,
+  });
+  try {
+    await client.discoverTools();
+  } finally {
+    await client.close();
+  }
+}
+
 async function prepareOAuthSecret(
   connectionName: string,
   kind: "session" | "grant",
@@ -685,8 +728,9 @@ export function managedMcpOAuthService(
   async function requireUsableGrant(
     orgId: string,
     connectionId: string,
+    executor?: McpDbTransaction,
   ): Promise<McpOAuthGrantRow> {
-    const outcome = await db.transaction(async (tx) => {
+    const validate = async (tx: McpDbTransaction) => {
       const connection = await tx.select().from(mcpConnections)
         .where(and(
           eq(mcpConnections.orgId, orgId),
@@ -715,7 +759,10 @@ export function managedMcpOAuthService(
         return { kind: "invalid_authorizer" as const };
       }
       return { kind: "usable" as const, grant };
-    });
+    };
+    const outcome = executor
+      ? await validate(executor)
+      : await db.transaction(validate);
     if (outcome.kind === "invalid_authorizer") {
       throw unprocessable("Managed MCP OAuth authorization must be reconnected by an owner");
     }
@@ -792,6 +839,30 @@ export function managedMcpOAuthService(
       });
     }
     return defaultDiscoverProviderScope({
+      provider: input.connection.provider,
+      connection: input.connection,
+      material: input.material,
+      endpoint: input.endpoint,
+      allowlists: options.allowlists,
+      dnsLookup: options.dnsLookup,
+    });
+  }
+
+  async function validateProviderTools(input: {
+    connection: McpConnectionRow & { provider: "supabase" | "linear" | "notion" };
+    material: ManagedMcpOAuthMaterial;
+    endpoint: string;
+  }): Promise<void> {
+    if (options.validateProviderTools) {
+      await options.validateProviderTools({
+        provider: input.connection.provider,
+        connection: input.connection,
+        material: input.material,
+        endpoint: input.endpoint,
+      });
+      return;
+    }
+    await defaultValidateProviderTools({
       provider: input.connection.provider,
       connection: input.connection,
       material: input.material,
@@ -944,15 +1015,36 @@ export function managedMcpOAuthService(
     orgId: string,
     connectionId: string,
     actor: ManagedMcpOAuthActor,
+    request: {
+      requestedAccessMode?: "read_only" | "read_write";
+    } = {},
   ): Promise<McpOAuthStartResponse> {
     await cleanupExpiredSessions(orgId);
     const connection = await findConnection(orgId, connectionId);
     assertCurated(connection);
     if (
+      connection.canonicalState !== "canonical"
+      && !isSupabaseAccountUpgradeCandidate(connection)
+    ) {
+      throw unprocessable("Superseded MCP connections cannot start authorization");
+    }
+    if (
       options.deploymentMode === "authenticated"
       && !actor.userId
     ) {
       throw unprocessable("Managed MCP OAuth requires an authenticated authorizing user");
+    }
+    if (
+      request.requestedAccessMode
+      && (
+        !["supabase", "linear"].includes(connection.provider)
+        || connection.status !== "active"
+        || !connection.enabled
+      )
+    ) {
+      throw unprocessable(
+        "Managed MCP access changes require an active Supabase or Linear connection",
+      );
     }
     let redirectUri: string;
     try {
@@ -974,7 +1066,12 @@ export function managedMcpOAuthService(
         material = structuredClone(next);
       },
     });
-    const authorization = createOAuthAuthorizationSnapshot(connection);
+    const authorization = createOAuthAuthorizationSnapshot({
+      ...connection,
+      ...(request.requestedAccessMode
+        ? { accessMode: request.requestedAccessMode }
+        : {}),
+    });
     const result = await runAuth(provider, {
       serverUrl: authorization.serverUrl,
       scope: authorization.scope,
@@ -1002,8 +1099,29 @@ export function managedMcpOAuthService(
         .then((rows) => rows[0] ?? null);
       if (!locked) throw notFound("MCP connection not found");
       assertCurated(locked);
+      if (isSupabaseAccountUpgradeCandidate(locked)) {
+        const legacy = await tx.select().from(mcpConnections)
+          .where(and(
+            eq(mcpConnections.orgId, orgId),
+            eq(mcpConnections.id, locked.supersededByConnectionId!),
+            eq(mcpConnections.provider, "supabase"),
+            eq(mcpConnections.scopeMode, "legacy_project"),
+            eq(mcpConnections.canonicalState, "canonical"),
+          ))
+          .for("share")
+          .then((rows) => rows[0] ?? null);
+        if (!legacy) {
+          throw unprocessable("Supabase account upgrade is no longer available");
+        }
+      }
       if (locked.lifecycleRevision !== connection.lifecycleRevision) {
         throw unprocessable("Managed MCP OAuth connection changed; start authorization again");
+      }
+      if (
+        request.requestedAccessMode
+        && locked.accessMode !== connection.accessMode
+      ) {
+        throw unprocessable("Managed MCP access changed; start authorization again");
       }
       const priorGrant = await tx.select().from(mcpOAuthGrants)
         .where(and(
@@ -1012,20 +1130,10 @@ export function managedMcpOAuthService(
         ))
         .for("update")
         .then((rows) => rows[0] ?? null);
-      if (priorGrant?.status === "active") {
-        await tx.update(mcpOAuthGrants).set({
-          status: "needs_reauth",
-          statusMetadata: { reason: "authorization_restarted" },
-          credentialSecretId: null,
-          refreshLeaseNonce: null,
-          refreshLeaseExpiresAt: null,
-          updatedAt: now,
-        }).where(eq(mcpOAuthGrants.id, priorGrant.id));
-        if (priorGrant.credentialSecretId) {
-          await tx.delete(organizationSecrets)
-            .where(eq(organizationSecrets.id, priorGrant.credentialSecretId));
-        }
-      }
+      const isCredentialReplacement = priorGrant?.status === "active"
+        && Boolean(priorGrant.credentialSecretId)
+        && locked.status === "active"
+        && locked.enabled;
       const replacedSessions = await tx.select({
         id: mcpOAuthSessions.id,
         credentialSecretId: mcpOAuthSessions.credentialSecretId,
@@ -1066,11 +1174,17 @@ export function managedMcpOAuthService(
         credentialSecretId: sessionSecret.id,
         redirectUri,
         status: "authorizing",
-        statusMetadata: { authorization },
+        statusMetadata: {
+          authorization,
+          reauthorization: isCredentialReplacement,
+          ...(request.requestedAccessMode
+            ? { pendingAccessMode: request.requestedAccessMode }
+            : {}),
+        },
         expiresAt,
       });
       await tx.update(mcpConnections).set({
-        status: "authorizing",
+        status: isCredentialReplacement ? "active" : "authorizing",
         enabled: true,
         disabledAt: null,
         revokedAt: null,
@@ -1112,7 +1226,10 @@ export function managedMcpOAuthService(
         .then((rows) => rows[0] ?? null);
       if (!connection) return null;
       assertCurated(connection);
-      if (connection.status !== "authorizing") return null;
+      if (
+        connection.canonicalState !== "canonical"
+        && !isSupabaseAccountUpgradeCandidate(connection)
+      ) return null;
       const lockedSession = await tx.select().from(mcpOAuthSessions)
         .where(and(
           eq(mcpOAuthSessions.id, session.id),
@@ -1121,6 +1238,13 @@ export function managedMcpOAuthService(
         .for("update")
         .then((rows) => rows[0] ?? null);
       if (!lockedSession || lockedSession.status !== "authorizing" || lockedSession.consumedAt) {
+        return null;
+      }
+      const isCredentialReplacement = lockedSession.statusMetadata.reauthorization === true;
+      if (
+        connection.status !== "authorizing"
+        && !(isCredentialReplacement && connection.status === "active" && connection.enabled)
+      ) {
         return null;
       }
       if (lockedSession.expiresAt <= now) {
@@ -1196,14 +1320,34 @@ export function managedMcpOAuthService(
           ))
           .for("update")
           .then((rows) => rows[0] ?? null);
+        const isCredentialReplacement =
+          callbackContext.session.statusMetadata.reauthorization === true
+          && locked?.status === "active"
+          && locked.enabled;
         if (
           !locked
-          || locked.status !== "authorizing"
+          || (
+            locked.status !== "authorizing"
+            && !isCredentialReplacement
+          )
           || locked.lifecycleRevision !== callbackContext.connectionLifecycleRevision
         ) {
           return;
         }
         const now = new Date();
+        if (isCredentialReplacement) {
+          await tx.insert(activityLog).values(oauthActivityValues({
+            orgId: callbackContext.session.orgId,
+            connectionId: locked.id,
+            action: inputFailure.action,
+            actorUserId: callbackContext.session.authorizingUserId,
+            details: {
+              reason: inputFailure.reason,
+              existingGrantPreserved: true,
+            },
+          }));
+          return;
+        }
         await tx.update(mcpConnections).set({
           status: inputFailure.status,
           ...(inputFailure.status === "needs_reauth"
@@ -1247,9 +1391,11 @@ export function managedMcpOAuthService(
       consumed.session.statusMetadata,
       consumed.connection,
     );
+    const stagedAccessMode = consumed.session.statusMetadata.reauthorization === true
+      && consumed.session.statusMetadata.pendingAccessMode === authorization.accessMode;
     if (
-      consumed.connection.provider === "linear"
-      && authorization.accessMode !== consumed.connection.accessMode
+      authorization.accessMode !== consumed.connection.accessMode
+      && !stagedAccessMode
     ) {
       await finishFailure({
         status: "needs_reauth",
@@ -1304,11 +1450,13 @@ export function managedMcpOAuthService(
       if (authResult !== "AUTHORIZED" || !grantMaterial.tokens?.access_token) {
         throw unprocessable("Managed MCP OAuth token exchange failed");
       }
-      scope = await discoverScope({
-        connection: consumed.connection,
-        material: grantMaterial,
-        endpoint: authorization.serverUrl,
-      });
+      scope = consumed.connection.provider === "supabase"
+        ? { options: [] }
+        : await discoverScope({
+            connection: consumed.connection,
+            material: grantMaterial,
+            endpoint: authorization.serverUrl,
+          });
     } catch (error) {
       await finishUnpersistedGrantFailure({
         status: isInvalidGrantOAuthError(error) ? "needs_reauth" : "error",
@@ -1321,16 +1469,7 @@ export function managedMcpOAuthService(
       throw unprocessable("Managed MCP OAuth authorization could not be completed");
     }
 
-    const safeOptions = sanitizeScopeOptions(scope.options);
     const selected = scope.selected ? safeScopeOption(scope.selected) : undefined;
-    if (consumed.connection.provider === "supabase" && safeOptions.length === 0) {
-      await finishUnpersistedGrantFailure({
-        status: "error",
-        action: "mcp_oauth.authorization_failed",
-        reason: "no_selectable_projects",
-      });
-      throw unprocessable("Supabase OAuth did not return any selectable projects");
-    }
     if (consumed.connection.provider !== "supabase" && !selected) {
       await finishUnpersistedGrantFailure({
         status: "error",
@@ -1338,6 +1477,22 @@ export function managedMcpOAuthService(
         reason: "workspace_identity_unavailable",
       });
       throw unprocessable("Managed MCP OAuth did not identify a provider workspace");
+    }
+
+    try {
+      await validateProviderTools({
+        connection: consumed.connection,
+        material: grantMaterial,
+        endpoint: authorization.serverUrl,
+      });
+    } catch (error) {
+      await finishUnpersistedGrantFailure({
+        status: isInvalidGrantOAuthError(error) ? "needs_reauth" : "error",
+        action: "mcp_oauth.authorization_failed",
+        reason: "tool_discovery_failed",
+      });
+      if (error instanceof HttpError) throw error;
+      throw unprocessable("Managed MCP OAuth tool discovery could not be completed");
     }
 
     const outcome = await (async () => {
@@ -1362,8 +1517,33 @@ export function managedMcpOAuthService(
             .then((rows) => rows[0] ?? null);
           if (
             !connection
-            || connection.status !== "authorizing"
+            || (
+              connection.status !== "authorizing"
+              && !(
+                consumed.session.statusMetadata.reauthorization === true
+                && connection.status === "active"
+                && connection.enabled
+              )
+            )
             || connection.lifecycleRevision !== consumed.connectionLifecycleRevision
+          ) {
+            return null;
+          }
+          const legacyUpgradeConnection = isSupabaseAccountUpgradeCandidate(connection)
+            ? await tx.select().from(mcpConnections)
+                .where(and(
+                  eq(mcpConnections.orgId, connection.orgId),
+                  eq(mcpConnections.id, connection.supersededByConnectionId!),
+                  eq(mcpConnections.provider, "supabase"),
+                  eq(mcpConnections.scopeMode, "legacy_project"),
+                  eq(mcpConnections.canonicalState, "canonical"),
+                ))
+                .for("update")
+                .then((rows) => rows[0] ?? null)
+            : null;
+          if (
+            isSupabaseAccountUpgradeCandidate(connection)
+            && !legacyUpgradeConnection
           ) {
             return null;
           }
@@ -1392,19 +1572,28 @@ export function managedMcpOAuthService(
                   .then((rows) => rows[0] ?? null),
               );
           if (!stillAuthorized) {
-            await tx.update(mcpConnections).set({
-              status: "needs_reauth",
-              enabled: false,
-              disabledAt: now,
-              lifecycleRevision: connection.lifecycleRevision + 1,
-              updatedAt: now,
-            }).where(eq(mcpConnections.id, connection.id));
+            const existingGrantPreserved =
+              consumed.session.statusMetadata.reauthorization === true
+              && connection.status === "active"
+              && connection.enabled;
+            if (!existingGrantPreserved) {
+              await tx.update(mcpConnections).set({
+                status: "needs_reauth",
+                enabled: false,
+                disabledAt: now,
+                lifecycleRevision: connection.lifecycleRevision + 1,
+                updatedAt: now,
+              }).where(eq(mcpConnections.id, connection.id));
+            }
             await tx.insert(activityLog).values(oauthActivityValues({
               orgId: consumed.session.orgId,
               connectionId: connection.id,
               action: "mcp_oauth.authorization_rejected",
               actorUserId: consumed.session.authorizingUserId,
-              details: { reason: "authorizer_no_longer_authorized" },
+              details: {
+                reason: "authorizer_no_longer_authorized",
+                existingGrantPreserved,
+              },
             }));
             return { kind: "reauth" as const };
           }
@@ -1429,9 +1618,6 @@ export function managedMcpOAuthService(
             status: "active",
             statusMetadata: {
               authorization,
-              ...(connection.provider === "supabase"
-                ? { scopeOptions: safeOptions }
-                : {}),
             },
             expiresAt: tokenExpiry(grantMaterial.tokens, now),
             lastRefreshedAt: now,
@@ -1454,17 +1640,71 @@ export function managedMcpOAuthService(
             await tx.delete(organizationSecrets)
               .where(eq(organizationSecrets.id, existingGrant.credentialSecretId));
           }
-          const status: "selecting_scope" | "active" =
-            connection.provider === "supabase" ? "selecting_scope" : "active";
+          const status = "active" as const;
+          if (legacyUpgradeConnection) {
+            const legacyGrant = await tx.select().from(mcpOAuthGrants)
+              .where(and(
+                eq(mcpOAuthGrants.orgId, connection.orgId),
+                eq(mcpOAuthGrants.connectionId, legacyUpgradeConnection.id),
+              ))
+              .for("update")
+              .then((rows) => rows[0] ?? null);
+            await tx.update(mcpConnections).set({
+              canonicalState: "superseded",
+              supersededByConnectionId: connection.id,
+              status: "revoked",
+              enabled: false,
+              revokedAt: now,
+              lifecycleRevision: legacyUpgradeConnection.lifecycleRevision + 1,
+              revision: legacyUpgradeConnection.revision + 1,
+              updatedAt: now,
+            }).where(eq(mcpConnections.id, legacyUpgradeConnection.id));
+            await tx.update(agentCustomIntegrationBindings).set({
+              accessMode: "none",
+              policyRevision: sql`${agentCustomIntegrationBindings.policyRevision} + 1`,
+              updatedAt: now,
+            }).where(and(
+              eq(agentCustomIntegrationBindings.orgId, connection.orgId),
+              eq(
+                agentCustomIntegrationBindings.connectionId,
+                legacyUpgradeConnection.id,
+              ),
+            ));
+            if (legacyGrant) {
+              await tx.update(mcpOAuthGrants).set({
+                status: "revoked",
+                credentialSecretId: null,
+                revokedAt: now,
+                updatedAt: now,
+              }).where(eq(mcpOAuthGrants.id, legacyGrant.id));
+              if (legacyGrant.credentialSecretId) {
+                await tx.delete(organizationSecrets)
+                  .where(eq(organizationSecrets.id, legacyGrant.credentialSecretId));
+              }
+            }
+          }
           await tx.update(mcpConnections).set({
             status,
-            externalScope: selected?.id ?? null,
-            safeConfig: connection.provider === "supabase"
-              ? {}
-              : connection.safeConfig,
+            accessMode: stagedAccessMode
+              ? authorization.accessMode
+              : connection.accessMode,
+            externalScope: connection.provider === "supabase"
+              ? legacyUpgradeConnection || connection.scopeMode === "account"
+                ? null
+                : connection.externalScope
+              : selected?.id ?? null,
+            scopeMode: legacyUpgradeConnection ? "account" : connection.scopeMode,
+            safeConfig: legacyUpgradeConnection ? {} : connection.safeConfig,
+            canonicalState: legacyUpgradeConnection
+              ? "canonical"
+              : connection.canonicalState,
+            supersededByConnectionId: legacyUpgradeConnection
+              ? null
+              : connection.supersededByConnectionId,
             enabled: true,
             activatedAt: status === "active" ? connection.activatedAt ?? now : null,
             lifecycleRevision: connection.lifecycleRevision + 1,
+            revision: connection.revision + 1,
             updatedAt: now,
           }).where(eq(mcpConnections.id, connection.id));
           await tx.insert(activityLog).values(oauthActivityValues({
@@ -1511,11 +1751,15 @@ export function managedMcpOAuthService(
       throw unprocessable("Managed MCP OAuth must be reauthorized by an owner");
     }
     if (outcome.status === "active" && options.refreshConnectionTools) {
+      // The replacement grant was already validated before the atomic swap.
+      // A transient second discovery must not turn a successfully swapped
+      // connection into an outage. Keep the last known-safe catalog and let a
+      // later refresh reconcile it.
       await options.refreshConnectionTools(
         outcome.orgId,
         outcome.connectionId,
         { userId: outcome.authorizingUserId, agentId: null },
-      );
+      ).catch(() => undefined);
     }
     return { connectionId: outcome.connectionId, status: outcome.status };
   }

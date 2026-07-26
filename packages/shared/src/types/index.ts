@@ -66,7 +66,7 @@ export type {
   ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
   ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType
 } from "./chat.js";
-export type { CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent, CostSummary, CostTrendPoint, CostWindowSpendRow } from "./cost.js";
+export type { CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent, CostSummary, CostTrendGranularity, CostTrendPoint, CostWindowSpendRow } from "./cost.js";
 export type {
   AgentCustomIntegrationBinding,
   CustomIntegration,
@@ -102,8 +102,7 @@ export type {
   ManagedExternalMcpBinding,
   ManagedExternalMcpBindings,
   ManagedExternalMcpToolPolicy,
-  McpAgentBinding,
-  McpAgentConnectionSummary,
+  McpAgentBinding, McpAgentConnectionSummary,
   McpConnectionSafeConfig,
   McpConnectionSecretsMutation,
   McpConnectionSummary,
@@ -113,8 +112,7 @@ export type {
   McpLegacyManualSafeConfig,
   McpOAuthCallbackResult,
   McpOAuthGrantSummary,
-  McpOAuthStartResponse,
-  McpProviderCatalogEntry,
+  McpOAuthStartResponse, McpProviderAvailability, McpProviderCatalogEntry,
   McpStdioSafeConfig,
   McpStreamableHttpSafeConfig
 } from "./mcp.js";

@@ -425,7 +425,7 @@ test.describe("Onboarding wizard", () => {
       { timeout: 15_000 },
     );
     await expect(page.locator(".chat-composer")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("chat-agent-selector")).toContainText(rootAgent.name, { timeout: 15_000 });
+    await expect(page.getByTestId("chat-agent-selector")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("chat-project-selector")).toContainText("Getting Started", { timeout: 15_000 });
     await expect(page.locator(".chat-composer [contenteditable='true']").first()).toContainText(expectedPrefill!, { timeout: 15_000 });
     await expect(page.locator(".chat-warning")).toHaveCount(0);

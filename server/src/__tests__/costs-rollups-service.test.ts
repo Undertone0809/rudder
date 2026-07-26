@@ -1,4 +1,5 @@
 import {
+  activityLog,
   agents,
   applyPendingMigrations,
   costEvents,
@@ -6,7 +7,9 @@ import {
   createDb,
   ensurePostgresDatabase,
   heartbeatRuns,
+  issues,
   organizations,
+  projects,
 } from "@rudderhq/db";
 import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -121,13 +124,16 @@ describe("costService monthly spend rollups", () => {
     db = createDb(started.connectionString);
     instance = started.instance;
     dataDir = started.dataDir;
-  }, 20_000);
+  }, 60_000);
 
   afterEach(async () => {
     vi.clearAllMocks();
     await db.delete(costEvents);
     await db.delete(costMonthlySpendRollups);
+    await db.delete(activityLog);
+    await db.delete(issues);
     await db.delete(heartbeatRuns);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(organizations);
   });
@@ -410,5 +416,274 @@ describe("costService monthly spend rollups", () => {
     expect(mockBudgetService.evaluateCostEvent).toHaveBeenCalledTimes(2);
     const events = await db.select().from(costEvents).where(eq(costEvents.heartbeatRunId, run!.id));
     expect(events).toHaveLength(1);
+  });
+
+  it("aggregates explicit UTC hour and day trend buckets", async () => {
+    const { orgId, agentId } = await seedOrgAndAgent();
+    await db.insert(costEvents).values([
+      {
+        orgId,
+        agentId,
+        provider: "openai",
+        biller: "openai",
+        billingType: "metered_api",
+        model: "gpt-5",
+        inputTokens: 100,
+        cachedInputTokens: 20,
+        outputTokens: 10,
+        costCents: 25,
+        occurredAt: new Date("2026-06-19T10:15:00.000Z"),
+      },
+      {
+        orgId,
+        agentId,
+        provider: "openai",
+        biller: "openai",
+        billingType: "metered_api",
+        model: "gpt-5",
+        inputTokens: 200,
+        cachedInputTokens: 40,
+        outputTokens: 20,
+        costCents: 50,
+        occurredAt: new Date("2026-06-19T11:05:00.000Z"),
+      },
+    ]);
+    const costs = costService(db);
+    const range = {
+      from: new Date("2026-06-19T10:00:00.000Z"),
+      to: new Date("2026-06-19T11:59:59.999Z"),
+    };
+
+    const hourly = await costs.trend(orgId, range, "hour");
+    const daily = await costs.trend(orgId, range, "day");
+
+    expect(hourly.map((row) => ({ date: row.date, costCents: row.costCents }))).toEqual([
+      { date: "2026-06-19T10:00:00.000Z", costCents: 25 },
+      { date: "2026-06-19T11:00:00.000Z", costCents: 50 },
+    ]);
+    expect(daily.map((row) => ({ date: row.date, costCents: row.costCents }))).toEqual([
+      { date: "2026-06-19", costCents: 75 },
+    ]);
+  });
+
+  it("clips and cumulatively sums each started run once within the selected range", async () => {
+    const { orgId, agentId } = await seedOrgAndAgent();
+    await db.insert(heartbeatRuns).values([
+      {
+        orgId,
+        agentId,
+        status: "completed",
+        startedAt: new Date("2026-06-19T09:00:00.000Z"),
+        finishedAt: new Date("2026-06-19T10:30:00.000Z"),
+      },
+      {
+        orgId,
+        agentId,
+        status: "completed",
+        startedAt: new Date("2026-06-19T10:15:00.000Z"),
+        finishedAt: new Date("2026-06-19T11:15:00.000Z"),
+      },
+      {
+        orgId,
+        agentId,
+        status: "running",
+        startedAt: new Date("2026-06-19T10:30:00.000Z"),
+        finishedAt: null,
+      },
+      {
+        orgId,
+        agentId,
+        status: "completed",
+        startedAt: new Date("2026-06-19T10:30:00.000Z"),
+        finishedAt: new Date("2026-06-19T11:00:00.000Z"),
+      },
+      {
+        orgId,
+        agentId,
+        status: "queued",
+        startedAt: null,
+        finishedAt: null,
+      },
+    ]);
+
+    const summary = await costService(db).summary(orgId, {
+      from: new Date("2026-06-19T10:00:00.000Z"),
+      to: new Date("2026-06-19T12:00:00.000Z"),
+    });
+
+    expect(summary.activeDurationMs).toBe(210 * 60_000);
+  });
+
+  it("includes unattributed cost events in project aggregation totals", async () => {
+    const { orgId, agentId } = await seedOrgAndAgent();
+    const projectId = randomUUID();
+    await db.insert(projects).values({
+      id: projectId,
+      orgId,
+      name: "Attributed Project",
+    });
+    const foreignOrgId = randomUUID();
+    await db.insert(organizations).values({
+      id: foreignOrgId,
+      name: "Foreign Rollup Test",
+      urlKey: `foreign-rollup-${foreignOrgId.slice(0, 8)}`,
+      issuePrefix: foreignOrgId.replaceAll("-", "").slice(0, 6).toUpperCase(),
+      requireBoardApprovalForNewAgents: false,
+    });
+    const foreignProjectId = randomUUID();
+    await db.insert(projects).values({
+      id: foreignProjectId,
+      orgId: foreignOrgId,
+      name: "Foreign Project",
+    });
+    await db.insert(costEvents).values([
+      {
+        orgId,
+        agentId,
+        projectId,
+        provider: "openai",
+        biller: "openai",
+        billingType: "metered_api",
+        model: "gpt-5",
+        inputTokens: 100,
+        cachedInputTokens: 20,
+        outputTokens: 10,
+        costCents: 25,
+        occurredAt: new Date("2026-06-19T10:15:00.000Z"),
+      },
+      {
+        orgId,
+        agentId,
+        projectId: null,
+        provider: "openai",
+        biller: "openai",
+        billingType: "metered_api",
+        model: "gpt-5",
+        inputTokens: 200,
+        cachedInputTokens: 40,
+        outputTokens: 20,
+        costCents: 50,
+        occurredAt: new Date("2026-06-19T10:45:00.000Z"),
+      },
+      {
+        orgId,
+        agentId,
+        projectId: foreignProjectId,
+        provider: "openai",
+        biller: "openai",
+        billingType: "metered_api",
+        model: "gpt-5",
+        inputTokens: 50,
+        cachedInputTokens: 10,
+        outputTokens: 5,
+        costCents: 30,
+        occurredAt: new Date("2026-06-19T11:00:00.000Z"),
+      },
+    ]);
+
+    const rows = await costService(db).byProject(orgId);
+
+    expect(rows.map((row) => ({
+      projectId: row.projectId,
+      projectName: row.projectName,
+      costCents: row.costCents,
+    }))).toEqual([
+      { projectId: null, projectName: null, costCents: 80 },
+      { projectId, projectName: "Attributed Project", costCents: 25 },
+    ]);
+    expect(rows.reduce((sum, row) => sum + row.costCents, 0)).toBe(105);
+  });
+
+  it("attributes a run to only its latest linked project", async () => {
+    const { orgId, agentId } = await seedOrgAndAgent();
+    const olderProjectId = randomUUID();
+    const latestProjectId = randomUUID();
+    await db.insert(projects).values([
+      { id: olderProjectId, orgId, name: "Older Project" },
+      { id: latestProjectId, orgId, name: "Latest Project" },
+    ]);
+
+    const runId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      status: "completed",
+      startedAt: new Date("2026-06-19T10:00:00.000Z"),
+      finishedAt: new Date("2026-06-19T10:30:00.000Z"),
+    });
+
+    const olderIssueId = randomUUID();
+    const latestIssueId = randomUUID();
+    await db.insert(issues).values([
+      {
+        id: olderIssueId,
+        orgId,
+        projectId: olderProjectId,
+        title: "Older project issue",
+      },
+      {
+        id: latestIssueId,
+        orgId,
+        projectId: latestProjectId,
+        title: "Latest project issue",
+      },
+    ]);
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorId: "test",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: olderIssueId,
+        runId,
+        createdAt: new Date("2026-06-19T10:05:00.000Z"),
+      },
+      {
+        orgId,
+        actorId: "test",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: latestIssueId,
+        runId,
+        createdAt: new Date("2026-06-19T10:10:00.000Z"),
+      },
+    ]);
+    await db.insert(costEvents).values({
+      orgId,
+      agentId,
+      heartbeatRunId: runId,
+      provider: "openai",
+      biller: "openai",
+      billingType: "metered_api",
+      model: "gpt-5",
+      inputTokens: 100,
+      cachedInputTokens: 20,
+      outputTokens: 10,
+      costCents: 40,
+      occurredAt: new Date("2026-06-19T10:15:00.000Z"),
+    });
+
+    const costs = costService(db);
+    const range = {
+      from: new Date("2026-06-19T10:00:00.000Z"),
+      to: new Date("2026-06-19T10:59:59.999Z"),
+    };
+    const [summary, rows, olderTrend, latestTrend] = await Promise.all([
+      costs.summary(orgId, range),
+      costs.byProject(orgId, range),
+      costs.trend(orgId, range, "hour", { projectId: olderProjectId }),
+      costs.trend(orgId, range, "hour", { projectId: latestProjectId }),
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      projectId: latestProjectId,
+      projectName: "Latest Project",
+      costCents: 40,
+    });
+    expect(rows.reduce((sum, row) => sum + row.costCents, 0)).toBe(summary.spendCents);
+    expect(olderTrend).toEqual([]);
+    expect(latestTrend.map((row) => row.costCents)).toEqual([40]);
   });
 });

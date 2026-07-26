@@ -100,6 +100,7 @@ export interface ChatRuntimeDescriptor {
   runtimeAgentId: string | null;
   agentRuntimeType: string | null;
   model: string | null;
+  effort?: string | null;
   available: boolean;
   error: string | null;
 }
@@ -233,6 +234,7 @@ export interface ChatQueuedMessagePayload {
   projectId?: string | null;
   skillRefs?: string[];
   accessMode?: string | null;
+  agentId?: string | null;
   model?: string | null;
   effort?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -247,6 +249,7 @@ export interface ChatQueuedMessage {
   version: number;
   clientMutationId: string;
   payload: ChatQueuedMessagePayload;
+  runtimeSnapshotVersion?: number | null;
   annotationCount?: number;
   requestActor?: ChatQueueRequestActor | null;
   deliveryIntent: ChatQueueDeliveryIntent;
@@ -417,6 +420,8 @@ export interface ChatConversation {
   userMessageCount: number;
   searchPreview?: string | null;
   preferredAgentId: string | null;
+  modelOverride?: string | null;
+  effortOverride?: string | null;
   routedAgentId: string | null;
   primaryIssueId: string | null;
   forkedFromConversationId: string | null;

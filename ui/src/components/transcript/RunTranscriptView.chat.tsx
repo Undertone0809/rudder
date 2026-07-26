@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
@@ -9,8 +9,14 @@ import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalO
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
 import { transcriptAgentInspectionForTool } from "./TranscriptAgentInspection";
+import { TranscriptImageArtifact } from "./TranscriptImageArtifact";
 
 const EMPTY_AGENT_INSPECTIONS = new Map<string, TranscriptAgentInspection>();
+
+function transcriptFileDisplayName(label: string) {
+  const trimmed = label.replace(/[\\/]+$/, "");
+  return trimmed.split(/[\\/]/).pop() || label;
+}
 
 type TranscriptMcpBrandIcon = {
   aliases: readonly string[];
@@ -296,6 +302,7 @@ export function TranscriptChatToolActionRow({
   const canExpand = semantic.category !== "skill"
     && Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
   const [open, setOpen] = useState(inline || (defaultOpenOnError && block.status === "error"));
+  const [imageOpen, setImageOpen] = useState(false);
   const duration = quiet ? null : formatTranscriptDuration(block.ts, block.endTs);
   const statusText =
     block.status === "error"
@@ -316,6 +323,7 @@ export function TranscriptChatToolActionRow({
   const chevronOffsetClass = compact ? "" : "mt-0.5";
   const fileTargets = semantic.fileTargets ?? [];
   const hasOpenableFileTargets = fileTargets.some((target) => target.path);
+  const image = block.status === "completed" ? semantic.image : undefined;
   const detailStateLabelId = useId();
   const summaryLabelId = useId();
   const statusLabelId = useId();
@@ -338,29 +346,71 @@ export function TranscriptChatToolActionRow({
           {open ? "Collapse" : "Expand"} {isCommand ? "command" : "tool"} details:
         </span>
       ) : null}
-      {hasOpenableFileTargets ? (
+      {image ? (
+        <div>
+          <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
+            <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
+            <button
+              type="button"
+              id={summaryLabelId}
+              className={cn("min-w-0 flex-1 rounded-sm text-left text-foreground/84 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40", compact ? "text-xs leading-5" : "text-sm leading-6")}
+              title={image.path}
+              aria-expanded={imageOpen}
+              aria-label={`${imageOpen ? "Collapse" : "Preview"} image ${image.displayLabel}`}
+              data-transcript-image-target={image.path}
+              onClick={() => setImageOpen((value) => !value)}
+            >
+              Viewed an image
+            </button>
+            {duration ? (
+              <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
+                {duration}
+              </span>
+            ) : null}
+            {statusText ? (
+              <span id={statusLabelId} className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
+                {statusText}
+              </span>
+            ) : null}
+          </div>
+          {imageOpen ? <TranscriptImageArtifact path={image.path} displayLabel={image.displayLabel} /> : null}
+        </div>
+      ) : hasOpenableFileTargets ? (
         <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
           <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
-          <span id={summaryLabelId} className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
-            {semantic.category === "edit" ? "Edited " : "Read "}
-            {fileTargets.map((target, index) => (
-              <span key={`${target.label}-${index}`}>
-                {index > 0 ? ", " : null}
-                {target.path ? (
-                  <button
-                    type="button"
-                    className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                    aria-label={`Open file ${target.label}`}
-                    data-transcript-file-target={target.path}
-                    onClick={() => onOpenFile?.(target.path!, target.label)}
-                  >
-                    {target.label}
-                  </button>
-                ) : (
-                  <span title="This relative file path has no trusted workspace root.">{target.label}</span>
-                )}
-              </span>
-            ))}
+          <span
+            id={summaryLabelId}
+            className={cn(
+              "flex min-w-0 flex-1 items-baseline gap-1 text-foreground/84",
+              compact ? "text-xs leading-5" : "text-sm leading-6",
+            )}
+          >
+            <span className="shrink-0">{semantic.category === "edit" ? "Edited" : "Read"}</span>
+            <span className="min-w-0 flex-1">
+              {fileTargets.map((target, index) => {
+                const displayName = transcriptFileDisplayName(target.label);
+                return (
+                  <span key={`${target.label}-${index}`}>
+                    {index > 0 ? ", " : null}
+                    {target.path ? (
+                      <button
+                        type="button"
+                        className="inline-block max-w-full whitespace-normal break-words rounded-sm text-left align-top underline decoration-border underline-offset-4 transition-colors [overflow-wrap:anywhere] hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                        aria-label={`Open file ${displayName}`}
+                        data-transcript-file-target={target.path}
+                        onClick={() => onOpenFile?.(target.path!, displayName)}
+                      >
+                        {displayName}
+                      </button>
+                    ) : (
+                      <span className="[overflow-wrap:anywhere]" title="This relative file path has no trusted workspace root.">
+                        {displayName}
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
+            </span>
           </span>
           {duration ? (
             <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
@@ -757,33 +807,84 @@ export function TranscriptChatTurn({
   const actionGroupCount = segments.filter((segment) => segment.type === "actions").length;
   const content = segments.length > 0 ? (
     <div className={cn(density === "compact" ? "space-y-1" : "space-y-3")} title={getTranscriptTimestampTitle(turn.ts)}>
-      {segments.map((segment, index) => (
-        segment.type === "block"
-          ? renderTranscriptBlock({
-              block: segment.block,
-              index,
-              density,
-              presentation: detailVariant ? "detail" : "chat",
-              collapseStdout: true,
-              thinkingClassName,
-              onMarkdownLinkClick,
-              annotationSource,
-              sentAnnotationContext,
-            })
-          : (
+      {segments.map((segment, index) => {
+        if (detailVariant) {
+          return segment.type === "block" ? (
+            <Fragment key={`${segment.block.type}-${segment.block.ts}-${index}`}>
+              {renderTranscriptBlock({
+                block: segment.block,
+                index,
+                density,
+                presentation: "detail",
+                collapseStdout: true,
+                thinkingClassName,
+                onMarkdownLinkClick,
+                annotationSource,
+                sentAnnotationContext,
+              })}
+            </Fragment>
+          ) : (
             <TranscriptChatActionGroup
               key={segment.key}
               actions={segment.actions}
               density={density}
-              detailVariant={detailVariant}
+              detailVariant
               groupIndex={segments.slice(0, index).filter((item) => item.type === "actions").length}
               groupCount={actionGroupCount}
               onOpenFile={onOpenFile}
               agentInspections={agentInspections}
               onOpenAgent={onOpenAgent}
             />
+          );
+        }
+
+        return segment.type === "block"
+          ? (
+            <div
+              key={`${segment.block.type}-${segment.block.ts}-${index}`}
+              data-transcript-chat-column={
+                segment.block.type === "message" && segment.block.source === "steer"
+                  ? "full"
+                  : "reading"
+              }
+              className={cn(
+                segment.block.type === "message" && segment.block.source === "steer"
+                  ? "w-full"
+                  : "max-w-3xl px-1",
+              )}
+            >
+              {renderTranscriptBlock({
+                block: segment.block,
+                index,
+                density,
+                presentation: "chat",
+                collapseStdout: true,
+                thinkingClassName,
+                onMarkdownLinkClick,
+                annotationSource,
+                sentAnnotationContext,
+              })}
+            </div>
           )
-      ))}
+          : (
+            <div
+              key={segment.key}
+              data-transcript-chat-column="reading"
+              className="max-w-3xl px-1"
+            >
+              <TranscriptChatActionGroup
+                actions={segment.actions}
+                density={density}
+                detailVariant={detailVariant}
+                groupIndex={segments.slice(0, index).filter((item) => item.type === "actions").length}
+                groupCount={actionGroupCount}
+                onOpenFile={onOpenFile}
+                agentInspections={agentInspections}
+                onOpenAgent={onOpenAgent}
+              />
+            </div>
+          );
+      })}
     </div>
   ) : null;
   return content;
@@ -1010,17 +1111,28 @@ export function TranscriptChatTimeline({
 
   return (
     <div className="space-y-3">
-      {preludeBlocks.map((block, index) => renderTranscriptBlock({
-        block,
-        index,
-        density,
-        presentation: "chat",
-        collapseStdout,
-        thinkingClassName,
-        onMarkdownLinkClick,
-        annotationSource,
-        sentAnnotationContext,
-      }))}
+      {preludeBlocks.map((block, index) => {
+        const fullWidth = block.type === "message" && block.source === "steer";
+        return (
+          <div
+            key={`${block.type}-${block.ts}-${index}`}
+            data-transcript-chat-column={fullWidth ? "full" : "reading"}
+            className={cn(fullWidth ? "w-full" : "max-w-3xl px-1")}
+          >
+            {renderTranscriptBlock({
+              block,
+              index,
+              density,
+              presentation: "chat",
+              collapseStdout,
+              thinkingClassName,
+              onMarkdownLinkClick,
+              annotationSource,
+              sentAnnotationContext,
+            })}
+          </div>
+        );
+      })}
       {turns.map((turn) => (
         <TranscriptChatTurn
           key={turn.key}

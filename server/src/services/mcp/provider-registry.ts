@@ -32,7 +32,7 @@ export const MCP_PROVIDER_REGISTRY = {
     endpoint: "https://mcp.supabase.com/mcp",
     oauthOrigins: ["https://mcp.supabase.com", "https://api.supabase.com"],
     requiresOAuth: true,
-    scopeSelection: "project",
+    scopeSelection: "none",
     defaultAccessMode: "read_only",
     featureGroups: {
       mode: "provider_default",
@@ -93,16 +93,14 @@ export function resolveCuratedMcpEndpoint(input: {
 
   const definition = MCP_PROVIDER_REGISTRY[input.provider];
   if (input.provider === "supabase") {
-    const projectRef = input.externalScope?.trim();
-    if (!projectRef) {
-      throw new Error("Supabase MCP connections require a selected project");
-    }
     if (input.accessMode !== "read_only" && input.accessMode !== "read_write") {
       throw new Error("Supabase MCP connections require read_only or read_write access");
     }
     const endpoint = new URL(definition.endpoint);
-    endpoint.searchParams.set("project_ref", projectRef);
     endpoint.searchParams.set("read_only", String(input.accessMode === "read_only"));
+    if (input.externalScope) {
+      endpoint.searchParams.set("project_ref", input.externalScope);
+    }
     return { href: endpoint.href, transport: "streamable_http" };
   }
 

@@ -33,6 +33,7 @@ const mockChatService = vi.hoisted(() => ({
   createWithInitialMessage: vi.fn(),
   forkConversation: vi.fn(),
   update: vi.fn(),
+  updateAgentModelInvariant: vi.fn(),
   listAttachmentsForConversation: vi.fn(),
   assetHasAttachments: vi.fn(),
   remove: vi.fn(),
@@ -60,6 +61,7 @@ const mockChatService = vi.hoisted(() => ({
   updateDefaultTitle: vi.fn(),
   replaceSystemGeneratedTitle: vi.fn(),
   getQueueSnapshot: vi.fn(),
+  getQueuedMessageReplay: vi.fn(),
   createQueuedMessage: vi.fn(),
   createQueuedMessageWithStagedAttachments: vi.fn(),
   updateQueuedMessage: vi.fn(),
@@ -307,6 +309,8 @@ function createConversation(overrides: Partial<Record<string, unknown>> = {}) {
     latestUserMessagePreview: null,
     userMessageCount: 0,
     preferredAgentId: "agent-1",
+    modelOverride: null,
+    effortOverride: null,
     routedAgentId: null,
     primaryIssueId: null,
     primaryIssue: null,
@@ -331,6 +335,7 @@ function createConversation(overrides: Partial<Record<string, unknown>> = {}) {
       runtimeAgentId: "agent-1",
       agentRuntimeType: "codex_local",
       model: "gpt-5",
+      effort: null,
       available: true,
       error: null,
     },
@@ -455,6 +460,7 @@ describe("chat routes", () => {
       runtimeAgentId: "agent-1",
       agentRuntimeType: "codex_local",
       model: "gpt-5",
+      effort: null,
       error: null,
     });
     mockChatAssistantService.getDraftChatAssistantAvailability.mockResolvedValue({
@@ -464,6 +470,7 @@ describe("chat routes", () => {
       runtimeAgentId: "agent-1",
       agentRuntimeType: "codex_local",
       model: "gpt-5",
+      effort: null,
       error: null,
     });
     mockLogActivity.mockResolvedValue(undefined);
@@ -597,6 +604,7 @@ describe("chat routes", () => {
       activeGenerationStatus: null,
       items: [],
     });
+    mockChatService.getQueuedMessageReplay.mockResolvedValue(null);
     mockChatService.createQueuedMessage.mockImplementation(async (input: Record<string, unknown>) => ({
       id: "queued-1",
       orgId: input.orgId,
@@ -833,6 +841,12 @@ describe("chat routes", () => {
         id: "queued-1",
         conversationId: conversation.id,
         orgId: conversation.orgId,
+        runtimeSnapshotVersion: null,
+        payload: {
+          body: queuedUserMessage.body,
+          model: "legacy-client-forged-model",
+          effort: null,
+        },
         requestActor: {
           type: "board",
           source: "session",
@@ -878,7 +892,11 @@ describe("chat routes", () => {
           itemId: claim.item.id,
           generationId: claim.generationId,
         }));
+        expect(hasActiveChatGeneration(conversation.id)).toBe(false);
       });
+      const legacyInvocation = mockChatAssistantService.streamChatAssistantReply.mock.calls[0]?.[0];
+      expect(legacyInvocation).not.toHaveProperty("modelSnapshot");
+      expect(legacyInvocation).not.toHaveProperty("effortSnapshot");
       expect(mockChatService.acknowledgeServerQueuedMessageDelivery).not.toHaveBeenCalled();
     } finally {
       if (previousWorkerFlag === undefined) delete process.env.RUDDER_CHAT_QUEUE_WORKER_TEST;
@@ -958,6 +976,7 @@ describe("chat routes", () => {
           leaseToken: claim.leaseToken,
           leaseEpoch: claim.leaseEpoch,
         });
+        expect(hasActiveChatGeneration(conversation.id)).toBe(false);
       });
       expect(mockChatService.releaseServerQueuedMessageClaim).not.toHaveBeenCalled();
       expect(mockChatService.completeServerQueuedMessageDelivery).not.toHaveBeenCalled();
@@ -1503,9 +1522,15 @@ describe("chat routes", () => {
   });
 
   it("creates a conversation with the organization default agent and issue creation mode", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({ title: "Start with evidence" });
     const message = createMessage("message-first", "user", "message", "Start with evidence");
     mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message });
+    mockProductIntelligenceService.execute.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "\"Evidence-first kickoff\"",
+    });
 
     const res = await request(createApp())
       .post("/api/orgs/organization-1/chats")
@@ -1522,6 +1547,42 @@ describe("chat routes", () => {
         initialMessage: expect.objectContaining({ role: "user", body: "Start with evidence" }),
       }),
     );
+    await waitUntil(() => {
+      expect(mockProductIntelligenceService.execute).toHaveBeenCalledWith(expect.objectContaining({
+        orgId: "organization-1",
+        purpose: "lightweight",
+        feature: "chat_title",
+        prompt: expect.stringContaining("Start with evidence"),
+      }));
+      expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith(
+        "chat-1",
+        "Start with evidence",
+        "Start with evidence",
+      );
+      expect(mockChatService.replaceSystemGeneratedTitle).toHaveBeenCalledWith(
+        "chat-1",
+        "Start with evidence",
+        "Evidence-first kickoff",
+      );
+    });
+  });
+
+  it("preserves an explicit title during atomic chat creation", async () => {
+    const conversation = createConversation({ title: "Operator title" });
+    const message = createMessage("message-first", "user", "message", "Start with evidence");
+    mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats")
+      .send({
+        title: "Operator title",
+        initialMessage: { body: "Start with evidence" },
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockProductIntelligenceService.execute).not.toHaveBeenCalled();
+    expect(mockChatService.updateDefaultTitle).not.toHaveBeenCalled();
+    expect(mockChatService.replaceSystemGeneratedTitle).not.toHaveBeenCalled();
   });
 
   it("rejects direct chat creation without an initial message", async () => {
@@ -1535,9 +1596,15 @@ describe("chat routes", () => {
     const unavailable = { available: false, sourceType: "agent", sourceLabel: "Unsupported agent", runtimeAgentId: preferredAgentId, agentRuntimeType: "process", model: null, error: "The current user has not configured a chat model yet." };
     mockAgentService.getById.mockResolvedValue({ id: preferredAgentId, orgId: "organization-1", status: "idle" });
     mockChatAssistantService.getDraftChatAssistantAvailability.mockResolvedValue(unavailable);
-    const res = await request(createApp()).post("/api/orgs/organization-1/chats/preflight").send({ preferredAgentId });
+    const res = await request(createApp()).post("/api/orgs/organization-1/chats/preflight").send({
+      preferredAgentId,
+      modelOverride: "gpt-5.6-terra",
+    });
     expect(res.status).toBe(200);
     expect(res.body).toEqual(unavailable);
+    expect(mockChatAssistantService.getDraftChatAssistantAvailability).toHaveBeenCalledWith(
+      expect.objectContaining({ preferredAgentId, modelOverride: "gpt-5.6-terra" }),
+    );
     expect(mockChatService.createWithInitialMessage).not.toHaveBeenCalled();
   });
 
@@ -1550,7 +1617,14 @@ describe("chat routes", () => {
   });
 
   it("atomically accepts a first turn and includes the conversation in the stream ack", async () => {
-    const conversation = createConversation();
+    const conversation = createConversation({
+      title: "Start atomically",
+      modelOverride: "gpt-5.6-terra",
+      chatRuntime: {
+        ...createConversation().chatRuntime,
+        model: "gpt-5.6-terra",
+      },
+    });
     const userMessage = createMessage("message-user", "user", "message", "Start atomically");
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "Ready.");
     mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message: userMessage });
@@ -1563,10 +1637,16 @@ describe("chat routes", () => {
       replyingAgentId: "agent-1",
       reply: { kind: "message", body: "Ready.", structuredPayload: null, replyingAgentId: "agent-1" },
     });
+    mockProductIntelligenceService.execute.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "\"Atomic chat kickoff\"",
+    });
 
     const res = await request(createApp())
       .post("/api/orgs/organization-1/chats/messages/stream")
-      .send({ body: "Start atomically" })
+      .send({ body: "Start atomically", modelOverride: "gpt-5.6-terra" })
       .buffer(true)
       .parse((response, callback) => {
         let text = "";
@@ -1583,7 +1663,126 @@ describe("chat routes", () => {
       userMessage: expect.objectContaining({ id: "message-user", body: "Start atomically" }),
     }));
     expect(mockChatService.createWithInitialMessage).toHaveBeenCalledTimes(1);
+    expect(mockChatService.createWithInitialMessage).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({ modelOverride: "gpt-5.6-terra" }),
+    );
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledWith(
+      expect.objectContaining({ modelSnapshot: "gpt-5.6-terra" }),
+    );
     expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    await waitUntil(() => {
+      expect(mockProductIntelligenceService.execute).toHaveBeenCalledWith(expect.objectContaining({
+        orgId: "organization-1",
+        purpose: "lightweight",
+        feature: "chat_title",
+        prompt: expect.stringContaining("Start atomically"),
+      }));
+      expect(mockChatService.replaceSystemGeneratedTitle).toHaveBeenCalledWith(
+        "chat-1",
+        "Start atomically",
+        "Atomic chat kickoff",
+      );
+    });
+  });
+
+  it("preserves an explicit New chat title during an atomic streaming first turn", async () => {
+    const conversation = createConversation({ title: "New chat" });
+    const userMessage = createMessage("message-user", "user", "message", "Keep the explicit title");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Ready.");
+    mockChatService.createWithInitialMessage.mockResolvedValue({ conversation, message: userMessage });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addMessage.mockResolvedValue(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Ready.",
+      replyingAgentId: "agent-1",
+      reply: { kind: "message", body: "Ready.", structuredPayload: null, replyingAgentId: "agent-1" },
+    });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats/messages/stream")
+      .send({ title: "New chat", body: "Keep the explicit title" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockProductIntelligenceService.execute).not.toHaveBeenCalled();
+    expect(mockChatService.updateDefaultTitle).not.toHaveBeenCalled();
+    expect(mockChatService.replaceSystemGeneratedTitle).not.toHaveBeenCalled();
+  });
+
+  it("rejects direct streaming of a claimed queued message in favor of the server-owned worker", async () => {
+    const queuedMessageId = "10000000-0000-4000-8000-000000000011";
+    const conversation = createConversation({
+      title: "Queued Agent default snapshot",
+      modelOverride: "gpt-5.6-luna",
+      chatRuntime: {
+        ...createConversation().chatRuntime,
+        model: "gpt-5.6-luna",
+      },
+    });
+    const userMessage = createMessage("message-user", "user", "message", "Use the queued Agent default");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Default kept.");
+    const claimedQueuedMessage = await mockChatService.createQueuedMessage({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      clientMutationId: "claimed-null-model",
+      payload: {
+        body: "Use the queued Agent default",
+        model: null,
+      },
+    });
+    mockChatService.createQueuedMessage.mockClear();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.assertQueuedMessageClaimedForDelivery.mockResolvedValueOnce({
+      ...claimedQueuedMessage,
+      id: queuedMessageId,
+    });
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.getChatAssistantAvailability.mockResolvedValueOnce({
+      ...conversation.chatRuntime,
+      model: "gpt-5.6-luna",
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Default kept.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Default kept.",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: "Use the queued Agent default",
+        queuedMessageId,
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(String(res.body))).toEqual({
+      error: "Queued messages are delivered only by Rudder's server-owned Queue worker",
+    });
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
   });
 
   it("normalizes multipart draft fields before accepting an attached first turn", async () => {
@@ -2885,6 +3084,119 @@ describe("chat routes", () => {
     expect(mockChatService.markQueuedMessageSteerFallback).not.toHaveBeenCalled();
   });
 
+  it("snapshots the effective conversation runtime when a queued message is admitted", async () => {
+    const conversation = createConversation({
+      modelOverride: "gpt-5.6-terra",
+      effortOverride: "high",
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatAssistantService.getChatAssistantAvailability.mockResolvedValueOnce({
+      ...conversation.chatRuntime,
+      model: "gpt-5.6-terra",
+      effort: "high",
+    });
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/queue")
+      .send({
+        clientMutationId: "model-snapshot-1",
+        payload: {
+          body: "Use the admitted model",
+          model: "client-forged-model",
+          effort: "client-forged-effort",
+        },
+      });
+
+    expect(response.status).toBe(201);
+    expect(mockChatService.createQueuedMessage).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: "chat-1",
+      runtimeSnapshotVersion: 1,
+      payload: expect.objectContaining({
+        body: "Use the admitted model",
+        agentId: conversation.preferredAgentId,
+        model: "gpt-5.6-terra",
+        effort: "high",
+      }),
+    }));
+  });
+
+  it("replays a queued mutation before resolving a newer conversation model", async () => {
+    const conversation = createConversation({ modelOverride: "gpt-5.6-terra" });
+    const replay = {
+      id: "queued-existing",
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      position: 1,
+      status: "queued",
+      version: 1,
+      clientMutationId: "model-snapshot-retry-1",
+      payload: {
+        body: "Retry after a lost response",
+        attachmentIds: [],
+        projectId: null,
+        skillRefs: [],
+        accessMode: null,
+        model: "gpt-5.6-terra",
+        effort: null,
+        metadata: null,
+      },
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getQueuedMessageReplay.mockResolvedValueOnce(replay);
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/queue")
+      .send({
+        clientMutationId: "model-snapshot-retry-1",
+        payload: {
+          body: "Retry after a lost response",
+          model: "gpt-5.6-luna",
+        },
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toEqual(expect.objectContaining({
+      id: "queued-existing",
+      payload: expect.objectContaining({ model: "gpt-5.6-terra" }),
+    }));
+    expect(mockChatService.getQueuedMessageReplay).toHaveBeenCalledWith({
+      conversationId: "chat-1",
+      clientMutationId: "model-snapshot-retry-1",
+      payload: expect.objectContaining({
+        body: "Retry after a lost response",
+        model: "gpt-5.6-luna",
+      }),
+    });
+    expect(mockChatAssistantService.getChatAssistantAvailability).not.toHaveBeenCalled();
+    expect(mockChatService.createQueuedMessage).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "chat.queue.created",
+    }));
+  });
+
+  it("preserves a non-default model snapshot when queue availability is degraded", async () => {
+    const conversation = createConversation({ modelOverride: "gpt-5.6-terra" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatAssistantService.getChatAssistantAvailability.mockResolvedValueOnce({
+      ...conversation.chatRuntime,
+      available: false,
+      model: "gpt-5.6-terra",
+      error: "Workspace is temporarily unavailable.",
+    });
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/queue")
+      .send({
+        clientMutationId: "degraded-model-snapshot-1",
+        payload: { body: "Keep the admitted model" },
+      });
+
+    expect(response.status).toBe(201);
+    expect(mockChatService.createQueuedMessage).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ model: "gpt-5.6-terra" }),
+    }));
+  });
+
   it("schedules queued feedback after Stop when no in-memory runtime owner remains", async () => {
     const conversation = createConversation();
     const generationId = "10000000-0000-4000-8000-000000000001";
@@ -3487,6 +3799,7 @@ describe("chat routes", () => {
       expect(transcriptCalls).toHaveLength(2);
       expect(transcriptCalls.map(([input]) => input.payload.entry)).toEqual(transcriptEntries);
       expect(transcriptCalls.every(([input]) => !Object.hasOwn(input, "transcript"))).toBe(true);
+      expect(transcriptCalls.every(([input]) => input.replyingAgentId === "agent-1")).toBe(true);
       expect(visibleProjectionCalls.find(([input]) => input.eventKind === "runtime_output")?.[0])
         .toMatchObject({ messageId: "message-assistant" });
       expect(mockChatService.acknowledgeServerQueuedMessageDelivery).toHaveBeenCalledWith({
@@ -4622,6 +4935,144 @@ describe("chat routes", () => {
     expect(mockChatService.update).not.toHaveBeenCalled();
   });
 
+  it("persists a conversation model override and records it as activity evidence", async () => {
+    const conversation = createConversation();
+    const updated = createConversation({
+      modelOverride: "gpt-5.6-terra",
+      chatRuntime: { ...conversation.chatRuntime, model: "gpt-5.6-terra" },
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.updateAgentModelInvariant.mockResolvedValueOnce(updated);
+
+    const res = await request(createApp())
+      .patch("/api/chats/chat-1")
+      .send({ modelOverride: "gpt-5.6-terra" });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.updateAgentModelInvariant).toHaveBeenCalledWith({
+      id: "chat-1",
+      expectedPreferredAgentId: "agent-1",
+      patch: {
+        modelOverride: "gpt-5.6-terra",
+      },
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "chat.updated",
+      details: { modelOverride: "gpt-5.6-terra" },
+    }));
+  });
+
+  it("persists a conversation effort override without changing the Agent runtime", async () => {
+    const conversation = createConversation();
+    const updated = createConversation({
+      effortOverride: "xhigh",
+      chatRuntime: { ...conversation.chatRuntime, effort: "xhigh" },
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.updateAgentModelInvariant.mockResolvedValueOnce(updated);
+
+    const res = await request(createApp())
+      .patch("/api/chats/chat-1")
+      .send({ effortOverride: "xhigh" });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.updateAgentModelInvariant).toHaveBeenCalledWith({
+      id: "chat-1",
+      expectedPreferredAgentId: "agent-1",
+      patch: {
+        effortOverride: "xhigh",
+      },
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "chat.updated",
+      details: { effortOverride: "xhigh" },
+    }));
+  });
+
+  it("restores the Agent default by clearing the conversation model override", async () => {
+    const conversation = createConversation({ modelOverride: "gpt-5.6-terra" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.updateAgentModelInvariant.mockResolvedValueOnce(createConversation({ modelOverride: null }));
+
+    const res = await request(createApp())
+      .patch("/api/chats/chat-1")
+      .send({ modelOverride: null });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.updateAgentModelInvariant).toHaveBeenCalledWith({
+      id: "chat-1",
+      expectedPreferredAgentId: "agent-1",
+      patch: {
+        modelOverride: null,
+      },
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      details: { modelOverride: null },
+    }));
+  });
+
+  it("repairs a historical unassigned conversation and clears its stale model override", async () => {
+    const nextAgentId = "10000000-0000-4000-8000-000000000005";
+    mockChatService.getById.mockResolvedValue(createConversation({
+      preferredAgentId: null,
+      modelOverride: "gpt-5.6-terra",
+    }));
+    mockAgentService.getById.mockResolvedValue({
+      id: nextAgentId,
+      orgId: "organization-1",
+      status: "idle",
+    });
+    mockChatService.updateAgentModelInvariant.mockResolvedValueOnce(createConversation({
+      preferredAgentId: nextAgentId,
+      modelOverride: null,
+    }));
+
+    const res = await request(createApp())
+      .patch("/api/chats/chat-1")
+      .send({ preferredAgentId: nextAgentId });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.updateAgentModelInvariant).toHaveBeenCalledWith({
+      id: "chat-1",
+      expectedPreferredAgentId: null,
+      patch: {
+        preferredAgentId: nextAgentId,
+        modelOverride: null,
+        effortOverride: null,
+      },
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      details: {
+        preferredAgentId: nextAgentId,
+        modelOverride: null,
+        effortOverride: null,
+      },
+    }));
+  });
+
+  it("rejects changing the Agent on an assigned persisted conversation", async () => {
+    const nextAgentId = "10000000-0000-4000-8000-000000000005";
+    mockChatService.getById.mockResolvedValue(createConversation({
+      preferredAgentId: "agent-1",
+    }));
+    mockAgentService.getById.mockResolvedValue({
+      id: nextAgentId,
+      orgId: "organization-1",
+      status: "idle",
+    });
+
+    const res = await request(createApp())
+      .patch("/api/chats/chat-1")
+      .send({ preferredAgentId: nextAgentId });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("Chat agent is locked after the conversation starts");
+    expect(mockChatService.updateAgentModelInvariant).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "chat.updated",
+    }));
+  });
+
   it("renames Feishu-bound chat conversations without enabling other local mutation fields", async () => {
     mockChatService.getById.mockResolvedValue(createFeishuBackedConversation());
     mockChatService.update.mockResolvedValueOnce(createFeishuBackedConversation({ title: "Renamed Feishu Chat" }));
@@ -4642,6 +5093,8 @@ describe("chat routes", () => {
   it.each([
     ["summary", { title: "Renamed Feishu Chat", summary: "Local summary update" }],
     ["preferred agent", { title: "Renamed Feishu Chat", preferredAgentId: "10000000-0000-4000-8000-000000000001" }],
+    ["model override", { title: "Renamed Feishu Chat", modelOverride: "gpt-5.6-terra" }],
+    ["effort override", { title: "Renamed Feishu Chat", effortOverride: "xhigh" }],
     ["primary issue", { title: "Renamed Feishu Chat", primaryIssueId: "10000000-0000-4000-8000-000000000002" }],
     ["routed agent", { title: "Renamed Feishu Chat", routedAgentId: "10000000-0000-4000-8000-000000000003" }],
     ["issue creation mode", { title: "Renamed Feishu Chat", issueCreationMode: "auto_create" }],

@@ -94,6 +94,26 @@ Human attention belongs here, but durable state stays on the native object.
 Messenger is not a backlog, a generic chat app, or the sole record of a review
 decision.
 
+## Choose an Agent and runtime for one Chat
+
+The Agent control in a new Chat chooses who owns the task. Open it to see the
+organization's available Agents. The current Agent row also contains the
+Model / Thinking entry for that Agent's runtime. Changing the draft Agent
+returns both runtime values to the new Agent's defaults.
+
+After the first message, the Chat is bound to that Agent and other Agents are
+locked. You can still open the Agent menu and change Model or Thinking on the
+bound row. Those values affect only later replies in that conversation; they
+do not change the Agent's saved runtime, credentials, skills, workspace, or
+fallback models. Choose **Agent default** to return one control to the Agent's
+saved setting.
+
+An active reply keeps the Agent, model, and effort it started with. A queued
+follow-up also keeps that admitted Agent and the values shown when it entered
+the queue, even if you change the conversation controls or the Agent becomes
+unavailable before that message runs. New Chats, Forks, and Side Chats begin
+from the Agent defaults.
+
 ## Follow-ups during a reply
 
 If you send another message while the current reply is running, Rudder keeps it

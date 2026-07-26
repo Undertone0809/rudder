@@ -24,13 +24,17 @@ describe("managed MCP connection schema", () => {
       "org_id",
       "legacy_custom_integration_id",
       "credential_secret_id",
+      "superseded_by_connection_id",
       "name",
       "display_name",
       "provider",
       "transport",
       "external_scope",
+      "scope_mode",
       "access_mode",
       "status",
+      "canonical_state",
+      "revision",
       "safe_config",
       "startup_timeout_ms",
       "tool_timeout_ms",
@@ -89,10 +93,15 @@ describe("managed MCP connection schema", () => {
     expect(indexNames).toEqual(expect.arrayContaining([
       "mcp_connections_org_name_uq",
       "mcp_connections_org_provider_scope_uq",
+      "mcp_connections_org_official_canonical_uq",
       "mcp_connections_org_status_idx",
       "mcp_connections_legacy_integration_uq",
     ]));
-    expect(config.foreignKeys).toHaveLength(3);
+    expect(config.foreignKeys).toHaveLength(4);
+    expect(config.checks.map((constraint) => constraint.name)).toEqual(expect.arrayContaining([
+      "mcp_connections_canonical_state_check",
+      "mcp_connections_scope_mode_check",
+    ]));
   });
 
   it("extends existing tool, binding, and audit rows for discovered managed MCP tools", () => {
@@ -102,11 +111,18 @@ describe("managed MCP connection schema", () => {
       "input_schema",
       "raw_output_schema",
       "output_schema",
+      "capability_class",
+      "policy_revision",
+      "catalog_revision",
       "enabled",
       "discovered_at",
       "removed_at",
     ]));
-    expect(columnNames(schema.agentCustomIntegrationBindings)).toContain("connection_id");
+    expect(columnNames(schema.agentCustomIntegrationBindings)).toEqual(expect.arrayContaining([
+      "connection_id",
+      "access_mode",
+      "policy_revision",
+    ]));
     expect(columnNames(schema.customIntegrationToolCalls)).toEqual(expect.arrayContaining([
       "connection_id",
       "redacted_dispatch_outcome",
@@ -114,6 +130,12 @@ describe("managed MCP connection schema", () => {
     expect(
       getTableConfig(schema.customIntegrationTools).indexes.map((index) => index.config.name),
     ).toContain("custom_integration_tools_connection_external_name_uq");
+    expect(
+      getTableConfig(schema.customIntegrationTools).checks.map((constraint) => constraint.name),
+    ).toContain("custom_integration_tools_capability_class_check");
+    expect(
+      getTableConfig(schema.agentCustomIntegrationBindings).checks.map((constraint) => constraint.name),
+    ).toContain("agent_custom_integration_bindings_access_mode_check");
   });
 
   it("keeps legacy custom integration references nullable for backward-compatible managed rows", () => {

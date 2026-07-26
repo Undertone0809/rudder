@@ -29,7 +29,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { type ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { useMarkdownMentions } from "@/context/MarkdownMentionsContext";
 import { useResolvedIssueMention } from "@/hooks/useResolvedIssueMention";
-import { agentTitleBadgeLabel } from "@/lib/agent-labels";
 import {
   assigneeValueFromSelection,
   currentUserAssigneeOption,
@@ -53,9 +52,17 @@ import { mergeNativeSteerTranscriptEntries } from "@/lib/chat-stream-state";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "@/lib/mention-chips";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
 import { Link } from "@/lib/router";
-import { formatSkillReferenceDisplayLabel, parseSkillReference } from "@/lib/skill-reference";
+import {
+  formatSkillReferenceDisplayLabel,
+  parseSkillReference,
+  resolveSkillReferenceOpenHref,
+} from "@/lib/skill-reference";
 import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { agentUrl, cn, relativeTime } from "@/lib/utils";
+import {
+  ChatComposerFileDropOverlay,
+  useChatComposerFileDrop,
+} from "@/pages/Chat.file-drop";
 import {
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
@@ -104,16 +111,24 @@ export function ChatAssistantAttributionRow({
   conversation: ChatConversation;
   agents: Agent[] | undefined;
 }) {
-  const agent = replyingAgentId ? agents?.find((a) => a.id === replyingAgentId) : null;
-  const fallbackLabel = replyingAgentId ? conversation.chatRuntime?.sourceLabel ?? "Unknown agent" : "Assistant";
+  const effectiveReplyingAgentId = replyingAgentId
+    ?? conversation.chatRuntime?.runtimeAgentId
+    ?? conversation.preferredAgentId
+    ?? null;
+  const agent = effectiveReplyingAgentId
+    ? agents?.find((a) => a.id === effectiveReplyingAgentId)
+    : null;
+  const fallbackLabel = effectiveReplyingAgentId
+    ? conversation.chatRuntime?.sourceLabel ?? "Unknown agent"
+    : "Assistant";
   const label = agent?.name ?? fallbackLabel;
   const content = (
     <>
-      {agent || replyingAgentId ? (
+      {agent || effectiveReplyingAgentId ? (
         <AgentIcon
           icon={agent?.icon}
           role={agent?.role}
-          fallbackSeed={agent?.id ?? replyingAgentId}
+          fallbackSeed={agent?.id ?? effectiveReplyingAgentId}
           className="h-8 w-8 shrink-0"
         />
       ) : (
@@ -317,7 +332,7 @@ function ProposalPrincipalLabel({ principal }: { principal: ProposalPrincipalDis
       <AssigneeLabel
         kind="agent"
         label={principal.label}
-        badgeLabel={principal.agent ? agentTitleBadgeLabel(principal.agent) : null}
+        agentAvatarStyle="bare"
         agentIcon={principal.agent?.icon ?? null}
         agentRole={principal.agent?.role ?? null}
       />
@@ -1342,7 +1357,19 @@ export function ChatUserPlainTextBody({
             ?? skillPreviewByLabel.get(normalizeSkillReferenceLookupKey(part.label))
             ?? null;
           const skillLabel = formatSkillReferenceDisplayLabel(preview?.label) || part.label;
-          return <SkillReferenceToken key={`${part.href}-${index}`} label={skillLabel} preview={preview} />;
+          return (
+            <SkillReferenceToken
+              key={`${part.href}-${index}`}
+              label={skillLabel}
+              preview={preview}
+              fallbackOpenHref={resolveSkillReferenceOpenHref(part.href)}
+              onOpen={onMarkdownLinkClick
+                ? (event, targetHref, targetLabel) => {
+                    handlePlainTextLinkClick(event, targetHref, targetLabel);
+                  }
+                : undefined}
+            />
+          );
         }
 
         const mention = resolvedMentionFromCurrentOptions(part.mention, mentions);
@@ -1727,6 +1754,7 @@ export function AskUserPanel({
   disabled,
   pendingFiles,
   onAddAttachment,
+  onDropAttachments,
   onRemovePendingFile,
   onPasteAttachment,
   onSubmit,
@@ -1736,6 +1764,7 @@ export function AskUserPanel({
   disabled: boolean;
   pendingFiles: File[];
   onAddAttachment: () => void;
+  onDropAttachments: (files: Iterable<File>) => void | Promise<void>;
   onRemovePendingFile: (fileKey: string) => void;
   onPasteAttachment: (event: ReactClipboardEvent<HTMLDivElement>) => void;
   onSubmit: (body: string) => void;
@@ -1752,6 +1781,10 @@ export function AskUserPanel({
   const freeformByQuestionId = activeDraftState.freeformByQuestionId;
   const currentQuestionIndex = activeDraftState.currentQuestionIndex;
   const reviewingAnswers = activeDraftState.reviewingAnswers;
+  const {
+    active: fileDragActive,
+    targetProps: fileDropTargetProps,
+  } = useChatComposerFileDrop(onDropAttachments);
 
   useEffect(() => {
     setDraftState(normalizeAskUserPanelDraft(
@@ -1877,8 +1910,13 @@ export function AskUserPanel({
     <div
       data-testid="chat-ask-user-panel"
       onPasteCapture={onPasteAttachment}
-      className="rounded-[var(--radius-lg)] border border-[color:color-mix(in_oklab,var(--accent-base)_35%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_28%,var(--surface-elevated))] p-3 shadow-[var(--shadow-sm)]"
+      {...fileDropTargetProps}
+      className={cn(
+        "relative rounded-[var(--radius-lg)] border border-[color:color-mix(in_oklab,var(--accent-base)_35%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_28%,var(--surface-elevated))] p-3 shadow-[var(--shadow-sm)]",
+        fileDragActive && "ring-2 ring-[color:var(--accent-base)] ring-offset-2 ring-offset-background",
+      )}
     >
+      {fileDragActive ? <ChatComposerFileDropOverlay /> : null}
       {hasMultipleQuestions ? (
         <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span>{reviewingAnswers ? "Review answers" : `Question ${boundedQuestionIndex + 1} of ${questionCount}`}</span>
@@ -1889,7 +1927,10 @@ export function AskUserPanel({
       {reviewingAnswers ? (
         <section className="rounded-[var(--radius-md)] border border-border bg-card/85 p-3">
           <div className="text-sm font-medium text-foreground">Review answers</div>
-          <div className="mt-2 space-y-2">
+          <div
+            data-testid="chat-ask-user-review-scroll"
+            className="scrollbar-auto-hide mt-2 max-h-[min(48dvh,28rem)] space-y-2 overflow-y-auto overscroll-contain pr-1"
+          >
             {request.questions.map((question, index) => {
               const answer = answersWithAttachmentFallback[question.id];
               return (
@@ -2012,7 +2053,7 @@ export function AskUserPanel({
                   },
                 }))}
                 placeholder="Type your answer..."
-                className="min-h-20 resize-y rounded-[var(--radius-md)] bg-background text-sm"
+                className="min-h-20 max-h-[min(38dvh,22rem)] resize-y overflow-y-auto rounded-[var(--radius-md)] bg-background text-sm"
               />
               <div className="flex flex-wrap items-center gap-2">
                 <Button

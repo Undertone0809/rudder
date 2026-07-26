@@ -22,6 +22,7 @@ export const chatQueuedMessages = pgTable(
     version: integer("version").notNull().default(1),
     clientMutationId: text("client_mutation_id").notNull(),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    runtimeSnapshotVersion: integer("runtime_snapshot_version"),
     requestActor: jsonb("request_actor").$type<ChatQueueRequestActor>(),
     deliveryIntent: text("delivery_intent").$type<ChatQueueDeliveryIntent>().notNull().default("queue"),
     deliveryDisposition: text("delivery_disposition").$type<ChatControlDisposition>(),

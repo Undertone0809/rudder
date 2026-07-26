@@ -63,6 +63,7 @@ export function normalizeQueuedMessagePayload(
       ? payload.skillRefs.filter((ref): ref is string => typeof ref === "string")
       : [],
     accessMode: typeof payload.accessMode === "string" ? payload.accessMode : null,
+    agentId: typeof payload.agentId === "string" ? payload.agentId : null,
     model: typeof payload.model === "string" ? payload.model : null,
     effort: typeof payload.effort === "string" ? payload.effort : null,
     metadata:
@@ -139,6 +140,7 @@ export function queuedMessageMutationFingerprint(input: {
   payload: Record<string, unknown>;
   stagedAttachments: readonly StagedQueuedAnnotationAttachment[];
   attachmentFileIndexesByAnnotationId: ReadonlyMap<string, readonly number[]>;
+  runtimeSnapshotVersion?: number | null;
 }) {
   const annotationIdByFileIndex = fileAnnotationBindings(
     input.stagedAttachments,
@@ -153,9 +155,24 @@ export function queuedMessageMutationFingerprint(input: {
     sha256: attachment.sha256,
     originalFilename: attachment.originalFilename,
   }));
+  const normalizedPayload = normalizeQueuedMessagePayload(input.payload);
+  // Version 1 marks Agent/model/effort as server-owned admission snapshots. Legacy
+  // queue rows have no marker, so their historical client-controlled fields
+  // remain part of the idempotency fingerprint for exact upgrade compatibility.
+  const clientPayload = input.runtimeSnapshotVersion === 1
+    ? (() => {
+        const {
+          agentId: _agentIdSnapshot,
+          model: _modelSnapshot,
+          effort: _effortSnapshot,
+          ...rest
+        } = normalizedPayload;
+        return rest;
+      })()
+    : normalizedPayload;
   return createHash("sha256")
     .update(JSON.stringify({
-      payload: normalizeQueuedMessagePayload(input.payload),
+      payload: clientPayload,
       files,
     }))
     .digest("hex");

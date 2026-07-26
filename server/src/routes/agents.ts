@@ -1230,11 +1230,26 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     const endDate = typeof req.query.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.endDate)
       ? req.query.endDate
       : undefined;
+    const from = typeof req.query.from === "string" && Number.isFinite(new Date(req.query.from).getTime())
+      ? req.query.from
+      : undefined;
+    const to = typeof req.query.to === "string" && Number.isFinite(new Date(req.query.to).getTime())
+      ? req.query.to
+      : undefined;
+    const rawTimezoneOffsetMinutes = typeof req.query.timezoneOffsetMinutes === "string"
+      ? Number.parseInt(req.query.timezoneOffsetMinutes, 10)
+      : undefined;
+    const timezoneOffsetMinutes = Number.isFinite(rawTimezoneOffsetMinutes)
+      && Math.abs(rawTimezoneOffsetMinutes!) <= 14 * 60
+      ? rawTimezoneOffsetMinutes
+      : undefined;
 
     const analytics: AgentSkillAnalytics = await heartbeat.getAgentSkillAnalytics(agent.id, {
       windowDays: Number.isFinite(rawWindowDays) ? rawWindowDays : undefined,
       startDate,
       endDate,
+      ...(from && to && new Date(from) <= new Date(to) ? { from, to } : {}),
+      timezoneOffsetMinutes,
     });
     res.json(analytics);
   });

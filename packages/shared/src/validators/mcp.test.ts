@@ -19,6 +19,16 @@ describe("managed MCP shared contracts", () => {
       .toEqual(["stdio", "streamable_http", "legacy_manual"]);
     expect((shared as unknown as Record<string, unknown>).MCP_CONNECTION_ACCESS_MODES)
       .toEqual(["provider_default", "read_only", "read_write"]);
+    expect((shared as unknown as Record<string, unknown>).MCP_AGENT_ACCESS_MODES)
+      .toEqual(["none", "read_only", "read_write", "provider_granted", "full"]);
+    expect((shared as unknown as Record<string, unknown>).MCP_CONNECTION_CANONICAL_STATES)
+      .toEqual(["canonical", "superseded"]);
+    expect((shared as unknown as Record<string, unknown>).MCP_PROVIDER_SCOPE_MODES)
+      .toEqual(["account", "workspace", "legacy_project"]);
+    expect((shared as unknown as Record<string, unknown>).MCP_PROVIDER_ORGANIZATION_STATES)
+      .toEqual(["not_connected", "connecting", "connected", "needs_attention", "disconnected"]);
+    expect((shared as unknown as Record<string, unknown>).MCP_TOOL_CAPABILITY_CLASSES)
+      .toEqual(["read", "normal_write", "destructive", "admin_or_billing", "unknown"]);
     expect((shared as unknown as Record<string, unknown>).MCP_CONNECTION_STATUSES)
       .toEqual([
         "draft",
@@ -602,6 +612,9 @@ describe("managed MCP shared contracts", () => {
       description: "Search connected content",
       inputSchema: { type: "object" },
       outputSchema: null,
+      capabilityClass: "read",
+      policyRevision: 1,
+      catalogRevision: 1,
       enabled: true,
       removedAt: null,
     }).success).toBe(true);
@@ -610,12 +623,15 @@ describe("managed MCP shared contracts", () => {
       connectionId: "22222222-2222-4222-8222-222222222222",
       agentId: "33333333-3333-4333-8333-333333333333",
       status: "active",
+      accessMode: "read_only",
+      policyRevision: 1,
       enabledToolIds: ["44444444-4444-4444-8444-444444444444"],
     }).success).toBe(true);
 
     const runtimeBinding = {
       bindingId: "22222222-2222-4222-8222-222222222222",
       serverName: "team-tools",
+      accessMode: "read_only",
       toolPolicy: {
         mode: "allowlist",
         allowedToolNames: ["search"],
@@ -645,6 +661,8 @@ describe("managed MCP shared contracts", () => {
     expect(upsertSchema.safeParse({}).success).toBe(true);
     expect(upsertSchema.safeParse({
       status: "disabled",
+      accessMode: "none",
+      expectedRevision: 3,
       enabledToolIds: ["44444444-4444-4444-8444-444444444444"],
     }).success).toBe(true);
     expect(upsertSchema.safeParse({
@@ -677,6 +695,109 @@ describe("managed MCP shared contracts", () => {
       },
       binding: null,
       tools: [],
+      reviewRequired: false,
     }).success).toBe(true);
+  });
+
+  it("validates provider availability without mixing organization lifecycle and agent access", () => {
+    const availabilitySchema = exportedSchema("mcpProviderAvailabilitySchema");
+    if (!availabilitySchema) return;
+
+    expect(availabilitySchema.safeParse({
+      provider: "supabase",
+      organization: {
+        state: "connected",
+        connectionId: "22222222-2222-4222-8222-222222222222",
+        maxAccess: "read_write",
+        scopeMode: "account",
+        revision: 4,
+        historicalGrantConnectionIds: [
+          "33333333-3333-4333-8333-333333333333",
+        ],
+      },
+      agent: {
+        access: "read_only",
+        activeRunUsesOlderPolicy: false,
+      },
+    }).success).toBe(true);
+
+    expect(availabilitySchema.safeParse({
+      provider: "supabase",
+      organization: {
+        state: "connected",
+        connectionId: "22222222-2222-4222-8222-222222222222",
+        maxAccess: "read_write",
+        scopeMode: "account",
+        revision: 4,
+        historicalGrantConnectionIds: ["not-a-uuid"],
+      },
+    }).success).toBe(false);
+
+    expect(availabilitySchema.safeParse({
+      provider: "supabase",
+      organization: {
+        state: "connected",
+        connectionId: null,
+        maxAccess: "read_write",
+        scopeMode: "account",
+        revision: 4,
+      },
+    }).success).toBe(false);
+
+    expect(availabilitySchema.safeParse({
+      provider: "notion",
+      organization: {
+        state: "connected",
+        connectionId: "22222222-2222-4222-8222-222222222222",
+        maxAccess: "read_only",
+        scopeMode: "workspace",
+        revision: 1,
+      },
+    }).success).toBe(false);
+
+    expect(availabilitySchema.safeParse({
+      provider: "notion",
+      organization: {
+        state: "connected",
+        connectionId: "22222222-2222-4222-8222-222222222222",
+        maxAccess: "provider_granted",
+        scopeMode: "workspace",
+        revision: 1,
+      },
+      agent: {
+        access: "provider_granted",
+        activeRunUsesOlderPolicy: false,
+      },
+    }).success).toBe(true);
+
+    expect(availabilitySchema.safeParse({
+      provider: "supabase",
+      organization: {
+        state: "connected",
+        connectionId: "22222222-2222-4222-8222-222222222222",
+        maxAccess: "read_only",
+        scopeMode: "account",
+        revision: 1,
+      },
+      agent: {
+        access: "read_write",
+        activeRunUsesOlderPolicy: false,
+      },
+    }).success).toBe(false);
+
+    expect(availabilitySchema.safeParse({
+      provider: "notion",
+      organization: {
+        state: "connected",
+        connectionId: "22222222-2222-4222-8222-222222222222",
+        maxAccess: "provider_default",
+        scopeMode: "workspace",
+        revision: 1,
+      },
+      agent: {
+        access: "read_only",
+        activeRunUsesOlderPolicy: false,
+      },
+    }).success).toBe(false);
   });
 });

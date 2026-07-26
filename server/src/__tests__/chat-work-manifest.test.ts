@@ -10,12 +10,14 @@ import {
   createDb,
   ensurePostgresDatabase,
   heartbeatRuns,
+  issueComments,
+  issues,
   organizationResources,
   organizations,
   projectResourceAttachments,
   projects,
 } from "@rudderhq/db";
-import { deriveOrganizationUrlKey } from "@rudderhq/shared";
+import { deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -105,6 +107,8 @@ describe("chatWorkManifestService", () => {
     await db.delete(heartbeatRuns);
     await db.delete(chatContextLinks);
     await db.delete(chatConversations);
+    await db.delete(issueComments);
+    await db.delete(issues);
     await db.delete(projectResourceAttachments);
     await db.delete(organizationResources);
     await db.delete(projects);
@@ -489,6 +493,321 @@ describe("chatWorkManifestService", () => {
       id: referencedChat?.id,
       title: renamedConversationTitle,
     });
+  });
+
+  it("does not project an issue before the conversation has a created primary issue", async () => {
+    const { orgId, agentId, conversationId } = await seedBase("PendingIssue");
+    await db.insert(chatMessages).values({
+      orgId,
+      conversationId,
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Propose an issue, but wait for operator approval.",
+      replyingAgentId: agentId,
+    });
+
+    await svc.reconcileConversation(conversationId);
+
+    expect((await svc.getConversationManifest(conversationId)).references).toEqual([]);
+  });
+
+  it("projects the same-organization primary issue once with readable identity and valid proposal provenance", async () => {
+    const { orgId, agentId, conversationId } = await seedBase("PrimaryIssue");
+    const issueId = randomUUID();
+    const messageId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Expose the created issue",
+      identifier: "PRI-42",
+      status: "todo",
+      createdByAgentId: agentId,
+    });
+    await db.insert(chatMessages).values({
+      id: messageId,
+      orgId,
+      conversationId,
+      role: "assistant",
+      kind: "issue_proposal",
+      body: [
+        `[PRI-42](issue://${issueId}?r=PRI-42)`,
+        "[PRI-42 route](/issues/pri-42)",
+      ].join(" "),
+      replyingAgentId: agentId,
+    });
+    await db.insert(chatContextLinks).values({
+      orgId,
+      conversationId,
+      entityType: "issue",
+      entityId: issueId,
+      metadata: { sourceMessageId: messageId },
+    });
+    await db.update(chatConversations)
+      .set({ primaryIssueId: issueId })
+      .where(eq(chatConversations.id, conversationId));
+
+    await svc.reconcileConversation(conversationId);
+    const manifest = await svc.getConversationManifest(conversationId);
+
+    expect(manifest.references).toHaveLength(1);
+    expect(manifest.references[0]).toMatchObject({
+      targetType: "issue",
+      targetKey: `issue:${issueId}`,
+      title: "PRI-42 · Expose the created issue",
+      messageId,
+      sourceRole: "assistant",
+      createdByAgentId: agentId,
+      metadata: {
+        issueId,
+        issueIdentifier: "PRI-42",
+        issueTitle: "Expose the created issue",
+        ref: "PRI-42",
+        issueStatus: "todo",
+      },
+    });
+  });
+
+  it("canonicalizes issue and comment references, repairs historical rows, and preserves organization boundaries", async () => {
+    const first = await seedBase("IssueStatus");
+    const second = await seedBase("ForeignIssueStatus");
+    const issueId = randomUUID();
+    const foreignIssueId = randomUUID();
+    const commentId = randomUUID();
+    const uppercaseCommentId = randomUUID();
+    const deletedCommentId = randomUUID();
+    const foreignCommentId = randomUUID();
+    await db.insert(issues).values([
+      {
+        id: issueId,
+        orgId: first.orgId,
+        title: "Visible status issue",
+        identifier: "STATUS-1",
+        status: "in_progress",
+      },
+      {
+        id: foreignIssueId,
+        orgId: second.orgId,
+        title: "Foreign status issue",
+        identifier: "FOREIGN-STATUS-1",
+        status: "blocked",
+      },
+    ]);
+    await db.insert(issueComments).values([
+      {
+        id: commentId,
+        orgId: first.orgId,
+        issueId,
+        body: "Canonical comment",
+      },
+      {
+        id: deletedCommentId,
+        orgId: first.orgId,
+        issueId,
+        body: "Deleted comment",
+        deletedAt: new Date(),
+      },
+      {
+        id: uppercaseCommentId,
+        orgId: first.orgId,
+        issueId,
+        body: "Uppercase UUID comment",
+      },
+      {
+        id: foreignCommentId,
+        orgId: second.orgId,
+        issueId: foreignIssueId,
+        body: "Foreign comment",
+      },
+    ]);
+    await db.insert(chatMessages).values({
+      orgId: first.orgId,
+      conversationId: first.conversationId,
+      role: "user",
+      body: [
+        `[Stale visible issue](issue://${issueId}?r=STATUS-1)`,
+        "[Identifier route](/issues/status-1)",
+        `[Comment](issue://STATUS-1?c=${shortRefFor("issue_comment", commentId)})`,
+        `[Uppercase UUID comment](issue://STATUS-1?c=${uppercaseCommentId.toUpperCase()})`,
+        `[Deleted comment](issue://${issueId}?c=${deletedCommentId})`,
+        `[Foreign issue](issue://${foreignIssueId}?r=FOREIGN-STATUS-1)`,
+        `[Foreign comment](issue://${foreignIssueId}?c=${foreignCommentId})`,
+      ].join(" "),
+    });
+
+    await svc.reconcileConversation(first.conversationId);
+    const initialManifest = await svc.getConversationManifest(first.conversationId);
+    expect(initialManifest.references).toHaveLength(6);
+    expect(initialManifest.references.filter((item) => item.targetType === "issue")).toHaveLength(2);
+    expect(initialManifest.references.find((item) => item.targetKey === `issue:${issueId}`)).toMatchObject({
+      title: "STATUS-1 · Visible status issue",
+      metadata: {
+        issueId,
+        issueIdentifier: "STATUS-1",
+        issueTitle: "Visible status issue",
+        ref: "STATUS-1",
+        issueStatus: "in_progress",
+      },
+    });
+    expect(initialManifest.references.find((item) => item.targetType === "issue_comment" && item.metadata?.commentId === commentId))
+      .toMatchObject({
+        targetKey: `issue-comment:${issueId}:${commentId}`,
+        title: "STATUS-1 · Visible status issue",
+        metadata: {
+          issueId,
+          issueIdentifier: "STATUS-1",
+          issueTitle: "Visible status issue",
+          ref: "STATUS-1",
+          issueStatus: "in_progress",
+          commentId,
+        },
+      });
+    expect(initialManifest.references.find((item) => item.metadata?.commentId === uppercaseCommentId))
+      .toMatchObject({
+        targetKey: `issue-comment:${issueId}:${uppercaseCommentId}`,
+        title: "STATUS-1 · Visible status issue",
+        metadata: {
+          issueId,
+          issueStatus: "in_progress",
+          commentId: uppercaseCommentId,
+        },
+      });
+    const deletedComment = initialManifest.references.find((item) => item.metadata?.commentId === deletedCommentId);
+    expect(deletedComment).toMatchObject({ title: "Deleted comment" });
+    expect(deletedComment?.metadata).not.toHaveProperty("issueStatus");
+    const foreignIssue = initialManifest.references.find((item) => item.metadata?.issueId === foreignIssueId);
+    expect(foreignIssue).toMatchObject({ title: "Foreign issue" });
+    expect(foreignIssue?.metadata).not.toHaveProperty("issueStatus");
+    const foreignComment = initialManifest.references.find((item) => item.metadata?.commentId === foreignCommentId);
+    expect(foreignComment).toMatchObject({ title: "Foreign comment" });
+    expect(foreignComment?.metadata).not.toHaveProperty("issueStatus");
+
+    const canonicalIssueRow = initialManifest.references.find((item) => item.targetKey === `issue:${issueId}`);
+    if (!canonicalIssueRow) throw new Error("Expected canonical issue row");
+    await db.update(chatWorkManifestItems)
+      .set({ title: "Issue", metadata: { issueId } })
+      .where(eq(chatWorkManifestItems.id, canonicalIssueRow.id));
+    await db.update(issues)
+      .set({ title: "Renamed visible issue", status: "done" })
+      .where(eq(issues.id, issueId));
+    await svc.reconcileConversation(first.conversationId);
+    const refreshedManifest = await svc.getConversationManifest(first.conversationId);
+    expect(refreshedManifest.references.find((item) => item.targetKey === `issue:${issueId}`)).toMatchObject({
+      id: canonicalIssueRow.id,
+      title: "STATUS-1 · Renamed visible issue",
+      metadata: {
+        issueId,
+        issueTitle: "Renamed visible issue",
+        issueStatus: "done",
+      },
+    });
+    expect(refreshedManifest.references.find((item) => item.targetType === "issue_comment" && item.metadata?.commentId === commentId))
+      .toMatchObject({
+        title: "STATUS-1 · Renamed visible issue",
+        metadata: { issueTitle: "Renamed visible issue", issueStatus: "done" },
+      });
+    expect(refreshedManifest.references.find((item) => item.metadata?.issueId === foreignIssueId)?.metadata)
+      .not.toHaveProperty("issueStatus");
+  });
+
+  it("omits stale primary-issue provenance and rejects cross-organization primary issues", async () => {
+    const first = await seedBase("PrimaryBoundary");
+    const second = await seedBase("ForeignPrimary");
+    const issueId = randomUUID();
+    const foreignIssueId = randomUUID();
+    const sourceMessageId = randomUUID();
+    await db.insert(issues).values([
+      {
+        id: issueId,
+        orgId: first.orgId,
+        title: "Scoped primary issue",
+        identifier: "SCOPED-1",
+        status: "todo",
+      },
+      {
+        id: foreignIssueId,
+        orgId: second.orgId,
+        title: "Foreign primary issue",
+        identifier: "FOREIGN-1",
+        status: "todo",
+      },
+    ]);
+    await db.insert(chatMessages).values({
+      id: sourceMessageId,
+      orgId: first.orgId,
+      conversationId: first.conversationId,
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Superseded issue proposal",
+      supersededAt: new Date(),
+    });
+    await db.insert(chatContextLinks).values({
+      orgId: first.orgId,
+      conversationId: first.conversationId,
+      entityType: "issue",
+      entityId: issueId,
+      metadata: { sourceMessageId },
+    });
+    await db.update(chatConversations)
+      .set({ primaryIssueId: issueId })
+      .where(eq(chatConversations.id, first.conversationId));
+
+    await svc.reconcileConversation(first.conversationId);
+    expect((await svc.getConversationManifest(first.conversationId)).references[0]).toMatchObject({
+      targetKey: `issue:${issueId}`,
+      messageId: null,
+    });
+
+    await db.update(chatConversations)
+      .set({ primaryIssueId: foreignIssueId })
+      .where(eq(chatConversations.id, first.conversationId));
+    await svc.reconcileConversation(first.conversationId);
+
+    expect((await svc.getConversationManifest(first.conversationId)).references).toEqual([]);
+  });
+
+  it("removes the derived primary-issue row when the association is cleared or the issue is deleted", async () => {
+    const { orgId, conversationId } = await seedBase("StalePrimary");
+    const firstIssueId = randomUUID();
+    const deletedIssueId = randomUUID();
+    await db.insert(issues).values([
+      {
+        id: firstIssueId,
+        orgId,
+        title: "Detached primary issue",
+        identifier: "STALE-1",
+        status: "todo",
+      },
+      {
+        id: deletedIssueId,
+        orgId,
+        title: "Deleted primary issue",
+        identifier: "STALE-2",
+        status: "todo",
+      },
+    ]);
+    await db.update(chatConversations)
+      .set({ primaryIssueId: firstIssueId })
+      .where(eq(chatConversations.id, conversationId));
+    await svc.reconcileConversation(conversationId);
+    expect((await svc.getConversationManifest(conversationId)).references).toHaveLength(1);
+
+    await db.update(chatConversations)
+      .set({ primaryIssueId: null })
+      .where(eq(chatConversations.id, conversationId));
+    await svc.reconcileConversation(conversationId);
+    expect((await svc.getConversationManifest(conversationId)).references).toEqual([]);
+
+    await db.update(chatConversations)
+      .set({ primaryIssueId: deletedIssueId })
+      .where(eq(chatConversations.id, conversationId));
+    await svc.reconcileConversation(conversationId);
+    expect((await svc.getConversationManifest(conversationId)).references).toHaveLength(1);
+
+    await db.delete(issues).where(eq(issues.id, deletedIssueId));
+    await svc.reconcileConversation(conversationId);
+
+    expect((await svc.getConversationManifest(conversationId)).references).toEqual([]);
+    expect(await db.select().from(chatWorkManifestItems)).toEqual([]);
   });
 
   it("keeps project resources in the project roll-up and enforces organization boundaries", async () => {

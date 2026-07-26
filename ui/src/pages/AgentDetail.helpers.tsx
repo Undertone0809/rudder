@@ -86,6 +86,7 @@ export function getDayKeysBetween(from: string, to: string): string[] {
 }
 
 export function formatRangeLabel(preset: DashboardDatePreset, customFrom: string, customTo: string): string {
+  if (preset === "1d") return "Today";
   if (preset === "7d") return "Last 7 days";
   if (preset === "15d") return "Last 15 days";
   if (preset === "30d") return "Last 30 days";

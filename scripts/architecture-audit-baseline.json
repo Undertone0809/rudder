@@ -66,6 +66,14 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "ui/src/pages/AgentDetail.integrations.tsx",
+      "lines": 1501,
+      "owner": "agents-ui",
+      "rationale": "Agent integration configuration still combines provider setup, connection state, and interaction controls while the managed integration surface stabilizes.",
+      "target": "Extract provider-specific integration panels and reduce this module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
       "path": "server/src/routes/chats.ts",
       "lines": 1792,
       "owner": "collaboration-server",

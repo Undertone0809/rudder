@@ -28,6 +28,8 @@ function makeConversation(overrides: Partial<ChatConversation> = {}): ChatConver
     latestUserMessagePreview: null,
     userMessageCount: 0,
     preferredAgentId: "agent-1",
+    modelOverride: null,
+    effortOverride: null,
     routedAgentId: null,
     primaryIssueId: null,
     forkedFromConversationId: null,
@@ -126,6 +128,44 @@ describe("enrichConversationRuntimeDescriptors", () => {
     expect(enriched.map((conversation) => conversation.chatRuntime.runtimeAgentId)).toEqual([
       "agent-1",
       "agent-2",
+    ]);
+  });
+
+  it("resolves the same agent separately for distinct conversation model overrides", async () => {
+    const resolveDescriptor = vi.fn(async (
+      conversation: Pick<ChatConversation, "orgId" | "preferredAgentId" | "modelOverride">,
+    ) => makeDescriptor({ model: conversation.modelOverride ?? "gpt-5.4" }));
+
+    const enriched = await enrichConversationRuntimeDescriptors([
+      makeConversation({ id: "chat-default", modelOverride: null }),
+      makeConversation({ id: "chat-sol", modelOverride: "gpt-5.6-sol" }),
+      makeConversation({ id: "chat-terra", modelOverride: "gpt-5.6-terra" }),
+    ], resolveDescriptor);
+
+    expect(resolveDescriptor).toHaveBeenCalledTimes(3);
+    expect(enriched.map((conversation) => conversation.chatRuntime.model)).toEqual([
+      "gpt-5.4",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+    ]);
+  });
+
+  it("resolves the same model separately for distinct conversation effort overrides", async () => {
+    const resolveDescriptor = vi.fn(async (
+      conversation: Pick<ChatConversation, "orgId" | "preferredAgentId" | "effortOverride">,
+    ) => makeDescriptor({ effort: conversation.effortOverride ?? null }));
+
+    const enriched = await enrichConversationRuntimeDescriptors([
+      makeConversation({ id: "chat-default", effortOverride: null }),
+      makeConversation({ id: "chat-high", effortOverride: "high" }),
+      makeConversation({ id: "chat-xhigh", effortOverride: "xhigh" }),
+    ], resolveDescriptor);
+
+    expect(resolveDescriptor).toHaveBeenCalledTimes(3);
+    expect(enriched.map((conversation) => conversation.chatRuntime.effort)).toEqual([
+      null,
+      "high",
+      "xhigh",
     ]);
   });
 

@@ -3,6 +3,7 @@ import { CHAT_ANNOTATION_TEXT_IGNORE_ATTRIBUTE } from "@/lib/chat-response-annot
 import { skillTokenIconInlineStyle } from "@/lib/skill-reference";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight, Boxes } from "lucide-react";
+import type { MouseEvent } from "react";
 
 export interface MarkdownSkillReferencePreview {
   href: string;
@@ -12,34 +13,42 @@ export interface MarkdownSkillReferencePreview {
   categoryLabel?: string | null;
   locationLabel?: string | null;
   detailsHref?: string | null;
+  openHref?: string | null;
 }
 
 interface SkillReferenceTokenProps {
   label: string;
   preview?: MarkdownSkillReferencePreview | null;
+  fallbackOpenHref?: string | null;
   sourceAttributes?: Record<string, string | undefined>;
+  onOpen?: (event: MouseEvent<HTMLAnchorElement>, href: string, label: string) => void;
 }
 
 export function SkillReferenceToken({
   label,
   preview,
+  fallbackOpenHref,
   sourceAttributes,
+  onOpen,
 }: SkillReferenceTokenProps) {
   const displayName = preview?.displayName?.trim() || label;
   const description = preview?.description?.trim() || null;
   const categoryLabel = preview?.categoryLabel?.trim() || null;
   const locationLabel = preview?.locationLabel?.trim() || null;
   const detailsHref = preview?.detailsHref?.trim() || null;
+  const openHref = fallbackOpenHref?.trim() || preview?.openHref?.trim() || null;
   const hasPreview = Boolean(description || categoryLabel || locationLabel || detailsHref);
   const hoverCardScrollRef = useScrollbarActivityRef();
-  const tokenContent = detailsHref ? (
+  const tokenHref = onOpen ? (openHref ?? detailsHref) : detailsHref;
+  const tokenContent = tokenHref ? (
     <a
       className="rudder-skill-token"
       data-skill-token="true"
-      href={detailsHref}
+      href={tokenHref}
       aria-label={`${displayName} skill`}
       style={skillTokenIconInlineStyle()}
       {...sourceAttributes}
+      onClick={(event) => onOpen?.(event, tokenHref, displayName)}
     >
       {label}
     </a>

@@ -10,11 +10,13 @@ import {
   ensurePostgresDatabase,
   heartbeatRuns,
   mcpConnections,
+  mcpOAuthGrants,
+  organizationSecrets,
   organizations,
   type LocalPostgresInstance,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -274,6 +276,7 @@ describe("managedMcpBindingService", () => {
     await db.delete(agentCustomIntegrationBindings);
     await db.delete(customIntegrationTools);
     await db.delete(mcpConnections);
+    await db.delete(organizationSecrets);
     await db.delete(heartbeatRuns);
     await db.delete(agents);
     await db.delete(organizations);
@@ -285,7 +288,7 @@ describe("managedMcpBindingService", () => {
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("defaults a first binding to current active tools and never auto-adds later discoveries", async () => {
+  it("requires one whole-catalog review before exposing later custom discoveries", async () => {
     const fixture = await seed(db);
     const svc = managedMcpBindingService(db);
 
@@ -300,6 +303,10 @@ describe("managedMcpBindingService", () => {
       fixture.alphaRead.id,
       fixture.alphaWrite.id,
     ].sort());
+    expect(created.binding).toMatchObject({
+      accessMode: "full",
+      policyRevision: 1,
+    });
     expect(await db.select({ action: activityLog.action }).from(activityLog)
       .where(eq(activityLog.entityId, created.binding!.id))).toEqual([
       { action: "mcp_agent_binding.created" },
@@ -320,6 +327,23 @@ describe("managedMcpBindingService", () => {
       "external.alpha.write",
     ]);
     expect(runtime[0]?.toolPolicy.allowedToolNames).not.toContain(later!.rudderToolName);
+    expect((await svc.listForAgent(fixture.orgId, fixture.agentId))
+      .find((row) => row.connection.id === fixture.first.id)?.reviewRequired)
+      .toBe(true);
+
+    const accepted = await svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { accessMode: "full", expectedRevision: created.binding!.policyRevision },
+      { userId: "board" },
+    );
+    expect(accepted.reviewRequired).toBe(false);
+    expect(accepted.binding?.enabledToolIds.sort()).toEqual([
+      fixture.alphaRead.id,
+      fixture.alphaWrite.id,
+      later!.id,
+    ].sort());
 
     await db.update(customIntegrationTools).set({
       status: "removed",
@@ -327,7 +351,13 @@ describe("managedMcpBindingService", () => {
       removedAt: new Date(),
     }).where(eq(customIntegrationTools.id, fixture.alphaWrite.id));
     expect((await svc.listRuntimeBindings(fixture.orgId, fixture.agentId))[0]
-      ?.toolPolicy.allowedToolNames).toEqual(["external.alpha.read"]);
+      ?.toolPolicy.allowedToolNames.sort()).toEqual([
+      "external.alpha.new-tool",
+      "external.alpha.read",
+    ]);
+    expect((await svc.listForAgent(fixture.orgId, fixture.agentId))
+      .find((row) => row.connection.id === fixture.first.id)?.reviewRequired)
+      .toBe(true);
   });
 
   it("preserves disabled and revoked binding state when a tool-only update omits status", async () => {
@@ -371,6 +401,188 @@ describe("managedMcpBindingService", () => {
       .then((rows) => rows[0]!);
     expect(persistedUpdated.revokedAt?.getTime())
       .toBe(persistedRevoked.revokedAt?.getTime());
+  });
+
+  it("enforces organization access ceilings and optimistic access revisions", async () => {
+    const fixture = await seed(db);
+    await db.update(mcpConnections).set({
+      provider: "supabase",
+      accessMode: "read_only",
+      scopeMode: "account",
+    }).where(eq(mcpConnections.id, fixture.first.id));
+    const [oauthSecret] = await db.insert(organizationSecrets).values({
+      orgId: fixture.orgId,
+      name: `managed-mcp-test-${randomUUID()}`,
+      provider: "local_encrypted",
+      purpose: "managed_mcp_oauth",
+      latestVersion: 1,
+    }).returning();
+    await db.insert(mcpOAuthGrants).values({
+      orgId: fixture.orgId,
+      connectionId: fixture.first.id,
+      credentialSecretId: oauthSecret!.id,
+      status: "active",
+    });
+    const svc = managedMcpBindingService(db);
+
+    const created = await svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { accessMode: "read_only" },
+    );
+    expect(created.binding).toMatchObject({
+      accessMode: "read_only",
+      status: "active",
+      policyRevision: 1,
+    });
+    expect((await svc.listProviderAvailability(fixture.orgId))
+      .find((status) => status.provider === "supabase")?.organization)
+      .toMatchObject({
+        state: "connected",
+        maxAccess: "read_only",
+        scopeMode: "account",
+        affectedAgentCount: 1,
+      });
+    expect((await svc.listProviderAvailability(fixture.orgId, fixture.agentId))
+      .find((status) => status.provider === "supabase")?.agent)
+      .toMatchObject({ access: "read_only" });
+    await expect(svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { accessMode: "none" },
+    )).rejects.toMatchObject({ status: 409 });
+    await expect(svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { accessMode: "read_write", expectedRevision: 1 },
+    )).rejects.toThrow("cannot exceed");
+
+    const disabled = await svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { accessMode: "none", expectedRevision: 1 },
+    );
+    expect(disabled.binding).toMatchObject({
+      accessMode: "none",
+      status: "disabled",
+      policyRevision: 2,
+    });
+    expect((await svc.listProviderAvailability(fixture.orgId))
+      .find((status) => status.provider === "supabase")
+      ?.organization.affectedAgentCount).toBe(0);
+    await expect(svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { accessMode: "read_only", expectedRevision: 1 },
+    )).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("lets legacy tool-id updates narrow but never expand or change coarse access", async () => {
+    const fixture = await seed(db);
+    const svc = managedMcpBindingService(db);
+    await svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      {},
+    );
+
+    const narrowed = await svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { enabledToolIds: [fixture.alphaRead.id] },
+    );
+    expect(narrowed.binding).toMatchObject({
+      accessMode: "full",
+      enabledToolIds: [fixture.alphaRead.id],
+    });
+    await expect(svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { enabledToolIds: [fixture.alphaRead.id, fixture.alphaWrite.id] },
+    )).rejects.toThrow(/only narrow/i);
+    await expect(svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      {
+        accessMode: "full",
+        expectedRevision: narrowed.binding.policyRevision - 1,
+        enabledToolIds: [fixture.alphaRead.id, fixture.alphaWrite.id],
+      },
+    )).rejects.toMatchObject({ status: 409 });
+    await expect(svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { status: "disabled" },
+    )).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("reports and snapshots effective access capped by the organization maximum", async () => {
+    const fixture = await seed(db);
+    await db.update(mcpConnections).set({
+      provider: "supabase",
+      accessMode: "read_write",
+      scopeMode: "account",
+    }).where(eq(mcpConnections.id, fixture.first.id));
+    await db.update(customIntegrationTools).set({
+      capabilityClass: "read",
+    }).where(eq(customIntegrationTools.id, fixture.alphaRead.id));
+    await db.update(customIntegrationTools).set({
+      capabilityClass: "normal_write",
+    }).where(eq(customIntegrationTools.id, fixture.alphaWrite.id));
+    const [oauthSecret] = await db.insert(organizationSecrets).values({
+      orgId: fixture.orgId,
+      name: `managed-mcp-effective-${randomUUID()}`,
+      provider: "local_encrypted",
+      purpose: "managed_mcp_oauth",
+      latestVersion: 1,
+    }).returning();
+    await db.insert(mcpOAuthGrants).values({
+      orgId: fixture.orgId,
+      connectionId: fixture.first.id,
+      credentialSecretId: oauthSecret!.id,
+      status: "active",
+    });
+    const svc = managedMcpBindingService(db);
+    await svc.upsert(fixture.orgId, fixture.agentId, fixture.first.id, {
+      accessMode: "read_write",
+    });
+
+    await db.update(mcpConnections).set({
+      accessMode: "read_only",
+    }).where(eq(mcpConnections.id, fixture.first.id));
+
+    const status = (await svc.listProviderAvailability(fixture.orgId, fixture.agentId))
+      .find((candidate) => candidate.provider === "supabase");
+    expect(status?.agent?.access).toBe("read_only");
+    const [snapshot] = await svc.listRuntimeBindings(fixture.orgId, fixture.agentId);
+    expect(snapshot).toMatchObject({
+      accessMode: "read_only",
+      toolPolicy: { allowedToolNames: ["external.alpha.read"] },
+    });
+  });
+
+  it("normalizes Notion provider-default access in provider status", async () => {
+    const fixture = await seed(db);
+    await db.update(mcpConnections).set({
+      provider: "notion",
+      accessMode: "provider_default",
+      scopeMode: "workspace",
+    }).where(eq(mcpConnections.id, fixture.first.id));
+
+    const status = (await managedMcpBindingService(db)
+      .listProviderAvailability(fixture.orgId))
+      .find((candidate) => candidate.provider === "notion");
+    expect(status?.organization.maxAccess).toBe("provider_granted");
   });
 
   it("uses the persisted tool namespace as the runtime server name for long connection names", async () => {
@@ -456,6 +668,57 @@ describe("managedMcpBindingService", () => {
     )).resolves.toEqual([]);
   });
 
+  it("does not list or project superseded official connections", async () => {
+    const fixture = await seed(db);
+    await db.update(mcpConnections).set({
+      provider: "supabase",
+      accessMode: "read_only",
+      scopeMode: "account",
+    }).where(eq(mcpConnections.id, fixture.first.id));
+    await db.update(customIntegrationTools).set({
+      capabilityClass: "read",
+    }).where(eq(customIntegrationTools.id, fixture.alphaRead.id));
+    const [oauthSecret] = await db.insert(organizationSecrets).values({
+      orgId: fixture.orgId,
+      name: `managed-mcp-superseded-${randomUUID()}`,
+      provider: "local_encrypted",
+      purpose: "managed_mcp_oauth",
+      latestVersion: 1,
+    }).returning();
+    await db.insert(mcpOAuthGrants).values({
+      orgId: fixture.orgId,
+      connectionId: fixture.first.id,
+      credentialSecretId: oauthSecret!.id,
+      status: "active",
+    });
+    const svc = managedMcpBindingService(db);
+    await svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { accessMode: "read_only" },
+    );
+    await db.update(mcpConnections).set({
+      canonicalState: "superseded",
+      enabled: true,
+    }).where(eq(mcpConnections.id, fixture.first.id));
+
+    expect((await svc.listForAgent(fixture.orgId, fixture.agentId))
+      .some((row) => row.connection.id === fixture.first.id)).toBe(false);
+    expect((await svc.listRuntimeBindings(fixture.orgId, fixture.agentId))
+      .some((binding) => binding.serverName === fixture.first.name)).toBe(false);
+    expect(await svc.listProviderAvailability(fixture.orgId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: "supabase",
+          organization: expect.objectContaining({
+            historicalGrantConnectionIds: [fixture.first.id],
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("keeps bounded audit records within 24 KiB for multibyte UTF-8 content", () => {
     const audit = boundedRedactedMcpAuditRecord(Object.fromEntries(
       Array.from({ length: 20 }, (_, index) => [
@@ -479,6 +742,7 @@ describe("managedMcpBindingService", () => {
       {
         bindingId: expect.any(String),
         serverName: "alpha",
+        accessMode: "full",
         toolPolicy: {
           mode: "allowlist",
           allowedToolNames: ["external.alpha.read", "external.alpha.write"],
@@ -490,6 +754,7 @@ describe("managedMcpBindingService", () => {
       {
         bindingId: expect.any(String),
         serverName: "beta",
+        accessMode: "full",
         toolPolicy: {
           mode: "allowlist",
           allowedToolNames: ["external.beta.read"],
@@ -517,7 +782,12 @@ describe("managedMcpBindingService", () => {
   it("revokes bindings without deleting the organization connection", async () => {
     const fixture = await seed(db);
     const svc = managedMcpBindingService(db);
-    await svc.upsert(fixture.orgId, fixture.agentId, fixture.first.id, {});
+    const created = await svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      {},
+    );
 
     const revoked = await svc.revoke(
       fixture.orgId,
@@ -525,7 +795,16 @@ describe("managedMcpBindingService", () => {
       fixture.first.id,
       { userId: "board" },
     );
-    expect(revoked?.binding?.status).toBe("revoked");
+    expect(revoked?.binding).toMatchObject({
+      status: "revoked",
+      accessMode: "none",
+      policyRevision: created.binding.policyRevision + 1,
+    });
+    expect((await db.select({
+      revokedAt: agentCustomIntegrationBindings.revokedAt,
+    }).from(agentCustomIntegrationBindings)
+      .where(eq(agentCustomIntegrationBindings.id, revoked!.binding!.id)))[0]
+      ?.revokedAt).toBeInstanceOf(Date);
     expect((await db.select({ action: activityLog.action }).from(activityLog)
       .where(eq(activityLog.entityId, revoked!.binding!.id)))
       .map((row) => row.action)).toEqual([
@@ -535,6 +814,36 @@ describe("managedMcpBindingService", () => {
     expect(await db.select().from(mcpConnections)
       .where(eq(mcpConnections.id, fixture.first.id))).toHaveLength(1);
     expect(await svc.listRuntimeBindings(fixture.orgId, fixture.agentId)).toEqual([]);
+
+    await expect(svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      {
+        accessMode: "full",
+        expectedRevision: created.binding.policyRevision,
+      },
+    )).rejects.toMatchObject({ status: 409 });
+
+    const restored = await svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      {
+        accessMode: "full",
+        expectedRevision: revoked!.binding!.policyRevision,
+      },
+    );
+    expect(restored.binding).toMatchObject({
+      status: "active",
+      accessMode: "full",
+      policyRevision: revoked!.binding!.policyRevision + 1,
+    });
+    expect((await db.select({
+      revokedAt: agentCustomIntegrationBindings.revokedAt,
+    }).from(agentCustomIntegrationBindings)
+      .where(eq(agentCustomIntegrationBindings.id, restored.binding.id)))[0]
+      ?.revokedAt).toBeNull();
   });
 
   it("locks and revalidates the connection before deriving first-bind defaults", async () => {
@@ -577,11 +886,14 @@ describe("managedMcpBindingService", () => {
       fixture.first.id,
       { enabledToolIds: [fixture.alphaRead.id] },
     );
+    const policySnapshot = await managedMcpBindingService(db)
+      .listRuntimeBindings(fixture.orgId, fixture.agentId);
     const [run] = await db.insert(heartbeatRuns).values({
       orgId: fixture.orgId,
       agentId: fixture.agentId,
       status: "running",
       startedAt: new Date(),
+      contextSnapshot: { managedMcpPolicySnapshot: policySnapshot },
     }).returning();
     const callTool = vi.fn().mockResolvedValue({
       content: [{
@@ -644,7 +956,7 @@ describe("managedMcpBindingService", () => {
       note: "Basic cHJpdmF0ZTpwYXNzd29yZA==",
       comment: "prefix Bearer private-token-value suffix",
     });
-    expect(openClient).toHaveBeenCalledWith(fixture.orgId, fixture.first.id);
+    expect(openClient).toHaveBeenCalledWith(fixture.orgId, fixture.first.id, "full");
     expect(close).toHaveBeenCalledTimes(1);
 
     const [audit] = await db.select().from(customIntegrationToolCalls);
@@ -705,7 +1017,13 @@ describe("managedMcpBindingService", () => {
     await expect(runtime.listTools(identity, summary.binding!.id))
       .rejects.toThrow("Managed MCP runtime context is not active");
 
-    await db.update(heartbeatRuns).set({ status: "running", startedAt: new Date() })
+    const policySnapshot = await managedMcpBindingService(db)
+      .listRuntimeBindings(fixture.orgId, fixture.agentId);
+    await db.update(heartbeatRuns).set({
+      status: "running",
+      startedAt: new Date(),
+      contextSnapshot: { managedMcpPolicySnapshot: policySnapshot },
+    })
       .where(eq(heartbeatRuns.id, queuedRun!.id));
     await expect(runtime.listTools({
       ...identity,
@@ -724,6 +1042,7 @@ describe("managedMcpBindingService", () => {
     expect(requireUsableGrant).toHaveBeenCalledWith(
       fixture.orgId,
       fixture.first.id,
+      expect.anything(),
     );
     await db.update(mcpConnections).set({ provider: "custom" })
       .where(eq(mcpConnections.id, fixture.first.id));
@@ -770,11 +1089,221 @@ describe("managedMcpBindingService", () => {
       .rejects.toThrow("Managed MCP binding is unavailable");
   });
 
-  it.each([
-    ["mcp_tool_timeout"],
-    ["mcp_upstream_unauthorized"],
-    ["mcp_tool_failed"],
-  ])("audits safe upstream %s failures and always closes the client", async (code) => {
+  it("reuses the dispatch transaction when validating an official grant", async () => {
+    const fixture = await seed(db);
+    await db.update(mcpConnections).set({
+      provider: "linear",
+      canonicalState: "canonical",
+      accessMode: "read_write",
+    }).where(eq(mcpConnections.id, fixture.first.id));
+    await db.update(customIntegrationTools).set({
+      capabilityClass: "read",
+    }).where(eq(customIntegrationTools.id, fixture.alphaRead.id));
+    const summary = await managedMcpBindingService(db).upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { accessMode: "read_only" },
+    );
+    const [run] = await db.insert(heartbeatRuns).values({
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      status: "running",
+      startedAt: new Date(),
+      contextSnapshot: {
+        managedMcpPolicySnapshot: [{
+          bindingId: summary.binding!.id,
+          serverName: "linear",
+          accessMode: "read_only",
+          policyRevision: summary.binding!.policyRevision,
+          toolPolicy: {
+            mode: "allowlist",
+            allowedToolNames: ["external.alpha.read"],
+          },
+        }],
+      },
+    }).returning();
+    type TestTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+    const requireUsableGrant = vi.fn(async (
+      orgId: string,
+      connectionId: string,
+      executor?: TestTransaction,
+    ) => {
+      const validate = async (tx: TestTransaction) => tx.select({ id: mcpConnections.id })
+        .from(mcpConnections)
+        .where(eq(mcpConnections.id, connectionId))
+        .for("update")
+        .then((rows) => {
+          expect(rows[0]?.id).toBe(connectionId);
+          expect(orgId).toBe(fixture.orgId);
+        });
+      return executor ? validate(executor) : db.transaction(validate);
+    });
+    const runtime = managedMcpRuntimeService(db, {
+      openClient: vi.fn().mockResolvedValue({
+        discoverTools: vi.fn(),
+        callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] }),
+        close: vi.fn().mockResolvedValue(undefined),
+      } satisfies ManagedMcpClient),
+      requireUsableGrant,
+    });
+
+    await expect(runtime.callTool({
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      runId: run!.id,
+    }, summary.binding!.id, "external.alpha.read", {})).resolves.toMatchObject({
+      content: [{ type: "text", text: "ok" }],
+    });
+    expect(requireUsableGrant.mock.calls.some((call) => call[2])).toBe(true);
+  }, 5_000);
+
+  it("enforces coarse capability policy and run-start snapshots for permission changes", async () => {
+    const fixture = await seed(db);
+    await db.update(mcpConnections).set({
+      provider: "supabase",
+      accessMode: "read_write",
+      scopeMode: "account",
+    }).where(eq(mcpConnections.id, fixture.first.id));
+    const [oauthSecret] = await db.insert(organizationSecrets).values({
+      orgId: fixture.orgId,
+      name: `managed-mcp-test-${randomUUID()}`,
+      provider: "local_encrypted",
+      purpose: "managed_mcp_oauth",
+      latestVersion: 1,
+    }).returning();
+    await db.insert(mcpOAuthGrants).values({
+      orgId: fixture.orgId,
+      connectionId: fixture.first.id,
+      credentialSecretId: oauthSecret!.id,
+      status: "active",
+    });
+    await db.update(customIntegrationTools).set({
+      capabilityClass: "read",
+    }).where(eq(customIntegrationTools.id, fixture.alphaRead.id));
+    await db.update(customIntegrationTools).set({
+      capabilityClass: "normal_write",
+    }).where(eq(customIntegrationTools.id, fixture.alphaWrite.id));
+    const [destructive] = await db.insert(customIntegrationTools).values({
+      orgId: fixture.orgId,
+      connectionId: fixture.first.id,
+      externalToolName: "delete_branch",
+      rudderToolName: "external.alpha.delete_branch",
+      inputSchema: { type: "object" },
+      capabilityClass: "destructive",
+      status: "active",
+      enabled: true,
+    }).returning();
+    const bindings = managedMcpBindingService(db);
+    const readOnly = await bindings.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      {
+        accessMode: "read_only",
+        enabledToolIds: [
+          fixture.alphaRead.id,
+          fixture.alphaWrite.id,
+          destructive!.id,
+        ],
+      },
+    );
+    const readOnlySnapshot = await bindings.listRuntimeBindings(
+      fixture.orgId,
+      fixture.agentId,
+    );
+    expect(readOnlySnapshot[0]?.toolPolicy.allowedToolNames)
+      .toEqual(["external.alpha.read"]);
+    const [oldRun] = await db.insert(heartbeatRuns).values({
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      status: "running",
+      startedAt: new Date(),
+      contextSnapshot: { managedMcpPolicySnapshot: readOnlySnapshot },
+    }).returning();
+
+    const readWrite = await bindings.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { accessMode: "read_write", expectedRevision: readOnly.binding!.policyRevision },
+    );
+    const callTool = vi.fn().mockResolvedValue({ content: [] });
+    const openClient = vi.fn().mockResolvedValue({
+      discoverTools: vi.fn(),
+      callTool,
+      close: vi.fn(),
+    } satisfies ManagedMcpClient);
+    const runtime = managedMcpRuntimeService(db, {
+      openClient,
+      requireUsableGrant: vi.fn(),
+    });
+    const oldIdentity = {
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      runId: oldRun!.id,
+    };
+    expect((await runtime.listTools(oldIdentity, readOnly.binding!.id))
+      .map((tool) => tool.name)).toEqual(["external.alpha.read"]);
+    await runtime.callTool(
+      oldIdentity,
+      readOnly.binding!.id,
+      "external.alpha.read",
+      {},
+    );
+    expect(openClient).toHaveBeenCalledWith(
+      fixture.orgId,
+      fixture.first.id,
+      "read_only",
+    );
+    callTool.mockClear();
+    await expect(runtime.callTool(
+      oldIdentity,
+      readOnly.binding!.id,
+      "external.alpha.write",
+      {},
+    )).rejects.toThrow("not enabled");
+    expect(callTool).not.toHaveBeenCalled();
+
+    const readWriteSnapshot = await bindings.listRuntimeBindings(
+      fixture.orgId,
+      fixture.agentId,
+    );
+    expect(readWriteSnapshot[0]?.toolPolicy.allowedToolNames.sort()).toEqual([
+      "external.alpha.read",
+      "external.alpha.write",
+    ]);
+    const [newRun] = await db.insert(heartbeatRuns).values({
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      status: "running",
+      startedAt: new Date(),
+      contextSnapshot: { managedMcpPolicySnapshot: readWriteSnapshot },
+    }).returning();
+    const newIdentity = { ...oldIdentity, runId: newRun!.id };
+    expect((await runtime.listTools(newIdentity, readOnly.binding!.id))
+      .map((tool) => tool.name).sort()).toEqual([
+      "external.alpha.read",
+      "external.alpha.write",
+    ]);
+
+    await bindings.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { accessMode: "read_only", expectedRevision: readWrite.binding!.policyRevision },
+    );
+    expect((await runtime.listTools(newIdentity, readOnly.binding!.id))
+      .map((tool) => tool.name)).toEqual(["external.alpha.read"]);
+    await expect(runtime.callTool(
+      newIdentity,
+      readOnly.binding!.id,
+      "external.alpha.write",
+      {},
+    )).rejects.toThrow("not enabled");
+  });
+
+  it("fails closed when a running task has no snapshot for the binding", async () => {
     const fixture = await seed(db);
     const summary = await managedMcpBindingService(db).upsert(
       fixture.orgId,
@@ -787,6 +1316,148 @@ describe("managedMcpBindingService", () => {
       agentId: fixture.agentId,
       status: "running",
       startedAt: new Date(),
+      contextSnapshot: { managedMcpPolicySnapshot: [] },
+    }).returning();
+    const callTool = vi.fn();
+    const runtime = managedMcpRuntimeService(db, {
+      openClient: vi.fn().mockResolvedValue({
+        discoverTools: vi.fn(),
+        callTool,
+        close: vi.fn(),
+      } satisfies ManagedMcpClient),
+      requireUsableGrant: vi.fn(),
+    });
+    const identity = {
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      runId: run!.id,
+    };
+
+    await expect(runtime.listTools(identity, summary.binding!.id))
+      .rejects.toThrow("not enabled for this run");
+    await expect(runtime.callTool(
+      identity,
+      summary.binding!.id,
+      "external.alpha.read",
+      {},
+    )).rejects.toThrow("not enabled for this run");
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("serializes dispatch start behind a pending access downgrade", async () => {
+    const fixture = await seed(db);
+    await db.update(mcpConnections).set({
+      provider: "supabase",
+      accessMode: "read_write",
+      scopeMode: "account",
+    }).where(eq(mcpConnections.id, fixture.first.id));
+    await db.update(customIntegrationTools).set({
+      capabilityClass: "normal_write",
+    }).where(eq(customIntegrationTools.id, fixture.alphaWrite.id));
+    const [oauthSecret] = await db.insert(organizationSecrets).values({
+      orgId: fixture.orgId,
+      name: `managed-mcp-concurrency-${randomUUID()}`,
+      provider: "local_encrypted",
+      purpose: "managed_mcp_oauth",
+      latestVersion: 1,
+    }).returning();
+    await db.insert(mcpOAuthGrants).values({
+      orgId: fixture.orgId,
+      connectionId: fixture.first.id,
+      credentialSecretId: oauthSecret!.id,
+      status: "active",
+    });
+    const bindings = managedMcpBindingService(db);
+    const summary = await bindings.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      {
+        accessMode: "read_write",
+        enabledToolIds: [fixture.alphaWrite.id],
+      },
+    );
+    const snapshot = await bindings.listRuntimeBindings(
+      fixture.orgId,
+      fixture.agentId,
+    );
+    const [run] = await db.insert(heartbeatRuns).values({
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      status: "running",
+      startedAt: new Date(),
+      contextSnapshot: { managedMcpPolicySnapshot: snapshot },
+    }).returning();
+    const downgradeWritten = deferred<void>();
+    const releaseDowngrade = deferred<void>();
+    const downgrade = db.transaction(async (tx) => {
+      await tx.select({ id: mcpConnections.id }).from(mcpConnections)
+        .where(eq(mcpConnections.id, fixture.first.id))
+        .for("update");
+      await tx.execute(sql`
+        select pg_advisory_xact_lock(
+          hashtextextended(
+            ${`managed-mcp-binding:${fixture.orgId}:${fixture.agentId}:${fixture.first.id}`},
+            0
+          )
+        )
+      `);
+      await tx.update(agentCustomIntegrationBindings).set({
+        accessMode: "read_only",
+        policyRevision: sql`${agentCustomIntegrationBindings.policyRevision} + 1`,
+        updatedAt: new Date(),
+      }).where(eq(agentCustomIntegrationBindings.id, summary.binding!.id));
+      downgradeWritten.resolve();
+      await releaseDowngrade.promise;
+    });
+    await downgradeWritten.promise;
+
+    const upstreamCall = vi.fn().mockResolvedValue({ content: [] });
+    const runtime = managedMcpRuntimeService(db, {
+      openClient: vi.fn().mockResolvedValue({
+        discoverTools: vi.fn(),
+        callTool: upstreamCall,
+        close: vi.fn(),
+      } satisfies ManagedMcpClient),
+      requireUsableGrant: vi.fn(),
+    });
+    const dispatch = runtime.callTool({
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      runId: run!.id,
+    }, summary.binding!.id, "external.alpha.write", {});
+    const early = await Promise.race([
+      dispatch.then(() => "settled", () => "settled"),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 100)),
+    ]);
+    expect(early).toBe("pending");
+
+    releaseDowngrade.resolve();
+    await downgrade;
+    await expect(dispatch).rejects.toThrow("not enabled");
+    expect(upstreamCall).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["mcp_tool_timeout"],
+    ["mcp_upstream_unauthorized"],
+    ["mcp_tool_failed"],
+  ])("audits safe upstream %s failures and always closes the client", async (code) => {
+    const fixture = await seed(db);
+    const summary = await managedMcpBindingService(db).upsert(
+      fixture.orgId,
+      fixture.agentId,
+      fixture.first.id,
+      { enabledToolIds: [fixture.alphaRead.id] },
+    );
+    const policySnapshot = await managedMcpBindingService(db)
+      .listRuntimeBindings(fixture.orgId, fixture.agentId);
+    const [run] = await db.insert(heartbeatRuns).values({
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      status: "running",
+      startedAt: new Date(),
+      contextSnapshot: { managedMcpPolicySnapshot: policySnapshot },
     }).returning();
     const close = vi.fn().mockResolvedValue(undefined);
     const runtime = managedMcpRuntimeService(db, {

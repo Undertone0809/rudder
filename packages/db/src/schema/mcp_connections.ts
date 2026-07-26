@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   check,
   index,
@@ -25,13 +26,18 @@ export const mcpConnections = pgTable(
       .references(() => customIntegrations.id, { onDelete: "set null" }),
     credentialSecretId: uuid("credential_secret_id")
       .references(() => organizationSecrets.id, { onDelete: "set null" }),
+    supersededByConnectionId: uuid("superseded_by_connection_id")
+      .references((): AnyPgColumn => mcpConnections.id, { onDelete: "set null" }),
     name: text("name").notNull(),
     displayName: text("display_name").notNull(),
     provider: text("provider").notNull(),
     transport: text("transport").notNull(),
     externalScope: text("external_scope"),
+    scopeMode: text("scope_mode"),
     accessMode: text("access_mode").notNull().default("provider_default"),
     status: text("status").notNull().default("draft"),
+    canonicalState: text("canonical_state").notNull().default("canonical"),
+    revision: integer("revision").notNull().default(1),
     lifecycleRevision: integer("lifecycle_revision").notNull().default(0),
     safeConfig: jsonb("safe_config").$type<Record<string, unknown>>().notNull().default({}),
     startupTimeoutMs: integer("startup_timeout_ms").notNull().default(10_000),
@@ -50,12 +56,16 @@ export const mcpConnections = pgTable(
     orgProviderScopeUq: uniqueIndex("mcp_connections_org_provider_scope_uq")
       .on(table.orgId, table.provider, table.externalScope)
       .where(sql`${table.provider} <> 'custom' and ${table.externalScope} is not null`),
+    orgOfficialCanonicalUq: uniqueIndex("mcp_connections_org_official_canonical_uq")
+      .on(table.orgId, table.provider)
+      .where(sql`${table.provider} in ('supabase', 'linear', 'notion') and ${table.canonicalState} = 'canonical'`),
     orgStatusIdx: index("mcp_connections_org_status_idx").on(table.orgId, table.status),
     orgProviderIdx: index("mcp_connections_org_provider_idx").on(table.orgId, table.provider),
     legacyIntegrationUq: uniqueIndex("mcp_connections_legacy_integration_uq")
       .on(table.legacyCustomIntegrationId)
       .where(sql`${table.legacyCustomIntegrationId} is not null`),
     credentialSecretIdx: index("mcp_connections_credential_secret_idx").on(table.credentialSecretId),
+    supersededByIdx: index("mcp_connections_superseded_by_idx").on(table.supersededByConnectionId),
     legacyManualDisabledCheck: check(
       "mcp_connections_legacy_manual_disabled_check",
       sql`${table.transport} <> 'legacy_manual' or ${table.enabled} = false`,
@@ -63,6 +73,18 @@ export const mcpConnections = pgTable(
     positiveTimeoutsCheck: check(
       "mcp_connections_positive_timeouts_check",
       sql`${table.startupTimeoutMs} > 0 and ${table.toolTimeoutMs} > 0`,
+    ),
+    positiveRevisionCheck: check(
+      "mcp_connections_positive_revision_check",
+      sql`${table.revision} > 0`,
+    ),
+    canonicalStateCheck: check(
+      "mcp_connections_canonical_state_check",
+      sql`${table.canonicalState} in ('canonical', 'superseded')`,
+    ),
+    scopeModeCheck: check(
+      "mcp_connections_scope_mode_check",
+      sql`${table.scopeMode} is null or ${table.scopeMode} in ('account', 'workspace', 'legacy_project')`,
     ),
   }),
 );

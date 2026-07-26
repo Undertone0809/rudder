@@ -2035,6 +2035,65 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain("skill://org/skill-1");
   });
 
+  it("routes an actionable skill token to its SKILL.md while keeping the details action", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody
+          onLinkClick={() => true}
+          skillReferences={[
+            {
+              href: "skill://org/skill-1?ref=build-advisor",
+              label: "build-advisor",
+              displayName: "Build Advisor",
+              detailsHref: "/library?skill=skill-1&skillFile=SKILL.md",
+              openHref: "library-file://file?p=skills%2Fbuild-advisor%2FSKILL.md",
+            },
+          ]}
+        >
+          {"Use [build-advisor](skill://org/skill-1?ref=build-advisor) carefully"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="library-file://file?p=skills%2Fbuild-advisor%2FSKILL.md"');
+    expect(html).toContain('href="/library?skill=skill-1&amp;skillFile=SKILL.md"');
+    expect(html).toContain(" carefully");
+  });
+
+  it("keeps historical local skill references actionable without current preview metadata", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody onLinkClick={() => true}>
+          {"Use [local-helper](skill://local/%2Fworkspace%2F.agents%2Fskills%2Flocal-helper?ref=local-helper)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/workspace/.agents/skills/local-helper/SKILL.md"');
+    expect(html).toContain('data-skill-token="true"');
+  });
+
+  it("prefers a historical local skill path over an organization skill with the same label", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody
+          onLinkClick={() => true}
+          skillReferences={[{
+            href: "skill://org/org-helper?ref=helper",
+            label: "helper",
+            displayName: "Organization Helper",
+            openHref: "library-file://file?p=skills%2Fhelper%2FSKILL.md",
+          }]}
+        >
+          {"Use [helper](skill://local/%2Fworkspace%2F.agents%2Fskills%2Fhelper?ref=helper)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/workspace/.agents/skills/helper/SKILL.md"');
+    expect(html).not.toContain('href="library-file://file?p=skills%2Fhelper%2FSKILL.md"');
+  });
+
   it("renders markdown when agent comments contain escaped newline sequences", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

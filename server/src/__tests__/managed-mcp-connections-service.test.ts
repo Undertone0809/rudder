@@ -292,6 +292,98 @@ describe("managedMcpConnectionService", () => {
     }, { userId: "owner-1" })).rejects.toThrow();
   });
 
+  it("single-flights concurrent official provider ensure calls to one canonical connection", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+
+    const ensured = await Promise.all(Array.from({ length: 6 }, () =>
+      svc.ensureOfficial(
+        orgId,
+        "supabase",
+        "read_only",
+        { userId: "owner-1" },
+      )));
+
+    expect(new Set(ensured.map((connection) => connection.id)).size).toBe(1);
+    const rows = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.orgId, orgId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      provider: "supabase",
+      canonicalState: "canonical",
+      scopeMode: "account",
+      externalScope: null,
+    });
+  });
+
+  it("prepares one non-canonical Supabase account candidate without changing the legacy connection", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+    const legacy = await svc.ensureOfficial(
+      orgId,
+      "supabase",
+      "read_only",
+      { userId: "owner-1" },
+    );
+    await db.update(mcpConnections).set({
+      scopeMode: "legacy_project",
+      externalScope: "legacy-project-ref",
+      status: "active",
+      enabled: true,
+    }).where(eq(mcpConnections.id, legacy.id));
+
+    const [first, second] = await Promise.all([
+      svc.prepareSupabaseAccountUpgrade(orgId, legacy.id, { userId: "owner-1" }),
+      svc.prepareSupabaseAccountUpgrade(orgId, legacy.id, { userId: "owner-1" }),
+    ]);
+
+    expect(first.id).toBe(second.id);
+    const rows = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.orgId, orgId));
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.id === legacy.id)).toMatchObject({
+      canonicalState: "canonical",
+      scopeMode: "legacy_project",
+      externalScope: "legacy-project-ref",
+      status: "active",
+      enabled: true,
+    });
+    expect(rows.find((row) => row.id === first.id)).toMatchObject({
+      canonicalState: "superseded",
+      supersededByConnectionId: legacy.id,
+      scopeMode: "account",
+      externalScope: null,
+      status: "draft",
+    });
+  });
+
+  it("rejects generic patches that would broaden legacy Supabase project scope", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+    const legacy = await svc.ensureOfficial(
+      orgId,
+      "supabase",
+      "read_only",
+      { userId: "owner-1" },
+    );
+    await db.update(mcpConnections).set({
+      scopeMode: "legacy_project",
+      externalScope: "legacy-project-ref",
+      status: "active",
+      enabled: true,
+    }).where(eq(mcpConnections.id, legacy.id));
+
+    await expect(svc.update(
+      orgId,
+      legacy.id,
+      { externalScope: null },
+      { userId: "owner-1" },
+    )).rejects.toThrow(/upgrade to account access/i);
+    await expect(svc.get(orgId, legacy.id)).resolves.toMatchObject({
+      externalScope: "legacy-project-ref",
+    });
+  });
+
   it("never decrypts curated OAuth tokens when the provider-neutral credential factory is missing", async () => {
     const orgId = await seedOrg(db);
     const oauthSecret = await secretService(db).create(orgId, {
@@ -947,6 +1039,156 @@ describe("managedMcpConnectionService", () => {
     expect(JSON.stringify(failureAudit)).not.toContain("leaked-token");
   });
 
+  it("preserves an active official connection and its last good catalog when rediscovery fails", async () => {
+    const orgId = await seedOrg(db);
+    const firstClient = clientWithTools([
+      { name: "list_projects", inputSchema: { type: "object" } },
+    ]);
+    const failingClient = clientWithTools([]);
+    failingClient.discoverTools.mockRejectedValue(new Error("temporary provider outage"));
+    createClient.mockResolvedValueOnce(firstClient).mockResolvedValueOnce(failingClient);
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "supabase-stable",
+      displayName: "Supabase",
+      provider: "supabase",
+      transport: "streamable_http",
+      safeConfig: {},
+    }, { userId: "owner-1" });
+    const oauthSecret = await secretService(db).create(orgId, {
+      name: "Supabase stable OAuth",
+      provider: "local_encrypted",
+      value: JSON.stringify({
+        tokens: { access_token: "stable-access-token" },
+      }),
+    }, undefined, {
+      allowManaged: true,
+      purpose: "managed_mcp_oauth",
+    });
+    await db.insert(mcpOAuthGrants).values({
+      orgId,
+      connectionId: connection.id,
+      credentialSecretId: oauthSecret.id,
+      status: "active",
+    });
+    await db.update(mcpConnections).set({
+      status: "active",
+      enabled: true,
+    }).where(eq(mcpConnections.id, connection.id));
+    await svc.refreshTools(orgId, connection.id);
+
+    await expect(svc.refreshTools(orgId, connection.id)).rejects.toThrow(
+      "Managed MCP tool discovery failed",
+    );
+
+    expect(await svc.get(orgId, connection.id)).toMatchObject({
+      status: "active",
+      enabled: true,
+    });
+    expect((await svc.listTools(orgId, connection.id)).map((tool) => tool.externalToolName))
+      .toEqual(["list_projects"]);
+    expect(await db.select().from(activityLog)
+      .where(eq(activityLog.action, "mcp_connection.discovery_failed")))
+      .toEqual([expect.objectContaining({ entityId: connection.id })]);
+  });
+
+  it("extends system-derived official bindings after discovery without widening legacy-narrowed bindings", async () => {
+    const orgId = await seedOrg(db);
+    const [derivedAgent, narrowedAgent] = await db.insert(agents).values([
+      {
+        orgId,
+        name: "Derived policy agent",
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        orgId,
+        name: "Legacy narrowed agent",
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]).returning();
+    const firstClient = clientWithTools([
+      { name: "list_projects", inputSchema: { type: "object" } },
+      { name: "get_project", inputSchema: { type: "object" } },
+    ]);
+    const secondClient = clientWithTools([
+      { name: "list_projects", inputSchema: { type: "object" } },
+      { name: "get_project", inputSchema: { type: "object" } },
+      { name: "get_advisors", inputSchema: { type: "object" } },
+    ]);
+    createClient.mockResolvedValueOnce(firstClient).mockResolvedValueOnce(secondClient);
+    const svc = service();
+    const connection = await svc.create(orgId, {
+      name: "supabase-policy-refresh",
+      displayName: "Supabase",
+      provider: "supabase",
+      transport: "streamable_http",
+      safeConfig: {},
+    }, { userId: "owner-1" });
+    const oauthSecret = await secretService(db).create(orgId, {
+      name: "Supabase policy refresh OAuth",
+      provider: "local_encrypted",
+      value: JSON.stringify({ tokens: { access_token: "policy-refresh-token" } }),
+    }, undefined, {
+      allowManaged: true,
+      purpose: "managed_mcp_oauth",
+    });
+    await db.insert(mcpOAuthGrants).values({
+      orgId,
+      connectionId: connection.id,
+      credentialSecretId: oauthSecret.id,
+      status: "active",
+    });
+    await db.update(mcpConnections).set({
+      status: "active",
+      enabled: true,
+    }).where(eq(mcpConnections.id, connection.id));
+    const originalTools = await svc.refreshTools(orgId, connection.id);
+    const originalIds = originalTools.map((tool) => tool.id);
+    const listId = originalTools.find((tool) => tool.externalToolName === "list_projects")!.id;
+    await db.insert(agentCustomIntegrationBindings).values([
+      {
+        orgId,
+        agentId: derivedAgent!.id,
+        connectionId: connection.id,
+        status: "active",
+        accessMode: "read_only",
+        enabledToolIds: originalIds,
+      },
+      {
+        orgId,
+        agentId: narrowedAgent!.id,
+        connectionId: connection.id,
+        status: "active",
+        accessMode: "read_only",
+        enabledToolIds: [listId],
+      },
+    ]);
+
+    const refreshedTools = await svc.refreshTools(orgId, connection.id);
+    const refreshedIds = refreshedTools
+      .filter((tool) => tool.enabled && !tool.removedAt)
+      .map((tool) => tool.id)
+      .sort();
+    const bindings = await db.select().from(agentCustomIntegrationBindings);
+    const derived = bindings.find((binding) => binding.agentId === derivedAgent!.id)!;
+    const narrowed = bindings.find((binding) => binding.agentId === narrowedAgent!.id)!;
+
+    expect(derived.enabledToolIds.sort()).toEqual(refreshedIds);
+    expect(derived.policyRevision).toBe(2);
+    expect(narrowed.enabledToolIds).toEqual([listId]);
+    expect(narrowed.policyRevision).toBe(1);
+  });
+
   it("requires reconnect before a disabled or reauthorization/error connection can discover again", async () => {
     const orgId = await seedOrg(db);
     const client = clientWithTools([]);
@@ -1412,7 +1654,7 @@ describe("managedMcpConnectionService", () => {
     expect(createClient).not.toHaveBeenCalled();
   });
 
-  it("requires a Supabase project before discovery and enforces centralized access-mode rules", async () => {
+  it("creates account-scoped Supabase without a project and enforces centralized access-mode rules", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
     const supabase = await svc.create(orgId, {
@@ -1430,9 +1672,11 @@ describe("managedMcpConnectionService", () => {
       safeConfig: {},
     }, { userId: "owner-1" });
 
-    await expect(svc.refreshTools(orgId, supabase.id)).rejects.toThrow(
-      /selected project/i,
-    );
+    const [storedSupabase] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, supabase.id));
+    expect(storedSupabase?.scopeMode).toBe("account");
+    expect(storedSupabase?.externalScope).toBeNull();
+    await expect(svc.refreshTools(orgId, supabase.id)).rejects.toThrow(/not ready/i);
     await expect(svc.update(
       orgId,
       notion.id,
@@ -1499,6 +1743,63 @@ describe("managedMcpConnectionService", () => {
       { userId: "owner-1" },
       { allowCuratedAccessMode: true },
     )).resolves.toMatchObject({ accessMode: "read_write" });
+  });
+
+  it("does not let direct updates bypass OAuth for active official access changes", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+    const supabase = await svc.create(orgId, {
+      name: "supabase-access",
+      displayName: "Supabase",
+      provider: "supabase",
+      transport: "streamable_http",
+      accessMode: "read_only",
+      safeConfig: {},
+    }, { userId: "owner-1" });
+    await db.update(mcpConnections).set({
+      status: "active",
+      enabled: true,
+    }).where(eq(mcpConnections.id, supabase.id));
+
+    await expect(svc.update(
+      orgId,
+      supabase.id,
+      { accessMode: "read_write" },
+      { userId: "owner-1" },
+      { allowCuratedAccessMode: true },
+    )).rejects.toThrow(/reauthoriz/i);
+    await expect(svc.get(orgId, supabase.id)).resolves.toMatchObject({
+      accessMode: "read_only",
+      status: "active",
+    });
+  });
+
+  it("does not let a superseded official connection be re-enabled", async () => {
+    const orgId = await seedOrg(db);
+    const svc = service();
+    const supabase = await svc.create(orgId, {
+      name: "supabase-superseded",
+      displayName: "Supabase",
+      provider: "supabase",
+      transport: "streamable_http",
+      safeConfig: {},
+    }, { userId: "owner-1" });
+    await db.update(mcpConnections).set({
+      canonicalState: "superseded",
+      enabled: false,
+      status: "active",
+    }).where(eq(mcpConnections.id, supabase.id));
+
+    await expect(svc.update(
+      orgId,
+      supabase.id,
+      { enabled: true },
+      { userId: "owner-1" },
+    )).rejects.toThrow(/superseded/i);
+    await expect(svc.get(orgId, supabase.id)).resolves.toMatchObject({
+      enabled: false,
+      status: "active",
+    });
   });
 
   it("rejects Linear access-mode changes while OAuth is authorizing", async () => {

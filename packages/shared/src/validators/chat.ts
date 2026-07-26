@@ -340,10 +340,15 @@ export const createChatContextLinkSchema = z.object({
   metadata: z.record(z.unknown()).optional().nullable(),
 });
 
+export const chatModelOverrideSchema = z.string().trim().min(1).max(120).nullable();
+export const chatEffortOverrideSchema = z.string().trim().min(1).max(120).nullable();
+
 export const chatDraftSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   summary: z.string().trim().max(5000).optional().nullable(),
   preferredAgentId: z.string().uuid().optional().nullable(),
+  modelOverride: chatModelOverrideSchema.optional(),
+  effortOverride: chatEffortOverrideSchema.optional(),
   issueCreationMode: chatIssueCreationModeSchema.optional(),
   planMode: z.boolean().optional(),
   contextLinks: z.array(createChatContextLinkSchema).optional().default([]),
@@ -404,6 +409,7 @@ export const chatQueuedMessagePayloadSchema = z.object({
   projectId: z.string().uuid().optional().nullable(),
   skillRefs: z.array(z.string().trim().min(1).max(240)).optional().default([]),
   accessMode: z.string().trim().min(1).max(120).optional().nullable(),
+  agentId: z.string().uuid().optional().nullable(),
   model: z.string().trim().min(1).max(120).optional().nullable(),
   effort: z.string().trim().min(1).max(120).optional().nullable(),
   metadata: z.record(z.unknown()).optional().nullable(),
@@ -430,6 +436,7 @@ const chatQueuedMessageUpdatePayloadSchema = z.object({
   projectId: z.string().uuid().optional().nullable(),
   skillRefs: z.array(z.string().trim().min(1).max(240)).optional().default([]),
   accessMode: z.string().trim().min(1).max(120).optional().nullable(),
+  agentId: z.string().uuid().optional().nullable(),
   model: z.string().trim().min(1).max(120).optional().nullable(),
   effort: z.string().trim().min(1).max(120).optional().nullable(),
   metadata: z.record(z.unknown()).optional().nullable(),

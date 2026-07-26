@@ -80,6 +80,7 @@ const EXECUTOR_OWNED_CONTEXT_KEYS = [
   "rudderPreviousSessionId",
   "rudderRuntimeServices",
   "rudderRuntimePrimaryUrl",
+  "managedMcpPolicySnapshot",
 ] as const;
 
 function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
@@ -365,6 +366,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         agent,
         baseConfig: mergedConfig,
       });
+    context.managedMcpPolicySnapshot = runtimeConfig.managedExternalMcpBindings ?? [];
     const issueRef = issueContext
       ? {
           id: issueContext.id,

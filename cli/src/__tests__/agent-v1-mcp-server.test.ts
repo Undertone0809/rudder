@@ -908,6 +908,41 @@ describe("agent-v1 MCP server", () => {
     });
   });
 
+  it.each([
+    {
+      toolName: "rudder_issue_comment",
+      arguments: { issue: "ISSUE-1", body: "Progress", images: ["/tmp/proof.png"] },
+    },
+    {
+      toolName: "rudder_issue_done",
+      arguments: { issue: "ISSUE-1", comment: "Done", images: ["/tmp/proof.png"] },
+    },
+  ])("routes image-bearing $toolName calls through the CLI upload path", async ({ toolName, arguments: toolArguments }) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("image-bearing issue mutations must not use the direct API path"),
+    );
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: toolName, arguments: toolArguments },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "11111111-1111-4111-8111-111111111111",
+      RUDDER_RUN_ID: "22222222-2222-4222-8222-222222222222",
+      RUDDER_MCP_RUDDER_BIN: "/missing/rudder",
+    }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response?.result).toMatchObject({
+      isError: true,
+      structuredContent: { code: "rudder_cli_command_failed" },
+    });
+  });
+
   it("dispatches Browser tools directly through the runtime-owned API identity", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       expect(String(input)).toBe("http://127.0.0.1:3100/api/browser/open");

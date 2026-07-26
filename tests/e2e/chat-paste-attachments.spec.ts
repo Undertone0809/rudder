@@ -40,8 +40,16 @@ process.stdin.on("end", async () => {
   }
   const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
   const hasAttachmentSection = prompt.includes("Current user message attachments:");
-  const hasImage = prompt.includes("clipboard-image.png");
-  const hasTextFile = prompt.includes("notes.txt");
+  const imageName = prompt.includes("clipboard-image.png")
+    ? "clipboard-image.png"
+    : prompt.includes("drop-screenshot.png")
+      ? "drop-screenshot.png"
+      : null;
+  const textFileName = prompt.includes("drop-notes.txt")
+    ? "drop-notes.txt"
+    : prompt.includes("notes.txt")
+      ? "notes.txt"
+      : null;
   const localPath = prompt.match(/localPath=([^;\\n]+)/)?.[1]?.trim();
   const localImageReadable = localPath
     ? await fs.access(localPath).then(() => true, () => false)
@@ -49,8 +57,8 @@ process.stdin.on("end", async () => {
   const hasInternalDownloadInstruction = prompt.includes("downloadCommand")
     || prompt.includes("Authorization: Bearer")
     || prompt.includes("curl -L");
-  const body = hasAttachmentSection && hasImage && hasTextFile && localImageReadable && !hasInternalDownloadInstruction
-    ? "I found 2 attachments: clipboard-image.png and notes.txt."
+  const body = hasAttachmentSection && imageName && textFileName && localImageReadable && !hasInternalDownloadInstruction
+    ? "I found 2 attachments: " + imageName + " and " + textFileName + "."
     : "Attachment context missing.";
   const finalText = body + "\\n" + sentinel + JSON.stringify({
     kind: "message",
@@ -118,6 +126,88 @@ async function pasteSameNamedImages(page: Page, count: number) {
   );
 }
 
+async function dragFilesOntoComposer(
+  page: Page,
+  files: Array<{ name: string; contents: string; type: string }>,
+) {
+  const composer = page.getByTestId("chat-composer-file-drop-target");
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.evaluate((element, payload) => {
+    const dataTransfer = new DataTransfer();
+    for (const file of payload) {
+      dataTransfer.items.add(new File([file.contents], file.name, { type: file.type }));
+    }
+
+    for (const type of ["dragenter", "dragover"] as const) {
+      element.dispatchEvent(new DragEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      }));
+    }
+  }, files);
+  await expect(page.getByTestId("chat-composer-file-drop-overlay")).toBeVisible();
+  const screenshotPath = process.env.RUDDER_CHAT_FILE_DROP_SCREENSHOT?.trim();
+  if (screenshotPath) {
+    await page.screenshot({ path: screenshotPath, fullPage: false, animations: "disabled" });
+  }
+  await composer.evaluate((element, payload) => {
+    const dataTransfer = new DataTransfer();
+    for (const file of payload) {
+      dataTransfer.items.add(new File([file.contents], file.name, { type: file.type }));
+    }
+    element.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    }));
+  }, files);
+}
+
+test("drops files onto the chat composer and stages them through the attachment workflow", async ({ page }) => {
+  const { tempDir, stubPath } = await createAttachmentAwareCodexStub();
+  try {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const organization = await createStreamingOrg(page, `Drop-Chat-${Date.now()}`, {
+      model: "gpt-5.4",
+      command: stubPath,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${organization.chatAgent.id}`);
+
+    await dragFilesOntoComposer(page, [
+      { name: "drop-screenshot.png", contents: "image bytes", type: "image/png" },
+      { name: "drop-notes.txt", contents: "release notes", type: "text/plain" },
+    ]);
+
+    await expect(page.getByTestId("chat-composer-file-drop-overlay")).toHaveCount(0);
+    await expect(page.getByTestId("chat-pending-attachment")).toHaveCount(2);
+    await expect(page.getByTestId("chat-pending-image-attachment")).toBeVisible();
+    await expect(page.getByTestId("chat-pending-attachments")).toContainText("drop-notes.txt");
+
+    const editor = page.locator(".rudder-mdxeditor-content").first();
+    await editor.fill("Review these dropped files.");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const userBubble = page.getByTestId("chat-user-message-bubble").last();
+    await expect(userBubble).toContainText("Review these dropped files.", { timeout: 15_000 });
+    await expect(userBubble.getByTestId("chat-image-attachment").getByAltText("drop-screenshot.png"))
+      .toBeVisible({ timeout: 15_000 });
+    await expect(userBubble.getByRole("link", { name: "drop-notes.txt" }))
+      .toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
+      "I found 2 attachments: drop-screenshot.png and drop-notes.txt.",
+      { timeout: 15_000 },
+    );
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("keeps multiple same-named pasted images staged independently", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1100 });
   const organization = await createStreamingOrg(page, `Paste-Multi-Images-${Date.now()}`, {
@@ -130,15 +220,47 @@ test("keeps multiple same-named pasted images staged independently", async ({ pa
   }, organization.id);
 
   await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${organization.chatAgent.id}`);
-  await pasteSameNamedImages(page, 4);
+  await pasteSameNamedImages(page, 10);
 
   const pendingAttachments = page.getByTestId("chat-pending-attachment");
-  await expect(pendingAttachments).toHaveCount(4);
-  await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(4);
+  await expect(pendingAttachments).toHaveCount(10);
+  await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(10);
+  await expect.poll(async () =>
+    page.locator(
+      '[data-testid="chat-pending-attachments"] ~ [data-testid="chat-composer-editor-scroll"]',
+    ).count()
+  ).toBe(1);
+  await expect.poll(async () =>
+    page.locator(
+      '[data-testid="chat-pending-attachments"] ~ [data-testid="chat-composer-toolbar"]',
+    ).count()
+  ).toBe(1);
+  await page.setViewportSize({ width: 480, height: 900 });
+  const attachmentBoxes = await pendingAttachments.evaluateAll((elements) =>
+    elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return { top: box.top, left: box.left, right: box.right, bottom: box.bottom };
+    }),
+  );
+  const pendingBox = await page.getByTestId("chat-pending-attachments").boundingBox();
+  const editorBox = await page.getByTestId("chat-composer-editor-scroll").boundingBox();
+  expect(new Set(attachmentBoxes.map(({ top }) => Math.round(top))).size).toBeGreaterThan(1);
+  expect(pendingBox).not.toBeNull();
+  expect(editorBox).not.toBeNull();
+  expect(
+    attachmentBoxes.every(({ left, right, bottom }) =>
+      pendingBox
+        ? left >= pendingBox.x &&
+          right <= pendingBox.x + pendingBox.width &&
+          bottom <= pendingBox.y + pendingBox.height
+        : false,
+    ),
+  ).toBe(true);
+  expect(pendingBox!.y + pendingBox!.height).toBeLessThanOrEqual(editorBox!.y);
 
   await page.getByRole("button", { name: "Remove image.png" }).first().click();
-  await expect(pendingAttachments).toHaveCount(3);
-  await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(3);
+  await expect(pendingAttachments).toHaveCount(9);
+  await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(9);
 });
 
 test("pastes clipboard images and files into chat as pending attachments and exposes them to the assistant", async ({ page }) => {
@@ -337,6 +459,9 @@ test("keeps pending pasted attachments scoped to the active chat conversation", 
       preferredAgentId: organization.chatAgent.id,
       issueCreationMode: "manual_approval",
       planMode: false,
+      initialMessage: {
+        body: "First attachment scope.",
+      },
     },
   });
   expect(firstChatRes.ok()).toBe(true);
@@ -348,6 +473,9 @@ test("keeps pending pasted attachments scoped to the active chat conversation", 
       preferredAgentId: organization.chatAgent.id,
       issueCreationMode: "manual_approval",
       planMode: false,
+      initialMessage: {
+        body: "Second attachment scope.",
+      },
     },
   });
   expect(secondChatRes.ok()).toBe(true);
@@ -367,7 +495,7 @@ test("keeps pending pasted attachments scoped to the active chat conversation", 
   await expect(pendingAttachments.filter({ hasText: "scope-b.txt" })).toHaveCount(0);
 
   await page.getByRole("link", { name: /Attachment scope B/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${secondChat.id}$`));
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${secondChat.id}$`));
   await expect(pendingAttachments).toHaveCount(0);
 
   await pasteTextAttachment(page, "scope-b.txt", "Attachment for the second chat only.");
@@ -376,7 +504,7 @@ test("keeps pending pasted attachments scoped to the active chat conversation", 
   await expect(pendingAttachments.filter({ hasText: "scope-a.txt" })).toHaveCount(0);
 
   await page.getByRole("link", { name: /Attachment scope A/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${firstChat.id}$`));
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${firstChat.id}$`));
   await expect(pendingAttachments).toHaveCount(1);
   await expect(pendingAttachments.filter({ hasText: "scope-a.txt" })).toBeVisible();
   await expect(pendingAttachments.filter({ hasText: "scope-b.txt" })).toHaveCount(0);

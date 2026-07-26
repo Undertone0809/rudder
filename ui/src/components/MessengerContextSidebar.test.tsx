@@ -1311,7 +1311,7 @@ describe("MessengerContextSidebar", () => {
         icon: "folder::slate",
         pinnedAt: null,
         sortOrder: 1,
-        collapsed: false,
+        collapsed: true,
         createdAt: "2026-04-11T08:00:00.000Z",
         updatedAt: "2026-04-11T08:00:00.000Z",
         entries: [hydratedThreadEntry({
@@ -1364,6 +1364,18 @@ describe("MessengerContextSidebar", () => {
     expect(regularClass).toContain("group/custom-group");
     expect(pinnedClass).toContain("mx-0.5");
     expect(regularClass).toContain("mx-0.5");
+    expect(pinnedClass).toContain("bg-[color:var(--messenger-group-bg)]");
+    expect(pinnedClass).toContain("border-[color:var(--messenger-group-border)]");
+    expect(regularClass).toContain("bg-transparent");
+    expect(regularClass).toContain("border-transparent");
+    expect(regularClass).toContain("hover:bg-[color:var(--messenger-group-bg-hover)]");
+    expect(regularClass).toContain("hover:border-[color:var(--messenger-group-border)]");
+    expect(regularClass).toContain("has-[:focus-visible]:bg-[color:var(--messenger-group-bg-hover)]");
+    expect(regularClass).toContain("has-[:focus-visible]:border-[color:var(--messenger-group-border)]");
+    expect(regularClass).toContain("dark:bg-transparent");
+    expect(regularClass).toContain("dark:border-transparent");
+    expect(regularClass).toContain("dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)]");
+    expect(regularClass).toContain("dark:hover:border-[color:var(--messenger-group-border-dark)]");
     expect(html.indexOf('data-testid="messenger-thread-section-custom-pinned"')).toBeLessThan(
       html.indexOf('data-testid="messenger-thread-section-custom-group-regular-group"'),
     );

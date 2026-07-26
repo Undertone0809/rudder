@@ -1421,23 +1421,28 @@ export function CommentThread({
       data-issue-detail-escape-back={escapeBackWhenEmpty ? (body.trim() ? "dirty" : "empty") : undefined}
       onMouseDown={focusComposerEditor}
     >
-      <MarkdownEditor
-        ref={editorRef}
-        engine="milkdown"
-        value={body}
-        onChange={updateBody}
-        placeholder="Leave a comment..."
-        mentions={mentions}
-        agentMentionIntent="wake"
-        onMentionQueryChange={onMentionQueryChange}
-        mentionMenuAnchorRef={composerSurfaceRef}
-        mentionMenuPlacement="container"
-        onSubmit={handleSubmit}
-        imageUploadHandler={imageUploadHandler}
-        className="rounded-[var(--radius-md)] bg-transparent"
-        contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
-        bordered={false}
-      />
+      <div
+        data-testid="issue-comment-composer-editor-scroll"
+        className="scrollbar-auto-hide max-h-[min(38dvh,22rem)] overflow-y-auto overscroll-contain pr-1"
+      >
+        <MarkdownEditor
+          ref={editorRef}
+          engine="milkdown"
+          value={body}
+          onChange={updateBody}
+          placeholder="Leave a comment..."
+          mentions={mentions}
+          agentMentionIntent="wake"
+          onMentionQueryChange={onMentionQueryChange}
+          mentionMenuAnchorRef={composerSurfaceRef}
+          mentionMenuPlacement="container"
+          onSubmit={handleSubmit}
+          imageUploadHandler={imageUploadHandler}
+          className="rounded-[var(--radius-md)] bg-transparent"
+          contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
+          bordered={false}
+        />
+      </div>
       <div className="mt-3 flex items-center justify-end gap-3">
         {(imageUploadHandler || onAttachImage) && (
           <div className="mr-auto flex items-center gap-3">

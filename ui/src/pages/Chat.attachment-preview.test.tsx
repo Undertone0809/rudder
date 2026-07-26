@@ -1313,6 +1313,27 @@ function dispatchPasteFiles(target: Element, files: File[], options: { clipboard
   target.dispatchEvent(pasteEvent);
 }
 
+function dispatchComposerDrag(
+  target: Element,
+  type: "dragenter" | "dragover" | "dragleave" | "drop",
+  files: File[],
+  options: { fileDrag?: boolean } = {},
+) {
+  const fileDrag = options.fileDrag ?? true;
+  const dragEvent = new Event(type, { bubbles: true, cancelable: true });
+  const dataTransfer = {
+    types: fileDrag ? ["Files"] : ["text/plain"],
+    items: fileDrag
+      ? files.map(() => ({ kind: "file" }))
+      : [{ kind: "string" }],
+    files,
+    dropEffect: "none",
+  };
+  Object.defineProperty(dragEvent, "dataTransfer", { value: dataTransfer });
+  target.dispatchEvent(dragEvent);
+  return { dragEvent, dataTransfer };
+}
+
 async function clickEnabledButton(container: Element, label: string) {
   await act(async () => {
     await Promise.resolve();
@@ -2644,7 +2665,7 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel?.textContent).toContain("High");
     expect(sidePanel?.textContent).toContain("Assignee");
     expect(sidePanel?.textContent).toContain("Wesley");
-    expect(sidePanel?.textContent).toContain("Founding Engineer");
+    expect(sidePanel?.textContent).not.toContain("Founding Engineer");
     expect(sidePanel?.textContent).toContain("Reviewer");
     expect(sidePanel?.textContent).toContain("Project");
     expect(sidePanel?.textContent).toContain("Make the issue reference read like a task detail panel.");
@@ -2831,6 +2852,9 @@ describe("Chat Side Panel link handling", () => {
         status: "done",
       },
     });
+    expect(mockState.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["chats", "org-1", "work-manifest"],
+    });
 
     const commentEditor = container.querySelector<HTMLTextAreaElement>('textarea[placeholder="Leave a comment..."]');
     expect(commentEditor).not.toBeNull();
@@ -2892,10 +2916,10 @@ describe("Chat Side Panel link handling", () => {
 
     const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.textContent).toContain("Wesley");
-    expect(sidePanel?.textContent).toContain("Founding Engineer");
+    expect(sidePanel?.textContent).not.toContain("Founding Engineer");
 
     const assigneeButton = Array.from(sidePanel?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
-      (candidate) => candidate.textContent?.includes("Wesley") && candidate.textContent?.includes("Founding Engineer"),
+      (candidate) => candidate.textContent?.includes("Wesley"),
     );
     expect(assigneeButton).not.toBeUndefined();
     await act(async () => {
@@ -2921,7 +2945,7 @@ describe("Chat Side Panel link handling", () => {
       },
     });
     expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Ada");
-    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Review Lead");
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).not.toContain("Review Lead");
   });
 
   it("keeps multiple Side Panel chat targets as deduplicated focusable tabs", async () => {
@@ -4992,7 +5016,7 @@ describe("Chat unread state", () => {
 });
 
 describe("Chat route loading", () => {
-  it("shows a target conversation loading state instead of the new-chat empty state", () => {
+  it("keeps prefetched history hidden behind the loading state until conversation detail resolves", () => {
     mockState.conversationId = "chat-loading";
     mockState.conversations = [];
     mockState.messagesByChatId = {
@@ -5001,13 +5025,13 @@ describe("Chat route loading", () => {
           id: "history-user",
           conversationId: "chat-loading",
           role: "user",
-          body: "Loaded user history before descriptor resolution.",
+          body: "**Loaded user history before descriptor resolution.**",
         }),
         message({
           id: "history-assistant",
           conversationId: "chat-loading",
           role: "assistant",
-          body: "Loaded assistant history before descriptor resolution.",
+          body: "- Loaded assistant history before descriptor resolution.",
         }),
       ],
     };
@@ -5017,10 +5041,12 @@ describe("Chat route loading", () => {
 
     expect(container.querySelector("[data-testid='chat-conversation-loading-state']")).not.toBeNull();
     expect(mockState.queryKeys).toContainEqual(["chats", "org-1", "messages", "chat-loading"]);
-    expect(container.textContent).toContain("Loaded user history before descriptor resolution.");
-    expect(container.textContent).toContain("Loaded assistant history before descriptor resolution.");
+    expect(container.querySelector("[role='status'][aria-label='Chat messages loading']")).not.toBeNull();
+    expect(container.textContent).not.toContain("Loaded user history before descriptor resolution.");
+    expect(container.textContent).not.toContain("Loaded assistant history before descriptor resolution.");
     expect(container.querySelector("[data-testid='chat-composer-toolbar']")).toBeNull();
     expect(container.querySelector("[data-testid='chat-empty-state-tabs']")).toBeNull();
+    expect(container.textContent).not.toContain("No messages yet.");
     expect(container.textContent).not.toContain("Scope a new feature");
   });
 });
@@ -7198,8 +7224,22 @@ describe("Chat attachment previews", () => {
 
     const { container } = renderChat();
 
-    expect(container.querySelector("[data-testid='chat-pending-attachments']")).not.toBeNull();
+    const pendingAttachments = container.querySelector(
+      "[data-testid='chat-pending-attachments']",
+    );
+    const editorScroll = container.querySelector("[data-testid='chat-composer-editor-scroll']");
+    const toolbar = container.querySelector("[data-testid='chat-composer-toolbar']");
+
+    expect(pendingAttachments).not.toBeNull();
     expect(container.querySelector("[data-testid='chat-pending-attachment']")).not.toBeNull();
+    expect(editorScroll).not.toBeNull();
+    expect(toolbar).not.toBeNull();
+    expect(pendingAttachments?.compareDocumentPosition(editorScroll!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(pendingAttachments?.compareDocumentPosition(toolbar!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
     expect(container.querySelector("[data-testid='chat-empty-state-prompt-flow']")?.getAttribute("data-state")).toBe("hidden");
     expect(container.querySelector("[data-testid='chat-empty-state-starters']")?.getAttribute("aria-hidden")).toBe("true");
   });
@@ -7238,6 +7278,73 @@ describe("Chat attachment previews", () => {
     });
 
     expect(container.querySelectorAll("[data-testid='chat-pending-attachment']")).toHaveLength(3);
+  });
+
+  it("shows stable file-drop feedback and stages every dropped file", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "plain-user-message", body: "Drop the supporting files." })],
+    };
+
+    const { container } = renderChat();
+    const dropTarget = container.querySelector("[data-testid='chat-composer-file-drop-target']");
+    expect(dropTarget).not.toBeNull();
+
+    const files = [
+      new File(["design"], "design.png", { type: "image/png" }),
+      new File(["notes"], "notes.txt", { type: "text/plain" }),
+    ];
+    act(() => {
+      dispatchComposerDrag(dropTarget!, "dragenter", files);
+      dispatchComposerDrag(dropTarget!, "dragenter", files);
+    });
+    expect(container.querySelector("[data-testid='chat-composer-file-drop-overlay']")).not.toBeNull();
+
+    act(() => {
+      dispatchComposerDrag(dropTarget!, "dragleave", files);
+    });
+    expect(container.querySelector("[data-testid='chat-composer-file-drop-overlay']")).not.toBeNull();
+
+    act(() => {
+      dispatchComposerDrag(dropTarget!, "dragleave", files);
+    });
+    expect(container.querySelector("[data-testid='chat-composer-file-drop-overlay']")).toBeNull();
+
+    act(() => {
+      dispatchComposerDrag(dropTarget!, "dragenter", files);
+    });
+    const dragOver = dispatchComposerDrag(dropTarget!, "dragover", files);
+    expect(dragOver.dragEvent.defaultPrevented).toBe(true);
+    expect(dragOver.dataTransfer.dropEffect).toBe("copy");
+
+    await act(async () => {
+      dispatchComposerDrag(dropTarget!, "drop", files);
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='chat-composer-file-drop-overlay']")).toBeNull();
+    expect(container.querySelectorAll("[data-testid='chat-pending-attachment']")).toHaveLength(2);
+    expect(container.querySelector("[data-testid='chat-pending-attachments']")?.textContent)
+      .toContain("notes.txt");
+  });
+
+  it("preserves native editor behavior for non-file drags", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "plain-user-message", body: "Reorder this text." })],
+    };
+
+    const { container } = renderChat();
+    const dropTarget = container.querySelector("[data-testid='chat-composer-file-drop-target']");
+    expect(dropTarget).not.toBeNull();
+
+    const dragEnter = dispatchComposerDrag(dropTarget!, "dragenter", [], { fileDrag: false });
+    const dragOver = dispatchComposerDrag(dropTarget!, "dragover", [], { fileDrag: false });
+    const drop = dispatchComposerDrag(dropTarget!, "drop", [], { fileDrag: false });
+
+    expect(dragEnter.dragEvent.defaultPrevented).toBe(false);
+    expect(dragOver.dragEvent.defaultPrevented).toBe(false);
+    expect(drop.dragEvent.defaultPrevented).toBe(false);
+    expect(container.querySelector("[data-testid='chat-composer-file-drop-overlay']")).toBeNull();
+    expect(container.querySelector("[data-testid='chat-pending-attachment']")).toBeNull();
   });
 
   it("approves issue proposals with the operator-selected issue status", async () => {
@@ -7435,6 +7542,37 @@ describe("Chat ask_user panel", () => {
     expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).toBeNull();
   });
 
+  it("lets pending ask_user panels stage dropped attachments", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingAskUser(),
+      ],
+    };
+
+    const { container } = renderChat();
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+
+    const attachments = [
+      new File(["diagram"], "answer-diagram.png", { type: "image/png" }),
+      new File(["notes"], "answer-notes.txt", { type: "text/plain" }),
+    ];
+    act(() => {
+      dispatchComposerDrag(panel!, "dragenter", attachments);
+    });
+    expect(panel?.querySelector("[data-testid='chat-composer-file-drop-overlay']")).not.toBeNull();
+
+    await act(async () => {
+      dispatchComposerDrag(panel!, "drop", attachments);
+      await Promise.resolve();
+    });
+
+    expect(panel?.querySelector("[data-testid='chat-composer-file-drop-overlay']")).toBeNull();
+    expect(container.querySelectorAll("[data-testid='chat-ask-user-pending-attachment']")).toHaveLength(2);
+    expect(panel?.textContent).toContain("answer-notes.txt");
+  });
+
   it("dedupes pasted attachments exposed through both clipboard items and files", async () => {
     mockState.messagesByChatId = {
       "chat-1": [
@@ -7587,6 +7725,10 @@ describe("Chat ask_user panel", () => {
     expect(panel?.textContent).toContain("Missing tests");
     expect(panel?.textContent).toContain("Include screenshot evidence");
     expect(panel?.textContent).not.toContain("Question 3 of 3");
+    const reviewScroll = panel?.querySelector("[data-testid='chat-ask-user-review-scroll']");
+    expect(reviewScroll?.className).toContain("max-h-[min(48dvh,28rem)]");
+    expect(reviewScroll?.className).toContain("overflow-y-auto");
+    expect(reviewScroll?.className).toContain("overscroll-contain");
   });
 
   it("restores unfinished ask_user selections after switching conversations and clears them on submit", async () => {
@@ -8033,7 +8175,9 @@ describe("Chat project context selector", () => {
 
     expect(projectSelector).not.toBeNull();
     expect(projectSelector?.querySelector("[data-testid='chat-project-icon']")).toBeNull();
-    expect(container.querySelector("[data-testid='chat-agent-selector-chevron']")).toBeNull();
+    expect(
+      container.querySelector("[data-testid='chat-agent-selector'] [data-testid='chat-agent-selector-icon']"),
+    ).not.toBeNull();
 
     act(() => {
       projectSelector?.dispatchEvent(new MouseEvent("click", { bubbles: true }));

@@ -173,12 +173,18 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
   // Fetch events
   const { data: initialEvents } = useQuery({
     queryKey: ["run-events", run.id],
-    queryFn: () => agentRunsApi.events(run.id, 0, 200),
+    queryFn: () => agentRunsApi.allEvents(run.id),
   });
 
   useEffect(() => {
     if (initialEvents) {
-      setEvents(initialEvents);
+      setEvents((currentEvents) => {
+        if (currentEvents.length === 0) return initialEvents;
+        const eventsBySeq = new Map(
+          [...initialEvents, ...currentEvents].map((event) => [event.seq, event]),
+        );
+        return [...eventsBySeq.values()].sort((left, right) => left.seq - right.seq);
+      });
       setLoading(false);
     }
   }, [initialEvents]);

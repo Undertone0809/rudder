@@ -90,6 +90,44 @@ describe("RunTranscriptView Codex-style chat activity", () => {
     expect(html).toContain("text-muted-foreground");
   });
 
+  it("keeps process content in the reading column while Steer stays full width", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "assistant",
+              ts: "2026-07-23T00:00:01.000Z",
+              text: "Inspecting the current layout.",
+            },
+            {
+              kind: "user",
+              source: "steer",
+              messageId: "steer-message-1",
+              controlActionId: "steer-action-1",
+              ts: "2026-07-23T00:00:02.000Z",
+              text: "Keep the revised direction.",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-07-23T00:00:03.000Z",
+              text: "Continuing after Steer.",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('data-transcript-chat-column="reading"');
+    expect(html).toMatch(/data-transcript-chat-column="reading" class="max-w-3xl px-1"/);
+    expect(html).toMatch(/data-transcript-chat-column="full" class="w-full"/);
+    expect(html).toMatch(
+      /data-transcript-chat-column="full"[\s\S]*data-testid="chat-transcript-steer-message"/,
+    );
+  });
+
   it("keeps detail-view tool disclosures hidden outside hover or focus even when details are open", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

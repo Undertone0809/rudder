@@ -4,7 +4,6 @@ import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { projectsApi } from "@/api/projects";
 import { AgentIcon } from "@/components/AgentIconPicker";
-import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import {
@@ -23,6 +22,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { latestSideChatAnchor, sideChatConversationMessages, sideChatIsReadOnly } from "@/lib/side-chat";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { AssistantDraftItem, ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
+import { mergeChatMessages } from "@/pages/Chat.parts";
 import type {
   Agent,
   ChatConversation,
@@ -30,7 +30,7 @@ import type {
   ChatMessage,
 } from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, CirclePlus, Clock3, Folder, Loader2, Plus } from "lucide-react";
+import { ArrowUp, Clock3, Folder, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
@@ -38,6 +38,7 @@ type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
 type SideChatStream = {
   body: string;
   createdAt: Date;
+  generationId: string | null;
   replyingAgentId: string | null;
   state: ChatStreamDraftState;
   transcript: TranscriptEntry[];
@@ -178,6 +179,20 @@ export function SideChatPanelView({
   const conversation = conversationQuery.data ?? null;
   const displayConversation = conversation ?? sourceConversationQuery.data ?? null;
   const messages = sideChatConversationMessages(messagesQuery.data ?? []);
+  const authoritativeTerminalMessage = stream?.generationId
+    ? messages.find((message) => (
+        message.role === "assistant"
+        && message.generationId === stream.generationId
+        && message.status !== "streaming"
+      )) ?? null
+    : null;
+  const displayedStream = authoritativeTerminalMessage ? null : stream;
+  const visibleMessages = displayedStream?.generationId
+    ? messages.filter((message) => (
+        message.role !== "assistant"
+        || message.generationId !== displayedStream.generationId
+      ))
+    : messages;
   const readOnly = sideChatIsReadOnly(conversation, now);
   const stateLabel = readOnly
     ? "Expired · read-only"
@@ -198,12 +213,10 @@ export function SideChatPanelView({
     queryClient.setQueryData(queryKeys.chats.detail(organizationId, updated.id), updated);
   };
 
-  const appendMessage = (conversationId: string, message: ChatMessage) => {
+  const upsertMessage = (conversationId: string, message: ChatMessage) => {
     queryClient.setQueryData<ChatMessage[]>(
       queryKeys.chats.messages(organizationId, conversationId),
-      (current = []) => current.some((candidate) => candidate.id === message.id)
-        ? current
-        : [...current, message],
+      (current = []) => mergeChatMessages(current, [message]),
     );
   };
 
@@ -224,6 +237,7 @@ export function SideChatPanelView({
     setStream({
       body: "",
       createdAt,
+      generationId: null,
       replyingAgentId: selectedAgentId,
       state: "streaming",
       transcript: [],
@@ -266,7 +280,11 @@ export function SideChatPanelView({
         onEvent: async (event) => {
           if (event.type === "ack") {
             acknowledged = true;
-            appendMessage(conversationId!, event.userMessage);
+            upsertMessage(conversationId!, event.userMessage);
+            setStream((current) => current ? {
+              ...current,
+              generationId: event.generationId ?? current.generationId,
+            } : current);
             dispatchAnnotation({ type: "clear" });
             setAnnotationsExpanded(false);
             setEditingAnnotationId(null);
@@ -282,7 +300,11 @@ export function SideChatPanelView({
             );
           }
           if (event.type === "assistant_delta") {
-            setStream((current) => current ? { ...current, body: `${current.body}${event.delta}` } : current);
+            setStream((current) => current ? {
+              ...current,
+              body: `${current.body}${event.delta}`,
+              generationId: event.generationId ?? current.generationId,
+            } : current);
           }
           if (event.type === "assistant_state") {
             setStream((current) => current ? { ...current, state: event.state } : current);
@@ -292,11 +314,15 @@ export function SideChatPanelView({
               if (!current) return current;
               const transcript = [...current.transcript];
               appendTranscriptEntry(transcript, event.entry);
-              return { ...current, transcript };
+              return {
+                ...current,
+                generationId: event.generationId ?? current.generationId,
+                transcript,
+              };
             });
           }
           if (event.type === "final") {
-            for (const message of event.messages) appendMessage(conversationId!, message);
+            for (const message of event.messages) upsertMessage(conversationId!, message);
             setStream(null);
           }
           if (event.type === "error") {
@@ -353,35 +379,20 @@ export function SideChatPanelView({
     <div className="flex h-full min-h-0 flex-col" data-testid="side-chat-panel-view">
       <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
-          <section className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <CirclePlus className="h-4 w-4 text-[color:var(--accent-base)]" data-testid="side-chat-icon" />
-                Side Chat
-              </div>
-              {stateLabel ? (
-                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground" data-testid="side-chat-state">
-                  <Clock3 className="h-3 w-3" />
-                  {stateLabel}
-                </span>
-              ) : null}
+          {stateLabel ? (
+            <div className="flex justify-end">
+              <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground" data-testid="side-chat-state">
+                <Clock3 className="h-3 w-3" />
+                {stateLabel}
+              </span>
             </div>
-            <div className="mt-3 border-l-2 border-[color:var(--accent-base)] pl-3">
-              <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.13em] text-muted-foreground">From the main chat</div>
-              {anchorLoading ? (
-                <div className="h-10 animate-pulse rounded bg-[color:var(--surface-active)]" />
-              ) : noAnchor ? (
-                <p className="text-sm text-destructive">The main chat needs a completed assistant response first.</p>
-              ) : (
-                <div className="line-clamp-5 text-sm leading-6 text-muted-foreground" data-testid="side-chat-anchor-preview">
-                  <MarkdownBody>{sourcePreview ?? "Assistant response"}</MarkdownBody>
-                </div>
-              )}
-            </div>
-          </section>
+          ) : null}
+          {noAnchor ? (
+            <p className="text-sm text-destructive">The main chat needs a completed assistant response first.</p>
+          ) : null}
 
           <div className="flex min-h-[12rem] flex-col gap-5" data-testid="side-chat-messages">
-            {displayConversation ? messages.map((message) => {
+            {displayConversation ? visibleMessages.map((message) => {
               const transcript = transcriptEntries(message);
               return (
                 <div key={message.id}>
@@ -418,20 +429,20 @@ export function SideChatPanelView({
                 </div>
               );
             }) : null}
-            {stream && displayConversation ? (
+            {displayedStream && displayConversation ? (
               <div className="flex flex-col gap-5" data-testid="side-chat-streaming-reply">
                 <StreamTranscriptItem
-                  entries={stream.transcript}
-                  state={stream.state}
-                  streamStartedAt={stream.createdAt}
-                  assistantMessageBody={stream.body}
+                  entries={displayedStream.transcript}
+                  state={displayedStream.state}
+                  streamStartedAt={displayedStream.createdAt}
+                  assistantMessageBody={displayedStream.body}
                   showDeveloperDiagnostics={false}
                 />
                 <AssistantDraftItem
-                  body={stream.body}
-                  createdAt={stream.createdAt}
-                  state={stream.state}
-                  replyingAgentId={stream.replyingAgentId}
+                  body={displayedStream.body}
+                  createdAt={displayedStream.createdAt}
+                  state={displayedStream.state}
+                  replyingAgentId={displayedStream.replyingAgentId}
                   conversation={displayConversation}
                   agents={agents}
                   onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}

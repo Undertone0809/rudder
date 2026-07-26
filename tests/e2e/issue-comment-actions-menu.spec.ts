@@ -1,5 +1,52 @@
 import { expect, test } from "@playwright/test";
 
+test("long issue comment drafts stay inside a bounded scrolling composer", async ({ page }) => {
+  await page.setViewportSize({ width: 1360, height: 920 });
+  await page.goto("/");
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Issue-Comment-Composer-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Bounded comment composer",
+      description: "Long issue comment drafts should not take over the issue page.",
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier: string | null };
+
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+
+  const composerScroll = page.getByTestId("issue-comment-composer-editor-scroll");
+  const composer = composerScroll.locator(".ProseMirror");
+  await expect(composer).toBeVisible();
+  await composer.fill(Array.from({ length: 80 }, (_, index) => `Draft line ${index + 1}`).join("\n"));
+
+  const metrics = await composerScroll.evaluate((node) => ({
+    clientHeight: node.clientHeight,
+    scrollHeight: node.scrollHeight,
+    overflowY: getComputedStyle(node).overflowY,
+    viewportHeight: window.innerHeight,
+  }));
+  expect(metrics.overflowY).toBe("auto");
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+  expect(metrics.clientHeight).toBeLessThanOrEqual(Math.min(metrics.viewportHeight * 0.38, 352) + 1);
+
+  await composerScroll.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect.poll(() => composerScroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+});
+
 test("issue comment actions menu copies content and direct links", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window.navigator, "clipboard", {

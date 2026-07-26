@@ -54,6 +54,7 @@ describe("buildAgentSkillMentionOptions", () => {
         sourceBadge: "local",
         sourceLocator: "/workspace/skills/alpha-test",
         sourcePath: "/workspace/skills/alpha-test/SKILL.md",
+        workspaceEditPath: "skills/alpha-test/SKILL.md",
       }),
     ];
 
@@ -185,6 +186,7 @@ describe("buildAgentSkillMentionOptions", () => {
       skillMarkdownTarget: "skill://org/org-alpha-test?ref=alpha-test",
       skillDisplayName: "Alpha Test",
       skillDetailsHref: "/library?skill=org-alpha-test&skillFile=SKILL.md",
+      skillOpenHref: "library-file://file?p=skills%2Falpha-test%2FSKILL.md",
     });
     expect(options.find((option) => option.name === "build-advisor")).toMatchObject({
       skillRefLabel: "build-advisor",
@@ -196,9 +198,11 @@ describe("buildAgentSkillMentionOptions", () => {
       skillCategoryLabel: "Agent skill",
       skillLocationLabel: "AGENT_HOME/skills",
       skillDetailsHref: null,
+      skillOpenHref: "/workspace/agents/ella/skills/agent-helper/SKILL.md",
     });
     expect(options.find((option) => option.name === "global-helper")).toMatchObject({
       skillMarkdownTarget: "skill://local/%2FUsers%2Ftest%2F.agents%2Fskills%2Fglobal-helper?ref=global-helper",
+      skillOpenHref: "/Users/test/.agents/skills/global-helper/SKILL.md",
     });
     expect(options.find((option) => option.name === "global-helper")).toMatchObject({
       skillDisplayName: "global-helper",
@@ -251,6 +255,7 @@ describe("buildAgentSkillMentionOptions", () => {
       skillRefLabel: "alpha-test",
       skillMarkdownTarget: "skill://agent/agent-1/org%3Aorganization%2Forg-1%2Falpha-test?ref=organization%2Forg-1%2Falpha-test",
       skillDetailsHref: null,
+      skillOpenHref: "/workspace/skills/alpha-test/SKILL.md",
     });
   });
 });

@@ -64,6 +64,8 @@ describe("atomic chat draft API", () => {
 
     await expect(chatsApi.preflightDraft("org-1", {
       preferredAgentId: "agent-1",
+      modelOverride: "gpt-5.6-terra",
+      effortOverride: "xhigh",
       issueCreationMode: "manual_approval",
       planMode: true,
       contextLinks: [{ entityType: "project", entityId: "project-1" }],
@@ -79,6 +81,8 @@ describe("atomic chat draft API", () => {
     expect(new Headers(request?.headers).get("Content-Type")).toBe("application/json");
     expect(JSON.parse(String(request?.body))).toEqual({
       preferredAgentId: "agent-1",
+      modelOverride: "gpt-5.6-terra",
+      effortOverride: "xhigh",
       issueCreationMode: "manual_approval",
       planMode: true,
       contextLinks: [{ entityType: "project", entityId: "project-1" }],
@@ -111,6 +115,8 @@ describe("atomic chat draft API", () => {
 
     await chatsApi.sendFirstMessageStream("org-1", "Begin atomically", {
       preferredAgentId: "agent-1",
+      modelOverride: "gpt-5.6-luna",
+      effortOverride: "high",
       issueCreationMode: "manual_approval",
       planMode: false,
       contextLinks: [],
@@ -128,6 +134,8 @@ describe("atomic chat draft API", () => {
     expect(JSON.parse(String(request?.body))).toEqual({
       body: "Begin atomically",
       preferredAgentId: "agent-1",
+      modelOverride: "gpt-5.6-luna",
+      effortOverride: "high",
       issueCreationMode: "manual_approval",
       planMode: false,
       contextLinks: [],
@@ -144,6 +152,8 @@ describe("atomic chat draft API", () => {
 
     await chatsApi.sendFirstMessageStream("org-1", "Inspect the evidence", {
       preferredAgentId: "agent-1",
+      modelOverride: "gpt-5.6-terra",
+      effortOverride: "medium",
       issueCreationMode: "manual_approval",
       planMode: true,
       contextLinks: [{ entityType: "issue", entityId: "issue-1" }],
@@ -157,6 +167,8 @@ describe("atomic chat draft API", () => {
     const form = request?.body as FormData;
     expect(form.get("body")).toBe("Inspect the evidence");
     expect(form.get("preferredAgentId")).toBe("agent-1");
+    expect(form.get("modelOverride")).toBe("gpt-5.6-terra");
+    expect(form.get("effortOverride")).toBe("medium");
     expect(form.get("issueCreationMode")).toBe("manual_approval");
     expect(form.get("planMode")).toBe("true");
     expect(form.get("contextLinks")).toBe(JSON.stringify([

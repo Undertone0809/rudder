@@ -547,6 +547,9 @@ describe("applyPendingMigrations", () => {
           "0116_dark_skreet.sql",
           "0117_reflective_namora.sql",
           "0118_flippant_longshot.sql",
+          "0119_nervous_killraven.sql",
+          "0120_thick_maria_hill.sql",
+          "0121_pale_wildside.sql",
         ],
         reason: "pending-migrations",
       });
@@ -685,6 +688,9 @@ describe("applyPendingMigrations", () => {
           "0116_dark_skreet.sql",
           "0117_reflective_namora.sql",
           "0118_flippant_longshot.sql",
+          "0119_nervous_killraven.sql",
+          "0120_thick_maria_hill.sql",
+          "0121_pale_wildside.sql",
         ],
         reason: "pending-migrations",
       });
