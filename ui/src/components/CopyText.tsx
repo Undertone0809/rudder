@@ -54,7 +54,7 @@ export function CopyText({ text, children, className, containerClassName, ariaLa
           "motion-tooltip pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 rounded-md bg-foreground text-background px-2 py-1 text-xs whitespace-nowrap",
         )}
       >
-        {label}
+        {visible ? label : null}
       </span>
     </span>
   );

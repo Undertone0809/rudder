@@ -756,6 +756,7 @@ describe("MessengerMainWorkbench", () => {
       document.querySelector<HTMLElement>('[role="dialog"]'),
     ).not.toBeNull());
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    act(() => dialog.querySelector<HTMLButtonElement>('[data-testid="local-app-advanced-toggle"]')?.click());
     expect(dialog.textContent).toContain("Project settings");
     expect(dialog.querySelector<HTMLInputElement>("#local-app-name")?.value)
       .toBe("MKT dashboard");
@@ -805,11 +806,13 @@ describe("MessengerMainWorkbench", () => {
       await Promise.resolve();
     });
 
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    act(() => dialog?.querySelector<HTMLButtonElement>('[data-testid="local-app-advanced-toggle"]')?.click());
     await vi.waitFor(() => expect(
       document.querySelector<HTMLInputElement>("#local-app-name")?.disabled,
     ).toBe(true));
     expect(document.querySelector('[role="dialog"]')?.textContent)
-      .toContain("Stop this Local App to edit project settings.");
+      .toContain("Stop this Local App to edit its launch settings.");
 
     await act(async () => {
       Array.from(document.querySelectorAll<HTMLButtonElement>("button"))

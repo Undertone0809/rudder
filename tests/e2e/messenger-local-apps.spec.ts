@@ -367,6 +367,8 @@ test.describe("Messenger Local Apps", () => {
     await expect(reviewScroll).toHaveClass(/scrollbar-auto-hide/);
     await expect(reviewScroll).toHaveCSS("overflow-y", "auto");
     await expect(review.getByRole("button", { name: "Review & add" })).toBeVisible();
+    await expect(review.getByTestId("local-app-start-command")).toHaveText("npm run dev");
+    await review.getByTestId("local-app-advanced-toggle").click();
     await reviewScroll.evaluate((element) => element.dispatchEvent(new Event("scroll")));
     await expect(reviewScroll).toHaveClass(/is-scrolling/);
     await expect(review.getByLabel("Working directory")).toHaveValue(
@@ -434,6 +436,7 @@ test.describe("Messenger Local Apps", () => {
     }).click();
     await page.getByRole("menuitem", { name: "Project settings" }).click();
     const runningSettings = page.getByTestId("local-app-definition-review");
+    await runningSettings.getByTestId("local-app-advanced-toggle").click();
     await expect(runningSettings.getByLabel("Name", { exact: true })).toBeDisabled();
     await expect(runningSettings).toContainText(
       "Stop this Local App to edit project settings.",
@@ -540,6 +543,7 @@ test.describe("Messenger Local Apps", () => {
     }).click();
     await page.getByRole("menuitem", { name: "Project settings" }).click();
     const editableSettings = page.getByTestId("local-app-definition-review");
+    await editableSettings.getByTestId("local-app-advanced-toggle").click();
     await editableSettings.getByLabel("Name", { exact: true })
       .fill("MKT command center");
     await editableSettings.getByLabel("Page to open after readiness")
@@ -644,6 +648,7 @@ test.describe("Messenger Local Apps", () => {
     await more.click();
     await page.getByRole("menuitem", { name: "Project settings" }).click();
     const settings = page.getByTestId("local-app-definition-review");
+    await settings.getByTestId("local-app-advanced-toggle").click();
     await expect(settings.getByLabel("Working directory")).toHaveValue(
       "/Users/zeeland/projects/uranus/rudder/mkt/dashboard",
     );
@@ -659,6 +664,7 @@ test.describe("Messenger Local Apps", () => {
     await page.getByRole("menuitem", { name: "Project settings" }).click();
     const editableSettings = page.getByTestId("local-app-definition-review");
     await editableSettings.getByRole("button", { name: "Stop & edit" }).click();
+    await editableSettings.getByTestId("local-app-advanced-toggle").click();
     await expect(editableSettings.getByLabel("Name", { exact: true })).toBeEnabled();
     await editableSettings.getByLabel("Name", { exact: true })
       .fill("MKT command center");
