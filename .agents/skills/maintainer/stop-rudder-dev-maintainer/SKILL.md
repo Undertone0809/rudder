@@ -51,6 +51,12 @@ pnpm dev
 ```
 
 That flow launches `scripts/dev-shell.mjs`, which in turn manages the local dev runner and desktop shell.
+The dev shell must discard any inherited `prod_local` runtime identity before
+startup, and the dev runner must refuse to take over a runtime owned by
+Desktop, CLI, or a standalone server. If either invariant fails, stop and fix
+the startup path; do not use this skill's stop script as a workaround.
+The dev runner must also refuse to start against the protected `prod_local` /
+`default` target even when no production runtime is currently healthy.
 
 ## Default Workflow
 

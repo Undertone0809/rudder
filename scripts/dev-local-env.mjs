@@ -3,6 +3,27 @@ import os from "node:os";
 import path from "node:path";
 
 const CODEX_WORKTREE_DISABLE_RE = /^(1|true|yes)$/i;
+const PARENT_RUNTIME_ENV_KEYS = [
+  "DATABASE_URL",
+  "HOST",
+  "PORT",
+  "RUDDER_AUTH_BASE_URL_MODE",
+  "RUDDER_CONFIG",
+  "RUDDER_DEPLOYMENT_EXPOSURE",
+  "RUDDER_DEPLOYMENT_MODE",
+  "RUDDER_DESKTOP_USER_DATA_DIR",
+  "RUDDER_EMBEDDED_POSTGRES_PORT",
+  "RUDDER_HOME",
+  "RUDDER_INSTANCE_ID",
+  "RUDDER_LOCAL_ENV",
+  "RUDDER_MIGRATION_AUTO_APPLY",
+  "RUDDER_MIGRATION_PROMPT",
+  "RUDDER_OPEN_ON_LISTEN",
+  "RUDDER_ORGANIZATION_WORKSPACE_HOME",
+  "RUDDER_RUNTIME_OWNER_KIND",
+  "RUDDER_UI_DEV_MIDDLEWARE",
+  "SERVE_UI",
+];
 
 export const localEnvProfiles = {
   dev: {
@@ -26,6 +47,28 @@ export function normalizeLocalEnvName(value) {
   if (!value) return null;
   const normalized = value.trim().toLowerCase().replace(/-/g, "_");
   return Object.hasOwn(localEnvProfiles, normalized) ? normalized : null;
+}
+
+export function isolateDevShellFromParentRuntime(baseEnv) {
+  const env = { ...baseEnv };
+  const localEnvName = normalizeLocalEnvName(env.RUDDER_LOCAL_ENV);
+  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID)?.toLowerCase();
+  const runtimeOwnerKind = nonEmpty(env.RUDDER_RUNTIME_OWNER_KIND)?.toLowerCase().replace(/-/g, "_");
+  const inheritedProductionRuntime =
+    localEnvName === "prod_local"
+    || instanceId === "default"
+    || runtimeOwnerKind === "desktop"
+    || runtimeOwnerKind === "cli"
+    || runtimeOwnerKind === "server";
+
+  if (!inheritedProductionRuntime) {
+    return env;
+  }
+
+  for (const key of PARENT_RUNTIME_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
 }
 
 export function resolveRepoLocalEnvFile(repoRoot) {
