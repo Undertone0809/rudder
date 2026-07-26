@@ -18,6 +18,7 @@ import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
 import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { userImageContentPathsFromMessages } from "./chat-assistant.proposal-validation.js";
 import { enrichConversationRuntimeDescriptors } from "./chat-assistant.runtime-batch.js";
 import {
   applyChatRuntimeOverrides,
@@ -1074,12 +1075,23 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       const generatedAttachments = extractGeneratedAttachments(result);
       const inlineVisualArtifacts = extractCodexInlineVisualArtifacts(result);
       generatedAttachments.push(...inlineVisualArtifacts.attachments);
+      const availableImageContentPaths = userImageContentPathsFromMessages(input.messages);
+      const forbiddenAttachmentLocalPaths = [...preparedAttachments.references.values()]
+        .map((reference) => reference.localPath)
+        .filter((localPath): localPath is string => Boolean(localPath));
+      const proposalValidationOptions = {
+        allowedProposalImageContentPaths: availableImageContentPaths,
+        forbiddenAttachmentLocalPaths,
+      };
       let reply: ChatAssistantResult | null = null;
       let sentinelRepairAttempted = false;
       let sentinelRepairSucceeded = false;
       let repairResultUsage = null as typeof result.usage | null | undefined;
       try {
-        reply = parseCompletedAssistantReply(raw, resultSentinel, { requireSentinel: true });
+        reply = parseCompletedAssistantReply(raw, resultSentinel, {
+          requireSentinel: true,
+          ...proposalValidationOptions,
+        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Chat adapter returned an invalid final reply";
         const errorCode: ChatRecoverableFailureCode = errorMessage.includes("without the required Rudder result sentinel")
@@ -1098,7 +1110,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             repairResultUsage = repairResult.usage;
             if (!repairResult.timedOut && (repairResult.exitCode ?? 0) === 0 && !repairResult.errorMessage) {
               try {
-                const repairedReply = parseCompletedAssistantReply(resultText(repairResult), resultSentinel, { requireSentinel: true });
+                const repairedReply = parseCompletedAssistantReply(resultText(repairResult), resultSentinel, {
+                  requireSentinel: true,
+                  ...proposalValidationOptions,
+                });
                 if (
                   repairedReply.body.includes(resultSentinel)
                   || repairedReply.body.includes("Rudder internal repair request:")

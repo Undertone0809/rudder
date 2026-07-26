@@ -117,6 +117,9 @@ const {
   ChatAssistantStreamError,
   validateAssistantResult,
 } = await import("../services/chat-assistant.helpers.js");
+const {
+  userImageContentPathsFromMessages,
+} = await import("../services/chat-assistant.proposal-validation.js");
 
 let currentAgentHome = "";
 const cleanupDirs = new Set<string>();
@@ -705,6 +708,10 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("Treat message attachments as part of the user's message.");
     expect(prompt).toContain("Current user message attachments:");
     expect(prompt).toContain("The latest user message includes 1 attachment(s). Inspect any listed localPath directly before answering.");
+    expect(prompt).toContain("contentPath is the canonical user-visible Rudder asset path.");
+    expect(prompt).toContain("use that exact contentPath as the Markdown image target");
+    expect(prompt).toContain("localPath is temporary runtime-only inspection context.");
+    expect(prompt).toContain("this metadata does not require copying every attachment into a proposal");
     expect(prompt).toContain('User message body: "Help me scope this work."');
     expect(prompt).toContain("- [1] name=image.png; contentType=image/png; byteSize=1234; contentPath=/api/assets/asset-1/content;");
     expect(prompt).toMatch(/localPath=.*image\.png/);
@@ -1464,6 +1471,70 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("converting the chat to an issue");
   });
 
+  it("instructs initial issue proposals to preserve only relevant original images with canonical content paths", async () => {
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    expect(prompt).toContain("For initial and revised issue proposals, preserve a user-provided original image");
+    expect(prompt).toContain("Prefer the original image over a redraw, generated replacement, or text-only substitute.");
+    expect(prompt).toContain("using only the attachment's canonical contentPath as the target");
+    expect(prompt).toContain("![Current broken state](/api/assets/<asset-id>/content)");
+    expect(prompt).toContain("localPath is temporary runtime inspection context only");
+    expect(prompt).toContain("must never appear in user-visible proposal JSON or Markdown");
+    expect(prompt).toContain("Choose proposal images by relevance; do not copy every attachment indiscriminately.");
+    expect(prompt).toContain("has no usable contentPath");
+    expect(prompt).toContain("Never expose an internal download command, authentication material, or a fabricated image target.");
+  });
+
+  it("instructs revision proposals to recover relevant historical images without exposing local paths", async () => {
+    const storage = makeStorageService();
+    const svc = chatAssistantService({} as any, storage as any);
+    const [originalMessage] = makeMessages();
+    const originalImage = makeAttachment({
+      id: "attachment-original-evidence",
+      assetId: "asset-original-evidence",
+      messageId: originalMessage!.id,
+      originalFilename: "original-evidence.png",
+      contentPath: "/api/assets/asset-original-evidence/content",
+    });
+    const revisionFeedback: ChatMessage = {
+      ...originalMessage!,
+      id: "message-revision-feedback",
+      body: [
+        'Please revise the proposal "Preserve evidence".',
+        "",
+        "Requested changes:",
+        "Include the relevant original image.",
+      ].join("\n"),
+      attachments: [],
+      createdAt: new Date("2026-03-29T08:02:00.000Z"),
+      updatedAt: new Date("2026-03-29T08:02:00.000Z"),
+    };
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: [{ ...originalMessage!, attachments: [originalImage] }, revisionFeedback],
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    expect(prompt).toContain("When revising an issue proposal, re-check relevant user image attachments across the available recentMessages history");
+    expect(prompt).toContain("even when the latest revision-feedback message has no attachments");
+    expect(prompt).toContain('"name": "original-evidence.png"');
+    expect(prompt).toContain('"contentPath": "/api/assets/asset-original-evidence/content"');
+    expect(prompt).toMatch(/"localPath": ".*original-evidence\.png"/);
+    expect(prompt).toContain("Apply the same canonical contentPath, relevance, alt-text, and no-localPath rules");
+    expect(prompt).not.toContain("Current user message attachments:");
+  });
+
   it("rejects issue proposal results without an explicit owner decision", () => {
     expect(() => validateAssistantResult({
       kind: "issue_proposal",
@@ -1491,6 +1562,100 @@ describe("chatAssistantService operator profile prompt injection", () => {
     })).toMatchObject({
       kind: "issue_proposal",
     });
+  });
+
+  it("rejects temporary local paths and unavailable, non-image, or fabricated image targets in issue proposals", () => {
+    const proposal = (description: string) => ({
+      kind: "issue_proposal",
+      body: "This should become an issue.",
+      structuredPayload: {
+        issueProposal: {
+          title: "Preserve original evidence",
+          description,
+          priority: "medium",
+          assigneeUnassignedReason: "Ownership needs board review.",
+        },
+      },
+    });
+    const validationOptions = {
+      allowedProposalImageContentPaths: new Set([
+        "/api/assets/asset-relevant/content",
+      ]),
+      forbiddenAttachmentLocalPaths: [
+        "/tmp/rudder-chat-attachments-run/original-evidence.png",
+      ],
+    };
+
+    expect(validateAssistantResult(
+      proposal("![Relevant evidence](/api/assets/asset-relevant/content)"),
+      validationOptions,
+    )).toMatchObject({ kind: "issue_proposal" });
+    expect(() => validateAssistantResult(
+      proposal("Inspect `/tmp/rudder-chat-attachments-run/original-evidence.png`."),
+      validationOptions,
+    )).toThrow("must not expose temporary attachment localPath values");
+    expect(() => validateAssistantResult(
+      proposal("![Fabricated evidence](/api/assets/asset-not-in-context/content)"),
+      validationOptions,
+    )).toThrow("must use a canonical contentPath from an available user image attachment");
+    expect(() => validateAssistantResult(
+      proposal("![Non-image attachment](/api/assets/asset-document/content)"),
+      validationOptions,
+    )).toThrow("must use a canonical contentPath from an available user image attachment");
+    expect(() => validateAssistantResult(
+      proposal("![Missing canonical path](/api/assets/asset-without-content-path/content)"),
+      validationOptions,
+    )).toThrow("must use a canonical contentPath from an available user image attachment");
+    expect(() => validateAssistantResult(
+      proposal("![Runtime file](file:///tmp/original-evidence.png)"),
+      validationOptions,
+    )).toThrow("must use a canonical contentPath from an available user image attachment");
+    expect(() => validateAssistantResult(
+      proposal("![Runtime file][evidence]\n\n[evidence]: file:///tmp/original-evidence.png"),
+      validationOptions,
+    )).toThrow("must use a canonical contentPath from an available user image attachment");
+    expect(() => validateAssistantResult({
+      ...proposal("No image is needed."),
+      body: "Runtime inspection used /tmp/rudder-chat-attachments-run/original-evidence.png.",
+    }, validationOptions)).toThrow("must not expose temporary attachment localPath values");
+    expect(() => validateAssistantResult(
+      proposal("Runtime inspection used `C:\\Temp\\rudder-chat-attachments-run\\original-evidence.png`."),
+      {
+        ...validationOptions,
+        forbiddenAttachmentLocalPaths: [
+          "C:\\Temp\\rudder-chat-attachments-run\\original-evidence.png",
+        ],
+      },
+    )).toThrow("must not expose temporary attachment localPath values");
+  });
+
+  it("allows only user-provided image content paths from the bounded prompt window", () => {
+    const [userMessage] = makeMessages();
+    const userImage = makeAttachment({
+      id: "attachment-user-image",
+      assetId: "asset-user-image",
+      messageId: userMessage!.id,
+      contentPath: "/api/assets/asset-user-image/content",
+    });
+    const assistantImage = makeAttachment({
+      id: "attachment-assistant-image",
+      assetId: "asset-assistant-image",
+      messageId: "message-assistant-image",
+      contentPath: "/api/assets/asset-assistant-image/content",
+    });
+    const assistantMessage: ChatMessage = {
+      ...userMessage!,
+      id: "message-assistant-image",
+      role: "assistant",
+      attachments: [assistantImage],
+    };
+
+    expect([...userImageContentPathsFromMessages([
+      { ...userMessage!, attachments: [userImage] },
+      assistantMessage,
+    ])]).toEqual([
+      "/api/assets/asset-user-image/content",
+    ]);
   });
 
   it("injects selected project context and project resources into chat prompts", async () => {
