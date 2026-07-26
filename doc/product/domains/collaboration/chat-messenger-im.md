@@ -1677,8 +1677,10 @@ before the exploration proves useful.
 - The board operator is the only Side Chat actor. Access is scoped to both the
   organization and the creating user.
 - A provisional `side_chat` Side Panel target contains the source conversation,
-  optional completed assistant-message anchor, source preview, and an
-  owner-scoped client mutation id. When opened from
+  optional completed assistant-message anchor, source context used for
+  creation, and an owner-scoped client mutation id. The source answer remains
+  internal context and is not repeated as a preview card at the top of the Side
+  Chat. When opened from
   `CHAT.RESPONSE.ANNOTATION.001`, it also owns the exact selected annotation
   draft, comment, and pending annotation files while leaving the main Chat
   composer unchanged. It has no persisted conversation id before the first Send.
@@ -1713,7 +1715,8 @@ before the exploration proves useful.
    Side Panel target resolve the latest completed assistant answer.
 2. Opening the provisional target does not create a server record. The parent
    Chat stays mounted and its draft, transcript, scroll, and active generation
-   remain untouched.
+   remain untouched. The source answer remains available to anchor creation but
+   is not rendered as a persistent preview above the Side Chat transcript.
 3. On first Send, the server validates organization access, operator ownership,
    and a completed assistant-message anchor. When the provisional draft
    contains response annotations, their source conversation, owning assistant
@@ -1762,7 +1765,7 @@ before the exploration proves useful.
 
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
-| Provisional open | Valid normal Chat; completed assistant anchor available | Open one unsaved Side Panel target | Create a conversation before first Send or change parent state | Side Chat E2E entry screenshots |
+| Provisional open | Valid normal Chat; completed assistant anchor available | Open one unsaved Side Panel target with an independent composer and no repeated source-answer preview card | Create a conversation before first Send, change parent state, or duplicate the source answer above the Side Chat transcript | Side Chat E2E entry screenshots |
 | First Send | Owner and organization match; anchor is completed; annotations, if any, resolve to that lineage; mutation id is new or an identical retry | Create exactly one hidden active Side Chat with the bounded direct-source title snapshot, exact quoted context/files, and ordinary Chat runtime flow | Duplicate records, mutate the parent draft, copy messages after the anchor, expose the thread in Messenger, or run automatic title generation | Service, route, and E2E tests |
 | Active follow-up | Owner matches and expiry is in the future | Persist the message and refresh expiry to two hours | Let another user send or silently retain the old expiry | Service and route tests |
 | Close provisional | No persisted conversation id | Discard the client draft and close the tab | Create or retain a server record | UI and E2E tests |
@@ -1781,10 +1784,13 @@ before the exploration proves useful.
   Chat context exists.
 - Every Side Chat entry point and header uses the circle-plus Side icon. The
   sparkle icon is not the Side Chat identity.
-- Apart from its source-answer preview and expiry state, the Side Chat
-  transcript and composer use the normal Chat visual and interaction grammar:
-  normal user messages, assistant attribution, process transcript, streaming
-  answer, editor, send affordance, and visible Project, Agent, and Skills chips.
+- The source answer is creation and annotation context, not a persistent visual
+  header. Side Chat does not repeat a `From the main chat` source-answer preview
+  card above its transcript.
+- Apart from its expiry state, the Side Chat transcript and composer use the
+  normal Chat visual and interaction grammar: normal user messages, assistant
+  attribution, process transcript, streaming answer, editor, send affordance,
+  and visible Project, Agent, and Skills chips.
 - The Side Chat composer does not show the redundant `Enter to send ·
   Shift+Enter for a new line` helper, and there is no Done action.
 - The Side Chat tab context menu shows `Move to Messenger`, a separator, and
@@ -1799,7 +1805,8 @@ before the exploration proves useful.
 
 ### Operator-Visible Output
 
-- Before first Send, the operator sees an independent provisional composer.
+- Before first Send, the operator sees an independent provisional composer
+  without a repeated source-answer preview card above it.
 - While active, the operator sees user/assistant turns and a remaining-time
   label without any new row in Messenger.
 - Expiry replaces the composer with a read-only explanation.
