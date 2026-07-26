@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createE2EChatAgent } from "./support/chat-agent";
@@ -85,6 +85,67 @@ process.stdin.on("end", async () => {
   return stubPath;
 }
 
+async function writeOriginalImageProposalStub(name: string) {
+  await fs.mkdir(E2E_BIN_DIR, { recursive: true });
+  const stubPath = path.join(E2E_BIN_DIR, `${name}.js`);
+  const stubSource = `#!/usr/bin/env node
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  prompt += chunk;
+});
+process.stdin.on("end", () => {
+  const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+  const evidencePath = prompt.match(/"name":\\s*"proposal-evidence\\.png"[\\s\\S]{0,320}?"contentPath":\\s*"([^"]+)"/)?.[1] ?? null;
+  const isRevision = prompt.includes("Retain the relevant original image and narrow the acceptance wording.");
+  const hasPromptContract = prompt.includes("For initial and revised issue proposals")
+    && prompt.includes("canonical contentPath")
+    && prompt.includes("localPath is temporary runtime inspection context only")
+    && prompt.includes("do not copy every attachment indiscriminately")
+    && (!isRevision || prompt.includes("re-check relevant user image attachments across the available recentMessages history"));
+  const imageMarkdown = evidencePath ? "![Original issue evidence](" + evidencePath + ")" : "";
+  const description = hasPromptContract && evidencePath
+    ? [
+        isRevision ? "## Revised proposal" : "## Initial proposal",
+        "",
+        isRevision
+          ? "Keep the source screenshot and narrow acceptance to the observed state."
+          : "Use the operator's source screenshot as the requirement and acceptance reference.",
+        "",
+        imageMarkdown,
+      ].join("\\n")
+    : "Prompt contract or canonical image evidence is missing.";
+  const result = {
+    kind: "issue_proposal",
+    body: isRevision ? "I revised the proposal and retained the original evidence." : "I drafted the proposal with the original evidence.",
+    structuredPayload: {
+      issueProposal: {
+        title: "Original image proposal test",
+        description,
+        priority: "medium",
+        assigneeUnassignedReason: "The operator will choose an owner after reviewing the preserved evidence.",
+      },
+    },
+  };
+  process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-original-image-proposal", model: "gpt-5.4" }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "item.completed",
+    item: {
+      type: "agent_message",
+      text: result.body + "\\n" + sentinel + JSON.stringify(result),
+    },
+  }) + "\\n");
+  process.stdout.write(JSON.stringify({
+    type: "turn.completed",
+    usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
+  }) + "\\n");
+});
+`;
+  await fs.writeFile(stubPath, stubSource, "utf8");
+  await fs.chmod(stubPath, 0o755);
+  return stubPath;
+}
+
 async function createProposalOrg(page: Page, name: string, command: string) {
   const orgRes = await page.request.post("/api/orgs", {
     data: {
@@ -104,7 +165,138 @@ async function createProposalOrg(page: Page, name: string, command: string) {
   return { ...organization, chatAgent };
 }
 
+async function proposalEvidenceScreenshotPath(testInfo: TestInfo, filename: string) {
+  const evidenceDir = process.env.RUDDER_R6Z27_SCREENSHOT_DIR?.trim();
+  if (!evidenceDir) return testInfo.outputPath(filename);
+  await fs.mkdir(evidenceDir, { recursive: true });
+  return path.join(evidenceDir, filename);
+}
+
 test.describe("Chat proposal review block", () => {
+  test("preserves a relevant original image across proposal revision and the created issue", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const command = await writeOriginalImageProposalStub("proposal-review-original-image");
+    const organization = await createProposalOrg(page, `OriginalImage-${Date.now()}`, command);
+
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    const fileInput = page.locator('input[type="file"]').first();
+    await fileInput.setInputFiles([
+      {
+        name: "proposal-evidence.png",
+        mimeType: "image/png",
+        buffer: await fs.readFile(path.resolve("ui/public/rudder-logo.png")),
+      },
+      {
+        name: "unrelated-reference.png",
+        mimeType: "image/png",
+        buffer: await fs.readFile(path.resolve("ui/public/favicon-32x32.png")),
+      },
+    ]);
+    await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(2);
+    await composer.fill("Please draft an issue proposal using the screenshot that shows the requirement.");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const initialReviewBlock = page.getByTestId("proposal-review-block").first();
+    await expect(initialReviewBlock).toBeVisible({ timeout: 30_000 });
+    await expect(initialReviewBlock).toHaveAttribute("data-status", "pending");
+    await expect(initialReviewBlock.getByAltText("Original issue evidence")).toBeVisible();
+    await expect(initialReviewBlock.getByAltText("unrelated-reference.png")).toHaveCount(0);
+    await initialReviewBlock.getByRole("button", { name: "Show full proposal" }).click();
+    await expect(initialReviewBlock.getByRole("button", { name: "Show less" })).toBeVisible();
+    await initialReviewBlock.locator(".chat-review-details-body").screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "initial-proposal-original-image.png"),
+      animations: "disabled",
+    });
+
+    const chatId = new URL(page.url()).pathname.split("/").filter(Boolean).at(-1)!;
+    const messagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
+    expect(messagesRes.ok()).toBe(true);
+    const messages = await messagesRes.json();
+    const originalUserMessage = messages.find((message: {
+      role: string;
+      attachments: Array<{ originalFilename: string | null }>;
+    }) =>
+      message.role === "user"
+      && message.attachments.some((attachment) => attachment.originalFilename === "proposal-evidence.png"),
+    );
+    expect(originalUserMessage).toBeTruthy();
+    const evidenceAttachment = originalUserMessage.attachments.find(
+      (attachment: { originalFilename: string | null }) => attachment.originalFilename === "proposal-evidence.png",
+    );
+    const unrelatedAttachment = originalUserMessage.attachments.find(
+      (attachment: { originalFilename: string | null }) => attachment.originalFilename === "unrelated-reference.png",
+    );
+    expect(evidenceAttachment?.contentPath).toMatch(/^\/api\/assets\/[^/]+\/content$/);
+    expect(unrelatedAttachment?.contentPath).toMatch(/^\/api\/assets\/[^/]+\/content$/);
+
+    const revisionFeedback = "Retain the relevant original image and narrow the acceptance wording.";
+    await initialReviewBlock
+      .getByTestId("proposal-review-note")
+      .locator(".rudder-mdxeditor-content[contenteditable='true']")
+      .fill(revisionFeedback);
+    await initialReviewBlock.getByRole("button", { name: "Request changes" }).click();
+
+    await expect(initialReviewBlock).toHaveAttribute("data-status", "revision_requested", { timeout: 15_000 });
+    const revisedReviewBlock = page.getByTestId("proposal-review-block").last();
+    await expect(revisedReviewBlock).toHaveAttribute("data-status", "pending", { timeout: 30_000 });
+    await expect(revisedReviewBlock.getByRole("heading", { name: "Revised proposal" })).toBeVisible();
+    const revisedImage = revisedReviewBlock.getByAltText("Original issue evidence");
+    await expect(revisedImage).toBeVisible();
+    await expect(revisedImage).toHaveAttribute("src", evidenceAttachment.contentPath);
+    await expect(revisedReviewBlock.locator(`img[src="${unrelatedAttachment.contentPath}"]`)).toHaveCount(0);
+    await revisedReviewBlock.getByRole("button", { name: "Show full proposal" }).click();
+    await expect(revisedReviewBlock.getByRole("button", { name: "Show less" })).toBeVisible();
+    await revisedReviewBlock.locator(".chat-review-details-body").screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "revised-proposal-original-image.png"),
+      animations: "disabled",
+    });
+
+    const revisedMessagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
+    expect(revisedMessagesRes.ok()).toBe(true);
+    const revisedMessages = await revisedMessagesRes.json();
+    const proposalDescriptions = revisedMessages
+      .filter((message: { kind: string }) => message.kind === "issue_proposal")
+      .map((message: { structuredPayload?: { issueProposal?: { description?: string } } }) =>
+        message.structuredPayload?.issueProposal?.description ?? "",
+      );
+    expect(proposalDescriptions).toHaveLength(2);
+    expect(proposalDescriptions.every((description: string) =>
+      description.includes(`![Original issue evidence](${evidenceAttachment.contentPath})`),
+    )).toBe(true);
+    expect(proposalDescriptions.join("\n")).not.toContain(unrelatedAttachment.contentPath);
+    expect(proposalDescriptions.join("\n")).not.toContain("localPath");
+    expect(proposalDescriptions.join("\n")).not.toContain("rudder-chat-attachments-");
+
+    await revisedReviewBlock.getByTestId("proposal-review-approve").click();
+    await expect(revisedReviewBlock).toHaveAttribute("data-status", "approved", { timeout: 15_000 });
+    const createdIssueLink = revisedReviewBlock.locator(".chat-system-issue-link").last();
+    await expect(createdIssueLink).toBeVisible({ timeout: 15_000 });
+    await createdIssueLink.click();
+
+    await expect(page.getByRole("heading", { name: "Original image proposal test" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: "Revised proposal" })).toBeVisible();
+    const issueImage = page.getByAltText("Original issue evidence");
+    await expect(issueImage).toBeVisible();
+    await expect(issueImage).toHaveAttribute("src", evidenceAttachment.contentPath);
+    await expect(page.locator(`img[src="${unrelatedAttachment.contentPath}"]`)).toHaveCount(0);
+
+    const issuesRes = await page.request.get(`/api/orgs/${organization.id}/issues`);
+    expect(issuesRes.ok()).toBe(true);
+    const issues = await issuesRes.json();
+    const createdIssue = issues.find((issue: { title: string }) => issue.title === "Original image proposal test");
+    expect(createdIssue?.description).toContain(`![Original issue evidence](${evidenceAttachment.contentPath})`);
+    expect(createdIssue?.description).not.toContain(unrelatedAttachment.contentPath);
+    expect(createdIssue?.description).not.toContain("localPath");
+    expect(createdIssue?.description).not.toContain("rudder-chat-attachments-");
+    await page.screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "created-issue-original-image.png"),
+      fullPage: true,
+      animations: "disabled",
+    });
+  });
+
   test("collapses long proposal details until the operator expands them", async ({ page }) => {
     const command = await writeProposalStub("proposal-review-long-details", {
       kind: "issue_proposal",

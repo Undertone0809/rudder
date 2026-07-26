@@ -72,6 +72,7 @@
     "gpt-tokenizer": "3.4.0",
     "hermes-paperclip-adapter": "0.3.0",
     "jsdom": "^28.1.0",
+    "mdast-util-from-markdown": "^2.0.3",
     "micromark": "^4.0.2",
     "micromark-extension-gfm": "^3.0.0",
     "multer": "^2.2.0",

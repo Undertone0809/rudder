@@ -122,6 +122,9 @@ export function buildCurrentUserAttachmentPromptSection(
     const lines = [
       "Current user message attachments:",
       `- The latest user message includes ${generalAttachments.length} attachment(s). Inspect any listed localPath directly before answering.`,
+      "- contentPath is the canonical user-visible Rudder asset path. When a relevant original image belongs in an Issue Proposal description, use that exact contentPath as the Markdown image target.",
+      "- localPath is temporary runtime-only inspection context. Never place localPath, internal retrieval instructions, or authentication material in an Issue Proposal or other user-visible output.",
+      "- Select attachments by direct relevance; this metadata does not require copying every attachment into a proposal.",
       `- User message body: ${JSON.stringify(summarizeAnnotationMessageBody(message.body))}`,
       ...generalAttachments.map((attachment, attachmentIndex) => {
         const name = attachment.originalFilename ?? attachment.assetId;

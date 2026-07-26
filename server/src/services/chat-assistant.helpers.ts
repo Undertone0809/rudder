@@ -38,6 +38,7 @@ import {
 import {
   buildChatInlineVisualPromptSection
 } from "./chat-assistant.inline-visuals.js";
+import { validateIssueProposalAttachmentSafety } from "./chat-assistant.proposal-validation.js";
 
 export {
   buildChatInlineVisualPromptSection,
@@ -544,6 +545,10 @@ export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntime
     "For ask_user, each requestUserInput question id must be unique, and option ids must be unique within their question. Set question selectionMode to 'multiple' only when the user can choose more than one option; omit it for normal single-choice questions.",
     "Use result kind 'issue_proposal' only when the latest operator-authored user request explicitly asks for creating an issue, converting the chat to an issue, or drafting an issue proposal. Do not emit issue_proposal just because work is large, durable, assignable, or issue-shaped.",
     "For issue_proposal, include exactly one owner decision in structuredPayload.issueProposal: either assigneeAgentId/assigneeUserId for the proposed owner, or assigneeUnassignedReason explaining why the issue should intentionally remain unassigned. Do not leave ownership implicit. Do not default to the selected chat agent unless that agent should actually own execution.",
+    "For initial and revised issue proposals, preserve a user-provided original image in structuredPayload.issueProposal.description when it directly helps explain the requirement, reproduce the problem, provide a design reference, or define acceptance. Prefer the original image over a redraw, generated replacement, or text-only substitute.",
+    "Embed each selected proposal image with Markdown image syntax and a meaningful alt text, using only the attachment's canonical contentPath as the target (for example, ![Current broken state](/api/assets/<asset-id>/content)). localPath is temporary runtime inspection context only and must never appear in user-visible proposal JSON or Markdown. Never expose an internal download command, authentication material, or a fabricated image target.",
+    "Choose proposal images by relevance; do not copy every attachment indiscriminately. If an attachment is not an image, has no usable contentPath, or is not clearly relevant to the issue scope, omit the image reference and describe missing evidence only when that gap matters.",
+    "When revising an issue proposal, re-check relevant user image attachments across the available recentMessages history, even when the latest revision-feedback message has no attachments. Apply the same canonical contentPath, relevance, alt-text, and no-localPath rules to the replacement proposal.",
     "Issue proposals create To Do issues by default. Omit status for the normal runnable default; set status to 'backlog' only when the issue should intentionally wait and not be picked up by agents yet.",
     "Use result kind 'automation_create' only when the latest operator-authored user request clearly asks the selected agent to set up recurring automatic work and the schedule, assignee, and output are clear. Never use automation_create for automation-run input messages.",
     "For automation_create, include structuredPayload.automationCreate with title, instructions, schedule.cronExpression, and schedule.timezone. Omit assigneeAgentId to assign the automation to the selected chat agent. Use outputMode 'track_issue' so each run creates reviewable board-tracked work.",
@@ -938,7 +943,12 @@ export async function prepareChatAttachmentReferences(input: {
 
 export function validateAssistantResult(
   payload: Record<string, unknown>,
-  options: { bodyOverride?: string | null; bodyFallback?: string | null } = {},
+  options: {
+    bodyOverride?: string | null;
+    bodyFallback?: string | null;
+    allowedProposalImageContentPaths?: ReadonlySet<string>;
+    forbiddenAttachmentLocalPaths?: readonly string[];
+  } = {},
 ): ChatAssistantResult {
   const kind = typeof payload.kind === "string" ? payload.kind : "message";
   const payloadBody = typeof payload.body === "string" ? payload.body.trim() : "";
@@ -986,8 +996,18 @@ export function validateAssistantResult(
     };
   }
 
-  if (kind === "issue_proposal" && !chatIssueProposalFromStructuredPayload(structuredPayload)) {
-    throw new Error("issue_proposal assistant responses require structuredPayload.issueProposal with title, description, and an explicit owner decision");
+  if (kind === "issue_proposal") {
+    const issueProposal = chatIssueProposalFromStructuredPayload(structuredPayload);
+    if (!issueProposal) {
+      throw new Error("issue_proposal assistant responses require structuredPayload.issueProposal with title, description, and an explicit owner decision");
+    }
+    validateIssueProposalAttachmentSafety({
+      body,
+      structuredPayload,
+      description: issueProposal.description,
+      allowedImageContentPaths: options.allowedProposalImageContentPaths,
+      forbiddenAttachmentLocalPaths: options.forbiddenAttachmentLocalPaths,
+    });
   }
 
   if (kind === "automation_create" && !chatAutomationCreateFromStructuredPayload(structuredPayload)) {
@@ -1347,7 +1367,11 @@ export function parseAssistantTextBlock(rawText: string) {
 export function parseCompletedAssistantReply(
   rawText: string,
   resultSentinel: string,
-  options: { requireSentinel?: boolean } = {},
+  options: {
+    requireSentinel?: boolean;
+    allowedProposalImageContentPaths?: ReadonlySet<string>;
+    forbiddenAttachmentLocalPaths?: readonly string[];
+  } = {},
 ): ChatAssistantResult {
   const enveloped = parseAssistantEnvelope(rawText, resultSentinel);
   const textBlock = parseAssistantTextBlock(rawText);
@@ -1367,12 +1391,17 @@ export function parseCompletedAssistantReply(
   if (enveloped.jsonPayload) {
     return validateAssistantResult(enveloped.jsonPayload, {
       bodyFallback: enveloped.usedSentinel ? enveloped.visibleBody : null,
+      allowedProposalImageContentPaths: options.allowedProposalImageContentPaths,
+      forbiddenAttachmentLocalPaths: options.forbiddenAttachmentLocalPaths,
     });
   }
 
   const legacyPayload = extractJsonObject(rawText);
   if (legacyPayload) {
-    return validateAssistantResult(legacyPayload);
+    return validateAssistantResult(legacyPayload, {
+      allowedProposalImageContentPaths: options.allowedProposalImageContentPaths,
+      forbiddenAttachmentLocalPaths: options.forbiddenAttachmentLocalPaths,
+    });
   }
 
   const body = safeTrim(enveloped.visibleBody);

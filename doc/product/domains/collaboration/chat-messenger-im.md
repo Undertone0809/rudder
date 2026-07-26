@@ -185,6 +185,10 @@ Why:
   an issue proposal only when the latest operator-authored user request
   explicitly asks to create an issue, convert the chat to an issue, or draft an
   issue proposal.
+- User-provided original images are first-class proposal evidence when they
+  directly explain a requirement, reproduction, design reference, or acceptance
+  result. The proposal keeps that evidence inspectable instead of replacing it
+  with a redraw, generated substitute, or lossy text-only description.
 
 Product model:
 
@@ -376,6 +380,11 @@ Flow:
    issue, automation, or approval when the operator asks for that additional
    structure. The assistant must not emit an issue proposal merely because the
    work is large, durable, assignable, or issue-shaped.
+   When an explicitly requested Issue Proposal needs a relevant user-provided
+   image, its description embeds the original through Markdown using that
+   attachment's canonical `contentPath` and a meaningful alt text. A revision
+   turn re-checks relevant image attachments within the available bounded Chat
+   prompt history even when the revision-feedback message has no attachments.
 10. When the operator refreshes a completed assistant answer, Rudder reuses the
    original turn context, creates a new turn variant, and surfaces branch
    controls for moving between variants.
@@ -455,6 +464,25 @@ Invariants:
 - Assistant-created issue proposals must be grounded in an explicit latest
   operator-authored request for issue creation, chat-to-issue conversion, or
   issue-proposal drafting.
+- Initial and revised Issue Proposal descriptions preserve directly relevant
+  user-provided original images with Markdown image syntax, meaningful alt
+  text, and the attachment's canonical `contentPath`.
+- A temporary runtime `localPath` exists only so the Agent can inspect the
+  image. It, internal retrieval commands, and authentication material must
+  never enter user-visible proposal JSON, Markdown, or the created Issue
+  description.
+- Proposal image selection remains scope-relevant. The Agent must not copy all
+  attachments indiscriminately, treat non-images as proposal images, invent a
+  path when `contentPath` is unavailable, or claim ambiguous evidence is
+  relevant.
+- Before persistence, Rudder rejects a generated Issue Proposal that exposes a
+  materialized attachment `localPath` or uses a Markdown image target other
+  than the canonical `contentPath` of a user image attachment available in the
+  bounded prompt window.
+- Requesting a proposal revision does not discard eligible historical image
+  evidence inside the current bounded prompt window. The replacement proposal
+  applies the same canonical-path and relevance rules; attachments outside that
+  window are not retrieved implicitly.
 - A task becoming executable, long-running, expensive, reviewable, or worth
   revisiting must not by itself force Chat to create an issue. Policy may still
   require structured issue fields for governed team workflows.
@@ -578,6 +606,13 @@ Evidence:
   production-sized ceiling, Markdown-safe bounded previews, assistant context,
   and jump delegation.
 - Chat assistant tests cover runtime-backed turns.
+- Chat assistant prompt and output-validation tests cover relevant
+  original-image retention,
+  canonical `contentPath` Markdown guidance, runtime-only `localPath`
+  exclusion, relevance filtering, and historical image reconsideration for
+  revised Issue Proposals. Proposal-review E2E covers the original upload,
+  first proposal, Request changes replacement, approval, and the same image in
+  the created Issue Detail.
 - Chat assistant, route, queue, and runtime-selector tests cover model/effort
   precedence, atomic first-turn persistence, Agent-switch reset, fallback
   preservation, adapter effort projection and compatibility, in-flight
