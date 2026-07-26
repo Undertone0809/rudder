@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 
+import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import type {
+  Agent,
   ChatConversation,
   ChatInlineAnnotationInput,
   ChatMessage,
@@ -16,7 +18,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { SideChatPanelView } from "./SideChatPanelView";
 
 vi.mock("@/api/agents", () => ({
-  agentsApi: { list: vi.fn(async () => []) },
+  agentsApi: {
+    list: vi.fn(),
+    adapterModels: vi.fn(),
+  },
 }));
 
 vi.mock("@/api/projects", () => ({
@@ -106,10 +111,20 @@ const sourceConversation = {
   id: "10000000-0000-4000-8000-000000000001",
   orgId: "50000000-0000-4000-8000-000000000001",
   contextLinks: [],
-  preferredAgentId: null,
+  preferredAgentId: "40000000-0000-4000-8000-000000000001",
   routedAgentId: null,
   chatRuntime: null,
 } as unknown as ChatConversation;
+
+const defaultAgent = {
+  id: "40000000-0000-4000-8000-000000000001",
+  orgId: sourceConversation.orgId,
+  name: "Rudder Agent",
+  status: "idle",
+  agentRuntimeType: "codex_local",
+  agentRuntimeConfig: {},
+  runtimeConfig: {},
+} as unknown as Agent;
 
 const sideConversation = {
   ...sourceConversation,
@@ -165,6 +180,8 @@ beforeEach(() => {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   onReplaceTarget = vi.fn();
+  vi.mocked(agentsApi.list).mockReset().mockResolvedValue([defaultAgent]);
+  vi.mocked(agentsApi.adapterModels).mockReset().mockResolvedValue([]);
   vi.mocked(chatsApi.get).mockReset().mockResolvedValue(sourceConversation);
   vi.mocked(chatsApi.listMessages).mockReset().mockResolvedValue([]);
   vi.mocked(chatsApi.createSideChat).mockReset().mockResolvedValue(sideConversation);
@@ -177,7 +194,7 @@ afterEach(() => {
   host.remove();
 });
 
-function renderView({
+async function renderView({
   viewTarget = target,
   onSelectResponseAnnotation = vi.fn(),
 }: {
@@ -197,6 +214,7 @@ function renderView({
       </QueryClientProvider>,
     );
   });
+  await vi.waitFor(() => expect(host.textContent).toContain("Rudder Agent"));
 }
 
 function clickButton(label: string) {
@@ -285,7 +303,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
       await streamPending;
     });
 
-    renderView({
+    await renderView({
       viewTarget: {
         ...target,
         conversationId: sideConversation.id,
@@ -374,7 +392,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
       await finalPending;
     });
 
-    renderView({
+    await renderView({
       viewTarget: {
         ...target,
         conversationId: sideConversation.id,
@@ -455,7 +473,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
       });
     });
 
-    renderView({
+    await renderView({
       viewTarget: {
         ...target,
         conversationId: sideConversation.id,
@@ -506,7 +524,7 @@ describe("SideChatPanelView response annotations", () => {
       conversationId === sideConversation.id ? [sideUserMessage] : []
     ));
 
-    renderView({
+    await renderView({
       viewTarget: {
         ...target,
         conversationId: sideConversation.id,
@@ -531,7 +549,7 @@ describe("SideChatPanelView response annotations", () => {
   });
 
   it("dismisses provisional annotation details with Escape and restores chip focus", async () => {
-    renderView();
+    await renderView();
     const chip = host.querySelector<HTMLButtonElement>(
       '[aria-label="Show 1 annotation"]',
     )!;
@@ -569,7 +587,7 @@ describe("SideChatPanelView response annotations", () => {
       await options.onEvent({ type: "final", messages: [] } as ChatStreamEvent);
     });
 
-    renderView();
+    await renderView();
     expect(chatsApi.createSideChat).not.toHaveBeenCalled();
     expect(host.textContent).toContain("1 annotation");
     expect(host.querySelector('[aria-label="Show 1 annotation"]')).not.toBeNull();
@@ -614,6 +632,9 @@ describe("SideChatPanelView response annotations", () => {
       {
         sourceMessageId: annotation.sourceMessageId,
         clientMutationId: target.clientMutationId,
+        preferredAgentId: defaultAgent.id,
+        modelOverride: null,
+        effortOverride: null,
       },
     );
     expect(chatsApi.sendMessageStream).toHaveBeenCalledWith(
@@ -637,7 +658,7 @@ describe("SideChatPanelView response annotations", () => {
     vi.mocked(chatsApi.sendMessageStream).mockRejectedValueOnce(
       new Error("Source annotation is no longer valid."),
     );
-    renderView();
+    await renderView();
     const draft = host.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="Side Chat draft"]',
     )!;
@@ -669,7 +690,7 @@ describe("SideChatPanelView response annotations", () => {
         messageId: "70000000-0000-4000-8000-000000000002",
       });
     });
-    renderView();
+    await renderView();
     const draft = host.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="Side Chat draft"]',
     )!;
