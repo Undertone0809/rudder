@@ -77,6 +77,15 @@ describe("CustomGroupIcon", () => {
     expect(container.textContent).toContain("Ro");
     expect(container.textContent).not.toContain("Roadmap");
   });
+
+  it("uses the containing group's fallback tone for a default folder icon", () => {
+    const container = render(<CustomGroupIcon icon={null} color="teal" />);
+    const icon = container.querySelector<HTMLElement>("span");
+
+    expect(icon?.style.getPropertyValue("--project-accent-color")).toBe(
+      "#08a88a",
+    );
+  });
 });
 
 describe("CustomGroupIconPicker", () => {
@@ -110,9 +119,14 @@ describe("custom group forms", () => {
       onSubmit: vi.fn(),
     };
     const container = render(
-      <CustomGroupEditor name="Platform" icon="folder" color="slate" pending={false} {...handlers} />,
+      <CustomGroupEditor name="Platform" icon="folder" color="amber" pending={false} {...handlers} />,
     );
 
+    expect(
+      container
+        .querySelector<HTMLElement>('[data-testid="messenger-custom-group-icon"]')
+        ?.style.getPropertyValue("--project-accent-color"),
+    ).toBe("#f2a900");
     change(container.querySelector<HTMLInputElement>('[aria-label="Group name"]')!, "Runtime");
     act(() => {
       container.querySelector<HTMLButtonElement>('[aria-label="Use teal group color"]')?.click();

@@ -97,16 +97,28 @@ function isCustomGroupEmojiGlyph(value: string) {
   return !isProjectIconName(value) && /[^\x00-\x7F]/.test(value);
 }
 
-export function CustomGroupIcon({ icon }: { icon?: string | null }) {
+export function CustomGroupIcon({
+  icon,
+  color,
+}: {
+  icon?: string | null;
+  color?: CustomGroupColor | null;
+}) {
   const label = customGroupIconLabel(icon);
   if (!label || isProjectIconName(label)) {
+    const resolvedColor = color ?? customGroupColorFor({
+      id: label ?? DEFAULT_PROJECT_ICON,
+      icon: icon ?? null,
+      sortOrder: 0,
+    });
     return (
       <ProjectIcon
-        color={CUSTOM_GROUP_TONES[customGroupColorFor({ id: label ?? DEFAULT_PROJECT_ICON, icon: icon ?? null, sortOrder: 0 })].swatch}
+        color={CUSTOM_GROUP_TONES[resolvedColor].swatch}
         icon={customGroupProjectIconName(icon)}
         size="xs"
         className="h-4 w-4"
         iconClassName="h-4 w-4"
+        testId="messenger-custom-group-icon"
       />
     );
   }
@@ -220,7 +232,7 @@ export function CustomGroupEditor({
       }}
     >
       <div className="mb-2 flex items-center gap-2">
-        <CustomGroupIcon icon={icon} />
+        <CustomGroupIcon icon={icon} color={color} />
         <div className="min-w-0 flex-1 text-[12px] font-semibold text-foreground">New group</div>
       </div>
       <input
