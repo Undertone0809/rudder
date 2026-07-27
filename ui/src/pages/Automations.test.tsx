@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, forwardRef, type RefObject } from "react";
+import { act, forwardRef, type RefObject, useImperativeHandle, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../context/I18nContext";
@@ -264,11 +264,17 @@ vi.mock("../components/MarkdownEditor", () => ({
       mentionMenuPlacement?: "caret" | "container";
       plainText?: boolean;
     },
-    _ref,
+    ref,
   ) {
+    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+    useImperativeHandle(ref, () => ({
+      focus: () => textareaRef.current?.focus(),
+      getMarkdown: () => textareaRef.current?.value ?? props.value ?? "",
+    }));
     markdownEditorProps.push(props);
     return (
       <textarea
+        ref={textareaRef}
         aria-label="Instructions"
         value={props.value ?? ""}
         placeholder={props.placeholder}
@@ -813,7 +819,7 @@ describe("Automations", () => {
     expect(selectedMentionIds).toContain("skill:agent:build-advisor");
   });
 
-  it("allows creating an automation without selecting a project", async () => {
+  it("submits live editor instructions when creating without a project", async () => {
     renderPage();
 
     await act(async () => {
@@ -846,6 +852,9 @@ describe("Automations", () => {
     expect(createButton).toBeTruthy();
     expect(createButton?.disabled).toBe(false);
 
+    const currentInstructions = "每天汇总最新消息并发送给我";
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    valueSetter?.call(runbookInput!, currentInstructions);
     await act(async () => {
       createButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
@@ -854,6 +863,7 @@ describe("Automations", () => {
 
     expect(mockCreateAutomation).toHaveBeenCalledWith("org-1", expect.objectContaining({
       title: "帮我 flomo 打 tag",
+      instructions: currentInstructions,
       projectId: null,
       assigneeAgentId: "agent-1",
       outputMode: "chat_output",
