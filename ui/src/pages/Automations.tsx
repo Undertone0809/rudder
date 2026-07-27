@@ -526,9 +526,10 @@ export function Automations() {
 
   const createAutomation = useMutation({
     mutationFn: async () => {
+      const currentInstructions = descriptionEditorRef.current?.getMarkdown?.() ?? draft.description;
       const automation = await automationsApi.create(selectedOrganizationId!, {
         title: draft.title,
-        instructions: draft.description.trim() || null,
+        instructions: currentInstructions.trim() || null,
         projectId: draft.projectId || null,
         assigneeAgentId: draft.assigneeAgentId,
         priority: draft.priority,

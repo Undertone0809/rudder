@@ -38,6 +38,12 @@ function close(server) {
   });
 }
 
+function decodeNumericEntities(value) {
+  return value.replace(/&#(\d+);/gu, (_match, codePoint) =>
+    String.fromCodePoint(Number(codePoint)),
+  );
+}
+
 function runNotificationScript(env) {
   return new Promise((resolve) => {
     const child = spawn(
@@ -99,7 +105,7 @@ describe("GitHub issue to Feishu notification", () => {
       },
     });
     expect(title).toMatchObject({
-      tag: "plain_text",
+      tag: "markdown",
       content: "#42 Broken installer",
     });
     expect(metadata.content).toContain("提交人：@octocat");
@@ -143,27 +149,34 @@ describe("GitHub issue to Feishu notification", () => {
       },
       "acme/rudder",
     );
-    const plainText = card.body.elements
-      .filter((element) => element.tag === "plain_text")
+    const markdown = card.body.elements
+      .filter((element) => element.tag === "markdown")
       .map((element) => element.content)
       .join("\n");
 
-    expect(plainText).toContain('<at user_id="all">Everyone</at>');
-    expect(plainText).toContain('<at user_id="ou_known">Target</at>');
+    expect(markdown).not.toMatch(/<\s*\/?\s*at\b/iu);
+    expect(decodeNumericEntities(markdown)).toContain(
+      '<at user_id="all">Everyone</at>',
+    );
+    expect(decodeNumericEntities(markdown)).toContain(
+      '<at user_id="ou_known">Target</at>',
+    );
     expect(
       card.body.elements
         .filter((element) => element.tag !== "button")
-        .every((element) => element.tag === "plain_text"),
+        .every((element) => element.tag === "markdown"),
     ).toBe(true);
   });
 
-  it("preserves Markdown-like source text without interpreting it", () => {
+  it("neutralizes Markdown structure while preserving visible source glyphs", () => {
     const card = buildIssueCard(
       {
         issue: {
           number: 45,
-          title: "Normal**\n\n[Open securely](https://evil.example)\n\n**",
-          body: "![trusted image](https://evil.example/image.png)",
+          title:
+            "Normal *italic* _under_ `code` **bold** [Open securely](https://evil.example)",
+          body:
+            "# Heading\nSetext\n===\n> quote\n![trusted image](https://evil.example/image.png)",
           html_url: "https://github.com/acme/rudder/issues/45",
           user: { login: "reporter" },
           labels: [{ name: "[security](https://evil.example)" }],
@@ -173,25 +186,27 @@ describe("GitHub issue to Feishu notification", () => {
     );
     const [title, metadata, body] = card.body.elements;
 
-    expect(title).toEqual(
-      expect.objectContaining({
-        tag: "plain_text",
-        content: "#45 Normal**\n\n[Open securely](https://evil.example)\n\n**",
-      }),
+    const encodedTitle = title.content.slice("#45 ".length);
+    const encodedLabels = metadata.content.split("标签：")[1];
+    const untrustedMarkdown = [encodedTitle, encodedLabels, body.content].join(
+      "\n",
     );
-    expect(metadata).toEqual(
-      expect.objectContaining({
-        tag: "plain_text",
-        content: expect.stringContaining(
-          "标签：[security](https://evil.example)",
-        ),
-      }),
+
+    expect([title.tag, metadata.tag, body.tag]).toEqual([
+      "markdown",
+      "markdown",
+      "markdown",
+    ]);
+    expect(untrustedMarkdown).not.toMatch(/[*_`<>\[\]()=!|~\\]/u);
+    expect(untrustedMarkdown).not.toMatch(/(^|\n)[#>+-][ \t]/u);
+    expect(decodeNumericEntities(title.content)).toBe(
+      "#45 Normal *italic* _under_ `code` **bold** [Open securely](https://evil.example)",
     );
-    expect(body).toEqual(
-      expect.objectContaining({
-        tag: "plain_text",
-        content: "![trusted image](https://evil.example/image.png)",
-      }),
+    expect(decodeNumericEntities(metadata.content)).toContain(
+      "标签：[security](https://evil.example)",
+    );
+    expect(decodeNumericEntities(body.content)).toBe(
+      "# Heading\nSetext\n===\n> quote\n![trusted image](https://evil.example/image.png)",
     );
   });
 
@@ -202,7 +217,7 @@ describe("GitHub issue to Feishu notification", () => {
     expect(card.header.subtitle.content).toBe("acme/rudder");
     expect(card.body.elements).toEqual([
       expect.objectContaining({
-        tag: "plain_text",
+        tag: "markdown",
         content: "Rudder dev 通知通道正常。",
       }),
     ]);
