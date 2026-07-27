@@ -27,7 +27,6 @@ interface ProviderQuotaCardProps {
   weekSpendCents: number;
   /** rolling window rows for this provider: 5h, 24h, 7d */
   windowRows: CostWindowSpendRow[];
-  showDeficitNotch: boolean;
   /** live subscription quota windows from the provider's own api */
   quotaWindows?: QuotaWindow[];
   quotaError?: string | null;
@@ -42,7 +41,6 @@ export function ProviderQuotaCard({
   totalCompanySpendCents,
   weekSpendCents,
   windowRows,
-  showDeficitNotch,
   quotaWindows = [],
   quotaError = null,
   quotaSource = null,
@@ -166,7 +164,6 @@ export function ProviderQuotaCard({
               percentUsed={budgetPct}
               leftLabel={formatCents(totalCostCents)}
               rightLabel={`${Math.round(budgetPct)}% of allocation`}
-              showDeficitNotch={showDeficitNotch}
             />
             <QuotaBar
               label="This week"
