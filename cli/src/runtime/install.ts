@@ -849,10 +849,22 @@ async function assertRuntimePostgresBinDirComplete(cacheDir: string, binDir: str
       missing.push(path.join(templateDir, "postgresql.conf.sample"));
     }
     const shareDir = resolveRuntimePostgresShareDir(binDir, templateDir);
-    try {
-      const timezoneStats = await stat(path.join(shareDir, "timezone"));
-      if (!timezoneStats.isDirectory()) missing.push(path.join(shareDir, "timezone"));
-    } catch {
+    const timezoneCandidates = [
+      path.join(templateDir, "timezone"),
+      path.join(shareDir, "timezone"),
+    ];
+    let hasTimezoneDir = false;
+    for (const timezonePath of timezoneCandidates) {
+      try {
+        if ((await stat(timezonePath)).isDirectory()) {
+          hasTimezoneDir = true;
+          break;
+        }
+      } catch {
+        // Try the other supported PostgreSQL archive layout.
+      }
+    }
+    if (!hasTimezoneDir) {
       missing.push(path.join(shareDir, "timezone"));
     }
   }

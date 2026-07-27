@@ -92,6 +92,9 @@ describe("release workflow latency contracts", () => {
     expect(desktopWorkflow).toContain("--without-zlib");
     expect(desktopWorkflow).toContain("Linux portable PostgreSQL must bundle its own timezone database.");
     expect(desktopWorkflow).toContain("source_runtime}.portable-smoke-hidden");
+    expect(desktopWorkflow).toContain(
+      'if [ "$(uname -s)" = "Linux" ] || [ "$(uname -s)" = "Darwin" ]; then',
+    );
     expect(desktopWorkflow).toContain('staged_runtime}/bin/initdb');
     expect(desktopWorkflow).toContain('staged_runtime}/bin/pg_ctl');
     expect(desktopWorkflow).not.toContain("sudo apt-get install -y postgresql-18");

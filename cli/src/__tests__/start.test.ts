@@ -100,12 +100,18 @@ function writeRuntimePackageSync(cacheDir: string, packageName: string, version 
   writeFileSync(path.join(packageDir, "index.js"), "", "utf8");
 }
 
-async function writeFakePostgresRuntime(root: string): Promise<string> {
+async function writeFakePostgresRuntime(
+  root: string,
+  options: { nestedTimezone?: boolean } = {},
+): Promise<string> {
   const binDir = path.join(root, "pgsql", "bin");
   await mkdir(binDir, { recursive: true });
   await mkdir(path.join(root, "pgsql", "lib"), { recursive: true });
   await mkdir(path.join(root, "pgsql", "share", "postgresql"), { recursive: true });
-  await mkdir(path.join(root, "pgsql", "share", "timezone"), { recursive: true });
+  const timezoneDir = options.nestedTimezone
+    ? path.join(root, "pgsql", "share", "postgresql", "timezone")
+    : path.join(root, "pgsql", "share", "timezone");
+  await mkdir(timezoneDir, { recursive: true });
   for (const binary of ["initdb", "pg_ctl"]) {
     await writeFile(path.join(binDir, process.platform === "win32" ? `${binary}.exe` : binary), "", "utf8");
   }
@@ -119,7 +125,7 @@ async function writeFakePostgresRuntime(root: string): Promise<string> {
   await writeFile(path.join(root, "pgsql", "lib", "libpq.5.dylib"), "runtime lib", "utf8");
   await writeFile(path.join(root, "pgsql", "share", "postgresql", "postgres.bki"), "postgres template", "utf8");
   await writeFile(path.join(root, "pgsql", "share", "postgresql", "postgresql.conf.sample"), "postgres config template", "utf8");
-  await writeFile(path.join(root, "pgsql", "share", "timezone", "UTC"), "timezone data", "utf8");
+  await writeFile(path.join(timezoneDir, "UTC"), "timezone data", "utf8");
   return binDir;
 }
 
@@ -1953,7 +1959,9 @@ describe("runtime install helpers", () => {
     const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
     const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
     try {
-      process.env.RUDDER_POSTGRES_BIN_DIR = await writeFakePostgresRuntime(root);
+      process.env.RUDDER_POSTGRES_BIN_DIR = await writeFakePostgresRuntime(root, {
+        nestedTimezone: true,
+      });
       process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = process.env.RUDDER_POSTGRES_BIN_DIR;
       const otherPlatformMarker = path.join(
         root,
@@ -1980,7 +1988,9 @@ describe("runtime install helpers", () => {
       await expect(access(path.join(payloadBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"))).resolves.toBeUndefined();
       await expect(access(path.join(payloadBinDir, "..", "share", "postgresql", "postgres.bki"))).resolves.toBeUndefined();
       await expect(access(path.join(payloadBinDir, "..", "share", "postgresql", "postgresql.conf.sample"))).resolves.toBeUndefined();
-      await expect(access(path.join(payloadBinDir, "..", "share", "timezone", "UTC"))).resolves.toBeUndefined();
+      await expect(
+        access(path.join(payloadBinDir, "..", "share", "postgresql", "timezone", "UTC")),
+      ).resolves.toBeUndefined();
       await expect(access(path.join(compatibilityBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"))).resolves.toBeUndefined();
       await expect(readFile(otherPlatformMarker, "utf8")).resolves.toBe("preserve");
       await expectRuntimePostgresCompatibilityLink(
