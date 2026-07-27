@@ -72,6 +72,59 @@ async function closeRuntimePanelAndAgentMenu(page: import("@playwright/test").Pa
   }
 }
 
+test("closes the Agent selector when the operator clicks elsewhere in the composer", async ({ page }, testInfo) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Chat-Agent-Selector-Dismiss-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as {
+    id: string;
+    issuePrefix: string;
+  };
+  const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "Selector Dismiss Agent",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {
+        model: "gpt-5.6-sol",
+        modelReasoningEffort: "medium",
+      },
+    },
+  });
+  expect(agentRes.ok()).toBe(true);
+  const agent = await agentRes.json() as { id: string };
+
+  await page.addInitScript((orgId: string) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    window.localStorage.setItem("rudder.theme", "dark");
+  }, organization.id);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${agent.id}`);
+
+  const agentSelector = page.getByTestId("chat-agent-selector");
+  const composer = page.getByTestId("chat-composer-editor-scroll")
+    .locator(".rudder-mdxeditor-content")
+    .first();
+  await expect(agentSelector).toContainText("Selector Dismiss Agent", { timeout: 15_000 });
+  await agentSelector.click();
+  await expect(page.getByTestId("chat-agent-menu")).toBeVisible();
+
+  const composerBox = await composer.boundingBox();
+  expect(composerBox).not.toBeNull();
+  await page.mouse.click(
+    composerBox!.x + composerBox!.width - 12,
+    composerBox!.y + 12,
+  );
+
+  await expect(page.getByTestId("chat-agent-menu")).toBeHidden();
+  await expect(agentSelector).toHaveAttribute("aria-expanded", "false");
+  await page.screenshot({
+    path: testInfo.outputPath("agent-selector-dismissed-by-composer-click.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
+});
+
 test("persists conversation runtime overrides, freezes running and queued turns, and resets new Chat", async ({ page }, testInfo) => {
   test.slow();
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-model-selector-"));

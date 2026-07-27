@@ -580,7 +580,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!composerContextMenuOpen) { setComposerMenuPosition(null);
       return; } const updatePosition = () => { const anchor = agentMenuOpen ? runtimeSelectorRef.current ?? composerSurfaceRef.current : composerSurfaceRef.current; if (!anchor) return; setComposerMenuPosition(composerMenuPositionForAnchor(anchor)); }; updatePosition(); window.addEventListener("resize", updatePosition); window.addEventListener("scroll", updatePosition, true);
     return () => { window.removeEventListener("resize", updatePosition); window.removeEventListener("scroll", updatePosition, true); }; }, [agentMenuOpen, composerContextMenuOpen, runtimeSelectorRef]);
-  useEffect(() => { if (!composerContextMenuOpen) return; const handlePointerDown = (event: PointerEvent) => { const target = event.target; if (!(target instanceof Node)) return; if (target instanceof Element && target.closest("[data-chat-runtime-submenu]")) return; if (composerContextMenuRef.current?.contains(target)) return; if (composerSurfaceRef.current?.contains(target)) return; closeComposerContextMenus(); }; const handleKeyDown = (event: KeyboardEvent) => {
+  useEffect(() => { if (!composerContextMenuOpen) return; const handlePointerDown = (event: PointerEvent) => { const target = event.target; if (!(target instanceof Node)) return; if (target instanceof Element && target.closest("[data-chat-runtime-submenu]")) return; if (composerContextMenuRef.current?.contains(target)) return; if (runtimeSelectorRef.current?.contains(target)) return; closeComposerContextMenus(); }; const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         const restoreRuntimeFocus = agentMenuOpen;
         closeComposerContextMenus();
@@ -588,7 +588,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           requestAnimationFrame(() => runtimeSelectorRef.current?.focus());
         }
       } }; document.addEventListener("pointerdown", handlePointerDown, true); document.addEventListener("keydown", handleKeyDown);
-    return () => { document.removeEventListener("pointerdown", handlePointerDown, true); document.removeEventListener("keydown", handleKeyDown); }; }, [agentMenuOpen, closeComposerContextMenus, composerContextMenuOpen]);
+    return () => { document.removeEventListener("pointerdown", handlePointerDown, true); document.removeEventListener("keydown", handleKeyDown); }; }, [agentMenuOpen, closeComposerContextMenus, composerContextMenuOpen, runtimeSelectorRef]);
   useEffect(() => { if (!agentMenuOpen) return; requestAnimationFrame(() => { composerContextMenuRef.current?.querySelector<HTMLButtonElement>("[data-chat-composer-menu-item]")?.focus(); }); }, [agentMenuOpen]);
   useEffect(() => { if (!skillMenuOpen) return;
     requestAnimationFrame(() => { skillSearchInputRef.current?.focus(); }); }, [skillMenuOpen]);
