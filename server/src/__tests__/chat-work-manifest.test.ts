@@ -2,6 +2,7 @@ import {
   agents,
   applyPendingMigrations,
   assets,
+  automations,
   chatAttachments,
   chatContextLinks,
   chatConversations,
@@ -101,6 +102,7 @@ describe("chatWorkManifestService", () => {
 
   afterEach(async () => {
     await db.delete(chatWorkManifestItems);
+    await db.delete(automations);
     await db.delete(chatAttachments);
     await db.delete(assets);
     await db.delete(chatMessages);
@@ -383,7 +385,16 @@ describe("chatWorkManifestService", () => {
   });
 
   it("includes visible Rudder entity links in references", async () => {
-    const { orgId, conversationId } = await seedBase("References");
+    const { orgId, agentId, conversationId } = await seedBase("References");
+    const referencedAutomationId = randomUUID();
+    const referencedAutomationTitle = "Daily standup review";
+    const renamedAutomationTitle = "Operator morning review";
+    await db.insert(automations).values({
+      id: referencedAutomationId,
+      orgId,
+      title: referencedAutomationTitle,
+      assigneeAgentId: agentId,
+    });
     const referencedConversationId = randomUUID();
     const referencedConversationTitle = "Original referenced chat title that is much longer than the compact manifest row";
     const renamedConversationTitle = "Renamed referenced chat title that remains much longer than the compact manifest row";
@@ -413,13 +424,22 @@ describe("chatWorkManifestService", () => {
       createdByUserId: "other-user",
     });
     const crossOrganizationConversation = await seedBase("Cross organization");
+    const crossOrganizationAutomationId = randomUUID();
+    await db.insert(automations).values({
+      id: crossOrganizationAutomationId,
+      orgId: crossOrganizationConversation.orgId,
+      title: "Foreign automation title must stay private",
+      assigneeAgentId: crossOrganizationConversation.agentId,
+    });
     await db.insert(chatMessages).values({
       orgId,
       conversationId,
       role: "user",
       body: [
         "[Issue](issue://issue-1?r=REF-1)",
-        "[Automation](automation://automation-1?t=Daily%20report)",
+        `[](automation://${referencedAutomationId})`,
+        `[](automation://${crossOrganizationAutomationId})`,
+        "[](automation://automation-1)",
         `[Stale referenced title](chat://${referencedConversationId}?messageId=message-1)`,
         `[](chat://${privateSideChatId})`,
         `[](chat://${keptSideChatId})`,
@@ -437,6 +457,8 @@ describe("chatWorkManifestService", () => {
     expect(manifest.references.map((item) => item.targetType)).toEqual([
       "issue",
       "automation",
+      "automation",
+      "automation",
       "chat_conversation",
       "chat_conversation",
       "chat_conversation",
@@ -445,6 +467,8 @@ describe("chatWorkManifestService", () => {
     ]);
     expect(manifest.references.map((item) => item.title)).toEqual([
       "Issue",
+      referencedAutomationTitle,
+      "Automation",
       "Automation",
       referencedConversationTitle,
       "Chat",
@@ -454,6 +478,8 @@ describe("chatWorkManifestService", () => {
     ]);
     expect(manifest.references.map((item) => item.metadata)).toEqual([
       { issueId: "issue-1", ref: "REF-1", commentId: null },
+      { automationId: referencedAutomationId },
+      { automationId: crossOrganizationAutomationId },
       { automationId: "automation-1" },
       { conversationId: referencedConversationId, messageId: "message-1" },
       { conversationId: privateSideChatId, messageId: null },
@@ -493,6 +519,31 @@ describe("chatWorkManifestService", () => {
       id: referencedChat?.id,
       title: renamedConversationTitle,
     });
+
+    const referencedAutomation = renamedManifest.references.find((item) =>
+      item.metadata?.automationId === referencedAutomationId
+    );
+    if (!referencedAutomation) throw new Error("Expected hydrated Automation manifest reference");
+    await db.update(chatWorkManifestItems)
+      .set({ title: "Automation" })
+      .where(eq(chatWorkManifestItems.id, referencedAutomation.id));
+    await db.update(automations)
+      .set({ title: renamedAutomationTitle })
+      .where(eq(automations.id, referencedAutomationId));
+    await svc.reconcileConversation(conversationId);
+    const renamedAutomationManifest = await svc.getConversationManifest(conversationId);
+    expect(renamedAutomationManifest.references.find((item) =>
+      item.metadata?.automationId === referencedAutomationId
+    )).toMatchObject({
+      id: referencedAutomation.id,
+      title: renamedAutomationTitle,
+    });
+    expect(renamedAutomationManifest.references.find((item) =>
+      item.metadata?.automationId === crossOrganizationAutomationId
+    )).toMatchObject({ title: "Automation" });
+    expect(renamedAutomationManifest.references).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: "Foreign automation title must stay private" }),
+    ]));
   });
 
   it("does not project an issue before the conversation has a created primary issue", async () => {
