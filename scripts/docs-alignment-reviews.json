@@ -162,7 +162,8 @@
     {"reminder":"configure-agent-runtime: reviewer should compare public facts with AGENT.CONTROL.TOOLS.001, AGENT.RUNTIME.ADAPTERS.001, AGENT.RUNTIME.PERMISSIONS.001, RUN.RESULT.001","fingerprint":"2bfdd6292ad316e7cc07ffbd7268a0696bb2c6f2de386f89af31adbc7bdbec45","classification":"false-positive","reviewed_revision":"v0.6.2-main-alignment-review-2026-07-27"},
     {"reminder":"runtime-types: reviewer should compare English and Chinese counterparts","fingerprint":"4803813d6b889b50dcf38517c807fe87584a3fc107f3d97b85dbf0aec3955149","classification":"false-positive","reviewed_revision":"v0.6.2-main-alignment-review-2026-07-27"},
     {"reminder":"runtime-types: reviewer should compare public facts with AGENT.RUNTIME.ADAPTERS.001, AGENT.CONTROL.TOOLS.001, AGENT.RUNTIME.PERMISSIONS.001","fingerprint":"4803813d6b889b50dcf38517c807fe87584a3fc107f3d97b85dbf0aec3955149","classification":"false-positive","reviewed_revision":"v0.6.2-main-alignment-review-2026-07-27"},
-    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"377af7b97d6c145d7ff5850c1348f9ec0383ffb8df55f24d5d8370f762b49e26","classification":"intentional","reviewed_revision":"v0.6.2-and-v0.4.5-changelog-review-2026-07-27"}
+    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"377af7b97d6c145d7ff5850c1348f9ec0383ffb8df55f24d5d8370f762b49e26","classification":"intentional","reviewed_revision":"v0.6.2-and-v0.4.5-changelog-review-2026-07-27"},
+    {"reminder":"releases: reviewer should compare English and Chinese counterparts","fingerprint":"22e1abd110a370cfff201be67ed485ac163aa7552f8ae25b149c02ded56162ef","classification":"intentional","reviewed_revision":"v0.6.2-dock-icon-release-review-2026-07-27"}
   ],
   "allowed_classifications": ["fixed", "intentional", "false-positive"]
 }
