@@ -714,7 +714,6 @@ export function SideChatPanelView({
                   agent={selectedAgent}
                   label={agentLabel}
                   expanded={agentMenuOpen}
-                  locked={Boolean(conversation)}
                   disabled={agentsQuery.isPending || sending || runtimeMutation.isPending}
                   onClick={() => setAgentMenuOpen((open) => !open)}
                 />

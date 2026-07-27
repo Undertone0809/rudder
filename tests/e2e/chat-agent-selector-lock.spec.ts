@@ -58,6 +58,9 @@ test.describe("Chat Agent binding", () => {
     await page.getByRole("button", { name: "Send" }).click();
 
     await expect(agentSelector).toBeEnabled({ timeout: 15_000 });
+    await expect(
+      agentSelector.getByLabel("Agent is bound to this chat"),
+    ).toHaveCount(0);
     await agentSelector.click();
     const agentMenu = page.getByTestId("chat-agent-menu");
     await expect(agentMenu).toBeVisible();

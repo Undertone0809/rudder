@@ -157,6 +157,9 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
     effortOverride: null,
   });
 
+  await expect(
+    agentSelector.getByLabel("Agent is bound to this chat"),
+  ).toHaveCount(0);
   await agentSelector.click();
   await expect(panel.getByTestId("chat-agent-lock-state")).toContainText("Bound to chat");
   await expect(
