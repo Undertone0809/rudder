@@ -2915,7 +2915,7 @@ export function MessengerContextSidebar() {
               entry={entry}
               groups={customGroups}
               onMove={requestMoveSavedView}
-              onMoveToSidebar={requestReleaseSavedView}
+              onMoveOutOfGroup={requestReleaseSavedView}
               onRemove={requestRemoveSavedView}
               placementPending={placementPending}
             />
@@ -2936,7 +2936,7 @@ export function MessengerContextSidebar() {
                   entry={entry}
                   groups={customGroups}
                   onMove={requestMoveSavedView}
-                  onMoveToSidebar={requestReleaseSavedView}
+                  onMoveOutOfGroup={requestReleaseSavedView}
                   onRemove={requestRemoveSavedView}
                   placementPending={placementPending}
                 />

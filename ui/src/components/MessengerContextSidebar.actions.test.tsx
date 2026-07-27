@@ -4219,7 +4219,7 @@ describe("MessengerContextSidebar chat actions", () => {
     });
   });
 
-  it("releases a grouped Saved View loose and keeps group separation available", async () => {
+  it("moves one grouped Saved View out without removing its group", async () => {
     installLocalStorage({
       "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
     });
@@ -4229,7 +4229,7 @@ describe("MessengerContextSidebar chat actions", () => {
     const { container } = renderSidebar();
 
     const moveLoose = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Move to Messenger sidebar"));
+      .find((button) => button.textContent?.includes("Move out of group"));
     expect(moveLoose).toBeTruthy();
     await act(async () => {
       moveLoose?.click();
