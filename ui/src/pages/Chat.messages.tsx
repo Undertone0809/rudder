@@ -15,7 +15,7 @@ import { RudderEntityPreview } from "@/components/RudderEntityPreview";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TextDots } from "@/components/TextDots";
-import { RunTranscriptView, type TranscriptAgentInspection } from "@/components/transcript/RunTranscriptView";
+import { RunTranscriptView, type TranscriptAgentInspection, type TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -2786,6 +2786,8 @@ export function StreamTranscriptItem({
   defaultOpen = false,
   onOpenChange,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   onOpenAgent,
   annotationSource,
   sentAnnotationContext,
@@ -2802,6 +2804,8 @@ export function StreamTranscriptItem({
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   annotationSource?: {
     sourceConversationId: string;
@@ -2916,6 +2920,8 @@ export function StreamTranscriptItem({
               showDeveloperDiagnostics={showDeveloperDiagnostics}
               hiddenAssistantMessageText={assistantMessageBody}
               onOpenFile={onOpenFile}
+              onOpenSkill={onOpenSkill}
+              canOpenSkill={canOpenSkill}
               onOpenAgent={onOpenAgent}
               annotationSource={annotationSource}
               sentAnnotationContext={sentAnnotationContext}

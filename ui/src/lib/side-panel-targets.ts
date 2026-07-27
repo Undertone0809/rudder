@@ -71,6 +71,12 @@ export type SidePanelTarget =
       label: string;
     }
   | {
+      kind: "organization_skill_file";
+      skillId: string;
+      filePath: string;
+      label: string;
+    }
+  | {
       kind: "local_apps";
       label: string;
     }
@@ -155,6 +161,9 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "library_entry") return `library-entry:${target.entryId}:${target.path ?? ""}`;
   if (target.kind === "library_file") return `library-file:${target.filePath}`;
   if (target.kind === "local_file") return `local-file:${target.filePath}`;
+  if (target.kind === "organization_skill_file") {
+    return `organization-skill-file:${target.skillId}:${target.filePath}`;
+  }
   if (target.kind === "local_apps") return "local-apps";
   if (target.kind === "local_app") {
     return `local-app:${encodeURIComponent(target.desktopInstallationId)}:${encodeURIComponent(target.appPublicId)}:${encodeURIComponent(target.localBindingId)}`;
@@ -205,6 +214,13 @@ export function sidePanelFullPageHref(target: SidePanelTarget): string | null {
   if (target.kind === "library_document") return `/library?document=${encodeURIComponent(target.documentId)}`;
   if (target.kind === "library_file") return `/library?path=${encodeURIComponent(target.filePath)}`;
   if (target.kind === "local_file") return null;
+  if (target.kind === "organization_skill_file") {
+    const search = new URLSearchParams({
+      skill: target.skillId,
+      skillFile: target.filePath,
+    });
+    return `/library?${search.toString()}`;
+  }
   if (target.kind === "local_apps" || target.kind === "local_app") return null;
   if (target.kind === "library_directory") {
     return target.directoryPath
@@ -268,6 +284,16 @@ function sidePanelTargetFromInternalRouteHref(
   }
 
   if (segments.at(-1) === "library") {
+    const skillId = (url.searchParams.get("skill") ?? "").trim();
+    if (skillId) {
+      return {
+        kind: "organization_skill_file",
+        skillId,
+        filePath: (url.searchParams.get("skillFile") ?? "SKILL.md").trim() || "SKILL.md",
+        label: sidePanelLabel(label, "Skill"),
+      };
+    }
+
     const documentId = (url.searchParams.get("document") ?? url.searchParams.get("doc") ?? "").trim();
     if (documentId) {
       return {

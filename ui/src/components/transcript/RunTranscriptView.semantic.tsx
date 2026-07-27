@@ -1,4 +1,4 @@
-import { asRecord, COMMON_FILENAME_TOKENS, compactWhitespace, humanizeLabel, pluralize, resolveTranscriptFileTarget, TranscriptDensity, TranscriptFileTarget, TranscriptToolCategory, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
+import { asRecord, COMMON_FILENAME_TOKENS, compactWhitespace, humanizeLabel, pluralize, resolveTranscriptFileTarget, TranscriptDensity, TranscriptFileTarget, TranscriptSkillTarget, TranscriptToolCategory, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { classifyShellCommand, cleanShellToken, commandSegmentFrom, commandSegmentUsesInPlaceSed, extractStdoutWriteRedirectTarget, findStrongEditSegment, getShellPositionalArgsFromTokens, hasHelpSignal, isShellControlToken, shellTokensForCommand, stripWrappedShell, tokenizeShell } from "./RunTranscriptView.shell";
 
 export function normalizePathTarget(value: string): string | null {
@@ -107,6 +107,17 @@ export function createTranscriptFileTargets(
     label,
     path: resolveTranscriptFileTarget(label, workingDirectory),
   }));
+}
+
+export function createTranscriptSkillTargets(
+  paths: string[],
+  record: Record<string, unknown> | null,
+): TranscriptSkillTarget[] {
+  const fileTargets = createTranscriptFileTargets(paths, record);
+  return fileTargets.flatMap((target) => {
+    const name = extractSkillSlugFromEntryPath(target.label);
+    return name ? [{ name, path: target.path }] : [];
+  });
 }
 
 export function extractRecordQuery(record: Record<string, unknown> | null): string | null {
@@ -586,6 +597,7 @@ export function describeCommandSemanticInfo(
         category: "skill",
         label: "Use skill",
         bucket: "explore",
+        skillTargets: createTranscriptSkillTargets(targets, record),
       };
     }
     const action = formatTargetAction("Read", targets, "file", "Read file");
@@ -1019,7 +1031,7 @@ export function isCommandTool(name: string, input: unknown): boolean {
   return Boolean(record && (typeof record.command === "string" || typeof record.cmd === "string"));
 }
 
-export function describeToolSemanticInfo(name: string, input: unknown): TranscriptToolSemanticInfo {
+export function describeToolSemanticInfo(name: string, input: unknown, result?: string): TranscriptToolSemanticInfo {
   const normalizedName = name.trim().toLowerCase();
   const normalizedIdentifier = normalizedName.replace(/[\s_-]+/g, "");
   const record = asRecord(input);
@@ -1057,6 +1069,13 @@ export function describeToolSemanticInfo(name: string, input: unknown): Transcri
   if (normalizedName === "skill") {
     const skill = readStringField(record, ["skill", "name"]);
     const skillAction = skill ? formatSkillUseAction([skill]) : null;
+    const explicitPath = readStringField(record, ["path", "sourcePath", "source_path", "skillPath", "skill_path"]);
+    const baseDirectory = result?.match(/^Base directory(?: for this skill)?:\s*(.+)$/mi)?.[1]?.trim() ?? null;
+    const sourcePath = explicitPath
+      ?? (baseDirectory ? `${baseDirectory.replace(/[\\/]+$/u, "")}/SKILL.md` : null);
+    const resolvedPath = sourcePath
+      ? createTranscriptFileTargets([sourcePath], record)[0]?.path ?? null
+      : null;
     return {
       category: "skill",
       label: "Use skill",
@@ -1064,6 +1083,7 @@ export function describeToolSemanticInfo(name: string, input: unknown): Transcri
       bucket: "explore",
       quantity: 1,
       noun: "skill",
+      skillTargets: skill ? [{ name: skill, path: resolvedPath }] : [],
     };
   }
 
@@ -1118,6 +1138,7 @@ export function describeToolSemanticInfo(name: string, input: unknown): Transcri
         category: "skill",
         label: "Use skill",
         bucket: "explore",
+        skillTargets: createTranscriptSkillTargets(paths, record),
       };
     }
     const action = formatTargetAction("Read", paths, "file", "Read file");

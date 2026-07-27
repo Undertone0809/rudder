@@ -193,6 +193,10 @@ contracts:
       - ui/src/components/transcript/RunTranscriptView.tsx
       - ui/src/components/transcript/RunTranscriptView.chat.tsx
       - ui/src/components/transcript/RunTranscriptView.semantic.tsx
+      - ui/src/lib/transcript-skill-targets.ts
+      - ui/src/lib/side-panel-targets.ts
+      - ui/src/pages/Chat.side-panel.tsx
+      - ui/src/pages/Chat.tsx
     related_tests:
       - packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts
       - server/src/__tests__/codex-local-adapter.test.ts
@@ -205,11 +209,15 @@ contracts:
       - tests/e2e/chat-streaming.spec.ts
       - ui/src/components/transcript/RunTranscriptView.test.tsx
       - ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx
+      - ui/src/lib/transcript-skill-targets.test.ts
+      - ui/src/lib/side-panel-targets.test.ts
+      - ui/src/pages/Chat.side-panel.skill-file.test.tsx
       - tests/e2e/chat-transcript-internal-events.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
       - doc/plans/2026-07-23-chat-response-annotations.md
+      - doc/plans/2026-07-27-transcript-skill-side-panel.md
   ROUTING.ASSIGNMENT.001:
     owner: product
     domain: work-routing

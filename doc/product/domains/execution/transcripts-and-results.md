@@ -23,6 +23,11 @@ related_code:
   - ui/src/components/transcript/RunTranscriptView.normalize.tsx
   - ui/src/components/transcript/RunTranscriptView.tsx
   - ui/src/components/transcript/RunTranscriptView.chat.tsx
+  - ui/src/components/transcript/RunTranscriptView.semantic.tsx
+  - ui/src/lib/transcript-skill-targets.ts
+  - ui/src/lib/side-panel-targets.ts
+  - ui/src/pages/Chat.side-panel.tsx
+  - ui/src/pages/Chat.tsx
 related_tests:
   - packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts
   - server/src/__tests__/heartbeat-run-summary.test.ts
@@ -35,6 +40,9 @@ related_tests:
   - tests/e2e/chat-concurrent-streaming.spec.ts
   - tests/e2e/chat-streaming.spec.ts
   - ui/src/components/transcript/RunTranscriptView.test.tsx
+  - ui/src/lib/transcript-skill-targets.test.ts
+  - ui/src/lib/side-panel-targets.test.ts
+  - ui/src/pages/Chat.side-panel.skill-file.test.tsx
   - tests/e2e/chat-transcript-internal-events.spec.ts
 edit_policy: user_confirmed_only
 ---
@@ -95,6 +103,12 @@ Behavior:
   absolute `workdir` / `cwd`, is directly openable from the activity row. A
   relative target without that trusted execution root remains readable but is
   not treated as an openable file.
+- Skill-use actions retain structured skill identities and trusted `SKILL.md`
+  targets from the same provider evidence. When the identity resolves uniquely
+  to the current organization Skill Library, the operator can open its
+  `SKILL.md` read-only in the current Chat Side Panel; an exact trusted local
+  path may use the Desktop local-file preview. Ambiguous or unresolved skill
+  identities remain readable but are not guessed into an action.
 - Hidden lifecycle entries still delimit adjacent streamed text groups in the
   readable projection. The projection preserves readable boundaries between a
   completed message and a later delta group, and its display limit counts
@@ -131,6 +145,9 @@ Invariant:
   from the same structured transcript evidence; rendered prose must never be
   reparsed to guess a path. Live and persisted transcripts must project the same
   semantic actions.
+- Skill Side Panel actions must be derived from structured skill identity or
+  trusted path evidence, never from reparsing the rendered `Use … skill` label,
+  and inspection must not grant edit authority or change skill selection.
 - A Process annotation may address only one visible prose block. It cannot use
   transcript-array index or timestamp as identity, cross hidden/tool/lifecycle
   evidence, or make otherwise hidden reasoning visible. Provenance survives
@@ -159,6 +176,10 @@ Related code:
 - `ui/src/components/transcript/RunTranscriptView.tsx`
 - `ui/src/components/transcript/RunTranscriptView.chat.tsx`
 - `ui/src/components/transcript/RunTranscriptView.semantic.tsx`
+- `ui/src/lib/transcript-skill-targets.ts`
+- `ui/src/lib/side-panel-targets.ts`
+- `ui/src/pages/Chat.side-panel.tsx`
+- `ui/src/pages/Chat.tsx`
 - `packages/agent-runtimes/codex-local/src/server/app-server-chat.ts`
 - `packages/agent-runtimes/codex-local/src/ui/parse-stdout.ts`
 - `packages/agent-runtimes/codex-local/src/server/parse.ts`
@@ -179,6 +200,9 @@ Related tests:
 - `tests/e2e/chat-concurrent-streaming.spec.ts`
 - `tests/e2e/chat-streaming.spec.ts`
 - `ui/src/components/transcript/RunTranscriptView.test.tsx`
+- `ui/src/lib/transcript-skill-targets.test.ts`
+- `ui/src/lib/side-panel-targets.test.ts`
+- `ui/src/pages/Chat.side-panel.skill-file.test.tsx`
 - `ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx`
 - `tests/e2e/chat-transcript-internal-events.spec.ts`
 - `tests/e2e/chat-response-annotations.spec.ts`
