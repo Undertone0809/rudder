@@ -482,6 +482,7 @@ export function buildChatSpeakerPromptSection(runtimeSource: ResolvedChatRuntime
 
 export function buildChatResponseQualityPromptSection() {
   return [
+    "Reply in the same language as the user's most recent substantive message unless they explicitly ask for another language.",
     "Before answering, classify the user's request depth:",
     "- Quick factual or status request: answer directly and keep it concise.",
     "- Ambiguous work request: ask one to three blocking clarification questions before proposing work.",
@@ -489,6 +490,46 @@ export function buildChatResponseQualityPromptSection() {
     "- Implementation request with local evidence available: inspect the relevant files, docs, or artifacts before giving a confident recommendation.",
     "For non-trivial judgment questions, do not jump from the user's proposed solution to an answer. Reframe the durable job-to-be-done, map the likely scenarios, identify what must be true for the answer to be correct, compare two to three realistic options when useful, and recommend one next move.",
     "Do not claim certainty you do not have. State assumptions, confidence, and remaining unknowns when they matter. Keep the final answer concise and user-visible; do not expose hidden chain-of-thought or unnecessary process.",
+  ].join("\n");
+}
+
+function buildChatResultKindPromptSection() {
+  return [
+    "Choose the result kind by intent:",
+    "- message: clarification, summaries, and small requests that can stay in chat.",
+    "- ask_user: only when the conversation is blocked on one to three short structured questions that require the user's decision.",
+    "- For ask_user, use unique question ids and option ids. Set selectionMode to 'multiple' only when multiple choices are allowed; otherwise omit it.",
+  ].join("\n");
+}
+
+function buildIssueProposalPromptSection() {
+  return [
+    "Issue proposal rules:",
+    "- Use issue_proposal only when the latest operator-authored user request explicitly asks to create an issue, convert the chat to an issue, or draft an issue proposal. Do not emit issue_proposal merely because work is large or durable.",
+    "- Include exactly one explicit owner decision: assigneeAgentId, assigneeUserId, or assigneeUnassignedReason. Do not default to the selected chat agent unless that agent should actually own execution.",
+    "- Preserve directly relevant user-provided original images in the description. Prefer the original over a redraw, generated replacement, or text-only substitute.",
+    "- When revising, re-check eligible user images across recentMessages even if the latest feedback has no attachments.",
+    "- Embed each selected image with meaningful Markdown alt text using only its canonical contentPath. Never expose localPath, internal download commands, authentication material, or fabricated image targets.",
+    "- Omit images that are not relevant user images or lack a usable contentPath; do not copy every attachment.",
+    "- Omit status for the normal runnable To Do default; use backlog only when the issue should intentionally wait.",
+  ].join("\n");
+}
+
+function buildAutomationCreatePromptSection() {
+  return [
+    "Automation creation rules:",
+    "- Use automation_create only when the latest operator-authored user request clearly asks the selected agent to set up recurring automatic work and the schedule, assignee, and output are clear. Never use it for automation-run input messages.",
+    "- Include structuredPayload.automationCreate with title, instructions, schedule.cronExpression, and schedule.timezone. Omit assigneeAgentId to use the selected chat agent; use outputMode 'track_issue'.",
+  ].join("\n");
+}
+
+function buildChatResultProtocolPromptSection(resultSentinel: string) {
+  return [
+    "Reply in two phases:",
+    "- Phase 1: while working, write concise Markdown progress updates without JSON fences. These are process transcript entries, not the final answer.",
+    `- Phase 2, ordinary message: emit ${CHAT_RESULT_TEXT_BLOCK_BEGIN} on its own line, then only the final user-visible answer, then ${CHAT_RESULT_TEXT_BLOCK_END} on its own line.`,
+    `- Phase 2, structured result: for ask_user, issue_proposal, operation_proposal, or automation_create, emit exactly ${resultSentinel} followed immediately by one JSON object.`,
+    `- Output nothing after ${CHAT_RESULT_TEXT_BLOCK_END} or the JSON object.`,
   ].join("\n");
 }
 
@@ -532,28 +573,13 @@ export function buildAutomationRunInputPromptSection(messages: ChatMessage[]) {
 export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntimeSource, resultSentinel: string) {
   return [
     buildChatSpeakerPromptSection(runtimeSource),
-    "You are in chat scene of Rudder.",
-    "Always prefer clarification before proposing issue creation when requirements are incomplete.",
     "Treat message attachments as part of the user's message. If an image attachment includes localPath metadata, inspect that local file before claiming you cannot see the image.",
     buildChatInlineVisualPromptSection(),
     buildChatResponseQualityPromptSection(),
-    "Use result kind 'message' for clarification, summaries, and small requests that can stay in chat.",
-    "Use result kind 'ask_user' only when one to three short structured questions are blocked on the user's decision before the conversation can continue safely.",
-    "For ask_user, each requestUserInput question id must be unique, and option ids must be unique within their question. Set question selectionMode to 'multiple' only when the user can choose more than one option; omit it for normal single-choice questions.",
-    "Use result kind 'issue_proposal' only when the latest user request explicitly asks for creating an issue, converting the chat to an issue, or drafting an issue proposal. Do not emit issue_proposal just because work is large, durable.",
-    "For issue_proposal, include exactly one owner decision in structuredPayload.issueProposal: either assigneeAgentId/assigneeUserId for the proposed owner, or assigneeUnassignedReason explaining why the issue should intentionally remain unassigned. Do not leave ownership implicit. Do not default to the selected chat agent unless that agent should actually own execution.",
-    "For initial and revised issue proposals, preserve a user-provided original image in structuredPayload.issueProposal.description when it directly helps explain the requirement, reproduce the problem, provide a design reference, or define acceptance. Prefer the original image over a redraw, generated replacement, or text-only substitute.",
-    "Embed each selected proposal image with Markdown image syntax and a meaningful alt text, using only the attachment's canonical contentPath as the target (for example, ![Current broken state](/api/assets/<asset-id>/content)). localPath is temporary runtime inspection context only and must never appear in user-visible proposal JSON or Markdown. Never expose an internal download command, authentication material, or a fabricated image target.",
-    "Choose proposal images by relevance; do not copy every attachment indiscriminately. If an attachment is not an image, has no usable contentPath, or is not clearly relevant to the issue scope, omit the image reference and describe missing evidence only when that gap matters.",
-    "When revising an issue proposal, re-check relevant user image attachments across the available recentMessages history, even when the latest revision-feedback message has no attachments. Apply the same canonical contentPath, relevance, alt-text, and no-localPath rules to the replacement proposal.",
-    "Issue proposals create To Do issues by default. Omit status for the normal runnable default; set status to 'backlog' only when the issue should intentionally wait and not be picked up by agents yet.",
-    "Use result kind 'automation_create' only when the latest operator-authored user request clearly asks the selected agent to set up recurring automatic work and the schedule, assignee, and output are clear. Never use automation_create for automation-run input messages.",
-    "For automation_create, include structuredPayload.automationCreate with title, instructions, schedule.cronExpression, and schedule.timezone. Omit assigneeAgentId to assign the automation to the selected chat agent. Use outputMode 'track_issue' so each run creates reviewable board-tracked work.",
-    "Reply in two phases.",
-    "Phase 1: while you work, write concise progress updates in Markdown with no JSON fences. These are process transcript entries, not the final answer.",
-    `Phase 2 for ordinary message replies: emit ${CHAT_RESULT_TEXT_BLOCK_BEGIN} on its own line, then the final user-visible answer body only, then ${CHAT_RESULT_TEXT_BLOCK_END} on its own line.`,
-    `Phase 2 for ask_user, issue_proposal, operation_proposal, or automation_create replies: emit exactly ${resultSentinel} followed immediately by one JSON object.`,
-    `Do not output anything after ${CHAT_RESULT_TEXT_BLOCK_END} or after the JSON object.`,
+    buildChatResultKindPromptSection(),
+    buildIssueProposalPromptSection(),
+    buildAutomationCreatePromptSection(),
+    buildChatResultProtocolPromptSection(resultSentinel),
   ];
 }
 

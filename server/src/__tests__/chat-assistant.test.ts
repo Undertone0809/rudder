@@ -661,7 +661,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
 
     const prompt = mockAdapter.execute.mock.calls[0]?.[0]?.context?.chatPrompt as string;
-    expect(prompt).toContain("Always reply in the same language as the user's most recent substantive message unless they explicitly ask for a different language.");
+    expect(prompt).toContain("Reply in the same language as the user's most recent substantive message unless they explicitly ask for another language.");
     expect(prompt).toContain("You are Chat Specialist, replying inside Rudder's chat scene.");
     expect(prompt).toContain("Before answering, classify the user's request depth:");
     expect(prompt).toContain("Product, design, architecture, strategy, or workflow judgment: reason from scenarios, actors, needs, non-needs, constraints, failure modes, and corner cases before giving a decision-ready answer.");
@@ -1160,7 +1160,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("already-created automation");
     expect(prompt).toContain("Do not emit result kind \"automation_create\" because of an automation-run input.");
     expect(prompt).toContain("Do not ask for schedule, trigger source, recurrence, or push time");
-    expect(prompt).toContain("Use result kind 'automation_create' only when the latest operator-authored user request");
+    expect(prompt).toContain("Use automation_create only when the latest operator-authored user request");
     expect(prompt).toContain("\"eventType\": \"automation_run_input\"");
     expect(prompt).toContain("\"mayCreateAutomation\": false");
     expect(prompt).toContain("For this automation-run input, mayCreateAutomation: false.");
@@ -1288,7 +1288,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
 
     const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
-    expect(prompt).toContain("Use result kind 'ask_user'");
+    expect(prompt).toContain("- ask_user: only when the conversation is blocked");
     expect(prompt).toContain("requestUserInput");
     expect(result).toEqual(expect.objectContaining({
       kind: "ask_user",
@@ -1475,10 +1475,10 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
 
     const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
-    expect(prompt).toContain("Do not emit issue_proposal just because work is large");
+    expect(prompt).toContain("Do not emit issue_proposal merely because work is large or durable");
     expect(prompt).toContain("the latest operator-authored user request explicitly asks");
-    expect(prompt).toContain("creating an issue");
-    expect(prompt).toContain("converting the chat to an issue");
+    expect(prompt).toContain("create an issue");
+    expect(prompt).toContain("convert the chat to an issue");
   });
 
   it("instructs initial issue proposals to preserve only relevant original images with canonical content paths", async () => {
@@ -1492,15 +1492,12 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
 
     const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
-    expect(prompt).toContain("For initial and revised issue proposals, preserve a user-provided original image");
-    expect(prompt).toContain("Prefer the original image over a redraw, generated replacement, or text-only substitute.");
-    expect(prompt).toContain("using only the attachment's canonical contentPath as the target");
-    expect(prompt).toContain("![Current broken state](/api/assets/<asset-id>/content)");
-    expect(prompt).toContain("localPath is temporary runtime inspection context only");
-    expect(prompt).toContain("must never appear in user-visible proposal JSON or Markdown");
-    expect(prompt).toContain("Choose proposal images by relevance; do not copy every attachment indiscriminately.");
-    expect(prompt).toContain("has no usable contentPath");
-    expect(prompt).toContain("Never expose an internal download command, authentication material, or a fabricated image target.");
+    expect(prompt).toContain("Preserve directly relevant user-provided original images in the description.");
+    expect(prompt).toContain("Prefer the original over a redraw, generated replacement, or text-only substitute.");
+    expect(prompt).toContain("using only its canonical contentPath");
+    expect(prompt).toContain("Never expose localPath, internal download commands, authentication material, or fabricated image targets.");
+    expect(prompt).toContain("Omit images that are not relevant user images or lack a usable contentPath");
+    expect(prompt).toContain("do not copy every attachment.");
   });
 
   it("instructs revision proposals to recover relevant historical images without exposing local paths", async () => {
@@ -1536,12 +1533,13 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
 
     const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
-    expect(prompt).toContain("When revising an issue proposal, re-check relevant user image attachments across the available recentMessages history");
-    expect(prompt).toContain("even when the latest revision-feedback message has no attachments");
+    expect(prompt).toContain("When revising, re-check eligible user images across recentMessages");
+    expect(prompt).toContain("even if the latest feedback has no attachments");
     expect(prompt).toContain('"name": "original-evidence.png"');
     expect(prompt).toContain('"contentPath": "/api/assets/asset-original-evidence/content"');
     expect(prompt).toMatch(/"localPath": ".*original-evidence\.png"/);
-    expect(prompt).toContain("Apply the same canonical contentPath, relevance, alt-text, and no-localPath rules");
+    expect(prompt).toContain("using only its canonical contentPath");
+    expect(prompt).toContain("Never expose localPath");
     expect(prompt).not.toContain("Current user message attachments:");
   });
 
