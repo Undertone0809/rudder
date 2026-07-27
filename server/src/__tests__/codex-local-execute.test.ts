@@ -946,7 +946,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
           coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
           provenance: "desktop_bundle",
           serverName: "rudder-tools",
-          toolCount: 69,
+          toolCount: 70,
           version: "0.4.6",
         });
         expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
@@ -2302,7 +2302,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         provenance: "desktop_bundle",
         serverName: "rudder-tools",
-        toolCount: 69,
+        toolCount: 70,
         version: "0.4.6",
       });
       expect(runtimeMetadata.rudderMcp).not.toHaveProperty("browserAvailable");
@@ -3915,7 +3915,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
           available: true,
-          toolCount: 69,
+          toolCount: 70,
         });
         expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
         expect(meta.rudderMcp).not.toHaveProperty("contractHash");

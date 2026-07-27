@@ -73,6 +73,15 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": false
   },
   {
+    "capabilityId": "issue.list",
+    "name": "rudder_issue_list",
+    "description": "List issues with optional status, assignee, and project filters without requiring a search query.",
+    "mutating": false,
+    "requiresOrgId": true,
+    "requiresAgentId": false,
+    "attachesRunIdWhenAvailable": false
+  },
+  {
     "capabilityId": "issue.search",
     "name": "rudder_issue_search",
     "description": "Search issues with the server-side issue index across title, identifier, description, and comments.",
@@ -847,5 +856,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "a0c3df3a89ce6d150af3300507f6093ee85c66ff8a22d7cf628ab3d415e6e6b3";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "8494e4678d53860a8b3d71f8d1a0c87d75360d4bf7184ba93b0a3c8d98acda58";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

@@ -19,20 +19,12 @@ export interface RudderMcpToolContractSource extends RudderMcpSemanticToolContra
   attachesRunIdWhenAvailable: boolean;
 }
 
-function mcpString(description: string): Record<string, unknown> {
-  return { type: "string", description };
-}
-
-function mcpBoolean(description: string): Record<string, unknown> {
-  return { type: "boolean", description };
-}
-
-function mcpNumber(description: string): Record<string, unknown> {
-  return { type: "number", description };
-}
-
-function mcpStringArray(description: string): Record<string, unknown> {
-  return { type: "array", items: { type: "string" }, description };
+interface RudderMcpInputSchema extends Record<string, unknown> {
+  type: "object";
+  additionalProperties: false;
+  properties: Record<string, unknown>;
+  required?: string[];
+  anyOf?: Array<{ required: string[] }>;
 }
 
 function browserMcpInputSchema(id: string): {
@@ -200,239 +192,449 @@ function browserMcpInputSchema(id: string): {
   }
 }
 
-export function rudderMcpInputSchemaForCapability(id: string): {
-  type: "object";
-  additionalProperties: false;
-  properties: Record<string, unknown>;
-  required?: string[];
-} {
+export function rudderMcpInputSchemaForCapability(id: string): RudderMcpInputSchema {
   if (id.startsWith("browser.")) return browserMcpInputSchema(id);
-  const properties: Record<string, unknown> = {};
-  const add = (key: string, value: Record<string, unknown>) => {
-    properties[key] = value;
-  };
+  return coreMcpInputSchema(id);
+}
 
-  if (id.startsWith("runs.")) {
-    const addString = (key: string, description: string) => add(key, mcpString(description));
-    const addNumber = (key: string, description: string) => add(key, mcpNumber(description));
-    const addBoolean = (key: string, description: string) => add(key, mcpBoolean(description));
-    switch (id) {
-      case "runs.list":
-        addString("updatedAfter", "Only runs updated after this timestamp.");
-        addString("runIdPrefix", "Run id prefix filter.");
-        addString("relatedAgentId", "Agent id filter.");
-        addString("status", "Run status filter.");
-        addString("runtime", "Runtime type filter.");
-        addString("issueId", "Linked issue id filter.");
-        addString("usedSkill", "Used skill filter.");
-        addString("loadedSkill", "Loaded skill filter.");
-        addString("createdBefore", "Only runs created before this timestamp.");
-        addString("cursor", "Stable summary cursor.");
-        addNumber("limit", "Summary page size, capped by the server.");
-        break;
-      case "runs.by-skill":
-        addString("skill", "Skill key or display name.");
-        addString("evidence", "Evidence type: used or loaded.");
-        addString("relatedAgentId", "Agent id filter.");
-        addString("status", "Run status filter.");
-        addString("runtime", "Runtime type filter.");
-        addString("issueId", "Linked issue id filter.");
-        addString("createdBefore", "Only runs created before this timestamp.");
-        addString("cursor", "Stable summary cursor.");
-        addNumber("limit", "Summary page size, capped by the server.");
-        break;
-      case "runs.events":
-        addString("run", "Run id or short run id.");
-        addString("cursor", "Opaque total-order event cursor.");
-        addNumber("afterSeq", "Legacy sequence-only cursor.");
-        addNumber("limit", "Event page size, capped by the server.");
-        addNumber("maxChars", "Maximum payload preview characters per event.");
-        break;
-      case "runs.log":
-        addString("run", "Run id or short run id.");
-        addNumber("maxChars", "Maximum log characters for display.");
-        addNumber("offset", "Byte offset for the ranged read.");
-        addNumber("limitBytes", "Maximum bytes for the ranged read.");
-        break;
-      case "runs.transcript":
-        addString("run", "Run id or short run id.");
-        addBoolean("errorsOnly", "Return only error rows.");
-        addString("aroundError", "Transcript error step id.");
-        addNumber("contextTurns", "Turns around the selected error.");
-        addString("cursor", "Stable transcript cursor.");
-        addNumber("turnLimit", "Maximum turns to return.");
-        addBoolean("chronological", "Return oldest-first rows.");
-        addBoolean("narrative", "Use narrative row formatting.");
-        addNumber("maxChars", "Maximum output characters per row.");
-        addBoolean("includeOutput", "Include clipped row output.");
-        break;
-      case "runs.errors":
-        addString("run", "Run id or short run id.");
-        addString("cursor", "Error page cursor.");
-        addNumber("maxChars", "Maximum output characters per error.");
-        break;
-      default:
-        addString("run", "Run id or short run id.");
-        break;
-    }
-    return { type: "object", additionalProperties: false, properties };
-  }
-
-  if (id.startsWith("issue.")) {
-    add("issue", mcpString("Issue UUID, identifier, or short reference."));
-    add("body", mcpString("Direct Markdown body for issue comments or close-out notes."));
-    add("comment", mcpString("Direct Markdown review, blocker, or completion comment."));
-    add("images", { type: "array", items: { type: "string" }, description: "Local image paths to attach when supported." });
-  }
-  if (id.startsWith("project.")) add("project", mcpString("Project UUID or shortname."));
-  if (id.startsWith("library.file.")) {
-    add("path", mcpString("Library-relative file or directory path."));
-    if (id === "library.file.list") {
-      add("directory", mcpString("Library-relative directory path. Defaults to the run's project Library path when available."));
-    }
-    add("body", mcpString("Direct file content for put operations."));
-  }
-  if (id.startsWith("approval.")) {
-    add("approval", mcpString("Approval UUID or short reference."));
-    add("body", mcpString("Direct Markdown approval comment body."));
-  }
-  if (id.startsWith("skill.")) {
-    add("skill", mcpString("Organization skill id."));
-    add("path", mcpString("Skill package file path, such as SKILL.md."));
-  }
-  if (id.startsWith("browser.")) {
-    add("url", mcpString("HTTP or HTTPS URL."));
-    add("tabId", mcpString("Run-owned Rudder Browser tab id."));
-    add("ref", mcpString("Element reference returned by rudder_browser_read."));
-    add("text", mcpString("Text to enter into the referenced element."));
-  }
-  if (id.startsWith("automation.")) {
-    add("automation", mcpString("Automation id."));
-    add("trigger", mcpString("Automation trigger id."));
-    add("payload", { type: ["object", "string"], description: "JSON payload object or JSON string." });
-  }
-  if (id.startsWith("chat.")) {
-    add("chat", mcpString("Chat conversation id."));
-    add("body", mcpString("Agent-authored chat message body."));
-  }
-  if (id.startsWith("agent.skills.")) {
-    add("selectionRefs", { type: "array", items: { type: "string" }, description: "Skill selection refs." });
-    add("skills", { type: "array", items: { type: "string" }, description: "Skill selection refs alias." });
-    add("desiredSkills", mcpString("Comma-separated desired skill refs for sync."));
-  }
-
-  for (const [key, description] of Object.entries({
-    query: "Search query.",
-    decision: "Structured review decision.",
-    title: "Title.",
-    name: "Name.",
-    description: "Description or summary text.",
-    status: "Status filter or new status.",
-    cursor: "Pagination cursor.",
-    source: "Source path or source label.",
-    kind: "Trigger kind.",
-    label: "Trigger label.",
-    skill: "Skill key, id, or display name.",
-    slug: "Slug.",
-    markdown: "Direct Markdown content.",
-    role: "Agent role.",
-    capabilities: "Agent capability summary.",
-    wakeCommentId: "Issue comment id that triggered the wake.",
-    expectedStatuses: "Comma-separated checkout precondition statuses.",
-    after: "Pagination anchor or lower bound.",
-    order: "Sort order.",
-    priority: "Issue or automation priority.",
-    assigneeAgentId: "Target assignee agent id or reference.",
-    projectId: "Project id or reference.",
-    goalId: "Goal id or reference.",
-    parentId: "Parent issue id or reference.",
-    parentIssueId: "Parent issue id or reference.",
-    requestDepth: "Requested issue depth.",
-    billingCode: "Billing code.",
-    hiddenAt: "Hidden timestamp.",
-    archivedAt: "Archived timestamp.",
-    targetDate: "Target date.",
-    color: "Display color.",
-    scope: "Search or visibility scope.",
-    sha: "Git commit SHA.",
-    message: "Commit or status message.",
-    branch: "Git branch name.",
-    repoPath: "Repository path.",
-    workspacePath: "Workspace path.",
-    relatedAgentId: "Agent id used as a filter or related principal.",
-    leadAgentId: "Lead agent id or reference.",
-    approvalId: "Approval id or short approval id alias.",
-    automationId: "Automation id alias.",
-    chatId: "Chat conversation id alias.",
-    commentId: "Issue comment id alias.",
-    skillId: "Skill id alias.",
-    user: "User id, reference, or self.",
-    since: "Activity start timestamp.",
-    until: "Activity end timestamp.",
-    include: "Comma-separated optional data sections.",
-    content: "Direct content alias for body.",
-    roots: "Comma-separated local roots.",
-    projectIds: "Comma-separated project ids.",
-    workspaceIds: "Comma-separated workspace ids.",
-    cronExpression: "Cron expression.",
-    timezone: "Timezone.",
-    signingMode: "Webhook signing mode.",
-    replayWindowSec: "Webhook replay window in seconds.",
-    instructions: "Automation instructions.",
-    outputMode: "Automation output mode.",
-    concurrencyPolicy: "Automation concurrency policy.",
-    catchUpPolicy: "Automation catch-up policy.",
-    triggerId: "Automation trigger id.",
-    idempotencyKey: "Idempotency key.",
-    summary: "Chat summary.",
-    preferredAgentId: "Preferred responding agent id or reference.",
-    issueCreationMode: "Chat issue creation mode.",
-    editUserMessageId: "User message id to edit.",
-    updatedAfter: "Run updated-after timestamp.",
-    runIdPrefix: "Run id prefix filter.",
-    runtime: "Runtime type filter.",
-    issueId: "Issue id filter.",
-    usedSkill: "Used skill filter.",
-    loadedSkill: "Loaded skill filter.",
-    createdBefore: "Created-before timestamp.",
-    evidence: "Skill evidence type.",
-    aroundError: "Transcript error step id.",
-    maxOutputChars: "Maximum output characters.",
-  })) {
-    add(key, mcpString(description));
-  }
-  for (const [key, description] of Object.entries({
-    limit: "Page size or result limit.",
-    count: "Count represented by a report.",
-    turnLimit: "Maximum turns to return.",
-    contextTurns: "Number of context turns.",
-    maxChars: "Maximum characters.",
-    snippetChars: "Maximum snippet characters.",
-    afterSeq: "Return events after this sequence number.",
-    offset: "Byte offset for ranged reads.",
-    limitBytes: "Maximum bytes for ranged reads.",
-  })) {
-    add(key, mcpNumber(description));
-  }
-  for (const [key, description] of Object.entries({
-    selectionRefs: "Skill selection refs.",
-    selections: "Skill selection refs alias.",
-    skills: "Skill selection refs alias.",
-    images: "Local image paths to attach when supported.",
-    goalIds: "Goal ids.",
-  })) {
-    add(key, mcpStringArray(description));
-  }
-  for (const key of ["clearTitle", "clearCapabilities", "clearDescription", "clearReportsTo", "enable", "enabled", "disabled", "reopen", "planMode", "includeTranscript", "includeOutput", "includeOutputs", "notifyOnIssueCreated", "errorsOnly", "chronological", "narrative", "submit", "full"]) {
-    add(key, mcpBoolean(`Boolean option ${key}.`));
-  }
-
-  return {
-    type: "object",
-    additionalProperties: false,
+function coreMcpInputSchema(id: string): RudderMcpInputSchema {
+  const string = (description: string, extra: Record<string, unknown> = {}) => ({
+    type: "string",
+    description,
+    minLength: 1,
+    maxLength: 100_000,
+    ...extra,
+  });
+  const number = (description: string, minimum = 0, maximum = 10_000) => ({
+    type: "number",
+    description,
+    minimum,
+    maximum,
+  });
+  const boolean = (description: string) => ({ type: "boolean", description });
+  const strings = (description: string, maxItems = 100) => ({
+    type: "array",
+    description,
+    maxItems,
+    items: string(description, { maxLength: 8_192 }),
+  });
+  const payload = { type: ["object", "string"], description: "JSON payload object or JSON string." };
+  const schema = (properties: Record<string, unknown>, required: string[] = []) => ({
+    type: "object" as const,
+    additionalProperties: false as const,
     properties,
-    ...(id === "chat.create" ? { required: ["body"] } : {}),
-  };
+    ...(required.length > 0 ? { required } : {}),
+  });
+
+  const issue = string("Issue UUID, identifier, or short reference.", { maxLength: 200 });
+  const project = string("Project UUID or shortname.", { maxLength: 200 });
+  const approval = string("Approval UUID or short reference.", { maxLength: 200 });
+  const automation = string("Automation UUID or short reference.", { maxLength: 200 });
+  const trigger = string("Automation trigger UUID or short reference.", { maxLength: 200 });
+  const chat = string("Chat conversation UUID or short reference.", { maxLength: 200 });
+  const run = string("Run UUID or short reference.", { maxLength: 200 });
+  const cursor = string("Opaque pagination cursor.", { maxLength: 2_000 });
+  const body = string("Direct Markdown body.", { maxLength: 500_000 });
+  const images = strings("Local image paths to attach.", 20);
+
+  switch (id) {
+    case "agent.me":
+    case "agent.inbox":
+    case "agent.capabilities":
+    case "project.list":
+    case "skill.list":
+      return schema({});
+    case "agent.update":
+      return schema({
+        name: string("Agent name.", { maxLength: 200 }),
+        role: string("Agent role.", { maxLength: 100 }),
+        title: string("Agent title.", { maxLength: 300 }),
+        capabilities: string("Agent capability summary."),
+        description: string("Compatibility alias for capabilities."),
+        clearTitle: boolean("Clear the current title."),
+        clearCapabilities: boolean("Clear the current capability summary."),
+        clearDescription: boolean("Compatibility alias for clearCapabilities."),
+      });
+    case "agent.skills.create":
+      return schema({
+        name: string("Skill display name.", { maxLength: 200 }),
+        slug: string("Skill slug.", { maxLength: 200 }),
+        description: string("Skill description."),
+        markdown: string("SKILL.md content.", { maxLength: 500_000 }),
+        body: string("Compatibility alias for markdown.", { maxLength: 500_000 }),
+        enable: boolean("Enable the created skill for the runtime agent."),
+      }, ["name"]);
+    case "agent.skills.enable":
+      return schema({ selectionRefs: strings("Skill selection references.", 100) }, ["selectionRefs"]);
+    case "agent.skills.sync":
+      return schema({ desiredSkills: string("Comma-separated desired skill references.", { maxLength: 20_000 }) }, ["desiredSkills"]);
+    case "issue.list":
+      return schema({
+        status: string("Comma-separated issue statuses.", { maxLength: 500 }),
+        assigneeAgentId: string("Assignee agent id or reference.", { maxLength: 200 }),
+        projectId: string("Project id or reference.", { maxLength: 200 }),
+      });
+    case "issue.get":
+      return schema({ issue }, ["issue"]);
+    case "issue.search":
+      return schema({
+        query: string("Non-empty server-side issue search query.", { maxLength: 2_000 }),
+        status: string("Comma-separated issue statuses.", { maxLength: 500 }),
+        assigneeAgentId: string("Assignee agent id or reference.", { maxLength: 200 }),
+        projectId: string("Project id or reference.", { maxLength: 200 }),
+      }, ["query"]);
+    case "issue.context":
+      return schema({ issue, wakeCommentId: string("Wake comment id or short reference.", { maxLength: 200 }) }, ["issue"]);
+    case "issue.checkout":
+      return schema({ issue, expectedStatuses: string("Comma-separated allowed prior statuses.", { maxLength: 500 }) }, ["issue"]);
+    case "issue.comment":
+      return {
+        ...schema({ issue, body, comment: body, images, reopen: boolean("Reopen the issue while commenting.") }, ["issue"]),
+        anyOf: [{ required: ["body"] }, { required: ["comment"] }],
+      };
+    case "issue.comments.list":
+      return schema({
+        issue,
+        after: string("Return comments after this comment id or short reference.", { maxLength: 200 }),
+        order: string("Comment order.", { enum: ["asc", "desc"], maxLength: 10 }),
+      }, ["issue"]);
+    case "issue.comments.get":
+      return schema({ issue, comment: string("Comment id or short reference.", { maxLength: 200 }) }, ["issue", "comment"]);
+    case "issue.update":
+      return schema({
+        issue,
+        title: string("Issue title.", { maxLength: 500 }),
+        description: string("Issue description.", { maxLength: 500_000 }),
+        status: string("New issue status.", { maxLength: 100 }),
+        priority: string("New issue priority.", { maxLength: 100 }),
+        assigneeAgentId: string("Assignee agent id or reference.", { maxLength: 200 }),
+        projectId: string("Project id or reference.", { maxLength: 200 }),
+        goalId: string("Goal id or reference.", { maxLength: 200 }),
+        parentId: string("Parent issue id or reference.", { maxLength: 200 }),
+        requestDepth: string("Requested issue depth.", { maxLength: 30 }),
+        billingCode: string("Billing code.", { maxLength: 200 }),
+        hiddenAt: string("Hidden timestamp.", { maxLength: 100 }),
+        comment: body,
+        body,
+        images,
+      }, ["issue"]);
+    case "issue.review":
+      return {
+        ...schema({
+          issue,
+          decision: string("Structured review decision.", { enum: ["approve", "request_changes", "needs_followup", "blocked"], maxLength: 30 }),
+          comment: body,
+          body,
+        }, ["issue", "decision"]),
+        anyOf: [{ required: ["comment"] }, { required: ["body"] }],
+      };
+    case "issue.commit":
+      return schema({
+        issue,
+        sha: string("Git commit SHA.", { maxLength: 100 }),
+        message: string("Commit subject or status message.", { maxLength: 2_000 }),
+        branch: string("Git branch name.", { maxLength: 500 }),
+        repoPath: string("Repository path.", { maxLength: 8_192 }),
+        workspacePath: string("Workspace path.", { maxLength: 8_192 }),
+        count: number("Number of commits represented.", 1, 10_000),
+      }, ["issue", "sha", "message"]);
+    case "issue.done":
+    case "issue.block":
+      return {
+        ...schema({ issue, comment: body, body, images }, ["issue"]),
+        anyOf: [{ required: ["comment"] }, { required: ["body"] }],
+      };
+    case "project.get":
+      return schema({ project }, ["project"]);
+    case "project.create":
+      return schema({
+        name: string("Project name.", { maxLength: 300 }),
+        description: string("Project description.", { maxLength: 500_000 }),
+        status: string("Project status.", { maxLength: 100 }),
+        goalId: string("Goal id or reference.", { maxLength: 200 }),
+        goalIds: strings("Goal ids.", 100),
+        leadAgentId: string("Lead agent id or reference.", { maxLength: 200 }),
+        targetDate: string("Target date.", { maxLength: 100 }),
+        color: string("Display color.", { maxLength: 100 }),
+      }, ["name"]);
+    case "project.update":
+      return schema({
+        project,
+        name: string("Project name.", { maxLength: 300 }),
+        description: string("Project description.", { maxLength: 500_000 }),
+        status: string("Project status.", { maxLength: 100 }),
+        goalId: string("Goal id or reference.", { maxLength: 200 }),
+        goalIds: strings("Goal ids.", 100),
+        leadAgentId: string("Lead agent id or reference.", { maxLength: 200 }),
+        targetDate: string("Target date.", { maxLength: 100 }),
+        color: string("Display color.", { maxLength: 100 }),
+        archivedAt: string("Archive timestamp.", { maxLength: 100 }),
+      }, ["project"]);
+    case "user.activity":
+      return schema({
+        user: string("User id, reference, or self.", { maxLength: 200 }),
+        since: string("Activity start timestamp.", { maxLength: 100 }),
+        until: string("Activity end timestamp.", { maxLength: 100 }),
+        include: string("Comma-separated optional sections.", { maxLength: 500 }),
+        relatedAgentId: string("Related agent id.", { maxLength: 200 }),
+        projectId: string("Project id.", { maxLength: 200 }),
+        issueId: string("Issue id.", { maxLength: 200 }),
+        limit: number("Page size.", 1, 100),
+        cursor,
+      });
+    case "library.file.list":
+      return schema({
+        directory: string("Library-relative directory path.", { maxLength: 8_192 }),
+        path: string("Compatibility alias for directory.", { maxLength: 8_192 }),
+      });
+    case "library.file.get":
+    case "library.file.ref":
+    case "library.file.link":
+      return schema({ path: string("Library-relative file path.", { maxLength: 8_192 }) }, ["path"]);
+    case "library.file.put":
+      return {
+        ...schema({
+          path: string("Library-relative file path.", { maxLength: 8_192 }),
+          body: string("Direct file content.", { maxLength: 1_000_000 }),
+          content: string("Compatibility alias for body.", { maxLength: 1_000_000 }),
+        }, ["path"]),
+        anyOf: [{ required: ["body"] }, { required: ["content"] }],
+      };
+    case "approval.get":
+    case "approval.issues":
+      return schema({ approval }, ["approval"]);
+    case "approval.comment":
+      return {
+        ...schema({ approval, body, comment: body }, ["approval"]),
+        anyOf: [{ required: ["body"] }, { required: ["comment"] }],
+      };
+    case "skill.get":
+      return schema({ skill: string("Organization skill id.", { maxLength: 200 }) }, ["skill"]);
+    case "skill.file":
+      return schema({
+        skill: string("Organization skill id.", { maxLength: 200 }),
+        path: string("Skill package file path.", { maxLength: 8_192 }),
+      }, ["skill"]);
+    case "skill.import":
+      return schema({ source: string("Local path, URL, or repository reference.", { maxLength: 8_192 }) }, ["source"]);
+    case "skill.scan-local":
+      return schema({ roots: string("Comma-separated local roots.", { maxLength: 20_000 }) });
+    case "skill.scan-projects":
+      return schema({
+        projectIds: string("Comma-separated project ids.", { maxLength: 20_000 }),
+        workspaceIds: string("Comma-separated workspace ids.", { maxLength: 20_000 }),
+      });
+    case "automation.list":
+      return schema({
+        status: string("Automation status filter.", { maxLength: 100 }),
+        assigneeAgentId: string("Assignee agent id.", { maxLength: 200 }),
+        projectId: string("Project id.", { maxLength: 200 }),
+        outputMode: string("Output mode filter.", { maxLength: 100 }),
+      });
+    case "automation.get":
+    case "automation.triggers.list":
+    case "automation.enable":
+    case "automation.disable":
+      return schema({ automation }, ["automation"]);
+    case "automation.runs":
+      return schema({ automation, limit: number("Maximum run rows.", 1, 100) }, ["automation"]);
+    case "automation.triggers.create":
+      return schema({
+        automation,
+        payload,
+        kind: string("Trigger kind.", { maxLength: 100 }),
+        label: string("Trigger label.", { maxLength: 300 }),
+        enabled: boolean("Create the trigger enabled."),
+        disabled: boolean("Create the trigger disabled."),
+        cronExpression: string("Cron expression.", { maxLength: 500 }),
+        timezone: string("IANA timezone.", { maxLength: 200 }),
+        signingMode: string("Webhook signing mode.", { maxLength: 100 }),
+        replayWindowSec: string("Webhook replay window in seconds.", { maxLength: 30 }),
+      }, ["automation"]);
+    case "automation.triggers.update":
+      return schema({
+        trigger,
+        payload,
+        label: string("Trigger label.", { maxLength: 300 }),
+        enabled: boolean("Enable the trigger."),
+        disabled: boolean("Disable the trigger."),
+        cronExpression: string("Cron expression.", { maxLength: 500 }),
+        timezone: string("IANA timezone.", { maxLength: 200 }),
+        signingMode: string("Webhook signing mode.", { maxLength: 100 }),
+        replayWindowSec: string("Webhook replay window in seconds.", { maxLength: 30 }),
+      }, ["trigger"]);
+    case "automation.triggers.delete":
+    case "automation.triggers.rotate-secret":
+      return schema({ trigger }, ["trigger"]);
+    case "automation.create":
+      return schema({
+        payload,
+        title: string("Automation title.", { maxLength: 500 }),
+        instructions: string("Automation instructions.", { maxLength: 500_000 }),
+        description: string("Compatibility alias for instructions.", { maxLength: 500_000 }),
+        assigneeAgentId: string("Assignee agent id.", { maxLength: 200 }),
+        projectId: string("Project id.", { maxLength: 200 }),
+        goalId: string("Goal id.", { maxLength: 200 }),
+        parentIssueId: string("Parent issue id.", { maxLength: 200 }),
+        priority: string("Issue priority.", { maxLength: 100 }),
+        status: string("Automation status.", { maxLength: 100 }),
+        outputMode: string("Automation output mode.", { maxLength: 100 }),
+        concurrencyPolicy: string("Concurrency policy.", { maxLength: 100 }),
+        catchUpPolicy: string("Catch-up policy.", { maxLength: 100 }),
+        notifyOnIssueCreated: boolean("Notify when an issue is created."),
+      });
+    case "automation.update":
+      return schema({
+        automation,
+        payload,
+        title: string("Automation title.", { maxLength: 500 }),
+        instructions: string("Automation instructions.", { maxLength: 500_000 }),
+        description: string("Compatibility alias for instructions.", { maxLength: 500_000 }),
+        assigneeAgentId: string("Assignee agent id.", { maxLength: 200 }),
+        projectId: string("Project id.", { maxLength: 200 }),
+        goalId: string("Goal id.", { maxLength: 200 }),
+        parentIssueId: string("Parent issue id.", { maxLength: 200 }),
+        priority: string("Issue priority.", { maxLength: 100 }),
+        status: string("Automation status.", { maxLength: 100 }),
+        outputMode: string("Automation output mode.", { maxLength: 100 }),
+        concurrencyPolicy: string("Concurrency policy.", { maxLength: 100 }),
+        catchUpPolicy: string("Catch-up policy.", { maxLength: 100 }),
+        notifyOnIssueCreated: boolean("Notify when an issue is created."),
+      }, ["automation"]);
+    case "automation.run":
+      return schema({
+        automation,
+        triggerId: string("Trigger id.", { maxLength: 200 }),
+        payload,
+        idempotencyKey: string("Idempotency key.", { maxLength: 500 }),
+        source: string("Invocation source.", { maxLength: 500 }),
+      }, ["automation"]);
+    case "chat.list":
+      return schema({
+        status: string("Chat status filter.", { maxLength: 100 }),
+        query: string("Optional chat query.", { maxLength: 2_000 }),
+        limit: number("Maximum chat rows.", 1, 100),
+      });
+    case "chat.search":
+      return schema({
+        query: string("Non-empty chat search query.", { maxLength: 2_000 }),
+        status: string("Chat status filter.", { maxLength: 100 }),
+        scope: string("Search scope.", { maxLength: 100 }),
+        limit: number("Maximum matches.", 1, 100),
+        snippetChars: number("Maximum snippet characters.", 100, 10_000),
+      }, ["query"]);
+    case "chat.get":
+    case "chat.archive":
+      return schema({ chat }, ["chat"]);
+    case "chat.messages":
+      return schema({
+        chat,
+        limit: number("Maximum message rows.", 1, 100),
+        cursor,
+        maxOutputChars: number("Maximum output characters per row.", 100, 20_000),
+        includeTranscript: boolean("Include bounded transcript data."),
+        includeOutput: boolean("Compatibility alias for includeTranscript."),
+      }, ["chat"]);
+    case "chat.transcript":
+      return schema({
+        chat,
+        limit: number("Maximum transcript rows.", 1, 100),
+        cursor,
+        maxOutputChars: number("Maximum output characters per row.", 100, 20_000),
+      }, ["chat"]);
+    case "chat.read":
+      return schema({
+        chat,
+        limit: number("Maximum message rows.", 1, 100),
+        turnLimit: number("Maximum transcript turns.", 1, 100),
+        cursor,
+        maxOutputChars: number("Maximum output characters per row.", 100, 20_000),
+        includeTranscript: boolean("Include bounded transcript data."),
+        includeOutput: boolean("Compatibility alias for includeTranscript."),
+      }, ["chat"]);
+    case "chat.create":
+      return schema({
+        body: string("Initial agent-authored chat message.", { maxLength: 500_000 }),
+        payload,
+        title: string("Chat title.", { maxLength: 500 }),
+        summary: string("Chat summary.", { maxLength: 10_000 }),
+        preferredAgentId: string("Preferred responding agent id.", { maxLength: 200 }),
+        issueCreationMode: string("Issue creation mode.", { maxLength: 100 }),
+        planMode: boolean("Start the chat in plan mode."),
+      }, ["body"]);
+    case "chat.send":
+      return schema({
+        chat,
+        body: string("Agent-authored chat message.", { maxLength: 500_000 }),
+        editUserMessageId: string("User message id to edit.", { maxLength: 200 }),
+      }, ["chat", "body"]);
+    case "runs.list":
+      return schema({
+        updatedAfter: string("Only runs updated after this timestamp.", { maxLength: 100 }),
+        runIdPrefix: string("Run id prefix filter.", { maxLength: 200 }),
+        relatedAgentId: string("Agent id filter.", { maxLength: 200 }),
+        status: string("Run status filter.", { maxLength: 100 }),
+        runtime: string("Runtime type filter.", { maxLength: 100 }),
+        issueId: string("Linked issue id filter.", { maxLength: 200 }),
+        usedSkill: string("Used skill filter.", { maxLength: 500 }),
+        loadedSkill: string("Loaded skill filter.", { maxLength: 500 }),
+        createdBefore: string("Only runs created before this timestamp.", { maxLength: 100 }),
+        cursor,
+        limit: number("Summary page size.", 1, 100),
+      });
+    case "runs.by-skill":
+      return schema({
+        skill: string("Skill key or display name.", { maxLength: 500 }),
+        evidence: string("Skill evidence type.", { enum: ["used", "loaded"], maxLength: 20 }),
+        relatedAgentId: string("Agent id filter.", { maxLength: 200 }),
+        status: string("Run status filter.", { maxLength: 100 }),
+        runtime: string("Runtime type filter.", { maxLength: 100 }),
+        issueId: string("Linked issue id filter.", { maxLength: 200 }),
+        createdBefore: string("Only runs created before this timestamp.", { maxLength: 100 }),
+        cursor,
+        limit: number("Summary page size.", 1, 100),
+      }, ["skill"]);
+    case "runs.get":
+    case "runs.cancel":
+    case "runs.retry":
+      return schema({ run }, ["run"]);
+    case "runs.events":
+      return schema({
+        run,
+        cursor,
+        afterSeq: number("Legacy sequence-only cursor.", 0, 10_000_000),
+        limit: number("Event page size.", 1, 500),
+        maxChars: number("Maximum preview characters per event.", 100, 20_000),
+      }, ["run"]);
+    case "runs.log":
+      return schema({
+        run,
+        maxChars: number("Maximum displayed log characters.", 100, 100_000),
+        offset: number("Byte offset for ranged read.", 0, 1_000_000_000),
+        limitBytes: number("Maximum bytes for ranged read.", 1, 1_000_000),
+      }, ["run"]);
+    case "runs.transcript":
+      return schema({
+        run,
+        errorsOnly: boolean("Return only error rows."),
+        aroundError: string("Transcript error step id.", { maxLength: 200 }),
+        contextTurns: number("Turns around the selected error.", 1, 20),
+        cursor,
+        turnLimit: number("Maximum turns.", 1, 100),
+        chronological: boolean("Return oldest-first rows."),
+        narrative: boolean("Use narrative row formatting."),
+        maxChars: number("Maximum output characters per row.", 100, 20_000),
+        includeOutput: boolean("Include clipped row output."),
+      }, ["run"]);
+    case "runs.errors":
+      return schema({
+        run,
+        cursor,
+        maxChars: number("Maximum output characters per error.", 100, 20_000),
+      }, ["run"]);
+    default:
+      throw new Error(`Missing exact Rudder MCP input schema for capability: ${id}`);
+  }
 }
 
 export const RUDDER_MCP_CANONICAL_TOOL_DEFINITIONS = RUDDER_MCP_TOOL_DESCRIPTORS.map((tool) => ({

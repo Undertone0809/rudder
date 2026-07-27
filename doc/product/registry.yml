@@ -585,11 +585,13 @@ contracts:
     docs:
       - doc/product/domains/agents/control-tools.md
     related_code:
+      - cli/src/agent-v1-capabilities.ts
       - cli/src/agent-v1-registry.ts
       - cli/src/agent-v1-mcp-server.ts
       - cli/src/program.ts
       - cli/src/commands/client/browser.ts
       - packages/agent-runtime-utils/src/rudder-mcp.ts
+      - packages/agent-runtime-utils/src/rudder-mcp-contract.ts
       - packages/agent-runtime-utils/src/rudder-mcp-server.ts
       - packages/agent-runtime-utils/src/types.ts
       - packages/agent-runtime-utils/src/managed-external-mcp.ts
@@ -614,6 +616,7 @@ contracts:
       - cli/src/__tests__/browser-command.test.ts
       - cli/src/__tests__/agent-v1-registry.test.ts
       - cli/src/__tests__/agent-v1-mcp-server.test.ts
+      - tests/e2e/agent-mcp-contract.spec.ts
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/codex-local-execute.test.ts
       - server/src/__tests__/opencode-local-execute.test.ts
@@ -627,6 +630,7 @@ contracts:
       - doc/plans/2026-07-12-built-in-browser.md
       - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
       - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
+      - doc/plans/2026-07-27-agent-tool-contract-reliability.md
       - doc/plans/2026-07-26-managed-mcp-runtime-failure-isolation.md
       - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
       - doc/plans/2026-07-20-merge-rudder-creation-skills-into-docs.md
@@ -1594,6 +1598,7 @@ contracts:
       - ui/src/components/MessengerContextSidebar.test.tsx
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
       - ui/src/components/messenger/MessengerSavedViewRow.test.tsx
+      - ui/src/components/messenger/MessengerThreadListViews.test.tsx
       - ui/src/context/MainWorkbenchContext.test.tsx
       - ui/src/lib/messenger-preferences.test.ts
       - ui/src/lib/messenger-thread-organization.test.ts

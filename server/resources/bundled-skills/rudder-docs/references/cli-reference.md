@@ -53,6 +53,7 @@ operating-practices guide for operating behavior:
 | `rudder_agent_skills_enable` | `rudder agent skills enable <agent-id> <selection-ref...>` | Add skill selections to an agent without replacing existing enabled skills. | yes | no | no | attached when available |
 | `rudder_agent_skills_sync` | `rudder agent skills sync <agent-id>` | Sync the desired enabled skill set for an agent. | yes | no | no | attached when available |
 | `rudder_issue_get` | `rudder issue get <issue>` | Read a full issue by UUID or identifier. | no | no | no | no |
+| `rudder_issue_list` | `rudder issue list --org-id <id>` | List issues with optional status, assignee, and project filters without requiring a search query. | no | required | no | no |
 | `rudder_issue_search` | `rudder issue search <query> [--org-id <id>]` | Search issues with the server-side issue index across title, identifier, description, and comments. | no | required | no | no |
 | `rudder_issue_context` | `rudder issue context <issue> [--wake-comment-id <comment-id-or-cmt-ref>]` | Read the compact heartbeat context for an issue; wake comments may be addressed by full id or cmt_<uuid-prefix>. | no | no | no | no |
 | `rudder_issue_checkout` | `rudder issue checkout <issue>` | Atomically checkout an issue for the current or specified agent. | yes | no | required | attached when available |

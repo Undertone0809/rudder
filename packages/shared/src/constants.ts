@@ -267,6 +267,7 @@ export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_agent_skills_enable",
   "rudder_agent_skills_sync",
   "rudder_issue_get",
+  "rudder_issue_list",
   "rudder_issue_search",
   "rudder_issue_context",
   "rudder_issue_checkout",

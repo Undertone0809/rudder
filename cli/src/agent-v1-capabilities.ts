@@ -195,6 +195,18 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     attachesRunIdWhenAvailable: false,
   },
   {
+    id: "issue.list",
+    command: "rudder issue list --org-id <id>",
+    category: "issue",
+    description: "List issues with optional status, assignee, and project filters without requiring a search query.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: false,
+  },
+  {
     id: "issue.search",
     command: "rudder issue search <query> [--org-id <id>]",
     category: "issue",

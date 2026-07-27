@@ -459,7 +459,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
         coreContractHash: RUDDER_CORE_MCP_CONTRACT_HASH,
         contractVersion: RUDDER_MCP_CONTRACT_VERSION,
         serverName: "rudder-tools",
-        toolCount: 69,
+        toolCount: 70,
         provenance: "repo",
         version: await readRepositoryCliVersion(),
         fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface; Rudder tools are injected through a managed Pi extension.",
@@ -468,7 +468,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
         available: true,
         transport: "pi_extension",
         serverName: "rudder-tools",
-        toolCount: 69,
+        toolCount: 70,
         toolNames: expect.arrayContaining(["rudder_agent_me", "rudder_issue_checkout", "rudder_library_file_list"]),
         authMode: "runtime_managed",
         modelVisibleCliFallback: false,
@@ -945,7 +945,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
           [...RUDDER_CORE_MCP_TOOL_NAMES],
           [...RUDDER_BROWSER_MCP_TOOL_NAMES],
         ]);
-        expect(meta.rudderNativeTools).toMatchObject({ available: true, serverName: "rudder-tools", toolCount: 69 });
+        expect(meta.rudderNativeTools).toMatchObject({ available: true, serverName: "rudder-tools", toolCount: 70 });
         expect(meta.browserNativeTools).toMatchObject({
           available: true,
           serverName: "rudder-browser",
@@ -1141,12 +1141,12 @@ describe("pi execute", { timeout: 20_000 }, () => {
         expect(meta.loadedSkills).toEqual([expect.objectContaining({ runtimeName: "keep-skill" })]);
         expect(meta.realizedSkills).toEqual(meta.loadedSkills);
         expect(meta.rudderMcp).toMatchObject({
-          toolCount: 69,
+          toolCount: 70,
         });
         expect(meta.rudderMcp).not.toHaveProperty("browserAvailable");
         expect(meta.rudderMcp).not.toHaveProperty("contractHash");
         expect(meta.rudderMcp).not.toHaveProperty("diagnosticCode");
-        expect(meta.rudderNativeTools).toMatchObject({ toolCount: 69 });
+        expect(meta.rudderNativeTools).toMatchObject({ toolCount: 70 });
         expect((meta.rudderNativeTools as { toolNames: string[] }).toolNames).toEqual([
           ...RUDDER_CORE_MCP_TOOL_NAMES,
         ]);
