@@ -27,14 +27,13 @@ describe("release workflow latency contracts", () => {
   it("resolves an immutable source and runs release preflight before installation", () => {
     expect(releaseWorkflow).toMatch(/^  preflight:/m);
     expect(releaseWorkflow).toContain("source_sha:");
-    expect(releaseWorkflow).toContain("Require release source from protected main history");
+    expect(releaseWorkflow).toContain("Require release source from main history");
     expect(releaseWorkflow).toContain('git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main');
     expect(releaseWorkflow).toContain("Require successful CI for exact source");
     expect(releaseWorkflow).toContain('-f head_sha="$SOURCE_SHA"');
     expect(releaseWorkflow).toContain("-f status=success");
     expect(releaseWorkflow).toContain('.event == "push"');
     expect(releaseWorkflow).toContain('.head_branch == "main"');
-    expect(releaseWorkflow).toContain('test "$GITHUB_REPOSITORY" = "Undertone0809/rudder"');
     expect(releaseWorkflow).toContain(
       "if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'",
     );
@@ -50,36 +49,34 @@ describe("release workflow latency contracts", () => {
     expect(installIndex).toBeGreaterThan(preflightIndex);
   });
 
-  it("keeps dry-run code read-only and fails closed when repository safeguards are missing", () => {
+  it("keeps dry-run code read-only without repository-authorization attestations", () => {
     const workflowPermissions = releaseWorkflow.slice(
       releaseWorkflow.indexOf("permissions:"),
       releaseWorkflow.indexOf("jobs:"),
     );
     expect(workflowPermissions).toContain("contents: read");
     expect(workflowPermissions).not.toContain("id-token: write");
-    expect(releaseWorkflow).toContain("Require release repository safeguards");
-    expect(releaseWorkflow).toContain("RELEASE_SAFEGUARDS_CONFIGURED");
-    expect(releaseWorkflow).toContain("STABLE_RELEASE_MODE");
-    expect(releaseWorkflow).toContain("agent-automated");
-    expect(releaseWorkflow).toContain("main-only non-interactive environment");
-    expect(releaseWorkflow).not.toContain("Configure npm-stable reviewers");
+    expect(releaseWorkflow).not.toContain("Require release repository safeguards");
+    expect(releaseWorkflow).not.toContain("RELEASE_SAFEGUARDS_CONFIGURED");
+    expect(releaseWorkflow).not.toContain("STABLE_RELEASE_MODE");
+    expect(releaseWorkflow).not.toContain("confirm_stable");
+    expect(releaseWorkflow).not.toContain("confirm_docs");
   });
 
-  it("serializes publication and prepares the next patch base through a protected PR", () => {
+  it("serializes publication and advances the next patch base directly", () => {
     expect(releaseWorkflow.match(/group: release-publish/g)).toHaveLength(2);
     expect(releaseWorkflow).toMatch(/^  next-release-base:/m);
     expect(releaseWorkflow).toContain("node scripts/prepare-next-release.mjs");
-    expect(releaseWorkflow).toContain("Prepare the next patch version branch");
-    expect(releaseWorkflow).toContain("Create or reuse the next release base PR");
-    expect(releaseWorkflow).toContain("outputs.action == 'updated' || steps.next-release.outputs.action == 'ready'");
+    expect(releaseWorkflow).toContain("Advance main to the next patch version");
+    expect(releaseWorkflow).toContain("Start CI for the advanced release base");
+    expect(releaseWorkflow).toContain("outputs.action == 'updated'");
     expect(releaseWorkflow).toContain('-f source_sha="${{ steps.next-release.outputs.head_sha }}"');
     expect(ciWorkflow).toContain("source_sha:");
     expect(ciWorkflow).toContain("inputs.source_sha || github.sha");
-    expect(releaseWorkflow).toContain("pull-requests: write");
-    expect(releaseWorkflow).toContain("gh pr create");
+    expect(releaseWorkflow).not.toContain("pull-requests: write");
+    expect(releaseWorkflow).not.toContain("gh pr create");
     expect(nextReleaseScript).toContain("[skip release]");
-    expect(nextReleaseScript).toContain("HEAD:refs/heads/${branch}");
-    expect(nextReleaseScript).not.toContain("HEAD:refs/heads/${options.base}");
+    expect(nextReleaseScript).toContain("HEAD:refs/heads/${options.base}");
     expect(releaseWorkflow).not.toContain("continue-on-error: true");
   });
 
@@ -102,8 +99,8 @@ describe("release workflow latency contracts", () => {
     const stableDocsIndex = releaseWorkflow.indexOf("\n  stable-docs:\n");
     const nextReleaseIndex = releaseWorkflow.indexOf("\n  next-release-base:\n");
 
-    expect(releaseWorkflow).toContain("confirm_docs:");
-    expect(releaseWorkflow).toContain('test "$CONFIRM_DOCS" = "PUBLISH DOCS"');
+    expect(releaseWorkflow).not.toContain("confirm_docs:");
+    expect(releaseWorkflow).not.toContain('test "$CONFIRM_DOCS" = "PUBLISH DOCS"');
     expect(releaseWorkflow).toContain("name: Publish stable changelog to docs production");
     expect(releaseWorkflow).toContain("uses: ./.github/workflows/docs-production.yml");
     expect(releaseWorkflow).toContain("source_ref: v${{ needs.stable.outputs.version }}");

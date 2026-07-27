@@ -81,7 +81,7 @@ describe("next release version handoff", () => {
     );
   });
 
-  it("plans a protected PR branch without mutating a real temporary repository", () => {
+  it("plans a direct main handoff without mutating a real temporary repository", () => {
     const repo = createReleaseRepo();
     const before = exec("git", ["rev-parse", "HEAD"], repo).trim();
     const beforeBranch = exec("git", ["branch", "--show-current"], repo).trim();
@@ -100,7 +100,7 @@ describe("next release version handoff", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("from 0.5.1 -> 0.5.2");
-    expect(result.stdout).toContain("protected release-maintenance PR branch");
+    expect(result.stdout).toContain("push the release-maintenance commit directly");
     expect(exec("git", ["rev-parse", "HEAD"], repo).trim()).toBe(before);
     expect(exec("git", ["branch", "--show-current"], repo).trim()).toBe(beforeBranch);
     expect(exec("git", ["status", "--porcelain"], repo)).toBe("");
@@ -126,7 +126,7 @@ describe("next release version handoff", () => {
     expect(exec("git", ["status", "--porcelain"], repo)).toBe("");
   });
 
-  it("skips PR creation when main already has the next release base", () => {
+  it("recognizes when main already has the next release base", () => {
     const repo = createReleaseRepo();
     const outputFile = join(repo, "..", "github-output-skip.txt");
     const packageJson = JSON.parse(readFileSync(join(repo, "cli", "package.json"), "utf8"));
@@ -148,14 +148,14 @@ describe("next release version handoff", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("main already advanced to 0.5.2");
-    expect(readFileSync(outputFile, "utf8")).toContain("action=skip");
+    expect(readFileSync(outputFile, "utf8")).toContain("action=ready");
     expect(readFileSync(outputFile, "utf8")).not.toContain("branch=");
     expect(exec("git", ["ls-remote", "--heads", "origin"], repo)).not.toContain(
       "automation/release-",
     );
   });
 
-  it("pushes one idempotent release-maintenance commit to a PR branch", () => {
+  it("pushes one idempotent release-maintenance commit directly to main", () => {
     const repo = createReleaseRepo();
     const outputFile = join(repo, "..", "github-output-update.txt");
     writeFileSync(outputFile, "");
@@ -170,26 +170,19 @@ describe("next release version handoff", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("Prepared origin/automation/release-v0.5.2");
-    expect(exec("git", ["branch", "--show-current"], repo).trim()).toBe(
-      "automation/release-v0.5.2",
-    );
+    expect(result.stdout).toContain("Advanced origin/main to 0.5.2");
+    expect(exec("git", ["branch", "--show-current"], repo).trim()).toBe("main");
     exec("git", ["fetch", "origin"], repo);
-    const remoteHead = exec(
-      "git",
-      ["rev-parse", "origin/automation/release-v0.5.2"],
-      repo,
-    ).trim();
+    const remoteHead = exec("git", ["rev-parse", "origin/main"], repo).trim();
     expect(
-      JSON.parse(exec("git", ["show", "origin/automation/release-v0.5.2:cli/package.json"], repo))
+      JSON.parse(exec("git", ["show", "origin/main:cli/package.json"], repo))
         .version,
     ).toBe("0.5.2");
     expect(exec("git", ["show", "-s", "--format=%s", remoteHead], repo).trim()).toBe(
       "chore(release): start v0.5.2 [skip release]",
     );
-    expect(exec("git", ["rev-parse", "origin/main"], repo).trim()).not.toBe(remoteHead);
     expect(readFileSync(outputFile, "utf8")).toContain("action=updated");
-    expect(readFileSync(outputFile, "utf8")).toContain("branch=automation/release-v0.5.2");
+    expect(readFileSync(outputFile, "utf8")).not.toContain("branch=");
     expect(readFileSync(outputFile, "utf8")).toContain(`head_sha=${remoteHead}`);
 
     writeFileSync(outputFile, "");
@@ -203,15 +196,13 @@ describe("next release version handoff", () => {
     });
 
     expect(retry.status, retry.stderr).toBe(0);
-    expect(retry.stdout).toContain("Next release PR branch is already ready");
-    expect(exec("git", ["rev-parse", "origin/automation/release-v0.5.2"], repo).trim()).toBe(
-      remoteHead,
-    );
+    expect(retry.stdout).toContain("main already advanced to 0.5.2");
+    expect(exec("git", ["rev-parse", "origin/main"], repo).trim()).toBe(remoteHead);
     expect(readFileSync(outputFile, "utf8")).toContain("action=ready");
     expect(readFileSync(outputFile, "utf8")).toContain(`head_sha=${remoteHead}`);
   }, 15_000);
 
-  it("accepts an identical deterministic branch created by a concurrent run", () => {
+  it("accepts an identical main handoff created by a concurrent run", () => {
     const repo = createReleaseRepo();
     const root = dirname(repo);
     const hook = join(repo, ".git", "hooks", "pre-push");
@@ -229,7 +220,7 @@ describe("next release version handoff", () => {
         + `GIT_COMMITTER_EMAIL='concurrent-release@example.com' `
         + `git commit-tree "$tree" -p "$parent")"`,
       "  git push --no-verify origin "
-        + "\"$concurrent_commit:refs/heads/automation/release-v0.5.2\" >/dev/null 2>&1",
+        + "\"$concurrent_commit:refs/heads/main\" >/dev/null 2>&1",
       "fi",
       "",
     ].join("\n"));
@@ -247,13 +238,12 @@ describe("next release version handoff", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("A concurrent run prepared the matching PR branch");
+    expect(result.stdout).toContain("Concurrent main update detected");
+    expect(result.stdout).toContain("main already advanced to 0.5.2");
     expect(readFileSync(outputFile, "utf8")).toContain("action=ready");
-    expect(exec("git", ["ls-remote", "--heads", "origin"], repo)).toContain(
-      "refs/heads/automation/release-v0.5.2",
-    );
+    expect(exec("git", ["ls-remote", "--heads", "origin"], repo)).toContain("refs/heads/main");
     expect(JSON.parse(
-      exec("git", ["show", "origin/automation/release-v0.5.2:cli/package.json"], repo),
+      exec("git", ["show", "origin/main:cli/package.json"], repo),
     ).version).toBe("0.5.2");
   }, 15_000);
 
