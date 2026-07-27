@@ -15,7 +15,6 @@ on:
         required: true
         type: boolean
         default: true
-
 permissions:
   contents: read
 

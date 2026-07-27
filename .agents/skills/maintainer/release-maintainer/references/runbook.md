@@ -10,13 +10,45 @@ Help the user ship Rudder without losing track of release surfaces.
 
 Rudder's release model has several moving parts: npm packages, git tags, GitHub
 Releases, Desktop portable assets, release notes, and smoke tests. Your job is to
-turn the current repo and remote state into a concrete release plan, then
-execute only the steps the user has authorized.
+turn the current repo and remote state into a concrete release plan, then carry
+an authorized release through every standard surface without returning routine
+approval tasks to the user.
 
 When the user authorizes hands-on release work, operate with local and remote
 tools instead of stopping at guidance. Prefer `git`, `gh`, `npm`, and repository
 scripts for discoverable state. Ask the user only for secrets or decisions that
 cannot be safely inferred.
+
+## Default Release Authorization
+
+Treat an explicit imperative to release or publish—such as `release`, `publish`,
+`ship this version`, `发版`, or `发布`—as authorization for the complete standard
+release lifecycle. This covers release preparation, landing the reviewed source
+through the normal protected path, configuring missing release safeguards to
+the documented standard, dry-run, real publish, required workflow confirmation
+inputs, npm/GitHub/Desktop/production-docs surfaces, verification, obsolete
+canary Release/tag cleanup, recovery of partial failures, and the normal
+next-version handoff. Do not stop after dry-run or ask for a second production
+confirmation.
+
+If the user omits the version, resolve the single consistent target from the
+current conversation, committed package versions, and
+`./scripts/release.sh stable --print-version`. State the resolved version and
+locked source SHA in a progress update, then continue. Ask only when the
+release channel, version, source, or destination is genuinely ambiguous.
+
+Questions such as “how do releases work?” or “is this ready to release?” request
+guidance or inspection, not publication. Implementation-only instructions such
+as `start`, `continue`, or `finish the feature` also stop at Review Ready unless
+they explicitly include a release/publish imperative.
+
+The default authorization does not cover npm unpublish, force-pushing or
+retargeting published tags, deleting the active canary line, weakening
+repository protections, bypassing CI, exposing secrets, or expanding to a
+different product/environment. Those are nonstandard decisions and still need
+separate authority. If a documented safeguard is missing, tighten or restore it
+without asking; if credentials or permissions make that impossible, report the
+specific blocker.
 
 ## First Principles
 
@@ -48,9 +80,11 @@ cannot be safely inferred.
 - Stable preflight must fail closed unless `npm-stable` is a main-only,
   non-interactive environment, `main` is protected for normal changes, and the
   release workflow can create the generated post-stable version PR and dispatch
-  its exact CI. The explicit versioned release request is the human
-  authorization; locked source, exact CI, confirmation inputs, and repository
-  safeguards are the mandatory machine gate.
+  its exact CI. The explicit release request is the human authorization; locked
+  source, exact CI, confirmation inputs, and repository safeguards are the
+  mandatory machine gate. When authenticated access is available, repair
+  missing safeguards to the documented standard and rerun preflight without a
+  separate approval prompt.
 - Stable preflight must verify matching English and Chinese public changelog
   entries before expensive work. After stable npm, GitHub Release, and Desktop
   assets succeed, `release.yml` must promote those committed entries from the
@@ -445,10 +479,12 @@ node scripts/release-package-map.mjs list
    matrix.
 8. If dry-run passes, record the immutable source SHA, version, npm/GitHub/
    Desktop targets, public docs target, completed checks, known failures,
-   migration/data impact, and rollback point. An explicit versioned stable
-   release request authorizes the standard release surfaces, including
-   `docs.rudderhq.dev`, unless the user explicitly excludes one.
-9. After that authorization, rerun with the same locked SHA using
+   migration/data impact, and rollback point. An explicit stable release
+   request—or an unqualified release imperative whose stable target is
+   unambiguous—authorizes the standard release surfaces, including
+   `docs.rudderhq.dev`, unless the user explicitly excludes one. Report this as
+   a progress update, not as another approval request.
+9. Without pausing for another confirmation, rerun with the same locked SHA using
    `dry_run: false`, `confirm_stable: PUBLISH STABLE`, and
    `confirm_docs: PUBLISH DOCS`. The workflow input strings are mandatory
    machine assertions that the agent may supply; they are not extra UI tasks
@@ -763,7 +799,9 @@ path.
 
 ## Safety Rules
 
-- Do not run a real stable publish without an explicit user request.
+- Do not run a real stable publish without an explicit user request. Imperative
+  phrases such as `release`, `publish`, `发版`, or `发布` are explicit requests;
+  the version may be inferred when exactly one stable target is consistent.
 - Do not unpublish npm packages as a rollback strategy.
 - Do not unpublish npm canary package versions as a post-stable cleanup
   strategy. Cleanup means GitHub Releases and git `canary/*` tags unless the
@@ -801,8 +839,10 @@ When the user asks "what do I do now?", answer in this order:
    failing checks, dirty release files, or missing Desktop artifacts.
 3. **Next Actions**: numbered, executable steps with exact commands or GitHub UI
    actions.
-4. **Authorization**: the explicit versioned release request, npm
-   login/trusted-publisher setup when missing, and announcement scope.
+4. **Authorization**: whether an explicit release/publish imperative exists,
+   the resolved version when omitted, any missing credentials that cannot be
+   repaired automatically, and announcement scope. Do not request a routine
+   second approval after dry-run.
 5. **Verification**: exact checks that prove the release surface is complete.
 
 For hands-on release execution, keep short status updates while working, then
@@ -821,6 +861,30 @@ finish with:
 - a token rotation reminder if token-based publishing was used
 
 ## Examples
+
+**Unqualified hands-on release**
+
+User: `发版`
+
+Expected behavior:
+- recognize this as production authorization, not a readiness question
+- infer the single consistent stable version with repository release scripts
+- state the resolved version and locked source SHA in a progress update
+- prepare/land the release source, repair documented safeguards when possible,
+  run dry-run, then continue through real publish and verification
+- do not ask “may I configure branch protection?” or request another approval
+  after dry-run
+
+If the repository exposes multiple plausible versions or channels, ask one
+focused decision question instead of guessing.
+
+**Release advice only**
+
+User: `0.6.2 怎么发版？先告诉我流程，不要执行。`
+
+Expected behavior:
+- explain the release flow and inspect read-only state when useful
+- honor `不要执行`; do not push, publish, change safeguards, or dispatch workflows
 
 **Stable readiness check**
 
