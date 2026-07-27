@@ -205,7 +205,6 @@ describe("organization skill references", () => {
       "rudder/skill-creator",
       "rudder/visualize",
       `organization/${orgId}/deep-research`,
-      `organization/${orgId}/software-product-advisor`,
     ]));
     expect(skills.map((skill) => skill.key)).not.toEqual(expect.arrayContaining([
       "rudder/rudder-create-agent",

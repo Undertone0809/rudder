@@ -264,6 +264,30 @@
       "rationale": "Managed MCP OAuth currently combines provider discovery, authorization callbacks, token lifecycle, and compatibility handling while the integration contract stabilizes.",
       "target": "Extract provider discovery, callback exchange, and token lifecycle services and reduce this coordinator below 1500 lines.",
       "expiry": "2027-03-31"
+    },
+    {
+      "path": "cli/src/agent-v1-mcp-server.ts",
+      "lines": 1501,
+      "owner": "runtime-cli",
+      "rationale": "The agent MCP server currently combines tool schemas, request dispatch, and compatibility responses while the direct-run contract stabilizes.",
+      "target": "Extract tool families behind focused MCP handlers and reduce the server below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/pages/AgentDetail.integrations.tsx",
+      "lines": 1501,
+      "owner": "agents-ui",
+      "rationale": "Agent integration configuration currently combines MCP bindings, custom integrations, and related form state in one route module.",
+      "target": "Extract integration-specific controllers and views and reduce the module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/pages/OrganizationMcpSettings.tsx",
+      "lines": 1501,
+      "owner": "integrations-ui",
+      "rationale": "Organization MCP settings currently combine connection lifecycle, OAuth state, bindings, and tool inspection in one route.",
+      "target": "Extract connection and binding controllers and reduce the route below 1500 lines.",
+      "expiry": "2027-03-31"
     }
   ]
 }

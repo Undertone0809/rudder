@@ -155,10 +155,6 @@ export const COMMUNITY_PRESET_SKILLS: readonly CommunityPresetDefinition[] = [
     slug: "deep-research",
     source: "repo",
   },
-  {
-    slug: "software-product-advisor",
-    source: "repo",
-  },
 ] as const;
 export const COMMUNITY_PRESET_SKILL_SLUGS = COMMUNITY_PRESET_SKILLS.map((preset) => preset.slug);
 export const BUNDLED_SELECTION_PREFIX = "bundled:";

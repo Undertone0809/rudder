@@ -184,7 +184,12 @@ describe("codex_local ui stdout parser", () => {
         ts,
       ),
     ).toEqual([
-      { kind: "thinking", ts, text: "**Preparing to use rudder skill**" },
+      {
+        kind: "thinking",
+        ts,
+        text: "**Preparing to use rudder skill**",
+        segmentId: "item_1",
+      },
     ]);
   });
 
