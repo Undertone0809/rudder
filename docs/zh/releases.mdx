@@ -18,6 +18,19 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+## v0.6.3
+
+发布时间：2026-07-27
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.6.3)
+
+这个补丁恢复了旧版 Rudder Desktop 的应用内更新可靠性。
+
+### 问题修复
+
+- 修复旧版 Desktop updater 在 PostgreSQL 时区数据使用官方嵌套目录结构时，错误拒绝完整运行环境的问题。
+- 增加迁移兼容层，让已安装版本可以在新应用启动前准备并切换到目标运行环境。
+
 ## v0.6.2
 
 发布时间：2026-07-26

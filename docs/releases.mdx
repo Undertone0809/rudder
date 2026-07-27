@@ -18,6 +18,19 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+## v0.6.3
+
+Released: 2026-07-27
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.6.3)
+
+This patch restores reliable in-app updates from older Rudder Desktop builds.
+
+### Fixed
+
+- Fixed older Desktop updaters rejecting a complete PostgreSQL runtime when its timezone data uses the official nested directory layout.
+- Added migration compatibility so already-installed builds can prepare and switch to the new runtime before the replacement app starts.
+
 ## v0.6.2
 
 Released: 2026-07-26

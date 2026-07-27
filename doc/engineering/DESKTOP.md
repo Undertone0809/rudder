@@ -475,6 +475,24 @@ managed value, and the restarted shell selects the matching target payload.
 Explicit operator-provided PostgreSQL paths outside Desktop-managed resources
 remain unchanged.
 
+The target `@rudderhq/server` package also carries a narrowly scoped
+post-install compatibility bridge for already-published Desktop updaters. Before
+an older bundled CLI validates the target runtime, the bridge adds the legacy
+`share/timezone` alias when a Rudder-managed PostgreSQL payload uses the official
+`share/postgresql/timezone` layout. It scans only payloads inside the effective
+Rudder home, is idempotent, and never changes an operator-provided external
+PostgreSQL directory. This target-owned bridge is required because a fix inside
+the new Desktop binary cannot help an older updater that fails before replacing
+the app.
+
+Release validation for an update/runtime compatibility change must cover every
+published updater contract generation that can reach the target release. At a
+minimum, keep fixtures for the previous stable validators and any prerelease
+validator that introduced a stricter payload contract, then run a real
+installed-old-version to candidate update drill on the available platform.
+Fresh-install smoke proves the target installer only; it is not a substitute
+for the old updater executing the migration.
+
 This is a layered asset replacement path, not a binary-delta patcher. Fresh
 installs still download the server runtime and a Desktop app, but routine
 macOS/Windows Desktop updates avoid redownloading the server runtime when the
