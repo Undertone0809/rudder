@@ -1594,6 +1594,7 @@ contracts:
       - ui/src/components/MessengerContextSidebar.test.tsx
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
       - ui/src/components/messenger/MessengerSavedViewRow.test.tsx
+      - ui/src/components/messenger/MessengerThreadListViews.test.tsx
       - ui/src/context/MainWorkbenchContext.test.tsx
       - ui/src/lib/messenger-preferences.test.ts
       - ui/src/lib/messenger-thread-organization.test.ts

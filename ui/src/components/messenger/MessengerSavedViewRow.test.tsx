@@ -97,14 +97,14 @@ function renderRow({
   entry = savedViewEntry(),
   groups = [],
   onMove = vi.fn(),
-  onMoveToSidebar = vi.fn(),
+  onMoveOutOfGroup = vi.fn(),
 }: {
   active?: boolean;
   currentGroupId?: string | null;
   entry?: MessengerCustomGroupHydratedSavedViewEntry;
   groups?: Array<{ id: string; name: string }>;
   onMove?: ReturnType<typeof vi.fn>;
-  onMoveToSidebar?: ReturnType<typeof vi.fn>;
+  onMoveOutOfGroup?: ReturnType<typeof vi.fn>;
 } = {}) {
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -129,7 +129,7 @@ function renderRow({
         entry={entry}
         groups={groups as never}
         onMove={onMove}
-        onMoveToSidebar={onMoveToSidebar}
+        onMoveOutOfGroup={onMoveOutOfGroup}
         onRemove={vi.fn()}
       />,
     );
@@ -263,7 +263,7 @@ describe("MessengerSavedViewRow", () => {
 
   it("renders loose and grouped placement actions without inventing group membership", () => {
     const onMove = vi.fn();
-    const onMoveToSidebar = vi.fn();
+    const onMoveOutOfGroup = vi.fn();
     const groups = [
       { id: "group-a", name: "Launch" },
       { id: "group-b", name: "Review" },
@@ -273,13 +273,13 @@ describe("MessengerSavedViewRow", () => {
       currentGroupId: null,
       groups,
       onMove,
-      onMoveToSidebar,
+      onMoveOutOfGroup,
     });
 
     expect(host!.textContent).toContain("Move to group");
     expect(host!.textContent).toContain("Launch");
     expect(host!.textContent).toContain("Review");
-    expect(host!.textContent).not.toContain("Move to Messenger sidebar");
+    expect(host!.textContent).not.toContain("Move out of group");
     act(() => {
       Array.from(host!.querySelectorAll("button"))
         .find((button) => button.textContent === "Launch")
@@ -295,15 +295,15 @@ describe("MessengerSavedViewRow", () => {
       currentGroupId: "group-a",
       groups,
       onMove,
-      onMoveToSidebar,
+      onMoveOutOfGroup,
     });
 
     expect(host!.textContent).not.toContain(">Launch<");
     expect(host!.textContent).toContain("Review");
     const moveLooseButton = Array.from(host!.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Move to Messenger sidebar"));
+      .find((button) => button.textContent?.includes("Move out of group"));
     expect(moveLooseButton).toBeTruthy();
     act(() => moveLooseButton?.click());
-    expect(onMoveToSidebar).toHaveBeenCalledWith("saved-view:saved-a");
+    expect(onMoveOutOfGroup).toHaveBeenCalledWith("saved-view:saved-a");
   });
 });
