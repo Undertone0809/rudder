@@ -597,6 +597,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                 text: commentaryText,
                 ...(entry.delta === true ? { delta: true } : {}),
                 phase: "commentary",
+                ...(entry.segmentId ? { segmentId: entry.segmentId } : {}),
               };
               await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, commentaryEntry);
               if (isStopped()) return;
@@ -714,6 +715,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                   ts: entry.ts,
                   text: suppressTranscriptSource(entry.text, entry.delta === true),
                   ...(entry.delta === true ? { delta: true } : {}),
+                  ...(entry.segmentId ? { segmentId: suppressTranscriptSource(entry.segmentId) } : {}),
                 };
               case "user":
               case "stderr":

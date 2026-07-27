@@ -9,11 +9,32 @@ export function appendTranscriptEntry(entries: TranscriptEntry[], entry: Transcr
   if ((entry.kind === "thinking" || entry.kind === "assistant") && entry.delta) {
     const lastIndex = entries.length - 1;
     const last = entries[lastIndex];
-    if (last && last.kind === entry.kind && last.delta) {
+    const phasesAreCompatible = (
+      last?.kind !== "assistant"
+      || entry.kind !== "assistant"
+      || last.phase === undefined
+      || entry.phase === undefined
+      || last.phase === entry.phase
+    );
+    const segmentsAreCompatible = last
+      && (last.kind === "thinking" || last.kind === "assistant")
+      && (last.segmentId || entry.segmentId)
+      ? Boolean(last.segmentId && entry.segmentId && last.segmentId === entry.segmentId)
+      : true;
+    if (
+      last
+      && last.kind === entry.kind
+      && last.delta
+      && phasesAreCompatible
+      && segmentsAreCompatible
+    ) {
       entries[lastIndex] = {
         ...last,
         text: last.text + entry.text,
         ts: entry.ts,
+        ...(last.kind === "assistant" && entry.kind === "assistant" && (last.phase ?? entry.phase)
+          ? { phase: last.phase ?? entry.phase }
+          : {}),
       };
       return;
     }

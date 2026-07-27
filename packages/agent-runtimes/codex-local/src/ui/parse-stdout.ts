@@ -463,6 +463,7 @@ function parseCodexItem(
         text,
         ...(item.delta === true ? { delta: true } : {}),
         ...(messagePhase ? { phase: messagePhase } : {}),
+        ...(asString(item.id) ? { segmentId: asString(item.id) } : {}),
       }];
     }
     return [];
@@ -470,7 +471,15 @@ function parseCodexItem(
 
   if (itemType === "reasoning") {
     const text = asString(item.text);
-    if (text) return [{ kind: "thinking", ts, text, ...(item.delta === true ? { delta: true } : {}) }];
+    if (text) {
+      return [{
+        kind: "thinking",
+        ts,
+        text,
+        ...(item.delta === true ? { delta: true } : {}),
+        ...(asString(item.id) ? { segmentId: asString(item.id) } : {}),
+      }];
+    }
     return [{ kind: "system", ts, text: phase === "started" ? "reasoning started" : "reasoning completed" }];
   }
 

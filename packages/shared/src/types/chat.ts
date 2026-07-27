@@ -594,6 +594,7 @@ export type ChatStreamTranscriptTextEntry = {
   text: string;
   delta?: boolean;
   phase?: "commentary" | "final_answer";
+  segmentId?: string;
 } & Partial<ChatTranscriptGenerationProvenance>;
 
 export type ChatStreamTranscriptEntry =

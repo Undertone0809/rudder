@@ -151,6 +151,48 @@ describe("chat stream stop cutoff", () => {
     expect(replay?.transcript).toEqual([expect.objectContaining({ text: "我会" })]);
   });
 
+  it("coalesces only matching streamed commentary segments", () => {
+    const current = draft();
+    const first = applyChatStreamProgressEvent(current, "stream-1", {
+      type: "transcript_entry",
+      entry: {
+        kind: "assistant",
+        ts: "2026-07-27T09:00:00.000Z",
+        text: "读取 `rudder",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-1",
+      },
+    });
+    const second = applyChatStreamProgressEvent(first, "stream-1", {
+      type: "transcript_entry",
+      entry: {
+        kind: "assistant",
+        ts: "2026-07-27T09:00:01.000Z",
+        text: "-docs`。",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-1",
+      },
+    });
+    const third = applyChatStreamProgressEvent(second, "stream-1", {
+      type: "transcript_entry",
+      entry: {
+        kind: "assistant",
+        ts: "2026-07-27T09:00:02.000Z",
+        text: "另一条。",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-2",
+      },
+    });
+
+    expect(third?.transcript).toMatchObject([
+      { text: "读取 `rudder-docs`。", segmentId: "commentary-1" },
+      { text: "另一条。", segmentId: "commentary-2" },
+    ]);
+  });
+
   it("keeps body, state, and transcript immutable after Stop freezes the generation", () => {
     const frozen = draft({
       state: "stopping",

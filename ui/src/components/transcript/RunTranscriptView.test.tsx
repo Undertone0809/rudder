@@ -230,6 +230,104 @@ describe("RunTranscriptView", () => {
     ]);
   });
 
+  it("reassembles production-shaped Chinese commentary by provider item across sequence gaps", () => {
+    const blocks = normalizeTranscript([
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:00.000Z",
+        text: "我会先读取 ",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-production-1",
+        generationId: "generation-a",
+        generationSeqStart: 4,
+        generationSeqEnd: 4,
+      },
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:01.000Z",
+        text: "`rudder",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-production-1",
+        generationId: "generation-a",
+        generationSeqStart: 7,
+        generationSeqEnd: 7,
+      },
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:02.000Z",
+        text: "-docs`，再核对源码；",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-production-1",
+        generationId: "generation-a",
+        generationSeqStart: 8,
+        generationSeqEnd: 8,
+      },
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:03.000Z",
+        text: "确认字符不会丢失。",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-production-1",
+        generationId: "generation-a",
+        generationSeqStart: 11,
+        generationSeqEnd: 11,
+      },
+    ] as unknown as TranscriptEntry[], false);
+
+    expect(blocks).toMatchObject([{
+      type: "message",
+      role: "assistant",
+      segmentId: "commentary-production-1",
+      text: "我会先读取 `rudder-docs`，再核对源码；确认字符不会丢失。",
+    }]);
+    expect(blocks[0]).not.toHaveProperty("generationId");
+  });
+
+  it("keeps different commentary items and tool activity as visible boundaries", () => {
+    const blocks = normalizeTranscript([
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:00.000Z",
+        text: "第一条进度。",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-1",
+      },
+      {
+        kind: "tool_call",
+        ts: "2026-07-27T00:00:01.000Z",
+        name: "read",
+        toolUseId: "tool-1",
+        input: { path: "doc/README.md" },
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-07-27T00:00:02.000Z",
+        toolUseId: "tool-1",
+        content: "done",
+        isError: false,
+      },
+      {
+        kind: "assistant",
+        ts: "2026-07-27T00:00:03.000Z",
+        text: "第二条进度。",
+        delta: true,
+        phase: "commentary",
+        segmentId: "commentary-2",
+      },
+    ], false);
+
+    expect(blocks).toMatchObject([
+      { type: "message", text: "第一条进度。", segmentId: "commentary-1" },
+      { type: "tool", toolUseId: "tool-1" },
+      { type: "message", text: "第二条进度。", segmentId: "commentary-2" },
+    ]);
+  });
+
   it("joins adjacent streamed text fragments in raw mode without losing event boundaries", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

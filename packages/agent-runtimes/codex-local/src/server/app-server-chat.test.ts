@@ -242,15 +242,15 @@ rl.on("line", (line) => {
       };
       send({ method: "item/started", params: { threadId, turnId, item: commentaryItem } });
       send({ method: "item/agentMessage/delta", params: {
-        threadId, turnId, itemId: commentaryItem.id, delta: "Inspecting ",
+        threadId, turnId, itemId: commentaryItem.id, delta: "我会先读取 \`rudder",
       } });
       send({ method: "item/agentMessage/delta", params: {
-        threadId, turnId, itemId: commentaryItem.id, delta: "the timeline.",
+        threadId, turnId, itemId: commentaryItem.id, delta: "-docs\`，再核对源码。",
       } });
       send({ method: "item/completed", params: {
         threadId,
         turnId,
-        item: { ...commentaryItem, text: "Inspecting the timeline." },
+        item: { ...commentaryItem, text: "我会先读取 \`rudder-docs\`，再核对源码。" },
       } });
 
       const finalItem = {
@@ -607,11 +607,13 @@ describe("executeCodexAppServerChat", () => {
               kind: "thinking",
               ts: "2026-07-23T00:00:00.000Z",
               text: "I’ll inspect the collaboration rendering path.",
+              segmentId: "child-reasoning-1",
             },
             {
               kind: "assistant",
               ts: "2026-07-23T00:00:00.000Z",
               text: "Review passed.",
+              segmentId: "child-agent-1",
             },
           ],
         },
@@ -825,21 +827,24 @@ describe("executeCodexAppServerChat", () => {
     expect(assistantEntries).toEqual([
       expect.objectContaining({
         kind: "assistant",
-        text: "Inspecting ",
+        text: "我会先读取 `rudder",
         delta: true,
         phase: "commentary",
+        segmentId: "commentary-1",
       }),
       expect.objectContaining({
         kind: "assistant",
-        text: "the timeline.",
+        text: "-docs`，再核对源码。",
         delta: true,
         phase: "commentary",
+        segmentId: "commentary-1",
       }),
       expect.objectContaining({
         kind: "assistant",
         text: "Done.",
         delta: true,
         phase: "final_answer",
+        segmentId: "final-1",
       }),
     ]);
   });

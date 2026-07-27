@@ -29,6 +29,7 @@ const mockAdapter = vi.hoisted(() => ({
         text: item.text,
         ...(item.delta === true ? { delta: true } : {}),
         ...(phase ? { phase } : {}),
+        ...(typeof item.id === "string" && item.id ? { segmentId: item.id } : {}),
       }];
     }
     if (parsed.type === "item.completed" && item.type === "reasoning" && typeof item.text === "string") {
@@ -2599,7 +2600,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     const svc = chatAssistantService({} as any);
     const abortController = new AbortController();
     const deltas: string[] = [];
-    const entries: Array<{ kind: string; text?: string; phase?: string }> = [];
+    const entries: Array<{ kind: string; text?: string; phase?: string; segmentId?: string }> = [];
 
     mockAdapter.execute.mockImplementationOnce(async (ctx) => {
       await ctx.onLog(
@@ -2608,6 +2609,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
           type: "item.completed",
           item: {
             type: "agent_message",
+            id: "commentary-1",
             text: "I am still checking the timeline.",
             delta: true,
             phase: "commentary",
@@ -2643,6 +2645,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
         kind: "assistant",
         text: "I am still checking the timeline.",
         phase: "commentary",
+        segmentId: "commentary-1",
       }),
     ]);
   });
