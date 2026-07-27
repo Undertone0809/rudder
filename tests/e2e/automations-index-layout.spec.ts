@@ -278,6 +278,14 @@ test.describe("Automations index layout", () => {
 
     await createButton.click();
     await expect(page.getByPlaceholder("Automation title")).toBeVisible();
+    const composer = page.getByTestId("automation-instructions-composer");
+    const instructionsPlaceholder = composer.getByText(
+      "Add instructions e.g. look for crashes in Sentry",
+      { exact: true },
+    );
+    await expect(instructionsPlaceholder).toBeVisible();
+    await composer.getByRole("textbox", { name: "editable markdown" }).fill("给我推送每日的消息流");
+    await expect(instructionsPlaceholder).toBeHidden();
     const outputMethod = page.getByTestId("automation-create-output-mode");
     await expect(outputMethod).toContainText("Send to chat");
     await expect(page.getByTestId("automation-create-chat-destination")).toContainText("New chat per run");
