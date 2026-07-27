@@ -497,6 +497,30 @@ async function callToolDirectlyIfSupported(
         { status: "done", comment },
       ));
     }
+    case "runs.list":
+      return success(await api.get(
+        `/api/run-intelligence/orgs/${encodeURIComponent(requiredRuntimeString(env, "RUDDER_ORG_ID"))}/runs?${buildDirectRunsListQuery(input)}`,
+      ));
+    case "runs.get":
+      return success(await api.get(
+        `/api/run-intelligence/runs/${encodeURIComponent(requiredString(input, "run"))}?projection=summary`,
+      ));
+    case "runs.events":
+      return success(await api.get(
+        `/api/run-intelligence/runs/${encodeURIComponent(requiredString(input, "run"))}/events?${buildDirectRunEventsQuery(input)}`,
+      ));
+    case "runs.log":
+      return success(await api.get(
+        `/api/run-intelligence/runs/${encodeURIComponent(requiredString(input, "run"))}/log?${buildDirectRunLogQuery(input)}`,
+      ));
+    case "runs.transcript":
+      return success(await api.get(
+        `/api/run-intelligence/runs/${encodeURIComponent(requiredString(input, "run"))}/transcript?${buildDirectRunTranscriptQuery(input)}`,
+      ));
+    case "runs.errors":
+      return success(await api.get(
+        `/api/run-intelligence/runs/${encodeURIComponent(requiredString(input, "run"))}/errors?${buildDirectRunErrorsQuery(input)}`,
+      ));
     case "browser.tabs":
       return success(await api.post("/api/browser/tabs", {}));
     case "browser.user-tabs":
@@ -564,6 +588,90 @@ async function callToolDirectlyIfSupported(
     default:
       return null;
   }
+}
+
+function buildDirectRunsListQuery(input: Record<string, unknown>): string {
+  const params = new URLSearchParams({ projection: "summary" });
+  appendOptionalQuery(params, "updatedAfter", input.updatedAfter);
+  appendOptionalQuery(params, "runIdPrefix", input.runIdPrefix);
+  appendOptionalQuery(params, "agentId", input.relatedAgentId);
+  appendOptionalQuery(params, "status", input.status);
+  appendOptionalQuery(params, "runtime", input.runtime);
+  appendOptionalQuery(params, "issueId", input.issueId);
+  appendOptionalQuery(params, "usedSkill", input.usedSkill);
+  appendOptionalQuery(params, "loadedSkill", input.loadedSkill);
+  appendOptionalQuery(params, "createdBefore", input.createdBefore);
+  appendOptionalQuery(params, "cursor", input.cursor);
+  params.set("limit", String(parsePositiveInteger(input.limit, 50)));
+  return params.toString();
+}
+
+function buildDirectRunEventsQuery(input: Record<string, unknown>): string {
+  const params = new URLSearchParams({
+    afterSeq: String(parseNonNegativeInteger(input.afterSeq, 0)),
+    limit: String(parsePositiveInteger(input.limit, 200)),
+    maxChars: String(parsePositiveInteger(input.maxChars, 1200)),
+    projection: "compact",
+  });
+  appendOptionalQuery(params, "cursor", input.cursor);
+  return params.toString();
+}
+
+function buildDirectRunLogQuery(input: Record<string, unknown>): string {
+  return new URLSearchParams({
+    offset: String(parseNonNegativeInteger(input.offset, 0)),
+    limitBytes: String(parsePositiveInteger(input.limitBytes, 256_000)),
+  }).toString();
+}
+
+function buildDirectRunTranscriptQuery(input: Record<string, unknown>): string {
+  const params = new URLSearchParams({
+    contextTurns: String(parsePositiveInteger(input.contextTurns, 1)),
+    order: input.chronological === true || input.narrative === true ? "oldest" : "newest",
+    output: "compact",
+    includeOutputs: input.includeOutput === true || input.narrative === true ? "true" : "false",
+    maxChars: String(parsePositiveInteger(input.maxChars ?? input.maxOutputChars, 1200)),
+  });
+  if (input.errorsOnly === true) params.set("errorsOnly", "true");
+  appendOptionalQuery(params, "aroundError", input.aroundError);
+  appendOptionalQuery(params, "cursor", input.cursor);
+  if (input.turnLimit !== undefined) {
+    params.set("turnLimit", String(parsePositiveInteger(input.turnLimit, 20)));
+  }
+  return params.toString();
+}
+
+function buildDirectRunErrorsQuery(input: Record<string, unknown>): string {
+  const params = new URLSearchParams({
+    maxChars: String(parsePositiveInteger(input.maxChars, 1200)),
+  });
+  appendOptionalQuery(params, "cursor", input.cursor);
+  return params.toString();
+}
+
+function appendOptionalQuery(params: URLSearchParams, key: string, value: unknown): void {
+  const rendered = optionalString(value);
+  if (rendered) params.set(key, rendered);
+}
+
+function parsePositiveInteger(value: unknown, fallback: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function parseNonNegativeInteger(value: unknown, fallback: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function requiredRuntimeString(env: McpServerEnv, key: keyof McpServerEnv): string {
+  const value = optionalString(env[key]);
+  if (value) return value;
+  const err = new Error(`Rudder MCP runtime context is incomplete. Missing ${String(key)}.`);
+  (err as Error & { code?: string }).code = "rudder_mcp_missing_runtime_context";
+  throw err;
 }
 
 function hasLocalImageInputs(value: unknown): boolean {

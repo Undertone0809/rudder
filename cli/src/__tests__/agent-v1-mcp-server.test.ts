@@ -770,49 +770,48 @@ describe("agent-v1 MCP server", () => {
   });
 
   it("keeps a 50-row runs list JSON-RPC response below 200 KiB without duplicating structured data", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-runs-list-"));
-    try {
-      const shimPath = path.join(tempDir, process.platform === "win32" ? "rudder.cmd" : "rudder");
-      const marker = "bounded-summary-marker";
-      const output = JSON.stringify({
+    const marker = "bounded-summary-marker";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe("/api/run-intelligence/orgs/runtime-org/runs");
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        projection: "summary",
+        limit: "50",
+      });
+      expect(init?.method).toBe("GET");
+      return new Response(JSON.stringify({
         items: Array.from({ length: 50 }, (_, index) => ({
           id: `run-${index}`,
           status: "failed",
           outcome: `${marker}-${index}-${"S".repeat(2_000)}`,
         })),
         page: { limit: 50, hasMore: false, nextCursor: null },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
       });
-      if (process.platform === "win32") {
-        await fs.writeFile(shimPath, `@echo off\r\necho ${output.replaceAll('"', '\\"')}\r\n`, "utf8");
-      } else {
-        await fs.writeFile(shimPath, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, "utf8");
-        await fs.chmod(shimPath, 0o755);
-      }
+    });
 
-      const response = await runAgentV1McpJsonRpcMessage({
-        jsonrpc: "2.0",
-        id: 30,
-        method: "tools/call",
-        params: { name: "rudder_runs_list", arguments: { limit: 50 } },
-      }, buildMcpServerEnv({
-        PATH: tempDir,
-        RUDDER_API_URL: "http://127.0.0.1:3100",
-        RUDDER_API_KEY: "runtime-key",
-        RUDDER_ORG_ID: "runtime-org",
-      }));
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 30,
+      method: "tools/call",
+      params: { name: "rudder_runs_list", arguments: { limit: 50 } },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+    }));
 
-      expect(Buffer.byteLength(JSON.stringify(response), "utf8")).toBeLessThanOrEqual(200 * 1024);
-      const result = response!.result as {
-        content: Array<{ text: string }>;
-        structuredContent: { items: unknown[] };
-        isError: boolean;
-      };
-      expect(result.isError).toBe(false);
-      expect(result.structuredContent.items).toHaveLength(50);
-      expect(result.content[0]?.text).not.toContain(marker);
-    } finally {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    }
+    expect(Buffer.byteLength(JSON.stringify(response), "utf8")).toBeLessThanOrEqual(200 * 1024);
+    const result = response!.result as {
+      content: Array<{ text: string }>;
+      structuredContent: { items: unknown[] };
+      isError: boolean;
+    };
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent.items).toHaveLength(50);
+    expect(result.content[0]?.text).not.toContain(marker);
   });
 
   it("replaces an oversized final JSON-RPC tool result with a bounded error", async () => {
@@ -906,6 +905,120 @@ describe("agent-v1 MCP server", () => {
       isError: false,
       structuredContent: { id: "ISSUE-1", status: "in_progress" },
     });
+  });
+
+  it("dispatches run inspection tools directly with CLI-equivalent bounded queries", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      expect(init?.method).toBe("GET");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer runtime-key");
+      return new Response(JSON.stringify({
+        path: url.pathname,
+        query: Object.fromEntries(url.searchParams),
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "11111111-1111-4111-8111-111111111111",
+      RUDDER_RUN_ID: "22222222-2222-4222-8222-222222222222",
+      RUDDER_MCP_RUDDER_BIN: "/missing/rudder",
+    });
+    const cases = [
+      {
+        name: "rudder_runs_list",
+        arguments: {
+          status: "failed",
+          relatedAgentId: "agent-1",
+          updatedAfter: "2026-07-26T00:00:00Z",
+          limit: 25,
+        },
+        path: "/api/run-intelligence/orgs/runtime-org/runs",
+        query: {
+          projection: "summary",
+          status: "failed",
+          agentId: "agent-1",
+          updatedAfter: "2026-07-26T00:00:00Z",
+          limit: "25",
+        },
+      },
+      {
+        name: "rudder_runs_get",
+        arguments: { run: "run-1" },
+        path: "/api/run-intelligence/runs/run-1",
+        query: { projection: "summary" },
+      },
+      {
+        name: "rudder_runs_events",
+        arguments: { run: "run-1", afterSeq: 12, limit: 40, maxChars: 800, cursor: "event-cursor" },
+        path: "/api/run-intelligence/runs/run-1/events",
+        query: {
+          afterSeq: "12",
+          limit: "40",
+          maxChars: "800",
+          projection: "compact",
+          cursor: "event-cursor",
+        },
+      },
+      {
+        name: "rudder_runs_log",
+        arguments: { run: "run-1", offset: 64, limitBytes: 4096 },
+        path: "/api/run-intelligence/runs/run-1/log",
+        query: { offset: "64", limitBytes: "4096" },
+      },
+      {
+        name: "rudder_runs_transcript",
+        arguments: {
+          run: "run-1",
+          errorsOnly: true,
+          aroundError: "step-12",
+          contextTurns: 2,
+          turnLimit: 10,
+          chronological: true,
+          includeOutput: true,
+          maxChars: 2400,
+        },
+        path: "/api/run-intelligence/runs/run-1/transcript",
+        query: {
+          contextTurns: "2",
+          order: "oldest",
+          output: "compact",
+          includeOutputs: "true",
+          maxChars: "2400",
+          errorsOnly: "true",
+          aroundError: "step-12",
+          turnLimit: "10",
+        },
+      },
+      {
+        name: "rudder_runs_errors",
+        arguments: { run: "run-1", maxChars: 3000, cursor: "error-cursor" },
+        path: "/api/run-intelligence/runs/run-1/errors",
+        query: { maxChars: "3000", cursor: "error-cursor" },
+      },
+    ] as const;
+
+    for (const [index, testCase] of cases.entries()) {
+      const response = await runAgentV1McpJsonRpcMessage({
+        jsonrpc: "2.0",
+        id: index + 10,
+        method: "tools/call",
+        params: { name: testCase.name, arguments: testCase.arguments },
+      }, env);
+      expect(response?.result).toMatchObject({
+        isError: false,
+        structuredContent: {
+          path: testCase.path,
+          query: testCase.query,
+        },
+      });
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(cases.length);
   });
 
   it.each([
