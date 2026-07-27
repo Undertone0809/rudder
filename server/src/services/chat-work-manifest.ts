@@ -1,5 +1,6 @@
 import {
   assets,
+  automations,
   chatAttachments,
   chatContextLinks,
   chatConversations,
@@ -442,6 +443,35 @@ export function chatWorkManifestService(db: Db) {
     }
     candidates.clear();
     for (const [targetKey, candidate] of hydratedCandidates) candidates.set(targetKey, candidate);
+
+    const referencedAutomationIds = [...new Set(
+      [...candidates.values()]
+        .filter((candidate) => candidate.targetType === "automation")
+        .map((candidate) => typeof candidate.metadata?.automationId === "string"
+          ? candidate.metadata.automationId.trim()
+          : "")
+        .filter((automationId) => isUuidLike(automationId)),
+    )];
+    if (referencedAutomationIds.length > 0) {
+      const referencedAutomations = await db
+        .select({ id: automations.id, title: automations.title })
+        .from(automations)
+        .where(and(
+          eq(automations.orgId, conversation.orgId),
+          inArray(automations.id, referencedAutomationIds),
+        ));
+      const referencedAutomationTitles = new Map(
+        referencedAutomations.map((automation) => [automation.id, automation.title]),
+      );
+      for (const candidate of candidates.values()) {
+        if (candidate.targetType !== "automation") continue;
+        const referencedAutomationId = typeof candidate.metadata?.automationId === "string"
+          ? candidate.metadata.automationId.trim()
+          : "";
+        const referencedAutomationTitle = referencedAutomationTitles.get(referencedAutomationId);
+        if (referencedAutomationTitle?.trim()) candidate.title = referencedAutomationTitle;
+      }
+    }
 
     if (projectId) {
       const projectRuns = await db

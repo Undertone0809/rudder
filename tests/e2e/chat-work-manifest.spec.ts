@@ -22,6 +22,95 @@ const screenshotDir = process.env.RUDDER_CHAT_WORK_MANIFEST_SCREENSHOT_DIR
   : fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-work-manifest-"));
 
 test.describe("Chat Work Manifest", () => {
+  test("shows the current Automation name for an unlabeled reference", async ({ page }) => {
+    fs.mkdirSync(screenshotDir, { recursive: true });
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Automation-Manifest-${Date.now()}`,
+        issuePrefix: `CAM${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Automation Manifest Agent" });
+    const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Daily standup review",
+        description: "Referenced from a Chat message without an embedded title.",
+        assigneeAgentId: agent.id,
+        priority: "medium",
+      },
+    });
+    expect(automationRes.ok(), await automationRes.text()).toBe(true);
+    const automation = await automationRes.json() as { id: string; title: string };
+
+    const chatId = randomUUID();
+    const messageId = randomUUID();
+    const historicalRowId = randomUUID();
+    await e2eDb.insert(chatConversations).values({
+      id: chatId,
+      orgId: organization.id,
+      title: "Automation reference Chat",
+      preferredAgentId: agent.id,
+    });
+    await e2eDb.insert(chatMessages).values({
+      id: messageId,
+      orgId: organization.id,
+      conversationId: chatId,
+      role: "assistant",
+      status: "completed",
+      body: `Recommended automation: [](automation://${automation.id})`,
+      replyingAgentId: agent.id,
+    });
+    await e2eDb.insert(chatWorkManifestItems).values({
+      id: historicalRowId,
+      orgId: organization.id,
+      conversationId: chatId,
+      messageId,
+      category: "references",
+      targetType: "automation",
+      targetKey: `automation:${automation.id}`,
+      title: "Automation",
+      sourceRole: "assistant",
+      metadata: { automationId: automation.id },
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chatId}`);
+
+    const shelf = page.getByRole("complementary", { name: "Conversation files and links" });
+    await expect(shelf).toBeVisible({ timeout: 15_000 });
+    const automationButton = shelf
+      .locator("button[data-target-type='automation']")
+      .filter({ hasText: automation.title });
+    await expect(automationButton).toHaveCount(1);
+    await expect(automationButton).toHaveAttribute("title", automation.title);
+    await expect(automationButton.locator("[data-file-icon='automation']")).toBeVisible();
+    await expect(shelf.getByText("Automation", { exact: true })).toHaveCount(0);
+    const manifestRes = await page.request.get(`/api/chats/${chatId}/work-manifest`);
+    expect(manifestRes.ok(), await manifestRes.text()).toBe(true);
+    const manifest = await manifestRes.json() as {
+      references: Array<{ id: string; title: string }>;
+    };
+    expect(manifest.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: historicalRowId,
+        title: automation.title,
+      }),
+    ]));
+    await page.screenshot({ path: `${screenshotDir}/automation-reference-name.png`, fullPage: true });
+
+    await automationButton.click();
+    const automationSidePanel = page.getByTestId("chat-side-panel");
+    await expect(automationSidePanel).toBeVisible();
+    await expect(automationSidePanel).toContainText(automation.title);
+  });
+
   test("hydrates canonical Issue and Issue Comment references in an existing Chat", async ({ page }) => {
     fs.mkdirSync(screenshotDir, { recursive: true });
     const orgRes = await page.request.post("/api/orgs", {
@@ -329,7 +418,7 @@ test.describe("Chat Work Manifest", () => {
           `Use https://source.example/research, https://source-two.example/data, and ${sourceFile.markdownLink}.`,
           `[${issue.identifier}](issue://${issue.id}?r=${encodeURIComponent(issue.identifier)})`,
           `[Issue comment](issue://${issue.id}?r=${encodeURIComponent(issue.identifier)}&c=${issueComment.id})`,
-          `[${automation.title}](automation://${automation.id}?t=${encodeURIComponent(automation.title)})`,
+          `[](automation://${automation.id})`,
           `[](chat://${otherChat.id})`,
         ].join(" "),
         status: "completed",
