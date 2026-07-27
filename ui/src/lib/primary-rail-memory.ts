@@ -1,3 +1,5 @@
+import { isLegacyOrganizationSettingsRedirectPath } from "./organization-routes";
+
 const STORAGE_KEY = "rudder.primaryRailLastPaths";
 
 export type PrimaryRailSection =
@@ -58,6 +60,10 @@ export function sanitizePrimaryRailPath(section: PrimaryRailSection, path: strin
   const { pathname, search, hash } = splitPath(path);
   if (resolvePrimaryRailSection(pathname) !== section) return null;
   if (section === "library" && /^\/workspaces\/backups(?:\/|$)/.test(pathname)) return null;
+  // `/org` used to be the Organization workspace, but is now only a legacy
+  // redirect into Settings. Never let persisted rail memory turn the
+  // Organization entry into a Settings trigger.
+  if (section === "organization" && isLegacyOrganizationSettingsRedirectPath(path)) return null;
   return `${pathname}${search}${hash}`;
 }
 

@@ -2,6 +2,7 @@ import {
   DEFAULT_ORGANIZATION_HOME_PATH,
   extractOrganizationPrefixFromPath,
   findOrganizationByPrefix,
+  isLegacyOrganizationSettingsRedirectPath,
   normalizeOrganizationPrefix,
   toOrganizationRelativePath,
 } from "./organization-routes";
@@ -10,6 +11,7 @@ const GLOBAL_SEGMENTS = new Set(["auth", "invite", "board-claim", "cli-auth", "d
 const NON_RESTORABLE_BOARD_SEGMENTS = new Set(["skills"]);
 
 export function isRememberableOrganizationPath(path: string): boolean {
+  if (isLegacyOrganizationSettingsRedirectPath(path)) return false;
   const pathname = path.split("?")[0] ?? "";
   const segments = pathname.split("/").filter(Boolean);
   if (segments.length === 0) return true;

@@ -32,7 +32,7 @@ import {
   resolveDefaultSettingsPath,
 } from "../lib/instance-settings";
 import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
-import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix, getOrganizationRouteKey, toOrganizationRelativePath } from "../lib/organization-routes";
+import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix, getOrganizationRouteKey, isLegacyOrganizationSettingsRedirectPath, toOrganizationRelativePath } from "../lib/organization-routes";
 import { shouldSyncOrganizationSelectionFromRoute } from "../lib/organization-selection";
 import { rememberPrimaryRailPath } from "../lib/primary-rail-memory";
 import { RUDDER_DOCS_URL } from "../lib/product-links";
@@ -125,6 +125,7 @@ function readRememberedWorkspacePath(): string {
     if (
       relativePath.startsWith("/instance/")
       || relativePath.startsWith("/organization/settings")
+      || isLegacyOrganizationSettingsRedirectPath(relativePath)
     ) {
       return DEFAULT_ORGANIZATION_HOME_PATH;
     }
@@ -1261,6 +1262,7 @@ export function Layout() {
     const relativePath = toOrganizationRelativePath(
       `${location.pathname}${location.search}${location.hash}`,
     );
+    if (isLegacyOrganizationSettingsRedirectPath(relativePath)) return;
     try {
       window.localStorage.setItem(LAST_WORKSPACE_PATH_KEY, relativePath);
     } catch {

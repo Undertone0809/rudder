@@ -10,6 +10,72 @@ function uniqueIssuePrefix() {
 }
 
 test.describe("Settings sidebar", () => {
+  test("does not reopen settings from stale Organization rail and workspace memory", async ({ page }) => {
+    const otherOrgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Legacy Organization Rail Source ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(otherOrgRes.ok()).toBe(true);
+    const otherOrganization = await otherOrgRes.json() as {
+      id: string;
+      name: string;
+      urlKey: string;
+    };
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Legacy Organization Rail ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as {
+      id: string;
+      name: string;
+      issuePrefix: string;
+      urlKey: string;
+    };
+
+    await page.goto(`/${otherOrganization.urlKey}/messenger`);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.lastWorkspacePath", "/org?legacy=1#old");
+      window.localStorage.setItem("rudder.primaryRailLastPaths", JSON.stringify({
+        [orgId]: { organization: "/org?legacy=1#old" },
+      }));
+      window.localStorage.setItem("rudder.organizationPaths", JSON.stringify({
+        [orgId]: "/org?legacy=1#old",
+      }));
+    }, organization.id);
+    await page.reload();
+
+    await page.getByRole("button", { name: "Organization menu" }).click();
+    const organizationMenuItem = page
+      .getByRole("menu", { name: "Organization menu" })
+      .getByRole("menuitem")
+      .filter({ hasText: organization.name });
+    await expect(organizationMenuItem).toBeVisible();
+    await organizationMenuItem.click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/messenger$`));
+    await expect(page.getByTestId("settings-modal-shell")).toHaveCount(0);
+
+    await page.getByTestId("primary-rail").getByRole("link", { name: "Organization" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/dashboard$`));
+    await expect(page.getByTestId("settings-modal-shell")).toHaveCount(0);
+
+    await page.evaluate(() => {
+      window.localStorage.setItem("rudder.lastWorkspacePath", "/org?legacy=1#old");
+    });
+    await page.goto(`/${organization.urlKey}/org?legacy=1#old`);
+    const modal = page.getByTestId("settings-modal-shell");
+    await expect(modal).toBeVisible();
+    await modal.getByRole("button", { name: "Close settings" }).click();
+
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/messenger(?:/chat)?(?:[/?#]|$)`));
+    await expect(modal).toHaveCount(0);
+  });
+
   test("keeps organization import and export in settings after Structure removal", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

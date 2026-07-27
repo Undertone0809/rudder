@@ -87,4 +87,15 @@ describe("primary rail memory", () => {
     expect(readRememberedPrimaryRailPath("org-1", "organization", "/dashboard")).toBe("/dashboard");
     expect(readRememberedPrimaryRailPath("org-1", "library", "/library")).toBe("/library");
   });
+
+  it("rejects the removed Organization workspace redirect as a rail destination", () => {
+    storage.set("rudder.primaryRailLastPaths", JSON.stringify({
+      "org-1": { organization: "/org?legacy=1#old" },
+    }));
+
+    expect(sanitizePrimaryRailPath("organization", "/org")).toBeNull();
+    expect(sanitizePrimaryRailPath("organization", "/org/")).toBeNull();
+    expect(sanitizePrimaryRailPath("organization", "/org?legacy=1#old")).toBeNull();
+    expect(readRememberedPrimaryRailPath("org-1", "organization", "/dashboard")).toBe("/dashboard");
+  });
 });
