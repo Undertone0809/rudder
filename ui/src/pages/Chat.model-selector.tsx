@@ -774,7 +774,6 @@ export function ChatAgentSelectorButton(props: {
   agent: Agent | null;
   label: string;
   expanded: boolean;
-  locked: boolean;
   disabled: boolean;
   buttonRef?: Ref<HTMLButtonElement>;
   onClick: () => void;
@@ -800,9 +799,6 @@ export function ChatAgentSelectorButton(props: {
         </span>
       ) : null}
       <span className="min-w-0 truncate">{props.label}</span>
-      {props.locked ? (
-        <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Agent is bound to this chat" />
-      ) : null}
     </button>
   );
 }

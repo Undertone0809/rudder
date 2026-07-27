@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  buildIssueCard,
   createSignature,
-  formatIssueNotification,
   sendFeishuNotification,
 } from "../.github/scripts/notify-feishu-issue.mjs";
 
@@ -63,8 +63,8 @@ function runNotificationScript(env) {
 }
 
 describe("GitHub issue to Feishu notification", () => {
-  it("formats useful issue details and bounds long bodies", () => {
-    const text = formatIssueNotification(
+  it("builds a bounded issue card with a GitHub button", () => {
+    const card = buildIssueCard(
       {
         issue: {
           number: 42,
@@ -77,12 +77,45 @@ describe("GitHub issue to Feishu notification", () => {
       },
       "acme/rudder",
     );
+    const [title, metadata, body, button] = card.body.elements;
 
-    expect(text).toContain("#42 Broken installer");
-    expect(text).toContain("Opened by: @octocat");
-    expect(text).toContain("Labels: bug, desktop");
-    expect(text).toContain("https://github.com/acme/rudder/issues/42");
-    expect(text.length).toBeLessThan(1_100);
+    expect(card).toMatchObject({
+      schema: "2.0",
+      config: {
+        style: {
+          text_size: {
+            normal_v2: {
+              default: "normal",
+              pc: "normal",
+              mobile: "heading",
+            },
+          },
+        },
+      },
+      header: {
+        title: { tag: "plain_text", content: "🐞 新 GitHub Issue" },
+        subtitle: { tag: "plain_text", content: "acme/rudder" },
+        template: "blue",
+      },
+    });
+    expect(title).toMatchObject({
+      tag: "plain_text",
+      content: "#42 Broken installer",
+    });
+    expect(metadata.content).toContain("提交人：@octocat");
+    expect(metadata.content).toContain("标签：bug · desktop");
+    expect(body.content.length).toBeLessThan(900);
+    expect(button).toMatchObject({
+      tag: "button",
+      text: { tag: "plain_text", content: "在 GitHub 查看 Issue" },
+      type: "primary",
+      behaviors: [
+        {
+          type: "open_url",
+          default_url: "https://github.com/acme/rudder/issues/42",
+        },
+      ],
+    });
   });
 
   it("uses the Feishu timestamp-plus-secret signing contract", () => {
@@ -97,7 +130,7 @@ describe("GitHub issue to Feishu notification", () => {
   });
 
   it("neutralizes Feishu mention markup from untrusted issue text", () => {
-    const text = formatIssueNotification(
+    const card = buildIssueCard(
       {
         issue: {
           number: 43,
@@ -110,10 +143,88 @@ describe("GitHub issue to Feishu notification", () => {
       },
       "acme/rudder",
     );
+    const plainText = card.body.elements
+      .filter((element) => element.tag === "plain_text")
+      .map((element) => element.content)
+      .join("\n");
 
-    expect(text).not.toContain("<at");
-    expect(text).toContain('＜at user_id="all"＞Everyone＜/at＞');
-    expect(text).toContain('＜at user_id="ou_known"＞Target＜/at＞');
+    expect(plainText).toContain('<at user_id="all">Everyone</at>');
+    expect(plainText).toContain('<at user_id="ou_known">Target</at>');
+    expect(
+      card.body.elements
+        .filter((element) => element.tag !== "button")
+        .every((element) => element.tag === "plain_text"),
+    ).toBe(true);
+  });
+
+  it("preserves Markdown-like source text without interpreting it", () => {
+    const card = buildIssueCard(
+      {
+        issue: {
+          number: 45,
+          title: "Normal**\n\n[Open securely](https://evil.example)\n\n**",
+          body: "![trusted image](https://evil.example/image.png)",
+          html_url: "https://github.com/acme/rudder/issues/45",
+          user: { login: "reporter" },
+          labels: [{ name: "[security](https://evil.example)" }],
+        },
+      },
+      "acme/rudder",
+    );
+    const [title, metadata, body] = card.body.elements;
+
+    expect(title).toEqual(
+      expect.objectContaining({
+        tag: "plain_text",
+        content: "#45 Normal**\n\n[Open securely](https://evil.example)\n\n**",
+      }),
+    );
+    expect(metadata).toEqual(
+      expect.objectContaining({
+        tag: "plain_text",
+        content: expect.stringContaining(
+          "标签：[security](https://evil.example)",
+        ),
+      }),
+    );
+    expect(body).toEqual(
+      expect.objectContaining({
+        tag: "plain_text",
+        content: "![trusted image](https://evil.example/image.png)",
+      }),
+    );
+  });
+
+  it("builds a manual test card without a navigation button", () => {
+    const card = buildIssueCard({}, "acme/rudder");
+
+    expect(card.header.title.content).toBe("✅ GitHub Actions 手动测试");
+    expect(card.header.subtitle.content).toBe("acme/rudder");
+    expect(card.body.elements).toEqual([
+      expect.objectContaining({
+        tag: "plain_text",
+        content: "Rudder dev 通知通道正常。",
+      }),
+    ]);
+    expect(card.body.elements.some((element) => element.tag === "button")).toBe(
+      false,
+    );
+  });
+
+  it("rejects non-GitHub and non-HTTPS issue links", () => {
+    const event = {
+      issue: {
+        number: 44,
+        title: "Unsafe link",
+        body: "Do not render this button.",
+        html_url: "https://example.com/acme/rudder/issues/44",
+        user: { login: "reporter" },
+      },
+    };
+
+    expect(() => buildIssueCard(event, "acme/rudder")).toThrow(
+      "GitHub issue URL must be an HTTPS github.com issue URL",
+    );
   });
 
   it("runs the workflow script end to end and sends a signed payload", async () => {
@@ -164,8 +275,20 @@ describe("GitHub issue to Feishu notification", () => {
         stderr: "",
         stdout: "Feishu issue notification sent successfully\n",
       });
-      expect(receivedBody.msg_type).toBe("text");
-      expect(receivedBody.content.text).toContain("#7 Notification regression");
+      expect(receivedBody.msg_type).toBe("interactive");
+      expect(receivedBody.card.schema).toBe("2.0");
+      expect(receivedBody.card.body.elements[0].content).toContain(
+        "#7 Notification regression",
+      );
+      expect(receivedBody.card.body.elements[3]).toMatchObject({
+        tag: "button",
+        behaviors: [
+          {
+            type: "open_url",
+            default_url: "https://github.com/acme/rudder/issues/7",
+          },
+        ],
+      });
       expect(receivedBody.sign).toBe(
         createSignature("integration-secret", receivedBody.timestamp),
       );
@@ -174,12 +297,69 @@ describe("GitHub issue to Feishu notification", () => {
     }
   });
 
+  it("bounds a production-shaped high-volume issue below the webhook limit", async () => {
+    let payloadBody;
+    const card = buildIssueCard(
+      {
+        issue: {
+          number: 46,
+          title: "😀".repeat(256),
+          body: "😀".repeat(800),
+          html_url: "https://github.com/acme/rudder/issues/46",
+          user: { login: "reporter" },
+          labels: Array.from({ length: 100 }, (_, index) => ({
+            name: `${index}-${"😀".repeat(50)}`,
+          })),
+        },
+      },
+      "acme/rudder",
+    );
+
+    await sendFeishuNotification({
+      webhookUrl: "https://example.invalid/hook",
+      secret: "secret",
+      card,
+      timestamp: "1785080000",
+      fetchImpl: async (_url, options) => {
+        payloadBody = options.body;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ code: 0, msg: "success" }),
+        };
+      },
+    });
+
+    expect(new TextEncoder().encode(payloadBody).length).toBeLessThanOrEqual(
+      20 * 1024,
+    );
+    const labelsLine = JSON.parse(payloadBody).card.body.elements[1].content;
+    expect(labelsLine).toContain("另有 92 个");
+  });
+
+  it("uses a Chinese fallback for an empty issue body", () => {
+    const card = buildIssueCard(
+      {
+        issue: {
+          number: 47,
+          title: "No body",
+          body: "",
+          html_url: "https://github.com/acme/rudder/issues/47",
+          user: { login: "reporter" },
+        },
+      },
+      "acme/rudder",
+    );
+
+    expect(card.body.elements[2].content).toContain("未提供描述。");
+  });
+
   it("fails closed when Feishu rejects a notification", async () => {
     await expect(
       sendFeishuNotification({
         webhookUrl: "https://example.invalid/hook",
         secret: "secret",
-        text: "test",
+        card: buildIssueCard({}, "acme/rudder"),
         timestamp: "1785080000",
         fetchImpl: async () => ({
           ok: true,
@@ -188,5 +368,21 @@ describe("GitHub issue to Feishu notification", () => {
         }),
       }),
     ).rejects.toThrow("sign match fail");
+  });
+
+  it("fails closed when Feishu omits an explicit success code", async () => {
+    await expect(
+      sendFeishuNotification({
+        webhookUrl: "https://example.invalid/hook",
+        secret: "secret",
+        card: buildIssueCard({}, "acme/rudder"),
+        timestamp: "1785080000",
+        fetchImpl: async () => ({
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+        }),
+      }),
+    ).rejects.toThrow("unknown error");
   });
 });

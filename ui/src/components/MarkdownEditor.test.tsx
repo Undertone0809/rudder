@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, createRef } from "react";
+import { act, createRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImagePreviewProvider } from "../context/ImagePreviewContext";
@@ -686,6 +686,96 @@ describe("MarkdownEditor", () => {
     });
 
     expect(container.querySelector(".rudder-mdxeditor-scope")?.getAttribute("data-rudder-has-content")).toBe("true");
+  });
+
+  it("hides the placeholder as soon as the editable DOM receives text", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value=""
+          onChange={() => undefined}
+          placeholder="Add instructions e.g. look for crashes in Sentry"
+          plainText
+        />,
+      );
+    });
+
+    const editable = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    expect(editable).not.toBeNull();
+
+    act(() => {
+      editable!.textContent = "给我推送每日的消息流";
+      editable!.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    });
+
+    expect(container.querySelector(".rudder-mdxeditor-scope")?.getAttribute("data-rudder-has-content")).toBe("true");
+  });
+
+  it("shows the placeholder after programmatically deleting the editor's only token", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    function ControlledEditor() {
+      const [value, setValue] = useState("[ZST-357](issue://issue-1?r=ZST-357)");
+      return (
+        <MarkdownEditor
+          value={value}
+          onChange={setValue}
+          placeholder="Add instructions"
+          plainText
+        />
+      );
+    }
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(<ControlledEditor />);
+    });
+
+    const editable = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    const token = container.querySelector<HTMLElement>("[data-mention-kind='issue']");
+    expect(editable).not.toBeNull();
+    expect(token).not.toBeNull();
+
+    act(() => {
+      editable!.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    });
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.setStart(editable!, 1);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    await act(async () => {
+      editable!.dispatchEvent(new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        inputType: "deleteContentBackward",
+      }));
+    });
+
+    expect(editable!.textContent).toBe("");
+    expect(container.querySelector(".rudder-mdxeditor-scope")?.getAttribute("data-rudder-has-content")).toBe("false");
   });
 
   it("decorates legacy editor mention token spans with issue comment status semantics", async () => {

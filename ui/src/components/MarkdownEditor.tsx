@@ -1217,6 +1217,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   const lastSelectionOffsetsRef = useRef({ start: value.length, end: value.length });
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [hasDomContent, setHasDomContent] = useState(
+    () => value.replaceAll(INLINE_CARET_BOUNDARY, "").length > 0,
+  );
   const { openImagePreview } = useImagePreview();
   const dragDepthRef = useRef(0);
 
@@ -1576,7 +1579,8 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     () => (placeholder ? translateLegacyString(locale, placeholder) : undefined),
     [locale, placeholder],
   );
-  const hasEditorContent = value.replaceAll(INLINE_CARET_BOUNDARY, "").length > 0;
+  const hasEditorContent = hasDomContent
+    || value.replaceAll(INLINE_CARET_BOUNDARY, "").length > 0;
 
   const plugins = useMemo<RealmPlugin[]>(() => {
     const imageHandler = hasImageUpload
@@ -1656,6 +1660,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         end: Math.min(lastSelectionOffsetsRef.current.end, value.length),
       };
     }
+    setHasDomContent(value.replaceAll(INLINE_CARET_BOUNDARY, "").length > 0);
   }, [value]);
 
   useEffect(() => {
@@ -2114,6 +2119,12 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         isDragOver && "ring-1 ring-primary/60 bg-accent/20",
         className,
       )}
+      onInputCapture={(event) => {
+        const editable = event.currentTarget.querySelector<HTMLElement>('[contenteditable="true"]');
+        setHasDomContent(
+          (editable?.textContent ?? "").replaceAll(INLINE_CARET_BOUNDARY, "").length > 0,
+        );
+      }}
       onKeyDownCapture={(e) => {
         if (plainText && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
           const selection = window.getSelection();
