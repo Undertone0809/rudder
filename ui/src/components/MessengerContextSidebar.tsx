@@ -3034,7 +3034,10 @@ export function MessengerContextSidebar() {
               ) : (
                 <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
               )}
-              <CustomGroupIcon icon={displayedCustomGroup.icon} />
+              <CustomGroupIcon
+                icon={displayedCustomGroup.icon}
+                color={customGroupColorFor(displayedCustomGroup)}
+              />
               <span className="min-w-0 flex-1 truncate">{section.label}</span>
               {customGroupTitleGenerating ? (
                 <span
