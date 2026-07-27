@@ -176,6 +176,10 @@ describe("ChatThreadRow", () => {
       onStartRename: vi.fn(), onRegenerateTitle: vi.fn(), onFork: vi.fn(), onArchive: vi.fn(),
       onDelete: vi.fn(), onTogglePin: vi.fn(), onToggleUnread: vi.fn(), onCopyConversationLink: vi.fn(), onSelect: vi.fn(),
     };
+    const group = {
+      id: "group-1", orgId: "org-1", userId: "user-1", name: "Critical", icon: "brain::red",
+      sortOrder: 0, collapsed: false, pinnedAt: null, createdAt: new Date(), updatedAt: new Date(), entries: [],
+    };
     const container = render(
       <ChatThreadRow
         conversation={conversation()}
@@ -189,6 +193,11 @@ describe("ChatThreadRow", () => {
         renaming={false}
         renameDraft=""
         titleGenerating
+        customGroups={[group]}
+        customGroupId="other-group"
+        customGroupPending={false}
+        onMoveToCustomGroup={vi.fn()}
+        onRemoveFromCustomGroup={vi.fn()}
         {...handlers}
       />,
     );
@@ -197,6 +206,8 @@ describe("ChatThreadRow", () => {
     expect(container.textContent).toContain("Feishu");
     expect(container.querySelector('[data-testid$="unread-badge"]')?.textContent).toBe("99+");
     expect(container.querySelector('[aria-label="Generating chat title"]')).toBeTruthy();
+    expect(button(container, "Move out of group")?.querySelector("svg")).toBeNull();
+    expect(button(container, "Critical")?.querySelector("svg")).not.toBeNull();
     act(() => {
       container.querySelector<HTMLAnchorElement>('a[href="/messenger/chat/chat-1"]')?.click();
       button(container, "Fork")?.click();
@@ -287,6 +298,8 @@ describe("ThreadRow", () => {
     expect(container.querySelector('[title="Issue status: in progress"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="issue-ISS-42-unread-badge"]')?.textContent).toBe("3");
     expect(container.textContent).toContain("Direct preview");
+    expect(button(container, "Move out of group")?.querySelector("svg")).toBeNull();
+    expect(button(container, "Critical")?.querySelector("svg")).not.toBeNull();
     act(() => {
       container.querySelector<HTMLAnchorElement>('a[href="/issues/issue-42"]')?.click();
       button(container, "Unpin")?.click();

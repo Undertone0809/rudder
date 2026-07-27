@@ -28,6 +28,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import { CustomGroupIcon } from "./MessengerCustomGroupVisuals";
 import {
   MessengerDragHandle,
   type SortableDragHandleProps,
@@ -279,12 +280,12 @@ export function MessengerSavedViewRow({
             <DropdownMenuSubContent className="surface-overlay text-foreground">
               {currentGroupId && onMoveOutOfGroup ? (
                 <DropdownMenuItem onClick={() => onMoveOutOfGroup(resolvedItemKey)}>
-                  <Folder className="h-4 w-4" />
                   Move out of group
                 </DropdownMenuItem>
               ) : null}
               {otherGroups.map((group) => (
                 <DropdownMenuItem key={group.id} onClick={() => onMove(group.id, resolvedItemKey)}>
+                  <CustomGroupIcon icon={group.icon} />
                   {group.name}
                 </DropdownMenuItem>
               ))}

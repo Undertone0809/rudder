@@ -27,7 +27,6 @@ import {
   Copy,
   DollarSign,
   EyeOff,
-  Folder,
   FolderInput,
   FolderPlus,
   GitFork,
@@ -755,7 +754,6 @@ export function ChatThreadRow({
                     <DropdownMenuSubContent className="morph-popover morph-popover--from-left surface-overlay text-foreground">
                       {customGroupId ? (
                         <DropdownMenuItem onClick={onRemoveFromCustomGroup}>
-                          <Folder className="h-4 w-4" />
                           Move out of group
                         </DropdownMenuItem>
                       ) : null}
@@ -1056,7 +1054,6 @@ export function ThreadRow({
                   <DropdownMenuSubContent className="morph-popover morph-popover--from-left surface-overlay text-foreground">
                     {customGroupId ? (
                       <DropdownMenuItem onClick={onRemoveFromCustomGroup}>
-                        <Folder className="h-4 w-4" />
                         Move out of group
                       </DropdownMenuItem>
                     ) : null}

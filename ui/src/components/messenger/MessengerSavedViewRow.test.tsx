@@ -265,8 +265,8 @@ describe("MessengerSavedViewRow", () => {
     const onMove = vi.fn();
     const onMoveOutOfGroup = vi.fn();
     const groups = [
-      { id: "group-a", name: "Launch" },
-      { id: "group-b", name: "Review" },
+      { id: "group-a", name: "Launch", icon: "rocket::rose" },
+      { id: "group-b", name: "Review", icon: "🚀::teal" },
     ];
 
     renderRow({
@@ -302,7 +302,11 @@ describe("MessengerSavedViewRow", () => {
     expect(host!.textContent).toContain("Review");
     const moveLooseButton = Array.from(host!.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Move out of group"));
+    const reviewButton = Array.from(host!.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Review"));
     expect(moveLooseButton).toBeTruthy();
+    expect(moveLooseButton?.querySelector("svg")).toBeNull();
+    expect(reviewButton?.textContent).toContain("🚀");
     act(() => moveLooseButton?.click());
     expect(onMoveOutOfGroup).toHaveBeenCalledWith("saved-view:saved-a");
   });
