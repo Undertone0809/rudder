@@ -103,14 +103,27 @@ export function AssigneeLabel({
   );
 }
 
-export function AgentMenuLabel({ agent }: { agent: Pick<Agent, "name" | "role" | "title" | "icon"> }) {
+export function AgentMenuLabel({
+  agent,
+  agentAvatarStyle = "framed",
+}: {
+  agent: Pick<Agent, "name" | "role" | "title" | "icon">;
+  agentAvatarStyle?: "framed" | "bare";
+}) {
   const supportingLabel = agentTitleBadgeLabel(agent);
 
   return (
     <span data-slot="agent-menu-label" className="flex min-w-0 flex-1 items-center gap-2">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
-        <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5" />
-      </span>
+      {agentAvatarStyle === "bare" ? (
+        <AgentIcon icon={agent.icon} role={agent.role} className="h-6 w-6 shrink-0 text-muted-foreground" />
+      ) : (
+        <span
+          data-slot="agent-menu-avatar-frame"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground"
+        >
+          <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5" />
+        </span>
+      )}
       <span className="flex min-w-0 flex-1 flex-col text-left">
         <span className="truncate text-xs font-medium leading-4 text-foreground">{agent.name}</span>
         {supportingLabel ? (

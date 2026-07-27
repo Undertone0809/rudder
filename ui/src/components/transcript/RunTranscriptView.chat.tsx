@@ -183,7 +183,7 @@ function TranscriptChatActionIconCell({
             src={mcpBrandIcon.src}
             alt=""
             aria-hidden="true"
-            className={cn("h-4 w-4 object-contain", mcpBrandIcon.imageClassName)}
+            className={cn("h-3.5 w-3.5 object-contain", mcpBrandIcon.imageClassName)}
           />
         </span>
       ) : (

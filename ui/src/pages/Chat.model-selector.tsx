@@ -547,6 +547,7 @@ export function ChatAgentRuntimeSelector(props: {
   isLoading?: boolean;
   error?: unknown;
   pending?: boolean;
+  panelPlacement?: "side" | "above";
   modelSelectRef?: Ref<HTMLButtonElement>;
   onChange: (overrides: ChatRuntimeOverrides) => void;
 }) {
@@ -559,6 +560,17 @@ export function ChatAgentRuntimeSelector(props: {
     const rect = triggerRef.current.getBoundingClientRect();
     const width = 304;
     const viewportPadding = 12;
+    if (props.panelPlacement === "above") {
+      setPosition({
+        left: Math.max(
+          viewportPadding,
+          Math.min(rect.right - width, window.innerWidth - width - viewportPadding),
+        ),
+        bottom: Math.max(viewportPadding, window.innerHeight - rect.top + 8),
+      });
+      setOpen(true);
+      return;
+    }
     const availableRight = window.innerWidth - rect.right;
     setPosition({
       left: availableRight >= width + viewportPadding
@@ -695,6 +707,7 @@ export function ChatAgentMenuContent(props: {
   runtimeLabel: string;
   isLoading?: boolean;
   error?: unknown;
+  runtimePanelPlacement?: "side" | "above";
   modelSelectRef?: Ref<HTMLButtonElement>;
   onSelectAgent: (agentId: string) => void;
   onChangeRuntime: (overrides: ChatRuntimeOverrides) => void;
@@ -759,6 +772,7 @@ export function ChatAgentMenuContent(props: {
                 isLoading={props.isLoading}
                 error={props.error}
                 pending={props.runtimeSelectionPending}
+                panelPlacement={props.runtimePanelPlacement}
                 modelSelectRef={props.modelSelectRef}
                 onChange={props.onChangeRuntime}
               />
@@ -794,9 +808,12 @@ export function ChatAgentSelectorButton(props: {
       onClick={props.onClick}
     >
       {props.agent ? (
-        <span data-testid="chat-agent-selector-icon" className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
-          <AgentIcon icon={props.agent.icon} role={props.agent.role} className="h-3.5 w-3.5" />
-        </span>
+        <AgentIcon
+          icon={props.agent.icon}
+          role={props.agent.role}
+          testId="chat-agent-selector-icon"
+          className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+        />
       ) : null}
       <span className="min-w-0 truncate">{props.label}</span>
     </button>

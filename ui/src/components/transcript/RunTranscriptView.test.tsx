@@ -2736,6 +2736,7 @@ describe("RunTranscriptView", () => {
 
     expect(html).toContain("Call Rudder chat transcript");
     expect(html).toContain("/rudder-logo.png");
+    expect(html).toContain("h-3.5 w-3.5 object-contain");
     expect(html).not.toContain("rudder-tools");
     expect(html).not.toContain("eeb73ad1-e000-4dce-9d47-23106fa36bbc");
     expect(html).not.toContain("full true");

@@ -2,6 +2,8 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
+import { organizationSkillsApi } from "@/api/organizationSkills";
+import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
@@ -9,6 +11,12 @@ import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
@@ -19,9 +27,12 @@ import {
   serializeChatResponseAnnotations,
   validateChatResponseAnnotationReplacement,
 } from "@/lib/chat-response-annotations";
+import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
+import { appendSkillReferencesToDraft } from "@/lib/organization-skill-picker";
 import { queryKeys } from "@/lib/queryKeys";
 import { latestSideChatAnchor, sideChatConversationMessages, sideChatIsReadOnly } from "@/lib/side-chat";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
+import { PendingAttachmentPreview } from "@/pages/Chat.attachments";
 import { AssistantDraftItem, ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
 import {
   ChatAgentMenuContent,
@@ -31,7 +42,11 @@ import {
   useChatRuntimeSelection,
   type ChatRuntimeOverrides,
 } from "@/pages/Chat.model-selector";
-import { mergeChatMessages } from "@/pages/Chat.parts";
+import {
+  materializePendingAttachment,
+  mergeChatMessages,
+  pendingAttachmentKey,
+} from "@/pages/Chat.parts";
 import type {
   Agent,
   ChatConversation,
@@ -39,7 +54,7 @@ import type {
   ChatMessage,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Clock3, Folder, Loader2, Plus } from "lucide-react";
+import { ArrowUp, Clock3, Folder, Loader2, Paperclip, Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -101,6 +116,10 @@ export function SideChatPanelView({
   const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string | null>(null);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [agentMenuPosition, setAgentMenuPosition] = useState<CSSProperties | null>(null);
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  const [skillMenuOpen, setSkillMenuOpen] = useState(false);
+  const [skillSearchQuery, setSkillSearchQuery] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [annotationState, dispatchAnnotation] = useReducer(
     responseAnnotationReducer,
     target.inlineAnnotations ?? [],
@@ -111,6 +130,7 @@ export function SideChatPanelView({
   const editingAnnotationAnchorRef = useRef<HTMLButtonElement | null>(null);
   const annotationDetailsChipRef = useRef<HTMLButtonElement | null>(null);
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftAgentInitializedRef = useRef(false);
   const closeRequestedRef = useRef(false);
   const createPromiseRef = useRef<Promise<ChatConversation> | null>(null);
@@ -197,6 +217,14 @@ export function SideChatPanelView({
     queryKey: queryKeys.projects.list(organizationId),
     queryFn: () => projectsApi.list(organizationId),
   });
+  const organizationQuery = useQuery({
+    queryKey: queryKeys.organizations.detail(organizationId),
+    queryFn: () => organizationsApi.get(organizationId),
+  });
+  const organizationSkillsQuery = useQuery({
+    queryKey: queryKeys.organizationSkills.list(organizationId),
+    queryFn: () => organizationSkillsApi.list(organizationId),
+  });
 
   const conversation = conversationQuery.data ?? null;
   const displayConversation = conversation ?? sourceConversationQuery.data ?? null;
@@ -218,6 +246,29 @@ export function SideChatPanelView({
   const selectedAgent = selectedAgentId
     ? liveAgents.find((agent) => agent.id === selectedAgentId) ?? null
     : null;
+  const agentSkillsQuery = useQuery({
+    queryKey: queryKeys.agents.skills(selectedAgentId ?? "__none__"),
+    queryFn: () => agentsApi.skills(selectedAgentId!, organizationId),
+    enabled: Boolean(selectedAgentId),
+  });
+  const availableChatSkills = useMemo(
+    () => buildChatSkillOptions({
+      agent: selectedAgent,
+      orgUrlKey: organizationQuery.data?.urlKey ?? "organization",
+      organizationSkills: organizationSkillsQuery.data,
+      skillSnapshot: agentSkillsQuery.data,
+    }),
+    [
+      agentSkillsQuery.data,
+      organizationQuery.data?.urlKey,
+      organizationSkillsQuery.data,
+      selectedAgent,
+    ],
+  );
+  const filteredChatSkills = useMemo(
+    () => filterChatSkillOptions(availableChatSkills, skillSearchQuery),
+    [availableChatSkills, skillSearchQuery],
+  );
   const {
     activeRuntimeOverrides,
     adapterModelsQuery,
@@ -295,6 +346,31 @@ export function SideChatPanelView({
     if (!liveAgents.some((agent) => agent.id === agentId)) return;
     setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
     setDraftPreferredAgentId(agentId);
+    setSkillMenuOpen(false);
+    setSkillSearchQuery("");
+  };
+
+  const appendPendingFiles = async (incomingFiles: Iterable<File>) => {
+    const files = Array.from(incomingFiles).filter((file) => file.size > 0);
+    if (files.length === 0) return;
+    try {
+      const safeFiles = await Promise.all(
+        files.map((file, index) => materializePendingAttachment(file, index)),
+      );
+      setPendingFiles((current) => [...current, ...safeFiles]);
+      setSendError(null);
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Could not stage this attachment.");
+    }
+  };
+  const insertSkillReference = (entry: (typeof availableChatSkills)[number]) => {
+    if (!entry.skillRefLabel || !entry.skillMarkdownTarget) return;
+    setDraft((current) => appendSkillReferencesToDraft(
+      current,
+      [`[${entry.skillRefLabel}](${entry.skillMarkdownTarget})`],
+    ));
+    setSkillMenuOpen(false);
+    setSkillSearchQuery("");
   };
 
   const upsertMessage = (conversationId: string, message: ChatMessage) => {
@@ -307,12 +383,15 @@ export function SideChatPanelView({
   const handleSend = async () => {
     const body = draft.trim();
     if (
-      !canSubmitChatResponseAnnotations(body, annotationState)
+      (pendingFiles.length === 0 && !canSubmitChatResponseAnnotations(body, annotationState))
       || sending
       || readOnly
       || !sourceMessageId
     ) return;
-    const serializedAnnotations = serializeChatResponseAnnotations(annotationState);
+    const regularFiles = [...pendingFiles];
+    const serializedAnnotations = serializeChatResponseAnnotations(annotationState, {
+      fileIndexOffset: regularFiles.length,
+    });
     const createdAt = new Date();
     let acknowledged = false;
     setSending(true);
@@ -362,7 +441,7 @@ export function SideChatPanelView({
       streamAbortControllerRef.current = abortController;
       await chatsApi.sendMessageStream(conversationId, body, {
         signal: abortController.signal,
-        files: serializedAnnotations.files,
+        files: [...regularFiles, ...serializedAnnotations.files],
         inlineAnnotations: serializedAnnotations.inlineAnnotations,
         onEvent: async (event) => {
           if (event.type === "ack") {
@@ -373,6 +452,7 @@ export function SideChatPanelView({
               generationId: event.generationId ?? current.generationId,
             } : current);
             dispatchAnnotation({ type: "clear" });
+            setPendingFiles([]);
             setAnnotationsExpanded(false);
             setEditingAnnotationId(null);
             onReplaceTarget(
@@ -415,7 +495,8 @@ export function SideChatPanelView({
           if (event.type === "error") {
             if (!acknowledged && event.messageId) {
               acknowledged = true;
-              dispatchAnnotation({ type: "clear" });
+            dispatchAnnotation({ type: "clear" });
+            setPendingFiles([]);
               setAnnotationsExpanded(false);
               setEditingAnnotationId(null);
               onReplaceTarget(
@@ -689,6 +770,23 @@ export function SideChatPanelView({
                 })() : null}
               </div>
             ) : null}
+            {pendingFiles.length > 0 ? (
+              <div data-testid="side-chat-pending-attachments" className="mb-2.5 flex flex-wrap gap-2">
+                {pendingFiles.map((file) => {
+                  const fileKey = pendingAttachmentKey(file);
+                  return (
+                    <div key={fileKey} data-testid="side-chat-pending-attachment" className="max-w-full">
+                      <PendingAttachmentPreview
+                        file={file}
+                        onRemove={() => setPendingFiles((current) => (
+                          current.filter((candidate) => pendingAttachmentKey(candidate) !== fileKey)
+                        ))}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
             <MarkdownEditor
               value={draft}
               onChange={setDraft}
@@ -702,9 +800,33 @@ export function SideChatPanelView({
             />
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="side-chat-composer-toolbar">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <button type="button" aria-label="Add files and options" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground">
-                  <Plus className="h-4 w-4" />
-                </button>
+                <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
+                  <DropdownMenuTrigger
+                    type="button"
+                    aria-label="Add files and options"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="start"
+                    side="top"
+                    sideOffset={8}
+                    className="surface-overlay w-64 rounded-[var(--radius-lg)] border p-1.5 text-foreground"
+                  >
+                    <DropdownMenuItem
+                      className="rounded-[var(--radius-md)] px-3 py-2.5"
+                      onSelect={(event) => {
+                        event.preventDefault();
+                        setPlusMenuOpen(false);
+                        window.setTimeout(() => fileInputRef.current?.click(), 0);
+                      }}
+                    >
+                      <Paperclip className="mr-2 h-4 w-4" />
+                      Add files
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <span className="inline-flex max-w-[11rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:var(--surface-active)] px-2.5 py-1.5 text-xs font-medium text-muted-foreground" data-testid="side-chat-project-chip">
                   <Folder className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">{selectedProject?.name ?? "No project"}</span>
@@ -717,14 +839,74 @@ export function SideChatPanelView({
                   disabled={agentsQuery.isPending || sending || runtimeMutation.isPending}
                   onClick={() => setAgentMenuOpen((open) => !open)}
                 />
-                <span className="inline-flex rounded-[var(--radius-md)] bg-[color:var(--surface-active)] px-2.5 py-1.5 text-xs font-medium text-muted-foreground">Skills</span>
+                <DropdownMenu
+                  open={skillMenuOpen}
+                  onOpenChange={(open) => {
+                    setSkillMenuOpen(open);
+                    if (!open) setSkillSearchQuery("");
+                  }}
+                >
+                  <DropdownMenuTrigger
+                    type="button"
+                    aria-label="Skills"
+                    className="chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
+                  >
+                    Skills
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="start"
+                    side="top"
+                    sideOffset={8}
+                    className="surface-overlay max-h-[min(60vh,320px)] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
+                  >
+                    {agentSkillsQuery.isPending || organizationSkillsQuery.isPending ? (
+                      <div className="flex items-center gap-2 rounded-[var(--radius-md)] px-3 py-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading skills...
+                      </div>
+                    ) : availableChatSkills.length === 0 ? (
+                      <div className="rounded-[var(--radius-md)] px-3 py-2 text-sm text-muted-foreground">
+                        This agent has no enabled skills.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="p-1">
+                          <input
+                            className="w-full rounded-[var(--radius-md)] border border-border bg-transparent px-2.5 py-2 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-ring"
+                            placeholder="Search skills..."
+                            value={skillSearchQuery}
+                            onChange={(event) => setSkillSearchQuery(event.target.value)}
+                          />
+                        </div>
+                        {filteredChatSkills.length === 0 ? (
+                          <div className="rounded-[var(--radius-md)] px-3 py-2 text-sm text-muted-foreground">
+                            No skills match search.
+                          </div>
+                        ) : filteredChatSkills.map((entry) => (
+                          <DropdownMenuItem
+                            key={entry.skillMarkdownTarget}
+                            className="items-start rounded-[var(--radius-md)] px-3 py-2"
+                            onSelect={() => insertSkillReference(entry)}
+                          >
+                            <span className="flex min-w-0 flex-col">
+                              <span className="truncate text-sm font-medium">{entry.skillDisplayName}</span>
+                              <span className="truncate text-xs text-muted-foreground">
+                                {entry.skillDescription ?? entry.skillLocationLabel ?? entry.skillRefLabel}
+                              </span>
+                            </span>
+                          </DropdownMenuItem>
+                        ))}
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
               <button
                 type="button"
                 aria-label="Send Side Chat message"
                 className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:cursor-not-allowed disabled:opacity-45"
                 disabled={
-                  !canSubmitChatResponseAnnotations(draft, annotationState)
+                  (pendingFiles.length === 0 && !canSubmitChatResponseAnnotations(draft, annotationState))
                   || sending
                   || runtimeMutation.isPending
                   || !selectedAgentId
@@ -758,12 +940,23 @@ export function SideChatPanelView({
                 runtimeLabel={runtimeLabel}
                 isLoading={adapterModelsQuery.isPending}
                 error={adapterModelsQuery.error}
+                runtimePanelPlacement="above"
                 modelSelectRef={runtimeModelSelectRef}
                 onSelectAgent={applyPreferredAgent}
                 onChangeRuntime={applyRuntimeOverrides}
               />
             </div>
           ) : null}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              void appendPendingFiles(event.currentTarget.files ?? []);
+              event.currentTarget.value = "";
+            }}
+          />
         </div>
       ) : (
         <div className="shrink-0 border-t border-[color:var(--border-soft)] px-4 py-3 text-sm text-muted-foreground" data-testid="side-chat-read-only">

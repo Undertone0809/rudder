@@ -2,6 +2,8 @@
 
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
+import { organizationSkillsApi } from "@/api/organizationSkills";
+import { organizationsApi } from "@/api/orgs";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import type {
@@ -21,7 +23,16 @@ vi.mock("@/api/agents", () => ({
   agentsApi: {
     list: vi.fn(),
     adapterModels: vi.fn(),
+    skills: vi.fn(),
   },
+}));
+
+vi.mock("@/api/organizationSkills", () => ({
+  organizationSkillsApi: { list: vi.fn() },
+}));
+
+vi.mock("@/api/orgs", () => ({
+  organizationsApi: { get: vi.fn() },
 }));
 
 vi.mock("@/api/projects", () => ({
@@ -35,6 +46,7 @@ vi.mock("@/api/chats", () => ({
     createSideChat: vi.fn(),
     destroySideChat: vi.fn(async () => undefined),
     sendMessageStream: vi.fn(),
+    update: vi.fn(),
   },
 }));
 
@@ -120,6 +132,7 @@ const defaultAgent = {
   id: "40000000-0000-4000-8000-000000000001",
   orgId: sourceConversation.orgId,
   name: "Rudder Agent",
+  urlKey: "rudder-agent",
   status: "idle",
   agentRuntimeType: "codex_local",
   agentRuntimeConfig: {},
@@ -182,6 +195,31 @@ beforeEach(() => {
   onReplaceTarget = vi.fn();
   vi.mocked(agentsApi.list).mockReset().mockResolvedValue([defaultAgent]);
   vi.mocked(agentsApi.adapterModels).mockReset().mockResolvedValue([]);
+  vi.mocked(agentsApi.skills).mockReset().mockResolvedValue({
+    agentRuntimeType: "codex_local",
+    supported: true,
+    mode: "persistent",
+    desiredSkills: ["agent:research-skill"],
+    entries: [{
+      key: "research-skill",
+      selectionKey: "agent:research-skill",
+      runtimeName: "research-skill",
+      desired: true,
+      configurable: true,
+      alwaysEnabled: false,
+      managed: true,
+      state: "configured",
+      sourceClass: "agent_home",
+      sourcePath: "/tmp/skills/research-skill",
+      description: "Researches a focused question.",
+    }],
+    warnings: [],
+  });
+  vi.mocked(organizationSkillsApi.list).mockReset().mockResolvedValue([]);
+  vi.mocked(organizationsApi.get).mockReset().mockResolvedValue({
+    id: sourceConversation.orgId,
+    urlKey: "rudder",
+  } as Awaited<ReturnType<typeof organizationsApi.get>>);
   vi.mocked(chatsApi.get).mockReset().mockResolvedValue(sourceConversation);
   vi.mocked(chatsApi.listMessages).mockReset().mockResolvedValue([]);
   vi.mocked(chatsApi.createSideChat).mockReset().mockResolvedValue(sideConversation);
@@ -708,5 +746,62 @@ describe("SideChatPanelView response annotations", () => {
 
     expect(draft.value).toBe("");
     expect(host.textContent).not.toContain("1 annotation");
+  });
+});
+
+describe("SideChatPanelView composer controls", () => {
+  it("stages Add files and inserts an enabled Skill reference", async () => {
+    await renderView({
+      viewTarget: {
+        ...target,
+        inlineAnnotations: [],
+      },
+    });
+
+    await act(async () => {
+      const addButton = host.querySelector<HTMLButtonElement>('[aria-label="Add files and options"]');
+      addButton?.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        pointerType: "mouse",
+      }));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Add files"));
+
+    const file = new File(["evidence"], "evidence.txt", { type: "text/plain" });
+    const fileInput = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await act(async () => {
+      Object.defineProperty(fileInput, "files", {
+        configurable: true,
+        value: [file],
+      });
+      fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("evidence.txt"));
+
+    await act(async () => {
+      const skillsButton = host.querySelector<HTMLButtonElement>('[aria-label="Skills"]');
+      skillsButton?.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        pointerType: "mouse",
+      }));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(document.body.textContent).toContain("research-skill"));
+    const skillOption = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+      .find((candidate) => candidate.textContent?.includes("research-skill"));
+    expect(skillOption).toBeDefined();
+    await act(async () => {
+      skillOption?.click();
+      await Promise.resolve();
+    });
+
+    const draft = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Side Chat draft"]',
+    )!;
+    await vi.waitFor(() => expect(draft.value).toContain("[research-skill]("));
   });
 });

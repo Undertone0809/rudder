@@ -14,6 +14,25 @@ import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
+async function enableSideChatSkill(page: Page, orgId: string, agentIds: string[]) {
+  const skillRes = await page.request.post(`/api/orgs/${orgId}/skills`, {
+    data: {
+      name: "Side Chat Research",
+      slug: "side-chat-research",
+      markdown: "---\nname: side-chat-research\n---\n\n# Side Chat Research\n",
+    },
+  });
+  expect(skillRes.ok(), await skillRes.text()).toBe(true);
+  const skill = await skillRes.json() as { key: string };
+  for (const agentId of agentIds) {
+    const syncRes = await page.request.post(
+      `/api/agents/${agentId}/skills/sync?orgId=${encodeURIComponent(orgId)}`,
+      { data: { desiredSkills: [`org:${skill.key}`] } },
+    );
+    expect(syncRes.ok(), await syncRes.text()).toBe(true);
+  }
+}
+
 function threadTestId(threadKey: string) {
   return `messenger-thread-${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
@@ -30,6 +49,7 @@ async function seedSideChatSource(page: Page, name: string) {
     name: "Analyst",
     command: E2E_CODEX_STUB,
   }) as { id: string };
+  await enableSideChatSkill(page, organization.id, [agent.id, alternateAgent.id]);
   const conversationId = randomUUID();
   const assistantMessageId = randomUUID();
   await e2eDb.insert(chatConversations).values({
@@ -130,6 +150,26 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await expect(panel.getByTestId("side-chat-project-chip")).toBeVisible();
   const agentSelector = panel.getByTestId("side-chat-composer").getByTestId("chat-agent-selector");
   await expect(agentSelector).toContainText("Sidekick");
+  await panel.getByRole("button", { name: "Add files and options" }).click();
+  await expect(page.getByRole("menuitem", { name: "Add files" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  const sideFileInput = panel.getByTestId("side-chat-composer").locator('input[type="file"]');
+  await sideFileInput.setInputFiles({
+    name: "side-chat-evidence.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Side Chat attachment evidence"),
+  });
+  await expect(panel.getByTestId("side-chat-pending-attachments")).toContainText(
+    "side-chat-evidence.txt",
+  );
+  await panel.getByRole("button", { name: "Remove side-chat-evidence.txt" }).click();
+  await expect(panel.getByTestId("side-chat-pending-attachments")).toHaveCount(0);
+  await panel.getByRole("button", { name: "Skills" }).click();
+  const sideChatSkill = page.getByRole("menuitem").filter({ hasText: "Side Chat Research" });
+  await expect(sideChatSkill).toBeVisible();
+  await sideChatSkill.click();
+  await expect(sideComposerEditor(panel)).toContainText("side-chat-research");
+  await sideComposerEditor(panel).fill("");
   await expect(panel).not.toContainText("Enter to send · Shift+Enter for a new line");
   await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
   await expect(panel).not.toContainText("From the main chat");
@@ -141,7 +181,17 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   const runtimeSelector = analystRow.getByTestId("chat-agent-runtime-selector");
   await expect(runtimeSelector).toBeVisible();
   await runtimeSelector.click();
-  await expect(page.getByTestId("chat-agent-runtime-panel")).toBeVisible();
+  const runtimePanel = page.getByTestId("chat-agent-runtime-panel");
+  await expect(runtimePanel).toBeVisible();
+  const [runtimePanelBox, runtimeSelectorBox] = await Promise.all([
+    runtimePanel.boundingBox(),
+    runtimeSelector.boundingBox(),
+  ]);
+  expect(runtimePanelBox).not.toBeNull();
+  expect(runtimeSelectorBox).not.toBeNull();
+  expect(Math.abs(
+    runtimePanelBox!.y + runtimePanelBox!.height - runtimeSelectorBox!.y,
+  )).toBeLessThanOrEqual(12);
   await page.screenshot({
     path: testInfo.outputPath("side-chat-agent-runtime-draft.png"),
     fullPage: true,

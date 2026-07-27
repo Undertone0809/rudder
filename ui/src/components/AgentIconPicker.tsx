@@ -34,9 +34,10 @@ interface AgentIconProps {
   fallbackSeed?: string | null;
   className?: string;
   style?: CSSProperties;
+  testId?: string;
 }
 
-export function AgentIcon({ icon, role, fallbackSeed, className, style }: AgentIconProps) {
+export function AgentIcon({ icon, role, fallbackSeed, className, style, testId }: AgentIconProps) {
   const normalized = normalizeAgentAvatarIconValue(icon);
   const effectiveIcon = normalized ?? getDefaultAgentIconForRole(role);
   const imageSrc = getAgentAvatarImageSrc(effectiveIcon) ?? getAgentFallbackAvatarImageSrc(fallbackSeed);
@@ -46,6 +47,7 @@ export function AgentIcon({ icon, role, fallbackSeed, className, style }: AgentI
       <img
         src={imageSrc}
         alt=""
+        data-testid={testId}
         className={cn("inline-flex rounded-full object-cover", className)}
         style={{
           background:
@@ -60,7 +62,7 @@ export function AgentIcon({ icon, role, fallbackSeed, className, style }: AgentI
     );
   }
   const Icon = getAgentIcon(effectiveIcon);
-  return <Icon className={className} />;
+  return <Icon className={className} data-testid={testId} />;
 }
 
 interface AgentIconPickerProps {
