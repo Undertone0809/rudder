@@ -409,6 +409,10 @@ fails when `initdb`, `pg_ctl`, or `postgres` are missing, or when
 any of those binaries is not PostgreSQL 18.4. Packaging and runtime selection
 also require the complete PostgreSQL `share` resources, including timezone
 data, so a partial cache cannot pass staging and then fail during database boot.
+Linux release packaging builds PostgreSQL from the official pinned source
+archive without `--with-system-tzdata`, so its portable payload keeps both
+relocatable initdb templates and the PostgreSQL-owned timezone database instead
+of depending on files installed on the CI host.
 `desktop/scripts/stage-server.mjs` runs `pnpm deploy` with the legacy deploy
 config scoped to that child process so pnpm 10+ and 11+ can still package the
 server from a workspace that does not use injected workspace packages.

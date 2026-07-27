@@ -80,12 +80,21 @@ describe("release workflow latency contracts", () => {
     expect(releaseWorkflow).not.toContain("continue-on-error: true");
   });
 
-  it("caches prepared Desktop PostgreSQL payloads on non-Linux runners", () => {
+  it("caches prepared Desktop PostgreSQL payloads and builds a relocatable Linux runtime", () => {
     expect(desktopWorkflow).toContain("Cache PostgreSQL runtime payload");
     expect(desktopWorkflow).toContain("actions/cache@");
     expect(desktopWorkflow).toContain("postgres-runtime-18.4-");
-    expect(desktopWorkflow).toContain("hashFiles('desktop/scripts/prepare-postgres-runtime.mjs')");
-    expect(desktopWorkflow).toContain("matrix.platform != 'linux'");
+    expect(desktopWorkflow).toContain("hashFiles('desktop/scripts/prepare-postgres-runtime.mjs', '.github/workflows/desktop-release.yml')");
+    expect(desktopWorkflow).toContain("https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2");
+    expect(desktopWorkflow).toContain("81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094");
+    expect(desktopWorkflow).toContain("--without-icu");
+    expect(desktopWorkflow).toContain("--without-readline");
+    expect(desktopWorkflow).toContain("--without-zlib");
+    expect(desktopWorkflow).toContain("Linux portable PostgreSQL must bundle its own timezone database.");
+    expect(desktopWorkflow).toContain("source_runtime}.portable-smoke-hidden");
+    expect(desktopWorkflow).toContain('staged_runtime}/bin/initdb');
+    expect(desktopWorkflow).toContain('staged_runtime}/bin/pg_ctl');
+    expect(desktopWorkflow).not.toContain("sudo apt-get install -y postgresql-18");
     expect(releaseWorkflow).toContain("--ref main");
     expect(releaseWorkflow).toContain('-f source_ref="$tag"');
   });

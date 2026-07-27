@@ -64,29 +64,48 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Cache PostgreSQL runtime payload
-        if: matrix.platform != 'linux'
         uses: actions/cache@v5
         with:
           path: ~/.rudder/runtime-payloads/postgres-18.4
-          key: postgres-runtime-18.4-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('desktop/scripts/prepare-postgres-runtime.mjs') }}
+          key: postgres-runtime-18.4-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('desktop/scripts/prepare-postgres-runtime.mjs', '.github/workflows/desktop-release.yml') }}
 
       - name: Prepare PostgreSQL 18.4 runtime payload
         env:
           MATRIX_PLATFORM: ${{ matrix.platform }}
         run: |
           if [ "${MATRIX_PLATFORM}" = "linux" ]; then
-            sudo apt-get update
-            sudo apt-get install -y curl ca-certificates xvfb xauth
-            sudo install -d /usr/share/postgresql-common/pgdg
-            sudo curl --fail --location --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-              https://www.postgresql.org/media/keys/ACCC4CF8.asc
-            . /etc/os-release
-            echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
-              | sudo tee /etc/apt/sources.list.d/pgdg.list
-            sudo apt-get update
-            sudo apt-get install -y postgresql-18
-            echo "RUDDER_POSTGRES_BIN_DIR=/usr/lib/postgresql/18/bin" >> "$GITHUB_ENV"
-            /usr/lib/postgresql/18/bin/postgres --version
+            runtime_root="${HOME}/.rudder/runtime-payloads/postgres-18.4/linux-${{ matrix.arch }}"
+            bin_dir="${runtime_root}/bin"
+            if [ ! -x "${bin_dir}/postgres" ]; then
+              source_url="https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2"
+              source_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
+              source_archive="${RUNNER_TEMP}/postgresql-18.4.tar.bz2"
+              source_root="${RUNNER_TEMP}/postgresql-18.4"
+              build_root="${RUNNER_TEMP}/postgresql-18.4-build"
+              curl --fail --location --output "${source_archive}" "${source_url}"
+              echo "${source_sha256}  ${source_archive}" | sha256sum --check
+              tar -xjf "${source_archive}" -C "${RUNNER_TEMP}"
+              mkdir -p "${build_root}"
+              cd "${build_root}"
+              "${source_root}/configure" \
+                --prefix="${runtime_root}" \
+                --without-icu \
+                --without-readline \
+                --without-zlib
+              make -j2
+              make install
+            fi
+            test -f "${runtime_root}/share/postgres.bki"
+            test -f "${runtime_root}/share/postgresql.conf.sample"
+            test -d "${runtime_root}/share/timezone"
+            test -x "${bin_dir}/pg_config"
+            postgres_configure="$("${bin_dir}/pg_config" --configure)"
+            if grep -q -- '--with-system-tzdata' <<< "${postgres_configure}"; then
+              echo "Linux portable PostgreSQL must bundle its own timezone database." >&2
+              exit 1
+            fi
+            echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"
+            "${bin_dir}/postgres" --version
             exit 0
           fi
 
@@ -110,6 +129,33 @@ jobs:
 
           if [ "$(uname -s)" = "Linux" ]; then
             xvfb-run --auto-servernum pnpm desktop:dist
+            staged_runtime="${GITHUB_WORKSPACE}/desktop/.packaged/postgres-18.4/linux-${{ matrix.arch }}"
+            source_runtime="$(dirname "${RUDDER_POSTGRES_BIN_DIR}")"
+            hidden_source_runtime="${source_runtime}.portable-smoke-hidden"
+            restore_source_runtime() {
+              if [ -d "${hidden_source_runtime}" ]; then
+                mv "${hidden_source_runtime}" "${source_runtime}"
+              fi
+            }
+            trap restore_source_runtime EXIT
+            mv "${source_runtime}" "${hidden_source_runtime}"
+            smoke_data="$(mktemp -d "${RUNNER_TEMP}/rudder-postgres-portable-smoke.XXXXXX")"
+            "${staged_runtime}/bin/initdb" \
+              --pgdata="${smoke_data}" \
+              --no-locale \
+              --encoding=UTF8
+            "${staged_runtime}/bin/pg_ctl" \
+              --pgdata="${smoke_data}" \
+              --options="-h 127.0.0.1 -p 55432" \
+              --wait \
+              start
+            "${staged_runtime}/bin/pg_ctl" \
+              --pgdata="${smoke_data}" \
+              --mode=fast \
+              --wait \
+              stop
+            restore_source_runtime
+            trap - EXIT
           else
             pnpm desktop:dist
           fi
