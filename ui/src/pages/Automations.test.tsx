@@ -456,7 +456,8 @@ describe("Automations", () => {
 
     expect(document.body.textContent).toContain("Track as issue");
     expect(document.body.textContent).toContain("Create");
-    expect(runbookInput?.value).toContain("board-tracked work");
+    expect(runbookInput?.value).not.toMatch(/(?:^|\n)(?:Output:|输出：)/u);
+    const originalInstructions = runbookInput?.value;
 
     await act(async () => {
       Array.from(document.body.querySelectorAll("button"))
@@ -474,8 +475,8 @@ describe("Automations", () => {
       await Promise.resolve();
     });
 
-    expect(runbookInput?.value).toContain("each run's final result to a new Rudder chat");
-    expect(runbookInput?.value).not.toContain("board-tracked work so the result can be reviewed");
+    expect(runbookInput?.value).toBe(originalInstructions);
+    expect(runbookInput?.value).not.toMatch(/(?:^|\n)(?:Output:|输出：)/u);
 
     await act(async () => {
       Array.from(document.body.querySelectorAll("button"))
@@ -484,7 +485,7 @@ describe("Automations", () => {
       await Promise.resolve();
     });
 
-    expect(runbookInput?.value.match(/each run's final result to a new Rudder chat/g)).toHaveLength(1);
+    expect(runbookInput?.value).toBe(originalInstructions);
 
     await act(async () => {
       Array.from(document.body.querySelectorAll("button"))
@@ -604,6 +605,75 @@ describe("Automations", () => {
     expect(document.body.textContent).toContain("Schedule 0 18 * * *");
     expect(document.body.textContent).toContain("Send to chat");
     expect(document.body.querySelector('[data-testid="automation-template-picker"]')).toBeNull();
+  });
+
+  it.each([
+    {
+      locale: "en",
+      useTemplateLabel: "Use template",
+      templateTitles: [
+        "Daily review",
+        "Bug triage",
+        "PR review reminder",
+        "Weekly progress report",
+        "Documentation check",
+        "Daily news digest",
+        "Daily standup review",
+      ],
+    },
+    {
+      locale: "zh-CN",
+      useTemplateLabel: "使用模板",
+      templateTitles: [
+        "每日回顾",
+        "Bug 分诊",
+        "PR review 提醒",
+        "周进展报告",
+        "文档检查",
+        "每日信息简报",
+        "日会",
+      ],
+    },
+  ])("keeps standalone output descriptions out of every $locale automation template", async ({
+    locale,
+    useTemplateLabel,
+    templateTitles,
+  }) => {
+    document.documentElement.lang = locale;
+    renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const headerContainer = renderHeaderActions();
+    await act(async () => {
+      headerContainer.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    for (const templateTitle of templateTitles) {
+      const useTemplateButton = Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes(useTemplateLabel));
+      expect(useTemplateButton).toBeTruthy();
+      await act(async () => {
+        useTemplateButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+
+      const templatePicker = document.body.querySelector('[data-testid="automation-template-picker"]');
+      const templateButton = Array.from(templatePicker?.querySelectorAll("button") ?? [])
+        .find((button) => button.textContent?.includes(templateTitle));
+      expect(templateButton).toBeTruthy();
+      await act(async () => {
+        templateButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+
+      const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
+      expect(runbookInput).toBeTruthy();
+      expect(runbookInput?.value).not.toMatch(/(?:^|\n)(?:Output:|输出：)/u);
+    }
   });
 
   it("renders localized use-case templates for Chinese UI", async () => {

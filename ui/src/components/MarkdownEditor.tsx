@@ -1653,8 +1653,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
 
   useEffect(() => {
     if (value !== latestValueRef.current) {
-      ref.current?.setMarkdown(value);
+      // Plain-text import visitors synchronously read this source while setMarkdown parses block nodes.
       latestValueRef.current = value;
+      ref.current?.setMarkdown(value);
       lastSelectionOffsetsRef.current = {
         start: Math.min(lastSelectionOffsetsRef.current.start, value.length),
         end: Math.min(lastSelectionOffsetsRef.current.end, value.length),

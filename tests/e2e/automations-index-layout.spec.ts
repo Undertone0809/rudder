@@ -490,13 +490,17 @@ test.describe("Automations index layout", () => {
     await page.getByRole("button", { name: /Bug triage/ }).click();
 
     await expect(page.getByPlaceholder("Automation title")).toHaveValue("Bug triage");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("List all open issues labeled bug");
+    const instructionsEditor = page.locator(".rudder-mdxeditor-content").first();
+    await expect(instructionsEditor).toContainText("List all open issues labeled bug");
+    const originalInstructions = await instructionsEditor.textContent();
+    expect(originalInstructions).not.toMatch(/(?:^|\n)(?:Output:|输出：)/u);
     await expect(page.getByText("Weekdays at 09:00")).toBeVisible();
     await expect(page.getByRole("button", { name: /Track as issue/ })).toBeVisible();
     await page.getByRole("button", { name: /Track as issue/ }).click();
     await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
     await page.getByRole("button", { name: /Send to chat/ }).click();
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("each run's final result to a new Rudder chat");
+    await expect(instructionsEditor).toHaveText(originalInstructions ?? "");
+    expect(await instructionsEditor.textContent()).not.toMatch(/(?:^|\n)(?:Output:|输出：)/u);
     await expect(page.getByRole("button", { name: /^Create$/ })).toBeDisabled();
 
     await page.screenshot({

@@ -289,17 +289,6 @@ function localizeText(text: LocalizedText, locale: InstanceLocale) {
   return text[locale] ?? text.en;
 }
 
-function outputInstruction(mode: AutomationOutputMode, locale: InstanceLocale) {
-  if (mode === "chat_output") {
-    return locale === "zh-CN"
-      ? "输出：每次运行都将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。"
-      : "Output: send each run's final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions.";
-  }
-  return locale === "zh-CN"
-    ? "输出：创建或更新 board 可跟踪任务，确保结果可以被 review。"
-    : "Output: create or update board-tracked work so the result can be reviewed.";
-}
-
 function outputMethodCopy(locale: InstanceLocale) {
   if (locale === "zh-CN") {
     return {
@@ -319,22 +308,6 @@ function outputMethodCopy(locale: InstanceLocale) {
     sendToChatSummary: "Post each run to a new chat",
     newChatPerRun: "New chat per run",
   };
-}
-
-function withOutputInstruction(description: string, mode: AutomationOutputMode, locale: InstanceLocale) {
-  const trimmedDescription = description.trim();
-  if (!trimmedDescription) return "";
-  const instruction = outputInstruction(mode, locale);
-  return `${trimmedDescription}\n\n${instruction}`;
-}
-
-function removeOutputInstruction(description: string) {
-  return description
-    .replace(/\n*Output: create or update board-tracked work so the result can be reviewed\.\s*$/u, "")
-    .replace(/\n*Output: send each run's final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
-    .replace(/\n*输出：创建或更新 board 可跟踪任务，确保结果可以被 review。\s*$/u, "")
-    .replace(/\n*输出：每次运行都将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
-    .trim();
 }
 
 function autoResizeTextarea(element: HTMLTextAreaElement | null) {
@@ -418,7 +391,7 @@ export function Automations() {
     setDraft((current) => ({
       ...current,
       title: localizeText(template.title, locale),
-      description: withOutputInstruction(localizeText(template.description, locale), template.outputMode, locale),
+      description: localizeText(template.description, locale),
       scheduleCron: template.scheduleCron,
       outputMode: template.outputMode,
       chatConversationId: "",
@@ -433,9 +406,8 @@ export function Automations() {
       ...current,
       outputMode,
       chatConversationId: "",
-      description: withOutputInstruction(removeOutputInstruction(current.description), outputMode, locale),
     }));
-  }, [locale]);
+  }, []);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Automations" }]);

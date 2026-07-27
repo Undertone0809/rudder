@@ -24,6 +24,7 @@ const mdxEditorMocks = vi.hoisted(() => ({
     defaultSelection?: "rootStart" | "rootEnd";
     preventScroll?: boolean;
   } | undefined>,
+  onSetMarkdown: null as null | ((value: string) => string),
   navigate: vi.fn(),
 }));
 
@@ -164,6 +165,7 @@ vi.mock("@mdxeditor/editor", async () => {
     },
     ref: React.ForwardedRef<{
       focus: () => void;
+      getMarkdown: () => string | undefined;
       insertMarkdown: (value: string) => void;
       setMarkdown: (value: string) => void;
     }>,
@@ -177,6 +179,7 @@ vi.mock("@mdxeditor/editor", async () => {
       focus: (_callbackFn?: () => void, opts?: { defaultSelection?: "rootStart" | "rootEnd"; preventScroll?: boolean }) => {
         mdxEditorMocks.focusCalls.push(opts);
       },
+      getMarkdown: () => undefined,
       insertMarkdown: (value: string) => {
         const selection = window.getSelection();
         const anchorNode = selection?.anchorNode;
@@ -202,7 +205,7 @@ vi.mock("@mdxeditor/editor", async () => {
         setMarkdown((current) => current + value);
       },
       setMarkdown: (value: string) => {
-        setMarkdown(value);
+        setMarkdown(mdxEditorMocks.onSetMarkdown?.(value) ?? value);
       },
     }));
 
@@ -321,6 +324,7 @@ afterEach(() => {
   mdxEditorMocks.linkDialogPlugin.mockClear();
   mdxEditorMocks.lastEditorProps = null;
   mdxEditorMocks.focusCalls = [];
+  mdxEditorMocks.onSetMarkdown = null;
   mdxEditorMocks.navigate.mockReset();
   markdownMentionsMocks.mentions = [];
   markdownMentionsMocks.onMentionQueryChange.mockReset();
@@ -328,6 +332,50 @@ afterEach(() => {
 });
 
 describe("MarkdownEditor", () => {
+  it("publishes a controlled list source before synchronously importing it", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const editorRef = createRef<MarkdownEditorRef>();
+
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          ref={editorRef}
+          value="Initial instructions"
+          onChange={() => undefined}
+          plainText
+        />,
+      );
+    });
+
+    mdxEditorMocks.onSetMarkdown = () => editorRef.current?.getMarkdown?.() ?? "";
+    const listOnlyInstructions = [
+      "1. Gather open issues.",
+      "2. Review evidence.",
+      "3. Summarize next actions.",
+    ].join("\n");
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          ref={editorRef}
+          value={listOnlyInstructions}
+          onChange={() => undefined}
+          plainText
+        />,
+      );
+    });
+
+    expect(container.querySelector('[contenteditable="true"]')?.textContent).toBe(listOnlyInstructions);
+    expect(editorRef.current?.getMarkdown?.()).toBe(listOnlyInstructions);
+  });
+
   it("adds only the boundary spacing needed for cursor insertions", () => {
     expect(formatComposerCursorInsertion("alpha", 0, "Please explain.").value)
       .toBe("Please explain. alpha");
