@@ -55,6 +55,12 @@ available.
   read only permits read tools, while read and write also permits ordinary
   writes. Destructive, administrative, billing, and unknown tools remain
   unavailable.
+- Agent-owned and Organization connections for the same official provider use
+  independent grants and credentials. Rudder resolves the current Agent's
+  usable connection before the Organization connection. **No access** on the
+  Agent connection is an explicit deny and blocks fallback. Revoking or
+  disconnecting that connection allows a still-usable Organization connection
+  to be selected on the next runtime projection.
 - Each Run captures the binding policy it started with. Effective access is the
   intersection of that snapshot, the current Agent binding, and the current
   provider policy. A downgrade blocks later calls in the active Run

@@ -72,6 +72,13 @@ project when the tool runs rather than during OAuth setup. Existing
 project-scoped grants keep that boundary until an explicit account-access
 upgrade.
 
+Agent-owned and Organization connections keep independent grants and
+credentials. When both are available for an official provider, Rudder uses the
+current Agent's connection first. Selecting **No access** on that Agent
+connection is an explicit deny and does not fall back to the Organization
+connection. Revoking or disconnecting the Agent connection allows the next
+runtime projection to use an available Organization connection instead.
+
 <a id="success-signal" />
 
 ## Success signal
