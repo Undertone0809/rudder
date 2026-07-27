@@ -181,7 +181,9 @@ Required settings for `npm-stable`:
 
 Reasoning:
 
-- an explicit versioned release request is the human authorization gate
+- an explicit release/publish request is the human authorization gate; when the
+  version is omitted, the agent may infer the single consistent stable target
+  from the repository release state and state it before publishing
 - locked source SHA, exact successful CI, confirmation inputs, immutable-version
   checks, and protected `main` form the mandatory machine gate
 - the environment isolates stable credentials and limits use to `main` without
@@ -212,10 +214,18 @@ create these repository Actions variables:
 - `RELEASE_SAFEGUARDS_CONFIGURED=true`
 - `STABLE_RELEASE_MODE=agent-automated`
 
-Manual stable preflight fails closed while either variable is missing. The
-variables are operator attestations because the workflow's scoped
-`GITHUB_TOKEN` cannot read repository-administration settings; do not set them
-before checking all controls.
+Manual stable preflight fails closed while either variable is missing. These
+variables are operator attestations because the workflow's scoped `GITHUB_TOKEN`
+cannot read repository-administration settings; do not set them before checking
+all controls.
+
+The release agent should treat a failed safeguard check as a repair step, not a
+new human approval gate: an explicit release request authorizes configuring
+missing settings to the documented standard when the authenticated account has
+access. Set the attestation variables only after verifying those controls. The
+agent must not weaken protections, bypass CI, or invent a policy exception; if
+standard repair is impossible, report the concrete credential, permission, or
+platform blocker.
 
 ## 8. Enforce CODEOWNERS Review
 
@@ -300,10 +310,12 @@ After at least one good canary exists:
    - `source_ref`: the tested commit SHA or canary tag source commit
    - `dry_run`: `true`
 5. confirm the dry-run succeeds
-6. after an explicit versioned stable release request, let the release agent
+6. after an explicit stable release request—or an unqualified `release`/`发版`
+   request whose stable target is unambiguous—let the release agent
    rerun with `dry_run: false`, `confirm_stable: PUBLISH STABLE`, and
    `confirm_docs: PUBLISH DOCS`; production docs are part of the standard
-   release unless explicitly excluded
+   release unless explicitly excluded; no second confirmation is required after
+   dry-run
 7. confirm the `npm-stable` job starts without an interactive approval
 8. confirm npm `latest` points to the new stable version
 9. confirm git tag `v0.1.0` exists
@@ -337,8 +349,9 @@ Implementation note:
 Use this policy going forward:
 
 - canaries are automatic and cheap
-- stables start from an explicit versioned request, then run end to end without
-  an interactive GitHub approval
+- stables start from an explicit release/publish request; the agent resolves an
+  omitted version when exactly one stable target is consistent, then runs end
+  to end without another user or GitHub approval
 - only stables get public notes and announcements
 - release notes are committed before stable publish
 - stable docs deploys retain the mandatory `PUBLISH DOCS` machine assertion,

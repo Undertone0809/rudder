@@ -200,21 +200,35 @@ separate transitions.
   authorizes implementation and verification only. The default stopping point
   is Review Ready: validated changes committed and pushed on the current branch,
   a PR when appropriate, review evidence, and a release-risk summary.
+- An explicit imperative to release or publish, including `release`, `publish`,
+  `ship this version`, `发版`, or `发布`, authorizes the complete standard release
+  lifecycle. This includes landing the reviewed release source through the
+  normal protected path, repairing documented release safeguards to their
+  standard configuration, running dry-run and real publish workflows, supplying
+  workflow confirmation inputs, publishing npm/GitHub/Desktop/production-docs
+  surfaces, verifying them, cleaning obsolete canary Releases/tags, and
+  completing the normal next-version handoff. Do not ask for a second
+  confirmation after dry-run.
+- If the release request omits a version, infer the single consistent target
+  from the current release context and repository release scripts, lock its
+  source SHA, and state both in a progress update. Ask only when the channel,
+  version, source, or target is genuinely ambiguous.
 - Automatic branch previews are review surfaces only. Do not promote them or
-  assign shared aliases without explicit authorization.
-- Production docs, stable npm/GitHub/Desktop releases, and any other production
-  publish require a fresh, target-specific confirmation at the deployment gate.
-  A plan that mentions deployment, a request to start, or staging approval does
-  not satisfy that gate.
-- Never choose `dry_run: false`, enter `confirm_domain` or `confirm_stable`,
-  supply a production tag, invoke a deployment hook, or run an equivalent
-  production command on the user's behalf unless the user explicitly approved
-  that exact release. Workflow inputs are safeguards, not substitutes for human
-  authorization.
-- Before asking for production approval, report the exact commit/tag and target,
-  completed checks, unresolved or unrelated failing checks, migration or data
-  impact, and rollback point. After approval, release only that reviewed source
-  and verify the public surface.
+  assign shared aliases unless they are part of an explicit release/publish
+  request.
+- Machine gates remain mandatory. A release request authorizes tightening or
+  restoring missing safeguards to the documented standard; it does not
+  authorize weakening protections or bypassing CI. Stop only when credentials
+  or permissions are unavailable, a material target decision is ambiguous, or
+  proceeding would require a policy exception.
+- Destructive or nonstandard operations still require separate authority:
+  unpublishing npm versions, force-pushing or retargeting published tags,
+  deleting the active canary line, weakening repository protections, or
+  expanding beyond the requested product/environment.
+- Before the real publish, report the exact commit/tag and target, completed
+  checks, unresolved failures, migration or data impact, and rollback point as
+  a status update—not as another approval request. Release only that locked,
+  reviewed source and verify every public surface.
 
 ## 6. Database Change Workflow
 

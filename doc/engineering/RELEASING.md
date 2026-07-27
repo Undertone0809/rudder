@@ -64,21 +64,26 @@ Release preparation and release execution are separate operations:
 
 1. **Review Ready** — identify the exact source SHA, complete verification,
    prepare release notes/screenshots, push the feature branch, and open the PR.
-2. **Landing/Staging Gate** — obtain explicit permission before merging to
-   `main` when that merge publishes a canary or updates docs staging.
+2. **Landing/Staging Gate** — without a release request, obtain explicit
+   permission before merging to `main` when that merge publishes a canary or
+   updates docs staging. An explicit release/publish request authorizes landing
+   the reviewed release source through the normal protected path.
 3. **Production Gate** — report the exact source ref, version/tag, production
    targets, successful and failing checks, and rollback point. An explicit
-   versioned release instruction authorizes the release agent to complete the
-   GitHub Actions publish and verification without a second GitHub-account
-   approval.
+   release/publish imperative authorizes the release agent to complete the
+   standard GitHub Actions publish and verification without a second approval.
+   If the version is omitted, infer the single consistent stable target from the
+   current release context and repository scripts, state it, and proceed.
 
 Instructions such as `start`, `continue`, `proceed`, `implement`, or approval of
 a plan do not satisfy the production gate. A staging approval is not production
 approval. Agents and automation must not set `dry_run: false`, enter workflow
-confirmation strings, or synthesize a release tag without an explicit versioned
-release request. Once that request exists, the release agent supplies the
-confirmation strings and completes all standard release surfaces, including
-production docs, without returning UI tasks to the operator.
+confirmation strings, or synthesize a release tag without an explicit
+release/publish request. Imperatives such as `release`, `publish`, `发版`, and
+`发布` satisfy this gate when the target can be resolved unambiguously. Once
+that request exists, the release agent supplies the confirmation strings and
+completes all standard release surfaces, including production docs, without
+returning UI tasks or a second confirmation prompt to the operator.
 That stable-release authorization also covers creating the deterministic
 post-release PR that advances `main` to the next patch base; it does not
 authorize bypassing that PR's review or CI.
@@ -88,12 +93,18 @@ non-interactive environment, `main` is protected, and GitHub Actions can create
 the generated post-stable version PR and dispatch its CI. The environment must
 not require an account switch, reviewer click, or wait timer. These repository
 settings are part of the machine-enforced release gate, not optional
-documentation.
+documentation. When an explicit release request exists and an authenticated
+maintainer can restore missing safeguards to the documented standard, configure
+them and rerun preflight without asking for additional authorization. Never
+weaken or bypass a safeguard to make a release pass.
 
-Only an explicit versioned production-release instruction authorizes proceeding.
-Once it exists and the reviewed source, target, checks, known failures, and
-rollback point are recorded, the agent owns the remaining publish, recovery,
-verification, cleanup, and closeout steps end to end.
+Only an explicit production-release instruction authorizes proceeding. Once it
+exists and the reviewed source, resolved target, checks, known failures, and
+rollback point are recorded, the agent owns the remaining landing, safeguard
+repair, publish, recovery, verification, cleanup, and closeout steps end to end.
+Separate authority is still required for destructive or nonstandard actions
+such as npm unpublish, force-pushing published tags, deleting the active canary
+line, weakening repository protections, or expanding the release scope.
 
 ## Docs Site Releases
 
@@ -183,12 +194,12 @@ Inputs:
   - preview only when true
 - `confirm_stable`
   - leave empty for dry runs
-  - after explicit production authorization, enter `PUBLISH STABLE` for the
-    real stable release
+  - after an explicit release/publish request, the release agent enters
+    `PUBLISH STABLE` for the real stable release
 - `confirm_docs`
   - leave empty for dry runs
-  - after separately approving the `docs.rudderhq.dev` deployment for this
-    exact stable source, enter `PUBLISH DOCS`
+  - the same standard stable-release request includes `docs.rudderhq.dev`
+    unless explicitly excluded; the release agent enters `PUBLISH DOCS`
 
 Before running stable:
 
@@ -198,10 +209,11 @@ Before running stable:
    `docs/zh/releases.mdx` on that source ref
 4. confirm that exact source commit has a successful `CI` run
 5. run the workflow with `dry_run: true`
-6. present the exact source ref, version, checks, targets, and rollback point;
-   obtain explicit production approval
-7. obtain a separate explicit approval to deploy that exact changelog to
-   `docs.rudderhq.dev`
+6. present the exact source ref, version, checks, targets, and rollback point as
+   a progress update; the existing release request remains the production and
+   standard docs authorization
+7. continue without another confirmation unless the user excluded
+   `docs.rudderhq.dev` or a genuinely ambiguous/nonstandard decision appears
 8. run the workflow with `dry_run: false`, `confirm_stable: PUBLISH STABLE`,
    and `confirm_docs: PUBLISH DOCS`
 9. after stable and the docs deployment are both published, confirm the

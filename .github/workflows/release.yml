@@ -16,12 +16,12 @@ on:
         type: boolean
         default: true
       confirm_stable:
-        description: "For a real publish, the authorized release agent enters PUBLISH STABLE after an explicit versioned release request"
+        description: "For a real publish, the authorized release agent enters PUBLISH STABLE after an explicit release/publish request"
         required: false
         default: ""
         type: string
       confirm_docs:
-        description: "For a real stable publish, the authorized release agent enters PUBLISH DOCS for the docs surface included in the versioned release request"
+        description: "For a real stable publish, the authorized release agent enters PUBLISH DOCS for the standard docs surface unless explicitly excluded"
         required: false
         default: ""
         type: string
