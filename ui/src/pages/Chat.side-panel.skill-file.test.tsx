@@ -1,6 +1,6 @@
+import { ThemeProvider } from "@/context/ThemeContext";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ThemeProvider } from "@/context/ThemeContext";
 import { ChatSidePanelSkillFileView } from "./Chat.side-panel";
 
 describe("ChatSidePanelSkillFileView", () => {
