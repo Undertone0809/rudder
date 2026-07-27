@@ -71,11 +71,17 @@ export interface TranscriptToolSemanticInfo {
   quantity: number;
   noun: "file" | "location" | "item" | "tool" | "command" | "skill";
   fileTargets?: TranscriptFileTarget[];
+  skillTargets?: TranscriptSkillTarget[];
   image?: TranscriptImageEvidence;
 }
 
 export interface TranscriptFileTarget {
   label: string;
+  path: string | null;
+}
+
+export interface TranscriptSkillTarget {
+  name: string;
   path: string | null;
 }
 
@@ -125,6 +131,10 @@ export interface RunTranscriptViewProps {
   hiddenAssistantMessageText?: string | null;
   /** Open a structured local-file target without inferring paths from rendered prose. */
   onOpenFile?: (targetPath: string, label: string) => void;
+  /** Open a structured skill target without reparsing its rendered activity label. */
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  /** Report whether a structured skill target resolves to an inspectable source. */
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   /** Inspect a spawned Codex sub-agent in the read-only Side Panel. */
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   /** Stable owning assistant message for selectable persisted Process prose. */
