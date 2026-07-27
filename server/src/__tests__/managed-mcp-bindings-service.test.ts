@@ -775,7 +775,8 @@ describe("managedMcpBindingService", () => {
 
     await db.update(mcpConnections).set({ required: true })
       .where(eq(mcpConnections.id, fixture.first.id));
-    expect(await svc.listRuntimeBindings(fixture.orgId, fixture.agentId)).toEqual([]);
+    expect((await svc.listRuntimeBindings(fixture.orgId, fixture.agentId))
+      .map((binding) => binding.serverName)).toEqual(["beta"]);
   });
 
   it("revokes bindings without deleting the organization connection", async () => {
