@@ -72,7 +72,14 @@ describe("CustomGroupIcon", () => {
       </div>,
     );
 
-    expect(container.querySelector("svg")).toBeTruthy();
+    const projectIcon = container.querySelector<SVGElement>("svg");
+    expect(projectIcon).toBeTruthy();
+    expect(projectIcon?.className.baseVal).toContain(
+      "text-[color:var(--project-accent-color)]",
+    );
+    expect(projectIcon?.parentElement?.style.getPropertyValue("--project-accent-color")).toBe(
+      "#08a88a",
+    );
     expect(container.textContent).toContain("🚀");
     expect(container.textContent).toContain("Ro");
     expect(container.textContent).not.toContain("Roadmap");

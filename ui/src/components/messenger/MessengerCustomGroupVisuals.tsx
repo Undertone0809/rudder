@@ -117,7 +117,7 @@ export function CustomGroupIcon({
         icon={customGroupProjectIconName(icon)}
         size="xs"
         className="h-4 w-4"
-        iconClassName="h-4 w-4"
+        iconClassName="h-4 w-4 text-[color:var(--project-accent-color)]"
         testId="messenger-custom-group-icon"
       />
     );
