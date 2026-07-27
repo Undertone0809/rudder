@@ -7,9 +7,24 @@ import { SettingsSidebar } from "./SettingsSidebar";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const desktopShellMocks = vi.hoisted(() => ({
+  openExternal: vi.fn(async () => undefined),
+  forceOpenExternal: vi.fn(async () => undefined),
+}));
+const desktopShellState = vi.hoisted(() => ({ forceOpenExternalAvailable: true }));
+
 const queryState = vi.hoisted(() => ({
   isInstanceAdmin: true,
   deploymentMode: "local_trusted" as "local_trusted" | "authenticated",
+}));
+
+vi.mock("@/lib/desktop-shell", () => ({
+  readDesktopShell: () => ({
+    openExternal: desktopShellMocks.openExternal,
+    ...(desktopShellState.forceOpenExternalAvailable
+      ? { forceOpenExternal: desktopShellMocks.forceOpenExternal }
+      : {}),
+  }),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -68,6 +83,9 @@ afterEach(() => {
   cleanup = null;
   queryState.isInstanceAdmin = true;
   queryState.deploymentMode = "local_trusted";
+  desktopShellState.forceOpenExternalAvailable = true;
+  desktopShellMocks.openExternal.mockClear();
+  desktopShellMocks.forceOpenExternal.mockClear();
 });
 
 function renderSidebar(variant: "panel" | "modal" = "panel") {
@@ -93,6 +111,32 @@ function renderSidebar(variant: "panel" | "modal" = "panel") {
 }
 
 describe("SettingsSidebar Browser entry", () => {
+  it("opens Docs through the system browser even when built-in link routing is enabled", () => {
+    const container = renderSidebar("modal");
+    const docsLink = container.querySelector<HTMLAnchorElement>('a[href="https://docs.rudderhq.dev"]');
+
+    expect(docsLink).not.toBeNull();
+    act(() => {
+      docsLink?.click();
+    });
+
+    expect(desktopShellMocks.forceOpenExternal).toHaveBeenCalledWith("https://docs.rudderhq.dev");
+    expect(desktopShellMocks.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("keeps Docs usable with an older desktop shell bridge", () => {
+    desktopShellState.forceOpenExternalAvailable = false;
+    const container = renderSidebar("modal");
+    const docsLink = container.querySelector<HTMLAnchorElement>('a[href="https://docs.rudderhq.dev"]');
+
+    act(() => {
+      docsLink?.click();
+    });
+
+    expect(desktopShellMocks.openExternal).toHaveBeenCalledWith("https://docs.rudderhq.dev");
+    expect(desktopShellMocks.forceOpenExternal).not.toHaveBeenCalled();
+  });
+
   it("constrains modal navigation so its inner nav becomes the scroll container", () => {
     const container = renderSidebar("modal");
 

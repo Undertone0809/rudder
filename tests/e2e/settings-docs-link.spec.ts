@@ -3,7 +3,20 @@ import { expect, test } from "@playwright/test";
 const RUDDER_DOCS_URL = "https://docs.rudderhq.dev";
 
 test.describe("Settings docs link", () => {
-  test("shows a docs item in settings that points to the official docs", async ({ page }) => {
+  test("opens the official docs in the system browser from desktop settings", async ({ page }) => {
+    await page.addInitScript(() => {
+      const routedExternalUrls: string[] = [];
+      const forcedExternalUrls: string[] = [];
+      Object.assign(window, {
+        __rudderRoutedExternalUrls: routedExternalUrls,
+        __rudderForcedExternalUrls: forcedExternalUrls,
+        desktopShell: {
+          openExternal: async (url: string) => { routedExternalUrls.push(url); },
+          forceOpenExternal: async (url: string) => { forcedExternalUrls.push(url); },
+        },
+      });
+    });
+
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Settings Docs ${Date.now()}`,
@@ -20,5 +33,15 @@ test.describe("Settings docs link", () => {
     await expect(docsLink).toBeVisible();
     await expect(docsLink).toHaveAttribute("href", RUDDER_DOCS_URL);
     await expect(docsLink).toHaveAttribute("target", "_blank");
+    await docsLink.click();
+
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __rudderForcedExternalUrls?: string[] })
+        .__rudderForcedExternalUrls ?? []
+    ))).toEqual([RUDDER_DOCS_URL]);
+    expect(await page.evaluate(() => (
+      (window as typeof window & { __rudderRoutedExternalUrls?: string[] })
+        .__rudderRoutedExternalUrls ?? []
+    ))).toEqual([]);
   });
 });
