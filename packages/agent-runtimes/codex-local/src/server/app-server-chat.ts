@@ -5,6 +5,7 @@ import type {
 } from "@rudderhq/agent-runtime-utils";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
+import path from "node:path";
 import {
   CodexAppServerClient,
   CodexAppServerClosedError,
@@ -81,6 +82,45 @@ function appendBounded(current: string, chunk: string): string {
   return combined.length <= APP_SERVER_CAPTURE_LIMIT
     ? combined
     : combined.slice(combined.length - APP_SERVER_CAPTURE_LIMIT);
+}
+
+function trustedAbsoluteWorkingDirectory(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const candidate = value.trim();
+  if (
+    !candidate
+    || !path.isAbsolute(candidate)
+    || /[\0\r\n`$*?{}]/u.test(candidate)
+    || /%[^%]+%/u.test(candidate)
+  ) {
+    return null;
+  }
+  return candidate;
+}
+
+function commandWorkingDirectory(
+  item: JsonRecord,
+  fallbackCwd: string,
+): string | null {
+  const explicitCandidates = [item.workdir, item.cwd]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (explicitCandidates.length > 0) {
+    return explicitCandidates
+      .map(trustedAbsoluteWorkingDirectory)
+      .find((value): value is string => Boolean(value))
+      ?? null;
+  }
+  return trustedAbsoluteWorkingDirectory(fallbackCwd);
+}
+
+function withCommandWorkingDirectory(
+  item: JsonRecord,
+  cwd: string | null,
+): JsonRecord {
+  const normalized = { ...item };
+  delete normalized.workdir;
+  delete normalized.cwd;
+  return cwd ? { ...normalized, cwd } : normalized;
 }
 
 function normalizeThreadItem(value: unknown): JsonRecord {
@@ -287,6 +327,7 @@ export async function executeCodexAppServerChat(
   const reasoningStreamByItemId = new Map<string, "summary" | "raw">();
   const reasoningSummaryIndexByItemId = new Map<string, number>();
   const agentMessagePhaseByItemId = new Map<string, "commentary" | "final_answer" | null>();
+  const commandWorkingDirectoryByItemId = new Map<string, string | null>();
   let threadId: string | null = null;
   let turnId: string | null = null;
   let turnCompleted = false;
@@ -408,6 +449,19 @@ export async function executeCodexAppServerChat(
             agentMessagePhaseByItemId.set(itemId, phase);
           }
         }
+        if (item.type === "command_execution") {
+          const itemId = asString(item.id);
+          // App Server guarantees that item/started carries the full command item,
+          // including cwd. Keep that first directory so live and completed
+          // projections cannot disagree if a later payload is malformed.
+          const cwd = itemId && commandWorkingDirectoryByItemId.has(itemId)
+            ? commandWorkingDirectoryByItemId.get(itemId) ?? null
+            : commandWorkingDirectory(item, options.cwd);
+          if (itemId && !commandWorkingDirectoryByItemId.has(itemId)) {
+            commandWorkingDirectoryByItemId.set(itemId, cwd);
+          }
+          item = withCommandWorkingDirectory(item, cwd);
+        }
         if (notification.method === "item/completed" && item.type === "collab_agent_tool_call") {
           const snapshots = await Promise.all(collabAgentReceiverThreadIds(item).map(async (receiverThreadId) => {
             try {
@@ -447,9 +501,7 @@ export async function executeCodexAppServerChat(
         }
         await emit({
           type: notification.method === "item/started" ? "item.started" : "item.completed",
-          item: item.type === "command_execution"
-            ? { ...item, cwd: options.cwd }
-            : item,
+          item,
         });
         return;
       }

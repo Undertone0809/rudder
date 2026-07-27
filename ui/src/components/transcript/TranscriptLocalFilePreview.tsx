@@ -30,6 +30,14 @@ function workspacePreviewFile(preview: DesktopLocalFilePreview): OrganizationWor
   };
 }
 
+function previewFailureMessage(cause: unknown, label: string): string {
+  const message = cause instanceof Error ? cause.message : "";
+  if (/\bENOENT\b|no such file or directory/iu.test(message)) {
+    return "Could not resolve the file location recorded by this run. The file may have moved, or an older transcript may not include the command's original working directory.";
+  }
+  return message || `Could not preview ${label}.`;
+}
+
 export function TranscriptLocalFilePreview({
   targetPath,
   label,
@@ -62,7 +70,7 @@ export function TranscriptLocalFilePreview({
       .catch((cause) => {
         if (!cancelled) {
           setPreview(null);
-          setError(cause instanceof Error ? cause.message : `Could not preview ${label}.`);
+          setError(previewFailureMessage(cause, label));
         }
       })
       .finally(() => {

@@ -40,6 +40,17 @@ import readline from "node:readline";
 const threadId = "thread-app-1";
 const turnId = "turn-app-1";
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const commandDirectory = process.env.RUDDER_TEST_COMMAND_WORKDIR
+  ? { workdir: process.env.RUDDER_TEST_COMMAND_WORKDIR }
+  : process.env.RUDDER_TEST_COMMAND_CWD
+    ? { cwd: process.env.RUDDER_TEST_COMMAND_CWD }
+    : {};
+const startedCommandDirectory = process.env.RUDDER_TEST_COMMAND_STARTED_NO_DIRECTORY === "1"
+  ? {}
+  : commandDirectory;
+const completedCommandDirectory = process.env.RUDDER_TEST_COMMAND_COMPLETED_NO_DIRECTORY === "1"
+  ? {}
+  : commandDirectory;
 const finish = (status = "completed") => {
   send({ method: "thread/tokenUsage/updated", params: {
     threadId,
@@ -149,12 +160,26 @@ rl.on("line", (line) => {
       send({ method: "item/started", params: {
         threadId,
         turnId,
-        item: { type: "commandExecution", id: "command-1", command: "cat README.md", status: "inProgress" },
+        item: {
+          type: "commandExecution",
+          id: "command-1",
+          command: "cat README.md",
+          status: "inProgress",
+          ...startedCommandDirectory,
+        },
       } });
       send({ method: "item/completed", params: {
         threadId,
         turnId,
-        item: { type: "commandExecution", id: "command-1", command: "cat README.md", status: "completed", aggregatedOutput: "Rudder", exitCode: 0 },
+        item: {
+          type: "commandExecution",
+          id: "command-1",
+          command: "cat README.md",
+          status: "completed",
+          aggregatedOutput: "Rudder",
+          exitCode: 0,
+          ...completedCommandDirectory,
+        },
       } });
       finish("completed");
     }
@@ -512,7 +537,7 @@ describe("executeCodexAppServerChat", () => {
     expect(stderrLines.join("")).toContain("auth failed: in-process app-server event stream lagged; dropped 9 events");
   });
 
-  it("attaches the trusted runtime cwd to command transcript entries", async () => {
+  it("falls back to the trusted runtime cwd when a command has no execution directory", async () => {
     const stdoutLines: string[] = [];
     const result = await executeCodexAppServerChat({
       command: fakeCodex,
@@ -543,6 +568,127 @@ describe("executeCodexAppServerChat", () => {
       name: "command_execution",
       toolUseId: "command-1",
       input: { id: "command-1", command: "cat README.md", cwd: root },
+    });
+  });
+
+  it.each([
+    ["workdir", "RUDDER_TEST_COMMAND_WORKDIR"],
+    ["cwd", "RUDDER_TEST_COMMAND_CWD"],
+  ] as const)("preserves an absolute per-command %s across started and completed events", async (
+    _field,
+    envKey,
+  ) => {
+    const commandCwd = path.join(root, "source-workspace");
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        RUDDER_TEST_COMMAND_COMPLETED_NO_DIRECTORY: "1",
+        [envKey]: commandCwd,
+      } as Record<string, string>,
+      prompt: "Read doc/README.md",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const commandItems = result.stdout
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { item?: Record<string, unknown> })
+      .flatMap((event) => event.item?.type === "command_execution" ? [event.item] : []);
+    expect(commandItems).toHaveLength(2);
+    expect(commandItems.map((item) => item.cwd)).toEqual([commandCwd, commandCwd]);
+    expect(commandItems.every((item) => !("workdir" in item))).toBe(true);
+
+    const entries = result.stdout
+      .split(/\r?\n/u)
+      .flatMap((line) => parseCodexStdoutLine(line, "2026-07-27T00:00:00.000Z"));
+    expect(entries).toContainEqual({
+      kind: "tool_call",
+      ts: "2026-07-27T00:00:00.000Z",
+      name: "command_execution",
+      toolUseId: "command-1",
+      input: { id: "command-1", command: "cat README.md", cwd: commandCwd },
+    });
+  });
+
+  it("keeps the started fallback when a completed event reports late directory evidence", async () => {
+    const commandCwd = path.join(root, "late-source-workspace");
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        RUDDER_TEST_COMMAND_STARTED_NO_DIRECTORY: "1",
+        RUDDER_TEST_COMMAND_WORKDIR: commandCwd,
+      } as Record<string, string>,
+      prompt: "Read README.md",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const commandItems = result.stdout
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { item?: Record<string, unknown> })
+      .flatMap((event) => event.item?.type === "command_execution" ? [event.item] : []);
+    expect(commandItems.map((item) => item.cwd)).toEqual([root, root]);
+  });
+
+  it.each([
+    ["relative", "nested/workspace"],
+    ["dynamic-posix", "/tmp/$RUDDER_WORKSPACE"],
+    ["dynamic-windows", "C:\\Users\\%USERNAME%\\workspace"],
+  ])("does not trust an explicit %s command working directory", async (_label, commandWorkdir) => {
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        RUDDER_TEST_COMMAND_WORKDIR: commandWorkdir,
+      } as Record<string, string>,
+      prompt: "Read README.md",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const entries = result.stdout
+      .split(/\r?\n/u)
+      .flatMap((line) => parseCodexStdoutLine(line, "2026-07-27T00:00:00.000Z"));
+    expect(entries).toContainEqual({
+      kind: "tool_call",
+      ts: "2026-07-27T00:00:00.000Z",
+      name: "command_execution",
+      toolUseId: "command-1",
+      input: { id: "command-1", command: "cat README.md" },
     });
   });
 

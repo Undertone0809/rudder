@@ -63,6 +63,12 @@ describe("transcript file target resolution", () => {
     expect(resolveTranscriptFileTarget("https://example.com/file.ts")).toBeNull();
     expect(resolveTranscriptFileTarget("//server/share/file.ts")).toBeNull();
   });
+
+  it("rejects relative and dynamic working directories for relative file targets", () => {
+    expect(resolveTranscriptFileTarget("README.md", "workspace/project")).toBeNull();
+    expect(resolveTranscriptFileTarget("README.md", "/workspace/$PROJECT")).toBeNull();
+    expect(resolveTranscriptFileTarget("README.md", "C:\\Users\\%USERNAME%\\project")).toBeNull();
+  });
 });
 
 describe("RunTranscriptView", () => {

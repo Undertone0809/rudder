@@ -91,8 +91,9 @@ async function installDesktopShellLocalFilePreviewStub(
   canonicalPath: string,
   expectedFileName = "Chat.parts.tsx",
   sourceLocation?: string,
+  content = "export const localFileSidePanelEvidence = true;",
 ) {
-  await page.addInitScript(({ targetPath, fileName, requestedPath }) => {
+  await page.addInitScript(({ targetPath, fileName, requestedPath, previewContent }) => {
     const previewCalls: string[] = [];
     Object.defineProperty(window, "__rudderLocalFilePreviewCalls", {
       configurable: true,
@@ -109,11 +110,13 @@ async function installDesktopShellLocalFilePreviewStub(
             canonicalPath: targetPath,
             fileName,
             parentPath: targetPath.slice(0, targetPath.lastIndexOf("/")),
-            contentType: "text/plain; charset=utf-8",
-            previewKind: "text",
-            content: "export const localFileSidePanelEvidence = true;",
+            contentType: fileName.endsWith(".md")
+              ? "text/markdown; charset=utf-8"
+              : "text/plain; charset=utf-8",
+            previewKind: fileName.endsWith(".md") ? "markdown" : "text",
+            content: previewContent,
             base64: null,
-            sizeBytes: 47,
+            sizeBytes: previewContent.length,
             modifiedAt: "2026-07-21T00:00:00.000Z",
             truncated: false,
           };
@@ -124,6 +127,7 @@ async function installDesktopShellLocalFilePreviewStub(
   }, {
     targetPath: canonicalPath,
     fileName: expectedFileName,
+    previewContent: content,
     requestedPath: sourceLocation ? `${canonicalPath}:${sourceLocation}` : canonicalPath,
   });
 }
@@ -232,6 +236,103 @@ test.describe("Chat Side Panel", () => {
 
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-local-file-link.png"),
+      fullPage: true,
+    });
+  });
+
+  test("resolves a relative command-read file against the recorded command cwd", async ({ page }, testInfo) => {
+    const commandCwd = "/Users/zeeland/projects/rudder-oss";
+    const relativePath = "doc/README.md";
+    const resolvedPath = `${commandCwd}/${relativePath}`;
+    await installDesktopShellLocalFilePreviewStub(
+      page,
+      resolvedPath,
+      "README.md",
+      undefined,
+      "# Rudder documentation\n\nResolved from the command working directory.",
+    );
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Side-Panel-Relative-Command-File-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Command Workspace Agent",
+    });
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Relative command file preview",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Read the Rudder documentation." },
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "The documentation is ready.",
+      structuredPayload: {
+        __chatTranscript: [
+          {
+            kind: "tool_call",
+            ts: "2026-07-27T10:00:00.000Z",
+            name: "command_execution",
+            toolUseId: "command-read-doc",
+            input: {
+              command: "sed -n '1,120p' doc/README.md",
+              cwd: commandCwd,
+            },
+          },
+          {
+            kind: "tool_result",
+            ts: "2026-07-27T10:00:01.000Z",
+            toolUseId: "command-read-doc",
+            content: "command: sed -n '1,120p' doc/README.md\nstatus: completed\nexit_code: 0",
+            isError: false,
+          },
+        ],
+      },
+      replyingAgentId: agent.id,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const transcript = page.getByTestId("chat-transcript-item");
+    await transcript.getByRole("button", { name: /Worked for/i }).click();
+    const fileButton = transcript.getByRole("button", { name: "Open file README.md", exact: true });
+    await expect(fileButton).toHaveAttribute("data-transcript-file-target", resolvedPath);
+    await fileButton.click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel.getByTestId("chat-side-panel-local-file-view")).toBeVisible();
+    await expect(sidePanel.getByTestId("transcript-local-file-markdown-preview")).toContainText(
+      "Resolved from the command working directory.",
+    );
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __rudderLocalFilePreviewCalls?: string[] }).__rudderLocalFilePreviewCalls ?? []
+    ))).toEqual(expect.arrayContaining([resolvedPath]));
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-command-relative-file-preview.png"),
       fullPage: true,
     });
   });

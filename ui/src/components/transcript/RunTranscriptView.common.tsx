@@ -373,6 +373,18 @@ function resolveStructuredAbsoluteFileTarget(value: string | null | undefined): 
   return normalized.startsWith("/") ? normalizePosixAbsolutePath(normalized) : null;
 }
 
+function resolveStructuredAbsoluteWorkingDirectory(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  if (
+    !normalized
+    || /[\0\r\n`$*?{}]/u.test(normalized)
+    || /%[^%]+%/u.test(normalized)
+  ) {
+    return null;
+  }
+  return resolveStructuredAbsoluteFileTarget(normalized);
+}
+
 export function resolveTranscriptFileTarget(
   target: string | null | undefined,
   workingDirectory?: string | null,
@@ -384,7 +396,7 @@ export function resolveTranscriptFileTarget(
   if (absoluteTarget) return absoluteTarget;
   if (/^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("//")) return null;
 
-  const root = resolveStructuredAbsoluteFileTarget(workingDirectory);
+  const root = resolveStructuredAbsoluteWorkingDirectory(workingDirectory);
   if (!root) return null;
   if (/^[A-Za-z]:[\\/]/.test(root) || /^\\\\/.test(root)) {
     return normalizeWindowsAbsolutePath(`${root}\\${value}`);
