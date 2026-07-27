@@ -453,6 +453,54 @@ test("renders one readable reasoning stream when App Server emits summary and ra
   await expect(transcriptItem).not.toContainText("visualize once.visualize once.");
 });
 
+test("keeps phased App Server commentary in Process after Stop and reload", async ({ page }) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Commentary-Process-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json();
+  const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Commentary Process Agent",
+    agentRuntimeConfig: {
+      model: "gpt-5.4",
+      command: E2E_CODEX_APP_SERVER_STUB,
+      chatAppServerEnabled: true,
+    },
+  });
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${chatAgent.id}`);
+
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await composer.fill("Keep commentary in Process");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const commentary = "Checking the timeline before the final answer.";
+  const activeTranscript = page.getByTestId("chat-transcript-item").last();
+  await expect(activeTranscript.getByText(commentary, { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-assistant-message").filter({ hasText: commentary })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Stop streaming" }).click();
+  const stoppedToggle = page.getByRole("button", { name: /Worked for .*Stopped/ }).last();
+  await expect(stoppedToggle).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-assistant-message").filter({ hasText: commentary })).toHaveCount(0);
+
+  await page.reload();
+  const reloadedToggle = page.getByRole("button", { name: /Worked for .*Stopped/ }).last();
+  await expect(reloadedToggle).toBeVisible({ timeout: 15_000 });
+  await reloadedToggle.click();
+  const reloadedTranscript = page.getByTestId("chat-transcript-item").last();
+  await expect(reloadedTranscript.getByText(commentary, { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-assistant-message").filter({ hasText: commentary })).toHaveCount(0);
+  const screenshotPath = process.env.RUDDER_E2E_COMMENTARY_SCREENSHOT?.trim();
+  if (screenshotPath) {
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+  }
+});
+
 test("automatically runs queued messages after an operator Stop", async ({ page }) => {
   const organization = await createStreamingOrg(page, `Running-Queue-Stop-${Date.now()}`);
 

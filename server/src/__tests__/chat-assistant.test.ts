@@ -20,7 +20,16 @@ const mockAdapter = vi.hoisted(() => ({
     };
     const item = parsed.item ?? {};
     if (parsed.type === "item.completed" && item.type === "agent_message" && typeof item.text === "string") {
-      return [{ kind: "assistant", ts, text: item.text, ...(item.delta === true ? { delta: true } : {}) }];
+      const phase = item.phase === "commentary" || item.phase === "final_answer"
+        ? item.phase
+        : null;
+      return [{
+        kind: "assistant",
+        ts,
+        text: item.text,
+        ...(item.delta === true ? { delta: true } : {}),
+        ...(phase ? { phase } : {}),
+      }];
     }
     if (parsed.type === "item.completed" && item.type === "reasoning" && typeof item.text === "string") {
       return [{
@@ -2584,6 +2593,58 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(result).toMatchObject({ outcome: "stopped" });
     expect(JSON.stringify({ result, deltas, entries })).not.toContain("PRIVATE_STOP_BYTES");
     expect(JSON.stringify(mockChatAgentRuns.finalizeRun.mock.calls)).not.toContain("PRIVATE_STOP_BYTES");
+  });
+
+  it("keeps phased Codex commentary in Process instead of promoting it into a stopped reply body", async () => {
+    const svc = chatAssistantService({} as any);
+    const abortController = new AbortController();
+    const deltas: string[] = [];
+    const entries: Array<{ kind: string; text?: string; phase?: string }> = [];
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: {
+            type: "agent_message",
+            text: "I am still checking the timeline.",
+            delta: true,
+            phase: "commentary",
+          },
+        })}\n`,
+      );
+      abortController.abort();
+      return {
+        summary: "",
+        resultJson: null,
+        timedOut: false,
+        exitCode: null,
+        signal: "SIGTERM",
+      };
+    });
+
+    const result = await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      abortSignal: abortController.signal,
+      onAssistantDelta: (delta) => deltas.push(delta),
+      onTranscriptEntry: (entry) => entries.push(entry),
+    });
+
+    expect(result).toMatchObject({
+      outcome: "stopped",
+      partialBody: "",
+    });
+    expect(deltas).toEqual([]);
+    expect(entries).toEqual([
+      expect.objectContaining({
+        kind: "assistant",
+        text: "I am still checking the timeline.",
+        phase: "commentary",
+      }),
+    ]);
   });
 
   it("forwards process transcript entries while streaming", async () => {

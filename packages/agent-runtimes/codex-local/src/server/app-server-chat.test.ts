@@ -232,6 +232,57 @@ rl.on("line", (line) => {
       } });
       finish("completed");
     }
+    if (process.env.RUDDER_TEST_PHASED_AGENT_MESSAGES === "1") {
+      const commentaryItem = {
+        type: "agentMessage",
+        id: "commentary-1",
+        text: "",
+        phase: "commentary",
+        memoryCitation: null,
+      };
+      send({ method: "item/started", params: { threadId, turnId, item: commentaryItem } });
+      send({ method: "item/agentMessage/delta", params: {
+        threadId, turnId, itemId: commentaryItem.id, delta: "Inspecting ",
+      } });
+      send({ method: "item/agentMessage/delta", params: {
+        threadId, turnId, itemId: commentaryItem.id, delta: "the timeline.",
+      } });
+      send({ method: "item/completed", params: {
+        threadId,
+        turnId,
+        item: { ...commentaryItem, text: "Inspecting the timeline." },
+      } });
+
+      const finalItem = {
+        type: "agentMessage",
+        id: "final-1",
+        text: "",
+        phase: "final_answer",
+        memoryCitation: null,
+      };
+      send({ method: "item/started", params: { threadId, turnId, item: finalItem } });
+      send({ method: "item/agentMessage/delta", params: {
+        threadId, turnId, itemId: finalItem.id, delta: "Done.",
+      } });
+      send({ method: "item/completed", params: {
+        threadId,
+        turnId,
+        item: { ...finalItem, text: "Done." },
+      } });
+      send({ method: "turn/completed", params: {
+        threadId,
+        turn: {
+          id: turnId,
+          items: [],
+          itemsView: { type: "full" },
+          status: "completed",
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        },
+      } });
+    }
     return;
   }
   if (message.method === "turn/steer") {
@@ -738,6 +789,59 @@ describe("executeCodexAppServerChat", () => {
       expect.objectContaining({ kind: "assistant", text: "reply", delta: true }),
     ]);
     expect(stdoutLines.filter((line) => line.includes('"text":"Steered reply"'))).toEqual([]);
+  });
+
+  it("preserves App Server message phases and uses only the final answer as the result", async () => {
+    const stdoutLines: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_PHASED_AGENT_MESSAGES: "1",
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stdout") stdoutLines.push(chunk.trim());
+      }),
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 0,
+      summary: "Done.",
+    });
+    const assistantEntries = stdoutLines
+      .filter((line) => line.includes('"type":"item.completed"'))
+      .flatMap((line) => parseCodexStdoutLine(line, "2026-07-27T00:00:00.000Z"))
+      .filter((entry) => entry.kind === "assistant");
+    expect(assistantEntries).toEqual([
+      expect.objectContaining({
+        kind: "assistant",
+        text: "Inspecting ",
+        delta: true,
+        phase: "commentary",
+      }),
+      expect.objectContaining({
+        kind: "assistant",
+        text: "the timeline.",
+        delta: true,
+        phase: "commentary",
+      }),
+      expect.objectContaining({
+        kind: "assistant",
+        text: "Done.",
+        delta: true,
+        phase: "final_answer",
+      }),
+    ]);
   });
 
   it("projects one readable reasoning stream when Codex emits summary and raw deltas", async () => {

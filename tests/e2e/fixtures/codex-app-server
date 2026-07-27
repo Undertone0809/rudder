@@ -114,6 +114,33 @@ rl.on("line", (line) => {
       .join("\n");
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (prompt.includes("Keep commentary in Process")) {
+      send({
+        method: "item/started",
+        params: {
+          threadId,
+          turnId,
+          item: {
+            type: "agentMessage",
+            id: "commentary-e2e",
+            text: "",
+            phase: "commentary",
+            memoryCitation: null,
+          },
+        },
+      });
+      setTimeout(() => {
+        send({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId,
+            turnId,
+            itemId: "commentary-e2e",
+            delta: "Checking the timeline before the final answer.",
+          },
+        });
+      }, 300);
+    }
     if (prompt.includes("Keep Steer message position stable")) {
       setTimeout(() => emitReasoning("reason-before-steer", "Reasoning before Steer"), 600);
     }
@@ -144,6 +171,8 @@ rl.on("line", (line) => {
       () => finish(`Initial App Server reply (${prompt.includes("Keep Steer message position stable") ? "marker-true" : "marker-false"})`),
       prompt.includes("Render dual reasoning streams")
         ? 1_000
+        : prompt.includes("Keep commentary in Process")
+          ? 60_000
         : prompt.includes("Keep Steer message position stable")
           ? 60_000
           : 30_000,

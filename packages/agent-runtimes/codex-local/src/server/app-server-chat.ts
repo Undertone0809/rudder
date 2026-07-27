@@ -72,6 +72,10 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function messagePhase(value: unknown): "commentary" | "final_answer" | null {
+  return value === "commentary" || value === "final_answer" ? value : null;
+}
+
 function appendBounded(current: string, chunk: string): string {
   const combined = current + chunk;
   return combined.length <= APP_SERVER_CAPTURE_LIMIT
@@ -282,6 +286,7 @@ export async function executeCodexAppServerChat(
   const reasoningDeltaItemIds = new Set<string>();
   const reasoningStreamByItemId = new Map<string, "summary" | "raw">();
   const reasoningSummaryIndexByItemId = new Map<string, number>();
+  const agentMessagePhaseByItemId = new Map<string, "commentary" | "final_answer" | null>();
   let threadId: string | null = null;
   let turnId: string | null = null;
   let turnCompleted = false;
@@ -340,10 +345,17 @@ export async function executeCodexAppServerChat(
         const delta = asString(params.delta);
         const itemId = asString(params.itemId);
         if (itemId) agentDeltaItemIds.add(itemId);
+        const phase = itemId ? agentMessagePhaseByItemId.get(itemId) ?? null : null;
         if (delta) {
           await emit({
             type: "item.completed",
-            item: { id: itemId || undefined, type: "agent_message", text: delta, delta: true },
+            item: {
+              id: itemId || undefined,
+              type: "agent_message",
+              text: delta,
+              delta: true,
+              ...(phase ? { phase } : {}),
+            },
           });
         }
         return;
@@ -389,6 +401,13 @@ export async function executeCodexAppServerChat(
       if (notification.method === "item/started" || notification.method === "item/completed") {
         let item = normalizeThreadItem(params.item);
         if (item.type === "userMessage") return;
+        if (item.type === "agent_message") {
+          const itemId = asString(item.id);
+          const phase = messagePhase(item.phase);
+          if (itemId) {
+            agentMessagePhaseByItemId.set(itemId, phase);
+          }
+        }
         if (notification.method === "item/completed" && item.type === "collab_agent_tool_call") {
           const snapshots = await Promise.all(collabAgentReceiverThreadIds(item).map(async (receiverThreadId) => {
             try {
@@ -408,7 +427,11 @@ export async function executeCodexAppServerChat(
             item = { ...item, agentTranscripts };
           }
         }
-        if (notification.method === "item/completed" && item.type === "agent_message") {
+        if (
+          notification.method === "item/completed"
+          && item.type === "agent_message"
+          && messagePhase(item.phase) !== "commentary"
+        ) {
           finalAgentText = asString(item.text) || finalAgentText;
         }
         const itemId = asString(item.id);

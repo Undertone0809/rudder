@@ -453,7 +453,18 @@ function parseCodexItem(
 
   if (itemType === "agent_message") {
     const text = asString(item.text);
-    if (text) return [{ kind: "assistant", ts, text, ...(item.delta === true ? { delta: true } : {}) }];
+    const messagePhase = item.phase === "commentary" || item.phase === "final_answer"
+      ? item.phase
+      : null;
+    if (text) {
+      return [{
+        kind: "assistant",
+        ts,
+        text,
+        ...(item.delta === true ? { delta: true } : {}),
+        ...(messagePhase ? { phase: messagePhase } : {}),
+      }];
+    }
     return [];
   }
 

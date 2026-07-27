@@ -593,6 +593,7 @@ export type ChatStreamTranscriptTextEntry = {
   ts: string;
   text: string;
   delta?: boolean;
+  phase?: "commentary" | "final_answer";
 } & Partial<ChatTranscriptGenerationProvenance>;
 
 export type ChatStreamTranscriptEntry =
