@@ -3127,6 +3127,8 @@ Why:
 - Group membership must not make a thread feel like a second-class item. A
   grouped row is still the same Messenger item for navigation, unread state,
   pin ordering, and attention semantics.
+- Operators must be able to remove one grouped Chat, Issue, or Saved View
+  without dismantling the group or changing any sibling member.
 
 Product model:
 
@@ -3218,11 +3220,13 @@ Flow:
 10. Saved View group order and Main Workbench tab order are independent.
     Reordering or moving a Messenger row does not move, close, focus, or
     reassign the corresponding Main tab or live runtime.
-11. Removing a Saved View's group membership, choosing `Move to Messenger
-    sidebar`, or separating/deleting its group returns the Saved View to the
-    loose directory without deleting it. A loose Saved View can then be
-    reordered, moved into an existing group, or merged with an eligible loose
-    Chat or Issue through the same pointer and keyboard placement model.
+11. Every grouped Chat, Issue, and Saved View row exposes `Move out of group`
+    from its `Move to group` menu. The action removes only that selected
+    member's operator-scoped membership, returns it to the loose directory,
+    and leaves the group plus all sibling members intact. It does not delete or
+    mutate the owning Chat, Issue, or Saved View. A loose member can then be
+    reordered, moved into an existing group, or merged with another eligible
+    loose Chat or Issue through the same pointer and keyboard placement model.
 
 Invariants:
 
@@ -3267,6 +3271,9 @@ Invariants:
 - Removing a thread-backed item or Saved View from a group returns it to the
   loose Messenger directory. Thread-backed items retain existing read/unread
   and attention state; Saved Views retain their non-thread identity.
+- `Move out of group` is a per-member operation for grouped Chat, Issue, and
+  Saved View rows. It must not delete the custom group, remove sibling
+  memberships, or delete the selected owning-domain object.
 - A mixed group may contain both thread-backed members and Saved Views. Saved
   View rows preserve their Saved View route, target kind, title, and manual
   order, but must not inherit unread badges, attention state, mark-read actions,

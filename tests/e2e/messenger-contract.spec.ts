@@ -1568,6 +1568,138 @@ test.describe("Messenger unified threads contract", () => {
     }).toBeGreaterThanOrEqual(2);
   });
 
+  test("moves one Chat, Issue, or Saved View out of a group without removing the group or siblings", async ({ page }) => {
+    const organization = await createConfiguredOrganization(page, `Messenger-Move-Out-${Date.now()}`);
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Grouped move-out chat",
+        summary: "Only this Chat membership should be removed.",
+        initialMessage: { body: "Keep the Chat while moving it out of the group." },
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Grouped move-out issue",
+        description: "Only this Issue membership should be removed.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json() as { id: string };
+
+    const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Move-out proof", icon: "folder::blue" },
+    });
+    expect(groupRes.ok()).toBe(true);
+    const group = await groupRes.json() as { id: string };
+    for (const itemKey of [`chat:${chat.id}`, `issue:${issue.id}`]) {
+      const assignRes = await page.request.post(
+        `/api/orgs/${organization.id}/messenger/groups/${group.id}/entries`,
+        { data: { itemKey } },
+      );
+      expect(assignRes.ok()).toBe(true);
+    }
+
+    const savedViewRes = await page.request.post(`/api/orgs/${organization.id}/messenger/saved-views/keep`, {
+      data: {
+        title: "Grouped move-out reference",
+        target: {
+          kind: "browser",
+          tabId: `move-out-${randomUUID()}`,
+          url: "https://example.com/move-out-proof",
+          viewInstanceId: `move-out-${randomUUID()}`,
+        },
+        clientMutationId: randomUUID(),
+        placement: { kind: "group", groupId: group.id },
+      },
+    });
+    expect(savedViewRes.ok()).toBe(true);
+    const savedView = (await savedViewRes.json() as { savedView: { id: string } }).savedView;
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
+      window.localStorage.setItem("rudder.messengerSplitIssueNotificationsByOrg", JSON.stringify({ [orgId]: true }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+
+    const groupSectionId = `messenger-thread-section-custom-group-${group.id}`;
+    const chatRowId = threadTestId(`chat:${chat.id}`);
+    const issueRowId = threadTestId(`issue:${issue.id}`);
+    const savedViewRow = page.locator(`[data-messenger-saved-view-id="${savedView.id}"]`);
+    const groupSection = page.getByTestId(groupSectionId);
+    const groupedSavedViewRow = groupSection.locator(`[data-messenger-saved-view-id="${savedView.id}"]`);
+    await expect(groupSection).toContainText("Move-out proof", { timeout: 15_000 });
+    await expectTestIdWithinSection(page, groupSectionId, chatRowId);
+    await expectTestIdWithinSection(page, groupSectionId, issueRowId);
+    await expect(groupedSavedViewRow).toBeVisible();
+
+    const moveOutFromOpenMenu = async () => {
+      await page.getByRole("menuitem", { name: "Move to group", exact: true }).hover();
+      await page.getByRole("menuitem", { name: "Move out of group", exact: true }).click();
+    };
+    const expectMemberships = async (expectedItemKeys: string[]) => {
+      await expect.poll(async () => {
+        const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+        expect(groupsRes.ok()).toBe(true);
+        const payload = await groupsRes.json() as {
+          groups: Array<{ id: string; entries: Array<{ itemKey: string; threadKey: string | null }> }>;
+        };
+        const persistedGroup = payload.groups.find((candidate) => candidate.id === group.id);
+        return persistedGroup?.entries.map((entry) => entry.itemKey ?? entry.threadKey).sort() ?? null;
+      }).toEqual(expectedItemKeys.slice().sort());
+      await expect(groupSection).toBeVisible();
+    };
+
+    const chatMoveResponse = page.waitForResponse((response) =>
+      response.url().includes(`/api/orgs/${organization.id}/messenger/groups/entries/`)
+      && response.request().method() === "DELETE",
+    );
+    await page.getByTestId(chatRowId).hover();
+    await page.getByTestId(chatRowId).getByRole("button", { name: "Chat actions" }).click();
+    await moveOutFromOpenMenu();
+    expect((await chatMoveResponse).ok()).toBe(true);
+    await expectMemberships([`issue:${issue.id}`, `saved-view:${savedView.id}`]);
+    await expect(groupSection.getByTestId(chatRowId)).toHaveCount(0);
+    await expect(page.getByTestId(chatRowId)).toBeVisible();
+    await expectTestIdWithinSection(page, groupSectionId, issueRowId);
+    await expect(groupedSavedViewRow).toBeVisible();
+
+    const issueMoveResponse = page.waitForResponse((response) =>
+      response.url().includes(`/api/orgs/${organization.id}/messenger/groups/entries/`)
+      && response.request().method() === "DELETE",
+    );
+    await page.getByTestId(issueRowId).hover();
+    await page.getByTestId(issueRowId).getByRole("button", { name: "Thread actions" }).click();
+    await moveOutFromOpenMenu();
+    expect((await issueMoveResponse).ok()).toBe(true);
+    await expectMemberships([`saved-view:${savedView.id}`]);
+    await expect(groupSection.getByTestId(issueRowId)).toHaveCount(0);
+    await expect(page.getByTestId(issueRowId)).toBeVisible();
+    await expect(groupedSavedViewRow).toBeVisible();
+
+    const savedViewMoveResponse = page.waitForResponse((response) =>
+      response.url().includes(`/api/orgs/${organization.id}/messenger/groups/entries/`)
+      && response.request().method() === "DELETE",
+    );
+    await savedViewRow.hover();
+    await savedViewRow.getByRole("button", { name: "Saved View actions for Grouped move-out reference" }).click();
+    await moveOutFromOpenMenu();
+    expect((await savedViewMoveResponse).ok()).toBe(true);
+    await expectMemberships([]);
+    await expect(groupedSavedViewRow).toHaveCount(0);
+    await expect(savedViewRow).toBeVisible();
+    await expect(page.getByTestId(chatRowId)).toBeVisible();
+    await expect(page.getByTestId(issueRowId)).toBeVisible();
+  });
+
   test("groups aggregate issue and synthetic Messenger rows through the same group contract", async ({ page }) => {
     const organization = await createConfiguredOrganization(page, `Messenger-Nonchat-Groups-${Date.now()}`);
 

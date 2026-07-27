@@ -180,7 +180,7 @@ export function MessengerSavedViewRow({
   savedView: looseSavedView,
   groups,
   onMove,
-  onMoveToSidebar,
+  onMoveOutOfGroup,
   onRemove,
   placementPending = false,
 }: {
@@ -194,7 +194,7 @@ export function MessengerSavedViewRow({
   savedView?: MessengerSavedView;
   groups: MessengerCustomGroupWithEntries[];
   onMove: (groupId: string, itemKey: string) => void;
-  onMoveToSidebar?: (itemKey: string) => void;
+  onMoveOutOfGroup?: (itemKey: string) => void;
   onRemove: (savedViewId: string) => void;
   placementPending?: boolean;
 }) {
@@ -272,11 +272,17 @@ export function MessengerSavedViewRow({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="surface-overlay text-foreground">
           <DropdownMenuSub>
-            <DropdownMenuSubTrigger disabled={otherGroups.length === 0}>
+            <DropdownMenuSubTrigger disabled={otherGroups.length === 0 && !currentGroupId}>
               <FolderInput className="h-4 w-4" />
               Move to group
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="surface-overlay text-foreground">
+              {currentGroupId && onMoveOutOfGroup ? (
+                <DropdownMenuItem onClick={() => onMoveOutOfGroup(resolvedItemKey)}>
+                  <Folder className="h-4 w-4" />
+                  Move out of group
+                </DropdownMenuItem>
+              ) : null}
               {otherGroups.map((group) => (
                 <DropdownMenuItem key={group.id} onClick={() => onMove(group.id, resolvedItemKey)}>
                   {group.name}
@@ -284,12 +290,6 @@ export function MessengerSavedViewRow({
               ))}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
-          {currentGroupId && onMoveToSidebar ? (
-            <DropdownMenuItem onClick={() => onMoveToSidebar(resolvedItemKey)}>
-              <FolderInput className="h-4 w-4" />
-              Move to Messenger sidebar
-            </DropdownMenuItem>
-          ) : null}
           <DropdownMenuItem
             className="text-destructive focus:text-destructive"
             onClick={() => onRemove(savedView.id)}
