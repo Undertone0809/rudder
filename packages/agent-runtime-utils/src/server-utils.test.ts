@@ -1322,6 +1322,23 @@ describe("loadAgentInstructionsPrefix", () => {
     )).toBe("");
   });
 
+  it("does not move resources into the instruction stack when the Chat prompt already includes them", () => {
+    const resources = "## Organization Resources\n\n- Main codebase: ~/projects/rudder";
+    const prepared = prepareAgentInstructionRuntimeContext({
+      rudderChatPromptIncludesResources: true,
+      rudderWorkspace: {
+        resourcesPrompt: resources,
+        orgResourcesPrompt: resources,
+      },
+    });
+
+    expect(prepared.contextSectionsBeforeCurrentTime).toEqual([]);
+    expect(renderTemplate(
+      "{{context.rudderWorkspace.resourcesPrompt}}",
+      { context: prepared.promptContext },
+    )).toBe(resources);
+  });
+
   it("prefers canonical resourcesPrompt and only clears matching resource prompt aliases", async () => {
     const canonicalPrompt = "## Project Context Resources\n\n- Canonical library context";
     const legacyPrompt = "## Legacy Resources\n\n- Legacy fallback";

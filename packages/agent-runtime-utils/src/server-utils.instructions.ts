@@ -78,7 +78,9 @@ export function prepareAgentInstructionRuntimeContext(context: Record<string, un
     typeof context.rudderResourcesPrompt === "string" ? context.rudderResourcesPrompt.trim() : "";
   const resourcesPrompt = workspaceResourcesPrompt || workspaceOrgResourcesPrompt || topLevelResourcesPrompt;
 
-  if (!resourcesPrompt) {
+  // Chat prompt assembly already embeds the compiled resources for runtime-neutral
+  // adapters. Local runtimes must not prepend that same context a second time.
+  if (!resourcesPrompt || context.rudderChatPromptIncludesResources === true) {
     return {
       contextSectionsBeforeCurrentTime: [],
       promptContext: context,

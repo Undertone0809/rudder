@@ -878,6 +878,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             chatPrompt,
             chatConversationId: input.conversation.id,
             chatMode: true,
+            rudderChatPromptIncludesResources: true,
             rudderChatInlineVisualProtocolVersion: 1,
             rudderScene,
             rudderWorkspace,

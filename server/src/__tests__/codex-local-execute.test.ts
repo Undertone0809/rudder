@@ -550,6 +550,63 @@ function managedCodexHomePath(input: {
 }
 
 describe("codex execute", { timeout: 20_000 }, () => {
+  it("does not prepend resources already embedded in a Chat prompt", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-chat-resources-once-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    const resources = "## Organization Resources\n\n- Main codebase: ~/projects/rudder";
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const result = await execute({
+        runId: "run-chat-resources-once",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { RUDDER_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "{{context.chatPrompt}}",
+        },
+        context: {
+          rudderScene: "chat",
+          chatMode: true,
+          rudderChatPromptIncludesResources: true,
+          chatPrompt: `${resources}\n\nConversation input: test`,
+          rudderWorkspace: {
+            orgResourcesPrompt: resources,
+            resourcesPrompt: resources,
+          },
+        },
+        onLog: async () => undefined,
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.prompt.match(/## Organization Resources/g)).toHaveLength(1);
+      expect(capture.prompt).toContain("Conversation input: test");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps custom Codex commands on exec unless App Server is explicitly enabled", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-server-gate-"));
     const workspace = path.join(root, "workspace");
