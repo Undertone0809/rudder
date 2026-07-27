@@ -661,7 +661,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
 
     const prompt = mockAdapter.execute.mock.calls[0]?.[0]?.context?.chatPrompt as string;
-    expect(prompt).toContain("Always reply in the same language as the user's most recent substantive message unless they explicitly ask for a different language.");
+    expect(prompt).toContain("You are in chat scene of Rudder.");
     expect(prompt).toContain("You are Chat Specialist, replying inside Rudder's chat scene.");
     expect(prompt).toContain("Before answering, classify the user's request depth:");
     expect(prompt).toContain("Product, design, architecture, strategy, or workflow judgment: reason from scenarios, actors, needs, non-needs, constraints, failure modes, and corner cases before giving a decision-ready answer.");
@@ -1476,7 +1476,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
 
     const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
     expect(prompt).toContain("Do not emit issue_proposal just because work is large");
-    expect(prompt).toContain("the latest operator-authored user request explicitly asks");
+    expect(prompt).toContain("the latest user request explicitly asks");
     expect(prompt).toContain("creating an issue");
     expect(prompt).toContain("converting the chat to an issue");
   });
