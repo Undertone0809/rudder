@@ -168,7 +168,6 @@ import {
   ChevronDown,
   ChevronRight,
   Folder,
-  FolderInput,
   FolderPlus,
   ListFilter,
   Loader2,
@@ -179,7 +178,8 @@ import {
   Pin,
   PinOff,
   Plus,
-  RefreshCw
+  RefreshCw,
+  Trash2,
 } from "lucide-react";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -1631,10 +1631,10 @@ export function MessengerContextSidebar() {
     },
   });
 
-  const separateCustomGroupMutation = useMutation({
+  const deleteCustomGroupMutation = useMutation({
     mutationFn: (groupId: string) => {
-      if (!model.selectedOrganizationId) throw new Error("Organization is required to separate a Messenger group");
-      return messengerApi.separateCustomGroup(model.selectedOrganizationId, groupId);
+      if (!model.selectedOrganizationId) throw new Error("Organization is required to remove a Messenger group");
+      return messengerApi.deleteCustomGroup(model.selectedOrganizationId, groupId);
     },
     onSuccess: async () => {
       if (model.selectedOrganizationId) {
@@ -1643,7 +1643,7 @@ export function MessengerContextSidebar() {
     },
     onError: (error) => {
       pushToast({
-        title: "Could not separate Messenger group",
+        title: "Could not remove Messenger group",
         body: error instanceof Error ? error.message : "Try again.",
         tone: "error",
       });
@@ -2611,15 +2611,15 @@ export function MessengerContextSidebar() {
     queueCustomGroupIconUpdate(group.id, icon);
   };
 
-  const handleSeparateCustomGroup = async (group: MessengerCustomGroupWithEntries) => {
+  const handleDeleteCustomGroup = async (group: MessengerCustomGroupWithEntries) => {
     const confirmed = await confirm({
-      title: "Separate items",
-      description: `Move the items in "${group.name}" back into the main list? The Messenger threads will stay intact.`,
-      confirmLabel: "Separate items",
-      tone: "default",
+      title: "Remove group",
+      description: `Remove "${group.name}" and move its items back to the main list? Chats, issues, and Saved Views will stay intact.`,
+      confirmLabel: "Remove group",
+      tone: "destructive",
     });
     if (!confirmed) return;
-    separateCustomGroupMutation.mutate(group.id);
+    deleteCustomGroupMutation.mutate(group.id);
   };
 
   const renderThreadEntry = (
@@ -3151,10 +3151,11 @@ export function MessengerContextSidebar() {
                 </DropdownMenuSub>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onClick={() => void handleSeparateCustomGroup(customGroup)}
+                  variant="destructive"
+                  onClick={() => void handleDeleteCustomGroup(customGroup)}
                 >
-                  <FolderInput className="h-4 w-4" />
-                  Separate items
+                  <Trash2 className="h-4 w-4" />
+                  Remove group
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

@@ -1434,6 +1434,7 @@ test.describe("Messenger unified threads contract", () => {
         data: {
           title,
           summary,
+          initialMessage: { body: summary },
           issueCreationMode: "manual_approval",
           planMode: false,
         },
@@ -1459,6 +1460,7 @@ test.describe("Messenger unified threads contract", () => {
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
       window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
+      window.localStorage.setItem("rudder.messengerSplitIssueNotificationsByOrg", JSON.stringify({ [orgId]: true }));
     }, organization.id);
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
 
@@ -1469,22 +1471,30 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId(threadTestId(`chat:${groupedChat.id}`))).toContainText("Grouped release tab");
     await expect(page.getByTestId(threadTestId(`chat:${movableChat.id}`))).toContainText("Movable main-list tab");
     await expect(page.getByTestId(threadTestId(`chat:${untouchedChat.id}`))).toContainText("Untouched latest tab");
+    const movableThreadKey = `chat:${movableChat.id}`;
+    const untouchedThreadKey = `chat:${untouchedChat.id}`;
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json() as { user: { id: string } | null };
+    const currentUserId = session.user?.id ?? "anonymous";
+    await page.evaluate(({ orgId, userId, order }) => {
+      for (const identity of new Set([userId, "anonymous"])) {
+        window.localStorage.setItem(
+          `rudder.messengerDefaultThreadOrder:${orgId}:${identity}`,
+          JSON.stringify(order),
+        );
+      }
+    }, {
+      orgId: organization.id,
+      userId: currentUserId,
+      order: [groupLayoutKey, movableThreadKey, untouchedThreadKey],
+    });
+    await page.reload();
     await expectTestIdsInDomOrder(page, [
-      threadTestId(`chat:${untouchedChat.id}`),
       groupSectionId,
+      threadTestId(movableThreadKey),
+      threadTestId(untouchedThreadKey),
     ]);
-    await dragMessengerSectionOver(
-      page,
-      page.getByTestId(groupSectionId).getByRole("button", { name: /Deep work/ }),
-      page.getByTestId(threadTestId(`chat:${untouchedChat.id}`)),
-    );
-    const persistedMixedLayoutOrder = await page.evaluate((orgId) => {
-      const prefix = `rudder.messengerDefaultThreadOrder:${orgId}:`;
-      const storageKey = Object.keys(window.localStorage).find((key) => key.startsWith(prefix));
-      return storageKey ? JSON.parse(window.localStorage.getItem(storageKey) ?? "[]") as string[] : [];
-    }, organization.id);
-    expect(persistedMixedLayoutOrder).toContain(groupLayoutKey);
-    expect(persistedMixedLayoutOrder.some((key) => key.startsWith("chat:"))).toBe(true);
 
     await page.getByTestId("messenger-thread-organization-trigger").click();
     await expect(page.getByRole("menuitemradio", { name: "Custom groups" })).toHaveCount(0);
@@ -1495,8 +1505,7 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByRole("menuitem", { name: "Rename..." })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Change icon" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Pick color" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Separate items" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Remove group" })).toBeVisible();
     await page.keyboard.press("Escape");
 
     const moveResponse = page.waitForResponse((response) =>
@@ -1533,19 +1542,60 @@ test.describe("Messenger unified threads contract", () => {
       return payload.groups.find((candidate) => candidate.id === group.id)?.entries.map((entry) => entry.threadKey) ?? [];
     }).not.toContain(`chat:${movableChat.id}`);
 
-    const separateResponse = page.waitForResponse((response) =>
-      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${group.id}/separate`) &&
-      response.request().method() === "POST",
+    const groupedIssueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Grouped release issue",
+        description: "This issue must survive removing its Messenger group.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(groupedIssueRes.ok()).toBe(true);
+    const groupedIssue = await groupedIssueRes.json() as { id: string };
+    const assignIssueRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups/${group.id}/entries`, {
+      data: { itemKey: `issue:${groupedIssue.id}` },
+    });
+    expect(assignIssueRes.ok()).toBe(true);
+    const savedViewRes = await page.request.post(`/api/orgs/${organization.id}/messenger/saved-views/keep`, {
+      data: {
+        title: "Grouped release reference",
+        target: {
+          kind: "browser",
+          tabId: `remove-group-${randomUUID()}`,
+          url: "https://example.com/remove-group-proof",
+          viewInstanceId: `remove-group-${randomUUID()}`,
+        },
+        clientMutationId: randomUUID(),
+        placement: { kind: "group", groupId: group.id },
+      },
+    });
+    expect(savedViewRes.ok()).toBe(true);
+    const savedView = (await savedViewRes.json() as { savedView: { id: string } }).savedView;
+    await page.reload();
+    await expect(page.getByTestId(groupSectionId)).toContainText("Deep work", { timeout: 15_000 });
+    await expect(page.getByTestId(threadTestId(`issue:${groupedIssue.id}`))).toContainText("Grouped release issue");
+    await expect(page.locator(`[data-messenger-saved-view-id="${savedView.id}"]`)).toContainText("Grouped release reference");
+
+    const removeGroupResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${group.id}`) &&
+      response.request().method() === "DELETE",
     );
     await page.getByTestId(groupSectionId).hover();
     await page.getByRole("button", { name: "Group actions" }).click();
-    await page.getByRole("menuitem", { name: "Separate items" }).click();
-    await page.getByRole("dialog").getByRole("button", { name: "Separate items" }).click();
-    expect((await separateResponse).ok()).toBe(true);
+    await page.getByRole("menuitem", { name: "Remove group" }).click();
+    await expect(page.getByRole("dialog")).toContainText("Chats, issues, and Saved Views will stay intact.");
+    await page.getByRole("dialog").getByRole("button", { name: "Remove group" }).click();
+    expect((await removeGroupResponse).ok()).toBe(true);
     await expect(page.getByTestId(groupSectionId)).toHaveCount(0);
     const firstMainRow = page.getByTestId(threadTestId(`chat:${untouchedChat.id}`));
     const secondMainRow = page.getByTestId(threadTestId(`chat:${movableChat.id}`));
     await expect(page.getByTestId(threadTestId(`chat:${groupedChat.id}`))).toContainText("Grouped release tab");
+    await expect(page.getByTestId(threadTestId(`issue:${groupedIssue.id}`))).toContainText("Grouped release issue");
+    await expect(page.locator(`[data-messenger-saved-view-id="${savedView.id}"]`)).toContainText("Grouped release reference");
+    const savedViewAfterRemoval = await page.request.get(
+      `/api/orgs/${organization.id}/messenger/saved-views/${savedView.id}`,
+    );
+    expect(savedViewAfterRemoval.ok()).toBe(true);
     await expect(secondMainRow).toContainText("Movable main-list tab");
     await expect(firstMainRow).toBeVisible();
     await expect(secondMainRow).toBeVisible();

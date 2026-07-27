@@ -18,7 +18,7 @@ const mockListCustomGroups = vi.hoisted(() => vi.fn());
 const mockListSavedViews = vi.hoisted(() => vi.fn());
 const mockUpdateCustomGroup = vi.hoisted(() => vi.fn());
 const mockRegenerateCustomGroupTitle = vi.hoisted(() => vi.fn());
-const mockSeparateCustomGroup = vi.hoisted(() => vi.fn());
+const mockDeleteCustomGroup = vi.hoisted(() => vi.fn());
 const mockReorderCustomGroups = vi.hoisted(() => vi.fn());
 const mockReorderCustomGroupEntries = vi.hoisted(() => vi.fn());
 const mockRemoveCustomGroupEntry = vi.hoisted(() => vi.fn());
@@ -206,7 +206,7 @@ vi.mock("@/api/messenger", () => ({
     createCustomGroupWithEntries: mockCreateCustomGroupWithEntries,
     updateCustomGroup: mockUpdateCustomGroup,
     regenerateCustomGroupTitle: mockRegenerateCustomGroupTitle,
-    separateCustomGroup: mockSeparateCustomGroup,
+    deleteCustomGroup: mockDeleteCustomGroup,
     reorderCustomGroups: mockReorderCustomGroups,
     assignCustomGroupEntry: mockAssignCustomGroupEntry,
     removeCustomGroupEntry: mockRemoveCustomGroupEntry,
@@ -965,7 +965,7 @@ describe("MessengerContextSidebar chat actions", () => {
     mockListCustomGroups.mockClear();
     mockUpdateCustomGroup.mockClear();
     mockRegenerateCustomGroupTitle.mockClear();
-    mockSeparateCustomGroup.mockClear();
+    mockDeleteCustomGroup.mockClear();
     mockReorderCustomGroups.mockClear();
     mockReorderCustomGroupEntries.mockClear();
     mockUpdateConversation.mockClear();
@@ -4219,7 +4219,7 @@ describe("MessengerContextSidebar chat actions", () => {
     });
   });
 
-  it("releases a grouped Saved View loose and keeps group separation available", async () => {
+  it("releases a grouped Saved View loose and keeps group removal available", async () => {
     installLocalStorage({
       "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "custom" }),
     });
@@ -4240,13 +4240,21 @@ describe("MessengerContextSidebar chat actions", () => {
       "saved-view:30000000-0000-4000-8000-000000000001",
     );
 
-    const separate = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Separate items"));
-    expect(separate).toBeTruthy();
-    expect(separate?.hasAttribute("disabled")).toBe(false);
-    expect(container.textContent).not.toContain(
-      "Move or remove Saved Views before separating this group.",
-    );
+    const removeGroup = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Remove group"));
+    expect(removeGroup).toBeTruthy();
+    expect(removeGroup?.hasAttribute("disabled")).toBe(false);
+    await act(async () => {
+      removeGroup?.click();
+      await Promise.resolve();
+    });
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Remove group",
+      description: "Remove \"Launch research\" and move its items back to the main list? Chats, issues, and Saved Views will stay intact.",
+      confirmLabel: "Remove group",
+      tone: "destructive",
+    });
+    expect(mockDeleteCustomGroup).toHaveBeenCalledWith("org-1", "group-saved");
   });
 
   it("locks one Saved View placement until the server settles", async () => {
@@ -4589,7 +4597,7 @@ describe("MessengerContextSidebar chat actions", () => {
     ];
     mockAssignCustomGroupEntry.mockRejectedValueOnce(new Error("Move denied"));
     mockDeleteSavedView.mockRejectedValueOnce(new Error("Remove denied"));
-    mockSeparateCustomGroup.mockRejectedValueOnce(new Error("Saved View membership changed"));
+    mockDeleteCustomGroup.mockRejectedValueOnce(new Error("Saved View membership changed"));
     renderSidebar();
 
     const moveDestination = Array.from(document.querySelectorAll("button"))
@@ -4625,20 +4633,17 @@ describe("MessengerContextSidebar chat actions", () => {
       && queryKey[2] === "groups"
     ))).toBe(false);
 
-    const separateButtons = Array.from(document.querySelectorAll("button"))
-      .filter((button) => button.textContent?.includes("Separate items")) as HTMLButtonElement[];
-    expect(separateButtons.every((button) => !button.disabled)).toBe(true);
-    expect(document.body.textContent).not.toContain(
-      "Move or remove Saved Views before separating this group.",
-    );
-    const availableSeparate = separateButtons[0];
-    expect(availableSeparate).toBeTruthy();
+    const removeGroupButtons = Array.from(document.querySelectorAll("button"))
+      .filter((button) => button.textContent?.includes("Remove group")) as HTMLButtonElement[];
+    expect(removeGroupButtons.every((button) => !button.disabled)).toBe(true);
+    const availableRemoveGroup = removeGroupButtons[0];
+    expect(availableRemoveGroup).toBeTruthy();
     await act(async () => {
-      availableSeparate?.click();
+      availableRemoveGroup?.click();
       await Promise.resolve();
     });
     expect(mockPushToast).toHaveBeenCalledWith({
-      title: "Could not separate Messenger group",
+      title: "Could not remove Messenger group",
       body: "Saved View membership changed",
       tone: "error",
     });
