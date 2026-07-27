@@ -30,6 +30,13 @@ function truncateText(value, maxLength) {
     : value;
 }
 
+function neutralizeCardMarkdown(value) {
+  return value.replace(
+    /[!-/:-@[-`{-~]/gu,
+    (character) => `&#${character.codePointAt(0)};`,
+  );
+}
+
 function validateIssueUrl(value) {
   let url;
   try {
@@ -93,7 +100,7 @@ export function buildIssueCard(event, repository) {
       title: "✅ GitHub Actions 手动测试",
       bodyElements: [
         {
-          tag: "plain_text",
+          tag: "markdown",
           content: "Rudder dev 通知通道正常。",
           text_align: "left",
           text_size: "normal_v2",
@@ -107,15 +114,23 @@ export function buildIssueCard(event, repository) {
     .filter(Boolean);
   const safeLabels = labels
     .slice(0, MAX_LABELS)
-    .map((label) => truncateText(normalizeText(label), MAX_LABEL_LENGTH));
+    .map((label) =>
+      neutralizeCardMarkdown(
+        truncateText(normalizeText(label), MAX_LABEL_LENGTH),
+      ),
+    );
   if (labels.length > MAX_LABELS) {
     safeLabels.push(`另有 ${labels.length - MAX_LABELS} 个`);
   }
-  const excerpt = truncateText(
-    normalizeText(issue.body || "未提供描述。"),
-    MAX_BODY_LENGTH,
+  const excerpt = neutralizeCardMarkdown(
+    truncateText(
+      normalizeText(issue.body || "未提供描述。"),
+      MAX_BODY_LENGTH,
+    ),
   );
-  const safeTitle = truncateText(normalizeText(issue.title), MAX_TITLE_LENGTH);
+  const safeTitle = neutralizeCardMarkdown(
+    truncateText(normalizeText(issue.title), MAX_TITLE_LENGTH),
+  );
   const issueUrl = validateIssueUrl(issue.html_url);
 
   return buildCard({
@@ -123,13 +138,13 @@ export function buildIssueCard(event, repository) {
     title: "🐞 新 GitHub Issue",
     bodyElements: [
       {
-        tag: "plain_text",
+        tag: "markdown",
         content: `#${issue.number} ${safeTitle}`,
         text_align: "left",
         text_size: "normal_v2",
       },
       {
-        tag: "plain_text",
+        tag: "markdown",
         content: [
           `提交人：@${issue.user?.login ?? "unknown"}`,
           `标签：${safeLabels.length > 0 ? safeLabels.join(" · ") : "无"}`,
@@ -138,7 +153,7 @@ export function buildIssueCard(event, repository) {
         text_size: "normal_v2",
       },
       {
-        tag: "plain_text",
+        tag: "markdown",
         content: excerpt,
         text_align: "left",
         text_size: "normal_v2",
