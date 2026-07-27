@@ -2,6 +2,60 @@ import { expect, test } from "@playwright/test";
 
 test.use({ serviceWorkers: "block" });
 
+test("Library uses the detached Side Panel header layout", async ({ page }) => {
+  const suffix = Date.now();
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Library-Header-Layout-${suffix}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const filePath = `projects/header-layout-${suffix}/current.md`;
+  const fileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+    data: {
+      filePath,
+      content: "# Detached Library header\n\nThe tabs and document use separate workspace cards.\n",
+    },
+  });
+  expect(fileRes.ok()).toBe(true);
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
+
+  const editor = page.getByTestId("org-workspaces-editor-card");
+  const headerCard = page.getByTestId("org-workspaces-editor-tabs");
+  const contentCard = editor.locator(".workspace-tab-content-card");
+  const activeTab = headerCard.locator(".workspace-tab-pill [role='tab']").filter({ hasText: "current.md" });
+  await expect(headerCard).toBeVisible();
+  await expect(contentCard).toBeVisible();
+  await expect(activeTab).toHaveAttribute("aria-selected", "true");
+
+  const layout = await editor.evaluate((element) => {
+    const header = element.querySelector<HTMLElement>(".workspace-tab-header-card");
+    const content = element.querySelector<HTMLElement>(".workspace-tab-content-card");
+    const tab = element.querySelector<HTMLElement>(".workspace-tab-pill");
+    if (!header || !content || !tab) return null;
+    const headerBox = header.getBoundingClientRect();
+    const contentBox = content.getBoundingClientRect();
+    const tabBox = tab.getBoundingClientRect();
+    return {
+      gap: contentBox.top - headerBox.bottom,
+      headerRadius: getComputedStyle(header).borderTopLeftRadius,
+      contentRadius: getComputedStyle(content).borderTopLeftRadius,
+      tabHeight: tabBox.height,
+    };
+  });
+  expect(layout).not.toBeNull();
+  expect(layout!.gap).toBeGreaterThanOrEqual(5);
+  expect(layout!.gap).toBeLessThanOrEqual(7);
+  expect(layout!.headerRadius).toBe(layout!.contentRadius);
+  expect(layout!.tabHeight).toBe(28);
+
+  await page.screenshot({ path: "/tmp/rudder-library-side-panel-header-layout.png", fullPage: false });
+});
+
 test("Library command-f searches the current editor tab content", async ({ page }) => {
   const suffix = Date.now();
   const orgRes = await page.request.post("/api/orgs", {

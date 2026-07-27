@@ -1171,11 +1171,13 @@ describe("OrganizationWorkspaces scroll regions", () => {
     const editorContent = document.querySelector("[data-testid='org-workspaces-editor-content']");
     const fileTab = document.querySelector("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab");
     const dragSpacer = document.querySelector("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab-drag-spacer");
-    expect(tabStrip?.classList.contains("rudder-doc-editor-tab-strip--desktop-chrome")).toBe(true);
-    expect(tabStrip?.className).toContain("bg-transparent");
-    expect(tabStrip?.className).not.toContain("bg-[color:var(--surface-elevated)]");
-    expect(tabStrip?.className).not.toContain("bg-[color:var(--surface-page)]");
+    const contentCard = editorContent?.closest(".workspace-tab-content-card");
+    expect(tabStrip?.classList.contains("workspace-tab-header-card")).toBe(true);
+    expect(tabStrip?.classList.contains("workspace-main-card")).toBe(true);
+    expect(contentCard?.classList.contains("workspace-main-card")).toBe(true);
+    expect(tabStrip?.parentElement?.className).toContain("gap-1.5");
     expect(editorContent?.className).toContain("bg-[color:var(--surface-elevated)]");
+    expect(fileTab?.classList.contains("workspace-tab-pill")).toBe(true);
     expect(fileTab?.classList.contains("rudder-doc-editor-tab--desktop-no-drag")).toBe(true);
     expect(dragSpacer).not.toBeNull();
 
@@ -1194,6 +1196,10 @@ describe("OrganizationWorkspaces scroll regions", () => {
     expect(fileTabs).toHaveLength(2);
     expect(fileTabs.map((tab) => tab.getAttribute("draggable"))).toEqual(["true", "true"]);
     expect(fileTabs.every((tab) => tab.classList.contains("rudder-doc-editor-tab--desktop-no-drag"))).toBe(true);
+    const inactiveCloseButton = fileTabs[0]?.querySelector<HTMLButtonElement>("button[aria-label^='Close ']");
+    expect(inactiveCloseButton?.className).toContain("pointer-events-none");
+    expect(inactiveCloseButton?.className).toContain("group-focus-within:opacity-100");
+    expect(inactiveCloseButton?.className).toContain("focus-visible:opacity-100");
 
     Object.defineProperty(fileTabs[1], "getBoundingClientRect", {
       configurable: true,

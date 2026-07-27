@@ -1940,14 +1940,14 @@ export function ChatSidePanel({
       aria-hidden={!contextReady || undefined}
     >
       <div className={cn(
-        "workspace-main-card relative z-10 flex shrink-0 flex-col overflow-visible rounded-[var(--desktop-workspace-radius)]",
+        "workspace-tab-header-card workspace-main-card relative z-10 flex shrink-0 flex-col overflow-visible rounded-[var(--desktop-workspace-radius)]",
         isMobile && "!bg-[color:var(--surface-page)] shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]",
       )}>
         <div
           role="tablist"
           aria-label="Side Panel targets"
           data-testid="chat-side-panel-tabs"
-          className="scrollbar-auto-hide flex shrink-0 items-center gap-1 overflow-x-auto px-2 py-1.5"
+          className="workspace-tab-strip scrollbar-auto-hide flex shrink-0 items-center gap-1 overflow-x-auto px-2 py-1.5"
         >
           <div className="scrollbar-auto-hide flex min-w-0 flex-1 gap-1 overflow-x-auto">
             {visibleTabs.map((tab) => {
@@ -2022,7 +2022,7 @@ export function ChatSidePanel({
                       setTabDropTarget(null);
                     }}
                     className={cn(
-                      "group relative flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-[color,background-color,border-color,box-shadow,opacity]",
+                      "workspace-tab-pill group relative flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-[color,background-color,border-color,box-shadow,opacity]",
                       tab.kind === "browser" && "w-[12.5rem]",
                       selected
                         ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
@@ -2112,7 +2112,7 @@ export function ChatSidePanel({
         </div>
       </div>
       <div className={cn(
-        "workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]",
+        "workspace-tab-content-card workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]",
         isMobile && "!bg-[color:var(--surface-page)]",
       )}>
         <div className={cn(
