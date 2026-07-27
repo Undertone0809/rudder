@@ -5,7 +5,7 @@ This document covers the GitHub and npm setup required for the current Rudder re
 - automatic canaries from `main`
 - manual stable promotion from a chosen source ref
 - npm trusted publishing via GitHub OIDC
-- protected release infrastructure in a public repository
+- direct-main release execution with exact-source CI
 
 Repo-side files that depend on this setup:
 
@@ -16,14 +16,9 @@ Repo-side files that depend on this setup:
 The `Release` workflow needs `actions: write` because it inspects exact-source
 CI runs, dispatches `desktop-release.yml`, and starts CI for the generated
 post-stable version commit. It needs `contents: write` to push release tags and
-the version handoff branch, plus `pull-requests: write` to open the protected
-version handoff PR. A tag or branch push performed with `GITHUB_TOKEN` will not,
-by itself, trigger a second workflow run, so the workflow dispatches handoff CI
-explicitly.
-
-The release preflight requires an operator attestation that the safeguards
-below are configured. The workflow does not silently skip the next-version
-handoff.
+the direct version handoff commit to `main`. A tag or branch push performed with
+`GITHUB_TOKEN` will not, by itself, trigger a second workflow run, so the
+workflow dispatches handoff CI explicitly.
 
 Note:
 
@@ -184,64 +179,25 @@ Reasoning:
 - an explicit release/publish request is the human authorization gate; when the
   version is omitted, the agent may infer the single consistent stable target
   from the repository release state and state it before publishing
-- locked source SHA, exact successful CI, confirmation inputs, immutable-version
-  checks, and protected `main` form the mandatory machine gate
+- locked source SHA, exact successful CI, and immutable-version checks form the
+  mandatory machine gate
 - the environment isolates stable credentials and limits use to `main` without
   introducing an account switch or reviewer click
 
-## 7. Protect `main`
+## 7. Direct `main` Release Flow
 
-Open the branch protection settings for `main`.
+Stable release work does not require a PR, branch-protection approval, repository
+attestation variable, or workflow confirmation phrase. The release agent pushes
+the validated source directly to `main`; the workflow then requires that exact
+SHA to have a successful `main` CI run before it can publish.
 
-Required rules for release automation:
+The generated post-stable `[skip release]` version commit is also pushed
+directly to `main`, followed by an explicit CI dispatch for its immutable SHA.
 
-1. require pull requests before merging
-2. require status checks to pass before merging
-3. require review from code owners
-4. dismiss stale approvals when new commits are pushed
-5. prevent direct pushes to `main`, including from release automation
-6. allow GitHub Actions to create pull requests so `release.yml` can open its
-   generated `[skip release]` version handoff PR
+## 8. CODEOWNERS
 
-At minimum, make sure workflow and release script changes cannot land without
-review. The stable preflight stops before executing source-ref release code
-unless all safeguards have been attested.
-
-After the main-only non-interactive `npm-stable` environment, `main` protection,
-and Actions workflow permissions are all configured and manually verified,
-create these repository Actions variables:
-
-- `RELEASE_SAFEGUARDS_CONFIGURED=true`
-- `STABLE_RELEASE_MODE=agent-automated`
-
-Manual stable preflight fails closed while either variable is missing. These
-variables are operator attestations because the workflow's scoped `GITHUB_TOKEN`
-cannot read repository-administration settings; do not set them before checking
-all controls.
-
-The release agent should treat a failed safeguard check as a repair step, not a
-new human approval gate: an explicit release request authorizes configuring
-missing settings to the documented standard when the authenticated account has
-access. Set the attestation variables only after verifying those controls. The
-agent must not weaken protections, bypass CI, or invent a policy exception; if
-standard repair is impossible, report the concrete credential, permission, or
-platform blocker.
-
-## 8. Enforce CODEOWNERS Review
-
-This repo now includes `.github/CODEOWNERS`, but GitHub only enforces it if branch protection requires code owner reviews.
-
-In branch protection for `main`, enable:
-
-- `Require review from Code Owners`
-
-Then verify the owner entries are correct for your actual maintainer set.
-
-Current file:
-
-- `.github/CODEOWNERS`
-
-If `@cryppadotta` is not the right reviewer identity in the public repo, change it before enabling enforcement.
+`.github/CODEOWNERS` remains useful for optional review routing, but the standard
+release path does not require a CODEOWNERS approval.
 
 ## 9. Protect Release Infrastructure Specifically
 
@@ -312,10 +268,8 @@ After at least one good canary exists:
 5. confirm the dry-run succeeds
 6. after an explicit stable release request—or an unqualified `release`/`发版`
    request whose stable target is unambiguous—let the release agent
-   rerun with `dry_run: false`, `confirm_stable: PUBLISH STABLE`, and
-   `confirm_docs: PUBLISH DOCS`; production docs are part of the standard
-   release unless explicitly excluded; no second confirmation is required after
-   dry-run
+   rerun with `dry_run: false`; production docs are part of the standard release
+   unless explicitly excluded; no second confirmation is required after dry-run
 7. confirm the `npm-stable` job starts without an interactive approval
 8. confirm npm `latest` points to the new stable version
 9. confirm git tag `v0.1.0` exists
@@ -324,7 +278,7 @@ After at least one good canary exists:
 12. confirm the GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets
 13. confirm the Docs production child workflow publishes `docs/release/v0.1.0`
     from the matching `v0.1.0` source and passes public health checks
-14. confirm the workflow opens the protected next-patch-version PR and
+14. confirm the workflow commits the next patch version directly to `main` and
     dispatches CI for that exact commit, or reports that `main` already advanced
 
 Start-path check:
@@ -354,8 +308,7 @@ Use this policy going forward:
   to end without another user or GitHub approval
 - only stables get public notes and announcements
 - release notes are committed before stable publish
-- stable docs deploys retain the mandatory `PUBLISH DOCS` machine assertion,
-  supplied automatically by the authorized release agent
+- stable docs deploy is included automatically unless explicitly excluded
 - rollback uses `npm dist-tag`, not unpublish
 
 ## 14. Troubleshooting
@@ -376,16 +329,16 @@ Check:
 1. the `publish` job uses environment `npm-stable`
 2. the environment has no required reviewers or wait timer
 3. the environment allows only `main`
-4. `STABLE_RELEASE_MODE` is `agent-automated`
-5. the workflow is running in the canonical repository, not a fork
+4. the workflow is running in the canonical repository, not a fork
 
-### CODEOWNERS does not trigger
+### Optional CODEOWNERS routing does not trigger
 
 Check:
 
 1. `.github/CODEOWNERS` is on the default branch
-2. branch protection on `master` requires code owner review
-3. the owner identities in the file are valid reviewers with repository access
+2. the owner identities in the file are valid reviewers with repository access
+
+CODEOWNERS routing is optional and is not part of the release gate.
 
 ## Related Docs
 

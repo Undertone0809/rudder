@@ -27,10 +27,9 @@ Important constraints:
 - stable source commits must have one committed public package version
 - all public packages must share that same stable semver before release
 - canary publishes derive the next prerelease from the committed stable version
-- after publishing stable `X.Y.Z`, the workflow prepares the public package
-  version bump on a protected PR branch, for example `X.Y.Z -> X.Y.(Z+1)`,
-  marks the maintenance commit `[skip release]`, and explicitly dispatches CI
-  for it
+- after publishing stable `X.Y.Z`, the workflow commits the public package
+  version bump directly to `main`, for example `X.Y.Z -> X.Y.(Z+1)`, marks the
+  maintenance commit `[skip release]`, and explicitly dispatches CI for it
 - `./scripts/release.sh canary --print-version` fails if the committed canary
   base already exists as stable npm package `X.Y.Z` or remote git tag `vX.Y.Z`
 
@@ -58,17 +57,17 @@ external release blocker for docs-site publishing. Do not silently count a
 failed docs workflow as handled; either escalate the credential/account issue to
 the Vercel owner or explicitly scope docs-site publishing out of that release.
 
-## Authorization Gates
+## Release Command Contract
 
 Release preparation and release execution are separate operations:
 
-1. **Review Ready** — identify the exact source SHA, complete verification,
-   prepare release notes/screenshots, push the feature branch, and open the PR.
-2. **Landing/Staging Gate** — without a release request, obtain explicit
-   permission before merging to `main` when that merge publishes a canary or
-   updates docs staging. An explicit release/publish request authorizes landing
-   the reviewed release source through the normal protected path.
-3. **Production Gate** — report the exact source ref, version/tag, production
+1. **Review Ready** — identify the exact source SHA, complete verification, and
+   prepare release notes/screenshots.
+2. **Release execution** — an explicit release/publish request authorizes
+   committing and pushing the reviewed source directly to `main`, waiting for
+   exact-source CI, running release preflight/dry-run, and publishing all
+   standard surfaces.
+3. **Status and verification** — report the exact source ref, version/tag,
    targets, successful and failing checks, and rollback point. An explicit
    release/publish imperative authorizes the release agent to complete the
    standard GitHub Actions publish and verification without a second approval.
@@ -76,32 +75,21 @@ Release preparation and release execution are separate operations:
    current release context and repository scripts, state it, and proceed.
 
 Instructions such as `start`, `continue`, `proceed`, `implement`, or approval of
-a plan do not satisfy the production gate. A staging approval is not production
-approval. Agents and automation must not set `dry_run: false`, enter workflow
-confirmation strings, or synthesize a release tag without an explicit
-release/publish request. Imperatives such as `release`, `publish`, `发版`, and
-`发布` satisfy this gate when the target can be resolved unambiguously. Once
-that request exists, the release agent supplies the confirmation strings and
-completes all standard release surfaces, including production docs, without
-returning UI tasks or a second confirmation prompt to the operator.
-That stable-release authorization also covers creating the deterministic
-post-release PR that advances `main` to the next patch base; it does not
-authorize bypassing that PR's review or CI.
+a plan do not request publication. Imperatives such as `release`, `publish`,
+`发版`, and `发布` do. Once that request exists, the release agent completes all
+standard release surfaces, including production docs and the deterministic
+post-release version commit on `main`, without returning PR or authorization
+tasks to the operator.
 
-The workflow also fails closed unless `npm-stable` is a main-only,
-non-interactive environment, `main` is protected, and GitHub Actions can create
-the generated post-stable version PR and dispatch its CI. The environment must
-not require an account switch, reviewer click, or wait timer. These repository
-settings are part of the machine-enforced release gate, not optional
-documentation. When an explicit release request exists and an authenticated
-maintainer can restore missing safeguards to the documented standard, configure
-them and rerun preflight without asking for additional authorization. Never
-weaken or bypass a safeguard to make a release pass.
+The workflow still fails closed on machine evidence: the release source must be
+reachable from `main`, have successful exact-source CI, pass stable preflight,
+and preserve immutable npm/tag semantics. The `npm-stable` environment remains
+main-only and non-interactive, with no reviewer click or wait timer.
 
 Only an explicit production-release instruction authorizes proceeding. Once it
 exists and the reviewed source, resolved target, checks, known failures, and
-rollback point are recorded, the agent owns the remaining landing, safeguard
-repair, publish, recovery, verification, cleanup, and closeout steps end to end.
+rollback point are recorded, the agent owns the remaining landing, publish,
+recovery, verification, cleanup, and closeout steps end to end.
 Separate authority is still required for destructive or nonstandard actions
 such as npm unpublish, force-pushing published tags, deleting the active canary
 line, weakening repository protections, or expanding the release scope.
@@ -192,14 +180,6 @@ Inputs:
   - commit SHA, branch, or tag
 - `dry_run`
   - preview only when true
-- `confirm_stable`
-  - leave empty for dry runs
-  - after an explicit release/publish request, the release agent enters
-    `PUBLISH STABLE` for the real stable release
-- `confirm_docs`
-  - leave empty for dry runs
-  - the same standard stable-release request includes `docs.rudderhq.dev`
-    unless explicitly excluded; the release agent enters `PUBLISH DOCS`
 
 Before running stable:
 
@@ -214,10 +194,9 @@ Before running stable:
    standard docs authorization
 7. continue without another confirmation unless the user excluded
    `docs.rudderhq.dev` or a genuinely ambiguous/nonstandard decision appears
-8. run the workflow with `dry_run: false`, `confirm_stable: PUBLISH STABLE`,
-   and `confirm_docs: PUBLISH DOCS`
+8. run the workflow with `dry_run: false`
 9. after stable and the docs deployment are both published, confirm the
-   workflow opened the protected next-patch-base PR and its explicitly
+   workflow committed the next-patch base directly to `main` and its explicitly
    dispatched CI succeeded
 
 Example:
@@ -241,10 +220,9 @@ The workflow:
   the released stable version or older, while preserving the current npm
   `@rudderhq/cli@canary` target if the next-base canary has not been published
   yet
-- prepares the next canary/stable base on an `automation/release-vX.Y.Z` branch
-  with `[skip release]`, opens a protected pull request, and dispatches the
-  trusted CI workflow with the immutable bump SHA, unless `main` already
-  advanced
+- commits the next canary/stable base directly to `main` with `[skip release]`
+  and dispatches the trusted CI workflow with the immutable bump SHA, unless
+  `main` already advanced
 - makes the website changelog deployment a required stable-release surface;
   canary releases never deploy it
 

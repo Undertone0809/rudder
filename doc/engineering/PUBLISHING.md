@@ -92,10 +92,8 @@ workflow, branch, source-locking, approval, and deployment mechanics belong in
 maintainer records rather than the public changelog.
 After both the stable and public changelog deploy succeed,
 `scripts/prepare-next-release.mjs` idempotently updates current `main` to the
-next patch base on a deterministic `automation/release-vX.Y.Z` branch, opens a
-pull request, and explicitly dispatches CI for that SHA. The handoff remains
-subject to the same branch protection and CODEOWNERS review as contributor
-changes.
+next patch base with one `[skip release]` maintenance commit pushed directly to
+`main`, then explicitly dispatches CI for that exact SHA.
 
 ## Version formats
 

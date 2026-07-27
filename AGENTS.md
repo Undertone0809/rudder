@@ -202,13 +202,11 @@ separate transitions.
   a PR when appropriate, review evidence, and a release-risk summary.
 - An explicit imperative to release or publish, including `release`, `publish`,
   `ship this version`, `发版`, or `发布`, authorizes the complete standard release
-  lifecycle. This includes landing the reviewed release source through the
-  normal protected path, repairing documented release safeguards to their
-  standard configuration, running dry-run and real publish workflows, supplying
-  workflow confirmation inputs, publishing npm/GitHub/Desktop/production-docs
-  surfaces, verifying them, cleaning obsolete canary Releases/tags, and
-  completing the normal next-version handoff. Do not ask for a second
-  confirmation after dry-run.
+  lifecycle. This includes committing and pushing the reviewed source directly
+  to `main`, running CI and the release dry-run, publishing npm/GitHub/Desktop/
+  production-docs surfaces, verifying them, cleaning obsolete canary
+  Releases/tags, and completing the direct next-version handoff. Do not create a
+  release PR or ask for another authorization during this lifecycle.
 - If the release request omits a version, infer the single consistent target
   from the current release context and repository release scripts, lock its
   source SHA, and state both in a progress update. Ask only when the channel,
@@ -216,15 +214,14 @@ separate transitions.
 - Automatic branch previews are review surfaces only. Do not promote them or
   assign shared aliases unless they are part of an explicit release/publish
   request.
-- Machine gates remain mandatory. A release request authorizes tightening or
-  restoring missing safeguards to the documented standard; it does not
-  authorize weakening protections or bypassing CI. Stop only when credentials
-  or permissions are unavailable, a material target decision is ambiguous, or
-  proceeding would require a policy exception.
+- Machine validation remains mandatory: the exact `main` source must pass CI,
+  stable preflight, immutable-version checks, and public-surface verification.
+  Stop only when credentials or permissions are unavailable or a material
+  target decision is genuinely ambiguous.
 - Destructive or nonstandard operations still require separate authority:
   unpublishing npm versions, force-pushing or retargeting published tags,
-  deleting the active canary line, weakening repository protections, or
-  expanding beyond the requested product/environment.
+  deleting the active canary line, or expanding beyond the requested
+  product/environment.
 - Before the real publish, report the exact commit/tag and target, completed
   checks, unresolved failures, migration or data impact, and rollback point as
   a status update—not as another approval request. Release only that locked,

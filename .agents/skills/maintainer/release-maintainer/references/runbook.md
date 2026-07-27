@@ -24,12 +24,10 @@ cannot be safely inferred.
 Treat an explicit imperative to release or publish—such as `release`, `publish`,
 `ship this version`, `发版`, or `发布`—as authorization for the complete standard
 release lifecycle. This covers release preparation, landing the reviewed source
-through the normal protected path, configuring missing release safeguards to
-the documented standard, dry-run, real publish, required workflow confirmation
-inputs, npm/GitHub/Desktop/production-docs surfaces, verification, obsolete
-canary Release/tag cleanup, recovery of partial failures, and the normal
-next-version handoff. Do not stop after dry-run or ask for a second production
-confirmation.
+directly on `main`, CI, dry-run, real publish, npm/GitHub/Desktop/
+production-docs surfaces, verification, obsolete canary Release/tag cleanup,
+recovery of partial failures, and the direct next-version handoff. Do not create
+a release PR or ask for another authorization during this lifecycle.
 
 If the user omits the version, resolve the single consistent target from the
 current conversation, committed package versions, and
@@ -43,12 +41,9 @@ as `start`, `continue`, or `finish the feature` also stop at Review Ready unless
 they explicitly include a release/publish imperative.
 
 The default authorization does not cover npm unpublish, force-pushing or
-retargeting published tags, deleting the active canary line, weakening
-repository protections, bypassing CI, exposing secrets, or expanding to a
-different product/environment. Those are nonstandard decisions and still need
-separate authority. If a documented safeguard is missing, tighten or restore it
-without asking; if credentials or permissions make that impossible, report the
-specific blocker.
+retargeting published tags, deleting the active canary line, bypassing CI,
+exposing secrets, or expanding to a different product/environment. Those are
+nonstandard decisions and still need separate authority.
 
 ## First Principles
 
@@ -77,14 +72,11 @@ specific blocker.
   explicitly dispatch `desktop-release.yml`, or the maintainer must do it.
 - Stables are manually promoted from an explicitly chosen source ref and use
   npm dist-tag `latest`.
-- Stable preflight must fail closed unless `npm-stable` is a main-only,
-  non-interactive environment, `main` is protected for normal changes, and the
-  release workflow can create the generated post-stable version PR and dispatch
-  its exact CI. The explicit release request is the human authorization; locked
-  source, exact CI, confirmation inputs, and repository safeguards are the
-  mandatory machine gate. When authenticated access is available, repair
-  missing safeguards to the documented standard and rerun preflight without a
-  separate approval prompt.
+- Stable publishing uses a main-only, non-interactive `npm-stable` environment.
+  The explicit release request is the complete human authorization; locked
+  source, exact successful CI, immutable-version checks, and public-surface
+  verification are the mandatory machine gates. The workflow advances the
+  post-stable version directly on `main` and dispatches CI for that exact SHA.
 - Stable preflight must verify matching English and Chinese public changelog
   entries before expensive work. After stable npm, GitHub Release, and Desktop
   assets succeed, `release.yml` must promote those committed entries from the
@@ -218,7 +210,6 @@ npm view @rudderhq/cli dist-tags --json
 npm view @rudderhq/cli versions --json
 gh api repos/Undertone0809/rudder/environments/npm-stable
 gh api repos/Undertone0809/rudder/actions/permissions/workflow
-gh api repos/Undertone0809/rudder/branches/main/protection
 ```
 
 If the worktree has unrelated dirty files, explicitly say you will ignore them
@@ -484,11 +475,9 @@ node scripts/release-package-map.mjs list
    unambiguous—authorizes the standard release surfaces, including
    `docs.rudderhq.dev`, unless the user explicitly excludes one. Report this as
    a progress update, not as another approval request.
-9. Without pausing for another confirmation, rerun with the same locked SHA using
-   `dry_run: false`, `confirm_stable: PUBLISH STABLE`, and
-   `confirm_docs: PUBLISH DOCS`. The workflow input strings are mandatory
-   machine assertions that the agent may supply; they are not extra UI tasks
-   for the user.
+9. Without pausing for another confirmation, rerun with the same locked SHA
+   using `dry_run: false`. The original release request already authorizes the
+   standard npm, GitHub, Desktop, and production-docs surfaces.
 10. Confirm the `npm-stable` job starts automatically without an account switch
     or interactive approval.
 11. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
@@ -870,10 +859,9 @@ Expected behavior:
 - recognize this as production authorization, not a readiness question
 - infer the single consistent stable version with repository release scripts
 - state the resolved version and locked source SHA in a progress update
-- prepare/land the release source, repair documented safeguards when possible,
-  run dry-run, then continue through real publish and verification
-- do not ask “may I configure branch protection?” or request another approval
-  after dry-run
+- commit and push the release source directly to `main`, run CI and dry-run,
+  then continue through real publish and verification
+- do not create a release PR or request another approval after dry-run
 
 If the repository exposes multiple plausible versions or channels, ask one
 focused decision question instead of guessing.
