@@ -48,6 +48,7 @@ import {
 import { HttpError, notFound, unprocessable } from "../../errors.js";
 import { getSecretProvider } from "../../secrets/provider-registry.js";
 import { lockManagedMcpOAuthAuthorizer } from "./authorizer-lock.js";
+import { ensureDefaultManagedMcpBindingsForConnection } from "./managed-bindings.js";
 import {
   accessToken,
   defaultDiscoverProviderScope,
@@ -242,6 +243,8 @@ function publicConnection(row: McpConnectionRow): McpConnectionSummary {
   return {
     id: row.id,
     orgId: row.orgId,
+    scope: row.scope as McpConnectionSummary["scope"],
+    ownerAgentId: row.ownerAgentId,
     name: row.name,
     displayName: row.displayName,
     provider: row.provider as McpConnectionSummary["provider"],
@@ -1468,6 +1471,12 @@ export function managedMcpOAuthService(
         outcome.connectionId,
         { userId: outcome.authorizingUserId, agentId: null },
       ).catch(() => undefined);
+    }
+    if (outcome.status === "active") {
+      await ensureDefaultManagedMcpBindingsForConnection(
+        db,
+        await findConnection(outcome.orgId, outcome.connectionId),
+      );
     }
     return { connectionId: outcome.connectionId, status: outcome.status };
   }

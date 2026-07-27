@@ -92,14 +92,16 @@ describe("managed MCP connection schema", () => {
 
     expect(indexNames).toEqual(expect.arrayContaining([
       "mcp_connections_org_name_uq",
-      "mcp_connections_org_provider_scope_uq",
       "mcp_connections_org_official_canonical_uq",
+      "mcp_connections_agent_official_canonical_uq",
       "mcp_connections_org_status_idx",
       "mcp_connections_legacy_integration_uq",
     ]));
-    expect(config.foreignKeys).toHaveLength(4);
+    expect(config.foreignKeys).toHaveLength(5);
     expect(config.checks.map((constraint) => constraint.name)).toEqual(expect.arrayContaining([
       "mcp_connections_canonical_state_check",
+      "mcp_connections_scope_owner_check",
+      "mcp_connections_scope_check",
       "mcp_connections_scope_mode_check",
     ]));
   });

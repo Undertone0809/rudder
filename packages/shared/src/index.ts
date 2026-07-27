@@ -72,7 +72,7 @@ export {
 
 export {
   MCP_AGENT_ACCESS_MODES,
-  MCP_AGENT_BINDING_STATUSES, MCP_CONNECTION_ACCESS_MODES, MCP_CONNECTION_CANONICAL_STATES, MCP_CONNECTION_PROVIDERS,
+  MCP_AGENT_BINDING_STATUSES, MCP_CONNECTION_ACCESS_MODES, MCP_CONNECTION_CANONICAL_STATES, MCP_CONNECTION_PROVIDERS, MCP_CONNECTION_SCOPES,
   MCP_CONNECTION_STATUSES,
   MCP_CONNECTION_TRANSPORTS,
   MCP_OAUTH_GRANT_STATUSES,
@@ -83,7 +83,7 @@ export {
   MCP_PROVIDER_SCOPE_MODES,
   MCP_TOOL_CAPABILITY_CLASSES,
   type McpAgentAccessMode,
-  type McpAgentBindingStatus, type McpConnectionAccessMode, type McpConnectionCanonicalState, type McpConnectionProvider,
+  type McpAgentBindingStatus, type McpConnectionAccessMode, type McpConnectionCanonicalState, type McpConnectionProvider, type McpConnectionScope,
   type McpConnectionStatus,
   type McpConnectionTransport,
   type McpOAuthGrantStatus,
@@ -153,9 +153,7 @@ export {
   mcpConnectionCanonicalStateSchema,
   mcpConnectionMergedConfigSchema,
   mcpConnectionMutationConfigSchema,
-  mcpConnectionProviderSchema,
-  mcpConnectionSafeConfigSchema,
-  mcpConnectionSecretsMutationSchema,
+  mcpConnectionProviderSchema, mcpConnectionSafeConfigSchema, mcpConnectionScopeSchema, mcpConnectionSecretsMutationSchema,
   mcpConnectionStatusSchema,
   mcpConnectionSummarySchema,
   mcpConnectionTransportSchema,

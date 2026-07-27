@@ -551,6 +551,8 @@ describe("applyPendingMigrations", () => {
           "0120_thick_maria_hill.sql",
           "0121_pale_wildside.sql",
           "0122_jazzy_tyger_tiger.sql",
+          "0123_fine_king_bedlam.sql",
+          "0124_petite_cargill.sql",
         ],
         reason: "pending-migrations",
       });
@@ -693,6 +695,8 @@ describe("applyPendingMigrations", () => {
           "0120_thick_maria_hill.sql",
           "0121_pale_wildside.sql",
           "0122_jazzy_tyger_tiger.sql",
+          "0123_fine_king_bedlam.sql",
+          "0124_petite_cargill.sql",
         ],
         reason: "pending-migrations",
       });

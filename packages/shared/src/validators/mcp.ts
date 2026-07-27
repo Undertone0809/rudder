@@ -5,6 +5,7 @@ import {
   MCP_CONNECTION_ACCESS_MODES,
   MCP_CONNECTION_CANONICAL_STATES,
   MCP_CONNECTION_PROVIDERS,
+  MCP_CONNECTION_SCOPES,
   MCP_CONNECTION_STATUSES,
   MCP_CONNECTION_TRANSPORTS,
   MCP_OAUTH_GRANT_STATUSES,
@@ -32,6 +33,7 @@ const externalMcpToolNameSchema = z.string()
 const externalMcpToolFilterSchema = z.array(externalMcpToolNameSchema).max(500);
 
 export const mcpConnectionProviderSchema = z.enum(MCP_CONNECTION_PROVIDERS);
+export const mcpConnectionScopeSchema = z.enum(MCP_CONNECTION_SCOPES);
 export const mcpConnectionTransportSchema = z.enum(MCP_CONNECTION_TRANSPORTS);
 export const mcpConnectionAccessModeSchema = z.enum(MCP_CONNECTION_ACCESS_MODES);
 export const mcpAgentAccessModeSchema = z.enum(MCP_AGENT_ACCESS_MODES);
@@ -158,6 +160,8 @@ const mcpConnectionInputFields = {
   name: connectionNameSchema,
   displayName: z.string().trim().min(1).max(120),
   provider: mcpConnectionProviderSchema,
+  scope: mcpConnectionScopeSchema,
+  ownerAgentId: uuidSchema.optional().nullable(),
   transport: mcpConnectionTransportSchema,
   externalScope: z.string().trim().min(1).max(512).optional().nullable(),
   accessMode: mcpConnectionAccessModeSchema.optional(),
@@ -177,7 +181,7 @@ const providerAccessModes = {
 } as const;
 
 function defaultAccessMode(provider: string | undefined) {
-  if (provider === "supabase") return "read_only";
+  if (provider === "supabase") return "read_write";
   if (provider === "linear") return "read_write";
   return "provider_default";
 }
@@ -383,6 +387,22 @@ function validateConnectionSecretMutation(
 export const createMcpConnectionSchema = z.object(mcpConnectionInputFields)
   .strict()
   .superRefine((value, ctx) => {
+    if (value.scope === "organization" && value.ownerAgentId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ownerAgentId"],
+        message: "Organization MCP connections cannot have an owner agent",
+      });
+    }
+    if (value.scope === "agent" && !value.ownerAgentId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ownerAgentId"],
+        message: "Agent MCP connections require an owner agent",
+      });
+    }
+  })
+  .superRefine((value, ctx) => {
     if (reservedMcpConnectionNames.has(value.name)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -447,6 +467,8 @@ export const mcpConnectionMutationConfigSchema = z.object({
 export const mcpConnectionSummarySchema = z.object({
   id: uuidSchema,
   orgId: uuidSchema,
+  scope: mcpConnectionScopeSchema,
+  ownerAgentId: uuidSchema.nullable(),
   name: connectionNameSchema,
   displayName: z.string().min(1).max(120),
   provider: mcpConnectionProviderSchema,
@@ -613,11 +635,21 @@ export const mcpProviderAvailabilitySchema = z.object({
     scopeMode: mcpProviderScopeModeSchema.nullable(),
     revision: z.number().int().positive().nullable(),
     affectedAgentCount: z.number().int().nonnegative().optional(),
+    agentConnectionCount: z.number().int().nonnegative().optional(),
     historicalGrantConnectionIds: z.array(uuidSchema).max(100).optional(),
   }).strict(),
   agent: z.object({
     access: mcpAgentAccessModeSchema,
     activeRunUsesOlderPolicy: z.boolean(),
+    connection: z.object({
+      state: mcpProviderOrganizationStateSchema,
+      connectionId: uuidSchema,
+      maxAccess: mcpProviderMaxAccessSchema,
+      revision: z.number().int().positive(),
+    }).strict().nullable().default(null),
+    effectiveSource: z.enum(["agent", "organization", "none"]).default("none"),
+    effectiveConnectionId: uuidSchema.nullable().default(null),
+    explicitlyDisabled: z.boolean().default(false),
   }).strict().optional(),
 }).strict().superRefine((value, ctx) => {
   const connectedState = value.organization.state === "connected";

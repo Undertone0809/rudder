@@ -21,6 +21,8 @@ type Connection = {
   name: string;
   displayName: string;
   provider: "supabase" | "linear" | "notion" | "custom";
+  scope: "organization" | "agent";
+  ownerAgentId: string | null;
   transport: "stdio" | "streamable_http";
   externalScope: string | null;
   accessMode: "provider_default" | "read_only" | "read_write";
@@ -50,6 +52,8 @@ function connectionSummary(
     name: String(input.name),
     displayName: String(input.displayName),
     provider: input.provider as Connection["provider"],
+    scope: input.scope === "agent" ? "agent" : "organization",
+    ownerAgentId: input.scope === "agent" ? String(input.ownerAgentId) : null,
     transport: input.transport as Connection["transport"],
     externalScope: null,
     accessMode: input.accessMode as Connection["accessMode"],
@@ -116,7 +120,7 @@ async function installManagedMcpApiMock(
           scopeLabel: "Project",
           transports: ["streamable_http"],
           accessModes: ["read_only", "read_write"],
-          defaultAccessMode: "read_only",
+          defaultAccessMode: "read_write",
         },
         {
           id: "linear",
@@ -156,7 +160,12 @@ async function installManagedMcpApiMock(
     }
     if (path.endsWith("/mcp/provider-status") && method === "GET") {
       await routeJson(route, ["supabase", "linear", "notion"].map((provider) => {
-        const connection = connections.find((candidate) => candidate.provider === provider);
+        const connection = connections.find((candidate) =>
+          candidate.provider === provider && candidate.scope === "organization");
+        const agentConnectionCount = connections.filter((candidate) =>
+          candidate.provider === provider
+          && candidate.scope === "agent"
+          && candidate.status !== "revoked").length;
         const connected = connection?.status === "active" && connection.enabled;
         return {
           provider,
@@ -180,6 +189,7 @@ async function installManagedMcpApiMock(
               ? connection!.provider === "supabase" ? "account" : "workspace"
               : null,
             revision: connection ? 1 : null,
+            agentConnectionCount,
           },
         };
       }));
@@ -198,16 +208,28 @@ async function installManagedMcpApiMock(
         heldOfficialProvider = null;
         releaseHeldOfficialConnect = null;
       }
-      let connection = connections.find((candidate) => candidate.provider === officialProvider);
+      const target = body as {
+        scope?: Connection["scope"];
+        ownerAgentId?: string | null;
+        accessMode?: Connection["accessMode"];
+      } | null;
+      const scope = target?.scope ?? "organization";
+      const ownerAgentId = scope === "agent" ? target?.ownerAgentId ?? null : null;
+      let connection = connections.find((candidate) =>
+        candidate.provider === officialProvider
+        && candidate.scope === scope
+        && candidate.ownerAgentId === ownerAgentId);
       if (!connection) {
         connection = connectionSummary(orgId, {
-          name: officialProvider,
+          name: scope === "agent" ? `${officialProvider}-${ownerAgentId}` : officialProvider,
           displayName: officialProvider[0]!.toUpperCase() + officialProvider.slice(1),
           provider: officialProvider,
+          scope,
+          ownerAgentId,
           transport: "streamable_http",
-          accessMode: (body as { accessMode?: Connection["accessMode"] } | null)?.accessMode
+          accessMode: target?.accessMode
             ?? (officialProvider === "supabase"
-              ? "read_only"
+              ? "read_write"
               : officialProvider === "linear"
                 ? "read_write"
                 : "provider_default"),
@@ -307,6 +329,17 @@ async function installManagedMcpApiMock(
         : connection.provider === "linear"
           ? "workspace-linear"
           : "workspace-notion";
+      if (connection.scope === "organization" || connection.ownerAgentId === agentId) {
+        bindings.set(connection.id, {
+          id: randomUUID(),
+          connectionId: connection.id,
+          agentId,
+          status: "active",
+          accessMode: connection.provider === "notion" ? "provider_granted" : "read_write",
+          policyRevision: 1,
+          enabledToolIds: (tools.get(connection.id) ?? []).map((tool) => String(tool.id)),
+        });
+      }
       await routeJson(route, {
         connectionId: connection.id,
         authorizationUrl: `https://oauth.example.test/${connection.provider}`,
@@ -367,24 +400,49 @@ async function installManagedMcpApiMock(
     const path = new URL(request.url()).pathname;
     requests.push({ path, method: request.method(), body: null });
     await routeJson(route, ["supabase", "linear", "notion"].map((provider) => {
-      const connection = connections.find((candidate) => candidate.provider === provider);
+      const organizationConnection = connections.find((candidate) =>
+        candidate.provider === provider && candidate.scope === "organization");
+      const agentConnection = connections.find((candidate) =>
+        candidate.provider === provider
+        && candidate.scope === "agent"
+        && candidate.ownerAgentId === agentId
+        && candidate.status !== "revoked");
+      const connection = agentConnection ?? organizationConnection;
       const binding = connection ? bindings.get(connection.id) : undefined;
-      const connected = connection?.status === "active" && connection.enabled;
+      const connected = organizationConnection?.status === "active" && organizationConnection.enabled;
+      const effective = connection?.status === "active" && connection.enabled ? connection : undefined;
       return {
         provider,
         organization: {
           state: connected ? "connected" : connection ? "disconnected" : "not_connected",
-          connectionId: connection?.id ?? null,
+          connectionId: organizationConnection?.id ?? null,
           maxAccess: connected
-            ? connection!.provider === "notion" ? "provider_granted" : connection!.accessMode
+            ? organizationConnection!.provider === "notion" ? "provider_granted" : organizationConnection!.accessMode
             : null,
           scopeMode: connected
-            ? connection!.provider === "supabase" ? "account" : "workspace"
+            ? organizationConnection!.provider === "supabase" ? "account" : "workspace"
             : null,
-          revision: connection ? 1 : null,
+          revision: organizationConnection ? 1 : null,
+          agentConnectionCount: connections.filter((candidate) =>
+            candidate.provider === provider
+            && candidate.scope === "agent"
+            && candidate.status !== "revoked").length,
         },
         agent: {
           access: binding?.accessMode ?? "none",
+          connection: agentConnection ? {
+            state: agentConnection.status === "active" ? "connected" : "disconnected",
+            connectionId: agentConnection.id,
+            maxAccess: agentConnection.provider === "notion"
+              ? "provider_granted"
+              : agentConnection.accessMode,
+            revision: 1,
+          } : null,
+          effectiveSource: effective
+            ? effective.scope === "agent" ? "agent" : "organization"
+            : "none",
+          effectiveConnectionId: effective?.id ?? null,
+          explicitlyDisabled: Boolean(agentConnection && binding?.accessMode === "none"),
           activeRunUsesOlderPolicy: false,
         },
       };
@@ -400,7 +458,8 @@ async function installManagedMcpApiMock(
     const connectionId = url.pathname.match(/\/mcp-connections\/([^/]+)/)?.[1];
     if (method === "GET") {
       await routeJson(route, connections
-        .filter((connection) => connection.status === "active")
+        .filter((connection) => connection.status === "active"
+          && (connection.scope === "organization" || connection.ownerAgentId === agentId))
         .map((connection) => ({
           connection,
           binding: bindings.get(connection.id) ?? null,
@@ -500,20 +559,15 @@ test.describe("Managed MCP integrations", () => {
     const supabaseConnect = page
       .getByTestId("mcp-provider-supabase")
       .getByRole("button", { name: "Connect" });
-    const linearConnect = page
-      .getByTestId("mcp-provider-linear")
-      .getByRole("button", { name: "Connect" });
-    const notionConnect = page
-      .getByTestId("mcp-provider-notion")
-      .getByRole("button", { name: "Connect" });
-
     mock.holdOfficialConnect("supabase");
     await supabaseConnect.click();
+    const targetDialog = page.getByRole("dialog", { name: "Supabase" });
+    await expect(targetDialog.getByLabel("Enable for")).toHaveValue("organization");
+    const targetConnect = targetDialog.getByRole("button", { name: "Connect" });
+    await targetConnect.click();
 
     try {
-      await expect(supabaseConnect).toHaveAttribute("aria-busy", "true");
-      await expect(linearConnect).not.toHaveAttribute("aria-busy", "true");
-      await expect(notionConnect).not.toHaveAttribute("aria-busy", "true");
+      await expect(targetConnect).toBeDisabled();
       await page.screenshot({
         path: testInfo.outputPath("mcp-provider-loading-isolation.png"),
         fullPage: true,
@@ -560,6 +614,13 @@ test.describe("Managed MCP integrations", () => {
     await expect(page.getByRole("tab", { name: "Manage", exact: true })).toBeVisible();
 
     await page.getByTestId("mcp-provider-supabase").getByRole("button", { name: "Connect" }).click();
+    let targetDialog = page.getByRole("dialog", { name: "Supabase" });
+    await expect(targetDialog.getByLabel("Enable for")).toHaveValue("organization");
+    await expect(targetDialog.getByLabel("Enable for").locator("option")).toHaveText([
+      "Organization",
+      "MCP Operator",
+    ]);
+    await targetDialog.getByRole("button", { name: "Connect" }).click();
     await expect.poll(() => mock.connections.length).toBe(1);
     const supabase = mock.connections[0]!;
     const supabaseCard = page.getByTestId("mcp-provider-supabase");
@@ -573,7 +634,7 @@ test.describe("Managed MCP integrations", () => {
     let dialog = page.getByRole("dialog", { name: "Manage Supabase" });
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("All authorized projects");
-    await expect(dialog.getByRole("radio", { name: "Read only", exact: true })).toBeChecked();
+    await expect(dialog.getByRole("radio", { name: "Read & write", exact: true })).toBeChecked();
     await expect(dialog.getByText("Tool allowlist")).toHaveCount(0);
     await expect(dialog.getByText(/external\.supabase\./)).toHaveCount(0);
     await page.keyboard.press("Escape");
@@ -583,7 +644,7 @@ test.describe("Managed MCP integrations", () => {
     await page.getByRole("tab", { name: "Manage", exact: true }).click();
     const supabaseRow = page.getByTestId(`mcp-connection-${supabase.id}`);
     await expect(supabaseRow).toContainText("Account access");
-    await expect(supabaseRow).toContainText("Read only");
+    await expect(supabaseRow).toContainText("Read & write");
     await expect(supabaseRow.getByRole("button", { name: "Manage" })).toBeVisible();
     await expect(supabaseRow.getByRole("button", { name: "Tools" })).toHaveCount(0);
     await expect(supabaseRow.getByText(/external\.supabase\./)).toHaveCount(0);
@@ -597,42 +658,70 @@ test.describe("Managed MCP integrations", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${agent.id}/integrations`, {
       waitUntil: "domcontentloaded",
     });
-    await expect(page.getByTestId("managed-mcp-provider-supabase")).toContainText("Available");
+    await expect(page.getByTestId("managed-mcp-provider-supabase")).toContainText("Read & write");
     const agentSupabaseCard = page.getByTestId("managed-mcp-provider-supabase");
-    await agentSupabaseCard.getByRole("button", { name: "Set access for Supabase" }).click();
+    await agentSupabaseCard.getByRole("button", { name: "Manage Supabase" }).click();
     dialog = page.getByRole("dialog", { name: "Manage Supabase access" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("radio", { name: "No access" })).toBeChecked();
+    await expect(dialog).toContainText("Using the organization connection");
+    await expect(dialog.getByRole("radio", { name: "Read & write" })).toBeChecked();
     await expect(dialog.getByRole("radio", { name: "Read only", exact: true })).toBeEnabled();
-    await expect(dialog.getByRole("radio", { name: "Read & write", exact: false })).toBeDisabled();
-    await expect(dialog).toContainText("The organization connection is read only.");
-    await dialog.getByRole("radio", { name: "Read only", exact: true }).check();
-    await dialog.getByRole("button", { name: "Save" }).click();
+    await dialog.getByRole("button", { name: "Add connection" }).click();
+    targetDialog = page.getByRole("dialog", { name: "Supabase" });
+    await expect(targetDialog.getByLabel("Enable for")).toHaveValue("agent");
+    await expect(targetDialog.getByLabel("Enable for").locator("option")).toHaveText([
+      "MCP Operator",
+      "Organization",
+    ]);
+    await targetDialog.getByRole("button", { name: "Connect" }).click();
+    await expect.poll(() => mock.connections.filter((connection) =>
+      connection.provider === "supabase" && connection.scope === "agent").length).toBe(1);
 
-    await expect(agentSupabaseCard).toContainText("Read only");
+    await agentSupabaseCard.getByRole("button", { name: "Manage Supabase" }).click();
+    dialog = page.getByRole("dialog", { name: "Manage Supabase access" });
+    await expect(dialog).toContainText("Using this agent’s connection");
+    await dialog.getByRole("radio", { name: "No access" }).check();
+    await dialog.getByRole("button", { name: "Save" }).click();
+    await expect(agentSupabaseCard).toContainText("Disabled for this agent");
     await expect(agentSupabaseCard.getByRole("button", { name: "Manage Supabase" })).toBeVisible();
-    expect(mock.getBinding(supabase.id)?.accessMode).toBe("read_only");
+    const agentSupabase = mock.connections.find((connection) =>
+      connection.provider === "supabase" && connection.scope === "agent")!;
+    expect(mock.getBinding(agentSupabase.id)?.accessMode).toBe("none");
     const accessRequest = mock.requests.find((entry) =>
-      entry.path.endsWith(`/mcp-connections/${supabase.id}`)
+      entry.path.endsWith(`/mcp-connections/${agentSupabase.id}`)
       && entry.method === "PUT");
     expect(accessRequest?.body).toMatchObject({
-      accessMode: "read_only",
-      status: "active",
+      accessMode: "none",
+      status: "disabled",
     });
     expect(accessRequest?.body).not.toHaveProperty("enabledToolIds");
 
-    await page.getByRole("tab", { name: "Manage", exact: true }).click();
-    const managedSection = page.getByTestId("agent-managed-mcp-connections");
-    await expect(managedSection).toBeVisible();
-    const agentConnection = managedSection.getByTestId(`agent-mcp-connection-${supabase.id}`);
-    await expect(agentConnection).toContainText("Read only");
-    await expect(agentConnection.getByRole("checkbox")).toHaveCount(0);
-    await expect(agentConnection.getByText("Tool allowlist")).toHaveCount(0);
-    await expect(agentConnection.getByText(/external\.supabase\./)).toHaveCount(0);
-    await agentConnection.getByRole("button", { name: "Manage" }).click();
+    await agentSupabaseCard.getByRole("button", { name: "Manage Supabase" }).click();
     dialog = page.getByRole("dialog", { name: "Manage Supabase access" });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("radio", { name: "Read only", exact: true })).toBeChecked();
+    await dialog.getByRole("button", { name: "Organization settings" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole("tab", { name: "Integrations / MCPs" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await page.getByRole("tab", { name: "Manage", exact: true }).click();
+    const agentConnectionRow = page.getByTestId(`mcp-connection-${agentSupabase.id}`);
+    await expect(agentConnectionRow).toContainText("MCP Operator");
+    await agentConnectionRow.getByRole("button", { name: "Manage" }).click();
+    dialog = page.getByRole("dialog", { name: "Manage Supabase" });
+    await dialog.getByRole("button", { name: "Disconnect" }).click();
+    await expect(dialog).toContainText("Disconnect this agent connection?");
+    await expect(dialog).toContainText("This agent will stop using its dedicated credentials.");
+    await dialog.getByRole("button", { name: "Disconnect", exact: true }).last().click();
+    await expect.poll(() => agentSupabase.status).toBe("revoked");
+
+    await page.getByRole("button", { name: "Close settings" }).click();
+    await expect(page.getByRole("dialog", { name: "Manage Supabase access" })).toHaveCount(0);
+    await expect(page.getByTestId("managed-mcp-provider-supabase")).toContainText("Read & write");
+    await page.getByTestId("managed-mcp-provider-supabase")
+      .getByRole("button", { name: "Manage Supabase" }).click();
+    await expect(page.getByRole("dialog", { name: "Manage Supabase access" }))
+      .toContainText("Using the organization connection");
 
     expect(mock.requests.some((entry) => entry.path.endsWith("/oauth/scopes"))).toBe(false);
     expect(mock.requests.some((entry) => entry.path.endsWith("/oauth/scope"))).toBe(false);
@@ -660,6 +749,8 @@ test.describe("Managed MCP integrations", () => {
           name: `black-box-stdio-${Date.now().toString(36)}`,
           displayName: "Real STDIO MCP",
           provider: "custom",
+          scope: "organization",
+          ownerAgentId: null,
           transport: "stdio",
           accessMode: "provider_default",
           safeConfig: {
@@ -713,15 +804,14 @@ test.describe("Managed MCP integrations", () => {
     });
     const availableConnection = page.getByTestId(`agent-mcp-connection-${connection.id}`);
     await expect(availableConnection).toContainText("Real STDIO MCP");
-    await expect(availableConnection).toContainText("No access");
-    await availableConnection.getByRole("button", { name: "Set access" }).click();
+    await expect(availableConnection).toContainText("Full server access");
+    await availableConnection.getByRole("button", { name: "Manage" }).click();
     let accessDialog = page.getByRole("dialog", { name: "Manage Real STDIO MCP access" });
     await expect(accessDialog).toBeVisible();
     await expect(accessDialog.getByText("inspect", { exact: true })).toHaveCount(0);
     await expect(accessDialog.getByRole("checkbox")).toHaveCount(0);
-    await accessDialog.getByRole("radio", { name: "Full server access" }).check();
-    await accessDialog.getByRole("button", { name: "Save" }).click();
-    await expect(accessDialog).toBeHidden();
+    await expect(accessDialog.getByRole("radio", { name: "Full server access" })).toBeChecked();
+    await page.keyboard.press("Escape");
 
     await page.getByRole("tab", { name: "Manage", exact: true }).click();
     const agentConnection = page.getByTestId(`agent-mcp-connection-${connection.id}`);

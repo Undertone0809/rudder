@@ -386,6 +386,9 @@ export type McpConnectionProvider = (typeof MCP_CONNECTION_PROVIDERS)[number];
 export const MCP_CONNECTION_TRANSPORTS = ["stdio", "streamable_http", "legacy_manual"] as const;
 export type McpConnectionTransport = (typeof MCP_CONNECTION_TRANSPORTS)[number];
 
+export const MCP_CONNECTION_SCOPES = ["organization", "agent"] as const;
+export type McpConnectionScope = (typeof MCP_CONNECTION_SCOPES)[number];
+
 export const MCP_CONNECTION_ACCESS_MODES = ["provider_default", "read_only", "read_write"] as const;
 export type McpConnectionAccessMode = (typeof MCP_CONNECTION_ACCESS_MODES)[number];
 
@@ -451,11 +454,11 @@ export const MCP_PROVIDER_CATALOG = [
     label: "Supabase",
     curated: true,
     requiresOAuth: true,
-    requiresScopeSelection: true,
-    scopeLabel: "Project",
+    requiresScopeSelection: false,
+    scopeLabel: "Account",
     transports: ["streamable_http"],
     accessModes: ["read_only", "read_write"],
-    defaultAccessMode: "read_only",
+    defaultAccessMode: "read_write",
   },
   {
     id: "linear",

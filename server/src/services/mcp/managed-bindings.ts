@@ -21,7 +21,7 @@ import {
   type McpProviderAvailability,
   type UpsertMcpAgentBinding,
 } from "@rudderhq/shared";
-import { and, asc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, ne, notInArray, or, sql } from "drizzle-orm";
 import { conflict, notFound, unprocessable } from "../../errors.js";
 import {
   isManagedMcpToolCapabilityAllowed,
@@ -31,6 +31,17 @@ import {
 type ConnectionRow = typeof mcpConnections.$inferSelect;
 type BindingRow = typeof agentCustomIntegrationBindings.$inferSelect;
 type ToolRow = typeof customIntegrationTools.$inferSelect;
+type ManagedMcpBindingWriter = Pick<Db, "insert" | "select">;
+
+function isEligibleAutomaticMcpAgent(
+  agent: Pick<typeof agents.$inferSelect, "status" | "metadata">,
+): boolean {
+  if (agent.status === "terminated") return false;
+  const metadata = agent.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return true;
+  const record = metadata as Record<string, unknown>;
+  return record.hidden !== true && record.systemManaged !== "rudder_copilot";
+}
 
 export function effectiveManagedMcpAccess(
   bindingAccess: McpAgentAccessMode,
@@ -55,6 +66,8 @@ function publicConnection(row: ConnectionRow): McpConnectionSummary {
   return {
     id: row.id,
     orgId: row.orgId,
+    scope: row.scope as McpConnectionSummary["scope"],
+    ownerAgentId: row.ownerAgentId,
     name: row.name,
     displayName: row.displayName,
     provider: row.provider as McpConnectionSummary["provider"],
@@ -115,6 +128,114 @@ function defaultAgentAccess(connection: ConnectionRow): NonNullable<McpAgentBind
   if (connection.provider === "custom") return "full";
   if (connection.provider === "notion") return "provider_granted";
   return connection.accessMode === "read_only" ? "read_only" : "read_write";
+}
+
+async function activeToolIdsForConnection(
+  db: ManagedMcpBindingWriter,
+  connectionId: string,
+): Promise<string[]> {
+  return db.select({ id: customIntegrationTools.id })
+    .from(customIntegrationTools)
+    .where(and(
+      eq(customIntegrationTools.connectionId, connectionId),
+      eq(customIntegrationTools.status, "active"),
+      eq(customIntegrationTools.enabled, true),
+    ))
+    .then((rows) => rows.map((row) => row.id));
+}
+
+async function insertAutomaticBinding(
+  db: ManagedMcpBindingWriter,
+  connection: ConnectionRow,
+  agentId: string,
+  source: "connection_activation" | "agent_creation",
+): Promise<void> {
+  const enabledToolIds = await activeToolIdsForConnection(db, connection.id);
+  const created = await db.insert(agentCustomIntegrationBindings)
+    .values({
+      orgId: connection.orgId,
+      agentId,
+      connectionId: connection.id,
+      status: "active",
+      accessMode: defaultAgentAccess(connection),
+      enabledToolIds,
+    })
+    .onConflictDoNothing()
+    .returning()
+    .then((rows) => rows[0] ?? null);
+  if (!created) return;
+  await db.insert(activityLog).values(activityValues({
+    orgId: connection.orgId,
+    agentId,
+    connectionId: connection.id,
+    bindingId: created.id,
+    action: "mcp_agent_binding.created",
+    actor: {},
+    details: {
+      status: created.status,
+      accessMode: created.accessMode,
+      policyRevision: created.policyRevision,
+      enabledToolCount: created.enabledToolIds.length,
+      source,
+    },
+  }));
+}
+
+/**
+ * Creates only missing bindings at the connection's immutable ownership boundary.
+ * Existing bindings, including explicit No access, are never overwritten.
+ */
+export async function ensureDefaultManagedMcpBindingsForConnection(
+  db: ManagedMcpBindingWriter,
+  connection: ConnectionRow,
+): Promise<void> {
+  if (
+    connection.status !== "active"
+    || !connection.enabled
+    || connection.transport === "legacy_manual"
+    || connection.canonicalState !== "canonical"
+  ) return;
+  if (connection.scope === "agent") {
+    if (!connection.ownerAgentId) return;
+    await insertAutomaticBinding(db, connection, connection.ownerAgentId, "connection_activation");
+    return;
+  }
+  const organizationAgents = await db.select({
+    id: agents.id,
+    status: agents.status,
+    metadata: agents.metadata,
+  }).from(agents).where(eq(agents.orgId, connection.orgId));
+  for (const agent of organizationAgents.filter(isEligibleAutomaticMcpAgent)) {
+    await insertAutomaticBinding(db, connection, agent.id, "connection_activation");
+  }
+}
+
+export async function ensureOrganizationManagedMcpBindingsForAgent(
+  db: ManagedMcpBindingWriter,
+  orgId: string,
+  agentId: string,
+): Promise<void> {
+  const agent = await db.select({
+    id: agents.id,
+    status: agents.status,
+    metadata: agents.metadata,
+  }).from(agents).where(and(
+    eq(agents.orgId, orgId),
+    eq(agents.id, agentId),
+  )).then((rows) => rows[0] ?? null);
+  if (!agent || !isEligibleAutomaticMcpAgent(agent)) return;
+  const organizationConnections = await db.select().from(mcpConnections)
+    .where(and(
+      eq(mcpConnections.orgId, orgId),
+      eq(mcpConnections.scope, "organization"),
+      eq(mcpConnections.status, "active"),
+      eq(mcpConnections.enabled, true),
+      eq(mcpConnections.canonicalState, "canonical"),
+      ne(mcpConnections.transport, "legacy_manual"),
+    ));
+  for (const connection of organizationConnections) {
+    await insertAutomaticBinding(db, connection, agentId, "agent_creation");
+  }
 }
 
 function assertAgentAccessAllowed(
@@ -246,6 +367,13 @@ export function managedMcpBindingService(db: Db) {
           eq(mcpConnections.enabled, true),
           ne(mcpConnections.transport, "legacy_manual"),
           or(
+            eq(mcpConnections.scope, "organization"),
+            and(
+              eq(mcpConnections.scope, "agent"),
+              eq(mcpConnections.ownerAgentId, agentId),
+            ),
+          ),
+          or(
             eq(mcpConnections.provider, "custom"),
             eq(mcpConnections.canonicalState, "canonical"),
           ),
@@ -330,9 +458,17 @@ export function managedMcpBindingService(db: Db) {
           isNotNull(mcpOAuthGrants.credentialSecretId),
         )),
     ]);
-    const connectionByProvider = new Map(
-      connections.map((connection) => [connection.provider, connection]),
+    const organizationConnectionByProvider = new Map(
+      connections
+        .filter((connection) => connection.scope === "organization")
+        .map((connection) => [connection.provider, connection]),
     );
+    const agentConnectionsByProvider = new Map<string, ConnectionRow[]>();
+    for (const connection of connections.filter((candidate) => candidate.scope === "agent")) {
+      const values = agentConnectionsByProvider.get(connection.provider) ?? [];
+      values.push(connection);
+      agentConnectionsByProvider.set(connection.provider, values);
+    }
     const bindingByConnection = new Map(
       bindings
         .filter((binding) => binding.connectionId && binding.agentId === agentId)
@@ -356,55 +492,66 @@ export function managedMcpBindingService(db: Db) {
       agentsForConnection.add(binding.agentId);
       affectedAgentsByConnection.set(binding.connectionId, agentsForConnection);
     }
-    return providers.map((provider) => {
-      const connection = connectionByProvider.get(provider);
-      if (!connection) {
-        return {
-          provider,
-          organization: {
-            state: "not_connected",
-            connectionId: null,
-            maxAccess: null,
-            scopeMode: null,
-            revision: null,
-            affectedAgentCount: 0,
-            historicalGrantConnectionIds: [
-              ...(historicalGrantIdsByProvider.get(provider) ?? []),
-            ].sort(),
-          },
-          ...(agentId
-            ? { agent: { access: "none" as const, activeRunUsesOlderPolicy: false } }
-            : {}),
-        };
+    const connectionState = (connection: ConnectionRow | undefined) => {
+      if (!connection) return "not_connected" as const;
+      if (connection.status === "active" && connection.enabled) return "connected" as const;
+      if (connection.status === "authorizing" || connection.status === "draft") {
+        return "connecting" as const;
       }
-      const organizationState = (
-        connection.status === "active" && connection.enabled
-          ? "connected"
-          : connection.status === "authorizing" || connection.status === "draft"
-            ? "connecting"
-            : connection.status === "needs_reauth" || connection.status === "error"
-              ? "needs_attention"
-              : "disconnected"
-      ) as McpProviderAvailability["organization"]["state"];
-      const binding = bindingByConnection.get(connection.id);
+      if (connection.status === "needs_reauth" || connection.status === "error") {
+        return "needs_attention" as const;
+      }
+      return "disconnected" as const;
+    };
+    const maxAccess = (connection: ConnectionRow) => (
+      connection.provider === "notion"
+        ? "provider_granted" as const
+        : connection.accessMode as "read_only" | "read_write"
+    );
+    return providers.map((provider) => {
+      const organizationConnection = organizationConnectionByProvider.get(provider);
+      const agentConnections = agentConnectionsByProvider.get(provider) ?? [];
+      const ownedConnection = agentId
+        ? agentConnections.find((connection) => connection.ownerAgentId === agentId)
+        : undefined;
+      const ownedShadowsOrganization = Boolean(
+        ownedConnection
+        && ownedConnection.status !== "revoked"
+        && ownedConnection.status !== "disabled",
+      );
+      const effectiveConnection = ownedShadowsOrganization
+        ? connectionState(ownedConnection) === "connected"
+          ? ownedConnection
+          : undefined
+        : connectionState(organizationConnection) === "connected"
+          ? organizationConnection
+          : undefined;
+      const binding = effectiveConnection
+        ? bindingByConnection.get(effectiveConnection.id)
+        : undefined;
       const access = binding?.status === "active"
         ? effectiveManagedMcpAccess(
             binding.accessMode as McpAgentAccessMode,
-            connection.provider as McpConnectionProvider,
-            connection.accessMode as McpConnectionAccessMode,
+            effectiveConnection!.provider as McpConnectionProvider,
+            effectiveConnection!.accessMode as McpConnectionAccessMode,
           ) as NonNullable<McpProviderAvailability["agent"]>["access"]
         : "none";
       return {
         provider,
         organization: {
-          state: organizationState,
-          connectionId: connection.id,
-          maxAccess: connection.provider === "notion"
-            ? "provider_granted"
-            : connection.accessMode as McpProviderAvailability["organization"]["maxAccess"],
-          scopeMode: connection.scopeMode as McpProviderAvailability["organization"]["scopeMode"],
-          revision: connection.revision,
-          affectedAgentCount: affectedAgentsByConnection.get(connection.id)?.size ?? 0,
+          state: connectionState(organizationConnection),
+          connectionId: organizationConnection?.id ?? null,
+          maxAccess: organizationConnection ? maxAccess(organizationConnection) : null,
+          scopeMode: organizationConnection
+            ? organizationConnection.scopeMode as McpProviderAvailability["organization"]["scopeMode"]
+            : null,
+          revision: organizationConnection?.revision ?? null,
+          affectedAgentCount: organizationConnection
+            ? affectedAgentsByConnection.get(organizationConnection.id)?.size ?? 0
+            : 0,
+          agentConnectionCount: agentConnections.filter(
+            (connection) => connection.status !== "revoked",
+          ).length,
           historicalGrantConnectionIds: [
             ...(historicalGrantIdsByProvider.get(provider) ?? []),
           ].sort(),
@@ -413,6 +560,23 @@ export function managedMcpBindingService(db: Db) {
           ? {
               agent: {
                 access,
+                connection: ownedConnection
+                  ? {
+                      state: connectionState(ownedConnection),
+                      connectionId: ownedConnection.id,
+                      maxAccess: maxAccess(ownedConnection),
+                      revision: ownedConnection.revision,
+                    }
+                  : null,
+                effectiveSource: effectiveConnection
+                  ? effectiveConnection.scope === "agent" ? "agent" : "organization"
+                  : "none",
+                effectiveConnectionId: effectiveConnection?.id ?? null,
+                explicitlyDisabled: Boolean(
+                  ownedShadowsOrganization
+                  && binding
+                  && (binding.status !== "active" || binding.accessMode === "none"),
+                ),
                 activeRunUsesOlderPolicy: Boolean(
                   binding
                   && runningRuns.some((run) =>
@@ -443,6 +607,9 @@ export function managedMcpBindingService(db: Db) {
         .for("update")
         .then((rows) => rows[0] ?? null);
       if (!connection) throw notFound("MCP connection not found");
+      if (connection.scope === "agent" && connection.ownerAgentId !== agentId) {
+        throw notFound("MCP connection not found");
+      }
       if (
         !connection.enabled
         || connection.status !== "active"
@@ -666,11 +833,31 @@ export function managedMcpBindingService(db: Db) {
         eq(agentCustomIntegrationBindings.status, "active"),
         eq(mcpConnections.orgId, orgId),
         or(
+          eq(mcpConnections.scope, "organization"),
+          and(
+            eq(mcpConnections.scope, "agent"),
+            eq(mcpConnections.ownerAgentId, agentId),
+          ),
+        ),
+        or(
           eq(mcpConnections.provider, "custom"),
           eq(mcpConnections.canonicalState, "canonical"),
         ),
       ))
       .orderBy(asc(mcpConnections.name));
+
+    const shadowedOfficialProviders = new Set(
+      (await db.select({ provider: mcpConnections.provider })
+        .from(mcpConnections)
+        .where(and(
+          eq(mcpConnections.orgId, orgId),
+          eq(mcpConnections.scope, "agent"),
+          eq(mcpConnections.ownerAgentId, agentId),
+          eq(mcpConnections.canonicalState, "canonical"),
+          notInArray(mcpConnections.status, ["disabled", "revoked"]),
+          inArray(mcpConnections.provider, ["supabase", "linear", "notion"]),
+        ))).map((row) => row.provider),
+    );
 
     const connectionIds = rows.map((row) => row.connection.id);
     const [tools, grants] = await Promise.all([
@@ -704,6 +891,11 @@ export function managedMcpBindingService(db: Db) {
 
     const runtime: ManagedExternalMcpBinding[] = [];
     for (const { binding, connection } of rows) {
+      if (
+        connection.scope === "organization"
+        && connection.provider !== "custom"
+        && shadowedOfficialProviders.has(connection.provider)
+      ) continue;
       if (binding.accessMode === "none") continue;
       const effectiveAccess = effectiveManagedMcpAccess(
         binding.accessMode as McpAgentAccessMode,

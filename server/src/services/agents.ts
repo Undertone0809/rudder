@@ -39,6 +39,7 @@ import { resolveHomeAwarePath, resolveOrganizationAgentsDir } from "../home-path
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
 import { pickUniqueAgentName } from "./agent-name-pool.js";
 import { normalizeAgentPermissions } from "./agent-permissions.js";
+import { ensureOrganizationManagedMcpBindingsForAgent } from "./mcp/managed-bindings.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -555,21 +556,25 @@ export function agentService(db: Db) {
       const role = data.role ?? "general";
       const normalizedPermissions = normalizeAgentPermissions(data.permissions, role);
       const icon = normalizeCreatedAgentAvatarIcon(data.icon);
-      const created = await db
-        .insert(agents)
-        .values({
-          ...data,
-          id: agentId,
-          name: uniqueName,
-          orgId,
-          role,
-          icon,
-          permissions: normalizedPermissions,
-          workspaceKey,
-        })
-        .returning()
-        .then((rows) => rows[0]);
+      const created = await db.transaction(async (tx) => {
+        const row = await tx
+          .insert(agents)
+          .values({
+            ...data,
+            id: agentId,
+            name: uniqueName,
+            orgId,
+            role,
+            icon,
+            permissions: normalizedPermissions,
+            workspaceKey,
+          })
+          .returning()
+          .then((rows) => rows[0]);
 
+        await ensureOrganizationManagedMcpBindingsForAgent(tx, orgId, row.id);
+        return row;
+      });
       return normalizeAgentRow(created);
     },
 

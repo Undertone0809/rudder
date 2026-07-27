@@ -118,7 +118,11 @@ STDIO process, and environment variable boundaries. Provider tokens and
 temporary OAuth material remain encrypted on the Rudder server. A runtime
 receives only a run-scoped proxy identity and provider-neutral tool
 descriptors; it never receives provider access/refresh tokens, PKCE verifiers,
-dynamic client secrets, or organization secret identifiers.
+dynamic client secrets, or organization secret identifiers. Organization and
+Agent connections for the same provider have independent grants and encrypted
+credentials. Runtime source resolution selects the owner Agent's non-revoked
+connection before the Organization connection; explicit `No access` blocks
+fallback, while revocation restores an available Organization source.
 The runtime authorization boundary also includes a persisted run-start policy
 snapshot. Current binding and provider policy can immediately reduce that
 snapshot, while permission increases wait for the next run.
@@ -283,6 +287,14 @@ snapshot, while permission increases wait for the next run.
     the active run; increases wait until a new run. Permission update and run
     dispatch use one revision/locking order so a race cannot widen a snapshot.
 
+    For an official provider, Rudder first resolves a usable Agent-owned
+    connection for the exact runtime Agent, then an Organization connection.
+    The chosen connection id determines the only grant and encrypted credential
+    that dispatch may use. An Agent-owned connection with a disabled binding is
+    an explicit deny and does not authorize fallback. Revoked or disconnected
+    Agent connections no longer shadow an available Organization connection.
+    Named Custom MCP connections do not shadow across scopes.
+
 14. Arbitrary custom STDIO execution is permitted only in `local_trusted`.
     Authenticated deployments require instance-administrator allowlists for
     commands, executable paths, working directories, and environment variable
@@ -337,6 +349,9 @@ snapshot, while permission increases wait for the next run.
 | Built-in Browser enabled for supported local adapter | Trusted run context enables Browser | Managed MCP/native config receives only the capability flag and runtime-owned tool identity | Adapter must not receive Browser profile paths, cookies, Broker credentials, or an agent-overridable enable flag | Adapter execute and run-context tests |
 | Browser disabled or runtime unsupported | Live setting is off, runtime is remote, or no secure managed tool path exists | Remove the managed Browser flag/tools or report capability unavailable | Inherited env or user MCP config must not expose stale Browser control | Negative adapter and MCP manifest tests |
 | Managed provider OAuth grant | Connection is active for the organization and agent | Runtime gets a run-scoped proxy identity; Rudder injects provider credentials server-side per call | OAuth tokens or secret ids must not enter adapter config, prompts, arguments, logs, or model-visible errors | Proxy authorization and secret-redaction tests |
+| Agent and Organization grants exist for one official provider | Agent connection is non-revoked and belongs to the runtime Agent | Resolve the Agent connection and inject only its connection-bound credential | Organization credentials and another Agent's credentials must not be read or used as fallback | Scope-priority, owner-boundary, and credential-isolation tests |
+| Agent connection binding is `No access` | Agent connection remains non-revoked | Expose no provider tools and retain explicit disabled state | Runtime must not silently fall back to Organization | Binding source-resolution tests |
+| Agent connection is revoked or disconnected | Organization connection and binding remain usable | Resolve the Organization connection on the next runtime projection | Revoked Agent credentials must never be used | Revocation fallback tests |
 | Reauthorization is cancelled, expires, or fails | Existing usable grant remains active and the replacement session records failure | Pending replacement must not revoke the current grant or interrupt every bound Agent | OAuth replacement race and stale-callback tests |
 | Operator explicitly disconnects provider | Current grant is revoked and subsequent proxy calls stop | Disconnect must not be treated as a recoverable reauthorization attempt | Disconnect and proxy rejection tests |
 | Agent access is reduced during an active run | Later external MCP list/call checks apply the reduction immediately | The run-start snapshot must not preserve revoked write access | Run policy snapshot and direct-call rejection tests |
@@ -534,6 +549,9 @@ Evidence can include:
 - External MCP credentials remain server-side and are never materialized in
   runtime homes, generated adapter source, prompts, tool arguments, or
   redacted dispatch outcomes.
+- External MCP credentials are connection-scoped. Organization, Agent A, and
+  Agent B grants for the same provider cannot be substituted or queried across
+  their owner boundaries.
 - Safe custom STDIO/HTTP configuration is not authorization to access arbitrary
   processes, environment values, headers, redirects, or network ranges.
 
@@ -578,6 +596,7 @@ Related plans:
 - `doc/plans/2026-07-12-built-in-browser.md`
 - `doc/plans/2026-07-23-managed-mcp-oauth-integrations.md`
 - `doc/plans/2026-07-25-managed-mcp-access-and-interactions.md`
+- `doc/plans/2026-07-27-managed-mcp-connection-scopes.md`
 
 Related code:
 
@@ -613,6 +632,8 @@ Related tests:
 - `server/src/__tests__/pi-local-execute.test.ts`
 - `server/src/__tests__/managed-workspace-preflight.test.ts`
 - `server/src/__tests__/agent-run-context.test.ts`
+- `server/src/__tests__/managed-mcp-bindings-service.test.ts`
+- `server/src/__tests__/managed-mcp-connections-service.test.ts`
 - `desktop/src/navigation-guard.test.ts`
 - `desktop/src/preload.browser.test.ts`
 - `desktop/src/system-permissions.test.ts`

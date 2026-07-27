@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type {
+  Agent,
   McpConnectionSummary,
   McpProviderAvailability,
   McpProviderCatalogEntry,
@@ -22,6 +23,7 @@ const mockOrganizationMcpData = vi.hoisted(() => ({
   catalog: [] as McpProviderCatalogEntry[],
   statuses: [] as McpProviderAvailability[],
   connections: [] as McpConnectionSummary[],
+  agents: [] as Agent[],
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -30,6 +32,8 @@ vi.mock("@tanstack/react-query", () => ({
       ? mockOrganizationMcpData.statuses
       : queryKey.includes("mcp-connections")
         ? mockOrganizationMcpData.connections
+        : queryKey.includes("agents")
+          ? mockOrganizationMcpData.agents
         : mockOrganizationMcpData.catalog,
     isLoading: false,
     isError: false,
@@ -142,6 +146,73 @@ describe("official provider card actions", () => {
 });
 
 describe("organization MCP interaction", () => {
+  it("defaults a new connection to Organization and offers eligible agents", () => {
+    mockOrganizationMcpData.catalog = [{
+      id: "supabase",
+      label: "Supabase",
+      curated: true,
+      requiresOAuth: true,
+      requiresScopeSelection: false,
+      scopeLabel: "Account",
+      transports: ["streamable_http"],
+      accessModes: ["read_only", "read_write"],
+      defaultAccessMode: "read_write",
+    }];
+    mockOrganizationMcpData.statuses = [{
+      provider: "supabase",
+      organization: {
+        state: "not_connected",
+        connectionId: null,
+        maxAccess: null,
+        scopeMode: null,
+        revision: null,
+        agentConnectionCount: 0,
+      },
+    }];
+    mockOrganizationMcpData.connections = [];
+    mockOrganizationMcpData.agents = [{
+      id: "agent-1",
+      orgId: "org-1",
+      name: "Noah",
+      urlKey: "noah",
+      role: "engineer",
+      title: null,
+      icon: null,
+      status: "active",
+      capabilities: null,
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      budgetMonthlyCents: 0,
+      spentMonthlyCents: 0,
+      pauseReason: null,
+      pausedAt: null,
+      permissions: {
+        canCreateAgents: false,
+        canManageSkills: false,
+      },
+      lastHeartbeatAt: null,
+      metadata: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }];
+    const { container, cleanup } = render(createElement(OrganizationMcpSettings, { orgId: "org-1" }));
+    const card = container.querySelector('[data-testid="mcp-provider-supabase"]')!;
+    act(() => [...card.querySelectorAll("button")]
+      .find((button) => button.textContent === "Connect")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    const target = document.body.querySelector('select[aria-label="Enable for"]') as HTMLSelectElement;
+    expect(target.value).toBe("organization");
+    expect([...target.options].map((option) => option.textContent)).toEqual([
+      "Organization",
+      "Noah",
+    ]);
+
+    cleanup();
+    document.body.innerHTML = "";
+  });
+
   it("keeps discovery and management compact and opens a provider dialog", () => {
     const now = new Date("2026-07-25T00:00:00.000Z");
     mockOrganizationMcpData.catalog = [{
@@ -174,6 +245,8 @@ describe("organization MCP interaction", () => {
       name: "supabase",
       displayName: "Supabase",
       provider: "supabase",
+      scope: "organization",
+      ownerAgentId: null,
       transport: "streamable_http",
       externalScope: null,
       accessMode: "read_only",

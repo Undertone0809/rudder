@@ -14,8 +14,8 @@ import {
   organizations,
   type LocalPostgresInstance,
 } from "@rudderhq/db";
-import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { deriveOrganizationUrlKey, type CreateMcpConnection } from "@rudderhq/shared";
+import { and, eq } from "drizzle-orm";
 import express from "express";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -226,7 +226,7 @@ describe("managedMcpConnectionService", () => {
   });
 
   function service(overrides: Record<string, unknown> = {}) {
-    return managedMcpConnectionService(db, {
+    const managed = managedMcpConnectionService(db, {
       deploymentMode: "local_trusted",
       allowlists: {
         httpOrigins: [],
@@ -243,6 +243,14 @@ describe("managedMcpConnectionService", () => {
       dnsLookup: async () => [{ address: "93.184.216.34", family: 4 as const }],
       ...overrides,
     });
+    return {
+      ...managed,
+      create: (
+        orgId: string,
+        input: Omit<CreateMcpConnection, "scope"> & Partial<Pick<CreateMcpConnection, "scope">>,
+        actor?: Parameters<typeof managed.create>[2],
+      ) => managed.create(orgId, { scope: "organization", ...input }, actor),
+    };
   }
 
   it("creates curated providers from registry defaults without accepting client endpoints or credentials", async () => {
@@ -272,7 +280,7 @@ describe("managedMcpConnectionService", () => {
     }, { userId: "owner-1" });
 
     expect([supabase.accessMode, linear.accessMode, notion.accessMode]).toEqual([
-      "read_only",
+      "read_write",
       "read_write",
       "provider_default",
     ]);
@@ -300,7 +308,7 @@ describe("managedMcpConnectionService", () => {
       svc.ensureOfficial(
         orgId,
         "supabase",
-        "read_only",
+        { scope: "organization", ownerAgentId: null, accessMode: "read_only" },
         { userId: "owner-1" },
       )));
 
@@ -316,13 +324,187 @@ describe("managedMcpConnectionService", () => {
     });
   });
 
+  it("keeps organization and per-agent official connections independent and validates ownership", async () => {
+    const orgId = await seedOrg(db);
+    const otherOrgId = await seedOrg(db);
+    const [owner, peer, foreign] = await db.insert(agents).values([
+      {
+        orgId,
+        name: "Owner",
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        orgId,
+        name: "Peer",
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        orgId: otherOrgId,
+        name: "Foreign",
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]).returning();
+    const svc = service();
+    const organization = await svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
+    const agent = await svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "agent", ownerAgentId: owner!.id },
+      { userId: "owner-1" },
+    );
+    const peerConnection = await svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "agent", ownerAgentId: peer!.id },
+      { userId: "owner-1" },
+    );
+
+    expect(new Set([organization.id, agent.id, peerConnection.id]).size).toBe(3);
+    expect(organization).toMatchObject({ scope: "organization", ownerAgentId: null });
+    expect(agent).toMatchObject({ scope: "agent", ownerAgentId: owner!.id });
+    await expect(db.update(mcpConnections).set({
+      externalScope: "shared-linear-workspace",
+    }).where(eq(mcpConnections.id, organization.id))).resolves.toBeDefined();
+    await expect(db.update(mcpConnections).set({
+      externalScope: "shared-linear-workspace",
+    }).where(eq(mcpConnections.id, agent.id))).resolves.toBeDefined();
+    await expect(svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "agent", ownerAgentId: owner!.id },
+      { userId: "owner-1" },
+    )).resolves.toMatchObject({ id: agent.id });
+    await expect(svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "agent", ownerAgentId: foreign!.id },
+      { userId: "owner-1" },
+    )).rejects.toThrow(/organization/i);
+    await expect(db.insert(mcpConnections).values({
+      orgId,
+      scope: "agent",
+      ownerAgentId: foreign!.id,
+      name: `cross-org-${randomUUID()}`,
+      displayName: "Cross organization",
+      provider: "custom",
+      transport: "streamable_http",
+      accessMode: "provider_default",
+      safeConfig: { url: "https://foreign.example.test/mcp" },
+    })).rejects.toThrow();
+  });
+
+  it("builds each official runtime client from that connection's isolated OAuth credential", async () => {
+    const orgId = await seedOrg(db);
+    const [owner] = await db.insert(agents).values({
+      orgId,
+      name: "Credential owner",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    }).returning();
+    const createOAuthCredential = vi.fn((credentialOrgId: string, connectionId: string) => ({
+      token: async () => `token:${credentialOrgId}:${connectionId}`,
+      refresh: async () => undefined,
+    }));
+    const runtimeClient = clientWithTools([]);
+    const runtimeClientFactory = vi.fn(async () => runtimeClient);
+    const svc = service({
+      createOAuthCredential,
+      createClient: runtimeClientFactory,
+    });
+    const organizationConnection = await svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "organization", ownerAgentId: null },
+      { userId: "owner-1" },
+    );
+    const agentConnection = await svc.ensureOfficial(
+      orgId,
+      "linear",
+      { scope: "agent", ownerAgentId: owner!.id },
+      { userId: "owner-1" },
+    );
+    await db.update(mcpConnections).set({
+      status: "active",
+      enabled: true,
+      externalScope: "shared-workspace",
+    }).where(eq(mcpConnections.id, organizationConnection.id));
+    await db.update(mcpConnections).set({
+      status: "active",
+      enabled: true,
+      externalScope: "shared-workspace",
+    }).where(eq(mcpConnections.id, agentConnection.id));
+    const secrets = await db.insert(organizationSecrets).values([
+      {
+        orgId,
+        name: `organization-oauth-${randomUUID()}`,
+        provider: "local_encrypted",
+        purpose: "managed_mcp_oauth",
+        latestVersion: 1,
+      },
+      {
+        orgId,
+        name: `agent-oauth-${randomUUID()}`,
+        provider: "local_encrypted",
+        purpose: "managed_mcp_oauth",
+        latestVersion: 1,
+      },
+    ]).returning();
+    await db.insert(mcpOAuthGrants).values([
+      {
+        orgId,
+        connectionId: organizationConnection.id,
+        credentialSecretId: secrets[0]!.id,
+        status: "active",
+      },
+      {
+        orgId,
+        connectionId: agentConnection.id,
+        credentialSecretId: secrets[1]!.id,
+        status: "active",
+      },
+    ]);
+
+    await expect(svc.openRuntimeClient(orgId, organizationConnection.id))
+      .resolves.toBe(runtimeClient);
+    await expect(svc.openRuntimeClient(orgId, agentConnection.id))
+      .resolves.toBe(runtimeClient);
+    expect(createOAuthCredential.mock.calls).toEqual([
+      [orgId, organizationConnection.id],
+      [orgId, agentConnection.id],
+    ]);
+  });
+
   it("prepares one non-canonical Supabase account candidate without changing the legacy connection", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
     const legacy = await svc.ensureOfficial(
       orgId,
       "supabase",
-      "read_only",
+      { scope: "organization", ownerAgentId: null, accessMode: "read_only" },
       { userId: "owner-1" },
     );
     await db.update(mcpConnections).set({
@@ -363,7 +545,7 @@ describe("managedMcpConnectionService", () => {
     const legacy = await svc.ensureOfficial(
       orgId,
       "supabase",
-      "read_only",
+      { scope: "organization", ownerAgentId: null, accessMode: "read_only" },
       { userId: "owner-1" },
     );
     await db.update(mcpConnections).set({
@@ -805,13 +987,13 @@ describe("managedMcpConnectionService", () => {
 
     const first = await svc.refreshTools(orgId, connection.id);
     const search = first.find((tool) => tool.externalToolName === "search")!;
-    await db.insert(agentCustomIntegrationBindings).values({
-      orgId,
-      agentId,
-      connectionId: connection.id,
+    await db.update(agentCustomIntegrationBindings).set({
       status: "active",
       enabledToolIds: [search.id],
-    });
+    }).where(and(
+      eq(agentCustomIntegrationBindings.agentId, agentId),
+      eq(agentCustomIntegrationBindings.connectionId, connection.id),
+    ));
 
     const second = await svc.refreshTools(orgId, connection.id);
     expect(second.map((tool) => [tool.externalToolName, tool.enabled, tool.removedAt !== null]))
@@ -1155,24 +1337,14 @@ describe("managedMcpConnectionService", () => {
     const originalTools = await svc.refreshTools(orgId, connection.id);
     const originalIds = originalTools.map((tool) => tool.id);
     const listId = originalTools.find((tool) => tool.externalToolName === "list_projects")!.id;
-    await db.insert(agentCustomIntegrationBindings).values([
-      {
-        orgId,
-        agentId: derivedAgent!.id,
-        connectionId: connection.id,
-        status: "active",
-        accessMode: "read_only",
-        enabledToolIds: originalIds,
-      },
-      {
-        orgId,
-        agentId: narrowedAgent!.id,
-        connectionId: connection.id,
-        status: "active",
-        accessMode: "read_only",
-        enabledToolIds: [listId],
-      },
-    ]);
+    await db.update(agentCustomIntegrationBindings).set({
+      status: "active",
+      accessMode: "read_only",
+      enabledToolIds: [listId],
+    }).where(and(
+      eq(agentCustomIntegrationBindings.agentId, narrowedAgent!.id),
+      eq(agentCustomIntegrationBindings.connectionId, connection.id),
+    ));
 
     const refreshedTools = await svc.refreshTools(orgId, connection.id);
     const refreshedIds = refreshedTools

@@ -3,6 +3,7 @@ import type {
   McpAgentBindingStatus,
   McpConnectionAccessMode,
   McpConnectionProvider,
+  McpConnectionScope,
   McpConnectionStatus,
   McpConnectionTransport,
   McpOAuthGrantStatus,
@@ -59,6 +60,8 @@ export type McpConnectionSafeConfig =
 export interface McpConnectionSummary {
   id: string;
   orgId: string;
+  scope: McpConnectionScope;
+  ownerAgentId: string | null;
   name: string;
   displayName: string;
   provider: McpConnectionProvider;
@@ -178,10 +181,20 @@ export interface McpProviderAvailability {
      * active. They remain disabled until an owner explicitly disconnects them.
      */
     historicalGrantConnectionIds?: string[];
+    agentConnectionCount?: number;
   };
   agent?: {
     access: Exclude<McpAgentAccessMode, "full">;
     activeRunUsesOlderPolicy: boolean;
+    connection: {
+      state: McpProviderOrganizationState;
+      connectionId: string;
+      maxAccess: Extract<McpAgentAccessMode, "read_only" | "read_write" | "provider_granted">;
+      revision: number;
+    } | null;
+    effectiveSource: "agent" | "organization" | "none";
+    effectiveConnectionId: string | null;
+    explicitlyDisabled: boolean;
   };
 }
 

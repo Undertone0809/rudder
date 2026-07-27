@@ -3,6 +3,7 @@ import {
   type AnyPgColumn,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -12,6 +13,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { agents } from "./agents.js";
 import { authUsers } from "./auth.js";
 import { customIntegrations } from "./custom_integrations.js";
 import { organizationSecrets } from "./organization_secrets.js";
@@ -22,6 +24,8 @@ export const mcpConnections = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull().default("organization"),
+    ownerAgentId: uuid("owner_agent_id"),
     legacyCustomIntegrationId: uuid("legacy_custom_integration_id")
       .references(() => customIntegrations.id, { onDelete: "set null" }),
     credentialSecretId: uuid("credential_secret_id")
@@ -53,12 +57,12 @@ export const mcpConnections = pgTable(
   },
   (table) => ({
     orgNameUq: uniqueIndex("mcp_connections_org_name_uq").on(table.orgId, table.name),
-    orgProviderScopeUq: uniqueIndex("mcp_connections_org_provider_scope_uq")
-      .on(table.orgId, table.provider, table.externalScope)
-      .where(sql`${table.provider} <> 'custom' and ${table.externalScope} is not null`),
     orgOfficialCanonicalUq: uniqueIndex("mcp_connections_org_official_canonical_uq")
       .on(table.orgId, table.provider)
-      .where(sql`${table.provider} in ('supabase', 'linear', 'notion') and ${table.canonicalState} = 'canonical'`),
+      .where(sql`${table.provider} in ('supabase', 'linear', 'notion') and ${table.canonicalState} = 'canonical' and ${table.scope} = 'organization'`),
+    agentOfficialCanonicalUq: uniqueIndex("mcp_connections_agent_official_canonical_uq")
+      .on(table.orgId, table.ownerAgentId, table.provider)
+      .where(sql`${table.provider} in ('supabase', 'linear', 'notion') and ${table.canonicalState} = 'canonical' and ${table.scope} = 'agent'`),
     orgStatusIdx: index("mcp_connections_org_status_idx").on(table.orgId, table.status),
     orgProviderIdx: index("mcp_connections_org_provider_idx").on(table.orgId, table.provider),
     legacyIntegrationUq: uniqueIndex("mcp_connections_legacy_integration_uq")
@@ -66,6 +70,12 @@ export const mcpConnections = pgTable(
       .where(sql`${table.legacyCustomIntegrationId} is not null`),
     credentialSecretIdx: index("mcp_connections_credential_secret_idx").on(table.credentialSecretId),
     supersededByIdx: index("mcp_connections_superseded_by_idx").on(table.supersededByConnectionId),
+    ownerAgentIdx: index("mcp_connections_owner_agent_idx").on(table.ownerAgentId),
+    ownerAgentOrgFk: foreignKey({
+      columns: [table.orgId, table.ownerAgentId],
+      foreignColumns: [agents.orgId, agents.id],
+      name: "mcp_connections_owner_agent_org_fk",
+    }).onDelete("cascade"),
     legacyManualDisabledCheck: check(
       "mcp_connections_legacy_manual_disabled_check",
       sql`${table.transport} <> 'legacy_manual' or ${table.enabled} = false`,
@@ -81,6 +91,14 @@ export const mcpConnections = pgTable(
     canonicalStateCheck: check(
       "mcp_connections_canonical_state_check",
       sql`${table.canonicalState} in ('canonical', 'superseded')`,
+    ),
+    scopeOwnerCheck: check(
+      "mcp_connections_scope_owner_check",
+      sql`(${table.scope} = 'organization' and ${table.ownerAgentId} is null) or (${table.scope} = 'agent' and ${table.ownerAgentId} is not null)`,
+    ),
+    scopeCheck: check(
+      "mcp_connections_scope_check",
+      sql`${table.scope} in ('organization', 'agent')`,
     ),
     scopeModeCheck: check(
       "mcp_connections_scope_mode_check",

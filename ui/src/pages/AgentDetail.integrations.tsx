@@ -4,8 +4,9 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
-  DialogTitle
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,6 +24,8 @@ import type {
   CustomIntegrationScope,
   CustomIntegrationSummary,
   McpAgentAccessMode,
+  McpConnectionProvider,
+  McpConnectionScope,
   McpProviderAvailability,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -40,15 +43,23 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { agentsApi } from "../api/agents";
 import { ApiError } from "../api/client";
+import { managedMcpApi } from "../api/managedMcp";
 import { FeishuLogoIcon } from "../components/FeishuLogoIcon";
 import { McpProviderIcon } from "../components/McpProviderIcon";
 import { useToast } from "../context/ToastContext";
+import {
+  applyOrganizationPrefix,
+  extractOrganizationPrefixFromPath,
+} from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
+import { buildSettingsOverlayState } from "../lib/settings-overlay-state";
 import { cn, formatDateTime } from "../lib/utils";
 import { AgentManagedMcpConnections } from "./AgentManagedMcpConnections";
 import { AgentProviderAccessDialog } from "./AgentProviderAccessDialog";
+import { reserveAuthorizationLauncher } from "./OrganizationMcpSettings";
 
 type IntegrationState = "not_configured" | "active" | "revoked" | "error";
 
@@ -243,6 +254,8 @@ interface AgentIntegrationsTabProps {
 export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [providerRegion, setProviderRegion] = useState<AgentIntegrationProviderRegion>("feishu_cn");
   const [setupSession, setSetupSession] = useState<AgentIntegrationSetupSession | null>(null);
   const [customForm, setCustomForm] = useState<CustomIntegrationFormState | null>(null);
@@ -251,6 +264,11 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const [managedProvider, setManagedProvider] = useState<McpProviderAvailability | null>(null);
   const [managedProviderAccess, setManagedProviderAccess] = useState<McpAgentAccessMode>("none");
   const [managedProviderConflict, setManagedProviderConflict] = useState("");
+  const [connectionTargetProvider, setConnectionTargetProvider] = useState<McpProviderAvailability | null>(null);
+  const [connectionTarget, setConnectionTarget] = useState<{
+    scope: McpConnectionScope;
+    ownerAgentId: string | null;
+  }>({ scope: "agent", ownerAgentId: agent.id });
   const managedProviderTriggerRef = useRef<HTMLElement | null>(null);
   const integrationsQuery = useQuery({
     queryKey: queryKeys.agents.integrations(agent.id),
@@ -289,15 +307,16 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   };
   const updateManagedProviderAccess = useMutation({
     mutationFn: async () => {
-      if (!managedProvider?.organization.connectionId) {
-        throw new Error("Organization connection is unavailable");
+      const effectiveConnectionId = managedProvider?.agent?.effectiveConnectionId;
+      if (!effectiveConnectionId) {
+        throw new Error("No effective connection is available");
       }
       const row = managedMcpConnections.find(
-        (candidate) => candidate.connection.id === managedProvider.organization.connectionId,
+        (candidate) => candidate.connection.id === effectiveConnectionId,
       );
       return agentsApi.updateMcpConnectionBinding(
         agent.id,
-        managedProvider.organization.connectionId,
+        effectiveConnectionId,
         {
           accessMode: managedProviderAccess,
           status: managedProviderAccess === "none" ? "disabled" : "active",
@@ -336,6 +355,43 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
         tone: "error",
       });
     },
+  });
+  const connectManagedProvider = useMutation({
+    mutationFn: async () => {
+      if (!orgId || !connectionTargetProvider) throw new Error("Connection target is unavailable");
+      const launcher = reserveAuthorizationLauncher();
+      try {
+        const connection = await managedMcpApi.ensureOfficialConnection(
+          orgId,
+          connectionTargetProvider.provider as Exclude<McpConnectionProvider, "custom">,
+          connectionTarget,
+        );
+        const result = await managedMcpApi.startOAuth(orgId, connection.id);
+        await launcher.navigate(result.authorizationUrl);
+        return connection;
+      } catch (error) {
+        launcher.close();
+        throw error;
+      }
+    },
+    onSuccess: async () => {
+      setConnectionTargetProvider(null);
+      setManagedProvider(null);
+      pushToast({
+        title: "Authorization opened",
+        body: "Finish provider authorization in the browser.",
+        tone: "info",
+      });
+      await Promise.all([
+        managedMcpConnectionsQuery.refetch(),
+        managedMcpProviderStatusQuery.refetch(),
+      ]);
+    },
+    onError: (error) => pushToast({
+      title: "Could not start authorization",
+      body: error instanceof Error ? error.message : undefined,
+      tone: "error",
+    }),
   });
   const openSetup = useMutation({
     mutationFn: () => agentsApi.startFeishuSetupSession(agent.id, {
@@ -781,6 +837,34 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
         onAccessChange={setManagedProviderAccess}
         onClose={closeManagedProvider}
         onSave={() => updateManagedProviderAccess.mutate()}
+        onAddConnection={() => {
+          if (!managedProvider) return;
+          setConnectionTarget({ scope: "agent", ownerAgentId: agent.id });
+          setConnectionTargetProvider(managedProvider);
+          setManagedProvider(null);
+        }}
+        onOpenOrganizationSettings={() => {
+          const prefix = extractOrganizationPrefixFromPath(location.pathname);
+          setManagedProvider(null);
+          void navigate(
+            applyOrganizationPrefix("/organization/settings?view=integrations", prefix),
+            { state: buildSettingsOverlayState(location) },
+          );
+        }}
+      />
+      <AgentConnectionTargetDialog
+        provider={connectionTargetProvider}
+        agent={agent}
+        target={connectionTarget}
+        pending={connectManagedProvider.isPending}
+        connections={managedMcpConnections.map((row) => row.connection)}
+        onTargetChange={setConnectionTarget}
+        onClose={() => setConnectionTargetProvider(null)}
+        onManageExisting={() => {
+          setConnectionTargetProvider(null);
+          setManagedProvider(connectionTargetProvider);
+        }}
+        onConfirm={() => connectManagedProvider.mutate()}
       />
     </Tabs>
   );
@@ -934,11 +1018,15 @@ function ManagedMcpProviderCard({
     return <Skeleton className="h-24 w-full" aria-label={`Loading ${integration.name} status`} />;
   }
   const organizationState = status?.organization.state ?? "not_connected";
+  const agentConnectionState = status?.agent?.connection?.state ?? "not_connected";
   const agentAccess = status?.agent?.access ?? "none";
-  const connected = organizationState === "connected";
-  const enabled = connected && agentAccess !== "none";
+  const connected = Boolean(status?.agent && status.agent.effectiveSource !== "none");
+  const explicitlyDisabled = status?.agent?.explicitlyDisabled ?? false;
+  const enabled = connected && agentAccess !== "none" && !explicitlyDisabled;
   const displayStatus = loadFailed
     ? "Unavailable"
+    : explicitlyDisabled
+      ? "Disabled for this agent"
     : enabled
       ? agentAccess === "read_only"
         ? "Read only"
@@ -947,9 +1035,9 @@ function ManagedMcpProviderCard({
           : "Provider-granted access"
     : connected
       ? "Available"
-      : organizationState === "connecting"
+      : agentConnectionState === "connecting" || organizationState === "connecting"
         ? "Connecting"
-        : organizationState === "needs_attention"
+        : agentConnectionState === "needs_attention" || organizationState === "needs_attention"
           ? "Needs attention"
       : "Not connected";
   const statusTone = loadFailed
@@ -961,11 +1049,13 @@ function ManagedMcpProviderCard({
       : "border-border bg-muted text-muted-foreground";
   const details = loadFailed
     ? "Managed MCP status could not be loaded."
+    : explicitlyDisabled
+      ? "This agent explicitly blocks the organization connection."
     : enabled
       ? "Available during this agent’s next run."
       : connected
-        ? "The organization connection is ready for this agent."
-        : "Connect this provider in Organization Settings.";
+        ? "A connection is ready for this agent."
+        : null;
 
   return (
     <div
@@ -985,28 +1075,104 @@ function ManagedMcpProviderCard({
             </span>
           </div>
           <p className="text-sm text-muted-foreground">{integration.description}</p>
-          <p className="text-xs text-muted-foreground">{details}</p>
+          {details ? <p className="text-xs text-muted-foreground">{details}</p> : null}
         </div>
       </div>
       {loadFailed ? (
         <IntegrationActionButton variant="outline" size="sm" onClick={onRetry}>
           Retry
         </IntegrationActionButton>
-      ) : connected && status ? (
+      ) : status ? (
         <IntegrationActionButton
           variant="outline"
           size="sm"
           onClick={() => onManage(status)}
-          aria-label={`${enabled ? "Manage" : "Set access for"} ${integration.name}`}
+          aria-label={`Manage ${integration.name}`}
         >
-          {enabled ? "Manage" : "Set access"}
+          Manage
         </IntegrationActionButton>
       ) : (
-        <IntegrationActionButton asChild variant="outline" size="sm">
-          <a href="/organization/settings">Open organization settings</a>
+        <IntegrationActionButton variant="outline" size="sm" disabled>
+          Manage
         </IntegrationActionButton>
       )}
     </div>
+  );
+}
+
+function AgentConnectionTargetDialog({
+  provider,
+  agent,
+  target,
+  pending,
+  connections,
+  onTargetChange,
+  onClose,
+  onManageExisting,
+  onConfirm,
+}: {
+  provider: McpProviderAvailability | null;
+  agent: AgentDetail;
+  target: { scope: McpConnectionScope; ownerAgentId: string | null };
+  pending: boolean;
+  connections: Array<{
+    provider: McpConnectionProvider;
+    scope: McpConnectionScope;
+    ownerAgentId: string | null;
+    status: string;
+  }>;
+  onTargetChange: (target: { scope: McpConnectionScope; ownerAgentId: string | null }) => void;
+  onClose: () => void;
+  onManageExisting: () => void;
+  onConfirm: () => void;
+}) {
+  if (!provider) return null;
+  const name = provider.provider[0]!.toUpperCase() + provider.provider.slice(1);
+  const existing = connections.some((connection) => (
+    connection.provider === provider.provider
+    && connection.scope === target.scope
+    && connection.ownerAgentId === target.ownerAgentId
+    && connection.status !== "revoked"
+  ));
+  return (
+    <Dialog open onOpenChange={(open) => {
+      if (!open && !pending) onClose();
+    }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <div className="flex items-center gap-3">
+            <McpProviderIcon provider={provider.provider} />
+            <DialogTitle>{name}</DialogTitle>
+          </div>
+          <DialogDescription>
+            Connect a separate credential for this agent or share one with the organization.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-lg border border-dashed border-border p-4">
+          <label className="space-y-2 text-sm font-medium text-foreground">
+            <span>Enable for</span>
+            <select
+              aria-label="Enable for"
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={target.scope}
+              onChange={(event) => onTargetChange(event.target.value === "organization"
+                ? { scope: "organization", ownerAgentId: null }
+                : { scope: "agent", ownerAgentId: agent.id })}
+            >
+              <option value="agent">{agent.name}</option>
+              <option value="organization">Organization</option>
+            </select>
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
+          <Button disabled={pending} onClick={existing ? onManageExisting : onConfirm}>
+            {pending ? <Loader2 className="size-4 animate-spin" /> : null}
+            {existing ? "Manage" : "Connect"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

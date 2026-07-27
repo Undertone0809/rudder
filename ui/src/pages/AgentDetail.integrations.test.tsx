@@ -71,6 +71,16 @@ vi.mock("../context/ToastContext", () => ({
   }),
 }));
 
+vi.mock("react-router-dom", () => ({
+  useLocation: () => ({
+    pathname: "/R6z/agents/agent-1",
+    search: "",
+    hash: "",
+    state: null,
+  }),
+  useNavigate: () => vi.fn(),
+}));
+
 vi.mock("../api/agents", () => ({
   agentsApi: {
     integrationSetupUrl: vi.fn().mockResolvedValue({
@@ -323,6 +333,8 @@ function managedMcpConnection(
       name: `${provider}-main`,
       displayName: provider[0]!.toUpperCase() + provider.slice(1),
       provider,
+      scope: "organization",
+      ownerAgentId: null,
       transport: "streamable_http",
       externalScope: `${provider}-workspace`,
       accessMode: provider === "notion" ? "provider_default" : "read_only",
@@ -376,6 +388,10 @@ function managedMcpProviderStatus(
     agent: {
       access: "none",
       activeRunUsesOlderPolicy: false,
+      connection: null,
+      effectiveSource: "organization",
+      effectiveConnectionId: `${provider}-connection`,
+      explicitlyDisabled: false,
     },
     ...overrides,
   };
@@ -410,7 +426,14 @@ describe("AgentIntegrationsTab", () => {
     mockManagedMcpProviderStatusData.rows = [
       managedMcpProviderStatus("notion"),
       managedMcpProviderStatus("linear", {
-        agent: { access: "read_only", activeRunUsesOlderPolicy: false },
+        agent: {
+          access: "read_only",
+          activeRunUsesOlderPolicy: false,
+          connection: null,
+          effectiveSource: "organization",
+          effectiveConnectionId: "linear-connection",
+          explicitlyDisabled: false,
+        },
       }),
     ];
 
@@ -504,10 +527,88 @@ describe("AgentIntegrationsTab", () => {
     expect(notionCard?.textContent).not.toContain("Not connected");
   });
 
+  it("shows an agent OAuth connection in progress without calling it explicitly disabled", () => {
+    mockManagedMcpProviderStatusData.rows = [
+      managedMcpProviderStatus("linear", {
+        organization: {
+          state: "not_connected",
+          connectionId: null,
+          maxAccess: null,
+          scopeMode: null,
+          revision: null,
+        },
+        agent: {
+          access: "none",
+          activeRunUsesOlderPolicy: false,
+          connection: {
+            state: "connecting",
+            connectionId: "linear-agent-connection",
+            maxAccess: "read_write",
+            revision: 1,
+          },
+          effectiveSource: "none",
+          effectiveConnectionId: null,
+          explicitlyDisabled: false,
+        },
+      }),
+    ];
+
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const linearCard = container.querySelector('[data-testid="managed-mcp-provider-linear"]');
+
+    expect(linearCard?.textContent).toContain("Connecting");
+    expect(linearCard?.textContent).not.toContain("Disabled for this agent");
+  });
+
+  it("defaults Add connection to the current agent and also offers Organization", () => {
+    mockManagedMcpProviderStatusData.rows = [
+      managedMcpProviderStatus("supabase", {
+        organization: {
+          state: "not_connected",
+          connectionId: null,
+          maxAccess: null,
+          scopeMode: null,
+          revision: null,
+        },
+        agent: {
+          access: "none",
+          activeRunUsesOlderPolicy: false,
+          connection: null,
+          effectiveSource: "none",
+          effectiveConnectionId: null,
+          explicitlyDisabled: false,
+        },
+      }),
+    ];
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const card = container.querySelector('[data-testid="managed-mcp-provider-supabase"]')!;
+    act(() => [...card.querySelectorAll("button")]
+      .find((button) => button.textContent === "Manage")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const manageDialog = document.body.querySelector('[role="dialog"]')!;
+    act(() => [...manageDialog.querySelectorAll("button")]
+      .find((button) => button.textContent === "Add connection")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    const target = document.body.querySelector('select[aria-label="Enable for"]') as HTMLSelectElement;
+    expect(target.value).toBe("agent");
+    expect([...target.options].map((option) => option.textContent)).toEqual([
+      "Wesley",
+      "Organization",
+    ]);
+  });
+
   it("opens a focused access dialog instead of navigating to Manage", () => {
     mockManagedMcpProviderStatusData.rows = [
       managedMcpProviderStatus("linear", {
-        agent: { access: "read_only", activeRunUsesOlderPolicy: false },
+        agent: {
+          access: "read_only",
+          activeRunUsesOlderPolicy: false,
+          connection: null,
+          effectiveSource: "organization",
+          effectiveConnectionId: "linear-connection",
+          explicitlyDisabled: false,
+        },
       }),
     ];
 
@@ -529,10 +630,36 @@ describe("AgentIntegrationsTab", () => {
     expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Discover");
   });
 
+  it("closes the focused access dialog before opening organization settings", () => {
+    mockManagedMcpProviderStatusData.rows = [managedMcpProviderStatus("supabase")];
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const card = container.querySelector('[data-testid="managed-mcp-provider-supabase"]')!;
+
+    act(() => {
+      card.querySelector<HTMLButtonElement>('button[aria-label="Manage Supabase"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    act(() => {
+      [...dialog.querySelectorAll("button")]
+        .find((button) => button.textContent === "Organization settings")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+
   it("explains immediate reductions and next-run increases for an active task", () => {
     mockManagedMcpProviderStatusData.rows = [
       managedMcpProviderStatus("linear", {
-        agent: { access: "read_only", activeRunUsesOlderPolicy: true },
+        agent: {
+          access: "read_only",
+          activeRunUsesOlderPolicy: true,
+          connection: null,
+          effectiveSource: "organization",
+          effectiveConnectionId: "linear-connection",
+          explicitlyDisabled: false,
+        },
       }),
     ];
 
@@ -552,7 +679,14 @@ describe("AgentIntegrationsTab", () => {
   it("saves one coarse access choice with the current binding revision", async () => {
     mockManagedMcpProviderStatusData.rows = [
       managedMcpProviderStatus("linear", {
-        agent: { access: "read_only", activeRunUsesOlderPolicy: false },
+        agent: {
+          access: "read_only",
+          activeRunUsesOlderPolicy: false,
+          connection: null,
+          effectiveSource: "organization",
+          effectiveConnectionId: "linear-connection",
+          explicitlyDisabled: false,
+        },
       }),
     ];
     mockManagedMcpConnectionsData.rows = [
@@ -614,7 +748,7 @@ describe("AgentIntegrationsTab", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
     const card = container.querySelector('[data-testid="managed-mcp-provider-supabase"]')!;
     const setAccess = [...card.querySelectorAll("button")]
-      .find((button) => button.textContent === "Set access");
+      .find((button) => button.textContent === "Manage");
     act(() => {
       setAccess?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -622,7 +756,7 @@ describe("AgentIntegrationsTab", () => {
     const readWrite = [...dialog.querySelectorAll('input[name="agent-provider-access-supabase"]')].at(-1);
 
     expect(readWrite?.hasAttribute("disabled")).toBe(true);
-    expect(dialog.textContent).toContain("The organization connection is read only.");
+    expect(dialog.textContent).toContain("The active connection is read only.");
   });
 
   it("renders compact built-in summaries without a tool inventory wall", () => {

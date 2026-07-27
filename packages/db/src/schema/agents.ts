@@ -36,6 +36,7 @@ export const agents = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    orgIdUq: uniqueIndex("agents_org_id_uq").on(table.orgId, table.id),
     companyStatusIdx: index("agents_company_status_idx").on(table.orgId, table.status),
     companyWorkspaceKeyIdx: uniqueIndex("agents_org_workspace_key_idx").on(table.orgId, table.workspaceKey),
   }),

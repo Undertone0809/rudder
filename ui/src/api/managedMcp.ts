@@ -1,6 +1,7 @@
 import type {
   CreateMcpConnection,
   McpConnectionAccessMode,
+  McpConnectionScope,
   McpConnectionSummary,
   McpDiscoveredTool,
   McpOAuthGrantSummary,
@@ -34,10 +35,14 @@ export const managedMcpApi = {
   ensureOfficialConnection: (
     orgId: string,
     provider: "supabase" | "linear" | "notion",
-    accessMode?: McpConnectionAccessMode,
+    target: {
+      scope: McpConnectionScope;
+      ownerAgentId?: string | null;
+      accessMode?: McpConnectionAccessMode;
+    },
   ) => api.post<McpConnectionSummary>(
     `/orgs/${encodeURIComponent(orgId)}/mcp/providers/${provider}/connect`,
-    accessMode ? { accessMode } : {},
+    target,
   ),
   updateConnection: (
     orgId: string,

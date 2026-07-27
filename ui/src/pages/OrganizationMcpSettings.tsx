@@ -12,9 +12,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import type {
+  Agent,
   CreateMcpConnection,
   McpConnectionAccessMode,
   McpConnectionProvider,
+  McpConnectionScope,
   McpConnectionSummary,
   McpConnectionTransport,
   McpProviderAvailability,
@@ -25,10 +27,12 @@ import {
   ExternalLink,
   Loader2,
   Plus,
+  Settings2,
   Trash2,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { agentsApi } from "../api/agents";
 import { managedMcpApi } from "../api/managedMcp";
 import { McpProviderIcon } from "../components/McpProviderIcon";
 import { SettingsGroup, SettingsSection } from "../components/settings/SettingsScaffold";
@@ -39,8 +43,11 @@ import { cn } from "../lib/utils";
 
 type KeyValueRow = { id: string; key: string; value: string };
 type ValueRow = { id: string; value: string };
+type ConnectionTarget = { scope: McpConnectionScope; ownerAgentId: string | null };
 
 export interface CustomMcpFormState {
+  scope: McpConnectionScope;
+  ownerAgentId: string | null;
   displayName: string;
   transport: Extract<McpConnectionTransport, "stdio" | "streamable_http">;
   command: string;
@@ -69,6 +76,8 @@ function valueRow(): ValueRow {
 
 export function defaultCustomMcpForm(): CustomMcpFormState {
   return {
+    scope: "organization",
+    ownerAgentId: null,
     displayName: "",
     transport: "streamable_http",
     command: "",
@@ -122,6 +131,8 @@ export function buildCustomMcpPayload(form: CustomMcpFormState): CreateMcpConnec
     name: connectionSlug(displayName),
     displayName,
     provider: "custom" as const,
+    scope: form.scope,
+    ownerAgentId: form.scope === "agent" ? form.ownerAgentId : null,
     accessMode: form.accessMode,
     enabled: form.enabled,
     required: form.required,
@@ -183,7 +194,7 @@ export function buildCustomMcpPayload(form: CustomMcpFormState): CreateMcpConnec
 
 function providerDescription(provider: McpProviderCatalogEntry): string {
   if (provider.id === "supabase") {
-    return "Connect account access. Agents choose the project for each task. Starts read-only.";
+    return "Connect account access. Agents choose the project for each task. Starts with read & write.";
   }
   const permission = provider.defaultAccessMode === "read_only"
     ? " Starts read-only."
@@ -294,11 +305,20 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
   const [view, setView] = useState<"discover" | "manage">("discover");
   const [managedConnection, setManagedConnection] = useState<McpConnectionSummary | null>(null);
   const [managedScopeMode, setManagedScopeMode] = useState<McpProviderAvailability["organization"]["scopeMode"]>(null);
+  const [pendingProvider, setPendingProvider] = useState<Exclude<McpConnectionProvider, "custom"> | null>(null);
+  const [connectionTarget, setConnectionTarget] = useState<ConnectionTarget>({
+    scope: "organization",
+    ownerAgentId: null,
+  });
   const managedConnectionTriggerRef = useRef<HTMLElement | null>(null);
   const customConnectionCreated = useRef(false);
   const catalogQuery = useQuery({
     queryKey: queryKeys.organizations.mcpProviders(orgId),
     queryFn: () => managedMcpApi.catalog(orgId),
+  });
+  const agentsQuery = useQuery({
+    queryKey: queryKeys.agents.list(orgId),
+    queryFn: () => agentsApi.list(orgId),
   });
   const connectionsQuery = useQuery({
     queryKey: queryKeys.organizations.mcpConnections(orgId),
@@ -338,6 +358,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
     mutationFn: async (input: {
       provider: Exclude<McpConnectionProvider, "custom">;
       accessMode?: McpConnectionAccessMode;
+      target: ConnectionTarget;
       authorizationLauncher: AuthorizationLauncher;
     }) => {
       const { provider, authorizationLauncher } = input;
@@ -345,7 +366,10 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
         const connection = await managedMcpApi.ensureOfficialConnection(
           orgId,
           provider,
-          input.accessMode,
+          {
+            ...input.target,
+            accessMode: input.accessMode,
+          },
         );
         const started = await managedMcpApi.startOAuth(orgId, connection.id);
         await authorizationLauncher.navigate(started.authorizationUrl);
@@ -356,6 +380,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
       }
     },
     onSuccess: async () => {
+      setPendingProvider(null);
       await invalidate();
       pushToast({
         title: "Authorization opened",
@@ -422,20 +447,27 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
       .filter((id): id is string => Boolean(id)),
   );
   const visibleConnections = connections.filter((connection) => (
-    (connection.provider === "custom" || canonicalOfficialConnectionIds.has(connection.id))
+    (
+      connection.provider === "custom"
+      || connection.scope === "agent"
+      || canonicalOfficialConnectionIds.has(connection.id)
+    )
     && connection.status !== "revoked"
   ));
+  const eligibleAgents = (agentsQuery.data ?? []).filter((agent) => agent.status !== "terminated");
   const managedProviderStatus = providerStatusQuery.data?.find(
     (status) => status.organization.connectionId === managedConnection?.id,
   );
   const beginOfficialAuthorization = (
     provider: Exclude<McpConnectionProvider, "custom">,
+    target: ConnectionTarget,
     accessMode?: McpConnectionAccessMode,
   ) => {
     try {
       createOfficial.mutate({
         provider,
         accessMode,
+        target,
         authorizationLauncher: reserveAuthorizationLauncher(),
       });
     } catch (error) {
@@ -474,7 +506,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
     connectionId: string | null,
   ) => {
     if (!connectionId) {
-      beginOfficialAuthorization(provider);
+      setPendingProvider(provider);
       return;
     }
     let launcher: AuthorizationLauncher;
@@ -543,10 +575,13 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
               {curated.map((provider) => {
                 const status = providerStatuses.find((item) => item.provider === provider.id);
                 const state = status?.organization.state ?? "not_connected";
-                const actionLabel = officialProviderAction(
+                const actionLabel = (status?.organization.agentConnectionCount ?? 0) > 0
+                  && state === "not_connected"
+                  ? "Manage"
+                  : officialProviderAction(
                   state,
                   status?.organization.scopeMode ?? null,
-                );
+                  );
                 const actionPending = createOfficial.isPending
                   && createOfficial.variables?.provider === provider.id;
                 return (
@@ -565,7 +600,14 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
                         if (status) openConnectedProvider(status);
                         return;
                       }
-                      if (state === "not_connected") beginOfficialAuthorization(provider.id);
+                      if (actionLabel === "Manage") {
+                        setView("manage");
+                        return;
+                      }
+                      if (state === "not_connected") {
+                        setConnectionTarget({ scope: "organization", ownerAgentId: null });
+                        setPendingProvider(provider.id);
+                      }
                       else resumeOfficialAuthorization(provider.id, status?.organization.connectionId ?? null);
                     }}
                   />
@@ -588,6 +630,15 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
           title="Managed connections"
           description="Credentials remain encrypted and are never exposed to agents."
         >
+          <div className="mb-3 flex justify-end">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setView("discover")}
+            >
+              <Plus className="size-3.5" /> Add connection
+            </Button>
+          </div>
           <SettingsGroup>
             {connectionsQuery.isLoading || providerStatusQuery.isLoading ? (
               <div className="space-y-2 p-3" aria-label="Loading managed MCP connections">
@@ -612,6 +663,9 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
               <CompactConnectionRow
                 key={connection.id}
                 connection={connection}
+                ownerName={connection.ownerAgentId
+                  ? eligibleAgents.find((agent) => agent.id === connection.ownerAgentId)?.name ?? "Agent"
+                  : null}
                 onManage={() => {
                   managedConnectionTriggerRef.current = document.activeElement instanceof HTMLElement
                     ? document.activeElement
@@ -626,11 +680,37 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
 
       <CustomMcpDialog
         form={customForm}
+        agents={eligibleAgents}
         pending={createCustom.isPending}
         onChange={setCustomForm}
         onClose={() => setCustomForm(null)}
         onSubmit={() => {
           if (customForm) createCustom.mutate(customForm);
+        }}
+      />
+      <ConnectionTargetDialog
+        provider={pendingProvider}
+        target={connectionTarget}
+        agents={eligibleAgents}
+        pending={createOfficial.isPending}
+        connections={connections}
+        onTargetChange={setConnectionTarget}
+        onClose={() => setPendingProvider(null)}
+        onConfirm={() => {
+          if (!pendingProvider) return;
+          const existing = connections.find((connection) => (
+            connection.provider === pendingProvider
+            && connection.scope === connectionTarget.scope
+            && connection.ownerAgentId === connectionTarget.ownerAgentId
+            && connection.status !== "revoked"
+          ));
+          if (existing) {
+            setPendingProvider(null);
+            setManagedConnection(existing);
+            setManagedScopeMode(null);
+            return;
+          }
+          beginOfficialAuthorization(pendingProvider, connectionTarget);
         }}
       />
       <OrganizationConnectionDialog
@@ -726,7 +806,11 @@ function ProviderCard({
           aria-busy={loading || undefined}
           onClick={onAction}
         >
-          {loading ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+          {loading
+            ? <Loader2 className="size-3.5 animate-spin" />
+            : actionLabel === "Manage"
+              ? <Settings2 className="size-3.5" />
+              : <Plus className="size-3.5" />}
           {actionLabel}
         </Button>
       </div>
@@ -734,11 +818,111 @@ function ProviderCard({
   );
 }
 
+function ConnectionTargetSelect({
+  target,
+  agents,
+  onChange,
+}: {
+  target: ConnectionTarget;
+  agents: Agent[];
+  onChange: (target: ConnectionTarget) => void;
+}) {
+  const value = target.scope === "organization"
+    ? "organization"
+    : `agent:${target.ownerAgentId ?? ""}`;
+  return (
+    <select
+      aria-label="Enable for"
+      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      value={value}
+      onChange={(event) => {
+        if (event.target.value === "organization") {
+          onChange({ scope: "organization", ownerAgentId: null });
+          return;
+        }
+        onChange({
+          scope: "agent",
+          ownerAgentId: event.target.value.replace(/^agent:/, ""),
+        });
+      }}
+    >
+      <option value="organization">Organization</option>
+      {agents.map((agent) => (
+        <option key={agent.id} value={`agent:${agent.id}`}>
+          {agent.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function ConnectionTargetDialog({
+  provider,
+  target,
+  agents,
+  pending,
+  connections,
+  onTargetChange,
+  onClose,
+  onConfirm,
+}: {
+  provider: Exclude<McpConnectionProvider, "custom"> | null;
+  target: ConnectionTarget;
+  agents: Agent[];
+  pending: boolean;
+  connections: McpConnectionSummary[];
+  onTargetChange: (target: ConnectionTarget) => void;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!provider) return null;
+  const name = provider[0]!.toUpperCase() + provider.slice(1);
+  const existing = connections.some((connection) => (
+    connection.provider === provider
+    && connection.scope === target.scope
+    && connection.ownerAgentId === target.ownerAgentId
+    && connection.status !== "revoked"
+  ));
+  return (
+    <Dialog open onOpenChange={(open) => {
+      if (!open && !pending) onClose();
+    }}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <div className="flex items-center gap-3">
+            <McpProviderIcon provider={provider} />
+            <DialogTitle>{name}</DialogTitle>
+          </div>
+          <DialogDescription>
+            Connect an independent {name} credential for the organization or one agent.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-lg border border-dashed border-border p-4">
+          <p className="mb-2 text-sm font-medium text-foreground">Enable for</p>
+          <ConnectionTargetSelect target={target} agents={agents} onChange={onTargetChange} />
+          <p className="mt-2 text-xs text-muted-foreground">
+            The target cannot be changed after connection. Disconnect and reconnect to use a different target.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
+          <Button disabled={pending} onClick={onConfirm}>
+            {pending ? <Loader2 className="size-4 animate-spin" /> : null}
+            {existing ? "Manage" : "Connect"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function CompactConnectionRow({
   connection,
+  ownerName,
   onManage,
 }: {
   connection: McpConnectionSummary;
+  ownerName: string | null;
   onManage: () => void;
 }) {
   const [statusLabel, statusTone] = statusCopy(connection.status);
@@ -755,6 +939,9 @@ function CompactConnectionRow({
             <p className="truncate text-sm font-medium text-foreground">{connection.displayName}</p>
             <span className={cn("rounded-md border px-1.5 py-0.5 text-xs", statusTone)}>
               {statusLabel}
+            </span>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              {connection.scope === "organization" ? "Organization" : ownerName ?? "Agent"}
             </span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -947,7 +1134,7 @@ function OrganizationConnectionDialog({
             <DialogHeader>
               <DialogTitle>Manage {connection.displayName}</DialogTitle>
               <DialogDescription>
-                Organization connection settings and the maximum access agents may receive.
+                Connection settings and the maximum access its agents may receive.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
@@ -1053,8 +1240,47 @@ function OrganizationConnectionDialog({
                           : "Provider-granted access"}
                     </label>
                   ))}
+                </fieldset>
+              ) : null}
+              {confirmDisconnect ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                  <p className="text-sm font-medium text-foreground">
+                    {connection.scope === "agent"
+                      ? "Disconnect this agent connection?"
+                      : "Disconnect this organization connection?"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {connection.scope === "agent"
+                      ? "This agent will stop using its dedicated credentials. An available organization connection may take effect instead."
+                      : affectedAgentCount === null
+                        ? "Agents using it will lose access immediately."
+                        : `${affectedAgentCount} ${affectedAgentCount === 1 ? "agent" : "agents"} currently have access and will lose it immediately.`}
+                  </p>
+                  <div className="mt-3 flex justify-end gap-2">
+                    <Button size="sm" variant="outline" disabled={pending} onClick={() => setConfirmDisconnect(false)}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" variant="destructive" disabled={pending} onClick={() => disconnect.mutate()}>
+                      Disconnect
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <DialogFooter className="sm:justify-between">
+              {isLegacySupabase ? <span /> : (
+                <Button variant="outline" disabled={pending} onClick={() => reconnect.mutate()}>
+                  <ExternalLink className="size-3.5" /> Reconnect
+                </Button>
+              )}
+              <div className="flex justify-end gap-2">
+                {!confirmDisconnect ? (
+                  <Button variant="ghost" disabled={pending} onClick={() => setConfirmDisconnect(true)}>
+                    <Trash2 className="size-3.5" /> Disconnect
+                  </Button>
+                ) : null}
+                {!isLegacySupabase && provider && provider.accessModes.length > 1 ? (
                   <Button
-                    size="sm"
                     disabled={pending || accessMode === connection.accessMode}
                     onClick={() => {
                       if (!requiresReauthorization) {
@@ -1074,38 +1300,8 @@ function OrganizationConnectionDialog({
                   >
                     Save
                   </Button>
-                </fieldset>
-              ) : null}
-              {confirmDisconnect ? (
-                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
-                  <p className="text-sm font-medium text-foreground">Disconnect this organization connection?</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {affectedAgentCount === null
-                      ? "Agents using it will lose access immediately."
-                      : `${affectedAgentCount} ${affectedAgentCount === 1 ? "agent" : "agents"} currently have access and will lose it immediately.`}
-                  </p>
-                  <div className="mt-3 flex justify-end gap-2">
-                    <Button size="sm" variant="outline" disabled={pending} onClick={() => setConfirmDisconnect(false)}>
-                      Cancel
-                    </Button>
-                    <Button size="sm" variant="destructive" disabled={pending} onClick={() => disconnect.mutate()}>
-                      Disconnect
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-            <DialogFooter className="sm:justify-between">
-              {isLegacySupabase ? <span /> : (
-                <Button variant="outline" disabled={pending} onClick={() => reconnect.mutate()}>
-                  <ExternalLink className="size-3.5" /> Reconnect
-                </Button>
-              )}
-              {!confirmDisconnect ? (
-                <Button variant="ghost" disabled={pending} onClick={() => setConfirmDisconnect(true)}>
-                  <Trash2 className="size-3.5" /> Disconnect
-                </Button>
-              ) : null}
+                ) : null}
+              </div>
             </DialogFooter>
           </>
         ) : null}
@@ -1231,12 +1427,14 @@ function FormField({
 
 function CustomMcpDialog({
   form,
+  agents,
   pending,
   onChange,
   onClose,
   onSubmit,
 }: {
   form: CustomMcpFormState | null;
+  agents: Agent[];
   pending: boolean;
   onChange: (form: CustomMcpFormState | null) => void;
   onClose: () => void;
@@ -1257,6 +1455,16 @@ function CustomMcpDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
+          <FormField
+            label="Enable for"
+            hint="Organization connections are inherited by eligible agents. Agent connections keep separate credentials."
+          >
+            <ConnectionTargetSelect
+              target={{ scope: form.scope, ownerAgentId: form.ownerAgentId }}
+              agents={agents}
+              onChange={(target) => onChange({ ...form, ...target })}
+            />
+          </FormField>
           <FormField label="Name">
             <Input
               autoFocus

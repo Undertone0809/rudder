@@ -64,6 +64,19 @@ type AgentSnippetInput = {
 };
 
 type OrganizationSettingsView = "general" | "workspace" | "intelligence" | "chat" | "integrations" | "access";
+const ORGANIZATION_SETTINGS_VIEWS = new Set<OrganizationSettingsView>([
+  "general",
+  "workspace",
+  "intelligence",
+  "chat",
+  "integrations",
+  "access",
+]);
+
+function settingsViewFromSearch(search: string): OrganizationSettingsView {
+  const candidate = new URLSearchParams(search).get("view") as OrganizationSettingsView | null;
+  return candidate && ORGANIZATION_SETTINGS_VIEWS.has(candidate) ? candidate : "general";
+}
 
 export function OrganizationSettings() {
   const { t } = useI18n();
@@ -98,7 +111,24 @@ export function OrganizationSettings() {
   const [newLabelName, setNewLabelName] = useState("");
   const [newLabelColor, setNewLabelColor] = useState("#6366f1");
   const [labelDrafts, setLabelDrafts] = useState<Record<string, { name: string; color: string }>>({});
-  const [activeView, setActiveView] = useState<OrganizationSettingsView>("general");
+  const [activeView, setActiveView] = useState<OrganizationSettingsView>(() =>
+    settingsViewFromSearch(location.search));
+
+  useEffect(() => {
+    setActiveView(settingsViewFromSearch(location.search));
+  }, [location.search]);
+
+  const changeActiveView = (view: OrganizationSettingsView) => {
+    setActiveView(view);
+    const params = new URLSearchParams(location.search);
+    if (view === "general") params.delete("view");
+    else params.set("view", view);
+    const search = params.toString();
+    void navigate(
+      `${location.pathname}${search ? `?${search}` : ""}${location.hash}`,
+      { replace: true, state: overlayState },
+    );
+  };
 
   // Sync local state from the organization currently being viewed in settings.
   useEffect(() => {
@@ -514,7 +544,7 @@ export function OrganizationSettings() {
 
       <Tabs
         value={activeView}
-        onValueChange={(value) => setActiveView(value as OrganizationSettingsView)}
+        onValueChange={(value) => changeActiveView(value as OrganizationSettingsView)}
         className="flex min-w-0 flex-col gap-6"
       >
         <div className="scrollbar-auto-hide min-w-0 overflow-x-auto pb-1">
@@ -524,7 +554,7 @@ export function OrganizationSettings() {
             mobileMode="scrollable-tabs"
             items={settingsViews}
             value={activeView}
-            onValueChange={(value) => setActiveView(value as OrganizationSettingsView)}
+            onValueChange={(value) => changeActiveView(value as OrganizationSettingsView)}
           />
         </div>
 

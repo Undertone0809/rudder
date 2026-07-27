@@ -24,7 +24,10 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { managedMcpBindingService } from "../services/mcp/managed-bindings.js";
+import {
+  ensureOrganizationManagedMcpBindingsForAgent,
+  managedMcpBindingService,
+} from "../services/mcp/managed-bindings.js";
 import { ManagedMcpClientError, type ManagedMcpClient } from "../services/mcp/managed-client.js";
 import {
   boundedRedactedMcpAuditRecord,
@@ -358,6 +361,191 @@ describe("managedMcpBindingService", () => {
     expect((await svc.listForAgent(fixture.orgId, fixture.agentId))
       .find((row) => row.connection.id === fixture.first.id)?.reviewRequired)
       .toBe(true);
+  });
+
+  it("prefers an agent official connection, blocks fallback on No access, and restores organization fallback after revoke", async () => {
+    const fixture = await seed(db);
+    const [organizationConnection, agentConnection] = await db.insert(mcpConnections).values([
+      {
+        orgId: fixture.orgId,
+        name: "linear-organization",
+        displayName: "Linear",
+        provider: "linear",
+        scope: "organization",
+        ownerAgentId: null,
+        transport: "streamable_http",
+        accessMode: "read_write",
+        status: "active",
+        safeConfig: {},
+        enabled: true,
+        activatedAt: new Date(),
+      },
+      {
+        orgId: fixture.orgId,
+        name: "linear-agent",
+        displayName: "Linear",
+        provider: "linear",
+        scope: "agent",
+        ownerAgentId: fixture.agentId,
+        transport: "streamable_http",
+        accessMode: "read_write",
+        status: "active",
+        safeConfig: {},
+        enabled: true,
+        activatedAt: new Date(),
+      },
+    ]).returning();
+    const [organizationTool, agentTool] = await db.insert(customIntegrationTools).values([
+      {
+        orgId: fixture.orgId,
+        connectionId: organizationConnection!.id,
+        externalToolName: "organization_search",
+        rudderToolName: "external.linear.organization_search",
+        inputSchema: { type: "object" },
+        status: "active",
+        enabled: true,
+      },
+      {
+        orgId: fixture.orgId,
+        connectionId: agentConnection!.id,
+        externalToolName: "agent_search",
+        rudderToolName: "external.linear.agent_search",
+        inputSchema: { type: "object" },
+        status: "active",
+        enabled: true,
+      },
+    ]).returning();
+    await db.insert(agentCustomIntegrationBindings).values([
+      {
+        orgId: fixture.orgId,
+        agentId: fixture.agentId,
+        connectionId: organizationConnection!.id,
+        status: "active",
+        accessMode: "read_write",
+        enabledToolIds: [organizationTool!.id],
+      },
+      {
+        orgId: fixture.orgId,
+        agentId: fixture.agentId,
+        connectionId: agentConnection!.id,
+        status: "active",
+        accessMode: "read_write",
+        enabledToolIds: [agentTool!.id],
+      },
+    ]);
+    const [organizationSecret, agentSecret] = await db.insert(organizationSecrets).values([
+      {
+        orgId: fixture.orgId,
+        name: `managed-mcp-org-scope-test-${randomUUID()}`,
+        provider: "local_encrypted",
+        purpose: "managed_mcp_oauth",
+        latestVersion: 1,
+      },
+      {
+        orgId: fixture.orgId,
+        name: `managed-mcp-agent-scope-test-${randomUUID()}`,
+        provider: "local_encrypted",
+        purpose: "managed_mcp_oauth",
+        latestVersion: 1,
+      },
+    ]).returning();
+    await db.insert(mcpOAuthGrants).values([
+      {
+        orgId: fixture.orgId,
+        connectionId: organizationConnection!.id,
+        credentialSecretId: organizationSecret!.id,
+        status: "active",
+      },
+      {
+        orgId: fixture.orgId,
+        connectionId: agentConnection!.id,
+        credentialSecretId: agentSecret!.id,
+        status: "active",
+      },
+    ]);
+    const svc = managedMcpBindingService(db);
+
+    expect((await svc.listRuntimeBindings(fixture.orgId, fixture.agentId))
+      .filter((row) => row.serverName.startsWith("linear-"))
+      .map((row) => row.serverName)).toEqual(["linear-agent"]);
+
+    await svc.upsert(
+      fixture.orgId,
+      fixture.agentId,
+      agentConnection!.id,
+      { accessMode: "none", status: "disabled", expectedRevision: 1 },
+    );
+    expect((await svc.listRuntimeBindings(fixture.orgId, fixture.agentId))
+      .filter((row) => row.serverName.startsWith("linear-"))).toHaveLength(0);
+    expect((await svc.listProviderAvailability(fixture.orgId, fixture.agentId))
+      .find((row) => row.provider === "linear")?.agent).toMatchObject({
+      effectiveSource: "agent",
+      explicitlyDisabled: true,
+    });
+
+    await db.update(mcpConnections).set({
+      status: "authorizing",
+      enabled: true,
+    }).where(eq(mcpConnections.id, agentConnection!.id));
+    expect((await svc.listRuntimeBindings(fixture.orgId, fixture.agentId))
+      .filter((row) => row.serverName.startsWith("linear-"))).toHaveLength(0);
+    expect((await svc.listProviderAvailability(fixture.orgId, fixture.agentId))
+      .find((row) => row.provider === "linear")?.agent).toMatchObject({
+      connection: { state: "connecting" },
+      effectiveSource: "none",
+      explicitlyDisabled: false,
+    });
+
+    await db.update(mcpConnections).set({
+      status: "revoked",
+      enabled: false,
+      revokedAt: new Date(),
+    }).where(eq(mcpConnections.id, agentConnection!.id));
+    expect((await svc.listRuntimeBindings(fixture.orgId, fixture.agentId))
+      .filter((row) => row.serverName.startsWith("linear-"))
+      .map((row) => row.serverName)).toEqual(["linear-organization"]);
+  });
+
+  it("gives a newly created eligible agent every active organization connection", async () => {
+    const fixture = await seed(db);
+    const [connection] = await db.insert(mcpConnections).values({
+      orgId: fixture.orgId,
+      name: "supabase-organization-inheritance",
+      displayName: "Supabase",
+      provider: "supabase",
+      scope: "organization",
+      ownerAgentId: null,
+      transport: "streamable_http",
+      accessMode: "read_write",
+      status: "active",
+      safeConfig: {},
+      enabled: true,
+      activatedAt: new Date(),
+    }).returning();
+    const [newAgent] = await db.insert(agents).values({
+      orgId: fixture.orgId,
+      name: "New inheriting agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    }).returning();
+
+    await ensureOrganizationManagedMcpBindingsForAgent(
+      db,
+      fixture.orgId,
+      newAgent!.id,
+    );
+
+    const [binding] = await db.select().from(agentCustomIntegrationBindings)
+      .where(eq(agentCustomIntegrationBindings.connectionId, connection!.id));
+    expect(binding).toMatchObject({
+      agentId: newAgent!.id,
+      status: "active",
+      accessMode: "read_write",
+    });
   });
 
   it("preserves disabled and revoked binding state when a tool-only update omits status", async () => {

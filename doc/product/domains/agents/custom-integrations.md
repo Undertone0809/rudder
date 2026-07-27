@@ -59,9 +59,13 @@ bindings, and redacted dispatch evidence. OAuth grants and temporary OAuth
 sessions are separate encrypted credential records. Public connection
 summaries expose credential presence only, never secret identifiers or values.
 External MCP credentials stay server-side throughout authorization, discovery,
-and dispatch. Supabase, Linear, and Notion each have one canonical connection
-per organization; Custom MCP remains multi-instance. Operators assign
-coarse-grained Agent access instead of managing individual tool checkboxes.
+and dispatch. Every managed connection has immutable `organization` or `agent`
+scope and its own credential boundary. Supabase, Linear, and Notion allow one
+canonical connection per provider and target: one Organization connection plus
+one independent connection for each Agent. Custom MCP remains multi-instance
+within either scope. When both official scopes exist, the Agent connection
+takes precedence. Operators assign coarse-grained Agent access instead of
+managing individual tool checkboxes.
 
 ### Intent / User Job
 
@@ -112,14 +116,15 @@ tool naming, identity, and fallback semantics for that built-in surface.
   server-derived policy.
 - Custom integration tool call: sanitized audit evidence for attempted custom
   tool dispatch.
-- Managed MCP connection: organization-owned provider/server identity with a
-  unique organization server name, transport (`stdio`, `streamable_http`, or
-  `legacy_manual`), optional stable external scope, access mode, timeouts,
-  enablement/required flags, and explicit lifecycle state.
-- Canonical managed connection: the single active organization/provider record
-  for Supabase, Linear, or Notion. Superseded records retain historical tools,
-  bindings, calls, and audit evidence but are not offered as new connection
-  choices.
+- Managed MCP connection: organization-owned provider/server identity with
+  immutable `organization` or `agent` scope, a same-organization owner Agent
+  for Agent scope, transport (`stdio`, `streamable_http`, or `legacy_manual`),
+  optional stable external scope, access mode, timeouts, enablement/required
+  flags, and explicit lifecycle state.
+- Canonical managed connection: the single official provider record for one
+  target. The target key is organization/provider for Organization scope and
+  organization/Agent/provider for Agent scope. Superseded records retain
+  historical tools, bindings, calls, grants, and audit evidence.
 - OAuth grant: connection-bound provider identity and scope metadata whose
   access/refresh/client credential material exists only through an encrypted
   organization-secret reference.
@@ -176,18 +181,22 @@ tool naming, identity, and fallback semantics for that built-in surface.
    Rudder logo, server name, runtime-managed auth label, and full exposed tool
    list. This row is informational and cannot be configured or disconnected
    through custom integration actions.
-10. For an official provider, Rudder atomically ensures the organization's
-    canonical provider connection instead of creating timestamp-named
-    duplicates. It starts a one-time 10-minute OAuth session, stores only the
-    state hash, and keeps PKCE, temporary client metadata, access tokens, and
-    refresh tokens in encrypted organization secrets.
+10. Before connecting any official or Custom MCP, the operator chooses
+    `Organization` or one Agent. Organization Settings defaults to
+    `Organization` and offers every eligible Agent; Agent Detail defaults to
+    the current Agent and also offers `Organization`. The scope is immutable
+    after creation. For an official provider, Rudder atomically ensures the
+    canonical connection for the selected target instead of creating a
+    duplicate. It starts a one-time 10-minute OAuth session bound to that
+    connection and keeps PKCE, temporary client metadata, access tokens, and
+    refresh tokens in that connection's independent encrypted secret.
 11. The OAuth callback consumes the session once, associates the authorizing
     Rudder user with provider subject/scope metadata, and moves the connection
     through `authorizing`, `active`, `needs_reauth`, `disabled`, `revoked`, or
     `error` without putting provider credentials in connection rows or public
     responses. Reauthorization is two-phase: an existing usable grant remains
     active until a replacement grant succeeds and is atomically swapped in.
-12. Supabase authorizes account scope and defaults to `read_only`; setup does
+12. Supabase authorizes account scope and defaults to `read_write`; setup does
     not select or persist one project. The Agent supplies `project_id` on
     project-specific calls, and Rudder does not inject `project_ref` into the
     account-scoped provider endpoint. Existing project-scoped connections remain
@@ -204,12 +213,21 @@ tool naming, identity, and fallback semantics for that built-in surface.
     permits only `read`; `read_write` permits `read` and `normal_write`.
     `destructive`, `admin_or_billing`, and `unknown` fail closed in this
     contract slice. Operators do not manage per-tool allowlists.
-15. A managed dispatch revalidates organization, agent, run, eligible
-    connection, grant, current binding, and provider policy before forwarding.
-    New bindings target only the canonical official connection; preserved legacy
-    bindings remain within their existing scope until explicitly migrated.
+15. Activating an Organization connection creates missing default bindings for
+    every eligible existing Agent, and eligible Agents created later inherit
+    it. Automatic inheritance never overwrites an existing reduction or
+    `none`. Activating an Agent connection creates a default binding only for
+    its owner. For official providers, runtime resolves the owner Agent's
+    non-revoked Agent connection before the Organization connection. A `none`
+    binding on the Agent connection is an explicit denial and does not fall
+    back. Revoking or disconnecting the Agent connection restores an available
+    Organization connection. Organization and Agent Custom MCP connections do
+    not shadow one another and may load together.
+16. A managed dispatch revalidates organization, agent, run, eligible
+    connection, connection-scoped grant, current binding, and provider policy
+    before forwarding. It cannot read another Agent's connection or credential.
     Audit evidence stores sanitized input/result and a redacted outcome.
-16. Custom STDIO accepts Codex-compatible command, arguments, working
+17. Custom STDIO accepts Codex-compatible command, arguments, working
     directory, non-sensitive static environment values, forwarded environment
     names, secret environment names, enablement, required behavior, and startup
     and tool timeouts within the deployment boundary owned by
@@ -222,7 +240,7 @@ tool naming, identity, and fallback semantics for that built-in surface.
     Authorization header, Bearer environment, and direct Bearer sources are
     mutually exclusive; OAuth-grant conflicts are checked at the service
     boundary.
-17. Run-context preparation and runtime adapters isolate each managed MCP
+18. Run-context preparation and runtime adapters isolate each managed MCP
     binding from Agent startup. A malformed descriptor is omitted without
     widening its policy; missing run authentication, an unavailable grant,
     failed proxy preflight, or failed schema discovery removes only that
@@ -246,7 +264,10 @@ tool naming, identity, and fallback semantics for that built-in surface.
 | Operator opens Discover | Shows Custom API, MCP Server, fixed-provider setup, and planned provider cards; does not show built-in Rudder MCP tools. |
 | Operator opens Manage | Shows compact active fixed/custom integration summaries plus the built-in Rudder MCP tools row when available; provider management opens a modal rather than an inline tool wall. |
 | Official provider is already connected | Discover shows `Connected` and `Manage`; another Connect attempt resolves to the canonical connection rather than creating a duplicate. |
-| Agent has no binding to a connected official provider | Agent Detail shows `Available` and offers `Set access`. |
+| Organization and Agent official connections both exist | Agent Detail says `Using this agent's connection`; runtime and access management use the Agent connection and its credential. |
+| Agent connection access is `none` | Agent Detail shows an explicit disabled state and runtime does not fall back to Organization. |
+| Agent connection is revoked or disconnected | The available Organization connection becomes effective again. |
+| Agent has no connection or inherited binding | Agent Detail offers `Manage` and `Add connection`, defaulting the target to the current Agent. |
 | Organization maximum is read-only | Agent can select `none` or `read_only`; `read_write` remains unavailable with an explanation. |
 | Notion is connected | UI and API describe its access as provider-granted, not read-only. |
 | Supabase account connection is active | No project-selection step appears; project-specific tool calls carry `project_id`. |
@@ -328,9 +349,10 @@ Rudder persists:
 - Managed connections, grants, sessions, tools, bindings, and dispatch audits
   are organization-owned; identifiers supplied by a runtime do not establish
   organization membership or authorization.
-- Connection/server names are unique within an organization. Curated provider
-  canonical identity is unique by organization and provider for Supabase,
-  Linear, and Notion; multiple Custom MCP connections remain allowed.
+- Curated provider canonical identity is unique by organization, provider,
+  scope, and owner target. Organization scope has no owner; Agent scope has
+  exactly one same-organization owner. Multiple named Custom MCP connections
+  remain allowed in either scope.
 - Superseding a duplicate official connection must retain historical rows and
   audit evidence. Canonicalization must not physically delete connection,
   binding, tool, call, or secret-reference history.
@@ -368,6 +390,7 @@ semantics remain governed by their provider contracts, not this page.
 - Plan: `doc/plans/2026-07-23-managed-mcp-oauth-integrations.md`
 - Plan: `doc/plans/2026-07-25-managed-mcp-access-and-interactions.md`
 - Plan: `doc/plans/2026-07-26-managed-mcp-runtime-failure-isolation.md`
+- Plan: `doc/plans/2026-07-27-managed-mcp-connection-scopes.md`
 - Related active contracts:
   - `AGENT.SKILLS.001` for discovery vs runtime enablement.
   - `AGENT.INSTRUCTIONS.001` for runtime prompt assembly.

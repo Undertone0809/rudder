@@ -319,7 +319,8 @@ test.describe("Settings sidebar", () => {
     const textTransform = await personalLabel.evaluate((element) => getComputedStyle(element).textTransform);
     expect(textTransform).not.toBe("uppercase");
     const backdropFilter = await backdrop.evaluate((element) => getComputedStyle(element).backdropFilter);
-    expect(backdropFilter).not.toBe("none");
+    expect(backdropFilter).toBe("none");
+    await expect(workspaceShell).toBeVisible();
 
     const clickX = Math.max(8, modalBox!.x - 20);
     const clickY = modalBox!.y + 24;

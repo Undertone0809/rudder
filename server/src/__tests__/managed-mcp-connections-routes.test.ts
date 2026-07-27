@@ -178,15 +178,36 @@ describe("managed MCP connection organization routes", () => {
 
     const response = await request(app)
       .post(`/api/orgs/${orgId}/mcp/providers/supabase/connect`)
-      .send({ accessMode: "read_only" });
+      .send({ scope: "organization", accessMode: "read_only" });
 
     expect(response.status).toBe(200);
     expect(mockService.ensureOfficial).toHaveBeenCalledWith(
       orgId,
       "supabase",
-      "read_only",
+      {
+        scope: "organization",
+        ownerAgentId: null,
+        accessMode: "read_only",
+      },
       { userId: "owner-1", agentId: null },
     );
+  });
+
+  it("rejects an official provider connect request without an explicit scope", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "owner-1",
+      orgIds: [orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const response = await request(app)
+      .post(`/api/orgs/${orgId}/mcp/providers/supabase/connect`)
+      .send({ accessMode: "read_only" });
+
+    expect(response.status).toBe(400);
+    expect(mockService.ensureOfficial).not.toHaveBeenCalled();
   });
 
   it("starts an explicit Supabase account upgrade through a dedicated endpoint", async () => {
@@ -275,6 +296,7 @@ describe("managed MCP connection organization routes", () => {
         name: "custom-http",
         displayName: "Custom HTTP",
         provider: "custom",
+        scope: "organization",
         transport: "streamable_http",
         safeConfig: {
           url: "https://mcp.example.test/mcp",
@@ -368,6 +390,7 @@ describe("managed MCP connection organization routes", () => {
         name: "custom-http",
         displayName: "Custom HTTP",
         provider: "custom",
+        scope: "organization",
         transport: "streamable_http",
         safeConfig: {
           url: "https://mcp.example.test/mcp",

@@ -46,7 +46,7 @@ describe("managed MCP shared contracts", () => {
       expect.objectContaining({
         id: "supabase",
         accessModes: ["read_only", "read_write"],
-        defaultAccessMode: "read_only",
+        defaultAccessMode: "read_write",
       }),
       expect.objectContaining({
         id: "linear",
@@ -73,6 +73,7 @@ describe("managed MCP shared contracts", () => {
       name: "team-supabase",
       displayName: "Team Supabase",
       provider: "supabase",
+      scope: "organization",
       transport: "streamable_http",
       accessMode: "read_only",
       safeConfig: {},
@@ -86,6 +87,7 @@ describe("managed MCP shared contracts", () => {
       name: "local-tools",
       displayName: "Local tools",
       provider: "custom",
+      scope: "organization",
       transport: "stdio",
       accessMode: "provider_default",
       safeConfig: {
@@ -153,6 +155,7 @@ describe("managed MCP shared contracts", () => {
       name: "custom-http",
       displayName: "Custom HTTP",
       provider: "custom",
+      scope: "organization",
       transport: "streamable_http",
       accessMode: "provider_default",
       safeConfig: {
@@ -177,6 +180,7 @@ describe("managed MCP shared contracts", () => {
       name: "filtered-tools",
       displayName: "Filtered tools",
       provider: "custom",
+      scope: "organization",
       transport: "streamable_http",
       accessMode: "provider_default",
     };
@@ -205,6 +209,7 @@ describe("managed MCP shared contracts", () => {
       name: "conflicting-auth",
       displayName: "Conflicting auth",
       provider: "custom",
+      scope: "organization",
       transport: "streamable_http",
       accessMode: "provider_default",
     };
@@ -387,6 +392,8 @@ describe("managed MCP shared contracts", () => {
       name: "notion-team",
       displayName: "Notion Team",
       provider: "notion",
+      scope: "organization",
+      ownerAgentId: null,
       transport: "streamable_http",
       externalScope: "workspace-1",
       accessMode: "provider_default",
@@ -430,13 +437,14 @@ describe("managed MCP shared contracts", () => {
       name: "supabase-team",
       displayName: "Supabase Team",
       provider: "supabase",
+      scope: "organization",
       transport: "streamable_http",
       safeConfig: {},
     };
     const supabaseDefault = createSchema.safeParse(supabaseBase);
     expect(supabaseDefault.success).toBe(true);
     if (supabaseDefault.success) {
-      expect((supabaseDefault.data as { accessMode?: string }).accessMode).toBe("read_only");
+      expect((supabaseDefault.data as { accessMode?: string }).accessMode).toBe("read_write");
     }
     expect(createSchema.safeParse({ ...supabaseBase, accessMode: "read_write" }).success).toBe(true);
     expect(createSchema.safeParse({ ...supabaseBase, accessMode: "provider_default" }).success).toBe(false);
@@ -445,6 +453,7 @@ describe("managed MCP shared contracts", () => {
       name: "linear-team",
       displayName: "Linear Team",
       provider: "linear",
+      scope: "organization",
       transport: "streamable_http",
       safeConfig: {},
     };
@@ -461,12 +470,17 @@ describe("managed MCP shared contracts", () => {
       name: "notion-team",
       displayName: "Notion Team",
       provider: "notion",
+      scope: "organization",
       transport: "streamable_http",
       safeConfig: {},
     };
     expect(createSchema.safeParse({ ...notionBase, accessMode: "provider_default" }).success).toBe(true);
     expect(createSchema.safeParse({ ...notionBase, accessMode: "read_only" }).success).toBe(false);
     expect(createSchema.safeParse({ ...notionBase, accessMode: "read_write" }).success).toBe(false);
+    expect(createSchema.safeParse({
+      ...supabaseBase,
+      scope: undefined,
+    }).success).toBe(false);
 
     for (const override of [
       { safeConfig: { url: "https://override.example.com" } },
@@ -676,6 +690,8 @@ describe("managed MCP shared contracts", () => {
         name: "team-tools",
         displayName: "Team tools",
         provider: "custom",
+        scope: "organization",
+        ownerAgentId: null,
         transport: "streamable_http",
         externalScope: null,
         accessMode: "provider_default",

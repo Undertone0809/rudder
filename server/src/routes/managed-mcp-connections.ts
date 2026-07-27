@@ -2,6 +2,7 @@ import type { Db } from "@rudderhq/db";
 import {
   createMcpConnectionSchema,
   mcpConnectionAccessModeSchema,
+  mcpConnectionScopeSchema,
   mcpOAuthCallbackSchema,
   mcpOAuthStartSchema,
   updateMcpConnectionSchema,
@@ -27,6 +28,8 @@ const updateAccessModeSchema = z.object({
 }).strict();
 const ensureOfficialProviderSchema = z.object({
   accessMode: mcpConnectionAccessModeSchema.optional(),
+  scope: mcpConnectionScopeSchema,
+  ownerAgentId: z.string().uuid().optional().nullable(),
 }).strict();
 const reauthorizeAccessSchema = z.object({
   accessMode: z.enum(["read_only", "read_write"]),
@@ -125,7 +128,11 @@ export function managedMcpConnectionRoutes(
       res.json(await svc.ensureOfficial(
         orgId,
         provider,
-        req.body.accessMode,
+        {
+          scope: req.body.scope,
+          ownerAgentId: req.body.ownerAgentId ?? null,
+          accessMode: req.body.accessMode,
+        },
         mutationActor(req),
       ));
     },

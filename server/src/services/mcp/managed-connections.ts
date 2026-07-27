@@ -2,6 +2,7 @@ import type { Db } from "@rudderhq/db";
 import {
   activityLog,
   agentCustomIntegrationBindings,
+  agents,
   customIntegrationTools,
   mcpConnections,
   mcpOAuthGrants,
@@ -19,6 +20,7 @@ import {
   type McpConnectionAccessMode,
   type McpConnectionProvider,
   type McpConnectionSafeConfig,
+  type McpConnectionScope,
   type McpConnectionSecretsMutation,
   type McpConnectionSummary,
   type McpDiscoveredTool,
@@ -29,6 +31,7 @@ import { randomUUID } from "node:crypto";
 import { conflict, HttpError, notFound, unprocessable } from "../../errors.js";
 import { getSecretProvider } from "../../secrets/provider-registry.js";
 import { secretService } from "../secrets.js";
+import { ensureDefaultManagedMcpBindingsForConnection } from "./managed-bindings.js";
 import {
   createManagedMcpClient,
   resolveMcpHttpCredentials,
@@ -334,6 +337,8 @@ function publicSummary(row: McpConnectionRow): McpConnectionSummary {
   return {
     id: row.id,
     orgId: row.orgId,
+    scope: row.scope as McpConnectionSummary["scope"],
+    ownerAgentId: row.ownerAgentId,
     name: row.name,
     displayName: row.displayName,
     provider: row.provider as McpConnectionSummary["provider"],
@@ -435,6 +440,25 @@ export function managedMcpConnectionService(
       .then((rows) => rows[0] ?? null);
     if (!row) throw notFound("MCP connection not found");
     return row;
+  }
+
+  async function assertConnectionOwner(
+    orgId: string,
+    scope: McpConnectionScope,
+    ownerAgentId: string | null,
+  ): Promise<void> {
+    if (scope === "organization") {
+      if (ownerAgentId) {
+        throw unprocessable("Organization MCP connections cannot have an owner agent");
+      }
+      return;
+    }
+    if (!ownerAgentId) throw unprocessable("Agent MCP connections require an owner agent");
+    const owner = await db.select({ id: agents.id }).from(agents).where(and(
+      eq(agents.orgId, orgId),
+      eq(agents.id, ownerAgentId),
+    )).then((rows) => rows[0] ?? null);
+    if (!owner) throw unprocessable("MCP connection owner must belong to the organization");
   }
 
   function assertHttpEnvironmentPolicy(config: ReturnType<typeof asHttpConfig>): void {
@@ -683,15 +707,20 @@ export function managedMcpConnectionService(
     ensureOfficial: async (
       orgId: string,
       provider: Exclude<McpConnectionProvider, "custom">,
-      requestedAccessMode: McpConnectionAccessMode | undefined,
+      target: {
+        scope: McpConnectionScope;
+        ownerAgentId: string | null;
+        accessMode?: McpConnectionAccessMode;
+      },
       actor: ManagedMcpMutationActor = {},
     ) => {
+      await assertConnectionOwner(orgId, target.scope, target.ownerAgentId);
       const definition = MCP_PROVIDER_REGISTRY[provider];
       const catalog = MCP_PROVIDER_CATALOG.find((entry) => entry.id === provider);
       if (!catalog) {
         throw unprocessable("Official MCP provider is invalid");
       }
-      const accessMode = requestedAccessMode ?? definition.defaultAccessMode;
+      const accessMode = target.accessMode ?? definition.defaultAccessMode;
       const accessModeIsValid = provider === "notion"
         ? accessMode === "provider_default"
         : accessMode === "read_only" || accessMode === "read_write";
@@ -701,13 +730,17 @@ export function managedMcpConnectionService(
       const row = await db.transaction(async (tx) => {
         await tx.execute(sql`
           select pg_advisory_xact_lock(
-            hashtextextended(${`managed-mcp-official:${orgId}:${provider}`}, 0)
+            hashtextextended(${`managed-mcp-official:${orgId}:${provider}:${target.scope}:${target.ownerAgentId ?? "organization"}`}, 0)
           )
         `);
         const existing = await tx.select().from(mcpConnections)
           .where(and(
             eq(mcpConnections.orgId, orgId),
             eq(mcpConnections.provider, provider),
+            eq(mcpConnections.scope, target.scope),
+            target.scope === "agent"
+              ? eq(mcpConnections.ownerAgentId, target.ownerAgentId!)
+              : sql`${mcpConnections.ownerAgentId} is null`,
             eq(mcpConnections.canonicalState, "canonical"),
           ))
           .for("update")
@@ -715,7 +748,11 @@ export function managedMcpConnectionService(
         if (existing) return existing;
         const created = await tx.insert(mcpConnections).values({
           orgId,
-          name: provider,
+          scope: target.scope,
+          ownerAgentId: target.ownerAgentId,
+          name: target.scope === "organization"
+            ? provider
+            : `${provider}-agent-${target.ownerAgentId!.slice(0, 12)}`,
           displayName: catalog.label,
           provider,
           transport: "streamable_http",
@@ -739,6 +776,8 @@ export function managedMcpConnectionService(
             provider,
             transport: created.transport,
             status: created.status,
+            scope: created.scope,
+            ownerAgentId: created.ownerAgentId,
           },
         }));
         return created;
@@ -779,6 +818,10 @@ export function managedMcpConnectionService(
           .where(and(
             eq(mcpConnections.orgId, orgId),
             eq(mcpConnections.provider, "supabase"),
+            eq(mcpConnections.scope, legacy.scope),
+            legacy.scope === "agent"
+              ? eq(mcpConnections.ownerAgentId, legacy.ownerAgentId!)
+              : sql`${mcpConnections.ownerAgentId} is null`,
             eq(mcpConnections.scopeMode, "account"),
             eq(mcpConnections.canonicalState, "superseded"),
             eq(mcpConnections.supersededByConnectionId, legacy.id),
@@ -787,13 +830,15 @@ export function managedMcpConnectionService(
         if (existing) return existing;
         const created = await tx.insert(mcpConnections).values({
           orgId,
+          scope: legacy.scope,
+          ownerAgentId: legacy.ownerAgentId,
           name: `supabase-account-upgrade-${legacy.id}`,
           displayName: "Supabase",
           provider: "supabase",
           transport: "streamable_http",
           externalScope: null,
           scopeMode: "account",
-          accessMode: "read_only",
+          accessMode: "read_write",
           status: "draft",
           safeConfig: {},
           enabled: true,
@@ -838,6 +883,7 @@ export function managedMcpConnectionService(
       actor: ManagedMcpMutationActor = {},
     ) => {
       const input = createMcpConnectionSchema.parse(rawInput);
+      await assertConnectionOwner(orgId, input.scope, input.ownerAgentId ?? null);
       if (input.transport === "legacy_manual") {
         throw unprocessable("Legacy manual MCP definitions cannot be created as managed connections");
       }
@@ -879,6 +925,8 @@ export function managedMcpConnectionService(
           }
           const created = await tx.insert(mcpConnections).values({
             orgId,
+            scope: input.scope,
+            ownerAgentId: input.ownerAgentId ?? null,
             credentialSecretId: credential?.id ?? null,
             name: input.name,
             displayName: input.displayName,
@@ -909,6 +957,8 @@ export function managedMcpConnectionService(
               provider: created.provider,
               transport: created.transport,
               status: created.status,
+              scope: created.scope,
+              ownerAgentId: created.ownerAgentId,
             },
           }));
           return created;
@@ -1368,6 +1418,8 @@ export function managedMcpConnectionService(
             },
           }));
         });
+        const activated = await findRow(orgId, connectionId);
+        await ensureDefaultManagedMcpBindingsForConnection(db, activated);
         return listTools(orgId, connectionId);
       } catch (error) {
         if (error instanceof ManagedMcpDiscoveryStaleError) {
