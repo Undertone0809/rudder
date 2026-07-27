@@ -3,11 +3,13 @@ import { authApi } from "@/api/auth";
 import { chatsApi } from "@/api/chats";
 import { ApiError } from "@/api/client";
 import { issuesApi } from "@/api/issues";
+import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { CommentThread } from "@/components/CommentThread";
 import { InlineEditor } from "@/components/InlineEditor";
 import { IssueProperties } from "@/components/IssueProperties";
+import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef } from "@/components/MarkdownEditor";
 import { KeepSidePanelViewButton } from "@/components/messenger/KeepSidePanelViewButton";
 import { PriorityIcon } from "@/components/PriorityIcon";
@@ -71,6 +73,7 @@ import {
   type ChatInlineAnnotation,
   type Issue,
   type IssueComment,
+  type OrganizationSkillFileDetail,
   type OrganizationWorkspaceFileDetail,
   type OrganizationWorkspaceFileEntry,
 } from "@rudderhq/shared";
@@ -84,8 +87,10 @@ import {
   ChevronRight,
   Circle,
   CirclePlus,
+  Code2,
   Compass,
   ExternalLink,
+  Eye,
   FileAudio2,
   FileCode2,
   FileText,
@@ -1365,6 +1370,82 @@ function ChatSidePanelLibraryFileView({
   );
 }
 
+export function ChatSidePanelSkillFileView({
+  file,
+  label,
+}: {
+  file: OrganizationSkillFileDetail;
+  label: string;
+}) {
+  const [viewMode, setViewMode] = useState<"preview" | "source">("preview");
+  const markdownParts = splitChatSidePanelYamlFrontmatter(file.content);
+  const previewAvailable = file.markdown;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col" data-testid="chat-side-panel-skill-file-view">
+      <div className="flex h-11 shrink-0 items-center gap-3 border-b border-[color:var(--border-soft)] px-4">
+        <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-foreground">{label}</div>
+          <div className="truncate font-mono text-[11px] text-muted-foreground">{file.path}</div>
+        </div>
+        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+          Read only
+        </span>
+        {previewAvailable ? (
+          <div
+            className="flex shrink-0 items-center rounded-md border border-[color:var(--border-soft)] p-0.5"
+            data-testid="chat-side-panel-skill-view-toggle"
+          >
+            <button
+              type="button"
+              className={cn(
+                "inline-flex h-7 w-7 items-center justify-center rounded-[4px] transition-colors",
+                viewMode === "preview"
+                  ? "bg-[color:var(--surface-active)] text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              aria-label="Preview skill Markdown"
+              aria-pressed={viewMode === "preview"}
+              onClick={() => setViewMode("preview")}
+            >
+              <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "inline-flex h-7 w-7 items-center justify-center rounded-[4px] transition-colors",
+                viewMode === "source"
+                  ? "bg-[color:var(--surface-active)] text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              aria-label="View skill Markdown source"
+              aria-pressed={viewMode === "source"}
+              onClick={() => setViewMode("source")}
+            >
+              <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
+      </div>
+      <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 py-5">
+        {previewAvailable && viewMode === "preview" ? (
+          <MarkdownBody className="text-sm leading-7 text-foreground">
+            {markdownParts.body}
+          </MarkdownBody>
+        ) : (
+          <pre
+            className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs leading-6 text-foreground/85"
+            data-testid="chat-side-panel-skill-source"
+          >
+            <code>{file.content}</code>
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ChatSidePanel({
   contextReady = true,
   expanded = false,
@@ -1533,6 +1614,7 @@ export function ChatSidePanel({
   const automationTarget = activeTarget?.kind === "automation" ? activeTarget : null;
   const libraryFileTarget = activeTarget?.kind === "library_file" ? activeTarget : null;
   const localFileTarget = activeTarget?.kind === "local_file" ? activeTarget : null;
+  const organizationSkillFileTarget = activeTarget?.kind === "organization_skill_file" ? activeTarget : null;
   const libraryDirectoryTarget = activeTarget?.kind === "library_directory" ? activeTarget : null;
   const libraryEntryTarget = activeTarget?.kind === "library_entry" ? activeTarget : null;
   const browserTarget = activeTarget?.kind === "browser" ? activeTarget : null;
@@ -1627,6 +1709,19 @@ export function ChatSidePanel({
     queryFn: () => organizationsApi.readWorkspaceFile(selectedOrganizationId!, libraryFilePreviewPath!),
     enabled: targetQueriesEnabled && !!selectedOrganizationId && !!libraryFilePreviewPath,
   });
+  const organizationSkillFileQuery = useQuery({
+    queryKey: queryKeys.organizationSkills.file(
+      selectedOrganizationId ?? "__none__",
+      organizationSkillFileTarget?.skillId ?? "__none__",
+      organizationSkillFileTarget?.filePath ?? "SKILL.md",
+    ),
+    queryFn: () => organizationSkillsApi.file(
+      selectedOrganizationId!,
+      organizationSkillFileTarget!.skillId,
+      organizationSkillFileTarget!.filePath,
+    ),
+    enabled: targetQueriesEnabled && !!selectedOrganizationId && !!organizationSkillFileTarget,
+  });
   const libraryDirectoryQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(selectedOrganizationId ?? "__none__", libraryDirectoryTarget?.directoryPath ?? ""),
     queryFn: () => organizationsApi.listWorkspaceFiles(selectedOrganizationId!, libraryDirectoryTarget!.directoryPath),
@@ -1637,9 +1732,10 @@ export function ChatSidePanel({
     (issueTarget && issueQuery.isPending)
       || (chatTarget && (chatQuery.isPending || chatMessagesQuery.isPending))
       || (libraryFilePreviewPath && libraryFileQuery.isPending)
+      || (organizationSkillFileTarget && organizationSkillFileQuery.isPending)
       || (libraryDirectoryTarget && libraryDirectoryQuery.isPending),
   );
-  const error = issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? libraryFileQuery.error ?? libraryDirectoryQuery.error;
+  const error = issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? libraryFileQuery.error ?? organizationSkillFileQuery.error ?? libraryDirectoryQuery.error;
   const issue = issueTarget ? issueQuery.data : null;
   const issueComments = issueTarget ? (issueCommentsQuery.data ?? []) : [];
   const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
@@ -1647,6 +1743,7 @@ export function ChatSidePanel({
   const chat = chatTarget ? chatQuery.data : null;
   const chatMessages = chatTarget ? (chatMessagesQuery.data ?? []) : [];
   const libraryFile = libraryFilePreviewPath ? libraryFileQuery.data : null;
+  const organizationSkillFile = organizationSkillFileTarget ? organizationSkillFileQuery.data : null;
   const libraryDirectory = libraryDirectoryTarget ? libraryDirectoryQuery.data : null;
   const activeTargetKey = activeTarget ? sidePanelTargetKey(activeTarget) : "empty";
 
@@ -2020,7 +2117,7 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
-          activeLiveSurfaceTarget || localAppsTarget || issueTarget || localFileTarget || sideChatTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          activeLiveSurfaceTarget || localAppsTarget || issueTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {liveSurfaceTargets.map((target) => {
@@ -2178,6 +2275,12 @@ export function ChatSidePanel({
               key={localFileTarget.filePath}
               targetPath={localFileTarget.filePath}
               label={localFileTarget.label}
+            />
+          ) : organizationSkillFileTarget && organizationSkillFile ? (
+            <ChatSidePanelSkillFileView
+              key={`${organizationSkillFileTarget.skillId}:${organizationSkillFileTarget.filePath}`}
+              file={organizationSkillFile}
+              label={organizationSkillFileTarget.label}
             />
           ) : libraryDirectoryTarget ? (
             <div className="flex min-h-full flex-col" data-testid="chat-side-panel-library-directory-view">

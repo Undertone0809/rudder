@@ -2511,6 +2511,8 @@ describe("RunTranscriptView", () => {
         <RunTranscriptView
           density="compact"
           presentation="chat"
+          onOpenSkill={() => undefined}
+          canOpenSkill={() => true}
           entries={[
             {
               kind: "tool_call",
@@ -2533,6 +2535,8 @@ describe("RunTranscriptView", () => {
 
     expect(html).toContain("Use flomo-local-api skill");
     expect(html).toContain('data-transcript-action-icon="skill"');
+    expect(html).toContain('aria-label="Open skill flomo-local-api"');
+    expect(html).toContain('data-transcript-skill-path="/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md"');
     expect(html).not.toContain("Read /Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
     expect(html).not.toContain("Expand tool details");
     expect(html).not.toContain("aria-expanded=");
@@ -2576,6 +2580,52 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Use systematic-debugging skill");
     expect(html).not.toContain("Expand tool details");
     expect(html).not.toContain("aria-expanded=");
+  });
+
+  it("keeps an unresolved skill identity readable but non-actionable", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          onOpenSkill={() => undefined}
+          canOpenSkill={() => false}
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "Skill",
+              toolUseId: "skill-unresolved-1",
+              input: { skill: "ambiguous-skill" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "skill-unresolved-1",
+              content: "Loaded skill instructions",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Use ambiguous-skill skill");
+    expect(html).toContain('data-transcript-skill-target="ambiguous-skill"');
+    expect(html).not.toContain('aria-label="Open skill ambiguous-skill"');
+  });
+
+  it("retains the Claude skill context source path as structured action evidence", () => {
+    const semantic = describeToolSemanticInfo(
+      "Skill",
+      { skill: "systematic-debugging" },
+      "Loaded skill context\nBase directory: /tmp/runtime/skills/systematic-debugging",
+    );
+
+    expect(semantic.skillTargets).toEqual([{
+      name: "systematic-debugging",
+      path: "/tmp/runtime/skills/systematic-debugging/SKILL.md",
+    }]);
   });
 
   it("folds Claude Code skill context user injections into the skill tool card", () => {

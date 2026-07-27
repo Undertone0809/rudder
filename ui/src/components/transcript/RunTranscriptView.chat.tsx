@@ -2,7 +2,7 @@ import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptSentAnnotationContext, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
+import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
 import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool } from "./RunTranscriptView.semantic";
@@ -270,6 +270,8 @@ export function TranscriptChatToolActionRow({
   defaultOpenOnError = false,
   highlightError = true,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   agentInspection,
   onOpenAgent,
   quiet = true,
@@ -280,11 +282,13 @@ export function TranscriptChatToolActionRow({
   defaultOpenOnError?: boolean;
   highlightError?: boolean;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   agentInspection?: TranscriptAgentInspection | null;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   quiet?: boolean;
 }) {
-  const semantic = describeToolSemanticInfo(block.name, block.input);
+  const semantic = describeToolSemanticInfo(block.name, block.input, block.result);
   const displaySummary = formatChatToolActionSummary(block, semantic, density);
   const compact = density === "compact";
   const isCommand = isCommandTool(block.name, block.input);
@@ -323,6 +327,8 @@ export function TranscriptChatToolActionRow({
   const chevronOffsetClass = compact ? "" : "mt-0.5";
   const fileTargets = semantic.fileTargets ?? [];
   const hasOpenableFileTargets = fileTargets.some((target) => target.path);
+  const skillTargets = semantic.skillTargets ?? [];
+  const hasInspectableSkillTargets = semantic.category === "skill" && skillTargets.length > 0;
   const image = block.status === "completed" ? semantic.image : undefined;
   const detailStateLabelId = useId();
   const summaryLabelId = useId();
@@ -346,7 +352,79 @@ export function TranscriptChatToolActionRow({
           {open ? "Collapse" : "Expand"} {isCommand ? "command" : "tool"} details:
         </span>
       ) : null}
-      {image ? (
+      {hasInspectableSkillTargets ? (
+        <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
+          <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
+          <span
+            id={summaryLabelId}
+            className={cn(
+              "min-w-0 flex-1 break-words text-foreground/84",
+              compact ? "text-xs leading-5" : "text-sm leading-6",
+            )}
+          >
+            {skillTargets.length === 1 ? (() => {
+              const target = skillTargets[0]!;
+              const openable = Boolean(onOpenSkill) && (canOpenSkill?.(target) ?? true);
+              return openable ? (
+                <button
+                  type="button"
+                  className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  aria-label={`Open skill ${target.name}`}
+                  data-transcript-skill-target={target.name}
+                  data-transcript-skill-path={target.path ?? undefined}
+                  onClick={() => onOpenSkill?.(target)}
+                >
+                  {displaySummary}
+                </button>
+              ) : (
+                <span data-transcript-skill-target={target.name}>{displaySummary}</span>
+              );
+            })() : (
+              <>
+                <span>Use </span>
+                {skillTargets.map((target, index) => {
+                  const openable = Boolean(onOpenSkill) && (canOpenSkill?.(target) ?? true);
+                  return (
+                    <Fragment key={`${target.name}-${target.path ?? "unresolved"}-${index}`}>
+                      {index > 0 ? ", " : null}
+                      {openable ? (
+                        <button
+                          type="button"
+                          className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                          aria-label={`Open skill ${target.name}`}
+                          data-transcript-skill-target={target.name}
+                          data-transcript-skill-path={target.path ?? undefined}
+                          onClick={() => onOpenSkill?.(target)}
+                        >
+                          {target.name}
+                        </button>
+                      ) : (
+                        <span data-transcript-skill-target={target.name}>{target.name}</span>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                <span> skills</span>
+              </>
+            )}
+          </span>
+          <span
+            className="ml-auto inline-flex h-5 shrink-0 items-center gap-1.5 self-center"
+            data-transcript-action-trailing="true"
+          >
+            {duration ? (
+              <span className="inline-flex h-5 items-center text-[10px] font-medium tabular-nums text-muted-foreground">
+                {duration}
+              </span>
+            ) : null}
+            {statusText ? (
+              <span id={statusLabelId} className={cn("inline-flex h-5 items-center text-[10px] font-medium", rowTone)}>
+                {statusText}
+              </span>
+            ) : null}
+          </span>
+        </div>
+      ) : image ? (
         <div>
           <div className={cn("group/activity-row flex w-full text-left", rowAlignmentClass, rowGapClass)}>
             <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} toolName={block.name} input={block.input} />
@@ -529,6 +607,8 @@ export function TranscriptChatActionRow({
   defaultOpenOnError = false,
   highlightError = true,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   agentInspections = EMPTY_AGENT_INSPECTIONS,
   onOpenAgent,
   quiet = true,
@@ -539,6 +619,8 @@ export function TranscriptChatActionRow({
   defaultOpenOnError?: boolean;
   highlightError?: boolean;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   agentInspections?: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   quiet?: boolean;
@@ -555,6 +637,8 @@ export function TranscriptChatActionRow({
       defaultOpenOnError={defaultOpenOnError}
       highlightError={highlightError}
       onOpenFile={onOpenFile}
+      onOpenSkill={onOpenSkill}
+      canOpenSkill={canOpenSkill}
       agentInspection={transcriptAgentInspectionForTool(action.entry, agentInspections)}
       onOpenAgent={onOpenAgent}
       quiet={quiet}
@@ -642,6 +726,8 @@ export function TranscriptChatActionGroup({
   groupIndex,
   groupCount,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   agentInspections = EMPTY_AGENT_INSPECTIONS,
   onOpenAgent,
   annotationSource,
@@ -652,6 +738,8 @@ export function TranscriptChatActionGroup({
   groupIndex: number;
   groupCount: number;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   agentInspections?: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   annotationSource?: TranscriptAnnotationSourceContext;
@@ -702,6 +790,8 @@ export function TranscriptChatActionGroup({
           defaultOpenOnError={false}
           highlightError={!detailVariant}
           onOpenFile={onOpenFile}
+          onOpenSkill={onOpenSkill}
+          canOpenSkill={canOpenSkill}
           agentInspections={agentInspections}
           onOpenAgent={onOpenAgent}
           quiet={!detailVariant}
@@ -768,6 +858,8 @@ export function TranscriptChatActionGroup({
               action={action}
               density={density}
               onOpenFile={onOpenFile}
+              onOpenSkill={onOpenSkill}
+              canOpenSkill={canOpenSkill}
               agentInspections={agentInspections}
               onOpenAgent={onOpenAgent}
               quiet={!detailVariant}
@@ -786,6 +878,8 @@ export function TranscriptChatTurn({
   variant = "chat",
   onMarkdownLinkClick,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   agentInspections = EMPTY_AGENT_INSPECTIONS,
   onOpenAgent,
   annotationSource,
@@ -797,6 +891,8 @@ export function TranscriptChatTurn({
   variant?: "chat" | "detail";
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   agentInspections?: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   annotationSource?: TranscriptAnnotationSourceContext;
@@ -832,6 +928,8 @@ export function TranscriptChatTurn({
               groupIndex={segments.slice(0, index).filter((item) => item.type === "actions").length}
               groupCount={actionGroupCount}
               onOpenFile={onOpenFile}
+              onOpenSkill={onOpenSkill}
+              canOpenSkill={canOpenSkill}
               agentInspections={agentInspections}
               onOpenAgent={onOpenAgent}
             />
@@ -879,6 +977,8 @@ export function TranscriptChatTurn({
                 groupIndex={segments.slice(0, index).filter((item) => item.type === "actions").length}
                 groupCount={actionGroupCount}
                 onOpenFile={onOpenFile}
+                onOpenSkill={onOpenSkill}
+                canOpenSkill={canOpenSkill}
                 agentInspections={agentInspections}
                 onOpenAgent={onOpenAgent}
               />
@@ -1075,6 +1175,8 @@ export function TranscriptChatTimeline({
   showDeveloperDiagnostics,
   onMarkdownLinkClick,
   onOpenFile,
+  onOpenSkill,
+  canOpenSkill,
   agentInspections,
   onOpenAgent,
   annotationSource,
@@ -1090,6 +1192,8 @@ export function TranscriptChatTimeline({
   showDeveloperDiagnostics: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
   onOpenFile?: (targetPath: string, label: string) => void;
+  onOpenSkill?: (target: TranscriptSkillTarget) => void;
+  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   agentInspections: Map<string, TranscriptAgentInspection>;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   annotationSource?: TranscriptAnnotationSourceContext;
@@ -1141,6 +1245,8 @@ export function TranscriptChatTimeline({
           thinkingClassName={thinkingClassName}
           onMarkdownLinkClick={onMarkdownLinkClick}
           onOpenFile={onOpenFile}
+          onOpenSkill={onOpenSkill}
+          canOpenSkill={canOpenSkill}
           agentInspections={agentInspections}
           onOpenAgent={onOpenAgent}
           annotationSource={annotationSource}

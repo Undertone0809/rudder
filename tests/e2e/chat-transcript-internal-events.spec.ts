@@ -340,6 +340,24 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   });
   expect(orgRes.ok()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const skillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
+    data: {
+      name: "Systematic Debugging",
+      slug: "systematic-debugging",
+      description: "A deterministic debugging workflow.",
+      markdown: [
+        "---",
+        "name: systematic-debugging",
+        "description: A deterministic debugging workflow.",
+        "---",
+        "",
+        "# Systematic Debugging",
+        "",
+        "Reproduce, isolate, verify.",
+      ].join("\n"),
+    },
+  });
+  expect(skillRes.ok()).toBe(true);
   const agent = await createE2EChatAgent(page.request, organization.id, {
     name: "Transcript File Agent",
     command: E2E_CODEX_STUB,
@@ -486,6 +504,26 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   await page.waitForTimeout(250);
   await page.screenshot({ path: "/tmp/rudder-transcript-activity-expanded.png", fullPage: true });
   const chatUrl = page.url();
+  const skillButton = transcript.getByRole("button", {
+    name: "Open skill systematic-debugging",
+    exact: true,
+  });
+  await expect(skillButton).toBeVisible();
+  await skillButton.click();
+  const skillPanel = page.getByTestId("chat-side-panel-skill-file-view");
+  await expect(skillPanel).toBeVisible();
+  await expect(skillPanel).toContainText("Systematic Debugging");
+  await expect(skillPanel).toContainText("Read only");
+  await expect(skillPanel.getByText("Reproduce, isolate, verify.", { exact: true })).toBeVisible();
+  await expect(skillPanel.getByRole("button", { name: /save/i })).toHaveCount(0);
+  await expect(page).toHaveURL(chatUrl);
+  await page.screenshot({ path: "/tmp/rudder-transcript-skill-side-panel.png", fullPage: true });
+  await skillPanel.getByRole("button", { name: "View skill Markdown source" }).click();
+  await expect(skillPanel.getByTestId("chat-side-panel-skill-source")).toContainText(
+    "name: systematic-debugging",
+  );
+  await page.screenshot({ path: "/tmp/rudder-transcript-skill-side-panel-source.png", fullPage: true });
+
   await fileButton.click();
   await expect(page.getByTestId("chat-side-panel-local-file-view").or(page.getByRole("alert"))).toContainText("Rudder Desktop");
   await expect(page).toHaveURL(chatUrl);

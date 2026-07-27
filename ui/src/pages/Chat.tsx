@@ -20,7 +20,7 @@ import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { ProjectIcon } from "@/components/ProjectIdentity";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
-import type { TranscriptAgentInspection } from "@/components/transcript/RunTranscriptView";
+import type { TranscriptAgentInspection, TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -143,6 +143,7 @@ import {
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { latestSideChatAnchor } from "@/lib/side-chat";
+import { resolveTranscriptSkillSidePanelTarget } from "@/lib/transcript-skill-targets";
 import { cn } from "@/lib/utils";
 import {
   chatInlineAnnotationsFromStructuredPayload,
@@ -567,6 +568,31 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   } = useQuery({
     queryKey: queryKeys.organizationSkills.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => organizationSkillsApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, });
+  const resolveTranscriptSkillTarget = useCallback(
+    (target: TranscriptSkillTarget) => (
+      resolveTranscriptSkillSidePanelTarget(target, organizationSkills)
+    ),
+    [organizationSkills],
+  );
+  const canOpenTranscriptSkill = useCallback(
+    (target: TranscriptSkillTarget) => Boolean(resolveTranscriptSkillTarget(target)),
+    [resolveTranscriptSkillTarget],
+  );
+  const openTranscriptSkill = useCallback(
+    (target: TranscriptSkillTarget) => {
+      const sidePanelTarget = resolveTranscriptSkillTarget(target);
+      if (!sidePanelTarget) return;
+      openSidePanelTargetForContext(
+        resolveCurrentSidePanelChatContextKey(),
+        sidePanelTarget,
+      );
+    },
+    [
+      openSidePanelTargetForContext,
+      resolveCurrentSidePanelChatContextKey,
+      resolveTranscriptSkillTarget,
+    ],
+  );
   const {
     data: activeAgentSkillSnapshot,
     error: activeAgentSkillsError,
@@ -3672,6 +3698,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     assistantMessageBody={activeStream.body}
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
                                     onOpenFile={openTranscriptFile}
+                                    onOpenSkill={openTranscriptSkill}
+                                    canOpenSkill={canOpenTranscriptSkill}
                                     onOpenAgent={openSubagentInspection}
                                     sentAnnotationContext={{
                                       onSelect: handleSelectSentResponseAnnotation,
@@ -3727,6 +3755,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
                                     open={openProcessMessageIds[message.id]} onOpenChange={(open) => setProcessOpenForMessage(message.id, open)}
                                     onOpenFile={openTranscriptFile}
+                                    onOpenSkill={openTranscriptSkill}
+                                    canOpenSkill={canOpenTranscriptSkill}
                                     onOpenAgent={openSubagentInspection}
                                     annotationSource={
                                       message.role === "assistant"
