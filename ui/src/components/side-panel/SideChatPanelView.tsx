@@ -495,8 +495,8 @@ export function SideChatPanelView({
           if (event.type === "error") {
             if (!acknowledged && event.messageId) {
               acknowledged = true;
-            dispatchAnnotation({ type: "clear" });
-            setPendingFiles([]);
+              dispatchAnnotation({ type: "clear" });
+              setPendingFiles([]);
               setAnnotationsExpanded(false);
               setEditingAnnotationId(null);
               onReplaceTarget(
