@@ -453,6 +453,109 @@ test("renders one readable reasoning stream when App Server emits summary and ra
   await expect(transcriptItem).not.toContainText("visualize once.visualize once.");
 });
 
+test("keeps phased App Server commentary in Process after Stop and reload", async ({ page }) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Commentary-Process-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json();
+  const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Commentary Process Agent",
+    agentRuntimeConfig: {
+      model: "gpt-5.4",
+      command: E2E_CODEX_APP_SERVER_STUB,
+      chatAppServerEnabled: true,
+    },
+  });
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${chatAgent.id}`);
+
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await composer.fill("Keep commentary in Process");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const commentary = "我会先读取 rudder-docs，再核对源码；确认字符不会丢失。";
+  const activeTranscript = page.getByTestId("chat-transcript-item").last();
+  await expect(activeTranscript).toContainText(commentary, { timeout: 15_000 });
+  await expect(activeTranscript.locator("code", { hasText: "rudder-docs" })).toHaveCount(1);
+  await expect(page.getByTestId("chat-assistant-message").filter({ hasText: commentary })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Stop streaming" }).click();
+  const stoppedToggle = page.getByRole("button", { name: /Worked for .*Stopped/ }).last();
+  await expect(stoppedToggle).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-assistant-message").filter({ hasText: commentary })).toHaveCount(0);
+
+  await page.reload();
+  const reloadedToggle = page.getByRole("button", { name: /Worked for .*Stopped/ }).last();
+  await expect(reloadedToggle).toBeVisible({ timeout: 15_000 });
+  await reloadedToggle.click();
+  const reloadedTranscript = page.getByTestId("chat-transcript-item").last();
+  await expect(reloadedTranscript).toContainText(commentary, { timeout: 15_000 });
+  await expect(reloadedTranscript.locator("code", { hasText: "rudder-docs" })).toHaveCount(1);
+  await expect(page.getByTestId("chat-assistant-message").filter({ hasText: commentary })).toHaveCount(0);
+  const screenshotPath = process.env.RUDDER_E2E_COMMENTARY_SCREENSHOT?.trim();
+  if (screenshotPath) {
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+  }
+});
+
+test("renders fragmented App Server commentary identically while live, completed, and reloaded", async ({ page }, testInfo) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Commentary-Three-State-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json();
+  const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Commentary Three-State Agent",
+    agentRuntimeConfig: {
+      model: "gpt-5.4",
+      command: E2E_CODEX_APP_SERVER_STUB,
+      chatAppServerEnabled: true,
+    },
+  });
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${chatAgent.id}`);
+
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await composer.fill("Complete fragmented commentary");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const commentary = "我会先读取 rudder-docs，再核对源码；确认字符不会丢失。";
+  const activeTranscript = page.getByTestId("chat-transcript-item").last();
+  await expect(activeTranscript).toContainText(commentary, { timeout: 15_000 });
+  await expect(activeTranscript.locator("code", { hasText: "rudder-docs" })).toHaveText("rudder-docs");
+
+  await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
+    "Fragmented commentary completed.",
+    { timeout: 20_000 },
+  );
+  const completedToggle = page.getByRole("button", { name: /Worked for/ }).last();
+  await completedToggle.click();
+  const completedTranscript = page.getByTestId("chat-transcript-item").last();
+  await expect(completedTranscript).toContainText(commentary);
+  await expect(completedTranscript.locator("code", { hasText: "rudder-docs" })).toHaveText("rudder-docs");
+
+  await page.reload();
+  const reloadedToggle = page.getByRole("button", { name: /Worked for/ }).last();
+  await reloadedToggle.click();
+  const reloadedTranscript = page.getByTestId("chat-transcript-item").last();
+  await expect(reloadedTranscript).toContainText(commentary);
+  await expect(reloadedTranscript.locator("code", { hasText: "rudder-docs" })).toHaveText("rudder-docs");
+
+  await page.screenshot({
+    path: testInfo.outputPath("chat-commentary-three-state.png"),
+    fullPage: true,
+  });
+});
+
 test("automatically runs queued messages after an operator Stop", async ({ page }) => {
   const organization = await createStreamingOrg(page, `Running-Queue-Stop-${Date.now()}`);
 

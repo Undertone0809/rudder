@@ -28,6 +28,45 @@ function hasStableTranscriptProvenance(
     && Number.isInteger(entry.generationSeqEnd);
 }
 
+function canCoalesceTextEntries(
+  previous: ChatStreamTranscriptTextEntry,
+  entry: ChatStreamTranscriptTextEntry,
+) {
+  if (
+    previous.kind !== entry.kind
+    || previous.delta !== true
+    || entry.delta !== true
+    || (
+      previous.phase !== undefined
+      && entry.phase !== undefined
+      && previous.phase !== entry.phase
+    )
+  ) {
+    return false;
+  }
+
+  if (previous.segmentId || entry.segmentId) {
+    return Boolean(
+      previous.segmentId
+      && entry.segmentId
+      && previous.segmentId === entry.segmentId
+      && (
+        !hasStableTranscriptProvenance(previous)
+        || !hasStableTranscriptProvenance(entry)
+        || (
+          previous.generationId === entry.generationId
+          && previous.generationSeqEnd + 1 === entry.generationSeqStart
+        )
+      ),
+    );
+  }
+
+  return hasStableTranscriptProvenance(previous)
+    && hasStableTranscriptProvenance(entry)
+    && previous.generationId === entry.generationId
+    && previous.generationSeqEnd + 1 === entry.generationSeqStart;
+}
+
 export function coalesceChatTranscriptTextEntries(
   entries: readonly ChatStreamTranscriptEntry[],
 ): ChatStreamTranscriptEntry[] {
@@ -36,20 +75,17 @@ export function coalesceChatTranscriptTextEntries(
     const previous = coalesced.at(-1);
     if (
       (entry.kind === "assistant" || entry.kind === "thinking")
-      && entry.delta === true
       && (previous?.kind === "assistant" || previous?.kind === "thinking")
-      && previous.kind === entry.kind
-      && previous.delta === true
-      && hasStableTranscriptProvenance(previous)
-      && hasStableTranscriptProvenance(entry)
-      && previous.generationId === entry.generationId
-      && previous.generationSeqEnd + 1 === entry.generationSeqStart
+      && canCoalesceTextEntries(previous, entry)
     ) {
       coalesced[coalesced.length - 1] = {
         ...previous,
         ts: entry.ts,
         text: previous.text + entry.text,
-        generationSeqEnd: entry.generationSeqEnd,
+        ...(previous.phase ?? entry.phase ? { phase: previous.phase ?? entry.phase } : {}),
+        ...(hasStableTranscriptProvenance(previous) && hasStableTranscriptProvenance(entry)
+          ? { generationSeqEnd: entry.generationSeqEnd }
+          : {}),
       };
       continue;
     }

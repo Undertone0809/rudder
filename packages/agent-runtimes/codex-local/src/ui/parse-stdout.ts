@@ -453,13 +453,33 @@ function parseCodexItem(
 
   if (itemType === "agent_message") {
     const text = asString(item.text);
-    if (text) return [{ kind: "assistant", ts, text, ...(item.delta === true ? { delta: true } : {}) }];
+    const messagePhase = item.phase === "commentary" || item.phase === "final_answer"
+      ? item.phase
+      : null;
+    if (text) {
+      return [{
+        kind: "assistant",
+        ts,
+        text,
+        ...(item.delta === true ? { delta: true } : {}),
+        ...(messagePhase ? { phase: messagePhase } : {}),
+        ...(asString(item.id) ? { segmentId: asString(item.id) } : {}),
+      }];
+    }
     return [];
   }
 
   if (itemType === "reasoning") {
     const text = asString(item.text);
-    if (text) return [{ kind: "thinking", ts, text, ...(item.delta === true ? { delta: true } : {}) }];
+    if (text) {
+      return [{
+        kind: "thinking",
+        ts,
+        text,
+        ...(item.delta === true ? { delta: true } : {}),
+        ...(asString(item.id) ? { segmentId: asString(item.id) } : {}),
+      }];
+    }
     return [{ kind: "system", ts, text: phase === "started" ? "reasoning started" : "reasoning completed" }];
   }
 

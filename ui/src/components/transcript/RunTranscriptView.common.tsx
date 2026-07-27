@@ -181,12 +181,14 @@ export type TranscriptBlock =
       ts: string;
       text: string;
       streaming: boolean;
+      segmentId?: string;
     } & Partial<TranscriptGenerationProvenance>
   | {
       type: "thinking";
       ts: string;
       text: string;
       streaming: boolean;
+      segmentId?: string;
     } & Partial<TranscriptGenerationProvenance>
   | {
       type: "tool";

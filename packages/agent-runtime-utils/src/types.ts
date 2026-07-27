@@ -473,8 +473,15 @@ export interface ServerAgentRuntimeModule {
 // ---------------------------------------------------------------------------
 
 export type TranscriptEntry =
-  | { kind: "assistant"; ts: string; text: string; delta?: boolean }
-  | { kind: "thinking"; ts: string; text: string; delta?: boolean }
+  | {
+      kind: "assistant";
+      ts: string;
+      text: string;
+      delta?: boolean;
+      phase?: "commentary" | "final_answer";
+      segmentId?: string;
+    }
+  | { kind: "thinking"; ts: string; text: string; delta?: boolean; segmentId?: string }
   | {
       kind: "user";
       ts: string;

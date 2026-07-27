@@ -46,7 +46,22 @@ function canMergeTranscriptProvenance(
   previous: TranscriptBlock,
   current: ReturnType<typeof transcriptEntryProvenance>,
   continuesDeltaGroup: boolean,
+  currentSegmentId?: string,
 ) {
+  if (previous.type !== "message" && previous.type !== "thinking") return false;
+  if (previous.segmentId || currentSegmentId) {
+    return continuesDeltaGroup
+      && Boolean(
+        previous.segmentId
+        && currentSegmentId
+        && previous.segmentId === currentSegmentId,
+      )
+      && (
+        !current
+        || !blockHasTranscriptProvenance(previous)
+        || previous.generationId === current.generationId
+      );
+  }
   if (!current) return !blockHasTranscriptProvenance(previous);
   return continuesDeltaGroup
     && blockHasTranscriptProvenance(previous)
@@ -567,7 +582,12 @@ export function normalizeTranscript(
         && previous.role === entry.kind
         && previous.source === (entry.kind === "user" ? entry.source : undefined)
         && previous.messageId === (entry.kind === "user" ? entry.messageId : undefined)
-        && canMergeTranscriptProvenance(previous, provenance, continuesDeltaGroup)
+        && canMergeTranscriptProvenance(
+          previous,
+          provenance,
+          continuesDeltaGroup,
+          entry.kind === "assistant" ? entry.segmentId : undefined,
+        )
       ) {
         previous.text += continuesDeltaGroup
           || previous.text.endsWith("\n")
@@ -577,7 +597,18 @@ export function normalizeTranscript(
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
         if (provenance && blockHasTranscriptProvenance(previous)) {
-          previous.generationSeqEnd = provenance.generationSeqEnd;
+          if (previous.generationSeqEnd + 1 === provenance.generationSeqStart) {
+            previous.generationSeqEnd = provenance.generationSeqEnd;
+          } else {
+            const mutableProvenance = previous as Partial<{
+              generationId: string;
+              generationSeqStart: number;
+              generationSeqEnd: number;
+            }>;
+            delete mutableProvenance.generationId;
+            delete mutableProvenance.generationSeqStart;
+            delete mutableProvenance.generationSeqEnd;
+          }
         }
       } else {
         blocks.push({
@@ -592,6 +623,7 @@ export function normalizeTranscript(
           ts: entry.ts,
           text: entry.text,
           streaming: isStreaming,
+          ...(entry.kind === "assistant" && entry.segmentId ? { segmentId: entry.segmentId } : {}),
           ...provenance,
         });
       }
@@ -609,7 +641,7 @@ export function normalizeTranscript(
         && !forceTextBoundary;
       if (
         previous?.type === "thinking"
-        && canMergeTranscriptProvenance(previous, provenance, continuesDeltaGroup)
+        && canMergeTranscriptProvenance(previous, provenance, continuesDeltaGroup, entry.segmentId)
       ) {
         previous.text += continuesDeltaGroup || previous.text.endsWith("\n") || entry.text.startsWith("\n")
           ? entry.text
@@ -617,7 +649,18 @@ export function normalizeTranscript(
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
         if (provenance && blockHasTranscriptProvenance(previous)) {
-          previous.generationSeqEnd = provenance.generationSeqEnd;
+          if (previous.generationSeqEnd + 1 === provenance.generationSeqStart) {
+            previous.generationSeqEnd = provenance.generationSeqEnd;
+          } else {
+            const mutableProvenance = previous as Partial<{
+              generationId: string;
+              generationSeqStart: number;
+              generationSeqEnd: number;
+            }>;
+            delete mutableProvenance.generationId;
+            delete mutableProvenance.generationSeqStart;
+            delete mutableProvenance.generationSeqEnd;
+          }
         }
       } else {
         blocks.push({
@@ -625,6 +668,7 @@ export function normalizeTranscript(
           ts: entry.ts,
           text: entry.text,
           streaming: isStreaming,
+          ...(entry.segmentId ? { segmentId: entry.segmentId } : {}),
           ...provenance,
         });
       }

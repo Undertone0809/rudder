@@ -588,6 +588,24 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         for (const entry of entries) {
           if (isStopped()) return;
           if (entry.kind === "assistant") {
+            if (entry.phase === "commentary") {
+              const commentaryText = redactRudderInlineVisualSources(entry.text);
+              if (!commentaryText) continue;
+              const commentaryEntry: TranscriptEntry = {
+                kind: "assistant",
+                ts: entry.ts,
+                text: commentaryText,
+                ...(entry.delta === true ? { delta: true } : {}),
+                phase: "commentary",
+                ...(entry.segmentId ? { segmentId: entry.segmentId } : {}),
+              };
+              await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, commentaryEntry);
+              if (isStopped()) return;
+              await maybeEmitTranscriptEntry(input.onTranscriptEntry, commentaryEntry);
+              if (isStopped()) return;
+              await chatRunsSvc.appendTranscriptEntry(chatRun, commentaryEntry);
+              continue;
+            }
             const delta = assistantTextAccumulator.push(entry.text, entry.delta === true);
             if (!delta) continue;
             const visibleDelta = inlineVisualStream.push(sentinelStream.push(delta));
@@ -697,6 +715,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                   ts: entry.ts,
                   text: suppressTranscriptSource(entry.text, entry.delta === true),
                   ...(entry.delta === true ? { delta: true } : {}),
+                  ...(entry.segmentId ? { segmentId: suppressTranscriptSource(entry.segmentId) } : {}),
                 };
               case "user":
               case "stderr":
