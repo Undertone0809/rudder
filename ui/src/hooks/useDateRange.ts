@@ -2,11 +2,10 @@ import { defaultCustomDateRange, floorDateToMinuteIso, resolvePresetDateRange } 
 import type { CostTrendGranularity } from "@rudderhq/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-export type DatePreset = "24h" | "mtd" | "7d" | "30d" | "ytd" | "all" | "custom";
+export type DatePreset = "24h" | "7d" | "30d" | "ytd" | "all" | "custom";
 
 export const PRESET_LABELS: Record<DatePreset, string> = {
   "24h": "Last 24 Hours",
-  mtd: "Month to Date",
   "7d": "Last 7 Days",
   "30d": "Last 30 Days",
   ytd: "Year to Date",
@@ -14,7 +13,7 @@ export const PRESET_LABELS: Record<DatePreset, string> = {
   custom: "Custom",
 };
 
-export const PRESET_KEYS: DatePreset[] = ["24h", "mtd", "7d", "30d", "ytd", "all", "custom"];
+export const PRESET_KEYS: DatePreset[] = ["24h", "7d", "30d", "ytd", "all", "custom"];
 
 export interface UseDateRangeResult {
   preset: DatePreset;
@@ -32,7 +31,7 @@ export interface UseDateRangeResult {
   trendGranularity: CostTrendGranularity;
 }
 
-export function useDateRange(initialPreset: DatePreset = "mtd"): UseDateRangeResult {
+export function useDateRange(initialPreset: DatePreset = "24h"): UseDateRangeResult {
   const [preset, setPreset] = useState<DatePreset>(initialPreset);
   const [initialCustomRange] = useState(() => defaultCustomDateRange());
   const [customFrom, setCustomFrom] = useState(initialCustomRange.from);

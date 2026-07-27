@@ -1,4 +1,4 @@
-export type SlidingDatePreset = "1d" | "24h" | "7d" | "15d" | "30d" | "mtd" | "ytd" | "all" | "custom";
+export type SlidingDatePreset = "1d" | "24h" | "7d" | "15d" | "30d" | "ytd" | "all" | "custom";
 
 export function floorDateToMinuteIso(date: Date): string {
   const floored = new Date(date);
@@ -65,13 +65,6 @@ export function resolvePresetDateRange({
   if (preset === "24h") {
     return {
       from: new Date(new Date(to).getTime() - 24 * 60 * 60 * 1000).toISOString(),
-      to,
-      customReady: true,
-    };
-  }
-  if (preset === "mtd") {
-    return {
-      from: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
       to,
       customReady: true,
     };

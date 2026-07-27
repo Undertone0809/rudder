@@ -77,14 +77,15 @@ test.describe("Cost trend chart", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`/${organization.issuePrefix}/costs`, { waitUntil: "domcontentloaded" });
     const hourlyTrendResponse = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return url.pathname === `/api/orgs/${organization.id}/costs/trend`
         && url.searchParams.get("granularity") === "hour";
     });
-    await page.getByRole("button", { name: "Last 24 Hours" }).click();
+    await page.goto(`/${organization.issuePrefix}/costs`, { waitUntil: "domcontentloaded" });
     expect((await hourlyTrendResponse).ok()).toBe(true);
+    await expect(page.getByRole("button", { name: "Last 24 Hours" })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: "Month to Date" })).toHaveCount(0);
 
     const chart = page.getByTestId("cost-trend-chart");
     await expect(chart).toBeVisible();
@@ -120,7 +121,7 @@ test.describe("Cost trend chart", () => {
     await expect(customEnd).not.toHaveValue("");
     const rememberedStart = await customStart.inputValue();
     await expect(chart).toBeVisible();
-    await page.getByRole("button", { name: "Month to Date" }).click();
+    await page.getByRole("button", { name: "Last 7 Days" }).click();
     await page.getByRole("button", { name: "Custom" }).click();
     await expect(customStart).toHaveValue(rememberedStart);
 
@@ -209,7 +210,7 @@ test.describe("Cost trend chart", () => {
     ).toBe(true);
   });
 
-  test("loads month-to-date costs when token aggregates exceed the Postgres int4 range", async ({ page }) => {
+  test("loads the default rolling costs when token aggregates exceed the Postgres int4 range", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Cost-Overflow-${Date.now()}`,

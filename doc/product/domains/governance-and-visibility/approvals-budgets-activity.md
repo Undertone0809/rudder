@@ -82,7 +82,9 @@ Flow:
 5. Costs UI/API readbacks expose estimated spend, unified total tokens, cached
    input tokens, cumulative overlapping Agent Run duration, explicit UTC
    hourly or daily trends, and Agent/Project distributions for the selected
-   range.
+   range. Costs offers Last 24 Hours, Last 7 Days, Last 30 Days, Year to Date,
+   All Time, and Custom ranges; it defaults to Last 24 Hours and does not expose
+   a Month to Date preset.
 6. Project distribution retains an Unattributed bucket so visible usage totals
    reconcile with the organization summary; only valid Project IDs are
    accepted as trend filters.
@@ -98,6 +100,8 @@ Invariants:
   without `startedAt`.
 - A rolling 24-hour Costs range uses explicit hourly aggregation; longer and
   calendar ranges use explicit daily aggregation.
+- Month-based budget enforcement and Dashboard health metrics remain
+  independent of the Costs date-range preset model.
 
 Evidence:
 
@@ -108,8 +112,9 @@ Evidence:
 - `ui/src/lib/date-range-cache.test.ts` and `ui/src/pages/Costs.test.tsx` cover
   date-window, trend-label, distribution, and empty-state presentation
   behavior.
-- `tests/e2e/cost-trend.spec.ts` covers the visible rolling 24-hour, Custom,
-  metric, trend, and responsive distribution workflow.
+- `tests/e2e/cost-trend.spec.ts` covers the default rolling 24-hour query, the
+  absence of Month to Date, Custom memory, metric, trend, and responsive
+  distribution workflow.
 
 ## ACTIVITY.AUDIT.001
 

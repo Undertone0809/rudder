@@ -1079,29 +1079,6 @@ export function Costs() {
     return map;
   }, [quotaData]);
 
-  const deficitNotchByProvider = useMemo(() => {
-    const map = new Map<string, boolean>();
-    if (preset !== "mtd") return map;
-    const budget = spendData?.summary.budgetCents ?? 0;
-    if (budget <= 0) return map;
-    const totalSpend = spendData?.summary.spendCents ?? 0;
-    const now = new Date();
-    const daysElapsed = now.getDate();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    for (const [providerKey, rows] of byProvider) {
-      const providerCostCents = rows.reduce((sum, row) => sum + row.costCents, 0);
-      const providerShare = totalSpend > 0 ? providerCostCents / totalSpend : 0;
-      const providerBudget = budget * providerShare;
-      if (providerBudget <= 0) {
-        map.set(providerKey, false);
-        continue;
-      }
-      const burnRate = providerCostCents / Math.max(daysElapsed, 1);
-      map.set(providerKey, providerCostCents + burnRate * (daysInMonth - daysElapsed) > providerBudget);
-    }
-    return map;
-  }, [preset, spendData, byProvider]);
-
   const providers = useMemo(() => Array.from(byProvider.keys()), [byProvider]);
   const billers = useMemo(() => Array.from(byBiller.keys()), [byBiller]);
 
@@ -1233,6 +1210,7 @@ export function Costs() {
                   key={key}
                   variant={preset === key ? "secondary" : "ghost"}
                   size="sm"
+                  aria-pressed={preset === key}
                   onClick={() => setPreset(key)}
                 >
                   {PRESET_LABELS[key]}
@@ -1519,7 +1497,6 @@ export function Costs() {
                           totalCompanySpendCents={spendData?.summary.spendCents ?? 0}
                           weekSpendCents={weekSpendByProvider.get(provider) ?? 0}
                           windowRows={windowSpendByProvider.get(provider) ?? []}
-                          showDeficitNotch={deficitNotchByProvider.get(provider) ?? false}
                           quotaWindows={quotaWindowsByProvider.get(provider) ?? []}
                           quotaError={quotaErrorsByProvider.get(provider) ?? null}
                           quotaSource={quotaSourcesByProvider.get(provider) ?? null}
@@ -1539,7 +1516,6 @@ export function Costs() {
                       totalCompanySpendCents={spendData?.summary.spendCents ?? 0}
                       weekSpendCents={weekSpendByProvider.get(provider) ?? 0}
                       windowRows={windowSpendByProvider.get(provider) ?? []}
-                      showDeficitNotch={deficitNotchByProvider.get(provider) ?? false}
                       quotaWindows={quotaWindowsByProvider.get(provider) ?? []}
                       quotaError={quotaErrorsByProvider.get(provider) ?? null}
                       quotaSource={quotaSourcesByProvider.get(provider) ?? null}
