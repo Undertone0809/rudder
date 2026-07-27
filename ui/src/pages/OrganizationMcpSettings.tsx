@@ -547,6 +547,8 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
                   state,
                   status?.organization.scopeMode ?? null,
                 );
+                const actionPending = createOfficial.isPending
+                  && createOfficial.variables?.provider === provider.id;
                 return (
                   <ProviderCard
                     key={provider.id}
@@ -557,6 +559,7 @@ export function OrganizationMcpSettings({ orgId }: { orgId: string }) {
                     statusLabel={providerStateLabel(state)}
                     actionLabel={actionLabel}
                     disabled={createOfficial.isPending || (state === "connected" && connectionsQuery.isLoading)}
+                    loading={actionPending}
                     onAction={() => {
                       if (state === "connected") {
                         if (status) openConnectedProvider(status);
@@ -676,6 +679,7 @@ function ProviderCard({
   statusLabel,
   secondaryAction,
   disabled,
+  loading,
   onAction,
 }: {
   testId?: string;
@@ -686,6 +690,7 @@ function ProviderCard({
   statusLabel?: string;
   secondaryAction?: { label: string; onClick: () => void };
   disabled?: boolean;
+  loading?: boolean;
   onAction: () => void;
 }) {
   return (
@@ -714,8 +719,14 @@ function ProviderCard({
             {secondaryAction.label}
           </Button>
         ) : null}
-        <Button size="sm" variant="outline" disabled={disabled} onClick={onAction}>
-          {disabled ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled}
+          aria-busy={loading || undefined}
+          onClick={onAction}
+        >
+          {loading ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
           {actionLabel}
         </Button>
       </div>

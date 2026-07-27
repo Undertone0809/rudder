@@ -77,6 +77,8 @@ async function installManagedMcpApiMock(
   const connections: Connection[] = [];
   const tools = new Map<string, Array<Record<string, unknown>>>();
   const requests: Array<{ path: string; method: string; body: unknown }> = [];
+  let heldOfficialProvider: Exclude<Connection["provider"], "custom"> | null = null;
+  let releaseHeldOfficialConnect: (() => void) | null = null;
   const bindings = new Map<string, {
     id: string;
     connectionId: string;
@@ -189,6 +191,13 @@ async function installManagedMcpApiMock(
     }
     const officialProvider = path.match(/\/mcp\/providers\/(supabase|linear|notion)\/connect$/)?.[1];
     if (officialProvider && method === "POST") {
+      if (officialProvider === heldOfficialProvider) {
+        await new Promise<void>((resolve) => {
+          releaseHeldOfficialConnect = resolve;
+        });
+        heldOfficialProvider = null;
+        releaseHeldOfficialConnect = null;
+      }
       let connection = connections.find((candidate) => candidate.provider === officialProvider);
       if (!connection) {
         connection = connectionSummary(orgId, {
@@ -451,11 +460,70 @@ async function installManagedMcpApiMock(
     connections,
     tools,
     requests,
+    holdOfficialConnect: (provider: Exclude<Connection["provider"], "custom">) => {
+      heldOfficialProvider = provider;
+    },
+    releaseOfficialConnect: () => releaseHeldOfficialConnect?.(),
     getBinding: (connectionId: string) => bindings.get(connectionId) ?? null,
   };
 }
 
 test.describe("Managed MCP integrations", () => {
+  test("shows loading only on the provider being connected", async ({ page }, testInfo) => {
+    const orgResponse = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: { name: `MCP loading isolation ${Date.now()}` },
+    });
+    expect(orgResponse.ok()).toBe(true);
+    const organization = await orgResponse.json() as { id: string; issuePrefix: string };
+    const agentResponse = await page.request.post(
+      `${E2E_BASE_URL}/api/orgs/${organization.id}/agents`,
+      { data: { name: "MCP Loading Operator", role: "engineer", agentRuntimeType: "codex_local" } },
+    );
+    expect(agentResponse.ok()).toBe(true);
+    const agent = await agentResponse.json() as { id: string };
+
+    await page.addInitScript(({ orgId }) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.open = () => ({
+        opener: null,
+        close() {},
+        location: { replace() {} },
+      } as unknown as Window);
+    }, { orgId: organization.id });
+    const mock = await installManagedMcpApiMock(page, organization.id, agent.id);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/organization/settings`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("tab", { name: "Integrations / MCPs" }).click();
+
+    const supabaseConnect = page
+      .getByTestId("mcp-provider-supabase")
+      .getByRole("button", { name: "Connect" });
+    const linearConnect = page
+      .getByTestId("mcp-provider-linear")
+      .getByRole("button", { name: "Connect" });
+    const notionConnect = page
+      .getByTestId("mcp-provider-notion")
+      .getByRole("button", { name: "Connect" });
+
+    mock.holdOfficialConnect("supabase");
+    await supabaseConnect.click();
+
+    try {
+      await expect(supabaseConnect).toHaveAttribute("aria-busy", "true");
+      await expect(linearConnect).not.toHaveAttribute("aria-busy", "true");
+      await expect(notionConnect).not.toHaveAttribute("aria-busy", "true");
+      await page.screenshot({
+        path: testInfo.outputPath("mcp-provider-loading-isolation.png"),
+        fullPage: true,
+      });
+    } finally {
+      mock.releaseOfficialConnect();
+    }
+    await expect.poll(() => mock.connections.length).toBe(1);
+  });
+
   test("connects account-scoped Supabase and manages coarse agent access in focused dialogs", async ({ page }) => {
     test.setTimeout(180_000);
     const orgResponse = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
