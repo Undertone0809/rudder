@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { VirtualizedActivityTimeline } from "@/components/VirtualizedActivityTimeline";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
@@ -1905,9 +1906,18 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     const scrollElement = chatMessagesScrollElementRef.current;
     if (!scrollElement) return;
     const target = findChatMessageElement(scrollElement, messageId);
-    if (!target) return;
-    revealChatMessageElement(target);
-  }, []); const openWorkManifestItem = useCallback((item: ChatWorkManifestItem) => {
+    if (target) {
+      revealChatMessageElement(target);
+      return;
+    }
+    if (!conversationId) return;
+    const nextSearch = new URLSearchParams(searchParams);
+    nextSearch.set("targetMessageId", messageId);
+    navigate({
+      pathname: chatConversationPath(conversationId),
+      search: `?${nextSearch.toString()}`,
+    }, { replace: true });
+  }, [chatConversationPath, conversationId, navigate, searchParams]); const openWorkManifestItem = useCallback((item: ChatWorkManifestItem) => {
     const metadata = item.metadata ?? {};
     if (item.targetType === "issue" || item.targetType === "issue_comment") {
       const issueId = typeof metadata.issueId === "string" ? metadata.issueId : null;
@@ -2058,6 +2068,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           }
         : row);
   }, [activeStream, showActiveStreamDraft, timelineMessages, visibleMessages]);
+  const getChatTimelineItemKey = useCallback(
+    (timelineRow: (typeof chatTimelineRows)[number]) => timelineRow.kind === "active_stream"
+      ? `active-stream:${activeStream?.streamKey ?? "pending"}`
+      : timelineRow.message.id,
+    [activeStream?.streamKey],
+  );
+  const estimateChatTimelineItemSize = useCallback(() => 180, []);
   useEffect(() => {
     for (const message of visibleMessages) {
       if (message.role !== "assistant" || !message.generationId) continue;
@@ -3517,7 +3534,30 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                         <ChatMessagesLoadingState /> ) : visibleMessages.length === 0 && !activeStream ? (
                         <div className="surface-inset rounded-[var(--radius-xl)] border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
                           No messages yet. Start by describing the work and Rudder will clarify it first. </div> ) : ( <>
-                          {chatTimelineRows.map((timelineRow) => {
+                          <VirtualizedActivityTimeline
+                            items={chatTimelineRows}
+                            scrollElementRef={chatMessagesScrollElementRef}
+                            estimateSize={estimateChatTimelineItemSize}
+                            getItemKey={getChatTimelineItemKey}
+                            targetKey={pendingTargetMessageId}
+                            onTargetMounted={(targetMessageId) => {
+                              const scrollElement = chatMessagesScrollElementRef.current;
+                              if (!scrollElement) return;
+                              const target = findChatMessageElement(scrollElement, targetMessageId);
+                              if (!target) return;
+                              revealChatMessageElement(target);
+                              if (!conversationId) return;
+                              const nextSearch = new URLSearchParams(searchParams);
+                              nextSearch.delete("messageId");
+                              nextSearch.delete("targetMessageId");
+                              navigate({
+                                pathname: chatConversationPath(conversationId),
+                                search: nextSearch.toString() ? `?${nextSearch.toString()}` : "",
+                              }, { replace: true });
+                            }}
+                            testId="chat-virtual-timeline"
+                          >
+                          {(timelineRow) => {
                             if (timelineRow.kind === "active_stream") {
                               if (!activeStream) return null;
                               return (
@@ -3714,7 +3754,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   } : null}
                                   answered={activeStreamUserTurnVisible || isAskUserMessageAnswered(message, visibleMessages)}
                                   askUserAnswer={askUserAnswerFromMessage(message, visibleMessages)}
-                                  animateAskUserAnswer={message.id === recentAskUserAnswerMessageId} /> </Fragment> ); })} </>
+                                  animateAskUserAnswer={message.id === recentAskUserAnswerMessageId} /> </Fragment> ); }}
+                          </VirtualizedActivityTimeline> </>
                       )} </div> </div> </div> </div>
                 {hasActionableApprovals || hasPendingLightweightProposal ? null : (
                   <div

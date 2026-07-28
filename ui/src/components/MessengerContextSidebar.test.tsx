@@ -60,11 +60,12 @@ vi.mock("@/context/SidebarContext", () => ({
 }));
 
 vi.mock("@/context/ChatGenerationContext", () => ({
-  useChatGenerations: () => ({
+  useChatGenerationActions: () => ({
     isChatGenerationActive: (chatId: string | null | undefined) => Boolean(chatId && activeGeneratingChatIds.has(chatId)),
     setChatGenerationActive: vi.fn(),
     activeChatIds: activeGeneratingChatIds,
   }),
+  useChatGenerationActive: (chatId: string) => activeGeneratingChatIds.has(chatId),
 }));
 
 vi.mock("@/context/DialogContext", () => ({

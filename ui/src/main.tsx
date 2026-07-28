@@ -9,6 +9,7 @@ import { StrictMode } from "react";
 import * as ReactDOM from "react-dom";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { ActivityCoordinatorProvider } from "./context/ActivityCoordinatorContext";
 import { BreadcrumbProvider } from "./context/BreadcrumbContext";
 import { ChatGenerationProvider } from "./context/ChatGenerationContext";
 import { DesktopUpdateProgressProvider } from "./context/DesktopUpdateProgressContext";
@@ -32,6 +33,7 @@ declare global {
   interface ImportMeta {
     readonly env: {
       readonly DEV: boolean;
+      readonly MODE: string;
     };
   }
 
@@ -123,9 +125,10 @@ createRoot(document.getElementById("root")!).render(
           <ThemeProvider>
             <BrowserRouter>
               <OrganizationProvider>
-                <ToastProvider>
-                  <DesktopUpdateProgressProvider>
-                    <LiveUpdatesProvider>
+                <ActivityCoordinatorProvider>
+                  <ToastProvider>
+                    <DesktopUpdateProgressProvider>
+                      <LiveUpdatesProvider>
                       <TooltipProvider>
                         <BreadcrumbProvider>
                           <SidebarProvider>
@@ -143,9 +146,10 @@ createRoot(document.getElementById("root")!).render(
                           </SidebarProvider>
                         </BreadcrumbProvider>
                       </TooltipProvider>
-                    </LiveUpdatesProvider>
-                  </DesktopUpdateProgressProvider>
-                </ToastProvider>
+                      </LiveUpdatesProvider>
+                    </DesktopUpdateProgressProvider>
+                  </ToastProvider>
+                </ActivityCoordinatorProvider>
               </OrganizationProvider>
             </BrowserRouter>
           </ThemeProvider>

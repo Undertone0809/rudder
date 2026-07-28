@@ -19,7 +19,10 @@ let chatList: any[];
 let customGroupList: any[];
 let activeGeneratingChatIds: Set<string>;
 let cleanupFn: (() => void) | null = null;
-let intersectionCallback: ((entries: Array<{ isIntersecting: boolean }>) => void) | null = null;
+let intersectionObservers: Array<{
+  callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+  element: Element | null;
+}> = [];
 let intersectionObserverOptions: IntersectionObserverInit | undefined;
 let localStorageValues: Record<string, string>;
 
@@ -96,11 +99,12 @@ vi.mock("@/context/SidebarContext", () => ({
 }));
 
 vi.mock("@/context/ChatGenerationContext", () => ({
-  useChatGenerations: () => ({
+  useChatGenerationActions: () => ({
     isChatGenerationActive: (chatId: string | null | undefined) => Boolean(chatId && activeGeneratingChatIds.has(chatId)),
     setChatGenerationActive: vi.fn(),
     activeChatIds: activeGeneratingChatIds,
   }),
+  useChatGenerationActive: (chatId: string) => activeGeneratingChatIds.has(chatId),
 }));
 
 vi.mock("@/context/DialogContext", () => ({
@@ -182,7 +186,7 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
 
 describe("MessengerContextSidebar unread scroll requests", () => {
   beforeEach(() => {
-    intersectionCallback = null;
+    intersectionObservers = [];
     intersectionObserverOptions = undefined;
     localStorageValues = {};
     Object.defineProperty(window, "localStorage", {
@@ -206,14 +210,18 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     }) as typeof globalThis.requestAnimationFrame;
     globalThis.cancelAnimationFrame = vi.fn();
     class MockIntersectionObserver {
+      private readonly record: (typeof intersectionObservers)[number];
       constructor(
         callback: (entries: Array<{ isIntersecting: boolean }>) => void,
         options?: IntersectionObserverInit,
       ) {
-        intersectionCallback = callback;
+        this.record = { callback, element: null };
+        intersectionObservers.push(this.record);
         intersectionObserverOptions = options;
       }
-      observe = vi.fn();
+      observe = vi.fn((element: Element) => {
+        this.record.element = element;
+      });
       disconnect = vi.fn();
     }
     vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
@@ -245,6 +253,13 @@ describe("MessengerContextSidebar unread scroll requests", () => {
       return group;
     });
   });
+
+  function intersect(testId: string) {
+    const observer = intersectionObservers.find(
+      (candidate) => candidate.element?.getAttribute("data-testid") === testId,
+    );
+    observer?.callback([{ isIntersecting: true }]);
+  }
 
   afterEach(() => {
     cleanupFn?.();
@@ -706,14 +721,14 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     expect(document.querySelector('[data-testid="messenger-thread-page-sentinel"]')).not.toBeNull();
 
     await act(async () => {
-      intersectionCallback?.([{ isIntersecting: true }]);
+      intersect("messenger-thread-page-sentinel");
       await Promise.resolve();
     });
 
     expect(loadMoreThreadSummaries).toHaveBeenCalledTimes(1);
   });
 
-  it("stops auto-loading after the rendered thread guard and keeps manual loading available", async () => {
+  it("keeps auto-loading beyond the former rendered thread guard without a manual control", async () => {
     const loadMoreThreadSummaries = vi.fn().mockResolvedValue(undefined);
     messengerModel = {
       ...messengerModel,
@@ -739,17 +754,10 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     });
 
     expect(document.querySelector('[data-testid="messenger-thread-page-sentinel"]')).not.toBeNull();
-    expect(document.querySelector('[data-testid="messenger-thread-page-load-more"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="messenger-thread-page-load-more"]')).toBeNull();
 
     await act(async () => {
-      intersectionCallback?.([{ isIntersecting: true }]);
-      await Promise.resolve();
-    });
-
-    expect(loadMoreThreadSummaries).not.toHaveBeenCalled();
-
-    await act(async () => {
-      (document.querySelector('[data-testid="messenger-thread-page-load-more"]') as HTMLButtonElement | null)?.click();
+      intersect("messenger-thread-page-sentinel");
       await Promise.resolve();
     });
 
@@ -810,12 +818,12 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     const unreadRow = document.querySelector('[data-messenger-thread-key="chat:pinned-0"]') as HTMLElement | null;
     expect(unreadRow).not.toBeNull();
     await act(async () => {
-      intersectionCallback?.([{ isIntersecting: true }]);
+      intersect("messenger-thread-page-sentinel");
       requestMessengerUnreadScroll();
       await Promise.resolve();
     });
 
-    expect(loadMoreThreadSummaries).not.toHaveBeenCalled();
+    expect(loadMoreThreadSummaries).toHaveBeenCalledTimes(1);
     expect(unreadRow?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
   });
 
@@ -916,13 +924,15 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     expect(document.querySelector('[data-messenger-thread-key="chat:project-group-5"]')).not.toBeNull();
     expect(document.querySelector('[data-messenger-thread-key="chat:project-group-6"]')).toBeNull();
 
+    expect(document.querySelector(`[data-testid="${groupSectionId}-auto-loader"]`)).not.toBeNull();
+
     await act(async () => {
-      (document.querySelector(`[data-testid="${groupSectionId}-show-more"]`) as HTMLButtonElement | null)?.click();
+      intersect(`${groupSectionId}-auto-loader`);
       await Promise.resolve();
     });
 
     expect(document.querySelector('[data-messenger-thread-key="chat:project-group-6"]')).not.toBeNull();
-    expect(document.querySelector(`[data-testid="${groupSectionId}-show-more"]`)).toBeNull();
+    expect(document.querySelector(`[data-testid="${groupSectionId}-auto-loader"]`)).toBeNull();
     expect(loadMoreThreadSummaries).not.toHaveBeenCalled();
   });
 

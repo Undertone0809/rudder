@@ -1,6 +1,7 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
+import { useActivityCoordinator } from "@/context/ActivityCoordinatorContext";
 import { setChatFlagState, setChatScopedState } from "@/lib/chat-stream-state";
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 export type ChatStreamDraftState = "streaming" | "finalizing" | "stopping" | "stopped" | "failed";
 
@@ -41,6 +42,39 @@ type ChatGenerationContextValue = {
   abortChatStream: (chatId: string) => void;
 };
 
+type ChatGenerationActions = Pick<
+  ChatGenerationContextValue,
+  | "isChatGenerationActive"
+  | "setChatSendInFlight"
+  | "setStreamDraftForChat"
+  | "setStreamAbortController"
+  | "abortChatStream"
+>;
+
+class ChatGenerationStatusStore {
+  private readonly activeByChatId = new Map<string, boolean>();
+  private readonly listenersByChatId = new Map<string, Set<() => void>>();
+
+  getSnapshot = (chatId: string): boolean => this.activeByChatId.get(chatId) === true;
+
+  subscribe = (chatId: string, listener: () => void): (() => void) => {
+    const listeners = this.listenersByChatId.get(chatId) ?? new Set<() => void>();
+    listeners.add(listener);
+    this.listenersByChatId.set(chatId, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.listenersByChatId.delete(chatId);
+    };
+  };
+
+  setActive(chatId: string, active: boolean) {
+    if (this.getSnapshot(chatId) === active) return;
+    if (active) this.activeByChatId.set(chatId, true);
+    else this.activeByChatId.delete(chatId);
+    for (const listener of this.listenersByChatId.get(chatId) ?? []) listener();
+  }
+}
+
 const emptyActiveChatIds = new Set<string>();
 
 const defaultValue: ChatGenerationContextValue = {
@@ -55,11 +89,72 @@ const defaultValue: ChatGenerationContextValue = {
 };
 
 const ChatGenerationContext = createContext<ChatGenerationContextValue>(defaultValue);
+const ChatGenerationActionsContext = createContext<ChatGenerationActions>(defaultValue);
+const fallbackStatusStore = new ChatGenerationStatusStore();
+const ChatGenerationStatusStoreContext = createContext<ChatGenerationStatusStore>(fallbackStatusStore);
 
 export function ChatGenerationProvider({ children }: { children: ReactNode }) {
+  const activityCoordinator = useActivityCoordinator();
   const [streamDrafts, setStreamDrafts] = useState<Record<string, ChatStreamDraft>>({});
   const [sendInFlightByChatId, setSendInFlightByChatId] = useState<Record<string, true>>({});
+  const streamDraftsRef = useRef(streamDrafts);
+  const statusStoreRef = useRef<ChatGenerationStatusStore | null>(null);
+  if (!statusStoreRef.current) statusStoreRef.current = new ChatGenerationStatusStore();
+  const statusStore = statusStoreRef.current;
   const streamAbortControllersRef = useRef<Record<string, AbortController>>({});
+  const presentationTimerRef = useRef<number | null>(null);
+  const scrollStopTimerRef = useRef<number | null>(null);
+  const scrollingUntilRef = useRef(0);
+
+  const flushStreamDraftPresentation = useCallback(() => {
+    if (presentationTimerRef.current !== null) {
+      window.clearTimeout(presentationTimerRef.current);
+      presentationTimerRef.current = null;
+    }
+    setStreamDrafts(streamDraftsRef.current);
+  }, []);
+
+  const scheduleStreamDraftPresentation = useCallback((immediate: boolean) => {
+    if (immediate) {
+      flushStreamDraftPresentation();
+      return;
+    }
+    if (presentationTimerRef.current !== null) return;
+    const scrolling = Date.now() < scrollingUntilRef.current;
+    presentationTimerRef.current = window.setTimeout(() => {
+      presentationTimerRef.current = null;
+      if (scrolling) {
+        startTransition(() => setStreamDrafts(streamDraftsRef.current));
+      } else {
+        setStreamDrafts(streamDraftsRef.current);
+      }
+    }, scrolling ? 200 : 50);
+  }, [flushStreamDraftPresentation]);
+
+  useEffect(() => {
+    const markScrolling = () => {
+      scrollingUntilRef.current = Date.now() + 120;
+      if (scrollStopTimerRef.current !== null) {
+        window.clearTimeout(scrollStopTimerRef.current);
+      }
+      scrollStopTimerRef.current = window.setTimeout(() => {
+        scrollStopTimerRef.current = null;
+        flushStreamDraftPresentation();
+      }, 120);
+    };
+    window.addEventListener("scroll", markScrolling, { capture: true, passive: true });
+    window.addEventListener("wheel", markScrolling, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("scroll", markScrolling, true);
+      window.removeEventListener("wheel", markScrolling, true);
+      if (presentationTimerRef.current !== null) {
+        window.clearTimeout(presentationTimerRef.current);
+      }
+      if (scrollStopTimerRef.current !== null) {
+        window.clearTimeout(scrollStopTimerRef.current);
+      }
+    };
+  }, [flushStreamDraftPresentation]);
 
   const activeChatIds = useMemo(
     () => new Set(Object.keys(streamDrafts)),
@@ -77,15 +172,37 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
       | null
       | ((current: ChatStreamDraft | null) => ChatStreamDraft | null),
   ) => {
-    setStreamDrafts((current) => {
-      const existing = current[chatId] ?? null;
-      const resolved =
-        typeof nextDraft === "function"
-          ? nextDraft(existing)
-          : nextDraft;
-      return setChatScopedState(current, chatId, resolved);
-    });
-  }, []);
+    const current = streamDraftsRef.current;
+    const existing = current[chatId] ?? null;
+    const resolved =
+      typeof nextDraft === "function"
+        ? nextDraft(existing)
+        : nextDraft;
+    const next = setChatScopedState(current, chatId, resolved);
+    if (next === current) return;
+    streamDraftsRef.current = next;
+    statusStore.setActive(chatId, resolved !== null);
+    if (existing?.state !== resolved?.state || (existing === null) !== (resolved === null)) {
+      activityCoordinator.updateSummary(`chat:${chatId}`, {
+        status: resolved?.state ?? (existing ? "completed" : null),
+      });
+    }
+    if (resolved === null && existing) {
+      if (presentationTimerRef.current !== null) {
+        window.clearTimeout(presentationTimerRef.current);
+        presentationTimerRef.current = null;
+      }
+      // Publish the exact final raw snapshot for one render so checkpoint and
+      // persistence consumers observe it before the presentation row leaves.
+      setStreamDrafts(current);
+      window.setTimeout(() => setStreamDrafts(streamDraftsRef.current), 0);
+      return;
+    }
+    const terminal = resolved === null
+      || resolved.state === "failed"
+      || resolved.state === "stopped";
+    scheduleStreamDraftPresentation(terminal);
+  }, [activityCoordinator, scheduleStreamDraftPresentation, statusStore]);
 
   const setStreamAbortController = useCallback((chatId: string, controller: AbortController | null) => {
     if (controller) {
@@ -105,9 +222,23 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isChatGenerationActive = useCallback(
-    (chatId: string | null | undefined) => Boolean(chatId && activeChatIds.has(chatId)),
-    [activeChatIds],
+    (chatId: string | null | undefined) => Boolean(chatId && statusStore.getSnapshot(chatId)),
+    [statusStore],
   );
+
+  const actions = useMemo<ChatGenerationActions>(() => ({
+    abortChatStream,
+    isChatGenerationActive,
+    setChatSendInFlight,
+    setStreamDraftForChat,
+    setStreamAbortController,
+  }), [
+    abortChatStream,
+    isChatGenerationActive,
+    setChatSendInFlight,
+    setStreamAbortController,
+    setStreamDraftForChat,
+  ]);
 
   const value = useMemo(
     () => ({
@@ -132,9 +263,28 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return <ChatGenerationContext.Provider value={value}>{children}</ChatGenerationContext.Provider>;
+  return (
+    <ChatGenerationStatusStoreContext.Provider value={statusStore}>
+      <ChatGenerationActionsContext.Provider value={actions}>
+        <ChatGenerationContext.Provider value={value}>{children}</ChatGenerationContext.Provider>
+      </ChatGenerationActionsContext.Provider>
+    </ChatGenerationStatusStoreContext.Provider>
+  );
 }
 
 export function useChatGenerations() {
   return useContext(ChatGenerationContext);
+}
+
+export function useChatGenerationActions() {
+  return useContext(ChatGenerationActionsContext);
+}
+
+export function useChatGenerationActive(chatId: string) {
+  const store = useContext(ChatGenerationStatusStoreContext);
+  return useSyncExternalStore(
+    (listener) => store.subscribe(chatId, listener),
+    () => store.getSnapshot(chatId),
+    () => store.getSnapshot(chatId),
+  );
 }

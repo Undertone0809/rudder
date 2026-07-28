@@ -12,6 +12,7 @@ import { authApi } from "../api/auth";
 import { toOrganizationRelativePath } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import { useLocation } from "../lib/router";
+import { useActivityCoordinator } from "./ActivityCoordinatorContext";
 import { useOrganization } from "./OrganizationContext";
 import type { ToastInput } from "./ToastContext";
 import { useToast } from "./ToastContext";
@@ -858,6 +859,7 @@ export const __liveUpdatesTestUtils = {
 
 export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
   const { selectedOrganizationId } = useOrganization();
+  const activityCoordinator = useActivityCoordinator();
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const location = useLocation();
@@ -931,6 +933,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
 
         try {
           const parsed = JSON.parse(raw) as LiveEvent;
+          activityCoordinator.publishLiveEvent(parsed);
           handleLiveEvent(queryClient, selectedOrganizationId, pathnameRef.current, parsed, pushToast, gateRef.current, {
             userId: currentUserId,
             agentId: null,
@@ -971,6 +974,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     operatorDisplayName,
     notificationPreferences.issueNotifications,
     notificationPreferences.chatNotifications,
+    activityCoordinator,
   ]);
 
   return <>{children}</>;

@@ -48,7 +48,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
-import { useChatGenerations } from "@/context/ChatGenerationContext";
+import { VirtualizedActivityTimeline } from "@/components/VirtualizedActivityTimeline";
+import { useChatGenerationActions } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
 import {
   useMainWorkbench,
@@ -140,6 +141,7 @@ import { cn } from "@/lib/utils";
 import {
   closestCenter,
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   MeasuringFrequency,
   MeasuringStrategy,
@@ -164,6 +166,7 @@ import {
 } from "@dnd-kit/sortable";
 import { buildChatMentionHref, type Agent, type ChatConversation, type MessengerCustomGroupHydratedEntry, type MessengerCustomGroupHydratedSavedViewEntry, type MessengerCustomGroupHydratedThreadEntry, type MessengerCustomGroupWithEntries, type MessengerSavedView, type MessengerThreadSummary, type Project } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ChevronDown,
   ChevronRight,
@@ -220,7 +223,6 @@ type MessengerTopLevelDirectoryItem =
 const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
 const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const MESSENGER_SAVED_VIEW_PAGE_LIMIT = 50;
-const MESSENGER_AUTO_LOAD_RENDERED_THREAD_LIMIT = 160;
 const SELECTED_READ_EMPHASIS_HOLD_MS = 1200;
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
 const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
@@ -387,6 +389,45 @@ type ProjectOrderUpdatedDetail = {
   storageKey: string;
   orderedIds: string[];
 };
+
+function MessengerSectionAutoLoader({
+  loading,
+  onVisible,
+  testId,
+}: {
+  loading: boolean;
+  onVisible: () => void;
+  testId: string;
+}) {
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || loading || typeof IntersectionObserver === "undefined") return undefined;
+    const root = sentinel.closest<HTMLElement>("nav");
+    if (!root) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) onVisible();
+    }, { root, rootMargin: "0px 0px 320px 0px" });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loading, onVisible]);
+
+  return (
+    <div
+      ref={sentinelRef}
+      data-testid={testId}
+      className="flex min-h-7 items-center px-2 text-[11px] text-muted-foreground"
+      aria-live="polite"
+    >
+      {loading ? (
+        <span className="inline-flex items-center gap-1.5">
+          <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+          Loading
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 function MessengerThreadSectionHeader({
   rule,
@@ -611,6 +652,8 @@ export function MessengerContextSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const relativePath = toOrganizationRelativePath(location.pathname);
+  const performanceBaselineMode = import.meta.env.MODE === "test"
+    || new URLSearchParams(location.search).get("perfBaseline") === "1";
   const { selectedOrganizationId } = useOrganization();
   const [splitIssueNotifications, setSplitIssueNotifications] = useState(() =>
     readSplitIssueNotifications(selectedOrganizationId),
@@ -625,7 +668,7 @@ export function MessengerContextSidebar() {
     isChatGenerationActive,
     setChatSendInFlight,
     setStreamDraftForChat,
-  } = useChatGenerations();
+  } = useChatGenerationActions();
   const queryClient = useQueryClient();
   const route = resolveMessengerRoute(relativePath);
   const markedThreadRef = useRef<string | null>(null);
@@ -1299,10 +1342,22 @@ export function MessengerContextSidebar() {
     pendingSavedViewPlacementItemKeys,
     savedViewEntryByItemKey,
   ]);
-  const renderedThreadCount = useMemo(() => (
-    flattenThreadSectionEntries(organizedThreadSections).length
-  ), [organizedThreadSections]);
-  const shouldAutoLoadMoreThreadSummaries = renderedThreadCount < MESSENGER_AUTO_LOAD_RENDERED_THREAD_LIMIT;
+  const draggingOverlayLabel = useMemo(() => {
+    if (!draggingThreadId) return null;
+    const savedView = savedViewEntryByItemKey.get(draggingThreadId);
+    if (savedView) return savedViewDisplayTitle(savedView.savedView);
+    const group = customGroupBySectionKey.get(draggingThreadId);
+    if (group) return group.name;
+    return flattenThreadSectionEntries(organizedThreadSections)
+      .find((entry) => entry.thread.threadKey === draggingThreadId)
+      ?.thread.title
+      ?? "Messenger item";
+  }, [
+    customGroupBySectionKey,
+    draggingThreadId,
+    organizedThreadSections,
+    savedViewEntryByItemKey,
+  ]);
   const resolveCustomDragIntent = useCallback((activeId: string, overId: string | null): MessengerDragIntent => {
     if (effectiveThreadOrganizationRule !== "custom" || !overId || activeId === overId) return null;
     const activeIsEntry = customEntryGroupByItemKey.has(activeId);
@@ -1413,6 +1468,15 @@ export function MessengerContextSidebar() {
     looseSavedViews,
     organizedThreadSections,
   ]);
+  const directoryVirtualizer = useVirtualizer({
+    count: topLevelDirectoryItems.length,
+    getScrollElement: () => sidebarScrollElementRef.current,
+    estimateSize: () => threadDensity === "compact" ? 46 : 74,
+    getItemKey: (index) => topLevelDirectoryItems[index]?.key ?? index,
+    overscan: draggingThreadId ? 20 : 8,
+    useFlushSync: false,
+  });
+  const virtualDirectoryItems = directoryVirtualizer.getVirtualItems();
   const sortableThreadSectionKeys = useMemo(() => (
     topLevelDirectoryItems
       .filter((item) => item.kind === "saved-view"
@@ -2642,7 +2706,6 @@ export function MessengerContextSidebar() {
           sourceBadge={resolveSourceBadge(conversation, thread.metadata)}
           href={thread.href}
           active={active}
-          generating={isChatGenerationActive(conversation.id)}
           density={threadDensity}
           renaming={renamingConversationId === conversation.id}
           renameDraft={renameDraft}
@@ -2948,6 +3011,52 @@ export function MessengerContextSidebar() {
         return visibleEntry ? renderVisibleThreadEntry(visibleEntry) : null;
       })
       : visibleEntries.map(renderVisibleThreadEntry);
+    const renderedEntryKeys = customGroup
+      ? orderedCustomEntries.map(customGroupEntryItemKey)
+      : visibleEntries.map((entry) => entry.thread.threadKey);
+    const renderedEntryItems = renderedEntryNodes.flatMap((node, index) => (
+      node === null || node === undefined
+        ? []
+        : [{
+          key: renderedEntryKeys[index] ?? `${section.key}:${index}`,
+          node,
+        }]
+    ));
+    const unreadTargetKey = unreadScrollTarget?.sectionPath.includes(section.key)
+      ? unreadScrollTarget.threadKey
+      : null;
+    const renderedEntryContent = renderedEntryItems.length > 30 ? (
+      <VirtualizedActivityTimeline
+        items={renderedEntryItems}
+        getItemKey={(item) => item.key}
+        estimateSize={() => threadDensity === "compact" ? 34 : 42}
+        itemGap={4}
+        overscan={draggingThreadId ? 20 : 8}
+        scrollElementRef={sidebarScrollElementRef}
+        targetKey={unreadTargetKey}
+        onTargetMounted={(targetKey) => {
+          if (
+            !unreadScrollTarget
+            || targetKey !== unreadScrollTarget.threadKey
+            || unreadScrollRequestId <= 0
+          ) return;
+          const row = Array.from(
+            sidebarScrollElementRef.current?.querySelectorAll<HTMLElement>("[data-messenger-thread-key]") ?? [],
+          ).find((candidate) => candidate.dataset.messengerThreadKey === targetKey);
+          if (!row) return;
+          row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          unreadScrollCursorRef.current = targetKey;
+          handledUnreadScrollRequestIdRef.current = unreadScrollRequestId;
+          markMessengerUnreadScrollRequestHandled(unreadScrollRequestId);
+          unreadLoadMoreRequestRef.current = null;
+        }}
+        testId={`messenger-section-virtual-entries-${sanitizeThreadKey(section.key)}`}
+      >
+        {(item) => item.node}
+      </VirtualizedActivityTimeline>
+    ) : renderedEntryItems.map((item) => (
+      <div key={item.key}>{item.node}</div>
+    ));
     const renderedEntries = canSortCustomEntries ? (
       <SortableContext
         items={customGroup
@@ -2955,9 +3064,9 @@ export function MessengerContextSidebar() {
           : visibleEntries.map((entry) => entry.thread.threadKey)}
         strategy={verticalListSortingStrategy}
       >
-        {renderedEntryNodes}
+        {renderedEntryContent}
       </SortableContext>
-    ) : renderedEntryNodes;
+    ) : renderedEntryContent;
     const sectionBody = (
       <>
         {renderedChildSections}
@@ -2967,22 +3076,11 @@ export function MessengerContextSidebar() {
         {showMoreControl || showCollapseControl ? (
           <div className="mx-1.5 flex items-center gap-1.5 px-2 py-1">
             {showMoreControl ? (
-              <button
-                type="button"
-                data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-show-more`}
-                className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={Boolean(model.isFetchingMoreThreadSummaries && canFetchMoreForSection)}
-                onClick={() => handleShowMoreThreadSection(section, visibleCount)}
-              >
-                {model.isFetchingMoreThreadSummaries && canFetchMoreForSection ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                    Loading
-                  </span>
-                ) : (
-                  "Show more"
-                )}
-              </button>
+              <MessengerSectionAutoLoader
+                testId={`messenger-thread-section-${sanitizeThreadKey(section.key)}-auto-loader`}
+                loading={Boolean(model.isFetchingMoreThreadSummaries && canFetchMoreForSection)}
+                onVisible={() => handleShowMoreThreadSection(section, visibleCount)}
+              />
             ) : null}
             {showCollapseControl ? (
               <button
@@ -3279,6 +3377,40 @@ export function MessengerContextSidebar() {
       </>
     );
   };
+
+  const renderManagedDirectoryItem = (item: (typeof topLevelDirectoryItems)[number]) => {
+    if (item.kind === "saved-view") {
+      return sortableThreadSectionKeys.includes(item.key) ? (
+        <SortableCustomThreadEntry
+          id={item.key}
+          disabled={pendingSavedViewPlacementItemKeys.has(item.key)}
+        >
+          {(dragHandleProps, dragging) => (
+            renderLooseSavedView(item.savedView, dragHandleProps, dragging)
+          )}
+        </SortableCustomThreadEntry>
+      ) : renderLooseSavedView(item.savedView);
+    }
+    return sortableThreadSectionKeys.includes(item.key) ? (
+      <SortableThreadSection id={item.key}>
+        {(dragHandleProps, draggingSection) => renderThreadSection(item.section, dragHandleProps, draggingSection)}
+      </SortableThreadSection>
+    ) : (
+      <div className="flex shrink-0 flex-col gap-1">
+        {renderThreadSection(item.section)}
+      </div>
+    );
+  };
+
+  const renderPlainDirectoryItem = (item: (typeof topLevelDirectoryItems)[number]) => (
+    item.kind === "saved-view" ? (
+      renderLooseSavedView(item.savedView)
+    ) : (
+      <div className="flex shrink-0 flex-col gap-1">
+        {renderThreadSection(item.section)}
+      </div>
+    )
+  );
 
   const refreshChatViews = async (chatId?: string) => {
     if (!model.selectedOrganizationId) return;
@@ -3665,6 +3797,14 @@ export function MessengerContextSidebar() {
       }
     }
 
+    const topLevelSectionKey = unreadScrollTarget.sectionPath[0] ?? null;
+    if (topLevelSectionKey) {
+      const sectionIndex = topLevelDirectoryItems.findIndex((item) => item.key === topLevelSectionKey);
+      if (sectionIndex !== -1) {
+        directoryVirtualizer.scrollToIndex(sectionIndex, { align: "center" });
+      }
+    }
+
     const scrollFirstUnreadThreadIntoView = () => {
       const container = sidebarScrollElementRef.current;
       if (!container) return;
@@ -3685,13 +3825,12 @@ export function MessengerContextSidebar() {
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [collapsedThreadGroupKeys, customGroupBySectionKey, effectiveThreadOrganizationRule, model.selectedOrganizationId, unreadScrollRequestId, unreadScrollTarget, updateCustomGroupMutation, visibleThreadGroupEntryLimits]);
+  }, [collapsedThreadGroupKeys, customGroupBySectionKey, directoryVirtualizer, effectiveThreadOrganizationRule, model.selectedOrganizationId, topLevelDirectoryItems, unreadScrollRequestId, unreadScrollTarget, updateCustomGroupMutation, visibleThreadGroupEntryLimits]);
 
   useEffect(() => {
     const sentinel = loadMoreThreadSummariesRef.current;
     const root = sidebarScrollElementRef.current;
     if (!sentinel || !root) return;
-    if (!shouldAutoLoadMoreThreadSummaries) return;
     if (!model.hasMoreThreadSummaries || model.isFetchingMoreThreadSummaries || model.isLoading) return;
     if (typeof IntersectionObserver === "undefined") return;
 
@@ -3708,7 +3847,6 @@ export function MessengerContextSidebar() {
     model.isFetchingMoreThreadSummaries,
     model.isLoading,
     model.loadMoreThreadSummaries,
-    shouldAutoLoadMoreThreadSummaries,
     visibleThreadSummaries.length,
   ]);
 
@@ -3840,43 +3978,94 @@ export function MessengerContextSidebar() {
                 items={sortableThreadSectionKeys}
                 strategy={verticalListSortingStrategy}
               >
-                {topLevelDirectoryItems.map((item) => {
-                  if (item.kind === "saved-view") {
-                    return sortableThreadSectionKeys.includes(item.key) ? (
-                      <SortableCustomThreadEntry
+                {performanceBaselineMode ? (
+                  <div data-testid="messenger-directory-baseline" className="flex flex-col gap-1">
+                    {topLevelDirectoryItems.map((item) => (
+                      <div key={item.key}>{renderManagedDirectoryItem(item)}</div>
+                    ))}
+                  </div>
+                ) : (
+                  <div
+                  data-testid="messenger-virtual-directory"
+                  style={{
+                    height: `${directoryVirtualizer.getTotalSize()}px`,
+                    position: "relative",
+                    width: "100%",
+                  }}
+                >
+                  {virtualDirectoryItems.map((virtualItem) => {
+                    const item = topLevelDirectoryItems[virtualItem.index];
+                    if (!item) return null;
+                    return (
+                      <div
                         key={item.key}
-                        id={item.key}
-                        disabled={pendingSavedViewPlacementItemKeys.has(item.key)}
+                        ref={directoryVirtualizer.measureElement}
+                        data-index={virtualItem.index}
+                        style={{
+                          left: 0,
+                          position: "absolute",
+                          top: 0,
+                          transform: `translateY(${virtualItem.start}px)`,
+                          width: "100%",
+                        }}
                       >
-                        {(dragHandleProps, dragging) => (
-                          renderLooseSavedView(item.savedView, dragHandleProps, dragging)
-                        )}
-                      </SortableCustomThreadEntry>
-                    ) : (
-                      <div key={item.key}>{renderLooseSavedView(item.savedView)}</div>
+                        {renderManagedDirectoryItem(item)}
+                      </div>
                     );
-                  }
-                  return sortableThreadSectionKeys.includes(item.key) ? (
-                    <SortableThreadSection key={item.key} id={item.key}>
-                      {(dragHandleProps, draggingSection) => renderThreadSection(item.section, dragHandleProps, draggingSection)}
-                    </SortableThreadSection>
-                  ) : (
-                    <div key={item.key} className="flex shrink-0 flex-col gap-1">
-                      {renderThreadSection(item.section)}
-                    </div>
-                  );
-                })}
+                  })}
+                  </div>
+                )}
               </SortableContext>
+              <DragOverlay dropAnimation={null}>
+                {draggingOverlayLabel ? (
+                  <div
+                    data-testid="messenger-drag-overlay"
+                    className="surface-overlay max-w-[18rem] rounded-[var(--radius-md)] border border-[color:var(--border-strong)] px-3 py-2 text-sm font-medium text-foreground shadow-[var(--shadow-lg)]"
+                  >
+                    <span className="block truncate">{draggingOverlayLabel}</span>
+                  </div>
+                ) : null}
+              </DragOverlay>
             </DndContext>
           </>
         ) : (
-          topLevelDirectoryItems.map((item) => item.kind === "saved-view" ? (
-            <div key={item.key}>{renderLooseSavedView(item.savedView)}</div>
-          ) : (
-            <div key={item.key} className="flex shrink-0 flex-col gap-1">
-              {renderThreadSection(item.section)}
+          performanceBaselineMode ? (
+            <div data-testid="messenger-directory-baseline" className="flex flex-col gap-1">
+              {topLevelDirectoryItems.map((item) => (
+                <div key={item.key}>{renderPlainDirectoryItem(item)}</div>
+              ))}
             </div>
-          ))
+          ) : (
+            <div
+            data-testid="messenger-virtual-directory"
+            style={{
+              height: `${directoryVirtualizer.getTotalSize()}px`,
+              position: "relative",
+              width: "100%",
+            }}
+          >
+            {virtualDirectoryItems.map((virtualItem) => {
+              const item = topLevelDirectoryItems[virtualItem.index];
+              if (!item) return null;
+              return (
+                <div
+                  key={item.key}
+                  ref={directoryVirtualizer.measureElement}
+                  data-index={virtualItem.index}
+                  style={{
+                    left: 0,
+                    position: "absolute",
+                    top: 0,
+                    transform: `translateY(${virtualItem.start}px)`,
+                    width: "100%",
+                  }}
+                >
+                  {renderPlainDirectoryItem(item)}
+                </div>
+              );
+            })}
+            </div>
+          )
         )}
         {savedViewsQuery.data?.pageInfo?.hasMore ? (
           <div className="flex min-h-9 items-center justify-center px-3 py-1">
@@ -3902,15 +4091,6 @@ export function MessengerContextSidebar() {
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                 Loading more threads
               </span>
-            ) : !shouldAutoLoadMoreThreadSummaries ? (
-              <button
-                type="button"
-                data-testid="messenger-thread-page-load-more"
-                className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
-                onClick={() => void model.loadMoreThreadSummaries()}
-              >
-                Load more threads
-              </button>
             ) : null}
           </div>
         ) : null}

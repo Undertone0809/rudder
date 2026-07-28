@@ -123,11 +123,15 @@ export function useMessengerModel(options: { splitIssues?: boolean } = {}) {
     if (systemThreadQuery.error instanceof Error) return systemThreadQuery.error;
     return null;
   }, [approvalsThreadQuery.error, issuesThreadQuery.error, systemThreadQuery.error, threadsQuery.error]);
+  const threadSummaries = useMemo(
+    () => threadsQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [threadsQuery.data?.pages],
+  );
 
   return {
     currentUserId,
     selectedOrganizationId,
-    threadSummaries: threadsQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    threadSummaries,
     hasMoreThreadSummaries: Boolean(threadsQuery.hasNextPage),
     isFetchingMoreThreadSummaries: threadsQuery.isFetchingNextPage,
     loadMoreThreadSummaries: () => threadsQuery.fetchNextPage(),

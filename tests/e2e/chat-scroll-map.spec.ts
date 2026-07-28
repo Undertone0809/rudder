@@ -54,7 +54,7 @@ test.describe("Chat message scroll map", () => {
         role: isUserMessage ? "user" as const : "assistant" as const,
         kind: "message" as const,
         status: "completed" as const,
-        body: messageNumber === 11 && isUserMessage
+        body: messageNumber === 1 && isUserMessage
           ? tokenUserBody
           : `Checkpoint ${messageNumber}: ${isUserMessage ? "operator context" : "assistant progress"} for navigating a long conversation. ${"Detailed context. ".repeat(20)}`,
         structuredPayload: null,
@@ -114,11 +114,12 @@ test.describe("Chat message scroll map", () => {
     expect(compactRailGeometry?.railLeftOffset).toBeLessThanOrEqual(1);
     expect(compactRailGeometry?.railToUserBubbleGap).toBeGreaterThan(80);
 
-    const targetMessage = messages[10];
+    const targetMessage = messages[0];
+    await expect(page.locator(`[data-message-id="${targetMessage.id}"]`)).toHaveCount(0);
     const targetMarker = page.getByTestId(`chat-scroll-map-marker-${targetMessage.id}`);
     await targetMarker.hover();
     const preview = page.getByTestId("chat-scroll-map-preview");
-    await expect(preview).toContainText("Checkpoint 11");
+    await expect(preview).toContainText("Checkpoint 1");
     await expect(preview).toContainText("Navigator");
     await expect(preview).toContainText("verification");
     await expect(preview).toContainText("assistant progress");
@@ -208,7 +209,9 @@ test.describe("Chat message scroll map", () => {
     await page.screenshot({ path: "/tmp/rudder-chat-scroll-map-preview.png", fullPage: true });
 
     await targetMarker.click();
-    const targetMessageRow = page.locator(`[data-message-id="${targetMessage.id}"]`);
+    const targetMessageRow = page.locator(
+      `[data-testid="chat-user-message-turn"][data-message-id="${targetMessage.id}"]`,
+    );
     await expect(targetMessageRow).not.toHaveClass(/chat-message-jump-highlight/);
     await expect(targetMessageRow.getByTestId("chat-user-message-bubble")).toHaveClass(/chat-message-jump-highlight/);
     const jumpHighlightStyle = await page.evaluate((targetMessageId) => {

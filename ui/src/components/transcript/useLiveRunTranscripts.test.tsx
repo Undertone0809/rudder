@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
-import type { LiveEvent } from "@rudderhq/shared";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveRunForIssue } from "../../api/agent-runs";
+import { fallbackActivityCoordinator } from "../../runtime/activity-coordinator";
 import { useLiveRunTranscripts } from "./useLiveRunTranscripts";
 
 (
@@ -22,26 +22,6 @@ vi.mock("../../api/agent-runs", () => ({
     log: logMock,
   },
 }));
-
-class MockWebSocket {
-  static instances: MockWebSocket[] = [];
-
-  onclose: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
-
-  constructor(readonly url: string) {
-    MockWebSocket.instances.push(this);
-  }
-
-  close() {
-    this.onclose?.();
-  }
-
-  emit(event: LiveEvent) {
-    this.onmessage?.({ data: JSON.stringify(event) });
-  }
-}
 
 const liveRun: LiveRunForIssue = {
   id: "run-1",
@@ -87,8 +67,6 @@ describe("useLiveRunTranscripts", () => {
   beforeEach(() => {
     logMock.mockReset();
     logMock.mockResolvedValue({ runId: "run-1", store: "local", logRef: "run.log", content: "", endOffset: 0 });
-    MockWebSocket.instances = [];
-    vi.stubGlobal("WebSocket", MockWebSocket);
   });
 
   it("hydrates live transcript.entry events from payloads instead of showing placeholder messages", async () => {
@@ -101,11 +79,8 @@ describe("useLiveRunTranscripts", () => {
       root.render(<HookProbe onEntries={(texts) => observed.push(texts)} />);
     });
 
-    const socket = MockWebSocket.instances[0];
-    expect(socket).toBeTruthy();
-
     await act(async () => {
-      socket!.emit({
+      fallbackActivityCoordinator.publishLiveEvent({
         id: 1,
         orgId: "org-1",
         type: "heartbeat.run.event",
@@ -146,11 +121,8 @@ describe("useLiveRunTranscripts", () => {
       root.render(<HookProbe onEntries={(texts) => observed.push(texts)} />);
     });
 
-    const socket = MockWebSocket.instances[0];
-    expect(socket).toBeTruthy();
-
     await act(async () => {
-      socket!.emit({
+      fallbackActivityCoordinator.publishLiveEvent({
         id: 2,
         orgId: "org-1",
         type: "heartbeat.run.log",
@@ -162,7 +134,7 @@ describe("useLiveRunTranscripts", () => {
           chunk: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"first ",
         },
       });
-      socket!.emit({
+      fallbackActivityCoordinator.publishLiveEvent({
         id: 3,
         orgId: "org-1",
         type: "heartbeat.run.event",
@@ -180,7 +152,7 @@ describe("useLiveRunTranscripts", () => {
           },
         },
       });
-      socket!.emit({
+      fallbackActivityCoordinator.publishLiveEvent({
         id: 4,
         orgId: "org-1",
         type: "heartbeat.run.log",
@@ -244,6 +216,26 @@ describe("useLiveRunTranscripts", () => {
 
     expect(logMock).toHaveBeenCalledTimes(2);
     expect(observed.at(-1)).toContain("persisted terminal evidence");
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("shares one persisted-log source across concurrent consumers of the same run", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <>
+          <HookProbe onEntries={() => {}} />
+          <HookProbe onEntries={() => {}} />
+        </>,
+      );
+    });
+
+    expect(logMock).toHaveBeenCalledTimes(1);
 
     act(() => root.unmount());
     container.remove();
