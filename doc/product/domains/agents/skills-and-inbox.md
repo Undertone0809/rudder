@@ -17,11 +17,14 @@ related_code:
   - server/resources/bundled-skills/rudder-docs/references/plugin-authoring.md
   - packages/agent-runtime-utils/src/server-utils.cli.ts
   - server/src/routes/agents.ts
+  - server/src/services/runtime-kernel/heartbeat.misc.ts
   - server/src/services/agent-run-context.ts
   - server/src/services/agent-enabled-skills.ts
   - server/src/services/knowledge-portability/organization-skills.ts
   - server/src/services/knowledge-portability/organization-skills.catalog.ts
   - packages/agent-runtime-utils/src/server-utils.prompts.ts
+  - ui/src/components/ActivityCharts.tsx
+  - ui/src/pages/AgentDetail.tsx
   - ui/src/pages/AgentDetail.skills.tsx
 related_tests:
   - server/src/__tests__/agent-run-context.test.ts
@@ -30,7 +33,10 @@ related_tests:
   - desktop/scripts/smoke.mjs
   - server/src/__tests__/agent-skill-contract.test.ts
   - server/src/__tests__/heartbeat-skill-analytics.test.ts
+  - ui/src/components/ActivityCharts.test.tsx
   - server/src/__tests__/agent-inbox-reviewer.test.ts
+  - tests/e2e/agent-dashboard-one-day.spec.ts
+  - tests/e2e/agent-dashboard-skills-analytics.spec.ts
   - tests/e2e/organization-agent-skills.spec.ts
 related_plans:
   - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
@@ -225,9 +231,10 @@ Evidence:
 
 Why:
 
-- Skill analytics can mislead product decisions if loaded skills are counted as
-  used skills. Evidence levels must preserve the difference between available,
-  requested, loaded, and actually used.
+- Skill analytics can mislead product decisions if loaded or requested skills
+  are counted as used skills. Runtime and Run evidence preserve the difference
+  between available, requested, loaded, and actually used, while Dashboard
+  usage analytics intentionally count only provider-proven `used` evidence.
 
 Flow:
 
@@ -235,19 +242,36 @@ Flow:
    loaded skill metadata.
 2. Transcript parsing or runtime result evidence records skill usage when
    provider output proves it.
-3. Analytics aggregate by strongest available evidence:
+3. Run-level evidence resolution uses the strongest available evidence:
    `used > promptRequested/requested > loaded`.
-4. Dashboard/Agent Detail surfaces label the evidence level instead of treating
-   every loaded skill as usage.
+4. Dashboard and Agent Detail usage analytics discard every non-`used` entry.
+   Their totals, per-skill counts, and labels describe only provider-proven
+   skill use; requested-only and loaded-only skills do not appear in usage
+   charts.
+5. Analytics accept bounded date windows. The 1D preset sends exact `from` /
+   `to` timestamps plus the browser timezone offset so the server attributes
+   runs to the operator's local day. Multi-day presets aggregate by day across
+   their selected 7D, 15D, 30D, or custom window.
+6. A 1D Dashboard renders skill-use distribution as a pie chart. Multi-day
+   windows render the per-day skill-use series as an area chart.
 
 Invariants:
 
 - Loaded is not used.
+- Requested is not used.
+- Dashboard usage totals and charts contain `used` evidence only. Requested and
+  loaded evidence may remain inspectable on the Run surfaces that own it, but
+  must not inflate usage analytics.
+- Exact 1D boundaries use the operator timezone offset; a local-day run must not
+  leak into an adjacent UTC day.
 - Provider-specific parsing must be normalized before analytics consumption.
 
 Evidence:
 
-- Skill analytics tests cover evidence hierarchy.
+- Server skill analytics tests cover evidence hierarchy, used-only aggregation,
+  and exact 1D timezone boundaries.
+- Dashboard component and E2E tests cover the exclusion of requested/loaded
+  evidence, 1D distribution, and multi-day area charts.
 - Run events can carry skill usage evidence derived from transcripts.
 
 ## AGENT.INBOX.001

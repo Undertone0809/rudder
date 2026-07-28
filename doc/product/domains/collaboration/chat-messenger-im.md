@@ -2258,11 +2258,13 @@ them through `CONTEXT.RESOURCES.001`.
   id, identifier, title, and current status; Issue Comments retain their
   canonical comment id and parent Issue identity. A normal Chat reference uses
   the referenced conversation's current title when that conversation can be
-  resolved inside the same organization. Side Chats are deliberately excluded
-  because their titles are owner-private while manifest rows are
-  conversation-scoped shared state. Unresolved, invalid, Side Chat, or
-  cross-organization targets retain their visible message label, or the safe
-  generic typed label when the message provides no usable label.
+  resolved inside the same organization. An Automation reference with a
+  UUID-like id uses the current Automation title only when it resolves inside
+  the same organization. Side Chats are deliberately excluded because their
+  titles are owner-private while manifest rows are conversation-scoped shared
+  state. Unresolved, invalid, Side Chat, or cross-organization targets retain
+  their visible message label, or the safe generic typed label when the message
+  provides no usable label.
 
 ## Entry Points / Inputs
 
@@ -2324,21 +2326,26 @@ them through `CONTEXT.RESOURCES.001`.
    label or generic `Chat` fallback. Reconciliation refreshes the persisted
    manifest title after a referenced normal Chat is renamed and overwrites any
    previously persisted Side Chat title with the safe message-derived label.
-10. Rudder canonicalizes target keys, removes URL fragments/default ports,
+10. Before persistence, Automation reference candidates with UUID-like ids are
+    resolved in one organization-scoped lookup. A resolved Automation's current
+    title replaces stale, empty, or generic link text. Missing, malformed, or
+    cross-organization targets keep the safe visible-message fallback and never
+    disclose stored Automation data.
+11. Rudder canonicalizes target keys, removes URL fragments/default ports,
    deduplicates candidates, and applies `output > source > reference` so one
    target appears once in its strongest supported category. The canonical
    primary-issue target key also deduplicates an explicit visible link to the
    same issue.
-11. Reconciliation removes stale derived Sources/References from superseded or
+12. Reconciliation removes stale derived Sources/References from superseded or
    edited visible messages, but it does not silently delete a durable Output
    merely because the message that announced it was refreshed. A historical row
    now proven to be trusted inline visual presentation is removed because it
    was never production evidence. A primary-issue Reference is also removed
    when the association is cleared or the issue is deleted.
-12. The API returns the current Chat sections. It may continue returning a
+13. The API returns the current Chat sections. It may continue returning a
    Project id/count as compatibility metadata, but Chat does not render it or
    include it in the visible category count.
-13. When at least one current-thread item exists, wide Chat renders the compact
+14. When at least one current-thread item exists, wide Chat renders the compact
     shelf. Its fixed top row renders the first non-empty category in
     `Outputs > Sources > References` order as a normal category header, with
     the same icon, label, count, height, background, and typography used by
@@ -2353,7 +2360,7 @@ them through `CONTEXT.RESOURCES.001`.
     `32rem` (512 CSS pixels) on normal viewports, shrink to the available
     viewport allowance when necessary, and keep longer lists internally
     scrollable.
-14. Opening an image attachment uses the application-level image preview shared
+15. Opening an image attachment uses the application-level image preview shared
     with Chat message and Markdown images. The overlay exposes an explicit close
     control plus copy/download actions, closes on `Escape`, and does not create a
     Browser Side Panel tab. Non-image attachments keep their normal file-open
@@ -2376,6 +2383,7 @@ them through `CONTEXT.RESOURCES.001`.
 | Primary issue association becomes stale | Association is cleared, issue is deleted, or id does not resolve in the conversation organization | Derived primary-issue Reference is removed | A foreign, deleted, or detached issue must not remain in the current Chat manifest | Service tests |
 | Message references another normal Chat | Visible `chat://` target resolves to a normal conversation in the same organization | The Reference uses the target conversation's current complete title and refreshes after rename; the compact row visually truncates it to one line while preserving the complete title for hover and accessibility | Stale link text must not replace the stored title, long text must not widen the shelf, and title lookup must not cross organization boundaries | Service, component, and Chat Work Manifest E2E |
 | Chat reference cannot be resolved safely | Target id is malformed, missing, a Side Chat in any lifecycle state, or belongs to another organization | Keep the visible message label, or generic `Chat` when none is usable, plus normal typed target metadata; reconciliation repairs any previously hydrated Side Chat title | Rudder must not load or persist the private or cross-organization conversation title | Service tests |
+| Message references an Automation | UUID-like Automation id resolves in the same organization | The Reference uses the Automation's current title | Missing, malformed, or cross-organization ids must not disclose a stored Automation title | Service tests and Chat Work Manifest E2E |
 | Link appears in tool history only | URL exists only in transcript, reasoning, stdout, or stderr | No manifest item | Tool exploration must not pollute the visible manifest | Service tests |
 | Link or file supports an annotation | URL exists only inside selected text/comment, or attachment id is owned by a response annotation | No manifest item | Quoted context or its supporting file must not become a Source, Reference, or Output | Annotation/manifest regression tests |
 | Answer is refreshed or edited | Prior message becomes superseded | Stale derived References disappear; durable Outputs remain inspectable | Refresh must not erase a real artifact | Service tests |
@@ -2416,6 +2424,8 @@ status description.
   title, keep the complete title accessible, and constrain long visible labels
   to a one-line ellipsis without widening the compact shelf. Side Chat titles
   are never hydrated into this shared projection.
+- Automation References: use the current title only after same-organization
+  resolution; otherwise retain the safe message-derived fallback.
 - Empty state: no shelf, count, trigger, or reserved rail is rendered.
 - Error state: a compact, category-neutral files-and-links error remains visible
   so retrieval failure is not mistaken for confirmed absence.
@@ -2452,7 +2462,8 @@ full title; visual truncation does not shorten the stored value. Side Chat
 titles are not persisted into manifest rows. Issue and Issue Comment rows are
 also reconciled on every manifest read so historical generic rows and cached
 title/status metadata are lazily replaced with the latest safely resolved
-canonical values.
+canonical values. Automation references likewise persist the current title only
+after same-organization resolution.
 
 ## Canonical Scenarios
 
@@ -2501,6 +2512,13 @@ canonical values.
      accessibility expose the complete title; opening the row targets the same
      Chat.
    - Evidence: manifest service, component, and real Chat Work Manifest E2E.
+7. Automation reference without a message label:
+   - Trigger: a visible message contains an `automation://` reference with a
+     same-organization Automation id and no usable label.
+   - Expected state/action: reconciliation resolves the Automation in the Chat
+     organization and replaces the generic fallback with its current title.
+   - Visible output: one Automation Reference with the current title.
+   - Evidence: manifest service and Chat Work Manifest E2E.
 
 ## Invariants / Non-Goals
 
@@ -2518,6 +2536,9 @@ canonical values.
 - Issue and Issue Comment hydration is organization-scoped. Missing, deleted,
   invalid, ambiguous, or cross-organization targets keep safe generic/message
   fallbacks and never disclose canonical title or status.
+- Automation title hydration is organization-scoped. Missing, malformed, or
+  cross-organization targets keep the safe message-derived fallback and never
+  disclose the stored Automation title.
 - A primary issue is a Reference, never an Output, and unresolved proposals do
   not create an issue row.
 - One target appears once per conversation under its strongest supported

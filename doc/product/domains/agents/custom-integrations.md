@@ -8,7 +8,10 @@ contract_ids:
   - AGENT.CUSTOM.INTEGRATIONS.001
 related_code:
   - packages/db/src/schema/custom_integrations.ts
+  - packages/db/src/schema/agents.ts
   - packages/db/src/schema/mcp_connections.ts
+  - packages/db/src/migrations/0123_fine_king_bedlam.sql
+  - packages/db/src/migrations/0124_petite_cargill.sql
   - packages/shared/src/types/custom-integration.ts
   - packages/shared/src/types/mcp.ts
   - packages/shared/src/validators/custom-integration.ts
@@ -19,14 +22,24 @@ related_code:
   - packages/agent-runtimes/opencode-local/src/server/execute.ts
   - packages/agent-runtimes/pi-local/src/server/managed-external-mcp.ts
   - server/src/services/integrations/custom-integrations.ts
+  - server/src/routes/managed-mcp-connections.ts
+  - server/src/services/agents.ts
   - server/src/services/mcp/managed-bindings.ts
+  - server/src/services/mcp/managed-connections.ts
+  - server/src/services/mcp/oauth.ts
   - server/src/routes/agents.ts
   - server/src/services/agent-run-context.ts
+  - ui/src/api/managedMcp.ts
   - ui/src/api/agents.ts
   - ui/src/pages/AgentDetail.integrations.tsx
+  - ui/src/pages/AgentProviderAccessDialog.tsx
+  - ui/src/pages/OrganizationMcpSettings.tsx
+  - ui/src/pages/OrganizationSettings.tsx
 related_tests:
+  - packages/db/src/client.test.ts
   - packages/db/src/mcp-connections-schema.test.ts
   - packages/db/src/migrations/managed-mcp-connections.test.ts
+  - packages/db/src/migrations/managed-mcp-canonicalization.test.ts
   - packages/shared/src/validators/mcp.test.ts
   - packages/agent-runtime-utils/src/managed-external-mcp.test.ts
   - packages/agent-runtimes/codex-local/src/server/managed-external-mcp.test.ts
@@ -35,13 +48,20 @@ related_tests:
   - packages/agent-runtimes/pi-local/src/server/managed-external-mcp.test.ts
   - scripts/managed-mcp-product-contract.test.mjs
   - server/src/__tests__/custom-integrations-service.test.ts
+  - server/src/__tests__/managed-mcp-bindings-service.test.ts
+  - server/src/__tests__/managed-mcp-connections-routes.test.ts
+  - server/src/__tests__/managed-mcp-connections-service.test.ts
   - ui/src/pages/AgentDetail.integrations.test.tsx
+  - ui/src/pages/OrganizationMcpSettings.test.ts
   - tests/e2e/agent-detail-integrations-tab.spec.ts
+  - tests/e2e/managed-mcp-integrations.spec.ts
+  - tests/e2e/settings-sidebar.spec.ts
 related_plans:
   - doc/plans/2026-06-27-agent-custom-integrations.md
   - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
   - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
   - doc/plans/2026-07-26-managed-mcp-runtime-failure-isolation.md
+  - doc/plans/2026-07-27-managed-mcp-connection-scopes.md
 edit_policy: user_confirmed_only
 ---
 

@@ -107,9 +107,13 @@ Saved View identity and group placement.
 ### Product Logic Flow
 
 1. Desktop discovers a candidate definition but does not execute it.
-2. The operator reviews the structured executable, arguments, working
-   directory, readiness rule, and open path. A changed definition requires a
-   new review.
+2. The review dialog always shows the composed start command, project folder,
+   open path, and local-code warning. The structured executable, literal
+   arguments, editable working directory, readiness path and timeout, open path,
+   and inherited environment names are available under `View advanced
+   settings`. The operator may approve from the summary without expanding that
+   disclosure; expanding it is the path for inspecting or editing the complete
+   launch definition. A changed definition requires a new review.
 3. `Start & open` allocates an automatic loopback port, launches the structured
    executable without a shell, waits for readiness, verifies that the listener
    belongs to the launched process tree, and then opens the attested URL in the
@@ -144,7 +148,8 @@ Saved View identity and group placement.
 
 | Situation | Required behavior | Forbidden behavior |
 |---|---|---|
-| Definition is discovered | Show reviewable candidate | Execute it |
+| Definition is discovered | Show the command/folder/open-path summary, warning, and an Advanced disclosure for the complete launch definition | Execute it |
+| Operator approves without opening Advanced | Approve the exact summarized definition and its installation-local revision | Treat approval as permission for a later changed definition |
 | Operator selects `Start & open` on an approved definition | Start once, attest loopback listener, open isolated guest | Use a shell or accept a foreign listener |
 | Definition revision changed | Require renewed review | Reuse old approval silently |
 | Definition already has a running generation | Reuse that generation for another view | Run a second command |
@@ -160,8 +165,11 @@ Saved View identity and group placement.
 
 ### Actor-Visible Input
 
-- Reviewed executable, arguments, working directory, readiness endpoint, and
-  open path.
+- Always-visible composed start command, project folder, open path, and
+  local-code warning.
+- Advanced launch fields for the resolved executable, literal arguments,
+  working directory, readiness endpoint and timeout, open path, and inherited
+  environment names.
 - Explicit Start, Retry & open, Stop, Move, Remove, Close, and review actions.
 - Hover/focus More menu on a Main Local App tab, with `Project settings` and an
   explicit `Stop & edit` transition when the runtime is active.
@@ -173,6 +181,9 @@ Saved View identity and group placement.
 - A Main-tab project settings dialog that shows the reviewed configuration,
   prevents active-runtime edits, and updates the tab label after a successful
   reviewed save.
+- A compact default review state with the execution summary and warning;
+  complete structured launch authority remains inspectable and editable through
+  the Advanced disclosure.
 - Stable runtime status: starting, running, stopped, failed, or
   orphaned-unverified, with unavailable presented when the local binding or
   supported Desktop environment is absent.
@@ -211,6 +222,9 @@ attempt to start anything.
 ### Invariants / Non-Goals
 
 - Start is always a direct operator action against a reviewed definition.
+- Review approval is revision-specific. The operator is not required to expand
+  Advanced before approval, but the complete structured definition must remain
+  available there and any later definition change requires renewed review.
 - Opening or dismissing project settings never stops a Local App; changing an
   active definition requires the operator to choose `Stop & edit` explicitly.
 - Hydration, navigation, reload, restore, Move, Remove, Close, and passive
