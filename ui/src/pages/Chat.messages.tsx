@@ -2345,6 +2345,8 @@ export function ChatMessageItem({
   ));
   const canShowAssistantMessageActions = !isUser && message.status !== "stopped";
   const isInlineEditing = isUser && Boolean(inlineEdit);
+  const hasVisibleUserMessageContent = message.body.trim().length > 0
+    || visibleMessageAttachments.length > 0;
 
   if (!isUser) {
     return (
@@ -2574,7 +2576,7 @@ export function ChatMessageItem({
           </div>
         ) : askUserAnswer ? (
           <AskUserAnswerBubble answer={askUserAnswer} animate={animateAskUserAnswer} />
-        ) : (
+        ) : hasVisibleUserMessageContent ? (
           <div
             data-testid="chat-user-message-bubble"
             data-message-highlight-target="true"
@@ -2591,7 +2593,7 @@ export function ChatMessageItem({
               onOpenFile={onOpenFile}
             />
           </div>
-        )}
+        ) : null}
         {askUserAnswer && visibleMessageAttachments.length > 0 ? (
           <ChatAttachmentList
             attachments={visibleMessageAttachments}
@@ -2649,13 +2651,18 @@ export function OptimisticUserDraftItem({
   animateAskUserAnswer?: boolean;
   turnBranchControls?: ChatTurnBranchControls | null;
 }) {
+  const hasVisibleUserMessageContent = body.trim().length > 0;
+
   return (
     <div className="flex justify-end transition-all duration-200">
       <div className="group flex max-w-[82%] flex-col items-end text-left">
         {askUserAnswer ? (
           <AskUserAnswerBubble answer={askUserAnswer} animate={animateAskUserAnswer} />
-        ) : (
-          <div className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]">
+        ) : hasVisibleUserMessageContent ? (
+          <div
+            data-testid="chat-user-message-bubble"
+            className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
+          >
             <ChatLongMessageBody
               body={body}
               skillReferences={skillReferences}
@@ -2663,7 +2670,7 @@ export function OptimisticUserDraftItem({
               className="text-[15px] leading-7"
             />
           </div>
-        )}
+        ) : null}
         <div
           className={cn(
             "mt-1 flex h-7 items-center justify-end gap-1 text-muted-foreground",

@@ -680,6 +680,7 @@ test.describe("Chat response annotations", () => {
     await expect(sentTurn.getByRole("button", { name: "Show 2 annotations" })).toBeVisible({
       timeout: 15_000,
     });
+    await expect(sentTurn.getByTestId("chat-user-message-bubble")).toHaveCount(0);
     const sentCard = await expandSentAnnotations(page, sentTurn, 2);
     const sentEntries = sentCard.getByTestId("chat-response-annotation-sent-card-entry");
     await expect(sentEntries).toHaveCount(2);
@@ -740,6 +741,7 @@ test.describe("Chat response annotations", () => {
       .locator(`[data-testid="chat-user-message-turn"][data-message-id="${sentUserMessage!.id}"]`);
     await expect(reloadedTurn.getByRole("button", { name: "Show 2 annotations" }))
       .toBeVisible({ timeout: 15_000 });
+    await expect(reloadedTurn.getByTestId("chat-user-message-bubble")).toHaveCount(0);
     const reloadedCard = await expandSentAnnotations(page, reloadedTurn, 2);
     await reloadedCard
       .getByTestId("chat-response-annotation-sent-card-entry")

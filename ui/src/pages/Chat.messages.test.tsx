@@ -10,7 +10,13 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, StreamTranscriptItem } from "./Chat.messages";
+import {
+  ChatMessageItem,
+  ChatMessagesLoadingState,
+  LazyStreamTranscriptItem,
+  OptimisticUserDraftItem,
+  StreamTranscriptItem,
+} from "./Chat.messages";
 
 const markdownMentionsMock = vi.hoisted(() => ({
   mentions: [] as MentionOption[],
@@ -431,6 +437,35 @@ describe("user chat message rendering", () => {
     });
     expect(document.body.textContent).toContain("annotation-proof.pdf");
     expect(document.body.querySelectorAll("a").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("omits the empty user bubble when an annotation-only turn has no regular content", () => {
+    const container = renderChatMessageItem(message({
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "",
+      structuredPayload: {
+        inlineAnnotations: [{
+          id: "10000000-0000-4000-8000-000000000001",
+          selectedText: "Only real send failures show Retry.",
+          comment: null,
+          sourceConversationId: "20000000-0000-4000-8000-000000000001",
+          sourceMessageId: "30000000-0000-4000-8000-000000000001",
+          surface: "assistant_body",
+          sourceHash: "a".repeat(64),
+          start: 10,
+          end: 45,
+          prefix: "",
+          suffix: "",
+          attachmentIds: [],
+        }],
+      },
+    }));
+
+    expect(container.querySelector("[aria-label='Show 1 annotation']")).not.toBeNull();
+    expect(container.querySelector('[data-testid="chat-user-message-bubble"]')).toBeNull();
+    expect(container.querySelector('[data-testid="chat-user-message-toolbar"]')).not.toBeNull();
   });
 
   it("keeps user-authored markdown syntax literal while preserving links and Rudder references", () => {
@@ -1038,5 +1073,26 @@ describe("steer fallback chat rendering", () => {
     }));
 
     expect(container.textContent).toContain("Stopped");
+  });
+});
+
+describe("OptimisticUserDraftItem", () => {
+  it("omits the empty bubble while an annotation-only turn awaits acknowledgement", () => {
+    const container = render(
+      <OptimisticUserDraftItem
+        body=""
+        createdAt={new Date("2026-07-28T08:00:00.000Z")}
+        onCopyMessageText={vi.fn()}
+        onEditDraftOnly={vi.fn()}
+        skillReferences={[]}
+      />,
+    );
+
+    expect(
+      container.querySelector('[data-testid="chat-user-message-bubble"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('button[aria-label="Edit draft"]'),
+    ).not.toBeNull();
   });
 });
