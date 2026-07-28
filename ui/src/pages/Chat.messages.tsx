@@ -96,6 +96,7 @@ import {
   Lightbulb,
   Loader2,
   Maximize2,
+  Minimize2,
   Paperclip,
   Pencil,
   RefreshCcw,
@@ -646,10 +647,19 @@ export function ProposalCard({
     (target) => sidePanelTargetKey(target) === proposalPanelKey,
   );
   const proposalPanelOpen = presentation === "inline" && Boolean(registeredProposalPanel);
+  const proposalPanelActive = Boolean(
+    proposalPanelOpen
+    && sidePanel?.open
+    && sidePanel.activeKey === proposalPanelKey,
+  );
 
   const openIssueProposalPanel = useCallback(() => {
+    if (proposalPanelActive) {
+      sidePanel?.closeTargetAndHidePanel(proposalPanelKey);
+      return;
+    }
     sidePanel?.openTarget(proposalPanelTarget);
-  }, [proposalPanelTarget, sidePanel]);
+  }, [proposalPanelActive, proposalPanelKey, proposalPanelTarget, sidePanel]);
 
   return (
     <div
@@ -681,11 +691,20 @@ export function ProposalCard({
           data-testid="proposal-review-compact"
           className="chat-proposal-compact mt-4 flex h-14 w-full max-w-[860px] items-center gap-3 rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-4 text-left text-muted-foreground shadow-[var(--shadow-sm)] transition-[border-color,background-color,color,box-shadow,transform] duration-200 hover:border-[color:var(--border-base)] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           onClick={openIssueProposalPanel}
-          aria-label="Open Issue proposal in Side Panel"
+          aria-expanded={proposalPanelActive}
+          aria-label={
+            proposalPanelActive
+              ? "Collapse Issue proposal Side Panel and restore card"
+              : "Open Issue proposal in Side Panel"
+          }
         >
           <Lightbulb className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate text-sm font-medium">Issue proposal</span>
-          <Maximize2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+          {proposalPanelActive ? (
+            <Minimize2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+          ) : (
+            <Maximize2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+          )}
         </button>
       ) : (
       <div

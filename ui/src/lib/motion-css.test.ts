@@ -76,6 +76,18 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("transform-origin: bottom center");
   });
 
+  it("animates Issue proposal compact and card states with a reduced-motion fallback", () => {
+    expect(motionCss).toMatch(
+      /\.chat-proposal-compact \{[\s\S]*?animation: rudder-proposal-compact-in/,
+    );
+    expect(motionCss).toMatch(
+      /\.chat-review-block--inline \{[\s\S]*?animation: rudder-proposal-card-in/,
+    );
+    expect(motionCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.chat-proposal-compact,[\s\S]*?\.chat-review-block--inline,[\s\S]*?animation: none !important/,
+    );
+  });
+
   it("defines an enter animation for draft chat heading changes", () => {
     expect(motionCss).toContain(".motion-chat-empty-heading");
     expect(motionCss).toContain("@keyframes rudder-chat-empty-heading-enter");

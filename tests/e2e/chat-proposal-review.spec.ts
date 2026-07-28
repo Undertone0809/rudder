@@ -341,10 +341,7 @@ test.describe("Chat proposal review block", () => {
     await composer.fill("please draft a long issue proposal");
     await page.getByRole("button", { name: "Send" }).click();
 
-    const reviewBlock = page
-      .getByTestId("chat-messages-content")
-      .getByTestId("proposal-review-block")
-      .last();
+    const reviewBlock = page.locator(".chat-review-block--inline").last();
     await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
     await expect(reviewBlock).toContainText("Reason: This proposal is intentionally unassigned while the operator reviews the long details.");
     await page.screenshot({
@@ -395,19 +392,67 @@ test.describe("Chat proposal review block", () => {
       fullPage: true,
     });
 
-    await sidePanel.getByTestId("chat-side-panel-collapse").click();
-    await expect(sidePanel).toHaveCount(0);
-    await expect(compactProposal).toBeVisible();
-
+    await expect(compactProposal).toHaveAttribute("aria-expanded", "true");
     await compactProposal.click();
+    await expect(sidePanel).toHaveCount(0);
+    await expect(page.getByTestId("proposal-review-compact")).toHaveCount(0);
+    const restoredReviewBlock = page.locator(".chat-review-block--inline").last();
+    await expect(restoredReviewBlock).toBeVisible();
+    await expect(restoredReviewBlock).toHaveClass(/chat-review-block--inline/);
+    await page.screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "issue-proposal-restored-card.png"),
+      animations: "disabled",
+      fullPage: true,
+    });
+
+    await restoredReviewBlock.getByRole("button", { name: "Show full proposal" }).click();
+    const reopenedForHidePanel = page.getByTestId("chat-side-panel");
+    const compactBeforeHide = page.getByTestId("proposal-review-compact");
+    await expect(reopenedForHidePanel).toBeVisible();
+    await expect(compactBeforeHide).toHaveAttribute("aria-expanded", "true");
+
+    await reopenedForHidePanel.getByTestId("chat-side-panel-collapse").click();
+    await expect(reopenedForHidePanel).toHaveCount(0);
+    await expect(compactBeforeHide).toBeVisible();
+    await expect(compactBeforeHide).toHaveAttribute("aria-expanded", "false");
+
+    await compactBeforeHide.click();
     const reopenedPanel = page.getByTestId("chat-side-panel");
     await expect(reopenedPanel).toBeVisible();
-    await reopenedPanel.getByTestId("chat-side-panel-tab").hover();
-    await reopenedPanel.getByTestId("chat-side-panel-tab-close").click();
 
-    await expect(reopenedPanel).toHaveCount(0);
+    await reopenedPanel.getByTestId("chat-side-panel-add-tab").click();
+    await expect(reopenedPanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+    await reopenedPanel.getByTestId("chat-side-panel-empty-library-target").click();
+    await expect(reopenedPanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await expect(reopenedPanel.getByRole("tab", { name: "Library" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    const registeredCompactProposal = page.getByTestId("proposal-review-compact");
+    await expect(registeredCompactProposal).toHaveAttribute("aria-expanded", "false");
+    await registeredCompactProposal.click();
+    await expect(reopenedPanel).toBeVisible();
+    await expect(reopenedPanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    await expect(registeredCompactProposal).toHaveAttribute("aria-expanded", "true");
+
+    await registeredCompactProposal.click();
+    await expect(reopenedPanel).not.toBeVisible();
     await expect(page.getByTestId("proposal-review-compact")).toHaveCount(0);
-    await expect(page.getByTestId("proposal-review-block")).toBeVisible();
+    await expect(page.locator(".chat-review-block--inline")).toHaveCount(1);
+
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await page.getByTestId("global-side-panel-trigger").click();
+    const siblingPanel = page.getByTestId("chat-side-panel");
+    await expect(siblingPanel).toBeVisible();
+    await expect(siblingPanel.getByTestId("chat-side-panel-tab")).toHaveCount(1);
+    await expect(siblingPanel.getByTestId("chat-side-panel-tab")).toContainText("Library");
+    await siblingPanel.getByTestId("chat-side-panel-tab").hover();
+    await siblingPanel.getByTestId("chat-side-panel-tab-close").click();
+
+    await expect(siblingPanel).toHaveCount(0);
+    await expect(page.getByTestId("proposal-review-compact")).toHaveCount(0);
+    await expect(page.getByTestId("proposal-review-block")).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Show full proposal" })).toBeVisible();
   });
 
