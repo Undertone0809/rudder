@@ -1,16 +1,48 @@
+import {
+  AGENT_RUN_LIST_DEFAULT_LIMIT,
+  agentRunsApi,
+} from "@/api/agent-runs";
+import { useOrganization } from "@/context/OrganizationContext";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { RUDDER_DISCORD_URL } from "@/lib/product-links";
+import { queryKeys } from "@/lib/queryKeys";
+import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
-import { useState, type MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 
 export const MESSENGER_DISCORD_CTA_STORAGE_KEY = "rudder:messenger:discord-cta:v1";
+export const MESSENGER_DISCORD_CTA_ELIGIBILITY_KEY =
+  "rudder:messenger:discord-cta:eligible:v1";
+export const MESSENGER_DISCORD_CTA_COOLDOWN_MS = 15 * 24 * 60 * 60 * 1_000;
 
-function hasDismissedDiscordCta() {
+function readDiscordCtaEligibility() {
   if (typeof window === "undefined") return false;
   try {
-    return window.localStorage.getItem(MESSENGER_DISCORD_CTA_STORAGE_KEY) === "dismissed";
+    return window.localStorage.getItem(MESSENGER_DISCORD_CTA_ELIGIBILITY_KEY) === "eligible";
   } catch {
     return false;
+  }
+}
+
+function readDiscordCtaDismissedAt() {
+  if (typeof window === "undefined") return null;
+  try {
+    const storedValue = window.localStorage.getItem(MESSENGER_DISCORD_CTA_STORAGE_KEY);
+    if (!storedValue) return null;
+
+    if (storedValue === "dismissed") {
+      const migratedDismissedAt = Date.now();
+      window.localStorage.setItem(
+        MESSENGER_DISCORD_CTA_STORAGE_KEY,
+        String(migratedDismissedAt),
+      );
+      return migratedDismissedAt;
+    }
+
+    const dismissedAt = Number(storedValue);
+    return Number.isFinite(dismissedAt) && dismissedAt > 0 ? dismissedAt : null;
+  } catch {
+    return null;
   }
 }
 
@@ -37,18 +69,64 @@ function openDiscordInSystemBrowser(event: MouseEvent<HTMLAnchorElement>) {
 }
 
 export function MessengerDiscordCta() {
-  const [visible, setVisible] = useState(() => !hasDismissedDiscordCta());
+  const { selectedOrganizationId } = useOrganization();
+  const [eligible, setEligible] = useState(readDiscordCtaEligibility);
+  const [dismissedAt, setDismissedAt] = useState<number | null>(readDiscordCtaDismissedAt);
+  const agentRunsQuery = useQuery({
+    queryKey: queryKeys.agentRuns(
+      selectedOrganizationId ?? "__none__",
+      undefined,
+      AGENT_RUN_LIST_DEFAULT_LIMIT,
+    ),
+    queryFn: () => agentRunsApi.list(
+      selectedOrganizationId!,
+      undefined,
+      AGENT_RUN_LIST_DEFAULT_LIMIT,
+    ),
+    enabled: !!selectedOrganizationId && !eligible,
+  });
+  const hasCompletedAgentRun = agentRunsQuery.data?.some(
+    (run) => run.status === "succeeded",
+  ) ?? false;
+
+  useEffect(() => {
+    if (eligible || !hasCompletedAgentRun) return;
+    try {
+      window.localStorage.setItem(MESSENGER_DISCORD_CTA_ELIGIBILITY_KEY, "eligible");
+    } catch {
+      // The current render can still show the invitation without persistence.
+    }
+    setEligible(true);
+  }, [eligible, hasCompletedAgentRun]);
+
+  useEffect(() => {
+    if (dismissedAt === null) return;
+    const remainingCooldown = MESSENGER_DISCORD_CTA_COOLDOWN_MS - (Date.now() - dismissedAt);
+    if (remainingCooldown <= 0) {
+      setDismissedAt(null);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setDismissedAt(null), remainingCooldown);
+    return () => window.clearTimeout(timeout);
+  }, [dismissedAt]);
 
   const dismiss = () => {
+    const nextDismissedAt = Date.now();
     try {
-      window.localStorage.setItem(MESSENGER_DISCORD_CTA_STORAGE_KEY, "dismissed");
+      window.localStorage.setItem(
+        MESSENGER_DISCORD_CTA_STORAGE_KEY,
+        String(nextDismissedAt),
+      );
     } catch {
       // Keep the dismissal useful for the current visit when storage is unavailable.
     }
-    setVisible(false);
+    setDismissedAt(nextDismissedAt);
   };
 
-  if (!visible) return null;
+  const cooldownElapsed = dismissedAt === null
+    || Date.now() - dismissedAt >= MESSENGER_DISCORD_CTA_COOLDOWN_MS;
+  if ((!eligible && !hasCompletedAgentRun) || !cooldownElapsed) return null;
 
   return (
     <div
