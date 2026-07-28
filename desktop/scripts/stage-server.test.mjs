@@ -52,6 +52,10 @@ function createStageServerRepo() {
   mkdirSync(join(repo, "packages", "shared"), { recursive: true });
   mkdirSync(join(repo, "server"), { recursive: true });
   cpSync(join(scriptsDir, "stage-server.mjs"), join(repo, "desktop", "scripts", "stage-server.mjs"));
+  cpSync(
+    join(scriptsDir, "optimize-server-package.mjs"),
+    join(repo, "desktop", "scripts", "optimize-server-package.mjs"),
+  );
   writeFileSync(join(repo, "desktop", "scripts", "prepare-postgres-runtime.mjs"), [
     "const configuredBinDir = process.env.RUDDER_FAKE_PREPARED_POSTGRES_BIN_DIR;",
     "if (!configuredBinDir) {",

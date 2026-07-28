@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { macPortableZipArgs } from "./archive.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
@@ -113,7 +114,7 @@ async function createPortableZip(platform, arch) {
 
   await fs.rm(outputPath, { force: true });
   if (platform === "macos") {
-    await run("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appDir, outputPath]);
+    await run("ditto", macPortableZipArgs(appDir, outputPath));
     return;
   }
 
@@ -220,7 +221,7 @@ async function createShellZip(platform, arch) {
 
   await fs.rm(outputPath, { force: true });
   if (platform === "macos") {
-    await run("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appDir, outputPath]);
+    await run("ditto", macPortableZipArgs(appDir, outputPath));
     return;
   }
 

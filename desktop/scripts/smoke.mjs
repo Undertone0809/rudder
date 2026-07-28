@@ -1745,6 +1745,10 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
       }, "core");
       try {
         await coreMcp.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "desktop-smoke-core", version: "1" } });
+        const coreToolsBeforeDisable = await coreMcp.request("tools/list");
+        const coreToolNamesBeforeDisable = coreToolsBeforeDisable.result.tools
+          .map((tool) => tool.name)
+          .sort();
         const disabledResponse = await fetch(`${baseUrl}/api/instance/settings/browser`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -1753,7 +1757,11 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
         assert.equal(disabledResponse.status, 200, "Desktop smoke should disable Browser settings");
         await mcp.waitForExit(8_000);
         const coreTools = await coreMcp.request("tools/list");
-        assert.equal(coreTools.result.tools.length, 69, "core MCP should remain available after Browser disable");
+        assert.deepEqual(
+          coreTools.result.tools.map((tool) => tool.name).sort(),
+          coreToolNamesBeforeDisable,
+          "core MCP should remain unchanged after Browser disable",
+        );
         await new Promise((resolve) => setTimeout(resolve, 6_000));
         assert.equal(await pathExists(bundle.directoryPath), false, "live disable should clean page-asset artifacts");
         assert.equal(await pathExists(contentExport.directoryPath), false, "live disable should clean content-export artifacts");

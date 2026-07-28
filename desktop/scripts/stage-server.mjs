@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { optimizeServerPackage } from "./optimize-server-package.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
@@ -353,6 +354,12 @@ async function main() {
   await rewriteInternalPackages(targetDir);
   await normalizeSelfReference(targetDir);
   await stagePostgresRuntimePayload();
+  await optimizeServerPackage({
+    arch: process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch,
+    bundledPostgres: process.env.RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME === "1",
+    platform: process.platform,
+    serverPackageDir: targetDir,
+  });
 
   const deployedEntry = path.join(targetDir, "dist", "index.js");
   await fs.access(deployedEntry);

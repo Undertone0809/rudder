@@ -416,6 +416,16 @@ of depending on files installed on the CI host.
 `desktop/scripts/stage-server.mjs` runs `pnpm deploy` with the legacy deploy
 config scoped to that child process so pnpm 10+ and 11+ can still package the
 server from a workspace that does not use injected workspace packages.
+The staged production server is then reduced to its reachable runtime dependency
+graph. Optional peer build/test tools, declarations, source maps, package test
+fixtures, and built Rudder workspace sources are excluded. The title generator
+ships only its used `o200k_base` tokenizer encoding. When the full portable
+bootstrap PostgreSQL payload is present, the matching npm platform binary is
+also omitted; non-portable staging retains that package as the startup fallback.
+Shell artifacts remove the server runtime entirely and rely on the prepared
+versioned runtime cache. macOS portable and shell ZIPs disable resource forks, extended
+attributes, quarantine metadata, and ACL metadata so archives do not accumulate
+`__MACOSX` or AppleDouble entries.
 Downloaded Desktop assets are cached under `~/.rudder/desktop-assets/` by
 SHA-256 checksum so repeated installs or retries can reuse an already verified
 portable asset instead of downloading the full release again.
