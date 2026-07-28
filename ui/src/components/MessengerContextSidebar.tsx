@@ -32,6 +32,7 @@ import {
   ThreadRow,
   type SortableDragHandleProps
 } from "@/components/messenger/MessengerThreadListViews";
+import { MessengerDiscordCta } from "@/components/MessengerDiscordCta";
 import { ProjectIcon } from "@/components/ProjectIdentity";
 import {
   DropdownMenu,
@@ -4095,6 +4096,7 @@ export function MessengerContextSidebar() {
           </div>
         ) : null}
       </nav>
+      <MessengerDiscordCta />
     </aside>
   );
 }
