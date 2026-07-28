@@ -9,6 +9,7 @@ import { AgentIcon } from "@/components/AgentIconPicker";
 import { CommentThread } from "@/components/CommentThread";
 import { InlineEditor } from "@/components/InlineEditor";
 import { IssueProperties } from "@/components/IssueProperties";
+import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef } from "@/components/MarkdownEditor";
 import { KeepSidePanelViewButton } from "@/components/messenger/KeepSidePanelViewButton";
@@ -18,6 +19,7 @@ import { LocalAppsPanel } from "@/components/side-panel/LocalAppsPanel";
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
 import { SubagentPanelView } from "@/components/side-panel/SubagentPanelView";
 import { StatusBadge } from "@/components/StatusBadge";
+import { StatusIcon } from "@/components/StatusIcon";
 import { TranscriptLocalFilePreview } from "@/components/transcript/TranscriptLocalFilePreview";
 import { Button } from "@/components/ui/button";
 import {
@@ -87,6 +89,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  CircleAlert,
   CirclePlus,
   Code2,
   Compass,
@@ -100,6 +103,7 @@ import {
   Globe2,
   Image as ImageIcon,
   LibraryBig,
+  LoaderCircle,
   Maximize2,
   MessageSquare,
   Minimize2,
@@ -110,7 +114,8 @@ import {
   Table2,
   Undo2,
   UserRound,
-  X
+  Workflow,
+  X,
 } from "lucide-react";
 import {
   useCallback,
@@ -158,6 +163,135 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
 ]);
 const CHAT_SIDE_PANEL_TAB_DND_MIME = "application/x-rudder-side-panel-tab";
 const CHAT_SIDE_PANEL_MARKDOWN_CONFLICT_MESSAGE = "This file changed while you were editing it.";
+
+function acceptedChatSidePanelBrowserFavicon(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 8_192) return null;
+  if (/^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(trimmed)) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:" ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+function ChatSidePanelBrowserTabIcon({ favicon }: { favicon?: string }) {
+  const acceptedFavicon = acceptedChatSidePanelBrowserFavicon(favicon);
+  const [faviconFailed, setFaviconFailed] = useState(false);
+
+  useEffect(() => {
+    setFaviconFailed(false);
+  }, [acceptedFavicon]);
+
+  if (acceptedFavicon && !faviconFailed) {
+    return (
+      <img
+        alt=""
+        className="size-3.5 shrink-0 rounded-[3px] object-contain"
+        data-testid="chat-side-panel-tab-browser-favicon"
+        referrerPolicy="no-referrer"
+        src={acceptedFavicon}
+        onError={() => setFaviconFailed(true)}
+      />
+    );
+  }
+
+  return (
+    <Globe2
+      aria-hidden
+      className="size-3.5 shrink-0"
+      data-testid="chat-side-panel-tab-browser-fallback-icon"
+    />
+  );
+}
+
+function ChatSidePanelIssueTabIcon({
+  enabled,
+  issueId,
+}: {
+  enabled: boolean;
+  issueId: string;
+}) {
+  const issueQuery = useQuery({
+    queryKey: queryKeys.issues.detail(issueId),
+    queryFn: () => issuesApi.get(issueId),
+    enabled,
+  });
+
+  if (issueQuery.isPending) {
+    return (
+      <LoaderCircle
+        aria-hidden
+        className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+        data-testid="chat-side-panel-tab-issue-loading-icon"
+      />
+    );
+  }
+  if (issueQuery.isError || !issueQuery.data) {
+    return (
+      <CircleAlert
+        aria-hidden
+        className="size-3.5 shrink-0 text-muted-foreground"
+        data-testid="chat-side-panel-tab-issue-fallback-icon"
+      />
+    );
+  }
+
+  return (
+    <StatusIcon
+      className="size-3.5"
+      dataSlot="side-panel-tab-issue-status-icon"
+      status={issueQuery.data.status}
+    />
+  );
+}
+
+function ChatSidePanelTabIcon({
+  enabled,
+  tab,
+}: {
+  enabled: boolean;
+  tab: SidePanelTarget;
+}) {
+  const iconClassName = "size-3.5 shrink-0";
+
+  if (tab.kind === "issue") {
+    return <ChatSidePanelIssueTabIcon enabled={enabled} issueId={tab.issueId} />;
+  }
+  if (tab.kind === "issue_proposal") return <CirclePlus aria-hidden className={iconClassName} />;
+  if (tab.kind === "automation") return <Workflow aria-hidden className={iconClassName} />;
+  if (tab.kind === "chat" || tab.kind === "side_chat") {
+    return <MessageSquare aria-hidden className={iconClassName} />;
+  }
+  if (tab.kind === "subagent") return <Bot aria-hidden className={iconClassName} />;
+  if (tab.kind === "library_directory") return <Folder aria-hidden className={iconClassName} />;
+  if (tab.kind === "library_document") return <FileText aria-hidden className={iconClassName} />;
+  if (tab.kind === "library_entry") {
+    return tab.path
+      ? <FileText aria-hidden className={iconClassName} />
+      : <LibraryBig aria-hidden className={iconClassName} />;
+  }
+  if (tab.kind === "library_file" || tab.kind === "local_file") {
+    return <FileText aria-hidden className={iconClassName} />;
+  }
+  if (tab.kind === "organization_skill_file") return <FileText aria-hidden className={iconClassName} />;
+  if (tab.kind === "local_apps") return <AppWindow aria-hidden className={iconClassName} />;
+  if (tab.kind === "local_app") {
+    return (
+      <LocalAppIdentityIcon
+        className={iconClassName}
+        identity={tab}
+        testId="chat-side-panel-tab-local-app-icon"
+      />
+    );
+  }
+  if (tab.kind === "browser") return <ChatSidePanelBrowserTabIcon favicon={tab.favicon} />;
+  if (tab.targetKind === "issue") return <Circle aria-hidden className={iconClassName} />;
+  if (tab.targetKind === "automation") return <Workflow aria-hidden className={iconClassName} />;
+  return <MessageSquare aria-hidden className={iconClassName} />;
+}
 
 function useChatSidePanelMobileLayout() {
   const [isMobile, setIsMobile] = useState(() => (
@@ -2093,12 +2227,16 @@ export function ChatSidePanel({
                           : tab.viewInstanceId
                         : undefined}
                       data-browser-favicon={tab.kind === "browser" ? tab.favicon : undefined}
-                      className="min-w-0 flex-1 cursor-grab truncate rounded-l-full px-2.5 py-1 text-left text-xs active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                      data-side-panel-tab-kind={tab.kind}
+                      className="flex min-w-0 flex-1 cursor-grab items-center gap-1.5 rounded-l-full px-2.5 py-1 text-left text-xs active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                       onClick={() => {
                         if (!promotionMoving) sidePanel.setActiveKey(tabKey);
                       }}
                     >
-                      {promotionMoving ? `${tab.label} · Moving…` : tab.label}
+                      <ChatSidePanelTabIcon enabled={targetQueriesEnabled} tab={tab} />
+                      <span className="min-w-0 truncate">
+                        {promotionMoving ? `${tab.label} · Moving…` : tab.label}
+                      </span>
                     </button>
                     <button
                       type="button"

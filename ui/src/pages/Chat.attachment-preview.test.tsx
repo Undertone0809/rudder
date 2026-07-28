@@ -78,6 +78,8 @@ const mockState = vi.hoisted(() => ({
   failedChatDetailIds: new Set<string>(),
   pendingChatDetailIds: new Set<string>(),
   issues: {} as Record<string, Issue>,
+  failedIssueDetailIds: new Set<string>(),
+  pendingIssueDetailIds: new Set<string>(),
   issueComments: {} as Record<string, IssueComment[]>,
   agents: [] as Agent[],
   goals: [] as Goal[],
@@ -240,10 +242,30 @@ vi.mock("@tanstack/react-query", () => ({
       };
     }
     if (queryKey[0] === "issues" && queryKey[1] === "detail") {
+      const issueId = String(queryKey[2]);
+      if (mockState.pendingIssueDetailIds.has(issueId)) {
+        return {
+          data: undefined,
+          isPending: true,
+          isLoading: true,
+          isError: false,
+          error: null,
+        };
+      }
+      if (mockState.failedIssueDetailIds.has(issueId)) {
+        return {
+          data: undefined,
+          isPending: false,
+          isLoading: false,
+          isError: true,
+          error: new Error("Issue detail unavailable"),
+        };
+      }
       return {
-        data: mockState.issues[String(queryKey[2])] ?? null,
+        data: mockState.issues[issueId] ?? null,
         isPending: false,
         isLoading: false,
+        isError: false,
         error: null,
       };
     }
@@ -1520,6 +1542,8 @@ beforeEach(() => {
     return updated;
   });
   mockState.issues = {};
+  mockState.failedIssueDetailIds = new Set();
+  mockState.pendingIssueDetailIds = new Set();
   mockState.issueComments = {};
   mockState.agents = [agent()];
   mockState.goals = [];
@@ -2696,6 +2720,32 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel?.textContent).toContain("Frequency");
     expect(sidePanel?.textContent).toContain("No activity yet.");
     expect(mockState.navigate).not.toHaveBeenCalledWith("/automations/automation-1?t=Daily%20report");
+  });
+
+  it.each([
+    ["pending", "chat-side-panel-tab-issue-loading-icon"],
+    ["failed", "chat-side-panel-tab-issue-fallback-icon"],
+  ] as const)("keeps a %s Issue tab neutral until a real status is available", async (state, testId) => {
+    if (state === "pending") mockState.pendingIssueDetailIds.add("issue-1");
+    else mockState.failedIssueDetailIds.add("issue-1");
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: `assistant-${state}-issue-side-panel`,
+          role: "assistant",
+          body: `Review [RUD-42](${buildIssueMentionHref("issue-1", "RUD-42", null, "in_progress")}) next.`,
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    const sidePanel = await openIssueReferenceSidePanel(container);
+    const issueTab = sidePanel.querySelector(
+      '[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="issue"]',
+    );
+
+    expect(issueTab?.querySelector(`[data-testid="${testId}"]`)).not.toBeNull();
+    expect(issueTab?.querySelector('[data-slot="side-panel-tab-issue-status-icon"]')).toBeNull();
   });
 
   it("renders issue references as a detail panel with task fields and comment target", async () => {
@@ -4459,6 +4509,18 @@ describe("Chat Side Panel link handling", () => {
     });
     expect(container.querySelector("[data-testid='chat-side-panel-tab']")?.getAttribute("data-browser-favicon"))
       .toBe("https://example.org/favicon.ico");
+    expect(
+      container.querySelector<HTMLImageElement>("[data-testid='chat-side-panel-tab-browser-favicon']")?.src,
+    ).toBe("https://example.org/favicon.ico");
+
+    await act(async () => {
+      container
+        .querySelector<HTMLImageElement>("[data-testid='chat-side-panel-tab-browser-favicon']")
+        ?.dispatchEvent(new Event("error"));
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-tab-browser-favicon']")).toBeNull();
+    expect(container.querySelector("[data-testid='chat-side-panel-tab-browser-fallback-icon']")).not.toBeNull();
   });
 
   it("renders a full Browser connection error state and reloads the current webview", async () => {

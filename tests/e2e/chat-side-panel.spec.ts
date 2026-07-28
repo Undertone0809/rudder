@@ -1149,11 +1149,20 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByLabel("Close Side Panel")).toBeVisible();
     await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
     await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
+    const issueTab = sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="issue"]');
+    await expect(issueTab.locator('[data-slot="side-panel-tab-issue-status-icon"]')).toHaveAttribute(
+      "data-status",
+      "in_progress",
+    );
 
     const propertiesPanel = sidePanel.getByRole("region", { name: "Issue properties" });
     await propertiesPanel.locator('button:has([data-slot="issue-status-icon"])').first().click();
     await page.getByRole("menuitemradio", { name: "Done" }).click();
     await expect(propertiesPanel.getByText("Done", { exact: true })).toBeVisible();
+    await expect(issueTab.locator('[data-slot="side-panel-tab-issue-status-icon"]')).toHaveAttribute(
+      "data-status",
+      "done",
+    );
 
     const reassigneeRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -1283,6 +1292,9 @@ test.describe("Chat Side Panel", () => {
     await sidePanel.getByLabel("Restore Side Panel width").click();
     await assistantMessage.locator('a[data-mention-kind="automation"]').filter({ hasText: automation.title }).click();
     await expect(page).toHaveURL(new RegExp(`${hostChat.id}$`));
+    await expect(
+      sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="automation"] svg'),
+    ).toBeVisible();
     await expect(sidePanel).toContainText("Codex verification automation");
     await expect(sidePanel).toContainText("Active");
     await expect(sidePanel).toContainText("Next run");
@@ -1294,6 +1306,9 @@ test.describe("Chat Side Panel", () => {
 
     await assistantMessage.getByRole("link", { name: libraryFileName }).click();
     await expect(page).toHaveURL(new RegExp(`${hostChat.id}$`));
+    await expect(
+      sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="library_file"] svg'),
+    ).toBeVisible();
     const libraryPath = sidePanel.getByRole("navigation", { name: "Library file path" });
     await expect(libraryPath).toContainText("docs");
     await expect(libraryPath).toContainText(libraryFileName);
@@ -2572,6 +2587,15 @@ test.describe("Chat Side Panel", () => {
       element.dispatchEvent(Object.assign(new Event("page-title-updated"), { title: "localhost" }));
     });
     await expect(activeBrowserTab).toContainText("localhost");
+    await stableWebview.evaluate((element) => {
+      element.dispatchEvent(Object.assign(new Event("page-favicon-updated"), {
+        favicons: ["http://localhost:4173/favicon.ico"],
+      }));
+    });
+    await expect(activeBrowserTab.getByTestId("chat-side-panel-tab-browser-favicon")).toHaveAttribute(
+      "src",
+      "http://localhost:4173/favicon.ico",
+    );
 
     const dispatchBrowserShortcut = async (key: string, code: string, shiftKey = false) => {
       await sidePanel.getByLabel("Browser URL").evaluate((element, shortcut) => {
