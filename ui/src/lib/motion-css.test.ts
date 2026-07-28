@@ -116,6 +116,16 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("transform var(--motion-duration-standard) var(--motion-ease-enter)");
   });
 
+  it("uses a white primary rail selection in light mode and preserves the dark theme treatment", () => {
+    const lightRailIndicator =
+      motionCss.match(/\.motion-rail-active-indicator \{[\s\S]*?\n\}/)?.[0] ?? "";
+    const darkRailIndicator =
+      motionCss.match(/html\.dark \.motion-rail-active-indicator \{[\s\S]*?\n\}/)?.[0] ?? "";
+
+    expect(lightRailIndicator).toContain("background: rgb(255 255 255 / 0.88)");
+    expect(darkRailIndicator).toContain("background: rgb(67 88 79 / 0.88)");
+  });
+
   it("highlights kanban card borders on hover and keyboard focus", () => {
     expect(motionCss).toContain(".motion-kanban-card:is(:hover, :focus-within)");
     expect(motionCss).toContain("border-color: color-mix(in oklab, var(--accent-base) 58%, var(--border))");
