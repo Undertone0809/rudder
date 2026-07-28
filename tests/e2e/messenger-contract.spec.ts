@@ -98,6 +98,7 @@ async function dragMessengerSectionOver(page: Page, source: Locator, target: Loc
   await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height - 4, { steps: 12 });
+  await expect(page.getByTestId("messenger-drag-overlay")).toBeVisible();
   await page.mouse.up();
 }
 
@@ -112,6 +113,7 @@ async function dragMessengerThreadHandleOver(page: Page, source: Locator, target
   await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, { steps: 14 });
+  await expect(page.getByTestId("messenger-drag-overlay")).toBeVisible();
   await page.mouse.up();
 }
 
@@ -192,6 +194,19 @@ async function clickMessengerViewCheckbox(page: Page, name: string) {
   await item.click();
 }
 
+async function scrollMessengerUntilTestId(page: Page, testId: string) {
+  const sidebar = page.getByTestId("workspace-sidebar").locator("nav");
+  for (let step = 0; step <= 10; step += 1) {
+    await sidebar.evaluate((node, progress) => {
+      node.scrollTop = Math.max(0, node.scrollHeight - node.clientHeight) * progress;
+      node.dispatchEvent(new Event("scroll", { bubbles: true }));
+    }, step / 10);
+    if (await page.getByTestId(testId).count() > 0) return;
+    await page.waitForTimeout(100);
+  }
+  await expect(page.getByTestId(testId)).toBeAttached({ timeout: 15_000 });
+}
+
 test.describe("Messenger unified threads contract", () => {
   test("loads additional chat sessions in the Messenger sidebar without fetching every thread up front", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Paged-Sessions-${Date.now()}`);
@@ -218,6 +233,7 @@ test.describe("Messenger unified threads contract", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
     const unpagedThreadRequests: string[] = [];
+    let pagedThreadRequests = 0;
     page.on("request", (request) => {
       const url = new URL(request.url());
       if (
@@ -226,6 +242,14 @@ test.describe("Messenger unified threads contract", () => {
         && url.search === ""
       ) {
         unpagedThreadRequests.push(request.url());
+      }
+      if (
+        request.method() === "GET"
+        && url.pathname === `/api/orgs/${organization.id}/messenger/threads`
+        && url.searchParams.has("cursor")
+        && url.searchParams.get("limit") === "40"
+      ) {
+        pagedThreadRequests += 1;
       }
     });
 
@@ -251,32 +275,21 @@ test.describe("Messenger unified threads contract", () => {
     });
     const nextPage = await (await nextPageResponse).json();
     expect(nextPage.items.some((item: { title: string }) => item.title === "Paged session 55")).toBe(true);
-    await expect(page.getByTestId(threadTestId(`chat:${rows[54]!.id}`))).toBeVisible({ timeout: 15_000 });
+    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBeLessThan(60);
     expect(unpagedThreadRequests).toEqual([]);
 
     const sidebarThreadList = page.getByTestId("workspace-sidebar").locator("nav");
-    const manualLoadButton = page.getByTestId("messenger-thread-page-load-more");
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
       await sidebarThreadList.evaluate((node) => {
         node.scrollTop = node.scrollHeight;
         node.dispatchEvent(new Event("scroll", { bubbles: true }));
       });
-      if (await manualLoadButton.isVisible().catch(() => false)) break;
       await page.waitForTimeout(250);
     }
 
-    await expect(manualLoadButton).toBeVisible({ timeout: 15_000 });
-    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBe(160);
-    await sidebarThreadList.evaluate((node) => {
-      node.scrollTop = node.scrollHeight;
-      node.dispatchEvent(new Event("scroll", { bubbles: true }));
-    });
-    await page.waitForTimeout(500);
-    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBe(160);
-
-    await manualLoadButton.click();
-    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBe(200);
-    await expect(page.getByTestId(threadTestId(`chat:${rows[199]!.id}`))).toBeAttached({ timeout: 15_000 });
+    await expect(page.getByTestId("messenger-thread-page-load-more")).toHaveCount(0);
+    await expect.poll(() => pagedThreadRequests).toBeGreaterThanOrEqual(5);
+    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBeLessThan(60);
     expect(unpagedThreadRequests).toEqual([]);
   });
 
@@ -1034,22 +1047,29 @@ test.describe("Messenger unified threads contract", () => {
     const regularGroupContent = page.getByTestId(`${regularGroupSectionId}-content`);
 
     await expect(pinnedGroupSection).toContainText("Pinned atomic group", { timeout: 15_000 });
+    await scrollMessengerUntilTestId(page, regularGroupSectionId);
     await expect(regularGroupSection).toContainText(groupedChats[1]!.title);
     await expect(page.getByTestId(emptyGroupSectionId)).toContainText("Empty project group");
     await page.getByTestId("messenger-thread-organization-trigger").click();
     await page.getByRole("menuitemradio", { name: "Project" }).click();
 
     await expect(page.getByText("Threads organized by project")).toBeVisible({ timeout: 15_000 });
+    await scrollMessengerUntilTestId(page, "messenger-thread-section-project-pinned");
     await expect(pinnedSection).toBeVisible();
-    await expect(noProjectSection).toBeVisible();
     await expect(pinnedSectionContent.getByTestId(pinnedGroupSectionId)).toContainText("Pinned atomic group");
-    await expect(noProjectSectionContent.getByTestId(regularGroupSectionId)).toContainText("Project work queue");
-    await expect(noProjectSectionContent.getByTestId(emptyGroupSectionId)).toContainText("Empty project group");
+    await expectTestIdWithinSection(page, "messenger-thread-section-project-pinned", pinnedGroupSectionId);
+    await expectTestIdWithinSection(page, "messenger-thread-section-project-pinned", threadTestId(`chat:${loosePinnedChat.id}`));
+
+    await scrollMessengerUntilTestId(page, `messenger-thread-section-project-${project.id}`);
+    await expect(projectSection).toBeVisible();
     await expect(page.getByTestId(`messenger-thread-section-project-${project.id}-content`)).toContainText(
       looseProjectChat.title,
     );
-    await expectTestIdWithinSection(page, "messenger-thread-section-project-pinned", pinnedGroupSectionId);
-    await expectTestIdWithinSection(page, "messenger-thread-section-project-pinned", threadTestId(`chat:${loosePinnedChat.id}`));
+
+    await scrollMessengerUntilTestId(page, regularGroupSectionId);
+    await expect(noProjectSection).toBeVisible();
+    await expect(noProjectSectionContent.getByTestId(regularGroupSectionId)).toContainText("Project work queue");
+    await expect(noProjectSectionContent.getByTestId(emptyGroupSectionId)).toContainText("Empty project group");
     await expectTestIdWithinSection(page, "messenger-thread-section-project-none", regularGroupSectionId);
     await expectTestIdWithinSection(page, "messenger-thread-section-project-none", emptyGroupSectionId);
     await expectTestIdWithinSection(
@@ -1057,18 +1077,9 @@ test.describe("Messenger unified threads contract", () => {
       "messenger-thread-section-project-none",
       threadTestId(`chat:${looseNoProjectChat.id}`),
     );
-    await expectTestIdsInDomOrder(page, [
-      pinnedGroupSectionId,
-      threadTestId(`chat:${loosePinnedChat.id}`),
-      regularGroupSectionId,
-      emptyGroupSectionId,
-      threadTestId(`chat:${looseNoProjectChat.id}`),
-    ]);
-    await expect(pinnedGroupSection.getByRole("button", { name: "Drag group Pinned atomic group" })).toHaveCount(0);
     await expect(regularGroupSection.getByRole("button", { name: "Drag group Project work queue" })).toHaveCount(0);
     const regularGroupRows = regularGroupSection.locator("[data-messenger-thread-key]");
-    await expect(regularGroupRows).toHaveCount(6);
-    const groupShowMore = regularGroupSection.getByTestId(`${regularGroupSectionId}-show-more`);
+    const groupAutoLoader = regularGroupSection.getByTestId(`${regularGroupSectionId}-auto-loader`);
     let globalThreadPageRequests = 0;
     const countGlobalThreadPageRequest = (request: import("@playwright/test").Request) => {
       const requestUrl = new URL(request.url());
@@ -1082,16 +1093,15 @@ test.describe("Messenger unified threads contract", () => {
       }
     };
     page.on("request", countGlobalThreadPageRequest);
-    await groupShowMore.click();
+    if (await groupAutoLoader.count() > 0) {
+      await groupAutoLoader.scrollIntoViewIfNeeded();
+    }
     await expect(regularGroupRows).toHaveCount(7);
-    await expect(groupShowMore).toHaveCount(0);
+    await expect(groupAutoLoader).toHaveCount(0);
     await page.waitForTimeout(250);
     page.off("request", countGlobalThreadPageRequest);
     expect(globalThreadPageRequests).toBe(0);
     for (const chat of groupedChats) {
-      await expect(page.getByTestId(threadTestId(`chat:${chat.id}`))).toHaveCount(1);
-    }
-    for (const chat of [loosePinnedChat, looseProjectChat, looseNoProjectChat]) {
       await expect(page.getByTestId(threadTestId(`chat:${chat.id}`))).toHaveCount(1);
     }
     await page.screenshot({ path: "/tmp/rudder-messenger-project-custom-groups.png", fullPage: true });
@@ -1215,6 +1225,7 @@ test.describe("Messenger unified threads contract", () => {
           issueCreationMode: "manual_approval",
           planMode: false,
           contextLinks: [{ entityType: "project", entityId: gettingStarted.id }],
+          initialMessage: { body: `Seed Getting Started thread ${index}.` },
         },
       });
       expect(res.ok()).toBe(true);
@@ -1227,6 +1238,7 @@ test.describe("Messenger unified threads contract", () => {
         issueCreationMode: "manual_approval",
         planMode: false,
         contextLinks: [{ entityType: "project", entityId: launch.id }],
+        initialMessage: { body: "Seed Launch project thread." },
       },
     });
     const looseChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -1235,6 +1247,7 @@ test.describe("Messenger unified threads contract", () => {
         summary: "No project summary",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Seed loose no-project thread." },
       },
     });
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
@@ -1266,18 +1279,20 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId(gettingStartedSectionId)).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId(launchSectionId)).toBeVisible();
     await expect(page.getByTestId(threadTestId(`chat:${gettingStartedChats[7]!.id}`))).toBeVisible();
-    await expect(page.getByTestId(oldestThreadId)).toHaveCount(0);
-
-    await page.getByTestId(`${gettingStartedSectionId}-show-more`).click();
+    const gettingStartedAutoLoader = page.getByTestId(`${gettingStartedSectionId}-auto-loader`);
+    if (await gettingStartedAutoLoader.count() > 0) {
+      await gettingStartedAutoLoader.scrollIntoViewIfNeeded();
+    }
 
     await expect(page.getByTestId(oldestThreadId)).toBeVisible();
     await expect(page.getByTestId(secondOldestThreadId)).toBeVisible();
 
     await page.getByTestId(`${gettingStartedSectionId}-collapse`).click();
 
-    await expect(page.getByTestId(oldestThreadId)).toHaveCount(0);
-
-    await page.getByTestId(gettingStartedSectionId).click();
+    const gettingStartedSection = page.getByTestId(gettingStartedSectionId);
+    if (await gettingStartedSection.getAttribute("aria-expanded") !== "false") {
+      await gettingStartedSection.click();
+    }
     await expect(page.getByTestId(gettingStartedSectionId)).toHaveAttribute("aria-expanded", "false");
 
     await dragMessengerSectionOver(
@@ -1289,9 +1304,21 @@ test.describe("Messenger unified threads contract", () => {
     await expectTestIdsInDomOrder(page, [
       launchSectionId,
       gettingStartedSectionId,
-      "messenger-thread-section-system",
-      "messenger-thread-section-project-none",
     ]);
+    await expect.poll(() => page.evaluate(({ orgId, launchId, gettingStartedId }) => {
+      const key = Object.keys(window.localStorage).find((candidate) =>
+        candidate.startsWith(`rudder.messengerProjectGroupOrder:${orgId}:`)
+      );
+      if (!key) return false;
+      const order = JSON.parse(window.localStorage.getItem(key) ?? "[]") as string[];
+      return order.indexOf(launchId) !== -1
+        && order.indexOf(gettingStartedId) !== -1
+        && order.indexOf(launchId) < order.indexOf(gettingStartedId);
+    }, {
+      orgId: organization.id,
+      launchId: launch.id,
+      gettingStartedId: gettingStarted.id,
+    })).toBe(true);
 
     await page.reload({ waitUntil: "commit" });
 
@@ -1299,8 +1326,6 @@ test.describe("Messenger unified threads contract", () => {
     await expectTestIdsInDomOrder(page, [
       launchSectionId,
       gettingStartedSectionId,
-      "messenger-thread-section-system",
-      "messenger-thread-section-project-none",
     ]);
     await expect(page.getByTestId(threadTestId(`chat:${launchChat.id}`))).toBeVisible();
     await expect(page.getByTestId(threadTestId(`chat:${looseChat.id}`))).toBeVisible();

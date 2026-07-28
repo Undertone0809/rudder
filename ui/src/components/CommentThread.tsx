@@ -12,7 +12,7 @@ import { PluginSlotOutlet } from "@/plugins/slots";
 import type { Agent, IssueComment } from "@rudderhq/shared";
 import { buildIssueMentionHref } from "@rudderhq/shared";
 import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, Pencil, TerminalSquare, Trash2 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { formatChatAgentLabel } from "../lib/agent-labels";
@@ -29,6 +29,7 @@ import type { MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 import { StatusBadge } from "./StatusBadge";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
+import { VirtualizedActivityTimeline } from "./VirtualizedActivityTimeline";
 
 const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 const COMMENT_HASH_SCROLL_RETRY_DELAYS_MS = [120, 360, 900] as const;
@@ -72,6 +73,7 @@ interface CommentThreadProps {
   escapeBackWhenEmpty?: boolean;
   fixedComposer?: boolean;
   fixedComposerTimelineScroll?: boolean;
+  timelineScrollElementRef?: RefObject<HTMLElement | null>;
 }
 
 export function shouldOfferReopen(issueStatus?: string) {
@@ -501,6 +503,8 @@ const TimelineList = memo(function TimelineList({
   imageUploadHandler,
   onMarkdownLinkClick,
   reserveHashScrollEndSpace,
+  scrollElementRef,
+  onVirtualTargetMounted,
 }: {
   timeline: TimelineItem[];
   agentMap?: Map<string, Agent>;
@@ -522,6 +526,8 @@ const TimelineList = memo(function TimelineList({
   imageUploadHandler?: (file: File) => Promise<string>;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   reserveHashScrollEndSpace?: boolean;
+  scrollElementRef?: RefObject<HTMLElement | null>;
+  onVirtualTargetMounted?: (key: string) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -561,12 +567,10 @@ const TimelineList = memo(function TimelineList({
     return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
   }
 
-  return (
-    <div className="space-y-3">
-      {timeline.map((item) => {
+  const renderTimelineItem = (item: TimelineItem) => {
         if (item.kind === "activity") {
           return (
-            <div key={`activity:${item.id}`}>
+            <div>
               {item.activity.node}
             </div>
           );
@@ -627,7 +631,6 @@ const TimelineList = memo(function TimelineList({
 
           return (
             <div
-              key={`run:${run.runId}`}
               aria-label="Agent run"
               data-run-id={run.runId}
               role="link"
@@ -817,7 +820,6 @@ const TimelineList = memo(function TimelineList({
         );
         return (
           <div
-            key={comment.id}
             id={`comment-${comment.id}`}
             aria-label={commentCollapsed ? "Collapsed comment" : undefined}
             className={
@@ -991,7 +993,35 @@ const TimelineList = memo(function TimelineList({
             )}
           </div>
         );
-      })}
+      };
+  const getTimelineItemKey = (item: TimelineItem) => `${item.kind}:${item.id}`;
+  const timelineItems = scrollElementRef && timeline.length > 60 ? (
+    <VirtualizedActivityTimeline
+      items={timeline}
+      getItemKey={getTimelineItemKey}
+      estimateSize={(index) => {
+        const item = timeline[index];
+        if (item?.kind === "run") return 52;
+        if (item?.kind === "activity") return 48;
+        return 168;
+      }}
+      overscan={5}
+      scrollElementRef={scrollElementRef}
+      targetKey={highlightCommentId ? `comment:${highlightCommentId}` : null}
+      onTargetMounted={onVirtualTargetMounted}
+      testId="comment-thread-virtual-timeline"
+    >
+      {(item) => renderTimelineItem(item)}
+    </VirtualizedActivityTimeline>
+  ) : timeline.map((item) => (
+    <div key={getTimelineItemKey(item)}>
+      {renderTimelineItem(item)}
+    </div>
+  ));
+
+  return (
+    <div className="space-y-3">
+      {timelineItems}
       {reserveHashScrollEndSpace ? (
         <div
           aria-hidden="true"
@@ -1029,6 +1059,7 @@ export function CommentThread({
   escapeBackWhenEmpty = false,
   fixedComposer = false,
   fixedComposerTimelineScroll = true,
+  timelineScrollElementRef,
 }: CommentThreadProps) {
   const [body, setBody] = useState(() => draftKey ? loadDraft(draftKey) : "");
   const canReopen = shouldOfferReopen(issueStatus);
@@ -1041,6 +1072,9 @@ export function CommentThread({
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
+  const internalTimelineScrollRef = useRef<HTMLDivElement | null>(null);
+  const activeTimelineScrollRef = timelineScrollElementRef
+    ?? (fixedComposer && fixedComposerTimelineScroll ? internalTimelineScrollRef : undefined);
   const location = useLocation();
   const navigate = useNavigate();
   const lastHandledCommentHashRef = useRef<string | null>(null);
@@ -1330,9 +1364,19 @@ export function CommentThread({
       }, Math.max(...COMMENT_HASH_SCROLL_RETRY_DELAYS_MS) + 120);
       pendingScrollRetryTimersRef.current.push(clearSpacerTimer);
     } else {
-      setReserveHashScrollEndSpace(false);
+      setHighlightCommentId(commentId);
     }
   }, [clearPendingCommentScroll, location.hash, location.key, scrollToComment, visibleComments]);
+
+  const handleVirtualTargetMounted = useCallback((key: string) => {
+    if (!key.startsWith("comment:")) return;
+    const navigationKey = `${location.key}:${location.hash}`;
+    if (lastHandledCommentHashRef.current === navigationKey) return;
+    const commentId = key.slice("comment:".length);
+    if (!commentId || !scrollToComment(commentId, "auto")) return;
+    lastHandledCommentHashRef.current = navigationKey;
+    setReserveHashScrollEndSpace(false);
+  }, [location.hash, location.key, scrollToComment]);
 
   async function handleSubmit() {
     const currentMarkdown = editorRef.current?.getMarkdown?.() ?? body;
@@ -1411,6 +1455,8 @@ export function CommentThread({
       imageUploadHandler={imageUploadHandler}
       onMarkdownLinkClick={handleMarkdownLinkClick}
       reserveHashScrollEndSpace={reserveHashScrollEndSpace}
+      scrollElementRef={activeTimelineScrollRef}
+      onVirtualTargetMounted={handleVirtualTargetMounted}
     />
   );
 
@@ -1517,6 +1563,7 @@ export function CommentThread({
         )}
 
         <div
+          ref={internalTimelineScrollRef}
           className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1"
           data-testid="comment-thread-timeline-scroll"
         >

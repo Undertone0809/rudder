@@ -79,6 +79,10 @@ const dndMockState = vi.hoisted(() => ({
   sensorNames: [] as string[],
   sortableItemSets: [] as string[][],
 }));
+let intersectionObservers: Array<{
+  callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+  element: Element | null;
+}> = [];
 const mockUseSortable = vi.hoisted(() => vi.fn(({ id }: { id: string | number }) => ({
   attributes: {},
   listeners: {},
@@ -384,13 +388,14 @@ vi.mock("@/context/SidebarContext", () => ({
 }));
 
 vi.mock("@/context/ChatGenerationContext", () => ({
-  useChatGenerations: () => ({
+  useChatGenerationActions: () => ({
     isChatGenerationActive: (chatId: string | null | undefined) => Boolean(chatId && activeGeneratingChatIds.has(chatId)),
     abortChatStream: mockAbortChatStream,
     activeChatIds: activeGeneratingChatIds,
     setChatSendInFlight: mockSetChatSendInFlight,
     setStreamDraftForChat: mockSetStreamDraftForChat,
   }),
+  useChatGenerationActive: (chatId: string) => activeGeneratingChatIds.has(chatId),
 }));
 
 vi.mock("@/context/DialogContext", () => ({
@@ -592,6 +597,19 @@ function deferred<T>() {
 
 describe("MessengerContextSidebar chat actions", () => {
   beforeEach(() => {
+    intersectionObservers = [];
+    vi.stubGlobal("IntersectionObserver", class IntersectionObserver {
+      private readonly record: (typeof intersectionObservers)[number];
+      constructor(callback: (entries: Array<{ isIntersecting: boolean }>) => void) {
+        this.record = { callback, element: null };
+        intersectionObservers.push(this.record);
+      }
+      observe(element: Element) {
+        this.record.element = element;
+      }
+      unobserve() {}
+      disconnect() {}
+    });
     vi.stubGlobal("ResizeObserver", class ResizeObserver {
       observe() {}
       unobserve() {}
@@ -733,6 +751,13 @@ describe("MessengerContextSidebar chat actions", () => {
       },
     });
   });
+
+  function intersect(testId: string) {
+    const observer = intersectionObservers.find(
+      (candidate) => candidate.element?.getAttribute("data-testid") === testId,
+    );
+    observer?.callback([{ isIntersecting: true }]);
+  }
 
   it("reveals chat and issue details only after a one-second row hover", async () => {
     vi.useFakeTimers();
@@ -4803,19 +4828,19 @@ describe("MessengerContextSidebar chat actions", () => {
 
     expect(document.querySelector('[data-testid="messenger-thread-chat-group-6"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="messenger-thread-chat-group-7"]')).toBeNull();
-    const showMore = document.querySelector<HTMLButtonElement>(
-      '[data-testid="messenger-thread-section-custom-group-large-project-group-show-more"]',
+    const autoLoader = document.querySelector<HTMLDivElement>(
+      '[data-testid="messenger-thread-section-custom-group-large-project-group-auto-loader"]',
     );
-    expect(showMore).toBeTruthy();
+    expect(autoLoader).toBeTruthy();
 
     await act(async () => {
-      showMore?.click();
+      intersect("messenger-thread-section-custom-group-large-project-group-auto-loader");
     });
 
     expect(document.querySelector('[data-testid="messenger-thread-chat-group-7"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="messenger-thread-chat-group-8"]')).toBeTruthy();
     expect(document.querySelector(
-      '[data-testid="messenger-thread-section-custom-group-large-project-group-show-more"]',
+      '[data-testid="messenger-thread-section-custom-group-large-project-group-auto-loader"]',
     )).toBeNull();
     expect(loadMoreThreadSummaries).not.toHaveBeenCalled();
   });
@@ -5034,9 +5059,10 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeNull();
 
     await act(async () => {
-      document.querySelector<HTMLButtonElement>(
-        '[data-testid="messenger-thread-section-agent-agent-1-show-more"]',
-      )?.click();
+      expect(document.querySelector(
+        '[data-testid="messenger-thread-section-agent-agent-1-auto-loader"]',
+      )).toBeTruthy();
+      intersect("messenger-thread-section-agent-agent-1-auto-loader");
     });
 
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeTruthy();
@@ -5203,9 +5229,10 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeNull();
 
     await act(async () => {
-      document.querySelector<HTMLButtonElement>(
-        '[data-testid="messenger-thread-section-project-project-1-show-more"]',
-      )?.click();
+      expect(document.querySelector(
+        '[data-testid="messenger-thread-section-project-project-1-auto-loader"]',
+      )).toBeTruthy();
+      intersect("messenger-thread-section-project-project-1-auto-loader");
     });
 
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeTruthy();
