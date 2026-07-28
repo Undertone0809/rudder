@@ -4,8 +4,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  SelectionAnnotationToolbar,
+  isUsableSelectionAnnotationRect,
   placeSelectionAnnotationToolbar,
+  SelectionAnnotationToolbar,
 } from "./SelectionAnnotationToolbar";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -26,6 +27,41 @@ afterEach(() => {
 });
 
 describe("selection annotation toolbar", () => {
+  it("rejects zero, non-finite, and dimensionless selection geometry", () => {
+    expect(isUsableSelectionAnnotationRect({
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+      width: 0,
+      height: 0,
+    })).toBe(false);
+    expect(isUsableSelectionAnnotationRect({
+      left: Number.NaN,
+      right: 40,
+      top: 20,
+      bottom: 40,
+      width: 40,
+      height: 20,
+    })).toBe(false);
+    expect(isUsableSelectionAnnotationRect({
+      left: 20,
+      right: 20,
+      top: 20,
+      bottom: 40,
+      width: 0,
+      height: 20,
+    })).toBe(false);
+    expect(isUsableSelectionAnnotationRect({
+      left: 20,
+      right: 60,
+      top: 20,
+      bottom: 40,
+      width: 40,
+      height: 20,
+    })).toBe(true);
+  });
+
   it("flips below and shifts inside the viewport", () => {
     expect(placeSelectionAnnotationToolbar(
       { left: 390, right: 410, top: 4, bottom: 24, width: 20, height: 20 },
@@ -200,5 +236,97 @@ describe("selection annotation toolbar", () => {
     expect(onDismiss).toHaveBeenCalledOnce();
 
     HTMLElement.prototype.getBoundingClientRect = originalRect;
+  });
+
+  it("keeps the last valid position when live geometry is temporarily invalid", () => {
+    const liveRects = [
+      { left: 260, right: 300, top: 100, bottom: 120, width: 40, height: 20 },
+      { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 },
+      { left: Number.NaN, right: 60, top: 160, bottom: 180, width: 40, height: 20 },
+      { left: 20, right: 20, top: 160, bottom: 180, width: 0, height: 20 },
+    ];
+    const getAnchorRect = vi.fn(() => liveRects.shift() ?? null);
+
+    act(() => {
+      root.render(
+        <SelectionAnnotationToolbar
+          open
+          anchorRect={{ left: 260, right: 300, top: 100, bottom: 120, width: 40, height: 20 }}
+          getAnchorRect={getAnchorRect}
+          onAddToChat={vi.fn()}
+          onAskInSideChat={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      );
+    });
+
+    const toolbar = document.body.querySelector<HTMLElement>("[role='toolbar']")!;
+    const initialPosition = { left: toolbar.style.left, top: toolbar.style.top };
+    for (let index = 0; index < 3; index += 1) {
+      act(() => window.dispatchEvent(new Event("scroll")));
+      expect({ left: toolbar.style.left, top: toolbar.style.top }).toEqual(initialPosition);
+    }
+  });
+
+  it("keeps the last valid workspace boundary when live boundary geometry is invalid", () => {
+    const getBoundaryRect = vi.fn()
+      .mockReturnValueOnce({
+        left: 200,
+        right: 520,
+        top: 36,
+        bottom: 500,
+        width: 320,
+        height: 464,
+      })
+      .mockReturnValue({
+        left: 0,
+        right: 0,
+        top: Number.NaN,
+        bottom: 0,
+        width: 0,
+        height: 0,
+      });
+    act(() => {
+      root.render(
+        <SelectionAnnotationToolbar
+          open
+          anchorRect={{ left: 490, right: 510, top: 44, bottom: 64, width: 20, height: 20 }}
+          boundaryRect={{
+            left: 200,
+            right: 520,
+            top: 36,
+            bottom: 500,
+            width: 320,
+            height: 464,
+          }}
+          getBoundaryRect={getBoundaryRect}
+          onAddToChat={vi.fn()}
+          onAskInSideChat={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      );
+    });
+    const toolbar = document.body.querySelector<HTMLElement>("[role='toolbar']")!;
+    const initialPosition = { left: toolbar.style.left, top: toolbar.style.top };
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect({ left: toolbar.style.left, top: toolbar.style.top }).toEqual(initialPosition);
+  });
+
+  it("dismisses when the canonical source is no longer available", () => {
+    const onAnchorUnavailable = vi.fn();
+    act(() => {
+      root.render(
+        <SelectionAnnotationToolbar
+          open
+          anchorRect={{ left: 40, right: 140, top: 100, bottom: 120, width: 100, height: 20 }}
+          isAnchorAvailable={() => false}
+          onAnchorUnavailable={onAnchorUnavailable}
+          onAddToChat={vi.fn()}
+          onAskInSideChat={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      );
+    });
+    expect(onAnchorUnavailable).toHaveBeenCalledOnce();
   });
 });

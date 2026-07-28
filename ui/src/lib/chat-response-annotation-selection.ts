@@ -355,6 +355,48 @@ export function restoreChatAnnotationRange(input: {
   return range.collapsed ? null : range;
 }
 
+export function findChatAnnotationSourceRoot(
+  anchor: ChatAnnotationSelectionAnchor,
+  searchRoot: ParentNode = document,
+) {
+  const candidates = Array.from(
+    searchRoot.querySelectorAll<HTMLElement>(`[${CHAT_ANNOTATION_SOURCE_ATTRIBUTE}]`),
+  );
+  return candidates.find((candidate) => {
+    if (
+      !candidate.isConnected
+      || candidate.dataset.messageId !== anchor.sourceMessageId
+      || candidate.dataset.annotationSurface !== anchor.surface
+    ) {
+      return false;
+    }
+    if (anchor.surface === "assistant_body") return true;
+    return candidate.dataset.transcriptKind === anchor.transcriptKind
+      && candidate.dataset.generationId === anchor.generationId
+      && Number(candidate.dataset.generationSeqStart) === anchor.generationSeqStart
+      && Number(candidate.dataset.generationSeqEnd) === anchor.generationSeqEnd;
+  }) ?? null;
+}
+
+export function restoreLiveChatAnnotationRange(input: {
+  anchor: ChatAnnotationSelectionAnchor;
+  source: string;
+  searchRoot?: ParentNode;
+}) {
+  const sourceRoot = findChatAnnotationSourceRoot(
+    input.anchor,
+    input.searchRoot,
+  );
+  if (!sourceRoot) return null;
+  const range = restoreChatAnnotationRange({
+    sourceRoot,
+    source: input.source,
+    start: input.anchor.start,
+    end: input.anchor.end,
+  });
+  return range ? { range, sourceRoot } : null;
+}
+
 function sourceOffsetForBoundary(
   sourceRoot: HTMLElement,
   source: string,

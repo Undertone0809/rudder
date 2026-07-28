@@ -21,11 +21,36 @@ export type SelectionAnnotationToolbarLabels = {
   toolbarLabel: string;
 };
 
+export type SelectionAnnotationAnchorSnapshot = {
+  available: boolean;
+  anchorRect: SelectionAnnotationRect | null;
+  boundaryRect?: SelectionAnnotationRect | null;
+};
+
 const DEFAULT_LABELS: SelectionAnnotationToolbarLabels = {
   addToChat: "Add to chat",
   askInSideChat: "Ask in side chat",
   toolbarLabel: "Response annotation actions",
 };
+
+export function isUsableSelectionAnnotationRect(
+  rect: SelectionAnnotationRect | null | undefined,
+): rect is SelectionAnnotationRect {
+  if (!rect) return false;
+  const values = [
+    rect.left,
+    rect.right,
+    rect.top,
+    rect.bottom,
+    rect.width,
+    rect.height,
+  ];
+  return values.every(Number.isFinite)
+    && rect.width > 0
+    && rect.height > 0
+    && rect.right > rect.left
+    && rect.bottom > rect.top;
+}
 
 export function placeSelectionAnnotationToolbar(
   anchorRect: SelectionAnnotationRect,
@@ -75,12 +100,16 @@ export function SelectionAnnotationToolbar({
   open,
   anchorRect,
   getAnchorRect,
+  getAnchorSnapshot,
+  isAnchorAvailable,
+  anchorObservationRoot,
   boundaryRect,
   getBoundaryRect,
   onAddToChat,
   onAskInSideChat,
   askInSideChatDisabled = false,
   onDismiss,
+  onAnchorUnavailable,
   labels = DEFAULT_LABELS,
   returnFocusRef,
   onReturnFocus,
@@ -90,12 +119,16 @@ export function SelectionAnnotationToolbar({
   open: boolean;
   anchorRect: SelectionAnnotationRect;
   getAnchorRect?: () => SelectionAnnotationRect | null;
+  getAnchorSnapshot?: () => SelectionAnnotationAnchorSnapshot;
+  isAnchorAvailable?: () => boolean;
+  anchorObservationRoot?: HTMLElement | null;
   boundaryRect?: SelectionAnnotationRect | null;
   getBoundaryRect?: () => SelectionAnnotationRect | null;
   onAddToChat: () => void;
   onAskInSideChat: () => void;
   askInSideChatDisabled?: boolean;
   onDismiss: () => void;
+  onAnchorUnavailable?: () => void;
   labels?: SelectionAnnotationToolbarLabels;
   returnFocusRef?: RefObject<HTMLElement | null>;
   onReturnFocus?: () => void;
@@ -104,7 +137,9 @@ export function SelectionAnnotationToolbar({
 }) {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [liveAnchorRect, setLiveAnchorRect] = useState(anchorRect);
-  const [liveBoundaryRect, setLiveBoundaryRect] = useState(boundaryRect ?? null);
+  const [liveBoundaryRect, setLiveBoundaryRect] = useState(
+    isUsableSelectionAnnotationRect(boundaryRect) ? boundaryRect : null,
+  );
   const [toolbarSize, setToolbarSize] = useState(() => ({
     width: Math.min(360, Math.max(0, (typeof window === "undefined" ? 1024 : window.innerWidth) - 16)),
     height: 40,
@@ -131,12 +166,18 @@ export function SelectionAnnotationToolbar({
   }, [autoFocus, open]);
 
   useEffect(() => {
-    setLiveAnchorRect(anchorRect);
+    if (isUsableSelectionAnnotationRect(anchorRect)) {
+      setLiveAnchorRect(anchorRect);
+    }
   }, [anchorRect]);
 
   useEffect(() => {
-    setLiveBoundaryRect(boundaryRect ?? null);
-  }, [boundaryRect]);
+    if (isUsableSelectionAnnotationRect(boundaryRect)) {
+      setLiveBoundaryRect(boundaryRect);
+    } else if (!getBoundaryRect) {
+      setLiveBoundaryRect(null);
+    }
+  }, [boundaryRect, getBoundaryRect]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -162,20 +203,57 @@ export function SelectionAnnotationToolbar({
   useEffect(() => {
     if (!open) return;
     const updateAnchor = () => {
-      const next = getAnchorRect?.();
-      if (next) setLiveAnchorRect(next);
-      if (getBoundaryRect) setLiveBoundaryRect(getBoundaryRect());
+      const snapshot = getAnchorSnapshot?.();
+      if (
+        snapshot
+          ? !snapshot.available
+          : isAnchorAvailable && !isAnchorAvailable()
+      ) {
+        onAnchorUnavailable?.();
+        return;
+      }
+      const next = snapshot?.anchorRect ?? getAnchorRect?.();
+      if (isUsableSelectionAnnotationRect(next)) setLiveAnchorRect(next);
+      const nextBoundary = snapshot
+        ? snapshot.boundaryRect
+        : getBoundaryRect?.();
+      if (isUsableSelectionAnnotationRect(nextBoundary)) {
+        setLiveBoundaryRect(nextBoundary);
+      }
     };
     updateAnchor();
     window.addEventListener("resize", updateAnchor);
     window.addEventListener("scroll", updateAnchor, true);
     document.addEventListener("selectionchange", updateAnchor);
+    const mutationObserver = typeof MutationObserver === "undefined"
+      ? null
+      : new MutationObserver(updateAnchor);
+    mutationObserver?.observe(anchorObservationRoot ?? document.body, {
+      childList: true,
+      subtree: true,
+    });
+    const resizeObserver = typeof ResizeObserver === "undefined" || !anchorObservationRoot
+      ? null
+      : new ResizeObserver(updateAnchor);
+    if (resizeObserver && anchorObservationRoot) {
+      resizeObserver.observe(anchorObservationRoot);
+    }
     return () => {
+      mutationObserver?.disconnect();
+      resizeObserver?.disconnect();
       window.removeEventListener("resize", updateAnchor);
       window.removeEventListener("scroll", updateAnchor, true);
       document.removeEventListener("selectionchange", updateAnchor);
     };
-  }, [getAnchorRect, getBoundaryRect, open]);
+  }, [
+    getAnchorRect,
+    getAnchorSnapshot,
+    getBoundaryRect,
+    anchorObservationRoot,
+    isAnchorAvailable,
+    onAnchorUnavailable,
+    open,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -190,7 +268,13 @@ export function SelectionAnnotationToolbar({
     return () => document.removeEventListener("keydown", handleGlobalKeyDown);
   }, [onDismiss, onReturnFocus, open, returnFocusRef]);
 
-  if (!open || typeof document === "undefined") return null;
+  if (
+    !open
+    || typeof document === "undefined"
+    || !isUsableSelectionAnnotationRect(liveAnchorRect)
+  ) {
+    return null;
+  }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const buttons = Array.from(

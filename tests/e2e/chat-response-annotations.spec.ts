@@ -351,6 +351,42 @@ async function selectVisibleText(
   return geometry;
 }
 
+async function gateAnnotationSourceDigests(page: Page) {
+  await page.evaluate(() => {
+    const runtime = window as typeof window & {
+      __releaseAnnotationDigest?: (index: number) => void;
+      __annotationDigestCount?: () => number;
+    };
+    const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
+    const releases: Array<() => void> = [];
+    Object.defineProperty(crypto.subtle, "digest", {
+      configurable: true,
+      value: (...args: Parameters<SubtleCrypto["digest"]>) => new Promise<ArrayBuffer>(
+        (resolve, reject) => {
+          void originalDigest(...args).then(
+            (result) => releases.push(() => resolve(result)),
+            reject,
+          );
+        },
+      ),
+    });
+    runtime.__releaseAnnotationDigest = (index) => releases[index]?.();
+    runtime.__annotationDigestCount = () => releases.length;
+  });
+}
+
+async function waitForAnnotationSourceDigest(page: Page, count: number) {
+  await expect.poll(() => page.evaluate(() => (
+    window as typeof window & { __annotationDigestCount?: () => number }
+  ).__annotationDigestCount?.() ?? 0)).toBe(count);
+}
+
+async function releaseAnnotationSourceDigest(page: Page, index: number) {
+  await page.evaluate((releaseIndex) => (
+    window as typeof window & { __releaseAnnotationDigest?: (index: number) => void }
+  ).__releaseAnnotationDigest?.(releaseIndex), index);
+}
+
 async function expectMarkerNearSelection(
   marker: Locator,
   source: Locator,
@@ -429,6 +465,39 @@ async function selectAcrossRoots(
       endNeedle,
     },
   );
+}
+
+async function expectToolbarNearSelection(
+  page: Page,
+  selection: SelectionGeometry,
+) {
+  await expect.poll(async () => {
+    const box = await annotationToolbar(page).boundingBox();
+    if (!box) return null;
+    const toolbarCenterX = box.x + box.width / 2;
+    const selectionCenterX = selection.bounds.x + selection.bounds.width / 2;
+    const verticalGap = Math.min(
+      Math.abs(box.y + box.height - selection.bounds.y),
+      Math.abs(box.y - selection.bounds.bottom),
+    );
+    return {
+      horizontalDistance: Math.round(Math.abs(toolbarCenterX - selectionCenterX)),
+      verticalGap: Math.round(verticalGap),
+    };
+  }).toEqual({
+    horizontalDistance: expect.any(Number),
+    verticalGap: expect.any(Number),
+  });
+  const box = await annotationToolbar(page).boundingBox();
+  expect(box).toBeTruthy();
+  const toolbarCenterX = box!.x + box!.width / 2;
+  const selectionCenterX = selection.bounds.x + selection.bounds.width / 2;
+  expect(Math.abs(toolbarCenterX - selectionCenterX))
+    .toBeLessThanOrEqual(box!.width / 2 + selection.bounds.width / 2 + 24);
+  expect(Math.min(
+    Math.abs(box!.y + box!.height - selection.bounds.y),
+    Math.abs(box!.y - selection.bounds.bottom),
+  )).toBeLessThanOrEqual(48);
 }
 
 async function expandProcess(page: Page, messageId: string) {
@@ -738,6 +807,112 @@ test.describe("Chat response annotations", () => {
     await expect(draftAnnotationChip(page, 1)).toHaveCount(0);
     await expect(finalSource.getByTestId("chat-response-annotation-marker")).toHaveCount(0);
     await expect(composer(page)).toHaveText("Keep this body when annotations are cleared.");
+  });
+
+  test("keeps assistant and Process toolbars anchored across source DOM replacement", async ({ page }, testInfo) => {
+    const seeded = await seedAnnotationChat(page, `Response-Annotation-Replacement-${Date.now()}`);
+    const finalSource = annotationSource(page, {
+      messageId: seeded.assistantMessageId,
+      surface: "assistant_body",
+    });
+    await gateAnnotationSourceDigests(page);
+    await selectVisibleText(
+      page,
+      finalSource,
+      "Second paragraph",
+      "Second paragraph",
+      { expectToolbar: false },
+    );
+    await waitForAnnotationSourceDigest(page, 1);
+    await finalSource.evaluate((sourceRoot) => {
+      sourceRoot.replaceWith(sourceRoot.cloneNode(true));
+    });
+    const replacedFinalSource = annotationSource(page, {
+      messageId: seeded.assistantMessageId,
+      surface: "assistant_body",
+    });
+    const restoredFinalGeometry = await selectVisibleText(
+      page,
+      replacedFinalSource,
+      "Second paragraph",
+      "Second paragraph",
+      { expectToolbar: false, dispatchSelection: false },
+    );
+    await releaseAnnotationSourceDigest(page, 0);
+    await expectToolbarNearSelection(page, restoredFinalGeometry);
+
+    await expandProcess(page, seeded.assistantMessageId);
+    const processSource = annotationSource(page, {
+      messageId: seeded.assistantMessageId,
+      surface: "process_transcript",
+      text: FIRST_PROCESS_TEXT,
+    });
+    await selectVisibleText(
+      page,
+      processSource,
+      "核对数据",
+      "核对数据",
+      { expectToolbar: false },
+    );
+    await waitForAnnotationSourceDigest(page, 2);
+    await processSource.evaluate((sourceRoot) => {
+      sourceRoot.replaceWith(sourceRoot.cloneNode(true));
+    });
+    const replacedProcessSource = annotationSource(page, {
+      messageId: seeded.assistantMessageId,
+      surface: "process_transcript",
+      text: FIRST_PROCESS_TEXT,
+    });
+    const restoredProcessGeometry = await selectVisibleText(
+      page,
+      replacedProcessSource,
+      "核对数据",
+      "核对数据",
+      { expectToolbar: false, dispatchSelection: false },
+    );
+    await releaseAnnotationSourceDigest(page, 1);
+    await expectToolbarNearSelection(page, restoredProcessGeometry);
+    await page.screenshot({
+      path: `/tmp/rudder-response-annotation-replacement-${testInfo.workerIndex}.png`,
+      fullPage: false,
+      animations: "disabled",
+    });
+
+    await replacedProcessSource.evaluate((sourceRoot) => sourceRoot.remove());
+    await expect(annotationToolbar(page)).toHaveCount(0);
+  });
+
+  test("ignores an older source-hash result after a newer selection wins", async ({ page }) => {
+    const seeded = await seedAnnotationChat(page, `Response-Annotation-Race-${Date.now()}`);
+    const finalSource = annotationSource(page, {
+      messageId: seeded.assistantMessageId,
+      surface: "assistant_body",
+    });
+    await gateAnnotationSourceDigests(page);
+
+    await selectVisibleText(
+      page,
+      finalSource,
+      "第一段包含",
+      "第一段包含",
+      { expectToolbar: false },
+    );
+    const latestGeometry = await selectVisibleText(
+      page,
+      finalSource,
+      "Second paragraph",
+      "Second paragraph",
+      { expectToolbar: false },
+    );
+    await waitForAnnotationSourceDigest(page, 2);
+    await releaseAnnotationSourceDigest(page, 1);
+    await expect(annotationToolbar(page)).toBeVisible();
+    await expectToolbarNearSelection(page, latestGeometry);
+    const winningBox = await annotationToolbar(page).boundingBox();
+
+    await releaseAnnotationSourceDigest(page, 0);
+    await page.waitForTimeout(50);
+    expect(await annotationToolbar(page).boundingBox()).toEqual(winningBox);
   });
 
   test("maps and deduplicates an exact selection across Markdown paragraphs", async ({ page }) => {

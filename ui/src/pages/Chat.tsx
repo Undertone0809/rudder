@@ -78,14 +78,7 @@ import {
   createChatResponseAnnotationNavigationState,
   readChatResponseAnnotationNavigationState,
 } from "@/lib/chat-response-annotation-navigation";
-import {
-  CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
-  hashChatAnnotationSource,
-  readChatAnnotationSourceText,
-  resolveChatAnnotationRange,
-  shouldAutoFocusChatAnnotationToolbar,
-  type ChatAnnotationSelectionAnchor,
-} from "@/lib/chat-response-annotation-selection";
+import { restoreLiveChatAnnotationRange } from "@/lib/chat-response-annotation-selection";
 import {
   canSubmitChatResponseAnnotations,
   chatResponseAnnotationsForDraft,
@@ -199,6 +192,7 @@ import {
 } from "./Chat.model-selector";
 import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatAgentRunMenuItem, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDisplay, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
 import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-controls";
+import { usePendingChatResponseAnnotationSelection } from "./Chat.response-annotation-selection";
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
 import { ChatWorkManifest, ChatWorkManifestToggle, hasChatWorkManifestContent } from "./Chat.work-manifest";
@@ -207,20 +201,6 @@ export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
 export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
-
-type PendingChatResponseAnnotationSelection = {
-  range: Range;
-  sourceRoot: HTMLElement;
-  source: string;
-  sourceConversationId: string;
-  sourceMessageId: string;
-  surface: "assistant_body" | "process_transcript";
-  anchor: ChatAnnotationSelectionAnchor;
-  anchorRect: DOMRect;
-  boundaryRoot: HTMLElement | null;
-  sideChatEligible: boolean;
-  autoFocusToolbar: boolean;
-};
 
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
@@ -273,7 +253,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   );
   const [historicalResponseAnnotations, setHistoricalResponseAnnotations] = useState<ChatResponseAnnotationDraft[]>([]);
   const [unlocatableResponseAnnotationId, setUnlocatableResponseAnnotationId] = useState<string | null>(null);
-  const [pendingResponseAnnotationSelection, setPendingResponseAnnotationSelection] = useState<PendingChatResponseAnnotationSelection | null>(null);
   const [responseAnnotationAnnouncement, setResponseAnnotationAnnouncement] = useState("");
   const draft = draftState.scopeKey === draftStorageScopeKey ? draftState.value : "";
   const setDraft = useCallback((nextDraft: string) => {
@@ -282,7 +261,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const [, refreshPendingFiles] = useState(0);
   const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
   const setPendingFilesForCurrentScope = useCallback((updater: (current: File[]) => File[]) => { updateChatPendingAttachmentsForScope(draftStorageScopeKey, updater); refreshPendingFiles((version) => version + 1); }, [draftStorageScopeKey]); const clearPendingFilesForCurrentScope = useCallback(() => { setPendingFilesForCurrentScope(() => []); }, [setPendingFilesForCurrentScope]); const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false); const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, boolean>>({}); const [loadingTranscriptMessageIds, setLoadingTranscriptMessageIds] = useState<Record<string, true>>({}); const [loadedTranscriptsByMessageId, setLoadedTranscriptsByMessageId] = useState<Record<string, TranscriptEntry[]>>({}); const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>(NO_CHAT_AGENT_ID); const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
-  const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [libraryFileMentionQuery, setLibraryFileMentionQuery] = useState<string | null>(null); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [sideChatSlashMenuPosition, setSideChatSlashMenuPosition] = useState<CSSProperties | null>(null); const [inlineEditUserMessageId, setInlineEditUserMessageId] = useState<string | null>(null); const [inlineEditDraft, setInlineEditDraft] = useState(""); const [editingQueuedItem, setEditingQueuedItem] = useState<{ itemId: string; value: string; version: number } | null>(null); const [stoppingChatIds, setStoppingChatIds] = useState<Set<string>>(() => new Set()); const [steeringQueuedItemIds, setSteeringQueuedItemIds] = useState<Set<string>>(() => new Set()); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [emptyStateActiveTab, setEmptyStateActiveTab] = useState<"recent" | "use-cases">("use-cases"); const [emptyStateActiveSuggestionIndex, setEmptyStateActiveSuggestionIndex] = useState(0); const [dismissedEmptyStatePromptQuery, setDismissedEmptyStatePromptQuery] = useState<string | null>(null); const [retainedEmptyStatePromptSuggestions, setRetainedEmptyStatePromptSuggestions] = useState<readonly EmptyStatePromptSuggestion[]>([]); const [recentProjectConversationLimit, setRecentProjectConversationLimit] = useState(RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT); const [recentAskUserAnswerMessageId, setRecentAskUserAnswerMessageId] = useState<string | null>(null); const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null); const [renameDraft, setRenameDraft] = useState(""); const [generatingChatTitleIds, setGeneratingChatTitleIds] = useState<Set<string>>(() => new Set()); const [workManifestWideOpen, setWorkManifestWideOpen] = useState(true); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const inlineEditSurfaceRef = useRef<HTMLDivElement>(null); const inlineEditEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const manuallyMarkedUnreadKeyRef = useRef<string | null>(null); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const stoppingChatIdsRef = useRef(new Set<string>()); const steeringQueuedItemIdsRef = useRef(new Set<string>()); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const draftProjectScopeKeyRef = useRef<string | null>(null); const draftProjectDefaultKeyRef = useRef<string | null>(null); const draftProjectManuallySelectedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile, setSidebarOpen, sidebarOpen } = useSidebar(); const { open: sidePanelOpen, openTarget: openSidePanelTarget, openTargetForContext: openSidePanelTargetForContext, showPanelForContext: showSidePanelForContext } = useSidePanel(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const pendingTargetMessageId = (searchParams.get("messageId") ?? searchParams.get("targetMessageId") ?? "").trim(); const isMessengerChatRoute = /^\/(?:[^/]+\/)?messenger\/chat(?:\/|$)/.test(location.pathname); const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const chatRootPath = chatRouteBase; const chatConversationPath = useCallback((id: string) => `${chatRouteBase}/${id}`, [chatRouteBase]); const resolveCurrentSidePanelChatContextKey = useCallback(() => { const activePath = typeof window === "undefined" ? relativePath : toOrganizationRelativePath(window.location.pathname); const match = activePath.match(/^\/(?:messenger\/)?chat\/([^/?#]+)/); const chatId = match?.[1] ?? conversationId ?? null; return chatId ? `chat:${chatId}` : null; }, [conversationId, relativePath]); const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
+  const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [libraryFileMentionQuery, setLibraryFileMentionQuery] = useState<string | null>(null); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [sideChatSlashMenuPosition, setSideChatSlashMenuPosition] = useState<CSSProperties | null>(null); const [inlineEditUserMessageId, setInlineEditUserMessageId] = useState<string | null>(null); const [inlineEditDraft, setInlineEditDraft] = useState(""); const [editingQueuedItem, setEditingQueuedItem] = useState<{ itemId: string; value: string; version: number } | null>(null); const [stoppingChatIds, setStoppingChatIds] = useState<Set<string>>(() => new Set()); const [steeringQueuedItemIds, setSteeringQueuedItemIds] = useState<Set<string>>(() => new Set()); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [emptyStateActiveTab, setEmptyStateActiveTab] = useState<"recent" | "use-cases">("use-cases"); const [emptyStateActiveSuggestionIndex, setEmptyStateActiveSuggestionIndex] = useState(0); const [dismissedEmptyStatePromptQuery, setDismissedEmptyStatePromptQuery] = useState<string | null>(null); const [retainedEmptyStatePromptSuggestions, setRetainedEmptyStatePromptSuggestions] = useState<readonly EmptyStatePromptSuggestion[]>([]); const [recentProjectConversationLimit, setRecentProjectConversationLimit] = useState(RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT); const [recentAskUserAnswerMessageId, setRecentAskUserAnswerMessageId] = useState<string | null>(null); const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null); const [renameDraft, setRenameDraft] = useState(""); const [generatingChatTitleIds, setGeneratingChatTitleIds] = useState<Set<string>>(() => new Set()); const [workManifestWideOpen, setWorkManifestWideOpen] = useState(true); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const inlineEditSurfaceRef = useRef<HTMLDivElement>(null); const inlineEditEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const manuallyMarkedUnreadKeyRef = useRef<string | null>(null); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const stoppingChatIdsRef = useRef(new Set<string>()); const steeringQueuedItemIdsRef = useRef(new Set<string>()); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const draftProjectScopeKeyRef = useRef<string | null>(null); const draftProjectDefaultKeyRef = useRef<string | null>(null); const draftProjectManuallySelectedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const chatMainWorkspaceRef = useRef<HTMLElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile, setSidebarOpen, sidebarOpen } = useSidebar(); const { open: sidePanelOpen, openTarget: openSidePanelTarget, openTargetForContext: openSidePanelTargetForContext, showPanelForContext: showSidePanelForContext } = useSidePanel(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const pendingTargetMessageId = (searchParams.get("messageId") ?? searchParams.get("targetMessageId") ?? "").trim(); const isMessengerChatRoute = /^\/(?:[^/]+\/)?messenger\/chat(?:\/|$)/.test(location.pathname); const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const chatRootPath = chatRouteBase; const chatConversationPath = useCallback((id: string) => `${chatRouteBase}/${id}`, [chatRouteBase]); const resolveCurrentSidePanelChatContextKey = useCallback(() => { const activePath = typeof window === "undefined" ? relativePath : toOrganizationRelativePath(window.location.pathname); const match = activePath.match(/^\/(?:messenger\/)?chat\/([^/?#]+)/); const chatId = match?.[1] ?? conversationId ?? null; return chatId ? `chat:${chatId}` : null; }, [conversationId, relativePath]); const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
     if (!desktopShell) {
       pushToast({
         title: "Open from Desktop",
@@ -1652,169 +1631,17 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       if (newConversationLockAcquired) { releaseNewConversationSendLock(); } } }; const conversations = useMemo(() => { const items = conversationsQuery.data ?? [];
     return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]);
   const rawMessages = messagesQuery.data ?? [];
-  useEffect(() => {
-    const updateSelection = (event: Event) => {
-      const eventTarget = event.target;
-      if (
-        eventTarget instanceof Element
-        && (
-          eventTarget.closest('[role="toolbar"][aria-label="Response annotation actions"]')
-          || eventTarget.closest("[data-testid='chat-response-annotation-editor']")
-          || eventTarget.closest("[data-testid='chat-response-annotation-card']")
-        )
-      ) {
-        return;
-      }
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        setPendingResponseAnnotationSelection(null);
-        return;
-      }
-      const range = selection.getRangeAt(0);
-      const startElement = range.startContainer instanceof Element
-        ? range.startContainer
-        : range.startContainer.parentElement;
-      const endElement = range.endContainer instanceof Element
-        ? range.endContainer
-        : range.endContainer.parentElement;
-      const sourceRoot = startElement?.closest<HTMLElement>(
-        `[${CHAT_ANNOTATION_SOURCE_ATTRIBUTE}]`,
-      ) ?? null;
-      if (
-        !sourceRoot
-        || endElement?.closest(`[${CHAT_ANNOTATION_SOURCE_ATTRIBUTE}]`) !== sourceRoot
-      ) {
-        setPendingResponseAnnotationSelection(null);
-        return;
-      }
-      const surface = sourceRoot.dataset.annotationSurface;
-      if (surface !== "assistant_body" && surface !== "process_transcript") {
-        setPendingResponseAnnotationSelection(null);
-        return;
-      }
-      const sourceMessageId = sourceRoot.dataset.messageId?.trim() ?? "";
-      const sourceMessage = rawMessages.find((message) => message.id === sourceMessageId);
-      if (
-        !sourceMessage
-        || sourceMessage.role !== "assistant"
-        || sourceMessage.kind !== "message"
-        || sourceMessage.supersededAt
-        || !(
-          sourceMessage.status === "completed"
-          || sourceMessage.status === "stopped"
-          || sourceMessage.status === "failed"
-        )
-      ) {
-        setPendingResponseAnnotationSelection(null);
-        return;
-      }
-      let source = sourceMessage.body;
-      let processProvenance: {
-        transcriptKind: "assistant" | "thinking";
-        generationId: string;
-        generationSeqStart: number;
-        generationSeqEnd: number;
-      } | null = null;
-      if (surface === "process_transcript") {
-        const transcriptKind = sourceRoot.dataset.transcriptKind;
-        const generationId = sourceRoot.dataset.generationId?.trim() ?? "";
-        const generationSeqStart = Number(sourceRoot.dataset.generationSeqStart);
-        const generationSeqEnd = Number(sourceRoot.dataset.generationSeqEnd);
-        if (
-          (transcriptKind !== "assistant" && transcriptKind !== "thinking")
-          || !generationId
-          || !Number.isInteger(generationSeqStart)
-          || !Number.isInteger(generationSeqEnd)
-        ) {
-          setPendingResponseAnnotationSelection(null);
-          return;
-        }
-        const transcriptEntries = loadedTranscriptsByMessageId[sourceMessage.id]
-          ?? sourceMessage.transcript
-          ?? [];
-        const sourceEntry = transcriptEntries.find((entry) => {
-          const candidate = entry as typeof entry & {
-            generationId?: string;
-            generationSeqStart?: number;
-            generationSeqEnd?: number;
-          };
-          return candidate.kind === transcriptKind
-            && candidate.generationId === generationId
-            && candidate.generationSeqStart === generationSeqStart
-            && candidate.generationSeqEnd === generationSeqEnd;
-        });
-        if (
-          !sourceEntry
-          || (sourceEntry.kind !== "assistant" && sourceEntry.kind !== "thinking")
-        ) {
-          setPendingResponseAnnotationSelection(null);
-          return;
-        }
-        const visibleSource = readChatAnnotationSourceText(sourceRoot);
-        if (visibleSource === null) {
-          setPendingResponseAnnotationSelection(null);
-          return;
-        }
-        source = visibleSource;
-        processProvenance = {
-          transcriptKind,
-          generationId,
-          generationSeqStart,
-          generationSeqEnd,
-        };
-      }
-      const stableRange = range.cloneRange();
-      const anchorRect = range.getBoundingClientRect();
-      const autoFocusToolbar = shouldAutoFocusChatAnnotationToolbar(event);
-      void hashChatAnnotationSource(source).then((sourceHash) => {
-        const common = {
-          range: stableRange,
-          sourceRoot,
-          source,
-          sourceHash,
-          sourceConversationId: sourceMessage.conversationId,
-          sourceMessageId: sourceMessage.id,
-        };
-        const anchor = processProvenance
-          ? resolveChatAnnotationRange({
-              ...common,
-              surface: "process_transcript",
-              ...processProvenance,
-            })
-          : resolveChatAnnotationRange({
-              ...common,
-              surface: "assistant_body",
-            });
-        if (!anchor) {
-          setPendingResponseAnnotationSelection(null);
-          return;
-        }
-        setPendingResponseAnnotationSelection({
-          range: stableRange,
-          sourceRoot,
-          source,
-          sourceConversationId: sourceMessage.conversationId,
-          sourceMessageId: sourceMessage.id,
-          surface,
-          anchor,
-          anchorRect,
-          boundaryRoot: sourceRoot.closest<HTMLElement>(
-            '[data-testid="chat-main-workspace-card"]',
-          ),
-          sideChatEligible: sourceMessage.status === "completed",
-          autoFocusToolbar,
-        });
-      });
-    };
-    document.addEventListener("mouseup", updateSelection);
-    document.addEventListener("touchend", updateSelection);
-    document.addEventListener("keyup", updateSelection);
-    return () => {
-      document.removeEventListener("mouseup", updateSelection);
-      document.removeEventListener("touchend", updateSelection);
-      document.removeEventListener("keyup", updateSelection);
-    };
-  }, [loadedTranscriptsByMessageId, rawMessages]);
+  const {
+    pendingSelection: pendingResponseAnnotationSelection,
+    setPendingSelection: setPendingResponseAnnotationSelection,
+  } = usePendingChatResponseAnnotationSelection({
+    activeDraftScopeRef,
+    chatMainWorkspaceRef,
+    draftStorageScopeKey,
+    loadedTranscriptsByMessageId,
+    rawMessages,
+    selectedConversationId: selectedConversation?.id ?? null,
+  });
   const addPendingResponseAnnotation = useCallback(async (
     options: { focusComposer?: boolean } = {},
   ) => {
@@ -1868,9 +1695,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     const annotation = await addPendingResponseAnnotation({ focusComposer: false });
     if (!annotation) return;
     setResponseAnnotationsExpanded(false);
+    const liveSelection = restoreLiveChatAnnotationRange({
+      anchor: pending.anchor,
+      source: pending.source,
+      searchRoot: chatMainWorkspaceRef.current ?? document,
+    });
     responseAnnotationEditor.openFromSelection(annotation.id, {
       anchorRect: pending.anchorRect,
-      boundaryRect: pending.boundaryRoot?.getBoundingClientRect() ?? null,
+      boundaryRect: liveSelection?.sourceRoot
+        .closest<HTMLElement>('[data-testid="chat-main-workspace-card"]')
+        ?.getBoundingClientRect() ?? null,
     });
   }, [addPendingResponseAnnotation, pendingResponseAnnotationSelection, responseAnnotationEditor]);
   const handleAskSelectionInSideChat = useCallback(async () => {
@@ -3300,24 +3134,33 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         <SelectionAnnotationToolbar
           open
           anchorRect={pendingResponseAnnotationSelection.anchorRect}
-          getAnchorRect={() => {
+          getAnchorSnapshot={() => {
             try {
-              return pendingResponseAnnotationSelection.range.getBoundingClientRect();
+              const liveSelection = restoreLiveChatAnnotationRange({
+                anchor: pendingResponseAnnotationSelection.anchor,
+                source: pendingResponseAnnotationSelection.source,
+                searchRoot: chatMainWorkspaceRef.current ?? document,
+              });
+              return {
+                available: Boolean(liveSelection),
+                anchorRect: liveSelection?.range.getBoundingClientRect() ?? null,
+                boundaryRect: chatMainWorkspaceRef.current?.getBoundingClientRect() ?? null,
+              };
             } catch {
-              return null;
+              return {
+                available: false,
+                anchorRect: null,
+                boundaryRect: null,
+              };
             }
           }}
-          boundaryRect={
-            pendingResponseAnnotationSelection.boundaryRoot?.getBoundingClientRect() ?? null
-          }
-          getBoundaryRect={() => {
-            const boundaryRoot = pendingResponseAnnotationSelection.boundaryRoot;
-            return boundaryRoot?.isConnected ? boundaryRoot.getBoundingClientRect() : null;
-          }}
+          anchorObservationRoot={chatMainWorkspaceRef.current}
+          boundaryRect={chatMainWorkspaceRef.current?.getBoundingClientRect() ?? null}
           onAddToChat={() => void handleAddSelectionToChat()}
           onAskInSideChat={() => void handleAskSelectionInSideChat()}
           askInSideChatDisabled={!pendingResponseAnnotationSelection.sideChatEligible}
           onDismiss={() => setPendingResponseAnnotationSelection(null)}
+          onAnchorUnavailable={() => setPendingResponseAnnotationSelection(null)}
           onReturnFocus={() => composerEditorRef.current?.focus()}
           autoFocus={pendingResponseAnnotationSelection.autoFocusToolbar}
         />
@@ -3378,6 +3221,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         }} />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row md:gap-1.5">
         <main
+          ref={chatMainWorkspaceRef}
           data-testid="chat-main-workspace-card"
           className="workspace-main-card relative flex min-h-0 flex-1 flex-col overflow-hidden md:rounded-[var(--desktop-workspace-radius)]"
         >
