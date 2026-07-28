@@ -3112,7 +3112,7 @@ test.describe("Messenger unified threads contract", () => {
     }).toContain(labels[0].id);
   });
 
-  test("keeps approval decision note in the modal review flow and scrolls long approval threads", async ({ page }, testInfo) => {
+  test("keeps approval decisions in the modal review flow without a separate comments surface", async ({ page }, testInfo) => {
     const organization = await createOrganization(page, `Messenger-Approval-Modal-${Date.now()}`);
 
     const approvalRes = await page.request.post(`/api/orgs/${organization.id}/approvals`, {
@@ -3147,31 +3147,15 @@ test.describe("Messenger unified threads contract", () => {
     await page.goto(`/${organization.issuePrefix}/messenger/approvals/${approval.id}`, { waitUntil: "commit" });
 
     const dialog = page.getByTestId("approval-detail-dialog");
-    const scrollArea = page.getByTestId("approval-detail-scroll-area");
 
     await expect(dialog).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("approval-decision-note")).toBeVisible();
     await expect(dialog.getByRole("button", { name: "See full request" })).toHaveCount(0);
-
-    const scrollMetrics = await scrollArea.evaluate((node) => ({
-      scrollHeight: node.scrollHeight,
-      clientHeight: node.clientHeight,
-    }));
-    expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
-
-    await scrollArea.evaluate((node) => {
-      node.scrollTo({ top: node.scrollHeight, behavior: "auto" });
-    });
-
-    await expect.poll(async () => {
-      return await scrollArea.evaluate((node) => node.scrollTop);
-    }).toBeGreaterThan(0);
-
-    await expect(page.getByPlaceholder("Add a comment...")).toBeVisible();
-
-    await scrollArea.evaluate((node) => {
-      node.scrollTo({ top: 0, behavior: "auto" });
-    });
+    await expect(dialog.getByText("Comments (10)")).toHaveCount(0);
+    await expect(dialog.getByText("Scrollable approval comment 1", { exact: false })).toHaveCount(0);
+    await expect(dialog.getByPlaceholder("Add a comment...")).toHaveCount(0);
+    await expect(dialog).toBeInViewport();
+    await expect(dialog.getByRole("button", { name: "Request changes" })).toBeInViewport();
     await expect(page.getByTestId("approval-decision-note")).toBeVisible();
 
     await page.getByTestId("approval-decision-note").fill("Please tighten the execution scope before resubmitting.");
