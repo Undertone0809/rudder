@@ -164,6 +164,14 @@ function normalizeThreadItem(value: unknown): JsonRecord {
   if (type === "collabAgentToolCall") {
     return { ...item, type: "collab_agent_tool_call" };
   }
+  if (type === "subAgentActivity") {
+    return {
+      ...item,
+      type: "sub_agent_activity",
+      agent_thread_id: asString(item.agentThreadId),
+      agent_path: asString(item.agentPath),
+    };
+  }
   if (type === "webSearch") {
     return { ...item, type: "web_search" };
   }
@@ -186,9 +194,12 @@ function readThreadSnapshot(response: unknown): { status: string; items: JsonRec
 }
 
 function collabAgentReceiverThreadIds(item: JsonRecord): string[] {
-  return Array.isArray(item.receiverThreadIds)
+  const receiverThreadIds = Array.isArray(item.receiverThreadIds)
     ? item.receiverThreadIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
+  if (receiverThreadIds.length > 0) return receiverThreadIds;
+  const activityThreadId = asString(item.agentThreadId) || asString(item.agent_thread_id);
+  return activityThreadId ? [activityThreadId] : [];
 }
 
 function usageFromNotification(params: JsonRecord): UsageSummary | null {
@@ -462,7 +473,10 @@ export async function executeCodexAppServerChat(
           }
           item = withCommandWorkingDirectory(item, cwd);
         }
-        if (notification.method === "item/completed" && item.type === "collab_agent_tool_call") {
+        if (
+          notification.method === "item/completed"
+          && (item.type === "collab_agent_tool_call" || item.type === "sub_agent_activity")
+        ) {
           const snapshots = await Promise.all(collabAgentReceiverThreadIds(item).map(async (receiverThreadId) => {
             try {
               const response = await client.request("thread/read", {

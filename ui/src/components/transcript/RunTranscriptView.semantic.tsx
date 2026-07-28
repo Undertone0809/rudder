@@ -889,6 +889,29 @@ function describeCodexAgentToolSemanticInfo(name: string, input: unknown): Trans
     };
   }
 
+  if (toolName === "subagent_activity") {
+    const activityKind = readStringField(record, ["activity_kind", "activityKind", "kind"]) ?? "updated";
+    const agentPath = readStringField(record, ["agent_path", "agentPath"]);
+    const agentName = agentPath?.split("/").filter(Boolean).at(-1)?.replace(/[_-]+/g, " ") ?? null;
+    const receiver = readCodexAgentReceivers(record)[0];
+    const label = agentName ?? (receiver ? truncate(receiver, 24) : "sub-agent");
+    const verb = activityKind === "started"
+      ? "Spawned"
+      : activityKind === "interrupted"
+        ? "Interrupted"
+        : activityKind === "completed"
+          ? "Completed"
+          : "Updated";
+    return {
+      category: "tool",
+      label: "Sub-agent activity",
+      summary: `${verb} ${label} agent`,
+      bucket: "tool",
+      quantity: 1,
+      noun: "tool",
+    };
+  }
+
   if (toolName === "wait_agent") {
     const targets = Array.isArray(record.targets)
       ? record.targets.filter((target): target is string => typeof target === "string" && target.trim().length > 0)

@@ -213,6 +213,20 @@ rl.on("line", (line) => {
       } });
       finish("completed");
     }
+    if (process.env.RUDDER_TEST_SUBAGENT_ACTIVITY_TRANSCRIPT === "1") {
+      send({ method: "item/completed", params: {
+        threadId,
+        turnId,
+        item: {
+          type: "subAgentActivity",
+          id: "subagent-activity-1",
+          kind: "started",
+          agentThreadId: "thread-child-1",
+          agentPath: "/root/transcript_renderer_review",
+        },
+      } });
+      finish("completed");
+    }
     if (process.env.RUDDER_TEST_DUAL_REASONING_STREAM === "1") {
       for (const delta of ["I will use ", "visualize once."]) {
         send({ method: "item/reasoning/summaryTextDelta", params: {
@@ -792,6 +806,88 @@ describe("executeCodexAppServerChat", () => {
     expect(entries).not.toContainEqual(expect.objectContaining({
       kind: "system",
       text: expect.stringContaining("Collab Agent Tool Call"),
+    }));
+  });
+
+  it("projects Codex sub-agent activity as an inspectable transcript row", async () => {
+    const stdoutLines: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_SUBAGENT_ACTIVITY_TRANSCRIPT: "1",
+      } as Record<string, string>,
+      prompt: "Delegate a transcript review",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (_stream, chunk) => {
+        stdoutLines.push(chunk.trim());
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const entries = stdoutLines.flatMap((line) => (
+      parseCodexStdoutLine(line, "2026-07-28T00:00:00.000Z")
+    ));
+    expect(entries).toContainEqual({
+      kind: "tool_call",
+      ts: "2026-07-28T00:00:00.000Z",
+      name: "subagent_activity",
+      toolUseId: "subagent-activity-1",
+      input: expect.objectContaining({
+        id: "subagent-activity-1",
+        activity_kind: "started",
+        agent_path: "/root/transcript_renderer_review",
+        receiver_thread_ids: ["thread-child-1"],
+        agent_transcripts: {
+          "thread-child-1": {
+            status: "completed",
+            entries: expect.arrayContaining([
+              expect.objectContaining({
+                kind: "assistant",
+                text: "Review passed.",
+              }),
+            ]),
+          },
+        },
+      }),
+    });
+    expect(entries).not.toContainEqual(expect.objectContaining({
+      kind: "system",
+      text: expect.stringContaining("subAgentActivity"),
+    }));
+  });
+
+  it("keeps legacy Codex collab_tool_call events on the collaboration UI path", () => {
+    const entries = parseCodexStdoutLine(JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "legacy-collab-1",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        prompt: "Review the compatibility path.",
+        receiver_thread_ids: ["thread-legacy-1"],
+        agents_states: {},
+        status: "completed",
+      },
+    }), "2026-07-28T00:00:00.000Z");
+
+    expect(entries).toContainEqual(expect.objectContaining({
+      kind: "tool_result",
+      toolUseId: "legacy-collab-1",
+      toolName: "spawn_agent",
+      content: expect.stringContaining('"receiver_thread_ids":["thread-legacy-1"]'),
+    }));
+    expect(entries).not.toContainEqual(expect.objectContaining({
+      kind: "system",
+      text: expect.stringContaining("collab_tool_call"),
     }));
   });
 

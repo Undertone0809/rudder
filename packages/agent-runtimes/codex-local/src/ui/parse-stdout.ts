@@ -357,6 +357,9 @@ function parseCollabAgentTranscriptItems(items: unknown[], fallbackTs: string): 
       || type === "web_search"
       || type === "mcp_tool_call"
       || type === "collab_agent_tool_call"
+      || type === "collab_tool_call"
+      || type === "subAgentActivity"
+      || type === "sub_agent_activity"
     ) {
       return [
         ...parseCodexItem(item, ts, "started"),
@@ -385,6 +388,57 @@ function parseCollabAgentTranscripts(item: Record<string, unknown>, ts: string) 
   return Object.keys(parsed).length > 0 ? parsed : null;
 }
 
+function subAgentActivityThreadId(item: Record<string, unknown>): string {
+  return firstString(item.agentThreadId, item.agent_thread_id);
+}
+
+function parseSubAgentActivityItem(
+  item: Record<string, unknown>,
+  ts: string,
+  phase: "started" | "completed",
+): TranscriptEntry[] {
+  if (phase === "started") return [];
+
+  const id = asString(item.id) || "sub_agent_activity";
+  const threadId = subAgentActivityThreadId(item);
+  const agentPath = firstString(item.agentPath, item.agent_path);
+  const activityKind = asString(item.kind, "updated");
+  const agentTranscripts = parseCollabAgentTranscripts(item, ts);
+  const receiverThreadIds = threadId ? [threadId] : [];
+  const input = {
+    id,
+    activity_kind: activityKind,
+    ...(agentPath ? { agent_path: agentPath } : {}),
+    receiver_thread_ids: receiverThreadIds,
+    ...(agentTranscripts ? { agent_transcripts: agentTranscripts } : {}),
+  };
+  const status = activityKind === "interrupted" ? "failed" : "completed";
+
+  return [
+    {
+      kind: "tool_call",
+      ts,
+      name: "subagent_activity",
+      toolUseId: id,
+      input,
+    },
+    {
+      kind: "tool_result",
+      ts,
+      toolUseId: id,
+      toolName: "subagent_activity",
+      content: JSON.stringify({
+        status,
+        activity_kind: activityKind,
+        ...(agentPath ? { agent_path: agentPath } : {}),
+        receiver_thread_ids: receiverThreadIds,
+        ...(agentTranscripts ? { agent_transcripts: agentTranscripts } : {}),
+      }),
+      isError: activityKind === "interrupted",
+    },
+  ];
+}
+
 function parseCollabAgentToolCallItem(
   item: Record<string, unknown>,
   ts: string,
@@ -392,10 +446,17 @@ function parseCollabAgentToolCallItem(
 ): TranscriptEntry[] {
   const id = asString(item.id) || "collab_agent_tool_call";
   const name = normalizeCollabAgentToolName(asString(item.tool));
-  const receiverThreadIds = Array.isArray(item.receiverThreadIds)
-    ? item.receiverThreadIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+  const rawReceiverThreadIds = Array.isArray(item.receiverThreadIds)
+    ? item.receiverThreadIds
+    : Array.isArray(item.receiver_thread_ids)
+      ? item.receiver_thread_ids
+      : [];
+  const receiverThreadIds = rawReceiverThreadIds.length > 0
+    ? rawReceiverThreadIds.filter((value): value is string => typeof value === "string" && value.length > 0)
     : [];
-  const agentsStates = asRecord(item.agentsStates) ?? {};
+  const agentsStates = asRecord(item.agentsStates) ?? asRecord(item.agents_states) ?? {};
+  const reasoningEffort = firstString(item.reasoningEffort, item.reasoning_effort);
+  const senderThreadId = firstString(item.senderThreadId, item.sender_thread_id);
 
   if (phase === "started") {
     return [{
@@ -407,8 +468,8 @@ function parseCollabAgentToolCallItem(
         id,
         ...(asString(item.prompt) ? { message: asString(item.prompt) } : {}),
         ...(asString(item.model) ? { model: asString(item.model) } : {}),
-        ...(asString(item.reasoningEffort) ? { reasoning_effort: asString(item.reasoningEffort) } : {}),
-        ...(asString(item.senderThreadId) ? { sender_thread_id: asString(item.senderThreadId) } : {}),
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+        ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
         receiver_thread_ids: receiverThreadIds,
         agents_states: agentsStates,
       },
@@ -426,8 +487,8 @@ function parseCollabAgentToolCallItem(
       status,
       ...(asString(item.prompt) ? { message: asString(item.prompt) } : {}),
       ...(asString(item.model) ? { model: asString(item.model) } : {}),
-      ...(asString(item.reasoningEffort) ? { reasoning_effort: asString(item.reasoningEffort) } : {}),
-      ...(asString(item.senderThreadId) ? { sender_thread_id: asString(item.senderThreadId) } : {}),
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
       receiver_thread_ids: receiverThreadIds,
       agents_states: agentsStates,
       ...(agentTranscripts ? { agent_transcripts: agentTranscripts } : {}),
@@ -495,8 +556,17 @@ function parseCodexItem(
     return parseMcpToolCallItem(item, ts, phase);
   }
 
-  if (itemType === "collab_agent_tool_call" || itemType === "collabAgentToolCall") {
+  if (
+    itemType === "collab_agent_tool_call"
+    || itemType === "collabAgentToolCall"
+    || itemType === "collab_tool_call"
+    || itemType === "collabToolCall"
+  ) {
     return parseCollabAgentToolCallItem(item, ts, phase);
+  }
+
+  if (itemType === "sub_agent_activity" || itemType === "subAgentActivity") {
+    return parseSubAgentActivityItem(item, ts, phase);
   }
 
   if (itemType === "file_change" && phase === "completed") {

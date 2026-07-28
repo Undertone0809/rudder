@@ -3005,6 +3005,61 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("Collab Tool Call");
   });
 
+  it("renders Codex sub-agent activity as an inspectable agent row", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-07-28T00:00:01.000Z",
+              name: "subagent_activity",
+              toolUseId: "activity-1",
+              input: {
+                id: "activity-1",
+                activity_kind: "started",
+                agent_path: "/root/transcript_renderer_review",
+                receiver_thread_ids: ["thread-child-1"],
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-07-28T00:00:02.000Z",
+              toolUseId: "activity-1",
+              toolName: "subagent_activity",
+              content: JSON.stringify({
+                status: "completed",
+                activity_kind: "started",
+                agent_path: "/root/transcript_renderer_review",
+                receiver_thread_ids: ["thread-child-1"],
+                agent_transcripts: {
+                  "thread-child-1": {
+                    status: "completed",
+                    entries: [{
+                      kind: "assistant",
+                      ts: "2026-07-28T00:00:01.500Z",
+                      text: "Review passed.",
+                    }],
+                  },
+                },
+              }),
+              isError: false,
+            },
+          ]}
+          onOpenAgent={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Spawned transcript renderer review agent");
+    expect(html).toContain('data-transcript-agent-avatar="activity-1"');
+    expect(html).toContain('data-transcript-agent-inspect="thread-child-1"');
+    expect(html).toContain('aria-label="Inspect agent thread-child-1"');
+    expect(html).not.toContain("SubAgentActivity");
+  });
+
   it("merges a later wait snapshot into the inspectable spawn agent", () => {
     const entries: TranscriptEntry[] = [
       {

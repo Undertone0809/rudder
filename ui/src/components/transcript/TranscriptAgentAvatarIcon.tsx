@@ -45,7 +45,7 @@ function hashSeed(seed: string): number {
 
 export function getTranscriptAgentAvatarInfo(toolName: string, input: unknown): TranscriptAgentAvatarInfo | null {
   const normalizedToolName = toolName.trim().toLowerCase().split(".").pop()?.replace(/-/g, "_");
-  if (normalizedToolName !== "spawn_agent") return null;
+  if (normalizedToolName !== "spawn_agent" && normalizedToolName !== "subagent_activity") return null;
 
   const record = asRecord(input);
   if (!record) return null;
