@@ -69,6 +69,11 @@ import {
   type AdapterType,
   type Step,
 } from "./OnboardingWizard.parts";
+import {
+  onboardingCreationPhaseTitle,
+  OnboardingCreationProgress,
+  type OnboardingCreationPhase,
+} from "./OnboardingWizard.progress";
 import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
 import { markProductTourPending } from "./ProductTourOverlay";
 export function OnboardingWizard() {
@@ -98,6 +103,8 @@ export function OnboardingWizard() {
   const [step, setStep] = useState<Step>(initialStep);
   const [furthestStep, setFurthestStep] = useState<Step>(initialStep);
   const [loading, setLoading] = useState(false);
+  const [creationPhase, setCreationPhase] =
+    useState<OnboardingCreationPhase | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   // Step 1
@@ -171,6 +178,7 @@ export function OnboardingWizard() {
     setCreatedCompanyId(cId);
     setCreatedAgentId(null);
     setCreatedNewOrganizationInSession(false);
+    setCreationPhase(null);
   }, [
     effectiveOnboardingOpen,
     effectiveOnboardingOptions.orgId,
@@ -368,6 +376,7 @@ export function OnboardingWizard() {
   function reset() {
     setStep(1);
     setLoading(false);
+    setCreationPhase(null);
     setError(null);
     setCompanyName("");
     setFirstTimeUser(true);
@@ -391,13 +400,14 @@ export function OnboardingWizard() {
     setCreatedNewOrganizationInSession(false);
   }
   async function handleClose() {
-    if (loading) return;
+    if (loading) return false;
     setLoading(true);
     setError(null);
     try {
       await cleanupDraftOrganization();
       reset();
       closeOnboarding();
+      return true;
     } catch (err) {
       setLoading(false);
       setError(
@@ -405,6 +415,12 @@ export function OnboardingWizard() {
           ? err.message
           : "Failed to rollback the unfinished onboarding draft."
       );
+      return false;
+    }
+  }
+  async function handleDismiss() {
+    if (await handleClose()) {
+      setRouteDismissed(true);
     }
   }
   function buildAdapterConfig(
@@ -528,7 +544,11 @@ export function OnboardingWizard() {
     }
   }
   async function handleStep1Next() {
+    if (loading) return;
     setLoading(true);
+    setCreationPhase(
+      createdCompanyId ? "saving_organization" : "creating_organization",
+    );
     setError(null);
     try {
       const isCreatingOrganization = !createdCompanyId;
@@ -566,6 +586,7 @@ export function OnboardingWizard() {
       );
     } finally {
       setLoading(false);
+      setCreationPhase(null);
     }
   }
   async function seedGettingStartedOnboarding(organizationId: string, includeTutorial = true) {
@@ -584,6 +605,7 @@ export function OnboardingWizard() {
     return result;
   }
   async function handleStep2Next() {
+    if (loading || adapterEnvLoading) return;
     if (!createdCompanyId) {
       setError("Complete organization setup before creating an agent.");
       setStep(1);
@@ -604,6 +626,11 @@ export function OnboardingWizard() {
           return;
         }
       }
+      setCreationPhase(
+        isLocalAdapter && !adapterEnvResult
+          ? "checking_runtime"
+          : "creating_agent",
+      );
       const agentRuntimeConfig = await buildAdapterConfigWithProviderSecret();
       if (isLocalAdapter) {
         const result = adapterEnvResult ?? (await runAdapterEnvironmentTest(agentRuntimeConfig));
@@ -614,6 +641,7 @@ export function OnboardingWizard() {
           return;
         }
       }
+      setCreationPhase("creating_agent");
       const agentPayload = {
         name: trimmedAgentName,
         role: "ceo",
@@ -636,6 +664,9 @@ export function OnboardingWizard() {
         ? await agentsApi.update(createdAgentId, agentPayload, createdCompanyId)
         : await agentsApi.create(createdCompanyId, agentPayload);
       setCreatedAgentId(agent.id);
+      if (createdNewOrganizationInSession) {
+        setCreationPhase("preparing_starter_workspace");
+      }
       const organizationSnapshot = await organizationsApi.get(createdCompanyId);
       syncOrganizationSnapshot(organizationSnapshot);
       queryClient.invalidateQueries({
@@ -668,6 +699,7 @@ export function OnboardingWizard() {
       );
     } finally {
       setLoading(false);
+      setCreationPhase(null);
     }
   }
   async function handleUnsetAnthropicApiKey() {
@@ -716,6 +748,7 @@ export function OnboardingWizard() {
     }
   }
   function handleKeyDown(e: React.KeyboardEvent) {
+    if (loading || adapterEnvLoading) return;
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       if (step === 1 && organizationName.trim()) handleStep1Next();
@@ -727,14 +760,16 @@ export function OnboardingWizard() {
     <Dialog
       open={effectiveOnboardingOpen} onOpenChange={(open) => {
         if (!open) {
-          setRouteDismissed(true);
-          void handleClose();
+          void handleDismiss();
         }
       }} >
       <DialogPortal>
         <div className="fixed inset-0 z-50 bg-background" />
         <div className="fixed inset-0 z-50 flex" onKeyDown={handleKeyDown}>
-          <button onClick={() => void handleClose()} className={cn(
+          <button
+            data-testid="onboarding-close"
+            onClick={() => void handleDismiss()}
+            className={cn(
               "absolute top-4 right-4 z-10 rounded-full border p-2 transition-colors",
               step === 1
                 ? "border-white/15 bg-white/10 text-white/80 backdrop-blur-sm hover:bg-white/15 hover:text-white"
@@ -1047,6 +1082,9 @@ export function OnboardingWizard() {
                         } value={url} onChange={(e) => setUrl(e.target.value)} /> </div>
                   )} </div>
               )}
+              {creationPhase && (
+                <OnboardingCreationProgress phase={creationPhase} />
+              )}
               {error && (
                 <div className="mt-3">
                   <p className="text-xs text-destructive">{error}</p> </div>
@@ -1070,7 +1108,9 @@ export function OnboardingWizard() {
                       ) : (
                         <ArrowRight className="h-3.5 w-3.5 mr-1" />
                       )}
-                      {loading ? "Creating..." : "Next"}
+                      {loading
+                        ? `${onboardingCreationPhaseTitle(creationPhase)}...`
+                        : "Next"}
                     </Button>
                   )}
                   {step === 2 && (
@@ -1080,7 +1120,9 @@ export function OnboardingWizard() {
                       ) : (
                         <ArrowRight className="h-3.5 w-3.5 mr-1" />
                       )}
-                      {loading ? "Creating..." : "Create"}
+                      {loading
+                        ? `${onboardingCreationPhaseTitle(creationPhase)}...`
+                        : "Create"}
                     </Button>
                   )}
                 </div> </div> </div> </div>

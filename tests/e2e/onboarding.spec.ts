@@ -82,6 +82,19 @@ function extractMarkdownHref(markdown: string, label: string) {
   return match![1]!;
 }
 
+function createRequestGate() {
+  let signalStarted!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  return { started, signalStarted, blocked, release };
+}
+
 test.describe("Onboarding wizard", () => {
   test("keeps internal identity and mission out of organization setup", async ({ page }) => {
     const organizationName = `E2E-Name-Only-${Date.now()}`;
@@ -113,6 +126,107 @@ test.describe("Onboarding wizard", () => {
 
     await page.getByRole("button", { name: "Close" }).first().click();
     await expect(page.getByRole("button", { name: "Start Onboarding" })).toBeVisible();
+  });
+
+  test("explains each slow setup stage while creating a starter organization", async ({
+    page,
+  }) => {
+    const organizationGate = createRequestGate();
+    const runtimeGate = createRequestGate();
+    const agentGate = createRequestGate();
+    const starterWorkspaceGate = createRequestGate();
+    let organizationCreateRequestCount = 0;
+
+    await page.route(/\/api\/orgs$/, async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      organizationCreateRequestCount += 1;
+      organizationGate.signalStarted();
+      await organizationGate.blocked;
+      await route.continue();
+    });
+    await page.route(
+      /\/api\/orgs\/[^/]+\/adapters\/codex_local\/test-environment$/,
+      async (route) => {
+        runtimeGate.signalStarted();
+        await runtimeGate.blocked;
+        await route.continue();
+      },
+    );
+    await page.route(/\/api\/orgs\/[^/]+\/agents$/, async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      agentGate.signalStarted();
+      await agentGate.blocked;
+      await route.continue();
+    });
+    await page.route(
+      /\/api\/orgs\/[^/]+\/onboarding\/getting-started$/,
+      async (route) => {
+        starterWorkspaceGate.signalStarted();
+        await starterWorkspaceGate.blocked;
+        await route.continue();
+      },
+    );
+
+    await page.goto("/onboarding");
+    await expectOnboardingStep(page, "Name your organization");
+    await page
+      .locator('input[placeholder="Acme Corp"]')
+      .fill(`E2E-Slow-Onboarding-${Date.now()}`);
+    await page.getByRole("button", { name: "Next" }).click();
+
+    await organizationGate.started;
+    await expect(
+      page
+        .getByTestId("onboarding-creation-progress")
+        .getByRole("status", { name: "Creating organization..." }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("onboarding-creation-progress")).toBeVisible();
+    await page.getByTestId("onboarding-close").click();
+    await expect(page.getByTestId("onboarding-creation-progress")).toBeVisible();
+    await page.keyboard.press("ControlOrMeta+Enter");
+    organizationGate.release();
+
+    await expectOnboardingStep(page, "Create your first agent");
+    expect(organizationCreateRequestCount).toBe(1);
+    await page.getByRole("button", { name: "Codex" }).click();
+    await expect(page.locator('input[placeholder="Agent name"]')).toHaveValue(/\S+/, {
+      timeout: 15_000,
+    });
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+
+    await runtimeGate.started;
+    await expect(
+      page
+        .getByTestId("onboarding-creation-progress")
+        .getByRole("status", { name: "Checking agent runtime..." }),
+    ).toBeVisible();
+    runtimeGate.release();
+
+    await agentGate.started;
+    await expect(
+      page
+        .getByTestId("onboarding-creation-progress")
+        .getByRole("status", { name: "Creating agent..." }),
+    ).toBeVisible();
+    agentGate.release();
+
+    await starterWorkspaceGate.started;
+    await expect(
+      page
+        .getByTestId("onboarding-creation-progress")
+        .getByRole("status", { name: "Preparing starter workspace..." }),
+    ).toBeVisible();
+    starterWorkspaceGate.release();
+
+    await expect(page).toHaveURL(/\/messenger(?:\/chat)?$/, { timeout: 30_000 });
+    await expect(page.getByTestId("onboarding-creation-progress")).toHaveCount(0);
   });
 
   test("fresh onboarding creates a Getting Started project and opens messenger", async ({
