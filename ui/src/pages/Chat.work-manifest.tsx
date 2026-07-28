@@ -33,7 +33,7 @@ export interface ChatWorkManifestProps {
   onJumpToMessage(messageId: string): void;
 }
 
-const COLLAPSED_ROWS = 2;
+const VISIBLE_ROWS_BEFORE_COLLAPSE = 6;
 
 export function hasChatWorkManifestContent(manifest: ChatWorkManifestResponse | null | undefined) {
   if (!manifest) return false;
@@ -235,7 +235,7 @@ function ManifestSection({
 }) {
   const [expanded, setExpanded] = useState(false);
   if (items.length === 0) return null;
-  const visibleItems = expanded ? items : items.slice(0, COLLAPSED_ROWS);
+  const visibleItems = expanded ? items : items.slice(0, VISIBLE_ROWS_BEFORE_COLLAPSE);
   const sectionId = `${idPrefix}-${label.toLowerCase()}`;
   return (
     <section aria-label={label} className={cn(!fixedHeader && "border-t border-border/70 first:border-t-0")}>
@@ -258,7 +258,7 @@ function ManifestSection({
           </div>
         ))}
       </div>
-      {items.length > COLLAPSED_ROWS ? (
+      {items.length > VISIBLE_ROWS_BEFORE_COLLAPSE ? (
         <button
           type="button"
           className="mt-1 flex h-7 w-full items-center justify-center gap-1 rounded-[var(--radius-sm)] text-[11px] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"

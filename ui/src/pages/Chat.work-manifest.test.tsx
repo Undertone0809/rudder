@@ -100,7 +100,7 @@ const wideProps = {
 };
 
 describe("ChatWorkManifest", () => {
-  it("renders ordered sections, bounded rows, and website details without project work", () => {
+  it("renders ordered sections and website details without project work", () => {
     const container = render(
       <ChatWorkManifest
         manifest={manifest}
@@ -117,8 +117,8 @@ describe("ChatWorkManifest", () => {
     expect(text.indexOf("Sources")).toBeLessThan(text.indexOf("References"));
     expect(text).toContain("Report.md");
     expect(text).toContain("Brief.md");
-    expect(text).not.toContain("Notes.txt");
-    expect(text).toContain("View all 3");
+    expect(text).toContain("Notes.txt");
+    expect(text).not.toContain("View all 3");
     expect(text).not.toContain("Project work");
     expect(text).not.toContain("9 items");
     expect(text).not.toContain("Browser");
@@ -169,9 +169,7 @@ describe("ChatWorkManifest", () => {
     );
 
     const panel = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
-    const expandButton = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
-      .find((button) => button.textContent?.includes("View all 6"));
-    act(() => expandButton?.click());
+    expect(panel?.textContent).not.toContain("View all 6");
     const iconFor = (title: string) => Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
       .find((button) => button.title === title)
       ?.querySelector("[data-file-icon]")
@@ -209,9 +207,7 @@ describe("ChatWorkManifest", () => {
     );
 
     const panel = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
-    const expandButton = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
-      .find((button) => button.textContent?.includes("View all 3"));
-    act(() => expandButton?.click());
+    expect(panel?.textContent).not.toContain("View all 3");
     const rowFor = (title: string) => Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
       .find((button) => button.title === title);
     const iconFor = (title: string) => rowFor(title)
@@ -363,17 +359,30 @@ describe("ChatWorkManifest", () => {
     expect(container.querySelector("[data-testid='chat-work-manifest-compact-panel']")).toBeNull();
   });
 
-  it("expands a bounded section with an accessible control", () => {
+  it("shows up to six items directly and expands a seventh with an accessible control", () => {
+    const sources = Array.from(
+      { length: 7 },
+      (_, index) => item(`source-${index + 1}`, "source", `Source ${index + 1}`),
+    );
     const container = render(
-      <ChatWorkManifest manifest={manifest} loading={false} error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,
+      <ChatWorkManifest
+        manifest={{ ...manifest, totalCount: 7, outputs: [], sources, references: [] }}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        {...wideProps}
+        {...handlers}
+      />,
     );
     const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((candidate) => candidate.textContent?.includes("View all 3"));
+      .find((candidate) => candidate.textContent?.includes("View all 7"));
     expect(button?.getAttribute("aria-expanded")).toBe("false");
     expect(button?.getAttribute("aria-controls")).toBe("chat-work-manifest-wide-sources");
+    expect(container.textContent).toContain("Source 6");
+    expect(container.textContent).not.toContain("Source 7");
     act(() => button?.click());
     expect(button?.getAttribute("aria-expanded")).toBe("true");
-    expect(container.textContent).toContain("Notes.txt");
+    expect(container.textContent).toContain("Source 7");
     expect(button?.textContent).toContain("Show less");
   });
 

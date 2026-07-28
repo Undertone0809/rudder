@@ -22,6 +22,58 @@ const screenshotDir = process.env.RUDDER_CHAT_WORK_MANIFEST_SCREENSHOT_DIR
   : fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-work-manifest-"));
 
 test.describe("Chat Work Manifest", () => {
+  test("shows all six references without a collapse control", async ({ page }) => {
+    fs.mkdirSync(screenshotDir, { recursive: true });
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Six-References-${Date.now()}`,
+        issuePrefix: `CSR${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Six References Agent" });
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Six direct references",
+        preferredAgentId: agent.id,
+        initialMessage: { body: "Show six reference links." },
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    const referenceUrls = Array.from(
+      { length: 6 },
+      (_, index) => `https://six-reference-${index + 1}.example/research`,
+    );
+    await e2eDb.insert(chatMessages).values({
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      body: referenceUrls.join(" "),
+      status: "completed",
+      replyingAgentId: agent.id,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const shelf = page.getByRole("complementary", { name: "Conversation files and links" });
+    const references = shelf.getByRole("region", { name: "References" });
+    await expect(shelf).toBeVisible({ timeout: 15_000 });
+    await expect(shelf.getByTestId("chat-work-manifest-section-count-references")).toHaveText("6");
+    await expect(references.getByRole("button", { name: "View all 6" })).toHaveCount(0);
+    for (const referenceUrl of referenceUrls) {
+      await expect(references.locator(`button[title="${new URL(referenceUrl).hostname}"]`)).toBeVisible();
+    }
+    await page.screenshot({ path: `${screenshotDir}/six-references-direct.png`, fullPage: true });
+  });
+
   test("shows the current Automation name for an unlabeled reference", async ({ page }) => {
     fs.mkdirSync(screenshotDir, { recursive: true });
     const orgRes = await page.request.post("/api/orgs", {
@@ -210,7 +262,6 @@ test.describe("Chat Work Manifest", () => {
     await expect(issueButton.locator("[data-issue-status='todo'] [data-slot='issue-status-icon']"))
       .toHaveAttribute("data-status", "todo");
     await expect(commentButton.locator("[data-issue-type-icon='true']")).toBeVisible();
-    await shelf.getByText("View all 3", { exact: true }).click();
     const foreignButton = shelf.locator("button[data-target-type='issue']").filter({ hasText: "Foreign fallback" });
     await expect(foreignButton).toHaveCount(1);
     await expect(foreignButton.locator("[data-issue-status]")).toHaveCount(0);
@@ -554,14 +605,8 @@ test.describe("Chat Work Manifest", () => {
     expect(shelfBox!.x - (composerContentBox!.x + composerContentBox!.width)).toBeGreaterThanOrEqual(12);
 
     const sources = shelf.getByRole("region", { name: "Sources" });
-    const expandSources = sources.getByRole("button", { name: /View all/ });
-    await expect(expandSources).toHaveAttribute("aria-expanded", "false");
-    await expandSources.click();
-    const collapseSources = sources.getByRole("button", { name: "Show less" });
-    await expect(collapseSources).toHaveAttribute("aria-expanded", "true");
-    await expect(shelf).toContainText("source-two.example");
-    await collapseSources.click();
-    await expect(sources.getByRole("button", { name: /View all/ })).toHaveAttribute("aria-expanded", "false");
+    await expect(sources).toContainText("source-two.example");
+    await expect(sources.getByRole("button", { name: /View all/ })).toHaveCount(0);
     await page.screenshot({ path: `${screenshotDir}/references.png`, fullPage: true });
 
     await issueCommentButton.click();
