@@ -1925,7 +1925,7 @@ export function AskUserPanel({
       ) : null}
 
       {reviewingAnswers ? (
-        <section className="rounded-[var(--radius-md)] border border-border bg-card/85 p-3">
+        <section data-testid="chat-ask-user-content" className="min-w-0">
           <div className="text-sm font-medium text-foreground">Review answers</div>
           <div
             data-testid="chat-ask-user-review-scroll"
@@ -1961,7 +1961,8 @@ export function AskUserPanel({
       ) : currentQuestion ? (
         <section
           key={currentQuestion.id}
-          className="rounded-[var(--radius-md)] border border-border bg-card/85 p-3"
+          data-testid="chat-ask-user-content"
+          className="min-w-0"
         >
           <div className="text-sm font-medium text-foreground">
             {askUserQuestionTitle(currentQuestion)}

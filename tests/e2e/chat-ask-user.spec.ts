@@ -179,6 +179,10 @@ test("ask_user focuses the answer panel until the user responds", async ({ page 
   await expect(panel).not.toContainText("Choose an answer to continue");
   await expect(panel).not.toContainText("The assistant is waiting on this decision.");
   await expect(page.locator(".chat-composer")).toHaveCount(0);
+  const content = panel.getByTestId("chat-ask-user-content");
+  await expect(content).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(content).toHaveCSS("border-top-width", "0px");
+  await expect(content).toHaveCSS("padding-top", "0px");
 
   await panel.getByRole("button", { name: /Narrow path/ }).click();
   await panel.getByRole("button", { name: "Submit answer" }).click();
