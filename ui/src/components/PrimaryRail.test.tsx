@@ -489,6 +489,18 @@ describe("PrimaryRail active motion indicator", () => {
     expect(nav?.getAttribute("data-active-index")).toBe("1");
   });
 
+  it("uses white text and icon color for the fixed active rail destination", async () => {
+    mockState.pathname = "/messenger";
+
+    await renderPrimaryRail();
+
+    const messengerLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Messenger"));
+
+    expect(messengerLink?.className).toContain("text-white");
+    expect(messengerLink?.className).not.toContain("text-[color:var(--sidebar-foreground)]");
+  });
+
   it("surfaces Library as a primary rail destination", async () => {
     mockState.pathname = "/library";
 

@@ -354,10 +354,10 @@
   height: var(--motion-rail-item-height);
   border-radius: var(--radius-sm);
   pointer-events: none;
-  background: rgb(255 255 255 / 0.88);
+  background: rgb(67 88 79 / 0.88);
   box-shadow:
-    inset 0 0 0 1px rgb(15 23 42 / 0.08),
-    0 10px 24px -20px rgb(15 23 42 / 0.42);
+    inset 0 0 0 1px rgb(222 244 235 / 0.1),
+    0 10px 24px -20px rgb(15 23 42 / 0.76);
   transform: translate(
     calc(-50% + var(--primary-rail-item-shift, 0.25rem)),
     calc(var(--motion-rail-active-index) * (var(--motion-rail-item-height) + var(--motion-rail-item-gap)))
@@ -366,13 +366,6 @@
     transform var(--motion-duration-standard) var(--motion-ease-enter),
     opacity var(--motion-duration-fast) var(--motion-ease-standard);
   will-change: transform;
-}
-
-html.dark .motion-rail-active-indicator {
-  background: rgb(67 88 79 / 0.88);
-  box-shadow:
-    inset 0 0 0 1px rgb(222 244 235 / 0.1),
-    0 10px 24px -20px rgb(15 23 42 / 0.76);
 }
 
 .motion-context-nav {
