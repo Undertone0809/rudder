@@ -53,6 +53,7 @@ export function ImageContextMenu({
   onClose,
   onOpen,
   position,
+  portalContainer,
   src,
   testId = "markdown-image-context-menu",
 }: {
@@ -60,6 +61,7 @@ export function ImageContextMenu({
   onClose: () => void;
   onOpen?: () => void;
   position: ImageContextMenuPosition;
+  portalContainer?: Element | null;
   src: string;
   testId?: string;
 }) {
@@ -113,7 +115,7 @@ export function ImageContextMenu({
       ref={contextMenuRef}
       data-testid={testId}
       role="menu"
-      className="motion-chat-composer-menu-pop surface-overlay fixed z-50 min-w-[190px] rounded-[var(--radius-lg)] border p-1.5 text-foreground shadow-[var(--shadow-lg)]"
+      className={`motion-chat-composer-menu-pop surface-overlay z-50 min-w-[190px] rounded-[var(--radius-lg)] border p-1.5 text-foreground shadow-[var(--shadow-lg)] ${portalContainer ? "absolute" : "fixed"}`}
       style={position}
     >
       {onOpen ? (
@@ -160,6 +162,6 @@ export function ImageContextMenu({
         </button>
       ) : null}
     </div>,
-    document.body,
+    portalContainer ?? document.body,
   );
 }
