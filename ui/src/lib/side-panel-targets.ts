@@ -11,6 +11,12 @@ export type SidePanelTarget =
       label: string;
     }
   | {
+      kind: "issue_proposal";
+      conversationId: string;
+      messageId: string;
+      label: string;
+    }
+  | {
       kind: "automation";
       automationId: string;
       label: string;
@@ -151,6 +157,9 @@ function commentIdFromHash(url: URL) {
 
 export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "issue") return `issue:${target.issueId}:${target.commentId ?? ""}`;
+  if (target.kind === "issue_proposal") {
+    return `issue-proposal:${target.conversationId}:${target.messageId}`;
+  }
   if (target.kind === "automation") return `automation:${target.automationId}`;
   if (target.kind === "chat") return `chat:${target.conversationId}:${target.messageId ?? ""}`;
   if (target.kind === "subagent") return `subagent:${target.callId}:${target.threadId}`;
@@ -200,6 +209,7 @@ export function sidePanelFullPageHref(target: SidePanelTarget): string | null {
     const base = `/issues/${target.issueId}`;
     return target.commentId ? `${base}#comment-${encodeURIComponent(target.commentId)}` : base;
   }
+  if (target.kind === "issue_proposal") return null;
   if (target.kind === "automation") return `/automations/${target.automationId}`;
   if (target.kind === "chat") {
     const base = `/messenger/chat/${target.conversationId}`;

@@ -204,8 +204,11 @@ test.describe("Chat proposal review block", () => {
     await expect(initialReviewBlock.getByAltText("Original issue evidence")).toBeVisible();
     await expect(initialReviewBlock.getByAltText("unrelated-reference.png")).toHaveCount(0);
     await initialReviewBlock.getByRole("button", { name: "Show full proposal" }).click();
-    await expect(initialReviewBlock.getByRole("button", { name: "Show less" })).toBeVisible();
-    await initialReviewBlock.locator(".chat-review-details-body").screenshot({
+    const initialProposalPanel = page.getByTestId("chat-side-panel-issue-proposal-view");
+    await expect(initialProposalPanel).toBeVisible();
+    await expect(page.getByTestId("proposal-review-compact")).toBeVisible();
+    const initialPanelReviewBlock = initialProposalPanel.getByTestId("proposal-review-block");
+    await initialPanelReviewBlock.locator(".chat-review-details-body").screenshot({
       path: await proposalEvidenceScreenshotPath(testInfo, "initial-proposal-original-image.png"),
       animations: "disabled",
     });
@@ -232,14 +235,17 @@ test.describe("Chat proposal review block", () => {
     expect(unrelatedAttachment?.contentPath).toMatch(/^\/api\/assets\/[^/]+\/content$/);
 
     const revisionFeedback = "Retain the relevant original image and narrow the acceptance wording.";
-    await initialReviewBlock
+    await initialPanelReviewBlock
       .getByTestId("proposal-review-note")
       .locator(".rudder-mdxeditor-content[contenteditable='true']")
       .fill(revisionFeedback);
-    await initialReviewBlock.getByRole("button", { name: "Request changes" }).click();
+    await initialPanelReviewBlock.getByRole("button", { name: "Request changes" }).click();
 
-    await expect(initialReviewBlock).toHaveAttribute("data-status", "revision_requested", { timeout: 15_000 });
-    const revisedReviewBlock = page.getByTestId("proposal-review-block").last();
+    await expect(initialPanelReviewBlock).toHaveAttribute("data-status", "revision_requested", { timeout: 15_000 });
+    const revisedReviewBlock = page
+      .getByTestId("chat-messages-content")
+      .getByTestId("proposal-review-block")
+      .last();
     await expect(revisedReviewBlock).toHaveAttribute("data-status", "pending", { timeout: 30_000 });
     await expect(revisedReviewBlock.getByRole("heading", { name: "Revised proposal" })).toBeVisible();
     const revisedImage = revisedReviewBlock.getByAltText("Original issue evidence");
@@ -247,8 +253,9 @@ test.describe("Chat proposal review block", () => {
     await expect(revisedImage).toHaveAttribute("src", evidenceAttachment.contentPath);
     await expect(revisedReviewBlock.locator(`img[src="${unrelatedAttachment.contentPath}"]`)).toHaveCount(0);
     await revisedReviewBlock.getByRole("button", { name: "Show full proposal" }).click();
-    await expect(revisedReviewBlock.getByRole("button", { name: "Show less" })).toBeVisible();
-    await revisedReviewBlock.locator(".chat-review-details-body").screenshot({
+    const revisedProposalPanel = page.getByTestId("chat-side-panel-issue-proposal-view");
+    await expect(revisedProposalPanel).toBeVisible();
+    await revisedProposalPanel.locator(".chat-review-details-body").screenshot({
       path: await proposalEvidenceScreenshotPath(testInfo, "revised-proposal-original-image.png"),
       animations: "disabled",
     });
@@ -269,9 +276,10 @@ test.describe("Chat proposal review block", () => {
     expect(proposalDescriptions.join("\n")).not.toContain("localPath");
     expect(proposalDescriptions.join("\n")).not.toContain("rudder-chat-attachments-");
 
-    await revisedReviewBlock.getByTestId("proposal-review-approve").click();
-    await expect(revisedReviewBlock).toHaveAttribute("data-status", "approved", { timeout: 15_000 });
-    const createdIssueLink = revisedReviewBlock.locator(".chat-system-issue-link").last();
+    const revisedPanelReviewBlock = revisedProposalPanel.getByTestId("proposal-review-block");
+    await revisedPanelReviewBlock.getByTestId("proposal-review-approve").click();
+    await expect(revisedPanelReviewBlock).toHaveAttribute("data-status", "approved", { timeout: 15_000 });
+    const createdIssueLink = revisedPanelReviewBlock.locator(".chat-system-issue-link").last();
     await expect(createdIssueLink).toBeVisible({ timeout: 15_000 });
     await createdIssueLink.click();
 
@@ -297,7 +305,7 @@ test.describe("Chat proposal review block", () => {
     });
   });
 
-  test("collapses long proposal details until the operator expands them", async ({ page }) => {
+  test("opens long proposal details in a Side Panel tab and restores the inline card after close", async ({ page }, testInfo) => {
     const command = await writeProposalStub("proposal-review-long-details", {
       kind: "issue_proposal",
       body: "Create a long proposal for the details expansion test.",
@@ -333,9 +341,17 @@ test.describe("Chat proposal review block", () => {
     await composer.fill("please draft a long issue proposal");
     await page.getByRole("button", { name: "Send" }).click();
 
-    const reviewBlock = page.getByTestId("proposal-review-block").last();
+    const reviewBlock = page
+      .getByTestId("chat-messages-content")
+      .getByTestId("proposal-review-block")
+      .last();
     await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
     await expect(reviewBlock).toContainText("Reason: This proposal is intentionally unassigned while the operator reviews the long details.");
+    await page.screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "issue-proposal-inline-card.png"),
+      animations: "disabled",
+      fullPage: true,
+    });
     const details = reviewBlock.locator(".chat-review-details-body");
     const expandButton = reviewBlock.getByRole("button", { name: "Show full proposal" });
     await expect(expandButton).toBeVisible();
@@ -354,16 +370,45 @@ test.describe("Chat proposal review block", () => {
 
     await expandButton.click();
 
-    await expect(reviewBlock.getByRole("button", { name: "Show less" })).toBeVisible();
+    const compactProposal = page.getByTestId("proposal-review-compact");
+    await expect(compactProposal).toBeVisible();
+    await expect(reviewBlock).toHaveCount(0);
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveText("Issue proposal");
+    await expect(sidePanel.getByRole("status")).toHaveText("Issue proposal opened in Side Panel.");
+    const panelReviewBlock = sidePanel.getByTestId("proposal-review-block");
+    const panelDetails = panelReviewBlock.locator(".chat-review-details-body");
     await expect
       .poll(async () =>
-        details.evaluate((element) => ({
+        panelDetails.evaluate((element) => ({
           expanded: element.scrollHeight <= element.clientHeight + 1,
           collapsed: element.classList.contains("chat-review-details-body--collapsed"),
           fadeVisible: element.classList.contains("chat-review-details-body--can-expand"),
         })),
       )
       .toEqual({ expanded: true, collapsed: false, fadeVisible: false });
+    await expect(panelDetails).toContainText("Acceptance: Clicking show full proposal reveals every line without clipping.");
+    await page.screenshot({
+      path: await proposalEvidenceScreenshotPath(testInfo, "issue-proposal-side-panel.png"),
+      animations: "disabled",
+      fullPage: true,
+    });
+
+    await sidePanel.getByTestId("chat-side-panel-collapse").click();
+    await expect(sidePanel).toHaveCount(0);
+    await expect(compactProposal).toBeVisible();
+
+    await compactProposal.click();
+    const reopenedPanel = page.getByTestId("chat-side-panel");
+    await expect(reopenedPanel).toBeVisible();
+    await reopenedPanel.getByTestId("chat-side-panel-tab").hover();
+    await reopenedPanel.getByTestId("chat-side-panel-tab-close").click();
+
+    await expect(reopenedPanel).toHaveCount(0);
+    await expect(page.getByTestId("proposal-review-compact")).toHaveCount(0);
+    await expect(page.getByTestId("proposal-review-block")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Show full proposal" })).toBeVisible();
   });
 
   test("keeps decision note inside the review block and restores the composer after rejection", async ({ page }) => {
@@ -487,20 +532,29 @@ test.describe("Chat proposal review block", () => {
     await composer.fill("please draft an issue");
     await page.getByRole("button", { name: "Send" }).click();
 
-    const reviewBlock = page.getByTestId("proposal-review-block").first();
+    const reviewBlock = page
+      .getByTestId("chat-messages-content")
+      .getByTestId("proposal-review-block")
+      .first();
     await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
+    await reviewBlock.getByRole("button", { name: "Show full proposal" }).click();
+    const proposalPanel = page.getByTestId("chat-side-panel-issue-proposal-view");
+    const panelReviewBlock = proposalPanel.getByTestId("proposal-review-block");
+    await expect(panelReviewBlock).toBeVisible();
     const revisionFeedback = "Narrow the acceptance criteria before I approve this.";
-    await reviewBlock
+    await panelReviewBlock
       .getByTestId("proposal-review-note")
       .locator(".rudder-mdxeditor-content[contenteditable='true']")
       .fill(revisionFeedback);
-    await reviewBlock.getByRole("button", { name: "Request changes" }).click();
+    await panelReviewBlock.getByRole("button", { name: "Request changes" }).click();
 
-    await expect(reviewBlock).toHaveAttribute("data-status", "revision_requested", { timeout: 15_000 });
+    await expect(panelReviewBlock).toHaveAttribute("data-status", "revision_requested", { timeout: 15_000 });
     await expect(page.getByText('Please revise the proposal "Review block revision test"')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(revisionFeedback).last()).toBeVisible();
     await expect(page.getByTestId("proposal-review-block")).toHaveCount(2, { timeout: 15_000 });
-    await expect(page.getByTestId("proposal-review-block").last()).toHaveAttribute("data-status", "pending");
+    await expect(
+      page.getByTestId("chat-messages-content").getByTestId("proposal-review-block"),
+    ).toHaveAttribute("data-status", "pending");
   });
 
   test("shows approved proposals as completed review blocks", async ({ page }, testInfo) => {

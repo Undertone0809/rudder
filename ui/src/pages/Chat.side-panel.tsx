@@ -51,6 +51,7 @@ import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import { createBrowserSidePanelTarget as createChatSidePanelBrowserTarget } from "@/lib/browser-side-panel";
 import { createChatResponseAnnotationNavigationState } from "@/lib/chat-response-annotation-navigation";
 import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspaceLaunchTarget } from "@/lib/desktop-shell";
+import { IssueProposalSidePanelContent } from "@/lib/issue-proposal-side-panel-registry";
 import { MAIN_WORKBENCH_BROWSER_CAPACITY } from "@/lib/main-workbench-state";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, getOrganizationRouteKey } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
@@ -1610,6 +1611,7 @@ export function ChatSidePanel({
   }, [contextReady, sidePanel.activeKey, visibleTabs]);
 
   const issueTarget = activeTarget?.kind === "issue" ? activeTarget : null;
+  const issueProposalTarget = activeTarget?.kind === "issue_proposal" ? activeTarget : null;
   const chatTarget = activeTarget?.kind === "chat" ? activeTarget : null;
   const sideChatTarget = activeTarget?.kind === "side_chat" ? activeTarget : null;
   const subagentTarget = activeTarget?.kind === "subagent" ? activeTarget : null;
@@ -2164,7 +2166,7 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
-          activeLiveSurfaceTarget || localAppsTarget || issueTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {liveSurfaceTargets.map((target) => {
@@ -2272,6 +2274,13 @@ export function ChatSidePanel({
                 }}
               />
             )
+          ) : issueProposalTarget ? (
+            <div
+              className="h-full min-h-0"
+              data-testid="chat-side-panel-issue-proposal-view"
+            >
+              <IssueProposalSidePanelContent targetKey={sidePanelTargetKey(issueProposalTarget)} />
+            </div>
           ) : automationTarget ? (
             <div className="h-full min-h-0" data-testid="chat-side-panel-automation-view">
               <AutomationDetail

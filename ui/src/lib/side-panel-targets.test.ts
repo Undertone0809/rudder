@@ -111,6 +111,16 @@ describe("side panel targets", () => {
     expect(sidePanelTargetKey(localFileTarget)).toBe("local-file:/tmp/evidence.md");
     expect(sidePanelFullPageHref(localFileTarget)).toBeNull();
 
+    const issueProposalTarget = {
+      kind: "issue_proposal",
+      conversationId: "chat-1",
+      messageId: "proposal-1",
+      label: "Issue proposal",
+    } as const;
+    expect(sidePanelTargetKey(issueProposalTarget)).toBe("issue-proposal:chat-1:proposal-1");
+    expect(sidePanelFullPageHref(issueProposalTarget)).toBeNull();
+    expect(sidePanelTargetSupportsSavedView(issueProposalTarget)).toBe(false);
+
     const skillFileTarget = {
       kind: "organization_skill_file",
       skillId: "skill-1",

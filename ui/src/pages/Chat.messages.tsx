@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { type ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { useMarkdownMentions } from "@/context/MarkdownMentionsContext";
+import { useOptionalSidePanel } from "@/context/SidePanelContext";
 import { useResolvedIssueMention } from "@/hooks/useResolvedIssueMention";
 import {
   assigneeValueFromSelection,
@@ -49,9 +50,14 @@ import {
   CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
 } from "@/lib/chat-response-annotation-selection";
 import { mergeNativeSteerTranscriptEntries } from "@/lib/chat-stream-state";
+import {
+  clearIssueProposalPanelContent,
+  publishIssueProposalPanelContent,
+} from "@/lib/issue-proposal-side-panel-registry";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "@/lib/mention-chips";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
 import { Link } from "@/lib/router";
+import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import {
   formatSkillReferenceDisplayLabel,
   parseSkillReference,
@@ -87,14 +93,16 @@ import {
   CirclePlus,
   Copy,
   GitFork,
+  Lightbulb,
   Loader2,
+  Maximize2,
   Paperclip,
   Pencil,
   RefreshCcw,
   Repeat,
   Sparkles
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { ChatFailedMessageActions } from "./Chat.failed-message-actions";
 import { chatForkSystemMessageParts, readStructuredPayloadString, sideChatStartedSystemMessageParts } from "./Chat.message-system-parts";
 import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, shouldHideSteerFallbackAssistantBubble, statusChipClassName } from "./Chat.parts";
@@ -470,6 +478,7 @@ export function ProposalCard({
   skillReferences,
   onMarkdownLinkClick,
   issueCreatedMessage,
+  presentation = "inline",
 }: {
   conversation: ChatConversation;
   message: ChatMessage;
@@ -489,7 +498,9 @@ export function ProposalCard({
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   issueCreatedMessage?: ChatMessage | null;
+  presentation?: "inline" | "side-panel";
 }) {
+  const sidePanel = useOptionalSidePanel();
   const baseIssueProposal = message.kind === "issue_proposal" ? issueProposalFromMessage(message) : null;
   const issueProposal = baseIssueProposal ? (issueProposalOverride ?? baseIssueProposal) : null;
   const operationProposal = message.kind === "operation_proposal" ? operationProposalFromMessage(message) : null;
@@ -573,15 +584,89 @@ export function ProposalCard({
     return () => observer.disconnect();
   }, [issueProposal, proposalDescription, proposalDetailsExpanded]);
 
-  return (
-    <div className="text-foreground">
-      <ChatAssistantAttributionRow
-        replyingAgentId={message.replyingAgentId ?? null}
-        conversation={conversation}
-        agents={agents}
-      />
+  const proposalPanelTarget = useMemo(() => ({
+    kind: "issue_proposal",
+    conversationId: conversation.id,
+    messageId: message.id,
+    label: "Issue proposal",
+  } satisfies SidePanelTarget), [conversation.id, message.id]);
+  const proposalPanelKey = sidePanelTargetKey(proposalPanelTarget);
+  const proposalPanelContent = useMemo(() => presentation === "inline" ? (
+    <ProposalCard
+      conversation={conversation}
+      message={message}
+      agents={agents}
+      currentUserId={currentUserId}
+      issueProposalOverride={issueProposalOverride}
+      onIssueProposalChange={onIssueProposalChange}
+      decisionNote={decisionNote}
+      onDecisionNoteChange={onDecisionNoteChange}
+      decisionNoteMentions={decisionNoteMentions}
+      onDecisionNoteMentionQueryChange={onDecisionNoteMentionQueryChange}
+      onDecisionNoteInlineTokenClick={onDecisionNoteInlineTokenClick}
+      onApprovalAction={onApprovalAction}
+      onResolveOperationProposal={onResolveOperationProposal}
+      onConvertToIssue={onConvertToIssue}
+      actionPending={actionPending}
+      skillReferences={skillReferences}
+      onMarkdownLinkClick={onMarkdownLinkClick}
+      issueCreatedMessage={issueCreatedMessage}
+      presentation="side-panel"
+    />
+  ) : null, [
+    actionPending,
+    agents,
+    conversation,
+    currentUserId,
+    decisionNote,
+    decisionNoteMentions,
+    issueCreatedMessage,
+    issueProposalOverride,
+    message,
+    onApprovalAction,
+    onConvertToIssue,
+    onDecisionNoteChange,
+    onDecisionNoteInlineTokenClick,
+    onDecisionNoteMentionQueryChange,
+    onIssueProposalChange,
+    onMarkdownLinkClick,
+    onResolveOperationProposal,
+    presentation,
+    skillReferences,
+  ]);
+  useLayoutEffect(() => {
+    if (presentation !== "inline" || !proposalPanelContent) return;
+    publishIssueProposalPanelContent(proposalPanelKey, proposalPanelContent);
+  }, [presentation, proposalPanelContent, proposalPanelKey]);
+  useEffect(() => {
+    if (presentation !== "inline") return;
+    return () => clearIssueProposalPanelContent(proposalPanelKey);
+  }, [presentation, proposalPanelKey]);
+  const registeredProposalPanel = sidePanel?.tabs.find(
+    (target) => sidePanelTargetKey(target) === proposalPanelKey,
+  );
+  const proposalPanelOpen = presentation === "inline" && Boolean(registeredProposalPanel);
 
-      {message.body.trim().length > 0 ? (
+  const openIssueProposalPanel = useCallback(() => {
+    sidePanel?.openTarget(proposalPanelTarget);
+  }, [proposalPanelTarget, sidePanel]);
+
+  return (
+    <div
+      className={cn(
+        "text-foreground",
+        presentation === "side-panel" && "h-full min-h-0",
+      )}
+    >
+      {presentation === "inline" ? (
+        <ChatAssistantAttributionRow
+          replyingAgentId={message.replyingAgentId ?? null}
+          conversation={conversation}
+          agents={agents}
+        />
+      ) : null}
+
+      {presentation === "inline" && message.body.trim().length > 0 ? (
         <ChatLongMessageBody
           body={message.body}
           skillReferences={skillReferences}
@@ -590,43 +675,90 @@ export function ProposalCard({
         />
       ) : null}
 
+      {proposalPanelOpen ? (
+        <button
+          type="button"
+          data-testid="proposal-review-compact"
+          className="chat-proposal-compact mt-4 flex h-14 w-full max-w-[860px] items-center gap-3 rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-4 text-left text-muted-foreground shadow-[var(--shadow-sm)] transition-[border-color,background-color,color,box-shadow,transform] duration-200 hover:border-[color:var(--border-base)] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          onClick={openIssueProposalPanel}
+          aria-label="Open Issue proposal in Side Panel"
+        >
+          <Lightbulb className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">Issue proposal</span>
+          <Maximize2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+        </button>
+      ) : (
       <div
         data-testid="proposal-review-block"
         data-status={reviewStatus ?? "default"}
         data-kind={proposalKind}
         data-active-surface={actionPending ? "proposal-action" : undefined}
         className={cn(
-          "chat-review-block mt-4 max-w-[860px] rounded-[var(--radius-lg)] text-foreground transition-all duration-200",
+          "chat-review-block text-foreground transition-all duration-200",
+          presentation === "side-panel"
+            ? "chat-review-block--side-panel flex h-full min-h-0 max-w-none flex-col overflow-y-auto rounded-none border-0 shadow-none"
+            : "chat-review-block--inline mt-4 max-w-[860px] rounded-[var(--radius-lg)]",
           actionPending && "chat-review-block--action-pending",
         )}
       >
-        <div
-          className={cn(
-            "chat-review-docket-header grid border-b border-[color:var(--border-soft)]",
-            reviewStatus ? "grid-cols-1 sm:grid-cols-[1fr_minmax(9rem,13rem)]" : "grid-cols-1",
-          )}
-        >
-          <div className="flex min-w-0 items-center gap-3 px-5 py-4">
-            <span className="h-6 w-1 rounded-full bg-[color:var(--accent-strong)]" aria-hidden="true" />
-            <span className="truncate text-sm font-semibold leading-5 text-foreground">{proposalKindLabel}</span>
-          </div>
-          {reviewStatus ? (
-            <div
-              data-testid="proposal-review-status"
-              className="relative z-[6] flex min-w-0 items-center justify-start border-t border-[color:var(--border-soft)] px-5 py-4 sm:justify-end sm:border-t-0 sm:pr-10"
-            >
-              <StatusBadge status={reviewStatus} />
+        {presentation === "inline" ? (
+          <div
+            className={cn(
+              "chat-review-docket-header grid border-b border-[color:var(--border-soft)]",
+              reviewStatus ? "grid-cols-1 sm:grid-cols-[1fr_minmax(11rem,15rem)]" : "grid-cols-1",
+            )}
+          >
+            <div className="flex min-w-0 items-center gap-3 px-5 py-4">
+              <span className="h-6 w-1 rounded-full bg-[color:var(--accent-strong)]" aria-hidden="true" />
+              <span className="truncate text-sm font-semibold leading-5 text-foreground">{proposalKindLabel}</span>
+              {!reviewStatus && issueProposal && sidePanel ? (
+                <button
+                  type="button"
+                  data-testid="proposal-review-open-side-panel"
+                  aria-label="Open Issue proposal in Side Panel"
+                  title="Open in Side Panel"
+                  className="ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  onClick={openIssueProposalPanel}
+                >
+                  <Maximize2 className="h-4 w-4" aria-hidden="true" />
+                </button>
+              ) : null}
             </div>
-          ) : null}
-        </div>
+            {reviewStatus ? (
+              <div
+                data-testid="proposal-review-status"
+                className="relative z-[6] flex min-w-0 items-center justify-between gap-2 border-t border-[color:var(--border-soft)] px-5 py-4 sm:justify-end sm:border-t-0"
+              >
+                <StatusBadge status={reviewStatus} />
+                {issueProposal && sidePanel ? (
+                  <button
+                    type="button"
+                    data-testid="proposal-review-open-side-panel"
+                    aria-label="Open Issue proposal in Side Panel"
+                    title="Open in Side Panel"
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                    onClick={openIssueProposalPanel}
+                  >
+                    <Maximize2 className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="px-5 py-5">
           <div className="min-w-0">
             {issueProposal ? (
               <>
                 <div className="chat-review-summary-grid grid gap-5">
-                  <div className="chat-review-summary-title flex min-w-0 items-center border-b border-[color:var(--border-soft)] pb-5">
+                  <div className="chat-review-summary-title flex min-w-0 items-start justify-between gap-3 border-b border-[color:var(--border-soft)] pb-5">
                     <div className="text-[26px] font-semibold leading-tight text-foreground">{String(issueProposal.title)}</div>
+                    {presentation === "side-panel" && reviewStatus ? (
+                      <span data-testid="proposal-review-status" className="shrink-0">
+                        <StatusBadge status={reviewStatus} />
+                      </span>
+                    ) : null}
                   </div>
                   <div className="chat-review-fact-ledger">
                     <ProposalFactRow label="Priority">
@@ -726,19 +858,23 @@ export function ProposalCard({
           <section className="border-t border-[color:var(--border-soft)] px-5 py-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="text-sm font-semibold text-foreground">Proposal details</div>
-              {proposalDetailsCanExpand ? (
+              {presentation === "inline" && (sidePanel || proposalDetailsCanExpand) ? (
                 <button
                   type="button"
-                  aria-controls={proposalDetailsId}
-                  aria-expanded={proposalDetailsExpanded}
+                  {...(!sidePanel ? {
+                    "aria-controls": proposalDetailsId,
+                    "aria-expanded": proposalDetailsExpanded,
+                  } : {})}
                   className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-1 text-xs font-medium text-[color:var(--accent-strong)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-proposal)_55%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]"
-                  onClick={() => setProposalDetailsExpanded((current) => !current)}
+                  onClick={sidePanel
+                    ? openIssueProposalPanel
+                    : () => setProposalDetailsExpanded((current) => !current)}
                 >
-                  {proposalDetailsExpanded ? "Show less" : "Show full proposal"}
+                  {sidePanel || !proposalDetailsExpanded ? "Show full proposal" : "Show less"}
                   <ChevronDown
                     className={cn(
                       "h-3.5 w-3.5 transition-transform duration-200",
-                      proposalDetailsExpanded && "rotate-180",
+                      !sidePanel && proposalDetailsExpanded && "rotate-180",
                     )}
                     aria-hidden="true"
                   />
@@ -750,8 +886,13 @@ export function ProposalCard({
               ref={proposalDetailsRef}
               className={cn(
                 "chat-review-details-body text-sm leading-6 text-muted-foreground",
-                !proposalDetailsExpanded && "chat-review-details-body--collapsed",
-                proposalDetailsCanExpand && !proposalDetailsExpanded && "chat-review-details-body--can-expand",
+                presentation === "inline"
+                  && (sidePanel || !proposalDetailsExpanded)
+                  && "chat-review-details-body--collapsed",
+                presentation === "inline"
+                  && proposalDetailsCanExpand
+                  && (sidePanel || !proposalDetailsExpanded)
+                  && "chat-review-details-body--can-expand",
               )}
             >
               <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
@@ -824,7 +965,12 @@ export function ProposalCard({
         ) : null}
 
         {showReviewControls ? (
-          <div className="border-t border-[color:var(--border-soft)] px-5 py-5">
+          <div
+            className={cn(
+              "border-t border-[color:var(--border-soft)] px-5 py-5",
+              presentation === "side-panel" && "chat-proposal-panel-actions sticky bottom-0 z-10 mt-auto !px-4 !py-4",
+            )}
+          >
             {showDecisionNote ? (
               <label className="block space-y-2">
                 <span className="text-xs font-medium text-muted-foreground">
@@ -850,29 +996,35 @@ export function ProposalCard({
                         : "Optional note for approval or rejection."
                     }
                     className="rounded-[var(--radius-md)] bg-transparent"
-                    contentClassName="min-h-[88px] bg-transparent text-sm leading-6 text-foreground"
+                    contentClassName={cn(
+                      "min-h-[88px] bg-transparent text-sm leading-6 text-foreground",
+                      presentation === "side-panel" && "!min-h-16",
+                    )}
                   />
                 </div>
               </label>
             ) : null}
 
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className={cn("mt-4 flex flex-wrap gap-2", presentation === "side-panel" && "!mt-3")}>
               {showApprovalActions && message.approval ? (
                 <>
                   <Button
                     size="sm"
-                    className="bg-green-700 text-white hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-500"
+                    className={cn(
+                      "bg-green-700 text-white hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-500",
+                      presentation === "side-panel" && "px-3 text-xs",
+                    )}
                     data-testid="proposal-review-approve"
                     disabled={actionPending}
                     onClick={() => onApprovalAction(message.approval!.id, "approve", message.id)}
                   >
-                    Approve
+                    {presentation === "side-panel" && issueProposal ? "Approve & create issue" : "Approve"}
                   </Button>
                   {showRevisionAction ? (
                     <Button
                       size="sm"
                       variant="outline"
-                      className="text-foreground"
+                      className={cn("text-foreground", presentation === "side-panel" && "px-3 text-xs")}
                       data-testid="proposal-review-request-revision"
                       disabled={actionPending}
                       onClick={() => onApprovalAction(message.approval!.id, "requestRevision", message.id)}
@@ -883,7 +1035,10 @@ export function ProposalCard({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="border-destructive/30 text-destructive hover:bg-destructive/10"
+                    className={cn(
+                      "border-destructive/30 text-destructive hover:bg-destructive/10",
+                      presentation === "side-panel" && "px-3 text-xs",
+                    )}
                     data-testid="proposal-review-reject"
                     disabled={actionPending}
                     onClick={() => onApprovalAction(message.approval!.id, "reject", message.id)}
@@ -937,6 +1092,7 @@ export function ProposalCard({
           </div>
         ) : null}
       </div>
+      )}
     </div>
   );
 }

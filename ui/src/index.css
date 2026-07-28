@@ -2239,6 +2239,39 @@
     animation: chat-review-action-pending-pulse 1.6s ease-in-out infinite;
   }
 
+  .chat-review-block--side-panel,
+  .chat-review-block--side-panel[data-kind="issue"] {
+    background: var(--surface-elevated);
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .chat-review-block--side-panel .chat-review-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chat-review-block--side-panel .chat-review-summary-title {
+    border-bottom: 1px solid color-mix(in oklab, var(--border-soft) 88%, transparent);
+    padding-bottom: 1rem;
+  }
+
+  .chat-review-block--side-panel .chat-review-fact-ledger {
+    border-top: 0;
+    border-left: 0;
+    padding-top: 0;
+  }
+
+  .chat-proposal-panel-actions {
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--surface-proposal) 54%, var(--surface-elevated)),
+        color-mix(in oklab, var(--surface-proposal) 72%, var(--surface-elevated))
+      );
+    box-shadow: 0 -14px 28px -26px color-mix(in oklab, var(--accent-base) 54%, black);
+  }
+
   @keyframes chat-review-action-pending-pulse {
     0%,
     100% {

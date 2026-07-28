@@ -115,6 +115,23 @@
   will-change: opacity, transform, filter;
 }
 
+.chat-proposal-compact {
+  animation: rudder-proposal-compact-in var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+  transform-origin: center top;
+  will-change: opacity, transform, filter;
+}
+
+.chat-review-block--inline {
+  animation: rudder-proposal-card-in var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+  transform-origin: center top;
+  will-change: opacity, transform, filter;
+}
+
+.chat-review-block--side-panel {
+  animation: rudder-proposal-panel-content-in var(--motion-duration-standard) var(--motion-ease-enter) both;
+  will-change: opacity, transform;
+}
+
 @keyframes rudder-surface-pop-in {
   from { opacity: 0; filter: blur(var(--motion-blur-soft)); transform: translateY(calc(-1 * var(--motion-distance-small))) scale(0.97); }
   to { opacity: 1; filter: blur(0); transform: translateY(0) scale(1); }
@@ -174,6 +191,37 @@
 @keyframes rudder-content-reveal {
   from { opacity: 0; filter: blur(var(--motion-blur-soft)); transform: translateY(var(--motion-distance-small)); }
   to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@keyframes rudder-proposal-compact-in {
+  from {
+    opacity: 0;
+    filter: blur(var(--motion-blur-soft));
+    transform: translateY(var(--motion-distance-small)) scaleY(0.9);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+@keyframes rudder-proposal-card-in {
+  from {
+    opacity: 0;
+    filter: blur(var(--motion-blur-soft));
+    transform: translateY(calc(-1 * var(--motion-distance-small))) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes rudder-proposal-panel-content-in {
+  from { opacity: 0; transform: translateX(var(--motion-distance-small)); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 @property --motion-live-surface-angle {
@@ -1038,6 +1086,9 @@
   .motion-organization-menu-pop [data-org-menu-item],
   .motion-entity-preview-pop,
   .motion-disclosure-enter,
+  .chat-proposal-compact,
+  .chat-review-block--inline,
+  .chat-review-block--side-panel,
   .rudder-text-dots__dot {
     animation: none !important;
   }

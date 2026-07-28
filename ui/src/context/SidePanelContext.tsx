@@ -734,3 +734,7 @@ export function useSidePanel() {
   if (!value) throw new Error("useSidePanel must be used inside SidePanelProvider");
   return value;
 }
+
+export function useOptionalSidePanel() {
+  return useContext(SidePanelContext);
+}
