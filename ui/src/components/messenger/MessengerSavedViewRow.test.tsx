@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 
-import type { MessengerCustomGroupHydratedSavedViewEntry } from "@rudderhq/shared";
+import {
+  MAX_BROWSER_FAVICON_LENGTH,
+  type MessengerCustomGroupHydratedSavedViewEntry,
+} from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -204,7 +207,7 @@ describe("MessengerSavedViewRow", () => {
   it.each([
     ["javascript:alert(1)"],
     ["data:text/html,<script>alert(1)</script>"],
-    [`https://example.com/${"a".repeat(8_193)}`],
+    [`https://example.com/${"a".repeat(MAX_BROWSER_FAVICON_LENGTH + 1)}`],
   ])("falls back to the Web icon for an unsafe Browser favicon: %s", (favicon) => {
     renderRow({ entry: savedViewEntry({ favicon }) });
 

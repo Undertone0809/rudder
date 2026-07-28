@@ -15,7 +15,12 @@ import {
   resolveChatAnnotationRange,
   restoreChatAnnotationRange,
 } from "../lib/chat-response-annotation-selection";
-import { __clearWebsiteMetadataIconCacheForTests, MarkdownBody, WebsiteLinkIcon } from "./MarkdownBody";
+import {
+  __clearWebsiteMetadataIconCacheForTests,
+  MarkdownBody,
+  resolvedWebsiteIconUrl,
+  WebsiteLinkIcon,
+} from "./MarkdownBody";
 import type { MentionOption } from "./MarkdownEditor";
 import {
   __clearRudderEntityPreviewCachesForTests,
@@ -2281,6 +2286,8 @@ describe("MarkdownBody", () => {
 
     const logo = container.querySelector("img.rudder-website-link-logo");
     expect(logo?.getAttribute("data-dark-mode")).toBe("invert");
+    expect(resolvedWebsiteIconUrl("https://github.com/Undertone0809/rudder"))
+      .toBe(logo?.getAttribute("src"));
   });
 
   it("replaces the generic website icon only with fetched metadata icons", async () => {
@@ -2317,6 +2324,7 @@ describe("MarkdownBody", () => {
     expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("aria-hidden")).toBe("true");
     expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(link?.textContent).toBe("post");
+    expect(resolvedWebsiteIconUrl(url)).toBe("https://static.example.com/favicon.ico");
   });
 
   it("reuses one metadata request when the same website icon appears multiple times", async () => {

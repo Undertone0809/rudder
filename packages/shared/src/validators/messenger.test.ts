@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MAX_BROWSER_FAVICON_LENGTH } from "../website-icons.js";
 import {
   assignMessengerCustomGroupEntrySchema,
   createMessengerCustomGroupWithEntriesSchema,
@@ -17,6 +18,27 @@ const savedViewItemKey = `saved-view:${savedViewId}`;
 const viewInstanceId = "view-instance-1";
 
 describe("Messenger Saved View validators", () => {
+  it("accepts bundled Browser icons while keeping favicon payloads bounded", () => {
+    const target = {
+      kind: "browser",
+      tabId: "tab-1",
+      url: "https://github.com/Undertone0809/rudder",
+      viewInstanceId,
+    };
+    const favicon = `data:image/png;base64,${"a".repeat(9_000)}`;
+
+    expect(createMessengerSavedViewSchema.safeParse({
+      target,
+      title: "GitHub",
+      favicon,
+    }).success).toBe(true);
+    expect(createMessengerSavedViewSchema.safeParse({
+      target,
+      title: "Too large",
+      favicon: "a".repeat(MAX_BROWSER_FAVICON_LENGTH + 1),
+    }).success).toBe(false);
+  });
+
   it("accepts every supported target identity", () => {
     const targets = [
       { kind: "browser", tabId: "tab-1", url: "https://rudder.example/path", viewInstanceId },

@@ -6,6 +6,8 @@ export interface KnownWebsiteIcon {
   darkMode?: "invert";
 }
 
+export const MAX_BROWSER_FAVICON_LENGTH = 65_536;
+
 function imageDataUrl(mimeType: string, base64: string) {
   return `data:${mimeType};base64,${base64}`;
 }

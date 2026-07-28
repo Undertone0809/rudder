@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_BROWSER_FAVICON_LENGTH } from "../website-icons.js";
 
 const uuid = z.string().uuid();
 export const messengerSavedViewIdSchema = uuid;
@@ -50,7 +51,7 @@ export const messengerSavedViewTargetSchema = z.discriminatedUnion("kind", [
 const savedViewMetadataShape = {
   title: z.string().trim().min(1).max(240),
   subtitle: z.string().trim().max(1000).optional().nullable(),
-  favicon: z.string().trim().max(8192).optional().nullable(),
+  favicon: z.string().trim().max(MAX_BROWSER_FAVICON_LENGTH).optional().nullable(),
 };
 
 export const createMessengerSavedViewSchema = z.object({

@@ -3,10 +3,12 @@ import type { MessengerThreadDensity } from "@/lib/messenger-preferences";
 import { messengerSavedViewRoute } from "@/lib/messenger-saved-views";
 import { Link } from "@/lib/router";
 import { cn } from "@/lib/utils";
-import type {
-  MessengerCustomGroupHydratedSavedViewEntry,
-  MessengerCustomGroupWithEntries,
-  MessengerSavedView,
+import {
+  MAX_BROWSER_FAVICON_LENGTH,
+  resolveKnownWebsiteIcon,
+  type MessengerCustomGroupHydratedSavedViewEntry,
+  type MessengerCustomGroupWithEntries,
+  type MessengerSavedView,
 } from "@rudderhq/shared";
 import {
   BookOpenText,
@@ -34,10 +36,8 @@ import {
   type SortableDragHandleProps,
 } from "./MessengerThreadListViews";
 
-const MAX_SAVED_VIEW_FAVICON_LENGTH = 8_192;
-
 function acceptedBrowserFavicon(value: string | null) {
-  if (!value || value.length > MAX_SAVED_VIEW_FAVICON_LENGTH) return null;
+  if (!value || value.length > MAX_BROWSER_FAVICON_LENGTH) return null;
   if (/^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(value)) return value;
   try {
     const url = new URL(value);
@@ -98,6 +98,9 @@ export function savedViewDisplayTitle(
 function SavedViewIcon({ savedView }: { savedView: MessengerSavedView }) {
   const kind = savedView.targetPayload.kind;
   const acceptedFavicon = kind === "browser" ? acceptedBrowserFavicon(savedView.favicon) : null;
+  const darkMode = kind === "browser"
+    ? resolveKnownWebsiteIcon(savedView.targetPayload.url)?.darkMode
+    : undefined;
   const [faviconFailed, setFaviconFailed] = useState(false);
 
   useEffect(() => {
@@ -108,7 +111,11 @@ function SavedViewIcon({ savedView }: { savedView: MessengerSavedView }) {
     return (
       <img
         alt=""
-        className="h-4 w-4 rounded-[3px] object-contain"
+        className={cn(
+          "h-4 w-4 rounded-[3px] object-contain",
+          darkMode === "invert" && "dark:invert",
+        )}
+        data-dark-mode={darkMode}
         data-testid="messenger-saved-view-browser-favicon"
         referrerPolicy="no-referrer"
         src={acceptedFavicon}

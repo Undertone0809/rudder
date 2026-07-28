@@ -463,6 +463,21 @@ type WebsiteMetadataIconState =
 const websiteMetadataIconCache = new Map<string, WebsiteMetadataIconState>();
 const websiteMetadataIconInflight = new Map<string, Promise<WebsiteMetadataIconState>>();
 
+export function resolvedWebsiteIconUrl(value: string | URL) {
+  let url: URL;
+  try {
+    url = typeof value === "string" ? new URL(value) : value;
+  } catch {
+    return null;
+  }
+
+  const knownIcon = resolveKnownWebsiteIcon(url);
+  if (knownIcon) return knownIcon.iconDataUrl;
+
+  const cached = websiteMetadataIconCache.get(url.href);
+  return cached?.status === "ready" ? cached.iconUrl : null;
+}
+
 function useWebsiteMetadataIcon(url: URL) {
   const href = url.href;
   const knownIcon = resolveKnownWebsiteIcon(url);

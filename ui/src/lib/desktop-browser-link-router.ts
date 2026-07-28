@@ -17,6 +17,7 @@ export async function routeDesktopWebLink(options: {
   getSettings(): Promise<InstanceBrowserSettings>;
   openBuiltIn(target: SidePanelTarget): void;
   forceOpenExternal(url: string): void | Promise<void>;
+  resolveFavicon?(url: string): string | null;
 }): Promise<"built_in" | "default_browser" | "ignored"> {
   const { request } = options;
   if (!isWebUrl(request.url)) return "ignored";
@@ -31,6 +32,7 @@ export async function routeDesktopWebLink(options: {
 
   if (settings.openLinksIn === "built_in" || request.source === "browser_popup") {
     options.openBuiltIn(createBrowserSidePanelTarget(request.url, {
+      favicon: options.resolveFavicon?.(request.url),
       newTab: request.source === "browser_popup",
     }));
     return "built_in";

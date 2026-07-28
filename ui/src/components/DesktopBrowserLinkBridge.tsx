@@ -1,4 +1,5 @@
 import { instanceSettingsApi } from "@/api/instanceSettings";
+import { resolvedWebsiteIconUrl } from "@/components/MarkdownBody";
 import { useOptionalLiveSurfaceRuntime } from "@/context/LiveSurfaceRuntimeContext";
 import { useOptionalOrganization } from "@/context/OrganizationContext";
 import { useSidePanel } from "@/context/SidePanelContext";
@@ -86,6 +87,7 @@ export function DesktopBrowserLinkBridge() {
         forceOpenExternal: (url) => (
           desktopShell.forceOpenExternal?.(url) ?? desktopShell.openExternal(url)
         ),
+        resolveFavicon: resolvedWebsiteIconUrl,
       }).catch((error) => {
         console.warn("[rudder-ui] failed to route Desktop web link", error);
       });

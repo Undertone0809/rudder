@@ -5,18 +5,22 @@ describe("Desktop Browser link router", () => {
   it("opens built-in links in a stable Side Panel tab by default", async () => {
     const openBuiltIn = vi.fn();
     const forceOpenExternal = vi.fn();
+    const resolveFavicon = vi.fn(() => "data:image/png;base64,aWNvbg==");
 
     await expect(routeDesktopWebLink({
       request: { url: "https://example.com/docs", source: "link" },
       getSettings: async () => ({ enabled: true, openLinksIn: "built_in" }),
       openBuiltIn,
       forceOpenExternal,
+      resolveFavicon,
     })).resolves.toBe("built_in");
 
     expect(openBuiltIn).toHaveBeenCalledWith(expect.objectContaining({
       kind: "browser",
+      favicon: "data:image/png;base64,aWNvbg==",
       url: "https://example.com/docs",
     }));
+    expect(resolveFavicon).toHaveBeenCalledWith("https://example.com/docs");
     expect(openBuiltIn.mock.calls[0]?.[0]).toMatchObject({ dedupeKey: "https://example.com/docs" });
     expect(forceOpenExternal).not.toHaveBeenCalled();
   });

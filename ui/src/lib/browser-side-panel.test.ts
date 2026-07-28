@@ -35,7 +35,10 @@ describe("Browser Side Panel targets", () => {
   });
 
   it("keeps tab identity unique while giving ordinary links a stable URL dedupe key", () => {
-    const linked = createBrowserSidePanelTarget("https://example.com", { newTab: false });
+    const linked = createBrowserSidePanelTarget("https://example.com", {
+      favicon: "data:image/png;base64,aWNvbg==",
+      newTab: false,
+    });
     const repeatedLink = createBrowserSidePanelTarget("https://example.com", { newTab: false });
     const firstPopup = createBrowserSidePanelTarget("https://example.com", { newTab: true });
     const secondPopup = createBrowserSidePanelTarget("https://example.com", { newTab: true });
@@ -46,6 +49,7 @@ describe("Browser Side Panel targets", () => {
     expect(firstPopup.tabId).toBeTruthy();
     expect(secondPopup.tabId).not.toBe(firstPopup.tabId);
     expect(linked.label).toBe("example.com");
+    expect(linked.favicon).toBe("data:image/png;base64,aWNvbg==");
     expect(createBrowserSidePanelTarget("file:///tmp/private.txt").label).toBe("private.txt");
     expect(browserSidePanelLabel(BROWSER_SIDE_PANEL_BLANK_URL)).toBe("New tab");
   });

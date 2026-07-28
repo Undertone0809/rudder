@@ -178,8 +178,16 @@ test.describe("Built-in Browser", () => {
 
     await page.evaluate(() => (
       window as typeof window & { __emitDesktopWebLink(request: DesktopWebLinkRequest): void }
-    ).__emitDesktopWebLink({ url: "https://example.com/docs", source: "browser_popup" }));
+    ).__emitDesktopWebLink({ url: "https://github.com/Undertone0809/rudder", source: "browser_popup" }));
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    const githubTab = sidePanel.getByTestId("chat-side-panel-tab").filter({ hasText: "github.com" });
+    await expect(githubTab).toHaveAttribute("data-browser-favicon", /^data:image\//u);
+    const githubFavicon = githubTab.getByTestId("chat-side-panel-tab-browser-favicon");
+    await expect(githubFavicon).toBeVisible();
+    await expect(githubFavicon).toHaveAttribute("data-dark-mode", "invert");
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    await expect(githubFavicon).toHaveCSS("filter", "invert(1)");
+    await githubTab.screenshot({ path: "/tmp/rudder-browser-reused-link-icon.png" });
 
     const defaultBrowser = await page.request.patch("/api/instance/settings/browser", {
       data: { openLinksIn: "default_browser" },

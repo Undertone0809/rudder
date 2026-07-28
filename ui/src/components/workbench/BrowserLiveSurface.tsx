@@ -16,6 +16,7 @@ import { readDesktopShell } from "@/lib/desktop-shell";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import {
+  MAX_BROWSER_FAVICON_LENGTH,
   resolveBrowserShortcutInput,
   type BrowserShortcutAction,
 } from "@rudderhq/shared";
@@ -76,7 +77,7 @@ type BrowserWebviewElement = HTMLElement & {
 function acceptedBrowserFavicon(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > 8_192) return null;
+  if (!trimmed || trimmed.length > MAX_BROWSER_FAVICON_LENGTH) return null;
   if (trimmed.startsWith("data:image/")) return trimmed;
   try {
     const url = new URL(trimmed);

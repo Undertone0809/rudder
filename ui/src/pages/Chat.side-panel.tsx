@@ -70,7 +70,9 @@ import {
 import { cn } from "@/lib/utils";
 import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
 import {
+  MAX_BROWSER_FAVICON_LENGTH,
   resolveBrowserShortcutInput,
+  resolveKnownWebsiteIcon,
   type Agent,
   type BrowserShortcutAction,
   type ChatInlineAnnotation,
@@ -167,7 +169,7 @@ const CHAT_SIDE_PANEL_MARKDOWN_CONFLICT_MESSAGE = "This file changed while you w
 function acceptedChatSidePanelBrowserFavicon(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > 8_192) return null;
+  if (!trimmed || trimmed.length > MAX_BROWSER_FAVICON_LENGTH) return null;
   if (/^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(trimmed)) return trimmed;
   try {
     const url = new URL(trimmed);
@@ -177,8 +179,9 @@ function acceptedChatSidePanelBrowserFavicon(value: unknown) {
   }
 }
 
-function ChatSidePanelBrowserTabIcon({ favicon }: { favicon?: string }) {
+function ChatSidePanelBrowserTabIcon({ favicon, url }: { favicon?: string; url: string }) {
   const acceptedFavicon = acceptedChatSidePanelBrowserFavicon(favicon);
+  const darkMode = resolveKnownWebsiteIcon(url)?.darkMode;
   const [faviconFailed, setFaviconFailed] = useState(false);
 
   useEffect(() => {
@@ -189,7 +192,11 @@ function ChatSidePanelBrowserTabIcon({ favicon }: { favicon?: string }) {
     return (
       <img
         alt=""
-        className="size-3.5 shrink-0 rounded-[3px] object-contain"
+        className={cn(
+          "size-3.5 shrink-0 rounded-[3px] object-contain",
+          darkMode === "invert" && "dark:invert",
+        )}
+        data-dark-mode={darkMode}
         data-testid="chat-side-panel-tab-browser-favicon"
         referrerPolicy="no-referrer"
         src={acceptedFavicon}
@@ -287,7 +294,7 @@ function ChatSidePanelTabIcon({
       />
     );
   }
-  if (tab.kind === "browser") return <ChatSidePanelBrowserTabIcon favicon={tab.favicon} />;
+  if (tab.kind === "browser") return <ChatSidePanelBrowserTabIcon favicon={tab.favicon} url={tab.url} />;
   if (tab.targetKind === "issue") return <Circle aria-hidden className={iconClassName} />;
   if (tab.targetKind === "automation") return <Workflow aria-hidden className={iconClassName} />;
   return <MessageSquare aria-hidden className={iconClassName} />;

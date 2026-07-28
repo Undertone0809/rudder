@@ -63,6 +63,10 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import {
+  MAX_BROWSER_FAVICON_LENGTH,
+  resolveKnownWebsiteIcon,
+} from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindow,
@@ -109,7 +113,7 @@ function tabIcon(target: MainWorkbenchTarget): WorkbenchTabIcon {
 function acceptedBrowserFavicon(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > 8_192) return null;
+  if (!trimmed || trimmed.length > MAX_BROWSER_FAVICON_LENGTH) return null;
   if (trimmed.startsWith("data:image/")) return trimmed;
   try {
     const url = new URL(trimmed);
@@ -169,6 +173,9 @@ function SortableWorkbenchTab({
   const favicon = tab.target.kind === "browser"
     ? acceptedBrowserFavicon(tab.target.favicon)
     : null;
+  const browserIconDarkMode = tab.target.kind === "browser"
+    ? resolveKnownWebsiteIcon(tab.target.url)?.darkMode
+    : undefined;
 
   return (
     <div
@@ -217,8 +224,12 @@ function SortableWorkbenchTab({
           <img
             src={favicon}
             alt=""
+            data-dark-mode={browserIconDarkMode}
             referrerPolicy="no-referrer"
-            className="h-3.5 w-3.5 shrink-0 rounded-sm object-contain"
+            className={cn(
+              "h-3.5 w-3.5 shrink-0 rounded-sm object-contain",
+              browserIconDarkMode === "invert" && "dark:invert",
+            )}
           />
         ) : (
           <Icon className="h-3.5 w-3.5 shrink-0" aria-label={icon.label} />

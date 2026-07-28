@@ -134,17 +134,18 @@ describe("DesktopBrowserLinkBridge", () => {
     });
 
     await act(async () => {
-      listener?.({ url: "https://example.com/docs", source: "link" });
+      listener?.({ url: "https://github.com/Undertone0809/rudder", source: "link" });
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(container.querySelector("[data-testid='probe']")?.textContent).toContain("https://example.com/docs");
+    expect(container.querySelector("[data-testid='probe']")?.textContent).toContain("https://github.com/Undertone0809/rudder");
+    expect(container.querySelector("[data-testid='probe']")?.textContent).toContain("data:image/");
     expect(container.querySelector("[data-testid='probe']")?.textContent).toContain('"open":true');
     expect(forceOpenExternal).not.toHaveBeenCalled();
 
     await act(async () => {
-      listener?.({ url: "https://example.com/docs", source: "link" });
+      listener?.({ url: "https://github.com/Undertone0809/rudder", source: "link" });
       await Promise.resolve();
       await Promise.resolve();
     });
