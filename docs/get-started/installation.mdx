@@ -1,7 +1,7 @@
 ---
-title: "Quick Start"
-description: "Install Rudder Desktop, confirm a healthy local startup, and recover safely when startup fails."
-icon: "zap"
+title: "Install Rudder"
+description: "Install the Rudder desktop app and open your local workspace."
+icon: "download"
 keywords:
   - "install Rudder"
   - "Rudder CLI"
@@ -12,82 +12,65 @@ hreflang_en: "https://docs.rudderhq.dev/get-started/installation"
 hreflang_zh: "https://docs.rudderhq.dev/zh/get-started/installation"
 ---
 
-When this guide is complete, Rudder Desktop is open on your machine and the
-`rudder` CLI is ready for later starts.
+Rudder runs locally on macOS, Windows, and Linux. The setup command downloads
+the desktop app for your computer and installs the `rudder` command for later
+starts.
 
-You need a supported desktop system, a terminal, internet access for the first
-download, and permission to install an app for your user account.
+You need:
 
-## Install and open Rudder
+- Node.js 20 or newer, which provides the `npx` command
+- a terminal and internet access for the first download
+- permission to install an app for your user account
 
-Run the public setup command:
+## 1. Run the setup command
 
 ```bash
 npx @rudderhq/cli@latest start
 ```
 
-The command prepares the persistent Rudder CLI, downloads the portable Desktop
-app for the selected release channel, and opens it. It keeps the CLI and app on
-the same release.
+The first download can take a few minutes. When it finishes, Rudder Desktop
+opens automatically.
 
-![Rudder CLI terminal workflow](../images/installation-cli.png)
+## 2. Check that Rudder opened
 
-After setup, start the same local app directly:
+Setup is complete when the desktop window asks you to create or choose an
+organization, Rudder's name for a team workspace. You do not need to install
+PostgreSQL or start a separate server.
+
+For future starts, use:
 
 ```bash
 rudder start
 ```
 
-The setup succeeds when the Desktop window reaches Rudder's organization
-screen. You can now create your first organization.
+Next, connect an agent runtime and give it a small task.
+
+<CardGroup cols={1}>
+  <Card title="Run your first task" icon="play" href="/get-started/first-organization">
+    Create an organization, connect an agent, and get a real result.
+  </Card>
+</CardGroup>
 
 <a id="startup-recovery" />
 
-## If Desktop cannot start
+## If Rudder does not open
 
-A healthy startup shows the Rudder identity and motion. It does not expose
-technical stage names or percentage progress. A quiet waiting screen during
-startup is normal.
+First choose **Try again** in the same window. Rudder starts one fresh attempt;
+repeated clicks do not create duplicate local servers.
 
-If the managed local server reports a startup failure, the same window shows a
-plain-language error and recovery actions:
+If it still fails:
 
-- **Try again** starts one fresh attempt in the existing window. Repeated clicks
-  do not start parallel runtimes or open more windows.
-- **Email support** opens an editable draft addressed to
-  `zeeland4work@gmail.com`. Rudder does not send it, upload local data, or
-  attach workspace files automatically. If the mail app cannot open, use
-  **Copy support email** and **Copy diagnostic**.
-- **Report on GitHub** opens Rudder's fixed
-  [public GitHub Issues bug-report form](https://github.com/Undertone0809/rudder/issues/new?template=bug_report.yml).
-  Rudder never submits the issue. If the browser cannot open, use **Copy issue
-  link**, open that fixed URL yourself, then use **Copy diagnostic** and review
-  the text before pasting it.
-- **Technical details** reveals only bounded, allowlisted fields and paths.
-  **Copy diagnostic** copies the same safe diagnostic used by the support
-  actions. **Open data folder** opens the failed instance folder when a path is
-  available; if the folder cannot open automatically, copy the visible
-  **Instance folder** path and open it in your file manager.
+1. Open **Technical details** and read the message.
+2. Use **Copy diagnostic** to copy the safe diagnostic summary.
+3. Choose **Report on GitHub** or **Email support**. Rudder opens a draft; it
+   never sends or uploads your local files automatically.
 
-Read the technical details before sharing them. Do not add credentials,
-databases, `.env` files, or private workspace contents to a support request.
+Review the copied text before sharing it. Do not attach credentials, databases,
+`.env` files, or private workspace content.
 
-## If an update finds active runs
+If the terminal says `npx: command not found`, install Node.js 20 or newer,
+open a new terminal, and run the setup command again.
 
-Packaged Rudder Desktop can download and verify an update while Agent Runs are
-active. Choose based on whether the current work may be interrupted:
-
-- **Update when idle** keeps current runs alive and applies the update after
-  they finish.
-- **Stop runs and update now** cancels active runs, quits Rudder, and applies
-  the update immediately.
-- **Cancel** leaves the current version running.
-
-If an update fails or expires, the failure remains visible with retry and
-release-page actions.
-
-<CardGroup cols={1}>
-  <Card title="Create Your First Organization" icon="building-2" href="/get-started/first-organization">
-    Complete one task and inspect its result.
-  </Card>
-</CardGroup>
+When an update is ready while an Agent is still working, choose **Update when
+idle** to let the run finish. Choose **Stop runs and update now** only when it is
+safe to cancel the active work.

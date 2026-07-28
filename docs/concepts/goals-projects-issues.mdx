@@ -1,6 +1,6 @@
 ---
-title: "Goals, projects, and issues"
-description: "Connect an organization's durable direction to grouped work and executable Issue records."
+title: "Organize Work with Goals and Projects"
+description: "Use goals for direction, projects for shared context, and Issues for work that needs explicit coordination."
 icon: "target"
 keywords:
   - "Rudder goals"
@@ -12,59 +12,60 @@ hreflang_en: "https://docs.rudderhq.dev/concepts/goals-projects-issues"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/goals-projects-issues"
 ---
 
+You can start using Rudder without a hierarchy. Add a goal, project, or Issue
+only when it answers a question your team actually has.
+
 <a id="definition" />
 
-## Definition
+## Choose the smallest useful object
 
-A goal records why a line of work exists. Goals can form a hierarchy inside one
-organization, so the organization mission can connect to narrower outcomes.
+| Your question | Use |
+| --- | --- |
+| Why are we doing this work? | Goal |
+| Which tasks, conversations, files, and dates belong together? | Project |
+| Who owns this task, what is its status, and who reviews it? | Issue |
 
-A project groups related work and context. It can connect goals with Chats,
-Issues, resources, workspaces, a lead Agent, and a target date. Project status
-groups the work; it does not replace the status of an Issue or Automation.
+A **goal** records a result that should outlast one task. Goals can be nested
+when a broad direction has smaller outcomes.
 
-An issue is a durable task record with an explicit status and lifecycle. Use
-one when work needs a named owner, dependencies, or a review path; comments,
-agent runs, artifacts, and review decisions can stay with the same record.
+A **project** groups related work and context. It can contain Chats, Issues,
+resources, workspaces, a lead Agent, and a target date.
 
-The [Issues concept](/concepts/issues) owns the detailed model, and [Issue
-statuses](/reference/issue-statuses) is the authoritative status lookup.
+An **Issue** keeps a larger task in one place. Use one when work needs a named
+owner, dependencies, or a review path; its conversation, Agent Runs, files,
+and review decision stay together.
 
 <a id="case" />
 
-## One illustrative case
+## Example: launch a product update
 
-A small team wants to publish a launch announcement. Its organization goal is
-to make the release understandable to new users. A launch project groups the
-announcement with screenshots and release notes. One Issue asks a writing Agent
-to produce the Markdown draft and names a reviewer.
+- **Goal:** Help new users reach their first successful task.
+- **Project:** July onboarding update.
+- **Issues:** Rewrite the quick start, capture new screenshots, and review the
+  published page.
 
-The goal explains the reason, the project gathers the shared context, and the
-Issue tells one owner what result to deliver next.
+The goal explains the reason. The project gathers shared material. Each Issue
+gives one owner a clear next result.
 
 <a id="when-useful" />
 
-## When each object is useful
+## When not to add more structure
 
-Use a goal when the reason should survive individual tasks. Use a project when
-several work items share context, resources, or a result. Use an Issue when the
-next piece of work needs explicit coordination. A short conversational task can
-remain in Chat without an Issue.
-
-Link work only when the relationship helps someone understand or execute it.
-Not every Issue needs its own project, and not every project needs a new goal.
+A short request can stay in Chat. One Issue does not need its own project, and
+one project does not need a new goal. Links are useful only when they help
+someone understand the work or start it with the right context.
 
 <a id="operating-boundaries" />
 
-## Operating boundaries
+## Rules worth knowing
 
-Goals, projects, and Issues stay inside one organization. Goal hierarchies
-cannot cross organizations or form cycles. Project links do not make work
-executable by themselves, and an Issue keeps a single assignee.
+- Goals, projects, and Issues stay inside one organization.
+- An Issue has one assignee. Split independent responsibilities into separate
+  Issues or sub-Issues.
+- Project status groups work but does not replace the status of an Issue or
+  Automation.
+- Rudder will stop you from deleting a goal while active work still depends on
+  it.
 
-The highest-risk operation is deletion or detachment. Rudder blocks goal
-deletion while linked projects, Issues, Automations, or other work still depend
-on it, so the reason for existing work is not removed silently.
-
-Follow [Run an Issue from intake to done](/how-to/issue-lifecycle) when the task
-needs structured execution.
+For the full task workflow, see [Run an Issue from intake to
+done](/how-to/issue-lifecycle).

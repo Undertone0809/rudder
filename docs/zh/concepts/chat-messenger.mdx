@@ -1,6 +1,6 @@
 ---
-title: "Chat 和 Messenger"
-description: "先为任务选择 Chat 或 Issue，再用 Messenger 找回需要人处理的工作。"
+title: "Chat、Issue 和 Messenger"
+description: "为任务选择合适的工作方式，再用 Messenger 找到正在等你处理的事情。"
 icon: "messages-square"
 keywords:
   - "Rudder Chat"
@@ -12,97 +12,78 @@ hreflang_en: "https://docs.rudderhq.dev/concepts/chat-messenger"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/chat-messenger"
 ---
 
-Chat 用持续对话推进一件任务。Messenger 从整个 Rudder 中找出需要人回应的工作。两者属于同一套沟通系统，但职责不同。
-
-以一份示例发布公告为例。负责人可以在 Chat 中请 Agent 起草，打开文件检查，再要求它缩短开头，最后直接接受结果。之后如果出现待评审事项、运行失败或阻塞，Messenger 会把负责人的注意力带回来。
+Chat 和 Issue 是两种完成任务的方式。Messenger 用来找到 Agent 提问、运行失败、
+待评审等需要你处理的事情。
 
 <a id="chat-or-issue" />
 
-## 先选任务入口
+## 默认从 Chat 开始，需要时再增加结构
 
-| 情况 | 从哪里开始 |
+| 情况 | 使用 |
 | --- | --- |
-| 想在一段对话中探索、澄清、执行并不断调整 | Chat |
-| 需要指定负责人、跟踪依赖、显示状态或安排评审 | Issue |
-| 团队规则要求填写字段或进入共享队列 | Issue |
-| 一位负责人可以在同一段对话中判断结果 | Chat |
+| 想在一段对话里提出要求、澄清、执行和修改 | Chat |
+| 一个人可以在对话中判断结果 | Chat |
+| 任务需要负责人、状态、依赖或评审人 | Issue |
+| 团队流程要求共享队列或特定字段 | Issue |
 
-Chat 和 Issue 是并列入口。Chat 不是正式工作开始前的候场区，任务耗时长或重要，也不代表必须创建 Issue。只有协作结构确实有用时，才创建或关联任务单。
+Chat 不是“正式工作”开始前的临时收件箱。任务可以从第一条请求一直在 Chat 中
+完成并被接受。只有额外协调确实有用时，才创建或关联 Issue。
 
-![Chat 中的 Issue 提案](../../images/chat-create-issue-proposal.png)
+![需要时从 Chat 创建 Issue](../../images/chat-create-issue-proposal.png)
 
-## 让结果和证据留在任务旁边
+## 让结果留在发生工作的地方
 
-一段 Chat 可以保留请求、Agent 运行、后续修改和最终回答。文件与链接侧栏分成三类：
+在 Chat 中，请求、Agent 运行、后续修改和最终回答会留在同一段对话里。文件与
+链接区域会分开显示：
 
-- **Outputs**：Agent 确实创建，并且有附件或运行证据支持的产物
-- **Sources**：负责人提供的资料，以及本次运行可用的项目上下文
-- **References**：对话中引用或推荐，但并非 Agent 产出的外部内容
+- **产物：**Agent 真正创建的文件或链接
+- **来源：**你或项目提供的材料
+- **参考：**Agent 引用或推荐的材料
 
-回答里出现的普通链接属于参考资料，不会自动变成产物。侧栏只显示当前对话的内容，不会混入同一项目中其他 Chat 的文件。
+回复里提到一个链接，不代表它是 Agent 的产物。如果工作属于 Issue，就把结果
+和评审结论留在那条 Issue 上。
 
-如果工作由 Issue 承载，产物和评审结论就应留在那条 Issue 上。Messenger 负责带人回到原记录，不再建立第二份决定记录。
+## 用 Messenger 找到正在等你的事情
 
-## 精确指出回答中的一段内容
+Messenger 会汇总 Rudder 各处需要注意的内容：
 
-你可以选择已完成、已停止或失败的助手回答文本，也可以选择负责人可见的 **Process**
-文字，把这段原文附到下一条 Chat 消息中。每条标注都可以带一段补充说明和自己的文件。
-选择 **Add to chat** 后，Rudder 会高亮原回答中的精确文字，并立即打开输入补充说明或
-添加文件的编辑框。你也可以把图片直接粘贴到说明框中，普通文字粘贴不受影响；当来源是
-已完成的助手回答时，还可以选择 **Ask in side chat**。
-
-主 Chat 编辑框依靠原文高亮提供上下文，不会重复显示选中文字。临时侧聊看不到
-来源回答，因此会保留一段紧凑的文字预览。草稿中的标注可以继续编辑。消息发送后，它会
-成为不可修改的消息证据。排队消息、**Steer**、重试、编辑分支、分叉和侧聊都会保留这些
-标注；只要原始内容仍可用，你也可以从标注返回来源位置。
-
-标注属于用户引用的 Chat 上下文，不是系统指令，也不会自动变成 Issue 的评审结论或学习
-证据。如果需要长期治理记录，仍应使用 Issue 和评审流程。
-
-## Messenger 找回人的注意力
-
-![Messenger 注意力界面](../../images/messenger-approvals.png)
-
-Messenger 回答两个问题：现在什么需要我处理，我应该回到哪里行动？
-
-| 提醒 | 应该回到 |
+| 看到的内容 | 去哪里处理 |
 | --- | --- |
-| Agent 提问 | 原始 Chat 或关联 Issue |
-| Agent 运行失败 | 运行记录以及来源 Chat 或 Issue |
-| 工作阻塞 | 缺少输入或负责人的原始记录 |
-| 等待评审 | 带有产物的待评审 Issue |
-| 等待审批 | 对应操作所拥有的审批记录 |
+| Agent 提问 | 原始 Chat 或 Issue |
+| 一次运行失败 | 运行记录和它所属的任务 |
+| 工作被阻塞 | 正在等待回答或负责人的记录 |
+| 结果等待评审 | 对应 Issue 和产物 |
+| 操作等待审批 | 对应的审批 |
 
-人的注意力集中在 Messenger，但持久状态仍属于原始对象。Messenger 不是待办队列、通用聊天应用，也不能成为评审结论的唯一记录。
+Messenger 负责把你带回来源，不是第二套任务看板。把对话放进自定义分组，也不会
+改变它的负责人、状态或评审人。
 
-## 整理 Messenger，但不改变工作本身
+![Messenger 待处理事项](../../images/messenger-approvals.png)
 
-自定义分组可以收纳 Chat、Issue 和 **Saved View**，但不会改变这些记录本身。要移出某一行，
-打开它的 **Move to group** 菜单并选择 **Move out of group**；只有当前项目会回到
-Messenger 的未分组目录。
+## 只调整当前对话
 
-移出操作不会删除 Chat、Issue 或 **Saved View**，也不会删除自定义分组或移除其他成员。
-被移出的 Chat 或 Issue 会保留原有的未读和注意力状态。
+每段 Chat 都可以选择 Agent；运行工具支持时，还可以选择模型和思考强度。这些
+选择只用于当前对话，不会改写 Agent 在其他地方的默认配置。
 
-## 为当前 Chat 选择 Agent 与运行参数
+想探索另一条路线，又不想改变原对话时，使用**分支**。只想在主任务旁边追问一个
+局部问题时，使用**侧边对话**。
 
-新 Chat 输入区中的 Agent 控件决定由谁承担任务。打开后可以查看组织内可用的 Agent；当前 Agent 行右侧同时提供该 Agent 运行环境下的 **Model** / **Thinking** 入口。切换草稿中的 Agent 会清除旧覆盖并恢复新 Agent 的默认值。
+## 对回复中的一小段继续提问
 
-第一条消息发送后，Chat 会绑定该 Agent，其他 Agent 随即锁定；Agent 菜单仍可打开，并可继续在绑定 Agent 行修改 **Model** 或 **Thinking**。修改只影响这段对话后续开始的回答，不会改写 Agent 已保存的运行环境、凭据、技能、工作区或备用模型。选择 **Agent default**，可以让对应控件恢复使用 Agent 的保存值。
+选中 Agent 回复中的文字，然后选择**添加到对话**，就能把准确段落附在下一条
+消息中。这样可以直接指出要改哪里，不必复制整段回复。消息发出后，这段引用会
+继续作为上下文保留。
 
-正在运行的回答会继续使用启动时的 Agent、模型和强度。排队消息也会保留入队时绑定的 Agent 与当时显示的值；即使消息开始前又修改了对话控件，或该 Agent 后来不可用，也不会重新路由。新 Chat、分支和侧聊都会重新从 Agent 默认值开始。
+## Agent 工作时又发了一条消息
 
-## Agent 回复时又发了一条消息
-
-当前回答还在运行时，新消息会进入可见队列，不会在同一个 Chat 中并行启动第二次回答。发送前，你可以编辑或删除这条消息。
-
-只有当前回答成功结束，排队消息才会自动发送。如果你停止回答或运行失败，消息会留在队列中等待处理。这样，一次中断的运行不会悄悄执行后续指令。
+Rudder 会把消息排成后续请求；运行工具支持时，也可以用它调整当前运行方向。
+输入框会说明接下来采取哪种方式。当前方向已经没有价值时，选择**停止**。
 
 <CardGroup cols={2}>
-  <Card title="Issue（任务单）" icon="circle-check" href="/zh/concepts/issues">
-    理解持久状态、负责人、依赖和评审如何配合。
+  <Card title="完成第一个 Chat 任务" icon="play" href="/zh/get-started/first-organization">
+    用最简单的方式从请求走到结果。
   </Card>
-  <Card title="创建第一个组织" icon="building-2" href="/zh/get-started/first-organization">
-    选择一个入口，完成一件小任务。
+  <Card title="了解 Issue" icon="circle-check" href="/zh/concepts/issues">
+    按需增加负责人、状态、依赖和评审。
   </Card>
 </CardGroup>

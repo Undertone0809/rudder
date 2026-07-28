@@ -1,92 +1,93 @@
 ---
-title: "创建第一个组织"
-description: "完成一件可检查的任务，让请求、Agent 运行、产物和评审结论留在一起。"
-icon: "building-2"
+title: "完成第一个任务"
+description: "创建 Rudder 组织，连接 Agent 运行工具，并在 Chat 中拿到第一个有用结果。"
+icon: "play"
 keywords:
-  - "Rudder 组织"
-  - "第一个 Agent 任务"
-  - "Agent 工作循环"
+  - "Rudder 第一个任务"
+  - "连接 AI Agent"
+  - "Rudder Chat"
 canonical: "https://docs.rudderhq.dev/zh/get-started/first-organization"
 "og:url": "https://docs.rudderhq.dev/zh/get-started/first-organization"
 hreflang_en: "https://docs.rudderhq.dev/get-started/first-organization"
 hreflang_zh: "https://docs.rudderhq.dev/zh/get-started/first-organization"
 ---
 
-完成本页后，你会有一个组织、一个可以工作的 Agent，以及一份可以检查的结果。这里用一个示意案例说明流程：Agent 起草 Markdown 发布公告，人来评审结果。
+这篇指南会带你从刚安装完成，走到 Agent 完成第一件任务。你会创建组织，
+连接平时使用的 Agent 运行工具，然后在 Chat 中拿到一个小而真实的结果。
 
-开始前，请先[安装并打开 Rudder](/zh/get-started/installation)，准备好第一个 Agent 要使用的本地运行环境，以及保存公告的文件夹。
+开始前，请先[安装并打开 Rudder](/zh/get-started/installation)。如果准备使用
+Codex 或 Claude Code 等本地工具，请先安装并登录对应的命令行程序。
 
 <a id="first-loop" />
 
-## 1. 给组织命名
+## 1. 创建组织
 
-输入组织显示名称，例如“发布团队”。第一个页面只会询问名称，Rudder 会自动建立内部组织标识。目标和 **Issue Key** 不在新手流程里设置，之后可以在日常工作页面和设置中添加或查看。
+Rudder 把团队工作空间称为**组织**。输入一个你能认出来的名字，例如项目名、
+公司名或个人工作空间名。
 
-## 2. 配置第一个 Agent
+先做到这里就够了。目标、项目和更多 Agent 都可以以后再加。
 
-选择第一个 Agent 使用的运行环境，并完成环境检查。运行环境决定 Agent 每次运行时在哪里执行。只有必要检查通过后，Rudder 才会创建 Agent；如果页面报告配置问题，请先修复再继续。
+## 2. 连接第一个 Agent
 
-设置完成后，Rudder 会打开 Messenger。`Getting Started` 分组已经标记为已读，不会制造虚假的未读提醒。你可以先打开欢迎内容，也可以直接完成下面的示例。
+选择电脑上已经能用的运行工具，然后按表单完成设置：
 
-## 3. 选择 Chat 或 Issue
+- 平时使用 Codex 或 Claude Code 命令行工具，就选择对应选项。
+- 有自己的脚本或 Agent 进程，就选择本地命令。
+- 只有在已经准备好远程服务时，才选择 Webhook 或远程方式。
 
-如果你想在一段持续对话里起草和修改公告，用 Chat。
+运行环境检查。检查通过表示 Rudder 可以启动这个工具，还不会开始正式任务。
+如果失败，根据表单中的提示完成安装、登录或修正命令。
 
-Issue（任务单）是带有明确状态和生命周期的任务记录。需要指定负责人、跟踪依赖或安排评审时使用；评论、Agent 运行、产物和评审结论可以留在同一条记录中。
+## 3. 交给 Agent 一件有用的小事
 
-本例有明确产物和评审人，所以使用 Issue。新建任务单，并写入：
+打开 Chat，发送一条几分钟内就能判断好坏的请求。例如：
 
-```md
-标题：起草发布公告
+```text
+为我的产品写一段简短的发布介绍。
 
-期望结果：
-产出一份可以评审的 Markdown 公告。
-
-验收标准：
-- 有简短标题
-- 包含安装命令
-- 解释一个具体使用场景
-- 列出尚未解决的问题
+读者：第一次尝试产品的开发者。
+需要包括：
+- 一句话标题
+- 它解决什么问题
+- 一个具体例子
+- 发布前我还需要回答的三个问题
 ```
 
-![Issue 看板](../../images/first-organization-issue-board.png)
+好的第一次请求会说明给谁看、要返回什么，以及有哪些重要限制。不要只写
+“测试 Rudder”，因为这样的结果对你没有实际价值。
 
-## 4. 让下一步可以直接执行
+## 4. 查看执行过程
 
-只有当另一个人或 Agent 不需要追问任务含义就能开始时，才把 Issue 移到 `todo`。把第一个 Agent 设为唯一负责人。因为公告需要另一位成员判断质量，再指定一位评审人。把可以执行的 Issue 分配给 Agent 后，Rudder 会自动唤醒它，不需要另外点击启动。
+Rudder 会启动刚才选择的 Agent，并在 Chat 中显示回复。你可以在同一段对话中
+补充要求、停止无效运行，也可以在 Agent 工作时继续发送信息。
 
-如果范围、优先级或验收标准还没有定，就留在 `backlog`。多项独立工作应该拆成不同 Issue，不要把同一条任务单交给两个负责人。
+想看更多细节时，打开这次 Agent 运行。这里会显示使用了哪个运行工具、任务是否
+完成，以及可用的对话记录、用量、错误或产物。
 
-## 5. 检查 Agent 运行
+## 5. 判断结果
 
-Rudder 会调用已经配置的运行环境，并把这次有边界的执行记为一次 Agent 运行。
+阅读 Agent 的回答，或打开它产出的文件，然后选择最轻量的下一步：
 
-![Agent 运行详情](../../images/agent-run-detail.png)
+- 在同一个 Chat 中要求修改。
+- 结果已经可用，就保存或分享。
+- 任务开始需要负责人、依赖、明确状态或独立评审时，再创建 Issue。
 
-运行结束后，检查以下内容：
+当你能从同一段对话中找到原始请求、Agent 的结果以及产生结果的运行记录时，
+第一次任务就完成了。
 
-- 运行摘要或对话记录
-- Markdown 产物或它的链接
-- Agent 完成的验证
-- 如果未完成，是否写清阻塞原因
+## Agent 无法完成怎么办
 
-看不到可检查的产物时，先让 Agent 补充文件或链接，再进入评审。
+打开失败的 Agent 运行，先阅读容易理解的错误说明。常见原因包括运行工具没有
+登录、模型或命令不存在、运行工具不能访问目标文件夹，或任务需要额外权限。
 
-## 6. 评审结果
-
-产物准备好后，把 Issue 移到 `in_review`。评审人检查任务单、产物、运行证据和评论，然后选择明确的评审结论，并填写说明。通过后，Issue 会自动完成；要求修改时会回到负责人；选择阻塞时，原因会继续显示。
-
-判断这条工作链是否完整，可以让另一位读者打开同一条 Issue。如果对方不用去别的工具拼凑过程，就能找到请求、Agent 运行、产物和评审结论，说明记录已经足够。
-
-## 出错后怎么恢复
-
-如果运行失败，保持 Issue 打开，检查运行证据，并写清下一步。缺少凭据或需要人做决定时，把任务移到 `blocked`，同时指出由谁解除阻塞。Messenger 会把这条注意力信号带回相应负责人。
+修好提示中的问题，再重试这条小请求。在一件简单的 Chat 任务成功前，不必急着
+添加更多 Agent、项目或自动化。
 
 <CardGroup cols={2}>
-  <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
-    判断哪些任务适合一直留在对话中。
+  <Card title="该用 Chat 还是 Issue？" icon="messages-square" href="/zh/concepts/chat-messenger">
+    了解什么时候对话就够了，什么时候值得增加结构。
   </Card>
-  <Card title="任务生命周期" icon="route" href="/zh/how-to/issue-lifecycle">
-    进一步了解状态、分配、评审和关闭。
+  <Card title="配置运行环境" icon="terminal" href="/zh/how-to/configure-agent-runtime">
+    修复或调整 Agent 使用的执行工具。
   </Card>
 </CardGroup>

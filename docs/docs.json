@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "Rudder",
-  "description": "Rudder is open-source software for assigning, running, reviewing, and improving AI agent work. It connects goals, conversational Chat, structured issues, runs, reviews, budgets, workspaces, and feedback loops.",
+  "description": "Build your self-improving Agent Team.",
   "logo": "/logo.png",
   "favicon": "/favicon.svg",
   "icons": {
@@ -49,7 +49,7 @@
         "default": true,
         "groups": [
           {
-            "group": "Getting Started",
+            "group": "Start Here",
             "icon": "rocket",
             "pages": [
               "index",
@@ -58,36 +58,36 @@
             ]
           },
           {
-            "group": "Concepts",
+            "group": "How Rudder Works",
             "icon": "book-open",
             "pages": [
               "concepts/overview",
-              "concepts/goals-projects-issues",
-              "concepts/agents",
-              "concepts/built-in-browser",
-              "concepts/issues",
               "concepts/chat-messenger",
-              "concepts/calendar",
+              "concepts/issues",
+              "concepts/agents",
+              "concepts/goals-projects-issues",
+              "concepts/reviews-feedback-learning",
               "concepts/workspaces",
+              "concepts/built-in-browser",
               "concepts/skills",
               "concepts/automations",
-              "concepts/reviews-feedback-learning",
+              "concepts/calendar",
               "concepts/plugins"
             ]
           },
           {
-            "group": "How-to Guides",
+            "group": "Common Tasks",
             "icon": "route",
             "pages": [
-              "how-to/issue-lifecycle",
               "how-to/create-agent",
-              "how-to/create-automation",
+              "how-to/configure-agent-runtime",
+              "how-to/issue-lifecycle",
               "how-to/review-agent-work",
               "how-to/manage-workspaces-and-library",
-              "how-to/export-import-organization",
-              "how-to/manage-plugins",
+              "how-to/create-automation",
               "how-to/configure-feishu-integration",
-              "how-to/configure-agent-runtime"
+              "how-to/manage-plugins",
+              "how-to/export-import-organization"
             ]
           },
           {
@@ -103,7 +103,7 @@
             ]
           },
           {
-            "group": "Other",
+            "group": "About Rudder",
             "icon": "ellipsis",
             "pages": [
               "benchmarks/gdpval-harness",
@@ -111,13 +111,80 @@
               "releases"
             ]
           }
-        ]
+        ],
+        "footer": {
+          "socials": {
+            "discord": "https://discord.gg/ZcfWwPVkUz",
+            "github": "https://github.com/Undertone0809/rudder"
+          },
+          "links": [
+            {
+              "header": "Docs",
+              "items": [
+                {
+                  "label": "Install Rudder",
+                  "href": "/get-started/installation"
+                },
+                {
+                  "label": "Run your first task",
+                  "href": "/get-started/first-organization"
+                },
+                {
+                  "label": "Use an Issue",
+                  "href": "/how-to/issue-lifecycle"
+                },
+                {
+                  "label": "Configure a runtime",
+                  "href": "/how-to/configure-agent-runtime"
+                }
+              ]
+            },
+            {
+              "header": "Product",
+              "items": [
+                {
+                  "label": "Chat and Messenger",
+                  "href": "/concepts/chat-messenger"
+                },
+                {
+                  "label": "Built-in Browser",
+                  "href": "/concepts/built-in-browser"
+                },
+                {
+                  "label": "Calendar",
+                  "href": "/concepts/calendar"
+                }
+              ]
+            },
+            {
+              "header": "Project",
+              "items": [
+                {
+                  "label": "Discord",
+                  "href": "https://discord.gg/ZcfWwPVkUz"
+                },
+                {
+                  "label": "Contact",
+                  "href": "/contact"
+                },
+                {
+                  "label": "GitHub",
+                  "href": "https://github.com/Undertone0809/rudder"
+                },
+                {
+                  "label": "Changelog",
+                  "href": "/releases"
+                }
+              ]
+            }
+          ]
+        }
       },
       {
         "language": "cn",
         "groups": [
           {
-            "group": "开始使用",
+            "group": "从这里开始",
             "icon": "rocket",
             "pages": [
               "zh",
@@ -126,36 +193,36 @@
             ]
           },
           {
-            "group": "核心概念",
+            "group": "理解 Rudder",
             "icon": "book-open",
             "pages": [
               "zh/concepts/overview",
-              "zh/concepts/goals-projects-issues",
-              "zh/concepts/agents",
-              "zh/concepts/built-in-browser",
-              "zh/concepts/issues",
               "zh/concepts/chat-messenger",
-              "zh/concepts/calendar",
+              "zh/concepts/issues",
+              "zh/concepts/agents",
+              "zh/concepts/goals-projects-issues",
+              "zh/concepts/reviews-feedback-learning",
               "zh/concepts/workspaces",
+              "zh/concepts/built-in-browser",
               "zh/concepts/skills",
               "zh/concepts/automations",
-              "zh/concepts/reviews-feedback-learning",
+              "zh/concepts/calendar",
               "zh/concepts/plugins"
             ]
           },
           {
-            "group": "操作指南",
+            "group": "常用操作",
             "icon": "route",
             "pages": [
-              "zh/how-to/issue-lifecycle",
               "zh/how-to/create-agent",
-              "zh/how-to/create-automation",
+              "zh/how-to/configure-agent-runtime",
+              "zh/how-to/issue-lifecycle",
               "zh/how-to/review-agent-work",
               "zh/how-to/manage-workspaces-and-library",
-              "zh/how-to/export-import-organization",
-              "zh/how-to/manage-plugins",
+              "zh/how-to/create-automation",
               "zh/how-to/configure-feishu-integration",
-              "zh/how-to/configure-agent-runtime"
+              "zh/how-to/manage-plugins",
+              "zh/how-to/export-import-organization"
             ]
           },
           {
@@ -171,7 +238,7 @@
             ]
           },
           {
-            "group": "其他",
+            "group": "关于 Rudder",
             "icon": "ellipsis",
             "pages": [
               "zh/benchmarks/gdpval-harness",
@@ -179,74 +246,74 @@
               "zh/releases"
             ]
           }
-        ]
-      }
-    ]
-  },
-  "footer": {
-    "socials": {
-      "discord": "https://discord.gg/ZcfWwPVkUz",
-      "github": "https://github.com/Undertone0809/rudder"
-    },
-    "links": [
-      {
-        "header": "Docs",
-        "items": [
-          {
-            "label": "Quick Start",
-            "href": "/get-started/installation"
+        ],
+        "footer": {
+          "socials": {
+            "discord": "https://discord.gg/ZcfWwPVkUz",
+            "github": "https://github.com/Undertone0809/rudder"
           },
-          {
-            "label": "First organization",
-            "href": "/get-started/first-organization"
-          },
-          {
-            "label": "Issue lifecycle guide",
-            "href": "/how-to/issue-lifecycle"
-          },
-          {
-            "label": "Configure an agent runtime",
-            "href": "/how-to/configure-agent-runtime"
-          }
-        ]
-      },
-      {
-        "header": "Product",
-        "items": [
-          {
-            "label": "Chat and Messenger",
-            "href": "/concepts/chat-messenger"
-          },
-          {
-            "label": "Built-in Browser",
-            "href": "/concepts/built-in-browser"
-          },
-          {
-            "label": "Calendar",
-            "href": "/concepts/calendar"
-          }
-        ]
-      },
-      {
-        "header": "Project",
-        "items": [
-          {
-            "label": "Discord",
-            "href": "https://discord.gg/ZcfWwPVkUz"
-          },
-          {
-            "label": "Contact",
-            "href": "/contact"
-          },
-          {
-            "label": "GitHub",
-            "href": "https://github.com/Undertone0809/rudder"
-          },
-          {
-            "label": "Changelog",
-            "href": "/releases"
-          }
-        ]
+          "links": [
+            {
+              "header": "文档",
+              "items": [
+                {
+                  "label": "安装 Rudder",
+                  "href": "/zh/get-started/installation"
+                },
+                {
+                  "label": "完成第一个任务",
+                  "href": "/zh/get-started/first-organization"
+                },
+                {
+                  "label": "使用 Issue",
+                  "href": "/zh/how-to/issue-lifecycle"
+                },
+                {
+                  "label": "配置运行环境",
+                  "href": "/zh/how-to/configure-agent-runtime"
+                }
+              ]
+            },
+            {
+              "header": "产品",
+              "items": [
+                {
+                  "label": "Chat 与 Messenger",
+                  "href": "/zh/concepts/chat-messenger"
+                },
+                {
+                  "label": "内置浏览器",
+                  "href": "/zh/concepts/built-in-browser"
+                },
+                {
+                  "label": "日历",
+                  "href": "/zh/concepts/calendar"
+                }
+              ]
+            },
+            {
+              "header": "项目",
+              "items": [
+                {
+                  "label": "Discord",
+                  "href": "https://discord.gg/ZcfWwPVkUz"
+                },
+                {
+                  "label": "联系我们",
+                  "href": "/zh/contact"
+                },
+                {
+                  "label": "GitHub",
+                  "href": "https://github.com/Undertone0809/rudder"
+                },
+                {
+                  "label": "更新记录",
+                  "href": "/zh/releases"
+                }
+              ]
+            }
+          ]
+        }
       }
     ]
   },

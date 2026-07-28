@@ -1,56 +1,66 @@
 ---
-title: "工作区和 Library"
-description: "把项目上下文、持久文件、运行改动和备份放在各自的文件边界内。"
+title: "文件、Library 和工作区"
+description: "分清参考资料、项目目录、Agent 改动和最终产物应该放在哪里。"
 icon: "folder-tree"
 keywords:
   - "Rudder 工作区"
   - "Rudder Library"
-  - "Agent 运行工作区"
+  - "Agent 文件"
 canonical: "https://docs.rudderhq.dev/zh/concepts/workspaces"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/workspaces"
 hreflang_en: "https://docs.rudderhq.dev/concepts/workspaces"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/workspaces"
 ---
 
+Rudder 使用几个不同的文件位置，因为参考资料、工作文件和最终产物需要不同的
+处理方式。
+
 <a id="definition" />
 
-## 定义
+## 文件应该放在哪里
 
-Rudder 划分了几种文件边界，因为背景资料、持久产物和可修改的执行目录承担的任务不同。
-
-| 位置 | 用途 |
+| 位置 | 适合放什么 |
 | --- | --- |
-| Library | 人和 Agent 都可以引用的组织持久文件 |
-| 项目资料 | 项目运行可以作为起始上下文使用的一组 Library 文件或外部资料 |
-| 项目工作区 | 项目实际工作的代码仓库或文件夹 |
-| 运行工作区 | 单次运行使用的具体文件系统与分支边界 |
-| Agent 文件夹 | 单个 Agent 的操作说明、记忆、长期记录和技能状态 |
-| 工作区备份 | 可检查、恢复或下载的组织工作区版本 |
+| Library | 团队或未来 Agent 还需要找到的文件 |
+| 项目资源 | 每次项目运行开始时真正需要的少量 Library 或外部资料 |
+| 项目工作区 | 进行项目工作的代码仓库或文件夹 |
+| 运行工作区 | 一次 Agent 运行实际使用的文件夹或分支 |
+| Agent 目录 | 某个 Agent 的托管指令、记忆和技能状态 |
+| 工作区备份 | 可以检查或恢复的组织工作区版本 |
 
-项目资料是一份准入清单，不是组织中的全部文件。产物应继续连接到产生它的 Chat、Issue、运行或项目，不能只留在对话记录里。
+项目资源是一份经过挑选的起始资料，不代表运行可以读取组织里的所有文件。
 
 <a id="case" />
 
-## 一个示意案例
+## 例子：准备一份客户简报
 
-一个咨询团队正在准备客户简报。源笔记保存在 Library，并作为精选资料附加到项目。Agent 通过运行工作区修改项目仓库，再把最终简报保存到项目 Library 文件夹，并从待评审 Issue 中链接过去。后续运行可以找到已经接受的简报，不会连第一次尝试留下的所有草稿文件一起继承。
+把客户确认过的来源资料放进 Library，只把这次项目真正需要的几份资料加到项目。
+让 Agent 在项目仓库中工作，再把通过确认的简报保存回 Library，并从 Chat 或
+评审 Issue 链接过去。
 
-![工作区和资料](../../images/workspaces-resources.png)
+下一个 Agent 因此可以找到正式结果，而不会继承第一次尝试留下的所有临时文件。
+
+![工作区与资源](../../images/workspaces-resources.png)
 
 <a id="when-useful" />
 
-## 各个位置适合什么时候使用
+## 一条简单规则
 
-需要长期留在组织记录中的文件放到 Library。只有项目运行应默认得到某项资料时，才把它附加为项目资料。代码仓库工作使用项目工作区；改动需要明确隔离策略时，使用运行工作区。临时产物不应放进 Library，除非它属于最终证据。
+- **以后还要复用的输入：**放进 Library 或项目资源
+- **允许 Agent 修改的文件：**放在项目或运行工作区
+- **最终结果：**继续连接到产生它的 Chat、Issue、运行或项目
+- **临时文件：**默认不要放进 Library
 
-在默认本地 Desktop 布局中，组织文件位于 `~/Documents/Rudder` 下的映射文件夹。映射以组织身份为准，因此修改组织名称不会悄悄移动文件。
+标准本地 Desktop 安装会把组织文件映射到 `~/Documents/Rudder` 下的目录。
 
 <a id="operating-boundaries" />
 
-## 操作边界
+## 安全恢复
 
-受保护的 Agent 操作说明、技能、运行环境托管目录和缓存路径都不是普通 Library 内容。Desktop 的本地打开操作仍要经过工作区和真实路径校验，也不会让浏览器或服务器部署获得打开本地应用的能力。
+Agent 指令、托管技能、凭据和缓存目录不是普通 Library 文件。如果映射的组织
+文件夹消失，应恢复原目录或使用备份，不能新建一个空目录后假设数据没有问题。
 
-风险最高的是破坏性文件操作。已经映射的组织文件夹如果丢失，Rudder 会把它当作恢复问题，不会自动建立空文件夹覆盖现场。还有未完成 Issue 依赖运行工作区时不能归档；恢复备份前，也会先创建一份安全版本。
+恢复前先检查备份内容。Rudder 会先创建安全备份。还有未完成 Issue 依赖某个
+运行工作区时，需要先关闭或移动这些任务，才能归档工作区。
 
-先查阅[工作区边界](/zh/reference/workspace-boundaries)，再按[管理工作区和 Library](/zh/how-to/manage-workspaces-and-library)操作。
+准确位置和平台差异见[工作区位置参考](/zh/reference/workspace-boundaries)。

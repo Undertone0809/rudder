@@ -1,11 +1,11 @@
 ---
 title: "Issues"
-description: "Use an Issue when agent work needs durable status, ownership, dependencies, or a review path."
+description: "Use an Issue when a task needs a clear owner, status, dependencies, or review."
 icon: "circle-check"
 keywords:
   - "Rudder Issues"
-  - "agent task record"
-  - "agent work lifecycle"
+  - "agent task"
+  - "task lifecycle"
 canonical: "https://docs.rudderhq.dev/concepts/issues"
 "og:url": "https://docs.rudderhq.dev/concepts/issues"
 hreflang_en: "https://docs.rudderhq.dev/concepts/issues"
@@ -14,93 +14,71 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/issues"
 
 <a id="issue-definition" />
 
-An issue is a durable task record with an explicit status and lifecycle. Use
-one when work needs a named owner, dependencies, or a review path; comments,
-agent runs, artifacts, and review decisions can stay with the same record.
+An **Issue** keeps a larger task in one place. Use one when work needs a named
+owner, dependencies, or a review path; its conversation, Agent Runs, files,
+and review decision stay together.
 
-Suppose an Agent is drafting a launch announcement. The request could stay in
-Chat while one person iterates on the wording. It becomes a good Issue when a
-release owner needs to assign the draft, track a legal dependency, and ask a
-reviewer to approve the final file.
+If one person can request, refine, and accept a result in a conversation, keep
+the task in Chat. Create an Issue when more people, steps, or decisions need to
+stay coordinated.
 
-![Issue detail surface](../images/issue-detail.png)
+![Issue detail](../images/issue-detail.png)
 
-## What the record keeps together
+## What belongs on an Issue
 
-One Issue can hold:
+- the result you want and how you will judge it
+- one person or Agent responsible for the next step
+- status and dependencies
+- comments and directed Agent requests
+- related Agent Runs
+- files, screenshots, links, and other results
+- a reviewer and their decision, when review is needed
 
-- the intended outcome and acceptance criteria
-- one assignee responsible for the next execution step
-- dependencies and current status
-- comments and directed Agent mentions
-- Agent Runs, summaries, and transcripts
-- files, screenshots, links, and other artifacts
-- a reviewer and durable review decisions
+## Status in plain language
 
-An Issue does not make work more real than Chat. It makes coordination state
-more explicit and easier to scan across a team.
-
-## Lifecycle at a glance
-
-| Status | Meaning |
+| Status | Use it when |
 | --- | --- |
-| `backlog` | The request exists, but scope, priority, owner, or acceptance criteria still needs a decision |
-| `todo` | The work is clear enough for an assignee to start |
-| `in_progress` | An assignee has checked out the work |
-| `blocked` | The next step depends on a person, dependency, access, or external condition |
-| `in_review` | There is an output ready for reviewer judgment |
-| `done` | The result and evidence have been accepted |
+| `backlog` | The request still needs scope, priority, an owner, or a clear result |
+| `todo` | The task is ready for its owner to start |
+| `in_progress` | The owner is working on it |
+| `blocked` | A person, dependency, permission, or external event must happen next |
+| `in_review` | The result is ready for someone else to judge |
+| `done` | The result has been accepted |
 
-Use `todo` only when the launch brief contains enough context to begin. If the
-audience is still undecided, keep it in `backlog`. Status communicates the
-normal lifecycle and automatic routing; it is not a progress decoration or a
-permission gate for an explicit request to the current assignee or reviewer.
+Do not move a vague request to `todo`. A new owner should be able to read the
+Issue and start without asking what success means.
 
-## Ownership and checkout
+## Ownership
 
-An Issue has one assignee. Agents check out an Issue when accepting
-checkout-eligible assignment work so Rudder can prevent duplicate active work
-and keep ownership clear. A direct comment request to the current assignee or
-reviewer gets authority from that relationship and explicit request, works in
-any Issue status without checkout, and preserves status and ownership unless
-the request explicitly changes them. The Issue execution lease serializes this
-path; it does not grant the authority.
-When two Agents need independent responsibilities, split the work into
-separate Issues or sub-Issues.
+An Issue has one assignee so the next step is unambiguous. When two Agents have
+independent responsibilities, split the work into separate Issues or
+sub-Issues.
 
-An ordinary comment records context but does not wake the assignee. Use an
-explicit Agent mention with wake intent when the comment is a directed request.
-Mentioning another Agent does not reassign the Issue. A mentioned collaborator
-may handle the comment itself, but does not gain Issue ownership or permission
-for protected Issue mutations.
+Assigning a ready Issue to an Agent can start the work automatically. An
+ordinary comment adds context but does not wake the Agent; use a directed Agent
+mention when you want it to act on the comment. Mentioning an Agent does not
+change the assignee.
 
-## Review and close-out
+## Review
 
-The assignee owns implementation and evidence. The reviewer owns the next
-quality judgment when the Issue reaches `in_review`. A useful decision says
-approve, request changes, needs follow-up, or blocked.
+Add a reviewer when someone other than the assignee must judge the result. Move
+the Issue to `in_review` only after the output is ready.
 
-Before moving the announcement to `done`, a later reader should be able to find
-the Markdown file, the checks performed, the review decision, and any remaining
-risk from the Issue itself.
+The reviewer can accept the work, request changes, or explain what is blocking
+the decision. If the Agent Run fails, keep the Issue open and name the next
+action instead of hiding the failure behind `done`.
 
-The high-risk edge case is a failed run with no close-out signal. Keep the Issue
-open, attach the failure evidence, move it to `blocked` when the next action
-belongs elsewhere, and name the person or dependency that can unblock it.
+## Issue IDs
 
-## Identity boundary
-
-Numbered Issues have organization-scoped readable IDs such as `R6-42`, formed
-from the organization's Issue Key and issue number. An operator may change the
-Issue Key in organization settings. Existing issue numbers and underlying
-identity remain the same, and links using an older Issue Key continue to
-resolve.
+Readable IDs such as `R6-42` combine the organization's Issue Key with a
+number. Changing the Issue Key changes how IDs are displayed, not the
+underlying task. Links that use an older key continue to work.
 
 <CardGroup cols={2}>
-  <Card title="Run an Issue from Intake to Done" icon="route" href="/how-to/issue-lifecycle">
-    Apply status, assignment, review, and recovery in a complete workflow.
+  <Card title="Use an Issue from start to finish" icon="route" href="/how-to/issue-lifecycle">
+    Follow a complete assignment, execution, and review workflow.
   </Card>
-  <Card title="Chat and Messenger" icon="messages-square" href="/concepts/chat-messenger">
-    Compare conversational work with an Issue and find attention signals.
+  <Card title="Chat or Issue?" icon="messages-square" href="/concepts/chat-messenger">
+    Decide whether your task needs this extra structure.
   </Card>
 </CardGroup>

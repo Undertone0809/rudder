@@ -1,76 +1,73 @@
 ---
-title: "Workspaces and Library"
-description: "Place project context, durable files, execution changes, and backups in their intended filesystem boundaries."
+title: "Files, Library, and Workspaces"
+description: "Know where to put source material, project folders, Agent changes, and finished output."
 icon: "folder-tree"
 keywords:
   - "Rudder Workspaces"
   - "Rudder Library"
-  - "Agent Run workspace"
+  - "Agent files"
 canonical: "https://docs.rudderhq.dev/concepts/workspaces"
 "og:url": "https://docs.rudderhq.dev/concepts/workspaces"
 hreflang_en: "https://docs.rudderhq.dev/concepts/workspaces"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/workspaces"
 ---
 
+Rudder uses a few file locations because source material, working files, and
+finished output need different treatment.
+
 <a id="definition" />
 
-## Definition
+## Where files belong
 
-Rudder uses several file boundaries because background context, durable output,
-and mutable execution work have different jobs.
-
-| Location | Purpose |
+| Location | Put this here |
 | --- | --- |
-| Library | Durable organization files that people and Agents can reference |
-| Project resources | A curated set of Library or external resources eligible as starting context for project-linked runs |
-| Project workspace | The repository or folder where project work takes place |
-| Run workspace | The concrete filesystem and branch boundary used by one run |
-| Agent home | Managed instructions, memory, life, and Skill state for one Agent |
-| Workspace backup | A version of the organization workspace for inspection, restore, or download |
+| Library | Files your team or future Agents should be able to find again |
+| Project resources | The small set of Library or external material a project should provide to its Runs |
+| Project workspace | The repository or folder where project work happens |
+| Run workspace | The exact folder or branch used by one Agent Run |
+| Agent home | Managed instructions, memory, and Skill state for one Agent |
+| Workspace backup | A saved organization workspace you can inspect or restore |
 
-Project resources are an admission list, not every file in the organization.
-An output should remain connected to the Chat, Issue, Run, or project that
-produced it instead of existing only inside a transcript.
+Project resources are a curated starting set, not permission to read every file
+in the organization.
 
 <a id="case" />
 
-## One illustrative case
+## Example: prepare a client brief
 
-A consulting team prepares a client brief. Source notes live in Library and are
-attached to the project as curated resources. The Agent works in the project's
-repository through a run workspace, then saves the final brief in the project
-Library folder and links it from the review Issue. A later run can find the
-accepted brief without inheriting every scratch file from the first attempt.
+Keep the client's approved source notes in Library and add only the relevant
+ones to the project. Let the Agent work in the project repository. Save the
+accepted brief back to Library and link it from the Chat or review Issue.
+
+The next Agent can now find the approved result without inheriting every scratch
+file from the first attempt.
 
 ![Workspaces and resources](../images/workspaces-resources.png)
 
 <a id="when-useful" />
 
-## When each location is useful
+## A simple rule
 
-Use Library for files that should remain part of the organization record. Add a
-file as a project resource only when project-linked runs should receive it as
-starting context. Use a project workspace for repository work and a run
-workspace when changes need an explicit isolation strategy. Keep temporary
-artifacts outside Library unless they are part of the final evidence.
+- **Input you want to reuse:** Library or project resources
+- **Files the Agent may change:** project or Run workspace
+- **Final result:** keep it linked to its Chat, Issue, Run, or project
+- **Temporary scratch files:** do not promote them to Library by default
 
-On the default local Desktop layout, organization files live in a mapped folder
-under `~/Documents/Rudder`. The mapping uses organization identity, so renaming
-the organization does not silently move its files.
+On a standard local Desktop setup, organization files live in a mapped folder
+under `~/Documents/Rudder`.
 
 <a id="operating-boundaries" />
 
-## Operating boundaries
+## Safe recovery
 
-Protected Agent instructions, Skills, managed runtime directories, and cache
-paths are not ordinary Library content. Desktop launch actions still pass
-through workspace and real-path validation; they do not grant browser or server
-deployments access to local applications.
+Agent instructions, managed Skills, credentials, and cache folders are not
+ordinary Library files. If a mapped organization folder disappears, restore it
+or use a backup; do not create an empty replacement and assume the data is
+safe.
 
-The highest-risk boundary is destructive filesystem work. A missing mapped
-organization folder is treated as a recovery problem, not replaced with an
-empty folder. Run workspaces cannot be archived while open Issues still depend
-on them, and restoring a backup creates a pre-restore safety version first.
+Inspect a backup before restoring it. Rudder creates a safety backup first.
+Open work can prevent a Run workspace from being archived until its dependent
+Issues are closed or moved.
 
-See [Workspace boundaries](/reference/workspace-boundaries) for the lookup
-rules, then follow [Manage Workspaces and Library](/how-to/manage-workspaces-and-library).
+For exact locations and platform behavior, see [Workspace
+boundaries](/reference/workspace-boundaries).

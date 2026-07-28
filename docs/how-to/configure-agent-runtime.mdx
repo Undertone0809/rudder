@@ -1,107 +1,86 @@
 ---
-title: "Configure an Agent runtime"
-description: "Configure and test the execution environment Rudder invokes for one Agent, then verify a real low-risk run."
+title: "Configure an Agent Runtime"
+description: "Connect the program that performs an Agent's work, test it, and verify one real task."
 icon: "terminal"
 keywords:
   - "configure Agent runtime"
   - "Rudder runtime test"
-  - "local Agent CLI"
+  - "Codex Claude CLI"
 canonical: "https://docs.rudderhq.dev/how-to/configure-agent-runtime"
 "og:url": "https://docs.rudderhq.dev/how-to/configure-agent-runtime"
 hreflang_en: "https://docs.rudderhq.dev/how-to/configure-agent-runtime"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/configure-agent-runtime"
 ---
 
+A runtime is the program or service Rudder starts when an Agent works. The
+fastest setup uses a local CLI you have already installed and signed in to.
+
 <a id="completed-state" />
 
-## Completed state
+## What you will verify
 
-At the end of this guide, one Agent has a saved runtime configuration, its
-environment test has an understood result, and a low-risk Agent Run has left a
-visible result or blocker with transcript or raw output evidence.
-
-The Agent, Agent Run, and runtime remain separate. The Agent owns the role, the
-Run records one attempt, and the runtime performs that attempt. Compare
-operator-facing choices in [Runtime types](/reference/runtime-types).
+You will configure one Agent, pass its environment check, and run a small Chat
+task. The real task matters: a successful test proves that Rudder found the
+runtime, but not that the runtime can complete your work.
 
 <a id="prerequisites" />
 
-## Prerequisites
+## Before you start
 
-You need permission to edit an Agent and the runtime on the same host or network
-where Rudder will invoke it. For a local runtime, install and authenticate the
-matching CLI first. For an external service, prepare its reachable endpoint and
-credentials. Keep secrets in the host environment or Rudder secret fields, not
-in committed configuration.
+Install and authenticate one supported runtime on the same computer as Rudder:
 
-This walkthrough uses an illustrative release writer with Codex local. The same
-verification pattern applies to other operator-facing runtimes, but their
-capabilities differ.
+| Runtime | Command Rudder looks for |
+| --- | --- |
+| Codex | `codex` |
+| Claude Code | `claude` |
+| Cursor | `cursor-agent` |
+| Gemini CLI | `gemini` |
+| OpenCode | `opencode` |
+| Pi | `pi` |
+
+Run the command once in your terminal to confirm it opens without a missing
+command or login error.
 
 <a id="case-backed-steps" />
 
-## Configure the release writer
+## Connect it to an Agent
 
-1. Open the release writer's Agent detail and edit its Runtime configuration.
-2. Choose **Codex (local)**. If the default CLI is missing, Rudder shows setup
-   guidance but still permits a supported custom command.
-3. Choose the model and thinking effort offered for that model. Changing model
-   clears an effort value that the new model does not support.
-4. Add a role-specific instructions file only if the Agent needs one. Use an
-   absolute path that the Rudder host can read.
-5. Review broad options such as web search or sandbox bypass. Enable them only
-   when this trusted local work requires them.
-6. Run **Test runtime chain**. Treat `pass` as ready, `warn` as visible guidance that must
-   be understood, and `fail` as a failed probe that needs repair.
-7. Save the Agent, then ask it in Chat to draft a two-line release headline.
-8. Open the resulting Agent Run and confirm the selected runtime, result,
-   transcript or raw output, and any usage or cost evidence.
-
-Rudder supplies first-party control tools automatically to supported local
-runtimes. Do not add a second custom Rudder MCP server. Browser tools appear
-only for an eligible local run while the Built-in Browser setting is enabled.
-
-Organization-managed external MCP integrations are configured separately on
-the Agent's Integrations tab. Use Discover to find an available provider and
-Manage to choose that provider's coarse access mode; Supabase and Linear offer
-no access, read only, or read and write, while Notion uses no access or
-provider-granted access. There is no per-tool checklist. The server derives the allowed catalog and keeps
-destructive, administrative, billing, and unknown tools unavailable. Supabase
-connections created with account scope let project-specific calls choose their
-project when the tool runs rather than during OAuth setup. Existing
-project-scoped grants keep that boundary until an explicit account-access
-upgrade.
-
-Agent-owned and Organization connections keep independent grants and
-credentials. When both are available for an official provider, Rudder uses the
-current Agent's connection first. Selecting **No access** on that Agent
-connection is an explicit deny and does not fall back to the Organization
-connection. Revoking or disconnecting the Agent connection allows the next
-runtime projection to use an available Organization connection instead.
+1. Open the Agent, then edit its **Runtime** configuration.
+2. Choose the local runtime you installed.
+3. Choose a model and thinking level when that runtime offers them.
+4. Leave advanced permissions, sandbox bypass, custom commands, and
+   instruction-file paths at their defaults unless your task needs them.
+5. Select **Test runtime chain**.
+6. Read the result:
+   - `pass`: Rudder can start the runtime.
+   - `warn`: setup may work, but read the named limitation.
+   - `fail`: fix the named command, login, model, path, or network problem.
+7. Save the Agent.
+8. In Chat, ask for a safe, concrete result such as a two-line summary.
+9. Open the Agent Run and confirm the selected runtime produced the reply.
 
 <a id="success-signal" />
 
-## Success signal
+## Check the result
 
-The environment result is either `pass` or a `warn` whose limits you understand,
-and the real run starts under the selected runtime. The Chat shows a finished
-answer or explicit blocker, while Agent Run detail preserves evidence underneath
-it. A successful probe without a real run is not enough proof.
+The setup is ready when the environment test passes, or has a warning you
+understand, and the real Chat task finishes. The Run should show the intended
+runtime plus a result or clear blocker.
 
 <a id="recovery" />
 
-## Recovery
+## Common problems
 
-If the probe reports command not found, confirm the CLI is installed on the
-Rudder host and available on its `PATH`, or set a supported custom command. If
-authentication fails, log in through that runtime outside Rudder and test again.
-For an unreadable instructions file or workspace, correct the absolute path and
-host permissions before retrying.
+- **Command not found:** install the CLI or set the correct supported command.
+- **Authentication failed:** sign in through the runtime outside Rudder, then
+  test again.
+- **Model unavailable:** choose a model your provider account can use.
+- **Instructions or workspace cannot be read:** use an absolute path and fix
+  host permissions.
+- **The test passes but the task fails:** open the Run and fix the specific
+  provider, model, permission, or project-access error.
 
-If a `warn` becomes a failed real run, use the Run's terminal error and raw
-evidence to repair the exact provider, model, endpoint, or permission. Do not
-switch the Agent to active recurring work until the low-risk run succeeds.
-
-After changing external MCP access, start a new Run to test an upgrade.
-Downgrades block later calls in an already-active Run immediately, while
-upgrades intentionally wait for the next Run.
+Rudder supplies its own control tools to supported local runtimes. Do not add a
+second Rudder MCP server. External MCP connections and their access levels are
+advanced configuration; see [Permissions and
+platforms](/reference/permissions-and-platforms) when you need them.

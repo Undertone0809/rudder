@@ -1,76 +1,67 @@
 ---
-title: "Reviews, feedback, and learning"
-description: "Judge an output, record durable feedback, and promote lessons without confusing Review with Approval."
+title: "Review, Feedback, and Improvement"
+description: "Judge a result, explain what should change, and reuse proven lessons in future Agent work."
 icon: "message-square-check"
 keywords:
   - "Rudder Review"
-  - "agent feedback"
-  - "agent learning"
+  - "Agent feedback"
+  - "Agent improvement"
 canonical: "https://docs.rudderhq.dev/concepts/reviews-feedback-learning"
 "og:url": "https://docs.rudderhq.dev/concepts/reviews-feedback-learning"
 hreflang_en: "https://docs.rudderhq.dev/concepts/reviews-feedback-learning"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/reviews-feedback-learning"
 ---
 
+Rudder is designed for Agents that improve through real work. That does not
+mean every comment silently rewrites an Agent.
+
 <a id="definition" />
 
-## Definition
+## Three different steps
 
-Review judges whether an output satisfies the request. A reviewer inspects the
-Issue, output, Agent Run evidence, and comments, then records a structured
-decision with a required comment. Accepted work may complete. Requested changes
-return to the assignee, while a blocked result keeps the missing input visible.
+| Step | Question it answers |
+| --- | --- |
+| Review | Is this result good enough for the task? |
+| Feedback | What was good, wrong, missing, or worth repeating? |
+| Improvement | Should this lesson change future context, instructions, a Skill, a workflow, or an evaluation? |
 
-Approval is different from Review. An Approval authorizes a governed action,
-such as spending or a sensitive change. A Review can accept the quality of an
-output without authorizing the action that uses it, and an Approval can permit
-an action without judging the quality of its output.
-
-Feedback names what was good, wrong, missing, or worth repeating. Learning is
-the deliberate promotion of that evidence into future context, a Skill,
-instructions, a workflow, a decision, or an evaluation case.
+An **Approval** is different. It gives permission for an action, such as
+spending money or making a sensitive change. It does not judge the quality of
+the result.
 
 <a id="case" />
 
-## One illustrative case
+## Example: improve future release notes
 
-A writing Agent submits a launch announcement. The reviewer accepts the setup
-instructions but requests a clearer limitation paragraph. After the revision is
-accepted, the team notices that the same limitation check appears in every
-release review. It drafts a change to the release Skill, cites the reviewed
-Issues, and evaluates the update before enabling it for later work.
+A writing Agent submits release notes. The reviewer accepts the setup steps but
+asks for a clearer limitations section. After the revision is accepted, the
+team notices the same check has helped several releases.
+
+Instead of copying the comment forever, the team proposes an update to the
+release-writing Skill, tests it, and uses the reviewed version in later work.
+That is how feedback can improve the team without turning one opinion into an
+uncontrolled permanent rule.
 
 <a id="when-useful" />
 
-## When each step is useful
+## When to use each step
 
-Use Review when completion depends on judgment by someone other than the
-assignee. Use feedback whenever the next actor or a later run should understand
-the reason for the decision. Promote a lesson only when the pattern is stable
-enough to improve future work beyond the current Issue.
-
-Reviewer routing and the final reviewer decision are separate events. Moving an
-Issue into a reviewable state gives the reviewer the next action; the work is
-not accepted until a structured decision is recorded.
-
-An ordinary explicit mention of the current reviewer can authorize other Issue
-work in any status, but it does not authorize formal Review work. It is not
-reviewer routing or a structured decision; structured decisions still require
-a reviewable status.
+- Add a reviewer when completion needs independent judgment.
+- Leave specific feedback whenever the next person or future Run needs to know
+  why a decision was made.
+- Change durable instructions only when the lesson is repeated, its scope is
+  clear, and you can evaluate the change.
 
 <a id="operating-boundaries" />
 
-## Operating boundaries
+## Safe improvement
 
-An assignee Agent cannot bypass a named reviewer by marking the Issue `done`.
-Free-form accept or reject text is useful evidence, but it is not the structured
-review decision. Review follow-up is bounded and remains owned by the reviewer.
+When an Issue has a named reviewer, the assignee cannot skip that review and
+close the task as accepted. A casual “looks good” comment is useful feedback,
+but it is not the same as recording the review decision.
 
-The highest-risk boundary is silent learning. Feedback never rewrites durable
-Agent behavior automatically. A learning change needs linked evidence, a clear
-target and scope, an appropriate approval path, and a way to evaluate or roll
-back the change.
+Feedback never changes an Agent, Skill, or workflow by itself. A durable change
+should name the supporting work, where it applies, who reviews it, and how to
+test or undo it.
 
-Follow [Review Agent work](/how-to/review-agent-work) for the procedure. Use
-  [Approvals, budgets, and activity](/reference/approvals-budgets-activity) for
-governed-action controls.
+Follow [Review Agent work](/how-to/review-agent-work) for the practical steps.

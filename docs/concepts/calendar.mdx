@@ -1,11 +1,11 @@
 ---
 title: "Calendar"
-description: "Inspect scheduled and dated work without turning Calendar into a second task state machine."
+description: "See when Agent work ran, what is scheduled next, and where a human checkpoint happened."
 icon: "calendar-days"
 keywords:
   - "Rudder Calendar"
-  - "Agent Run history"
-  - "scheduled work"
+  - "Agent work history"
+  - "scheduled automation"
 canonical: "https://docs.rudderhq.dev/concepts/calendar"
 "og:url": "https://docs.rudderhq.dev/concepts/calendar"
 hreflang_en: "https://docs.rudderhq.dev/concepts/calendar"
@@ -14,49 +14,44 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/calendar"
 
 <a id="definition" />
 
-## Definition
+## What Calendar is for
 
-Calendar is an organization-scoped time view of work that already has a date or
-window. Events can come from Automation schedules, Issue dates, Agent Run
-windows, or configured calendar sources. A navigable event keeps a link to its
-source object.
+Calendar gives you a time-based view of work that already has a date: Agent
+Runs, Automation schedules and runs, and important human checkpoints.
 
-Calendar answers when something was scheduled or happened. The source Issue,
-Automation, or Run still owns its status, result, and next action.
+Use it to answer questions such as:
 
-<a id="case" />
-
-## One illustrative case
-
-The operations digest is scheduled for 18:00. Calendar shows the scheduled
-event and, after execution, the run window. The owner opens the event, follows
-it to the Automation, and checks the linked Chat result. If the run failed, the
-failure is handled on the source run and Automation record, not by editing a
-separate Calendar status.
+- What ran yesterday?
+- Which recurring tasks are scheduled this week?
+- Did several expensive Runs overlap?
+- When did a review or approval happen?
 
 ![Calendar work history](../images/calendar-work-history.png)
 
+<a id="case" />
+
+## Example: check a weekly report
+
+An operations digest is scheduled for Monday morning. Calendar shows the next
+scheduled time, then the Run after it happens. If the report fails, open the
+source Automation or Agent Run to see the reason and fix it.
+
 <a id="when-useful" />
 
-## When it is useful
+## Calendar does not replace the task
 
-Use Calendar to see timing, overlap, missed windows, and human checkpoints
-across a period. Day, week, and month views change how the same source events
-are arranged. They do not change the underlying records.
-
-For current ownership or a decision that needs attention, return to the source
-Issue, Messenger thread, Automation, or Agent Run.
+Day, week, and month views arrange the same source records in different ways.
+To change an owner, reply to a question, review output, or edit a schedule,
+return to the original Issue, Chat, Run, or Automation.
 
 <a id="operating-boundaries" />
 
-## Operating boundaries
+## What to remember
 
-Calendar is not an assignment queue and does not infer that time spent means
-work succeeded. It must preserve organization scope and source identity.
+- A Calendar event does not prove the work succeeded.
+- Calendar never creates a second status for an Issue or Automation.
+- Events stay inside their organization and link back to their source.
+- A source change is reflected in Calendar; you do not edit a separate copy.
 
-The highest-risk boundary is duplicate state. A Calendar event must never
-become a second status record for an Issue or Automation. If a source changes,
-Calendar reflects that source rather than maintaining an independent truth.
-
-For repeated schedules, read [Automations](/concepts/automations). For attention
-recovery, read [Chat and Messenger](/concepts/chat-messenger).
+For recurring work, see [Automations](/concepts/automations). For questions and
+failures waiting for you, see [Messenger](/concepts/chat-messenger).

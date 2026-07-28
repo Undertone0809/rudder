@@ -1,88 +1,89 @@
 ---
-title: "Run an Issue from intake to done"
-description: "Move one Issue through assignment, Agent execution, evidence, structured review, and accepted close-out."
+title: "Use an Issue from Start to Finish"
+description: "Create a clear task, assign one owner, review the result, and close it with the important context intact."
 icon: "route"
 keywords:
-  - "Rudder Issue lifecycle"
-  - "assign Agent Issue"
-  - "Issue review"
+  - "Rudder Issue workflow"
+  - "assign Agent task"
+  - "review Issue"
 canonical: "https://docs.rudderhq.dev/how-to/issue-lifecycle"
 "og:url": "https://docs.rudderhq.dev/how-to/issue-lifecycle"
 hreflang_en: "https://docs.rudderhq.dev/how-to/issue-lifecycle"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/issue-lifecycle"
 ---
 
+This guide uses an Issue for a launch announcement. Use the same flow for any
+task that benefits from a clear owner, status, and reviewer.
+
 <a id="completed-state" />
 
-## Completed state
+## What the finished Issue should show
 
-At the end of this guide, a launch-announcement Issue has one assignee, an
-inspectable Agent Run and output, a structured reviewer decision, and an
-accepted `done` state. The Issue itself contains enough evidence for a later
-reader to understand what happened.
+The final record should make it easy to find the original request, the owner,
+the Agent Run, the result, the review comment, and any follow-up work.
 
 <a id="prerequisites" />
 
-## Prerequisites
+## Before you start
 
-Prepare a bounded outcome, acceptance criteria, one eligible assignee, and a
-reviewer when independent judgment matters. Issue status meanings and allowed
-transitions are defined in [Issue statuses](/reference/issue-statuses); this
-guide does not create another status definition.
+Prepare:
 
-Every Issue keeps one assignee. Assignment to an Agent wakes it when the Issue
-is actionable rather than in `backlog`. Assignment-path execution checks out
-the Issue with Run ownership, and a named reviewer cannot be bypassed by
-assignee completion.
+- one result you can describe clearly
+- a short list of acceptance criteria
+- one person or Agent to do the work
+- a reviewer only when independent judgment matters
 
 <a id="case-backed-steps" />
 
-## Run the launch announcement
+## Move the task through its lifecycle
 
-1. Create `Draft the launch announcement` with the audience, required setup
-   command, claim boundaries, output format, and reviewer acceptance criteria.
-2. Leave it in `backlog` while any of those inputs still need a decision. Move
-   it to `todo` only when another owner can start without asking what the task
-   means.
-3. Assign the writing Agent and name the marketing reviewer. Assignment wakes
-   the Agent; do not start a duplicate Run manually.
-4. Let the Agent check out the Issue and produce the Markdown file. Inspect the
-   Agent Run, output link, validation, cost when available, and remaining risk.
-5. Move the Issue to `in_review` only when the output is ready for judgment.
-   Reviewer routing gives the reviewer the next action without reassigning the
-   implementation work.
-6. The reviewer records one structured decision with a comment. Acceptance can
-   complete the Issue. Requested changes return the next step to the assignee;
-   a blocked decision keeps the missing input visible.
+1. **Create the Issue.** Use a specific title such as `Draft the launch
+   announcement`. Describe the audience, required content, output format, and
+   how the result will be judged.
+2. **Keep it in backlog while decisions are missing.** Do not assign vague work
+   just to make the board look active.
+3. **Move it to todo and assign one owner.** A ready Issue assigned to an Agent
+   can start automatically, so do not also launch a duplicate Run.
+4. **Follow the work.** The Issue moves to in progress while the owner works.
+   Open the Agent Run to see progress, errors, or output.
+5. **Attach the result.** Link the Markdown file, preview, screenshot, test
+   output, or other deliverable from the Issue.
+6. **Move it to review.** Do this only when another person can judge the actual
+   result.
+7. **Record the decision.** The reviewer accepts the work, requests specific
+   changes, or explains what is blocking the decision. Acceptance can complete
+   the Issue; requested changes return the next step to the assignee.
 
-A normal comment preserves context but does not wake the assignee. When a
-specific Agent must act on a comment, use an explicit wake mention. The mention
-does not reassign the Issue. A direct request to the current assignee or
-reviewer can run in any status without checkout; the Issue execution lease
-serializes it while status and ownership stay unchanged unless the request
-explicitly asks for a governed change. A mentioned collaborator may handle the
-comment itself, but gains neither ownership nor permission for protected Issue
-mutations.
+An ordinary comment saves context. If you need a specific Agent to act on a
+comment, mention it directly. The mention wakes that Agent but does not change
+the Issue's assignee.
 
 <a id="success-signal" />
 
-## Success signal
+## Check the result
 
-The `done` Issue shows the original request, one current owner for each stage,
-the Agent Run, Markdown output, validation evidence, review comment, structured
-decision, and any follow-up work. No one needs a separate terminal transcript
-or private message to reconstruct the result.
+Open the completed Issue as if you had not seen the task before. You should be
+able to answer:
+
+- What was requested?
+- Who did the work?
+- Where is the result?
+- How was it checked?
+- Why was it accepted?
+- Is there any follow-up?
 
 <a id="recovery" />
 
-## Recovery
+## When the task does not finish cleanly
 
-If the Run fails, keep the Issue open and attach the failure evidence. Use
-`blocked` when the next action depends on access, a person, a dependency, or an
-external condition, and name who can unblock it. If the assignee finishes
-without a sufficient close-out signal, Rudder may schedule bounded same-Agent
-follow-up rather than hide the gap as success.
+- **The Run fails:** keep the Issue open, link the failed Run, and retry only
+  after understanding the error.
+- **Another person or dependency must act:** move the Issue to blocked and name
+  what will unblock it.
+- **The result is incomplete:** request changes instead of accepting it.
+- **The review never happens:** keep the Issue in review and return it to the
+  named reviewer.
+- **A completed task needs more work:** reopen it with a comment that explains
+  why, or create a separate follow-up Issue.
 
-If review output exists but no structured decision was recorded, keep the Issue
-in review and route it back to the reviewer. A closed Issue can be reopened only
-through an explicit reopen comment, which leaves durable evidence.
+For a compact status table, see [Issue statuses](/reference/issue-statuses).

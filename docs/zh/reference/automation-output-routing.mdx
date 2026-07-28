@@ -1,11 +1,11 @@
 ---
-title: "自动化输出路由"
-description: "比较 Rudder 自动化的 Issue 和 Chat 输出，包括运行记录与失败证据。"
-icon: "route"
+title: "选择自动化结果去向"
+description: "比较自动化的 Chat 与 Issue 结果，并了解运行失败时会看到什么。"
+icon: "split"
 keywords:
-  - "自动化输出路由"
-  - "Rudder 自动化 Issue 输出"
-  - "Rudder 自动化 Chat 输出"
+  - "自动化 Chat 结果"
+  - "自动化 Issue 结果"
+  - "Rudder 结果去向"
 canonical: "https://docs.rudderhq.dev/zh/reference/automation-output-routing"
 "og:url": "https://docs.rudderhq.dev/zh/reference/automation-output-routing"
 hreflang_en: "https://docs.rudderhq.dev/reference/automation-output-routing"
@@ -14,59 +14,47 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/automation-output-routing"
 
 <a id="definition" />
 
-## 定义
-
-自动化输出路由决定每次执行结果由哪个工作页面承载。自定义自动化默认把结果
-发送到 Chat。重复任务需要 Issue 字段和生命周期时，可以明确选择跟踪为 Issue。
+每项自动化都要决定每次结果放在哪里。根据人们怎样使用结果来选择，不要只看
+Agent 运行时间长短。
 
 <a id="states" />
 
-## 状态与模式
+## Chat 还是 Issue？
 
-| 输出模式 | 一次实际执行的结果 | 自动化运行上的来源链接 |
+| 选择 | 最适合 | 每次真实运行会创建 |
 | --- | --- | --- |
-| `chat_output` | 为这次执行新建一段 Messenger 对话 | `linkedChatConversationId` |
-| `track_issue` | 新建执行 Issue，进入正常的分配和评审流程 | `linkedIssueId` |
+| 发送到 Chat | 一个人可以在对话中阅读、讨论并完成 | 一段独立 Messenger 对话 |
+| 创建 Issue | 结果需要负责人、状态、依赖、队列或评审 | 一条正常跟踪的 Issue |
 
-自动化运行使用精确状态 `received`、`running`、`coalesced`、`skipped`、
-`issue_created`、`completed` 和 `failed`。`issue_created` 表示已经创建用于跟踪
-结果的 Issue，之后由该 Issue 自己的生命周期继续推进。即使没有新建 Chat 或
-Issue，最终状态也会保留在运行记录上。
+两种方式都会保留自动化运行和底层 Agent 运行。
+
+运行历史可能显示 `received`、`running`、`coalesced`、`skipped`、
+`issue_created`、`completed` 或 `failed`。这些标签说明触发过程，关联的 Chat
+或 Issue 仍然保留自己的任务状态。
 
 <a id="constraints" />
 
-## 约束
+## 跳过或失败时会怎样
 
-- 每次真实的 Chat 输出执行都会得到一段独立对话。Rudder 不会把某段人工 Chat
-  永久作为所有后续结果的收件箱。
-- 被跳过或合并的运行不会创建空对话。
-- Chat 输出失败时会保留可见的部分结果或备用证据。
-- 跟踪为 Issue 后，任务遵循正常的分配、状态、Agent 运行、评审和关闭规则。
+- 被跳过或合并的触发会保留运行记录，说明为什么没有创建新工作。
+- Chat 运行开始后失败，会保留已经创建的对话、部分结果或失败说明。
+- Issue 运行失败时，Issue 会保持打开，方便继续处理。
+- 修改结果方式只影响未来运行，不会改变旧结果。
 
 <a id="boundaries" />
 
-## 边界
+## 只保留一份任务事实
 
-输出模式不表示任务是否重要、昂贵或耗时。应根据团队需要的协作记录选择页面。
-受治理的团队策略仍可以要求使用 Issue，即使结果也适合在 Chat 中阅读。
+Chat 结果留在原对话，Issue 结果沿用正常 Issue 流程。Messenger 可以提醒你，
+但不会成为任务的第二份副本。
 
-两种模式都以自动化运行为调度记录。Chat 对话不能替代运行记录，执行 Issue
-也不能替代自动化定义或日程。
+即使 Chat 更方便，团队策略仍然可以要求某些受控工作必须创建 Issue。
 
 <a id="examples" />
 
 ## 例子
 
-- 每日摘要适合发到 Chat，负责人可以直接阅读，并在本次执行对话中继续追问。
-- 每周合规检查需要负责人、验收条件、产物和评审结论，适合跟踪为 Issue。
-- 并发策略合并了一次重复触发时，应在自动化运行中查看原因，不会出现空白的
-  Chat 或 Issue 占位记录。
-
-<CardGroup cols={2}>
-  <Card title="创建自动化" icon="workflow" href="/zh/how-to/create-automation">
-    配置触发条件、负责人、上下文和输出模式。
-  </Card>
-  <Card title="Issue 状态" icon="list-checks" href="/zh/reference/issue-statuses">
-    查询跟踪为 Issue 时使用的生命周期。
-  </Card>
-</CardGroup>
+- 个人每日简报：Chat。
+- 需要经理接受的每周报告：Issue。
+- 为支持队列创建后续工作的 Webhook：Issue。
+- 一位负责人阅读并讨论的定时调研摘要：Chat。
