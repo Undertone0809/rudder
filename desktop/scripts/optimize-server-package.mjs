@@ -46,6 +46,15 @@ async function readJson(filePath) {
   return JSON.parse(await fs.readFile(filePath, "utf8"));
 }
 
+async function writeFileBreakingLinks(filePath, content) {
+  const temporaryPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`,
+  );
+  await fs.writeFile(temporaryPath, content, "utf8");
+  await fs.rename(temporaryPath, filePath);
+}
+
 function stripTypeExportConditions(value) {
   if (Array.isArray(value)) {
     return value.map(stripTypeExportConditions);
@@ -93,7 +102,7 @@ async function stripPackageTypeMetadata(manifestPath) {
   if (Array.isArray(manifest.files)) {
     manifest.files = manifest.files.filter((filePath) => !isNonRuntimeFile(filePath));
   }
-  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await writeFileBreakingLinks(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   return true;
 }
 
