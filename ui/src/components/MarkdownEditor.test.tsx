@@ -651,6 +651,48 @@ describe("MarkdownEditor", () => {
     expect(document.body.textContent).toContain("Architecture diagram");
   });
 
+  it("shows image actions when an inline editor image is right-clicked", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <ImagePreviewProvider>
+          <MarkdownEditor
+            value="![Draft evidence](/api/attachments/test/content)"
+            onChange={() => undefined}
+          />
+        </ImagePreviewProvider>,
+      );
+    });
+
+    const image = container.querySelector("img");
+    expect(image).toBeTruthy();
+
+    act(() => {
+      image?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 32,
+        clientY: 48,
+      }));
+    });
+
+    const contextMenu = document.body.querySelector('[data-testid="markdown-image-context-menu"]');
+    expect(contextMenu).toBeTruthy();
+    expect(contextMenu?.textContent).toContain("Open Image");
+    expect(contextMenu?.textContent).toContain("Copy Image");
+    expect(contextMenu?.textContent).toContain("Download Image");
+  });
+
   it("disables the default inline image toolbar when image uploads are enabled", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

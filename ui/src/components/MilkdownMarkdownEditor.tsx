@@ -61,6 +61,11 @@ import {
 } from "../lib/skill-reference";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
+import {
+  getImageContextMenuTarget,
+  ImageContextMenu,
+  type ImageContextMenuTarget,
+} from "./ImageContextMenu";
 import type { InlineTokenClickEvent, MarkdownEditorProps, MarkdownEditorRef, MentionOption } from "./MarkdownEditor";
 import { ProjectIcon } from "./ProjectIdentity";
 import { StatusIcon } from "./StatusIcon";
@@ -1116,6 +1121,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   const mentionIndexRef = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [imageContextMenu, setImageContextMenu] = useState<ImageContextMenuTarget | null>(null);
   const { openImagePreview } = useImagePreview();
   const mentionMenuRef = useScrollbarActivityRef();
   const translatedPlaceholder = useMemo(
@@ -1713,6 +1719,15 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
           titleFallback: "Image preview",
         });
       }}
+      onContextMenuCapture={(event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const image = target.closest("img");
+        if (!(image instanceof HTMLImageElement) || !image.src) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setImageContextMenu(getImageContextMenuTarget(image, event.clientX, event.clientY));
+      }}
       onKeyUpCapture={checkMention}
       onMouseUpCapture={checkMention}
       onPasteCapture={(event) => {
@@ -1927,6 +1942,22 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
           })()}
           </div>
         </BrowserPortal>
+      ) : null}
+      {imageContextMenu ? (
+        <ImageContextMenu
+          name={imageContextMenu.name}
+          onClose={() => setImageContextMenu(null)}
+          onOpen={() => openImagePreview({
+            alt: imageContextMenu.alt,
+            name: imageContextMenu.name,
+            naturalSize: imageContextMenu.naturalSize,
+            src: imageContextMenu.src,
+            testId: "markdown-editor-image-preview-dialog",
+            titleFallback: "Image preview",
+          })}
+          position={imageContextMenu.position}
+          src={imageContextMenu.src}
+        />
       ) : null}
     </div>
   );

@@ -85,6 +85,11 @@ import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
 import { hasUnrenderedCanonicalRudderReference } from "./MarkdownEditor.parts";
 import {
+  getImageContextMenuTarget,
+  ImageContextMenu,
+  type ImageContextMenuTarget,
+} from "./ImageContextMenu";
+import {
   MilkdownMarkdownEditor,
   readCanonicalFragmentMarkdown,
   shouldCopySelectionAsMarkdown,
@@ -1217,6 +1222,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   const lastSelectionOffsetsRef = useRef({ start: value.length, end: value.length });
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [imageContextMenu, setImageContextMenu] = useState<ImageContextMenuTarget | null>(null);
   const [hasDomContent, setHasDomContent] = useState(
     () => value.replaceAll(INLINE_CARET_BOUNDARY, "").length > 0,
   );
@@ -2319,6 +2325,15 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
           titleFallback: "Image preview",
         });
       }}
+      onContextMenuCapture={(event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const image = target.closest("img");
+        if (!(image instanceof HTMLImageElement) || !image.src) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setImageContextMenu(getImageContextMenuTarget(image, event.clientX, event.clientY));
+      }}
       onDragOver={(evt) => {
         if (!canDropImage || !hasFilePayload(evt)) return;
         evt.preventDefault();
@@ -2539,6 +2554,22 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         <p className="px-3 pb-2 text-xs text-destructive">{uploadError}</p>
       )}
 
+      {imageContextMenu ? (
+        <ImageContextMenu
+          name={imageContextMenu.name}
+          onClose={() => setImageContextMenu(null)}
+          onOpen={() => openImagePreview({
+            alt: imageContextMenu.alt,
+            name: imageContextMenu.name,
+            naturalSize: imageContextMenu.naturalSize,
+            src: imageContextMenu.src,
+            testId: "markdown-editor-image-preview-dialog",
+            titleFallback: "Image preview",
+          })}
+          position={imageContextMenu.position}
+          src={imageContextMenu.src}
+        />
+      ) : null}
     </div>
   );
 });

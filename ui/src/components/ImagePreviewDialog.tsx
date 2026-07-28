@@ -15,6 +15,11 @@ import {
 } from "@/lib/image-preview";
 import { Copy, Download, Folder, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import {
+  getImageContextMenuTarget,
+  ImageContextMenu,
+  type ImageContextMenuTarget,
+} from "./ImageContextMenu";
 
 export interface ImagePreviewState {
   alt: string;
@@ -44,9 +49,11 @@ export function ImagePreviewDialog({
   const toast = useOptionalToast();
   const [naturalSize, setNaturalSize] = useState<ImageNaturalSize | null>(preview?.naturalSize ?? null);
   const [viewportSize, setViewportSize] = useState(() => getViewportSize());
+  const [imageContextMenu, setImageContextMenu] = useState<ImageContextMenuTarget | null>(null);
   const canShowInFolder = canShowImageInFolder();
 
   useEffect(() => {
+    setImageContextMenu(null);
     if (!preview) {
       setNaturalSize(null);
       return;
@@ -179,7 +186,25 @@ export function ImagePreviewDialog({
               alt={preview.alt}
               className="chat-attachment-preview-image"
               style={containedSize ? { width: "100%", height: "100%" } : undefined}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setImageContextMenu(getImageContextMenuTarget(
+                  event.currentTarget,
+                  event.clientX,
+                  event.clientY,
+                ));
+              }}
             />
+            {imageContextMenu ? (
+              <ImageContextMenu
+                name={imageContextMenu.name}
+                onClose={() => setImageContextMenu(null)}
+                position={imageContextMenu.position}
+                src={imageContextMenu.src}
+                testId="image-preview-context-menu"
+              />
+            ) : null}
           </div>
         ) : null}
       </DialogContent>
