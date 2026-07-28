@@ -140,7 +140,20 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1600, height: 900 });
   const websocketUrls: string[] = [];
-  page.on("websocket", (socket) => websocketUrls.push(socket.url()));
+  let activeOrganizationWebSockets = 0;
+  let maxConcurrentOrganizationWebSockets = 0;
+  page.on("websocket", (socket) => {
+    websocketUrls.push(socket.url());
+    if (!new URL(socket.url()).pathname.endsWith("/events/ws")) return;
+    activeOrganizationWebSockets += 1;
+    maxConcurrentOrganizationWebSockets = Math.max(
+      maxConcurrentOrganizationWebSockets,
+      activeOrganizationWebSockets,
+    );
+    socket.on("close", () => {
+      activeOrganizationWebSockets = Math.max(0, activeOrganizationWebSockets - 1);
+    });
+  });
 
   const orgResponse = await page.request.post("/api/orgs", {
     data: { name: `Thread-Pressure-${Date.now()}` },
@@ -364,11 +377,13 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   await page.screenshot({ path: "/tmp/rudder-thread-pressure-chat.png" });
 
   const requestedLogRunIds: string[] = [];
+  const requestedLogRequests: Array<{ runId: string; at: number }> = [];
   page.on("request", (request) => {
     const pathname = new URL(request.url()).pathname;
     const match = pathname.match(/^\/api\/agent-runs\/([^/]+)\/log$/u);
     if (request.method() === "GET" && match?.[1]) {
       requestedLogRunIds.push(match[1]);
+      requestedLogRequests.push({ runId: match[1], at: Date.now() });
     }
   });
 
@@ -510,4 +525,65 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   });
   console.log(`THREAD_PRESSURE_BEFORE_METRICS ${JSON.stringify(beforeMetrics)}`);
   console.log(`THREAD_PRESSURE_AFTER_METRICS ${JSON.stringify(afterMetrics)}`);
+
+  websocketUrls.length = 0;
+  requestedLogRunIds.length = 0;
+  requestedLogRequests.length = 0;
+  const activeRunDetailId = activeRunIds[0]!;
+  const activeRunDetailLogRequest = page.waitForRequest((request) => (
+    request.method() === "GET"
+    && new URL(request.url()).pathname === `/api/agent-runs/${activeRunDetailId}/log`
+  ));
+  const activeRunDetailLink = page.locator(
+    `a[href$="/agents/${agent.id}/runs/${activeRunDetailId}"]`,
+  ).first();
+  await expect(activeRunDetailLink).toBeVisible();
+  await activeRunDetailLink.click();
+  await page.waitForURL(
+    new RegExp(`/agents/${agent.id}/runs/${activeRunDetailId}(?:\\?|$)`, "u"),
+  );
+  await activeRunDetailLogRequest;
+  await expect(page.getByText(`ACTIVE_RUN_INITIAL_EVIDENCE_${activeRunDetailId}`, { exact: false }))
+    .toBeVisible({ timeout: 10_000 });
+  await page.waitForTimeout(4_200);
+  await page.screenshot({ path: "/tmp/rudder-thread-pressure-agent-run.png", fullPage: false });
+  expect(maxConcurrentOrganizationWebSockets).toBe(1);
+  const activeRunLogRequests = requestedLogRequests.filter(
+    (request) => request.runId === activeRunDetailId,
+  );
+  expect(activeRunLogRequests.length).toBeGreaterThanOrEqual(3);
+  expect(activeRunLogRequests.length).toBeLessThanOrEqual(4);
+  for (let index = 1; index < activeRunLogRequests.length; index += 1) {
+    expect(activeRunLogRequests[index]!.at - activeRunLogRequests[index - 1]!.at)
+      .toBeGreaterThan(1_000);
+  }
+
+  const terminalTransitionEvidence = "ACTIVE_RUN_TERMINAL_EVIDENCE";
+  await fs.appendFile(
+    path.join(E2E_INSTANCE_ROOT, "data", "run-logs", activeLogRef!),
+    `${JSON.stringify({
+      ts: new Date().toISOString(),
+      stream: "stdout",
+      chunk: `${JSON.stringify({
+        type: "item.completed",
+        item: { type: "agent_message", text: terminalTransitionEvidence },
+      })}\n`,
+    })}\n`,
+    "utf8",
+  );
+  const cancelResponse = await page.request.post(`/api/agent-runs/${activeRunDetailId}/cancel`);
+  expect(cancelResponse.ok()).toBe(true);
+  await expect(page.getByText("cancelled", { exact: true }).first()).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByText(terminalTransitionEvidence, { exact: false })).toBeVisible({
+    timeout: 10_000,
+  });
+  const terminalRequestCount = requestedLogRequests.filter(
+    (request) => request.runId === activeRunDetailId,
+  ).length;
+  await page.waitForTimeout(2_500);
+  expect(requestedLogRequests.filter(
+    (request) => request.runId === activeRunDetailId,
+  )).toHaveLength(terminalRequestCount);
 });

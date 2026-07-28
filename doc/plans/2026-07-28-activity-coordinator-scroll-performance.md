@@ -20,6 +20,8 @@ related_code:
   - ui/src/components/MessengerContextSidebar.tsx
   - ui/src/components/VirtualizedActivityTimeline.tsx
   - ui/src/components/transcript/useLiveRunTranscripts.ts
+  - ui/src/pages/AgentDetail.run-log.tsx
+  - ui/src/components/CommandPalette.test.tsx
   - tests/e2e/thread-pressure.spec.ts
   - scripts/perf/compare-scroll-evals.mjs
 commit_refs: []
@@ -40,18 +42,30 @@ production-shaped scale without manual loading or loss of live correctness.
 2. Isolate chat generation status from full stream drafts so assistant deltas do
    not rerender Messenger.
 3. Share live run events and persisted-log tailing instead of opening a socket
-   and poll loop per transcript consumer.
+   and poll loop per transcript consumer, including the Agent Run detail page.
+   Keep the socket lifecycle independent from asynchronously hydrated session,
+   notification, and operator display state by reading those handlers through
+   stable refs.
+   The currently opened Run alone keeps a cursor-based structured-event
+   backfill; its persisted cursor is independent from WebSocket presentation
+   events and reaches two stable reads after terminal status.
 4. Add variable-height virtualization to high-volume Messenger and transcript
    surfaces while preserving drag, unread navigation, and scroll anchoring.
 5. Add repeatable pressure and scroll evals that report DOM, frame, long-task,
    request, renderer task-time, and JavaScript heap evidence before and after
    the change.
+6. Prove that unrelated coordinator updates do not rerender or requery the
+   Command Palette.
 
 ## Acceptance
 
 - One generic organization WebSocket is active per renderer.
 - An assistant delta does not rerender the Messenger directory.
 - Background runs do not create duplicate log polling loops.
+- Opening an active Agent Run reuses the same organization stream and shared
+  run-detail source.
+- A live-to-terminal Run transition refreshes detail state, hydrates final
+  evidence, reconciles reconnect gaps, and stops log polling.
 - Messenger and transcript DOM size stays bounded by the visible range plus
   overscan.
 - Streaming, Stop checkpoints, annotations, drag/drop, unread navigation, and

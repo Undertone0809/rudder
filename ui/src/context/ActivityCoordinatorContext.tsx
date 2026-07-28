@@ -32,6 +32,16 @@ export function ActivityCoordinatorProvider({ children }: { children: ReactNode 
     };
   }, [coordinator]);
 
+  return <ActivityCoordinatorScope coordinator={coordinator}>{children}</ActivityCoordinatorScope>;
+}
+
+export function ActivityCoordinatorScope({
+  children,
+  coordinator,
+}: {
+  children: ReactNode;
+  coordinator: ActivityCoordinator;
+}) {
   return (
     <ActivityCoordinatorContext.Provider value={coordinator}>
       {children}

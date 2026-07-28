@@ -252,6 +252,7 @@ export const queryKeys = {
   heartbeats: (orgId: string, agentId?: string, limit?: number) =>
     queryKeys.agentRuns(orgId, agentId, limit),
   runDetail: (runId: string) => ["agent-run", runId] as const,
+  runEvents: (runId: string) => ["run-events", runId] as const,
   runWorkspaceOperations: (runId: string) => ["agent-run", runId, "workspace-operations"] as const,
   liveRuns: (orgId: string) => ["live-runs", orgId] as const,
   runIssues: (runId: string) => ["run-issues", runId] as const,

@@ -260,6 +260,13 @@ export function useLiveRunTranscripts({
     () => runs.map((run) => run.id).sort((a, b) => a.localeCompare(b)).join(","),
     [runs],
   );
+  const runSourcesKey = useMemo(
+    () => runs
+      .map((run) => `${run.id}:${run.status}`)
+      .sort((a, b) => a.localeCompare(b))
+      .join(","),
+    [runs],
+  );
 
   useEffect(() => {
     const leases = runs.map((run) => activityCoordinator.acquireDetail(`run:${run.id}`));
@@ -319,7 +326,7 @@ export function useLiveRunTranscripts({
     return () => {
       for (const release of releases) release();
     };
-  }, [runIdsKey, runs]);
+  }, [runSourcesKey]);
 
   useEffect(() => {
     if (!orgId || activeRunIds.size === 0) return undefined;

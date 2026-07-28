@@ -622,6 +622,12 @@ function invalidateHeartbeatQueries(
   queryClient.invalidateQueries({ queryKey: queryKeys.costs(orgId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(orgId) });
 
+  const runId = readString(payload.runId);
+  if (runId) {
+    queryClient.invalidateQueries({ queryKey: queryKeys.runDetail(runId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.runEvents(runId) });
+  }
+
   const agentId = readString(payload.agentId);
   if (agentId) {
     queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentId) });
@@ -884,6 +890,18 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
       ?? true,
     chatNotifications: notificationSettings?.desktopChatNotifications ?? true,
   };
+  const handlerStateRef = useRef({
+    pushToast,
+    currentUserId,
+    notificationPreferences,
+    operatorDisplayName,
+  });
+  handlerStateRef.current = {
+    pushToast,
+    currentUserId,
+    notificationPreferences,
+    operatorDisplayName,
+  };
 
   useEffect(() => {
     pathnameRef.current = location.pathname;
@@ -934,10 +952,11 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
         try {
           const parsed = JSON.parse(raw) as LiveEvent;
           activityCoordinator.publishLiveEvent(parsed);
-          handleLiveEvent(queryClient, selectedOrganizationId, pathnameRef.current, parsed, pushToast, gateRef.current, {
-            userId: currentUserId,
+          const handlerState = handlerStateRef.current;
+          handleLiveEvent(queryClient, selectedOrganizationId, pathnameRef.current, parsed, handlerState.pushToast, gateRef.current, {
+            userId: handlerState.currentUserId,
             agentId: null,
-          }, notificationPreferences, operatorDisplayName);
+          }, handlerState.notificationPreferences, handlerState.operatorDisplayName);
         } catch {
           // Ignore non-JSON payloads.
         }
@@ -969,11 +988,6 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
   }, [
     queryClient,
     selectedOrganizationId,
-    pushToast,
-    currentUserId,
-    operatorDisplayName,
-    notificationPreferences.issueNotifications,
-    notificationPreferences.chatNotifications,
     activityCoordinator,
   ]);
 

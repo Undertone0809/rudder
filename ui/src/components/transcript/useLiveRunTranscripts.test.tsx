@@ -221,18 +221,81 @@ describe("useLiveRunTranscripts", () => {
     container.remove();
   });
 
+  it("switches a visible Run from live tailing to terminal log hydration", async () => {
+    const terminalRun: LiveRunForIssue = {
+      ...liveRun,
+      status: "succeeded",
+      finishedAt: "2026-06-19T11:07:00.000Z",
+    };
+    const liveContent = `${JSON.stringify({
+      ts: "2026-06-19T11:06:30.000Z",
+      stream: "stdout",
+      chunk: "live evidence\n",
+    })}\n`;
+    const terminalContent = `${liveContent}${JSON.stringify({
+      ts: "2026-06-19T11:07:00.000Z",
+      stream: "stdout",
+      chunk: "terminal evidence\n",
+    })}\n`;
+    logMock
+      .mockResolvedValueOnce({
+        runId: liveRun.id,
+        store: "local",
+        logRef: "run.log",
+        content: liveContent,
+        endOffset: new TextEncoder().encode(liveContent).length,
+      })
+      .mockResolvedValueOnce({
+        runId: terminalRun.id,
+        store: "local",
+        logRef: "run.log",
+        content: terminalContent,
+        endOffset: new TextEncoder().encode(terminalContent).length,
+      });
+
+    const observed: string[][] = [];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const renderProbe = (runs: LiveRunForIssue[]) => (
+      <ConfigurableHookProbe runs={runs} onEntries={(texts) => observed.push(texts)} />
+    );
+
+    await act(async () => {
+      root.render(renderProbe([liveRun]));
+    });
+    expect(observed.at(-1)).toContain("live evidence");
+
+    await act(async () => {
+      root.render(renderProbe([terminalRun]));
+    });
+
+    expect(logMock).toHaveBeenCalledTimes(2);
+    expect(observed.at(-1)).toContain("terminal evidence");
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
   it("shares one persisted-log source across concurrent consumers of the same run", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
+    const renderProbes = (firstRun: LiveRunForIssue, secondRun: LiveRunForIssue) => (
+      <>
+        <ConfigurableHookProbe runs={[firstRun]} onEntries={() => {}} />
+        <ConfigurableHookProbe runs={[secondRun]} onEntries={() => {}} />
+      </>
+    );
 
     await act(async () => {
-      root.render(
-        <>
-          <HookProbe onEntries={() => {}} />
-          <HookProbe onEntries={() => {}} />
-        </>,
-      );
+      root.render(renderProbes(liveRun, liveRun));
+    });
+
+    expect(logMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.render(renderProbes({ ...liveRun }, { ...liveRun }));
     });
 
     expect(logMock).toHaveBeenCalledTimes(1);
