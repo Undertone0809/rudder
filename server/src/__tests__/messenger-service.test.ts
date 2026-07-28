@@ -14,6 +14,7 @@ import {
   chatContextLinks,
   chatControlActions,
   chatConversations,
+  chatConversationUserStates,
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
@@ -4653,6 +4654,88 @@ describe("messengerService and issue follows", () => {
       `chat:${conversationIds[5]}`,
     ]);
     expect(secondPage.pageInfo).toEqual({ limit: 3, nextCursor: null, hasMore: false });
+  });
+
+  it("promotes older unread and processing chats across Messenger summary pages", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-attention-pagination";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Attention Pagination Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Attention Pagination Org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const baseTime = Date.parse("2026-05-01T12:00:00.000Z");
+    const conversationIds = Array.from({ length: 6 }, () => randomUUID());
+    await db.insert(chatConversations).values(
+      conversationIds.map((conversationId, index) => {
+        const activityAt = new Date(baseTime - index * 60_000);
+        return {
+          id: conversationId,
+          orgId,
+          title: `Attention pagination chat ${index + 1}`,
+          summary: `Summary ${index + 1}`,
+          issueCreationMode: "manual_approval" as const,
+          planMode: false,
+          createdByUserId: userId,
+          lastMessageAt: activityAt,
+          createdAt: activityAt,
+          updatedAt: activityAt,
+        };
+      }),
+    );
+    await db.insert(chatConversationUserStates).values(
+      conversationIds.map((conversationId, index) => ({
+        orgId,
+        conversationId,
+        userId,
+        lastReadAt: new Date(baseTime - index * 60_000),
+      })),
+    );
+    const unreadConversationId = conversationIds[5]!;
+    const processingConversationId = conversationIds[4]!;
+    const unreadMessageAt = new Date(baseTime - 5 * 60_000 + 1_000);
+    await db.insert(chatMessages).values({
+      orgId,
+      conversationId: unreadConversationId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Older activity still needs attention.",
+      createdAt: unreadMessageAt,
+      updatedAt: unreadMessageAt,
+    });
+    const generationId = randomUUID();
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId: processingConversationId,
+      status: "running",
+      startedAt: new Date(baseTime - 4 * 60_000),
+    });
+
+    const firstPage = await messengerSvc.listThreadSummaryPage(orgId, userId, { limit: 3 });
+    const secondPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 3,
+      cursor: firstPage.pageInfo.nextCursor,
+    });
+
+    expect(firstPage.items.map((item) => item.threadKey)).toEqual([
+      `chat:${unreadConversationId}`,
+      `chat:${processingConversationId}`,
+      `chat:${conversationIds[0]}`,
+    ]);
+    expect(firstPage.items[0]).toMatchObject({ unreadCount: 1, needsAttention: true });
+    expect(firstPage.items[1]?.metadata).toMatchObject({ activeGenerationId: generationId });
+    const allThreadKeys = [...firstPage.items, ...secondPage.items].map((item) => item.threadKey);
+    expect(new Set(allThreadKeys).size).toBe(6);
+    expect(allThreadKeys).toEqual([
+      `chat:${unreadConversationId}`,
+      `chat:${processingConversationId}`,
+      ...conversationIds.slice(0, 4).map((id) => `chat:${id}`),
+    ]);
   });
 
   it("keeps older pinned chats in the first Messenger thread summary page", async () => {

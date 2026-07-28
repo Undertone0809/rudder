@@ -20,6 +20,7 @@ export type MessageHydrationRow = MessageRow & {
 };
 
 export type ConversationSummaryCursor = {
+  attentionRank: number;
   activityAt: Date;
   title: string;
   threadKey: string;

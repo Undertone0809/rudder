@@ -201,6 +201,31 @@ export function chatService(db: Db) {
     return new Set(rows.map((row) => row.conversationId));
   }
 
+  async function listActiveGenerationIds(orgId: string, conversationIds: string[]) {
+    if (conversationIds.length === 0) return new Map<string, string>();
+    const rows = await db
+      .select({
+        conversationId: chatGenerations.conversationId,
+        generationId: chatGenerations.id,
+      })
+      .from(chatGenerations)
+      .where(
+        and(
+          eq(chatGenerations.orgId, orgId),
+          inArray(chatGenerations.conversationId, conversationIds),
+          inArray(chatGenerations.status, ACTIVE_CHAT_GENERATION_STATUSES),
+        ),
+      )
+      .orderBy(desc(chatGenerations.startedAt), desc(chatGenerations.createdAt));
+    const idsByConversation = new Map<string, string>();
+    for (const row of rows) {
+      if (!idsByConversation.has(row.conversationId)) {
+        idsByConversation.set(row.conversationId, row.generationId);
+      }
+    }
+    return idsByConversation;
+  }
+
   async function listConversationSourceMetadata(orgId: string, conversationIds: string[]) {
     if (conversationIds.length === 0) return new Map<string, ConversationSourceMetadata>();
     const rows = await db
@@ -530,6 +555,7 @@ export function chatService(db: Db) {
       userStatesByConversationId,
       unreadCountsByConversationId,
       pendingProposalConversationIds,
+      activeGenerationIdsByConversationId,
       latestReplyPreviewsByConversationId,
       userMessageSummariesByConversationId,
       sourceMetadataByConversationId,
@@ -543,6 +569,9 @@ export function chatService(db: Db) {
       orgId
         ? listPendingProposalStates(orgId, conversationIds)
         : Promise.resolve(new Set<string>()),
+      orgId
+        ? listActiveGenerationIds(orgId, conversationIds)
+        : Promise.resolve(new Map<string, string>()),
       orgId
         ? listLatestReplyPreviews(orgId, conversationIds)
         : Promise.resolve(new Map<string, string | null>()),
@@ -572,6 +601,7 @@ export function chatService(db: Db) {
           unreadCount > 0 ||
           pendingProposalConversationIds.has(row.id)
         ),
+        activeGenerationId: activeGenerationIdsByConversationId.get(row.id) ?? null,
       };
     });
   }
@@ -3569,20 +3599,69 @@ export function chatService(db: Db) {
       const conditions = [eq(chatConversations.orgId, orgId)];
       const activityAtSql = sql<Date>`coalesce(${chatConversations.lastMessageAt}, ${chatConversations.updatedAt})`;
       const threadKeySql = sql<string>`'chat:' || ${chatConversations.id}`;
+      const hasActiveGenerationSql = sql<boolean>`exists (
+        select 1
+        from ${chatGenerations}
+        where ${chatGenerations.orgId} = ${orgId}
+          and ${chatGenerations.conversationId} = ${chatConversations.id}
+          and ${inArray(chatGenerations.status, ACTIVE_CHAT_GENERATION_STATUSES)}
+      )`;
+      const needsAttentionSql = userId
+        ? sql<boolean>`not exists (
+            select 1
+            from ${agentIntegrationChatBindings}
+            where ${agentIntegrationChatBindings.orgId} = ${orgId}
+              and ${agentIntegrationChatBindings.conversationId} = ${chatConversations.id}
+          ) and (
+            exists (
+              select 1
+              from ${chatMessages}
+              inner join ${chatConversationUserStates}
+                on ${chatConversationUserStates.orgId} = ${orgId}
+               and ${chatConversationUserStates.userId} = ${userId}
+               and ${chatConversationUserStates.conversationId} = ${chatMessages.conversationId}
+              where ${chatMessages.orgId} = ${orgId}
+                and ${chatMessages.conversationId} = ${chatConversations.id}
+                and ${isNull(chatMessages.supersededAt)}
+                and ${visibleIncomingMessageSql()}
+                and ${gt(chatMessages.createdAt, chatConversationUserStates.lastReadAt)}
+            )
+            or exists (
+              select 1
+              from ${chatMessages}
+              inner join ${approvals} on ${approvals.id} = ${chatMessages.approvalId}
+              where ${chatMessages.orgId} = ${orgId}
+                and ${chatMessages.conversationId} = ${chatConversations.id}
+                and ${isNull(chatMessages.supersededAt)}
+                and ${approvals.status} = 'pending'
+            )
+          )`
+        : sql<boolean>`false`;
+      const attentionRankSql = sql<number>`case
+        when ${needsAttentionSql} then 0
+        when ${hasActiveGenerationSql} then 1
+        else 2
+      end`;
       if (status !== "all") {
         conditions.push(eq(chatConversations.status, status));
       }
       if (options?.after) {
         const afterActivityAt = options.after.activityAt.toISOString();
         conditions.push(sql<boolean>`(
-          ${activityAtSql} < ${afterActivityAt}
+          ${attentionRankSql} > ${options.after.attentionRank}
           OR (
-            ${activityAtSql} = ${afterActivityAt}
+            ${attentionRankSql} = ${options.after.attentionRank}
             AND (
-              ${chatConversations.title} > ${options.after.title}
+              ${activityAtSql} < ${afterActivityAt}
               OR (
-                ${chatConversations.title} = ${options.after.title}
-                AND ${threadKeySql} > ${options.after.threadKey}
+                ${activityAtSql} = ${afterActivityAt}
+                AND (
+                  ${chatConversations.title} > ${options.after.title}
+                  OR (
+                    ${chatConversations.title} = ${options.after.title}
+                    AND ${threadKeySql} > ${options.after.threadKey}
+                  )
+                )
               )
             )
           )
@@ -3602,7 +3681,7 @@ export function chatService(db: Db) {
         .select()
         .from(chatConversations)
         .where(and(...conditions))
-        .orderBy(desc(activityAtSql), chatConversations.title, chatConversations.id)
+        .orderBy(asc(attentionRankSql), desc(activityAtSql), chatConversations.title, chatConversations.id)
         .$dynamic();
       if (typeof options?.limit === "number" && Number.isFinite(options.limit)) {
         query = query.limit(Math.max(1, Math.floor(options.limit)));

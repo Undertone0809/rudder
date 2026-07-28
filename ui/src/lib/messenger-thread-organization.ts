@@ -399,11 +399,35 @@ function entryActivityTime(entry: OrganizedThreadEntry) {
   return value ? new Date(value).getTime() : Number.NEGATIVE_INFINITY;
 }
 
+export function messengerThreadAttentionRank(thread: MessengerThreadSummary) {
+  if (thread.unreadCount > 0 || thread.needsAttention) return 0;
+  if (
+    thread.metadata?.isProcessing === true
+    || (typeof thread.metadata?.activeExecutionRunId === "string" && thread.metadata.activeExecutionRunId.length > 0)
+    || (typeof thread.metadata?.activeGenerationId === "string" && thread.metadata.activeGenerationId.length > 0)
+  ) {
+    return 1;
+  }
+  return 2;
+}
+
 export function compareThreadEntries(a: OrganizedThreadEntry, b: OrganizedThreadEntry) {
   if (isPinnedEntry(a) !== isPinnedEntry(b)) return isPinnedEntry(a) ? -1 : 1;
+  const attentionDiff = messengerThreadAttentionRank(a.thread) - messengerThreadAttentionRank(b.thread);
+  if (attentionDiff !== 0) return attentionDiff;
   const timeDiff = entryActivityTime(b) - entryActivityTime(a);
   if (timeDiff !== 0) return timeDiff;
   return a.thread.title.localeCompare(b.thread.title);
+}
+
+function sortEntriesByAttentionPreservingOrder(entries: OrganizedThreadEntry[]) {
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => (
+      messengerThreadAttentionRank(a.entry.thread) - messengerThreadAttentionRank(b.entry.thread)
+      || a.index - b.index
+    ))
+    .map(({ entry }) => entry);
 }
 
 function sectionActivityTime(section: OrganizedThreadSection) {
@@ -413,8 +437,17 @@ function sectionActivityTime(section: OrganizedThreadSection) {
   );
 }
 
+function sectionAttentionRank(section: OrganizedThreadSection) {
+  return section.entries.reduce(
+    (rank, entry) => Math.min(rank, messengerThreadAttentionRank(entry.thread)),
+    2,
+  );
+}
+
 export function compareCustomLayoutSections(a: OrganizedThreadSection, b: OrganizedThreadSection) {
   if (Boolean(a.isPinned) !== Boolean(b.isPinned)) return a.isPinned ? -1 : 1;
+  const attentionDiff = sectionAttentionRank(a) - sectionAttentionRank(b);
+  if (attentionDiff !== 0) return attentionDiff;
   const timeDiff = sectionActivityTime(b) - sectionActivityTime(a);
   if (timeDiff !== 0) return timeDiff;
   return (a.label ?? a.entries[0]?.thread.title ?? a.key)
@@ -448,9 +481,15 @@ export function sortCustomLayoutSections(
   if (orderedSectionKeys.length === 0) return sections;
   const pinnedSections = sections.filter((section) => section.isPinned);
   const unpinnedSections = sections.filter((section) => !section.isPinned);
+  const applyOrderWithinAttentionRanks = (domainSections: OrganizedThreadSection[]) => (
+    [0, 1, 2].flatMap((rank) => applyManualCustomLayoutOrder(
+      domainSections.filter((section) => sectionAttentionRank(section) === rank),
+      orderedSectionKeys,
+    ))
+  );
   return [
-    ...applyManualCustomLayoutOrder(pinnedSections, orderedSectionKeys),
-    ...applyManualCustomLayoutOrder(unpinnedSections, orderedSectionKeys),
+    ...applyOrderWithinAttentionRanks(pinnedSections),
+    ...applyOrderWithinAttentionRanks(unpinnedSections),
   ];
 }
 
@@ -488,7 +527,9 @@ export function organizeCustomThreadDirectory(
     label: group.name,
     icon: group.icon,
     isPinned: group.pinned,
-    entries: group.entries.map((entry) => ({ ...entry, customGroupId: group.id })),
+    entries: sortEntriesByAttentionPreservingOrder(
+      group.entries.map((entry) => ({ ...entry, customGroupId: group.id })),
+    ),
   }) satisfies OrganizedThreadSection);
   const ungroupedEntries = looseEntries
     .filter((entry) => !groupedThreadKeys.has(entry.thread.threadKey))
@@ -498,12 +539,16 @@ export function organizeCustomThreadDirectory(
     ...groupSections.flatMap((section) => section.entries),
     ...ungroupedEntries,
   ]);
-  const pinnedLooseEntries = applyManualCustomEntryOrder(
+  const orderedPinnedLooseEntries = [0, 1, 2].flatMap((rank) => applyManualCustomEntryOrder(
     allEntries
-      .filter((entry) => isPinnedEntry(entry) && entry.customGroupId === null)
+      .filter((entry) =>
+        isPinnedEntry(entry)
+        && entry.customGroupId === null
+        && messengerThreadAttentionRank(entry.thread) === rank,
+      )
       .sort(compareThreadEntries),
     orderedSectionKeys,
-  );
+  ));
   const looseSections = ungroupedEntries
     .filter((entry) => !isPinnedEntry(entry))
     .map((entry) => ({
@@ -519,11 +564,11 @@ export function organizeCustomThreadDirectory(
   );
   const pinnedChildSections = [
     ...topLevelSections.filter((section) => section.isPinned),
-    ...(pinnedLooseEntries.length > 0
+    ...(orderedPinnedLooseEntries.length > 0
       ? [{
         key: "custom:pinned:loose",
         label: null,
-        entries: pinnedLooseEntries,
+        entries: orderedPinnedLooseEntries,
       } satisfies OrganizedThreadSection]
       : []),
   ];
@@ -552,13 +597,15 @@ export function organizeProjectThreadDirectory(
     label: group.name,
     icon: group.icon,
     isPinned: group.pinned,
-    entries: group.entries
-      .filter((entry) => {
-        if (groupedThreadKeys.has(entry.thread.threadKey)) return false;
-        groupedThreadKeys.add(entry.thread.threadKey);
-        return true;
-      })
-      .map((entry) => ({ ...entry, customGroupId: group.id })),
+    entries: sortEntriesByAttentionPreservingOrder(
+      group.entries
+        .filter((entry) => {
+          if (groupedThreadKeys.has(entry.thread.threadKey)) return false;
+          groupedThreadKeys.add(entry.thread.threadKey);
+          return true;
+        })
+        .map((entry) => ({ ...entry, customGroupId: group.id })),
+    ),
   }) satisfies OrganizedThreadSection);
   const ungroupedEntries = dedupeOrganizedThreadEntriesByKey(looseEntries)
     .filter((entry) => !groupedThreadKeys.has(entry.thread.threadKey))

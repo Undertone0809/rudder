@@ -117,6 +117,7 @@ type IssueThreadCursor = {
   issueId: string;
 };
 type ThreadSummaryCursor = {
+  attentionRank: number;
   activityAt: string;
   title: string;
   threadKey: string;
@@ -282,6 +283,7 @@ type ChatSummarySource = Pick<
   | "preferredAgentId"
   | "routedAgentId"
 > & {
+  activeGenerationId?: string | null;
   chatRuntime?: { runtimeAgentId?: string | null } | null;
   sourceMetadata?: Record<string, unknown> | null;
 };
@@ -329,10 +331,28 @@ function compareLatestActivity<T extends { latestActivityAt: Date | null; title:
   return (a.threadKey ?? "").localeCompare(b.threadKey ?? "");
 }
 
-function comparePinnedThenLatest<T extends { latestActivityAt: Date | null; title: string; threadKey?: string; isPinned?: boolean }>(a: T, b: T) {
+function threadSummaryAttentionRank(
+  summary: Pick<MessengerThreadSummary, "unreadCount" | "needsAttention" | "metadata">,
+) {
+  if (summary.unreadCount > 0 || summary.needsAttention) return 0;
+  if (
+    (typeof summary.metadata?.activeExecutionRunId === "string" && summary.metadata.activeExecutionRunId.length > 0)
+    || (typeof summary.metadata?.activeGenerationId === "string" && summary.metadata.activeGenerationId.length > 0)
+  ) {
+    return 1;
+  }
+  return 2;
+}
+
+function comparePinnedThenLatest<
+  T extends Pick<MessengerThreadSummary, "latestActivityAt" | "title" | "unreadCount" | "needsAttention" | "metadata">
+  & { threadKey?: string; isPinned?: boolean },
+>(a: T, b: T) {
   const aPinned = Boolean(a.isPinned);
   const bPinned = Boolean(b.isPinned);
   if (aPinned !== bPinned) return aPinned ? -1 : 1;
+  const attentionDiff = threadSummaryAttentionRank(a) - threadSummaryAttentionRank(b);
+  if (attentionDiff !== 0) return attentionDiff;
   return compareLatestActivity(a, b);
 }
 
@@ -355,6 +375,7 @@ function normalizeThreadSummaryLimit(limit: number | null | undefined) {
 
 function encodeThreadSummaryCursor(summary: MessengerThreadSummary) {
   const payload: ThreadSummaryCursor = {
+    attentionRank: threadSummaryAttentionRank(summary),
     activityAt: (normalizeDate(summary.latestActivityAt) ?? new Date(0)).toISOString(),
     title: summary.title,
     threadKey: summary.threadKey,
@@ -371,6 +392,10 @@ function decodeThreadSummaryCursor(cursor: string | null | undefined): ThreadSum
     if (typeof decoded.title !== "string") return null;
     if (typeof decoded.threadKey !== "string" || decoded.threadKey.length === 0) return null;
     return {
+      attentionRank: typeof decoded.attentionRank === "number"
+        && Number.isFinite(decoded.attentionRank)
+        ? decoded.attentionRank
+        : 2,
       activityAt: decoded.activityAt,
       title: decoded.title,
       threadKey: decoded.threadKey,
@@ -388,11 +413,17 @@ function threadSummaryIsAfterCursor(summary: MessengerThreadSummary, cursor: Thr
     title: string;
     threadKey: string;
     isPinned: boolean;
+    unreadCount: number;
+    needsAttention: boolean;
+    metadata?: Record<string, unknown>;
   }>(summary, {
     latestActivityAt: new Date(cursor.activityAt),
     title: cursor.title,
     threadKey: cursor.threadKey,
     isPinned: cursor.isPinned,
+    unreadCount: cursor.attentionRank === 0 ? 1 : 0,
+    needsAttention: cursor.attentionRank === 0,
+    metadata: cursor.attentionRank === 1 ? { activeGenerationId: "cursor" } : undefined,
   }) > 0;
 }
 
@@ -688,6 +719,7 @@ function chatSummary(conversation: ChatSummarySource): MessengerThreadSummary {
       routedAgentId: conversation.routedAgentId,
       runtimeAgentId: conversation.chatRuntime?.runtimeAgentId ?? null,
       latestUserMessagePreview: conversation.latestUserMessagePreview,
+      activeGenerationId: conversation.activeGenerationId ?? null,
       ...(conversation.sourceMetadata ?? {}),
     },
   };
@@ -2828,6 +2860,7 @@ export function messengerService(db: Db) {
     const syntheticAfterCursor = syntheticSummaries.filter((summary) => threadSummaryIsAfterCursor(summary, cursor));
     const chatAfter = cursor && !cursor.isPinned
       ? {
+        attentionRank: cursor.attentionRank,
         activityAt: new Date(cursor.activityAt),
         title: cursor.title,
         threadKey: cursor.threadKey,

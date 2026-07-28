@@ -60,6 +60,9 @@ vi.mock("@/context/SidebarContext", () => ({
 }));
 
 vi.mock("@/context/ChatGenerationContext", () => ({
+  useChatGenerations: () => ({
+    activeChatIds: activeGeneratingChatIds,
+  }),
   useChatGenerationActions: () => ({
     isChatGenerationActive: (chatId: string | null | undefined) => Boolean(chatId && activeGeneratingChatIds.has(chatId)),
     setChatGenerationActive: vi.fn(),
@@ -630,6 +633,83 @@ describe("MessengerContextSidebar", () => {
     expect(html.indexOf('data-testid="messenger-thread-chat-b"')).toBeLessThan(
       html.indexOf('data-testid="messenger-thread-chat-c"'),
     );
+  });
+
+  it("keeps attention order across historical manual rows while preserving Saved View slots", () => {
+    chatList = [];
+    localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "custom" });
+    localStorageValues["rudder.messengerDefaultThreadOrder:org-1:anonymous"] = JSON.stringify([
+      "chat:read-chat",
+      "saved-view:saved-slot",
+      "chat:unread-chat",
+    ]);
+    savedViewPage = {
+      items: [{
+        id: "saved-slot",
+        orgId: "org-1",
+        userId: "local-board",
+        targetKind: "library_file",
+        targetPayload: {
+          kind: "library_file",
+          filePath: "attention.md",
+          viewInstanceId: "attention-view",
+        },
+        resourceKey: "library:attention.md",
+        instanceId: "attention-view",
+        canonicalResourceKey: "library:attention.md",
+        clientMutationId: null,
+        title: "Saved attention slot",
+        subtitle: null,
+        favicon: null,
+        sortOrder: 0,
+        hiddenAt: null,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+      }],
+      pageInfo: {
+        limit: 50,
+        offset: 0,
+        total: 1,
+        hasMore: false,
+        nextOffset: null,
+      },
+    };
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:read-chat",
+          kind: "chat",
+          title: "Newer read chat",
+          preview: "Already handled.",
+          subtitle: null,
+          href: "/messenger/chat/read-chat",
+          latestActivityAt: "2026-04-11T09:55:00.000Z",
+          lastReadAt: "2026-04-11T09:56:00.000Z",
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "chat:unread-chat",
+          kind: "chat",
+          title: "Older unread chat",
+          preview: "Needs a response.",
+          subtitle: null,
+          href: "/messenger/chat/unread-chat",
+          latestActivityAt: "2026-04-11T09:30:00.000Z",
+          lastReadAt: null,
+          unreadCount: 1,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.indexOf("Older unread chat")).toBeLessThan(html.indexOf("Saved attention slot"));
+    expect(html.indexOf("Saved attention slot")).toBeLessThan(html.indexOf("Newer read chat"));
   });
 
   it("keeps pinned grouped threads inside their custom group in persisted order", () => {

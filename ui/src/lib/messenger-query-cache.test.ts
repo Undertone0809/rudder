@@ -134,6 +134,47 @@ describe("upsertMessengerThreadSummaryQueries", () => {
     expect(pages?.[0]?.items.map((item) => item.threadKey)).toEqual(["chat:incoming", "chat:older"]);
     expect(pages?.[1]?.items.map((item) => item.threadKey)).toEqual([]);
   });
+
+  it("keeps optimistic cache merges aligned with unread, processing, and read priority", () => {
+    const queryClient = new QueryClient();
+    const orgId = "org-1";
+    const newerRead = thread({
+      threadKey: "chat:read",
+      title: "Newer read",
+      latestActivityAt: new Date("2026-05-03T08:00:00.000Z"),
+    });
+    const processing = thread({
+      threadKey: "chat:processing",
+      title: "Processing",
+      latestActivityAt: new Date("2026-05-02T08:00:00.000Z"),
+      metadata: { activeGenerationId: "generation-1" },
+    });
+    const olderUnread = thread({
+      threadKey: "chat:unread",
+      title: "Older unread",
+      latestActivityAt: new Date("2026-05-01T08:00:00.000Z"),
+      unreadCount: 1,
+      needsAttention: true,
+    });
+    queryClient.setQueryData(queryKeys.messenger.threadPages(orgId, false), {
+      pages: [{
+        items: [processing, newerRead],
+        pageInfo: { limit: 40, nextCursor: null, hasMore: false },
+      }],
+      pageParams: [null],
+    });
+
+    upsertMessengerThreadSummaryQueries(queryClient, orgId, olderUnread);
+
+    const items = queryClient.getQueryData<{
+      pages: Array<{ items: MessengerThreadSummary[] }>;
+    }>(queryKeys.messenger.threadPages(orgId, false))?.pages[0]?.items;
+    expect(items?.map((item) => item.threadKey)).toEqual([
+      "chat:unread",
+      "chat:processing",
+      "chat:read",
+    ]);
+  });
 });
 
 describe("Messenger optimistic action cache helpers", () => {

@@ -8,6 +8,7 @@ import {
   chatContextLinks,
   chatConversationUserStates,
   chatConversations,
+  chatGenerations,
   chatMessages,
   createDb,
   heartbeatRuns,
@@ -15,6 +16,7 @@ import {
   issueFollows,
   issues,
   messengerThreadUserStates,
+  projects,
 } from "../../packages/db/src/index.ts";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
@@ -436,6 +438,101 @@ test.describe("Messenger unified threads contract", () => {
       todayThreadTestId,
       recentThreadTestId,
     ]);
+  });
+
+  test("prioritizes unread, processing, and read messages within latest and project views", async ({ page }) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Attention-Order-${Date.now()}`);
+    const projectId = randomUUID();
+    await e2eDb.insert(projects).values({
+      id: projectId,
+      orgId: organization.id,
+      name: "Attention order project",
+      status: "in_progress",
+    });
+    const baseTime = Date.parse("2026-05-16T12:00:00.000Z");
+    const readChatId = randomUUID();
+    const processingChatId = randomUUID();
+    const unreadChatId = randomUUID();
+    const chatFixtures = [
+      { id: readChatId, title: "Newest read chat", activityAt: new Date(baseTime) },
+      { id: processingChatId, title: "Middle processing chat", activityAt: new Date(baseTime - 60_000) },
+      { id: unreadChatId, title: "Oldest unread chat", activityAt: new Date(baseTime - 120_000) },
+    ];
+    await e2eDb.insert(chatConversations).values(chatFixtures.map((chat) => ({
+      id: chat.id,
+      orgId: organization.id,
+      title: chat.title,
+      summary: chat.title,
+      issueCreationMode: "manual_approval" as const,
+      planMode: false,
+      createdByUserId: currentUserId,
+      lastMessageAt: chat.activityAt,
+      createdAt: chat.activityAt,
+      updatedAt: chat.activityAt,
+    })));
+    await e2eDb.insert(chatContextLinks).values(chatFixtures.map((chat) => ({
+      orgId: organization.id,
+      conversationId: chat.id,
+      entityType: "project",
+      entityId: projectId,
+    })));
+    await e2eDb.insert(chatConversationUserStates).values(chatFixtures.map((chat) => ({
+      orgId: organization.id,
+      conversationId: chat.id,
+      userId: currentUserId,
+      lastReadAt: chat.activityAt,
+    })));
+    const unreadMessageAt = new Date(baseTime - 119_000);
+    await e2eDb.insert(chatMessages).values({
+      orgId: organization.id,
+      conversationId: unreadChatId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "This older chat is unread.",
+      createdAt: unreadMessageAt,
+      updatedAt: unreadMessageAt,
+    });
+    await e2eDb.insert(chatGenerations).values({
+      orgId: organization.id,
+      conversationId: processingChatId,
+      status: "running",
+      startedAt: new Date(baseTime - 59_000),
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+
+    const unreadTestId = threadTestId(`chat:${unreadChatId}`);
+    const processingTestId = threadTestId(`chat:${processingChatId}`);
+    const readTestId = threadTestId(`chat:${readChatId}`);
+    await expect(page.getByTestId(unreadTestId)).toContainText("Oldest unread chat");
+    await expect(page.getByTestId(processingTestId).getByLabel("Chat reply in progress")).toBeVisible();
+    await expectTestIdsInDomOrder(page, [unreadTestId, processingTestId, readTestId]);
+
+    await page.getByTestId(unreadTestId).getByRole("link").click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${unreadChatId}`));
+    await expectTestIdsInDomOrder(page, [processingTestId, readTestId, unreadTestId]);
+
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "project" }));
+    }, organization.id);
+    await page.reload({ waitUntil: "commit" });
+    const projectSection = page.getByTestId(`messenger-thread-section-project-${projectId}`);
+    await expect(projectSection).toBeVisible();
+    await expectTestIdWithinSection(page, `messenger-thread-section-project-${projectId}`, processingTestId);
+    await expectTestIdsInDomOrder(page, [processingTestId, readTestId, unreadTestId]);
+    await page.screenshot({ path: "/tmp/rudder-messenger-attention-order-project.png", fullPage: true });
   });
 
   test("double-clicking primary rail Messenger cycles the sidebar through unread threads", async ({ page }) => {

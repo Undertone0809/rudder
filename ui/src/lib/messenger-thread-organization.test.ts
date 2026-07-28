@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   applyManualCustomEntryOrder,
   compareCustomLayoutSections,
+  compareThreadEntries,
   customGroupIdFromSectionKey,
   customGroupSectionKey,
   dedupeThreadSummariesByKey,
   flattenThreadSectionEntries,
   flattenThreadSections,
   locallyReadThreadSummary,
+  messengerThreadAttentionRank,
   nextDefaultThreadOrderKeysAfterMove,
   organizeCustomThreadDirectory,
   organizeProjectThreadDirectory,
@@ -213,6 +215,95 @@ describe("messenger thread organization", () => {
       2,
       0,
     )).toEqual(["chat:hidden", "chat:c", "chat:a", "chat:b"]);
+  });
+
+  it("orders unread or attention work before processing work and settled work", () => {
+    const entries = [
+      entry("chat:new-read", {
+        latestActivityAt: new Date("2026-07-17T08:05:00.000Z"),
+      }),
+      entry("chat:older-processing", {
+        latestActivityAt: new Date("2026-07-17T08:01:00.000Z"),
+        metadata: { isProcessing: true },
+      }),
+      entry("chat:older-unread", {
+        latestActivityAt: new Date("2026-07-17T08:00:00.000Z"),
+        unreadCount: 1,
+      }),
+      entry("issue:attention-and-processing", {
+        kind: "issues",
+        latestActivityAt: new Date("2026-07-17T07:59:00.000Z"),
+        needsAttention: true,
+        metadata: { activeExecutionRunId: "run-1" },
+      }),
+      entry("issue:newer-processing", {
+        kind: "issues",
+        latestActivityAt: new Date("2026-07-17T08:02:00.000Z"),
+        metadata: { activeExecutionRunId: "run-2" },
+      }),
+    ].sort(compareThreadEntries);
+
+    expect(entries.map((item) => item.thread.threadKey)).toEqual([
+      "chat:older-unread",
+      "issue:attention-and-processing",
+      "issue:newer-processing",
+      "chat:older-processing",
+      "chat:new-read",
+    ]);
+    expect(entries.map((item) => messengerThreadAttentionRank(item.thread))).toEqual([0, 0, 1, 1, 2]);
+  });
+
+  it("keeps pinning above attention rank and manual order within each rank", () => {
+    const sections = organizeCustomThreadDirectory(
+      [
+        entry("chat:pinned-read", { isPinned: true }),
+        entry("chat:read"),
+        entry("chat:processing", { metadata: { activeGenerationId: "generation-1" } }),
+        entry("chat:unread", { unreadCount: 1 }),
+      ],
+      [],
+      ["chat:read", "chat:unread", "chat:processing", "chat:pinned-read"],
+    );
+
+    expect(flattenThreadSectionEntries(sections).map((item) => item.thread.threadKey)).toEqual([
+      "chat:pinned-read",
+      "chat:unread",
+      "chat:processing",
+      "chat:read",
+    ]);
+  });
+
+  it("applies attention rank within project and custom-group boundaries", () => {
+    const projectConversation = conversation("project", {
+      contextLinks: [{
+        entityType: "project",
+        entityId: "project-1",
+        entity: { label: "Project one" },
+      } as ChatConversation["contextLinks"][number]],
+    });
+    const projectSections = organizeThreadEntries([
+      entry("chat:project-read", {}, projectConversation),
+      entry("chat:project-processing", { metadata: { isProcessing: true } }, projectConversation),
+      entry("chat:project-unread", { unreadCount: 1 }, projectConversation),
+    ], "project", new Map(), new Map(), (kind) => kind);
+    expect(projectSections[0]?.entries.map((item) => item.thread.threadKey)).toEqual([
+      "chat:project-unread",
+      "chat:project-processing",
+      "chat:project-read",
+    ]);
+
+    const customSections = organizeProjectThreadDirectory([], [{
+      id: "group-1",
+      name: "Grouped",
+      pinned: false,
+      entries: [
+        entry("chat:group-read"),
+        entry("chat:group-processing", { metadata: { isProcessing: true } }),
+        entry("chat:group-unread", { unreadCount: 1 }),
+      ],
+    }], new Map());
+    expect(customSections[0]?.childSections?.[0]?.entries.map((item) => item.thread.threadKey))
+      .toEqual(["chat:group-unread", "chat:group-processing", "chat:group-read"]);
   });
 
   it("never moves an unpinned custom section ahead of a pinned section", () => {
