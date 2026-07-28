@@ -142,10 +142,22 @@ export function chatReferenceMarkdown(conversation: Pick<ChatConversation, "id" 
 export function chatMessageJumpTargetFromHref(href: string) {
   try {
     const url = new URL(href, "http://rudder.local");
-    if (url.protocol !== "chat:") return null;
-    const conversationId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
+    let conversationId = "";
+    if (url.protocol === "chat:") {
+      conversationId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
+    } else if (url.origin === "http://rudder.local") {
+      const routeMatch = url.pathname.match(
+        /^\/(?:(?:messenger\/)?chat\/([^/]+)|[^/]+\/messenger\/chat\/([^/]+))\/?$/,
+      );
+      const encodedConversationId = routeMatch?.[1] ?? routeMatch?.[2] ?? "";
+      try {
+        conversationId = decodeURIComponent(encodedConversationId).trim();
+      } catch {
+        conversationId = encodedConversationId.trim();
+      }
+    }
     const messageId = (url.searchParams.get("messageId") ?? url.searchParams.get("targetMessageId") ?? "").trim();
-    return conversationId && messageId ? { conversationId, messageId } : null;
+    return conversationId ? { conversationId, messageId: messageId || null } : null;
   } catch {
     return null;
   }

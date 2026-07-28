@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 import { chatsApi } from "@/api/chats";
-import type { ChatConversation, ChatInlineAnnotationInput, ChatMessage, ChatQueuedMessage } from "@rudderhq/shared";
+import { buildChatMentionHref, type ChatConversation, type ChatInlineAnnotationInput, type ChatMessage, type ChatQueuedMessage } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canQueueComposerDraft,
+  chatMessageJumpTargetFromHref,
   chatSendButtonDisabled,
   createQueuedComposerMessage,
   projectChatQueueDelivery,
@@ -78,6 +79,29 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.body.replaceChildren();
+});
+
+describe("chat reference navigation targets", () => {
+  it("resolves chat mentions and Messenger routes with optional message anchors", () => {
+    expect(chatMessageJumpTargetFromHref(buildChatMentionHref("chat-2"))).toEqual({
+      conversationId: "chat-2",
+      messageId: null,
+    });
+    expect(chatMessageJumpTargetFromHref(`${buildChatMentionHref("chat-2")}?messageId=message-3`)).toEqual({
+      conversationId: "chat-2",
+      messageId: "message-3",
+    });
+    expect(chatMessageJumpTargetFromHref("/RUD/messenger/chat/chat-4?targetMessageId=message-5")).toEqual({
+      conversationId: "chat-4",
+      messageId: "message-5",
+    });
+  });
+
+  it("does not intercept external or non-chat links", () => {
+    expect(chatMessageJumpTargetFromHref("https://example.com/messenger/chat/chat-2")).toBeNull();
+    expect(chatMessageJumpTargetFromHref("/issues/issue-1")).toBeNull();
+    expect(chatMessageJumpTargetFromHref("/plugins/foo/chat/bar")).toBeNull();
+  });
 });
 
 describe("annotation source reveal", () => {

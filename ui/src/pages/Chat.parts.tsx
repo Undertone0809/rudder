@@ -602,7 +602,6 @@ export function shouldHandlePlainChatLinkClick(event: Parameters<MarkdownLinkCli
 export type ChatSidePanelTarget = Extract<
   SidePanelTarget,
   | { kind: "issue" }
-  | { kind: "chat" }
   | { kind: "automation" }
   | { kind: "library_file" }
   | { kind: "library_directory" }
@@ -616,7 +615,6 @@ export function chatSidePanelTargetFromHref(
   const target = sidePanelTargetFromHref(href, label);
   if (
     target?.kind === "issue"
-    || target?.kind === "chat"
     || target?.kind === "automation"
     || target?.kind === "library_file"
     || target?.kind === "library_directory"

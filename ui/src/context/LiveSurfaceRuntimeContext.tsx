@@ -758,12 +758,6 @@ function RuntimeSurface({
         <LazyAutomationDetail
           automationId={target.automationId}
           onClose={() => closeTarget(target)}
-          onOpenRunChat={(conversationId) => openTarget({
-            kind: "chat",
-            conversationId,
-            label: "Automation run",
-            messageId: null,
-          })}
           surface={surface}
         />
       </Suspense>

@@ -607,16 +607,11 @@ test.describe("Chat Work Manifest", () => {
       .click();
 
     await references.getByRole("button", { name: referencedChatTitle, exact: true }).click();
-    const chatSidePanel = page.getByTestId("chat-side-panel");
-    await expect(chatSidePanel).toBeVisible();
-    await expect(chatSidePanel.getByTestId("chat-side-panel-chat-view")).toBeVisible();
-    await expect(chatSidePanel).toContainText(referencedChatTitle);
-    await expect(chatSidePanel).toContainText("Other project source");
-    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
-    await page.screenshot({ path: `${screenshotDir}/chat-side-panel.png`, fullPage: true });
-    await chatSidePanel.getByTestId("chat-side-panel-tab").hover();
-    await chatSidePanel.getByTestId("chat-side-panel-tab-close").click();
-    await expect(chatSidePanel).toHaveCount(0);
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${referencedChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await expect(page.getByTestId("chat-assistant-message")).toContainText("Other project source");
+    await page.screenshot({ path: `${screenshotDir}/chat-reference-navigation.png`, fullPage: true });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
     await expect(shelf).toBeVisible();
     await shelf.locator("section[aria-label='References']")
       .getByRole("button", { name: "View all 30" })

@@ -977,7 +977,7 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("automation-detail-shell")).toHaveCount(0);
   });
 
-  test("opens issue, automation, library, and chat references in the Side Panel without replacing the Chat route", async ({ page }, testInfo) => {
+  test("opens inspectable references in the Side Panel and navigates chat references to Messenger", async ({ page }, testInfo) => {
     test.setTimeout(120_000);
 
     const orgRes = await page.request.post("/api/orgs", {
@@ -1067,6 +1067,7 @@ test.describe("Chat Side Panel", () => {
         title: "Referenced detail chat",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Open the referenced detail chat." },
       },
     });
     expect(referencedChatRes.ok(), await referencedChatRes.text()).toBe(true);
@@ -1091,6 +1092,7 @@ test.describe("Chat Side Panel", () => {
         title: "Reference host chat",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Show the linked work references." },
       },
     });
     expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
@@ -1299,10 +1301,74 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toContainText("Library preview should render beside the active chat.");
 
     await assistantMessage.getByRole("link", { name: "Referenced detail chat" }).click();
-    await expect(page).toHaveURL(new RegExp(`${hostChat.id}$`));
-    await expect(sidePanel).toContainText("Referenced detail chat");
-    await expect(sidePanel).toContainText("Referenced chat body should render beside the active chat.");
-    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(4);
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${referencedChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await expect(page.getByTestId("chat-assistant-message")).toContainText(
+      "Referenced chat body should render beside the active chat.",
+    );
+  });
+
+  test("navigates a chat reference directly without opening a Side Panel chat tab", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Reference-Navigation-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Reference Navigation Agent" });
+
+    const targetRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Direct navigation target",
+        initialMessage: { body: "This is the destination chat." },
+      },
+    });
+    expect(targetRes.ok(), await targetRes.text()).toBe(true);
+    const targetChat = await targetRes.json() as { id: string };
+
+    const hostRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Direct navigation host",
+        initialMessage: { body: "Show the referenced destination." },
+      },
+    });
+    expect(hostRes.ok(), await hostRes.text()).toBe(true);
+    const hostChat = await hostRes.json() as { id: string };
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: hostChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Open [Direct navigation target](${buildChatMentionHref(targetChat.id)}).`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+
+    const reference = page.locator('a[data-mention-kind="chat"]', { hasText: "Direct navigation target" });
+    await expect(reference).toBeVisible({ timeout: 15_000 });
+    await reference.click();
+
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${targetChat.id}$`));
+    await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
+    await expect(page.getByTestId("chat-user-message")).toContainText("This is the destination chat.");
+    await page.screenshot({
+      path: "/tmp/rudder-chat-reference-direct-navigation.png",
+      fullPage: true,
+    });
   });
 
   test("keeps the issue Side Panel in one scroll flow with a pinned composer", async ({ page }, testInfo) => {
@@ -1460,6 +1526,7 @@ test.describe("Chat Side Panel", () => {
           title,
           issueCreationMode: "manual_approval",
           planMode: false,
+          initialMessage: { body: `Open ${title}.` },
         },
       });
       expect(chatRes.ok(), await chatRes.text()).toBe(true);
@@ -1482,13 +1549,26 @@ test.describe("Chat Side Panel", () => {
       return chat;
     }
 
-    const panelTargetA = await createChat("Panel target A", "Panel target A body.");
-    const panelTargetB = await createChat("Panel target B", "Panel target B body.");
+    async function createIssue(title: string, description: string) {
+      const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+        data: {
+          title,
+          description,
+          status: "todo",
+          priority: "medium",
+        },
+      });
+      expect(issueRes.ok(), await issueRes.text()).toBe(true);
+      return issueRes.json() as Promise<{ id: string; identifier: string | null; title: string }>;
+    }
+
+    const panelTargetA = await createIssue("Panel target A", "Panel target A body.");
+    const panelTargetB = await createIssue("Panel target B", "Panel target B body.");
     const otherChat = await createChat("Other chat without panel history", "Other chat has no panel history.");
     const thirdChat = await createChat("Third chat without panel history", "Third chat has no panel history.");
     const hostChat = await createChat("Session state host chat", [
-      `Compare [Panel target A](${buildChatMentionHref(panelTargetA.id)}) beside this chat.`,
-      `Compare [Panel target B](${buildChatMentionHref(panelTargetB.id)}) beside this chat.`,
+      `Compare [Panel target A](${buildIssueMentionHref(panelTargetA.id, panelTargetA.identifier ?? panelTargetA.id)}) beside this chat.`,
+      `Compare [Panel target B](${buildIssueMentionHref(panelTargetB.id, panelTargetB.identifier ?? panelTargetB.id)}) beside this chat.`,
     ].join("\n\n"));
 
     await page.goto("/");
@@ -1502,12 +1582,12 @@ test.describe("Chat Side Panel", () => {
     const assistantMessage = page.getByTestId("chat-assistant-message").last();
     await expect(assistantMessage).toContainText("Panel target A", { timeout: 15_000 });
 
-    await assistantMessage.locator('a[data-mention-kind="chat"]').filter({ hasText: "Panel target A" }).click();
+    await assistantMessage.locator('a[data-mention-kind="issue"]').filter({ hasText: "Panel target A" }).click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
     await expect(sidePanel).toContainText("Panel target A body.");
 
-    await assistantMessage.locator('a[data-mention-kind="chat"]').filter({ hasText: "Panel target B" }).click();
+    await assistantMessage.locator('a[data-mention-kind="issue"]').filter({ hasText: "Panel target B" }).click();
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
     await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("Panel target B");
     await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toHaveAttribute("aria-selected", "true");

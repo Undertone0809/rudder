@@ -850,7 +850,7 @@ describe("ChatMessageItem", () => {
 });
 
 describe("Chat Side Panel targets", () => {
-  it("resolves issue, chat, automation, and library targets from chat links", () => {
+  it("resolves issue, automation, and library targets from chat links", () => {
     expect(chatSidePanelTargetFromHref(buildIssueMentionHref("issue-1", "ZST-1", "comment-1"))).toEqual({
       kind: "issue",
       issueId: "issue-1",
@@ -858,18 +858,8 @@ describe("Chat Side Panel targets", () => {
       commentId: "comment-1",
       label: "ZST-1",
     });
-    expect(chatSidePanelTargetFromHref(buildChatMentionHref("chat-2"))).toEqual({
-      kind: "chat",
-      conversationId: "chat-2",
-      messageId: null,
-      label: "Chat",
-    });
-    expect(chatSidePanelTargetFromHref(`${buildChatMentionHref("chat-2")}?messageId=message-3`, "Source message")).toEqual({
-      kind: "chat",
-      conversationId: "chat-2",
-      messageId: "message-3",
-      label: "Source message",
-    });
+    expect(chatSidePanelTargetFromHref(buildChatMentionHref("chat-2"))).toBeNull();
+    expect(chatSidePanelTargetFromHref(`${buildChatMentionHref("chat-2")}?messageId=message-3`, "Source message")).toBeNull();
     expect(chatSidePanelTargetFromHref(buildAutomationMentionHref("automation-1", "Daily report"))).toEqual({
       kind: "automation",
       automationId: "automation-1",
@@ -885,12 +875,7 @@ describe("Chat Side Panel targets", () => {
       directoryPath: "docs",
       label: "Docs",
     });
-    expect(chatSidePanelTargetFromHref("/messenger/chat/chat-2?messageId=message-3", "Source message")).toEqual({
-      kind: "chat",
-      conversationId: "chat-2",
-      messageId: "message-3",
-      label: "Source message",
-    });
+    expect(chatSidePanelTargetFromHref("/messenger/chat/chat-2?messageId=message-3", "Source message")).toBeNull();
     expect(chatSidePanelTargetFromHref("/automations/automation-1?t=Daily%20report")).toEqual({
       kind: "automation",
       automationId: "automation-1",

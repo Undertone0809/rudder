@@ -301,10 +301,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     checkpointDispatcher.retain(activeCheckpointKeys);
   }, [checkpointDispatcher, streamDrafts]);
   useEffect(() => () => checkpointDispatcher.dispose(), [checkpointDispatcher]);
-  const handleChatMarkdownLinkClick = useCallback<MarkdownLinkClickHandler>(({ event, href, label }) => { if (!shouldHandlePlainChatLinkClick(event)) return; const sidePanelTarget = chatSidePanelTargetFromHref(href, label); if (sidePanelTarget) { event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), sidePanelTarget); return true; } const chatMessageTarget = chatMessageJumpTargetFromHref(href); if (chatMessageTarget) { event.preventDefault(); event.stopPropagation(); navigate({
-        pathname: chatConversationPath(chatMessageTarget.conversationId),
+  const handleChatMarkdownLinkClick = useCallback<MarkdownLinkClickHandler>(({ event, href, label }) => { if (!shouldHandlePlainChatLinkClick(event)) return; const chatMessageTarget = chatMessageJumpTargetFromHref(href); if (chatMessageTarget) { event.preventDefault(); event.stopPropagation(); const pathname = chatConversationPath(chatMessageTarget.conversationId); navigate(chatMessageTarget.messageId ? {
+        pathname,
         search: `?messageId=${encodeURIComponent(chatMessageTarget.messageId)}`,
-      }); return true; } const targetPath = resolveLocalFileTarget(href, label); if (!targetPath) return; event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+      } : pathname); return true; } const sidePanelTarget = chatSidePanelTargetFromHref(href, label); if (sidePanelTarget) { event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), sidePanelTarget); return true; } const targetPath = resolveLocalFileTarget(href, label); if (!targetPath) return; event.preventDefault(); event.stopPropagation(); openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
         kind: "local_file",
         filePath: targetPath,
         label: label.trim() || targetPath.split(/[\\/]/u).at(-1) || targetPath,
@@ -1934,12 +1934,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (item.targetType === "chat_conversation") {
       const targetConversationId = typeof metadata.conversationId === "string" ? metadata.conversationId : null;
       if (!targetConversationId) return;
-      openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
-        kind: "chat",
-        conversationId: targetConversationId,
-        messageId: typeof metadata.messageId === "string" ? metadata.messageId : null,
-        label: item.title,
-      });
+      const messageId = typeof metadata.messageId === "string" ? metadata.messageId : null;
+      const pathname = chatConversationPath(targetConversationId);
+      navigate(messageId ? {
+        pathname,
+        search: `?messageId=${encodeURIComponent(messageId)}`,
+      } : pathname);
       return;
     }
     if (item.targetType === "library_entry") {
@@ -1981,7 +1981,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     }
     const opened = window.open(href, "_blank", "noopener,noreferrer");
     if (opened) opened.opener = null;
-  }, [openImagePreview, openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const latestUnansweredAskUserMessage = useMemo(
+  }, [chatConversationPath, navigate, openImagePreview, openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const latestUnansweredAskUserMessage = useMemo(
     () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const activeStreamUserTurnVisible = Boolean(activeStream && !activeStreamPreviewHidden); const activeStreamAskUserRequest = activeStreamUserTurnVisible && latestUnansweredAskUserMessage ? askUserRequestFromMessage(latestUnansweredAskUserMessage) : null; const pendingAskUserMessage = activeStreamUserTurnVisible ? null : latestUnansweredAskUserMessage; const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null); const optimisticReadBadgeMarkerRef = useRef<string | null>(null);
   useEffect(() => { if (!pendingAskUserRequest) return; closeComposerContextMenus(); }, [closeComposerContextMenus, pendingAskUserRequest]);
   useEffect(() => { const chatId = selectedConversation?.id ?? null; if (!chatId || showMessagesLoading) return; if (initialScrolledConversationRef.current === chatId) return; initialScrolledConversationRef.current = chatId; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; scrollChatMessagesToBottom(scrollElement); }); return () => cancelAnimationFrame(frame); }, [selectedConversation?.id, showMessagesLoading, visibleMessages.length]);
