@@ -83,12 +83,12 @@ import {
 import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
-import { hasUnrenderedCanonicalRudderReference } from "./MarkdownEditor.parts";
 import {
-  getImageContextMenuTarget,
   ImageContextMenu,
+  getImageContextMenuTarget,
   type ImageContextMenuTarget,
 } from "./ImageContextMenu";
+import { hasUnrenderedCanonicalRudderReference } from "./MarkdownEditor.parts";
 import {
   MilkdownMarkdownEditor,
   readCanonicalFragmentMarkdown,

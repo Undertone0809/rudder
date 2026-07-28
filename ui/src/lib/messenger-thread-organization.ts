@@ -1,4 +1,12 @@
-import type { Agent, ChatConversation, MessengerThreadSummary, Project } from "@rudderhq/shared";
+import type {
+  Agent,
+  ChatConversation,
+  MessengerCustomGroupHydratedEntry,
+  MessengerCustomGroupHydratedThreadEntry,
+  MessengerSavedView,
+  MessengerThreadSummary,
+  Project,
+} from "@rudderhq/shared";
 import { isLocalManagedThreadGroupRule, type ThreadOrganizationRule } from "./messenger-preferences";
 import { resolveSourceBadge } from "./source-badge";
 
@@ -30,6 +38,67 @@ export interface OrganizedThreadSection {
   pending?: boolean;
   entries: OrganizedThreadEntry[];
   childSections?: OrganizedThreadSection[];
+}
+
+export type MessengerTopLevelDirectoryItem =
+  | { key: string; kind: "section"; section: OrganizedThreadSection }
+  | { key: string; kind: "saved-view"; savedView: MessengerSavedView };
+
+export function applyManualDirectoryOrder(
+  items: MessengerTopLevelDirectoryItem[],
+  orderedKeys: string[],
+) {
+  if (orderedKeys.length === 0) return items;
+  const itemByKey = new Map(items.map((item) => [item.key, item]));
+  const manualItems = orderedKeys
+    .map((key) => itemByKey.get(key) ?? null)
+    .filter((item): item is MessengerTopLevelDirectoryItem => Boolean(item));
+  if (manualItems.length === 0) return items;
+  const manualKeys = new Set(manualItems.map((item) => item.key));
+  const firstManualIndex = items.findIndex((item) => manualKeys.has(item.key));
+  const manuallyOrderedItems = [
+    ...items.slice(0, firstManualIndex).filter((item) => !manualKeys.has(item.key)),
+    ...manualItems,
+    ...items.slice(firstManualIndex).filter((item) => !manualKeys.has(item.key)),
+  ];
+  const attentionOrderedSections = items.filter((item) => item.kind === "section");
+  let nextSectionIndex = 0;
+  return manuallyOrderedItems.map((item) => {
+    if (item.kind !== "section") return item;
+    return attentionOrderedSections[nextSectionIndex++] ?? item;
+  });
+}
+
+export function withLiveProcessingState(
+  thread: MessengerThreadSummary,
+  activeChatIds: ReadonlySet<string>,
+) {
+  const conversationId = threadConversationId(thread.threadKey);
+  if (!conversationId || !activeChatIds.has(conversationId)) return thread;
+  return {
+    ...thread,
+    metadata: { ...thread.metadata, isProcessing: true },
+  };
+}
+
+export function applyVisibleThreadAttentionOrder(
+  manuallyOrderedEntries: MessengerCustomGroupHydratedEntry[],
+  visibleEntries: OrganizedThreadEntry[],
+) {
+  const threadEntryByKey = new Map(
+    manuallyOrderedEntries
+      .filter((entry): entry is MessengerCustomGroupHydratedThreadEntry =>
+        entry.item.type === "thread")
+      .map((entry) => [entry.threadKey, entry]),
+  );
+  const attentionOrderedEntries = visibleEntries
+    .map((entry) => threadEntryByKey.get(entry.thread.threadKey) ?? null)
+    .filter((entry): entry is MessengerCustomGroupHydratedThreadEntry => Boolean(entry));
+  let nextVisibleThreadIndex = 0;
+  return manuallyOrderedEntries.map((entry) =>
+    entry.item.type === "thread"
+      ? attentionOrderedEntries[nextVisibleThreadIndex++] ?? entry
+      : entry);
 }
 
 export interface CustomThreadGroupLayoutInput {

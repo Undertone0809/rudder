@@ -667,7 +667,9 @@ describe("index.css motion rules", () => {
     expect(organizationWorkspacesSource).toContain("workspace-tab-pill rudder-doc-editor-tab");
     expect(chatSidePanelSource).toContain("workspace-tab-header-card workspace-main-card");
     expect(chatSidePanelSource).toContain("workspace-tab-content-card workspace-main-card");
-    expect(chatSidePanelSource).toContain("workspace-tab-strip scrollbar-auto-hide");
+    expect(chatSidePanelSource).toContain("workspace-tab-strip flex shrink-0 items-center gap-1 overflow-hidden");
+    expect(chatSidePanelSource).toContain('data-testid="chat-side-panel-tab-scroller"');
+    expect(chatSidePanelSource).toContain("scrollbar-auto-hide flex min-w-0 flex-1 gap-1 overflow-x-auto");
     expect(chatSidePanelSource).toContain("workspace-tab-pill group");
     expect(organizationWorkspaceSidebarSource).toContain("workspace-context-header rudder-doc-editor-sidebar-header desktop-chrome flex shrink-0");
     expect(organizationWorkspaceSidebarSource).toContain("sidebarHasTabStrip && !sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--tabs-only\"");

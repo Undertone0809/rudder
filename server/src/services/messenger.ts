@@ -66,6 +66,12 @@ import {
   lockMessengerCustomGroupPlacement,
   lockMessengerSavedViewPlacement,
 } from "./messenger-saved-views.js";
+import {
+  comparePinnedThenLatest,
+  decodeThreadSummaryCursor,
+  encodeThreadSummaryCursor,
+  threadSummaryIsAfterCursor,
+} from "./messenger-thread-summary-order.js";
 
 const ISSUE_ACTIVITY_ACTIONS = [
   "issue.updated",
@@ -115,13 +121,6 @@ type ThreadSummaryPageOptions = ThreadSummaryListOptions & {
 type IssueThreadCursor = {
   activityAt: string;
   issueId: string;
-};
-type ThreadSummaryCursor = {
-  attentionRank: number;
-  activityAt: string;
-  title: string;
-  threadKey: string;
-  isPinned: boolean;
 };
 type IssueThreadEntry = {
   issue: IssueUniverseRow & { followed: boolean; assigned: boolean };
@@ -331,31 +330,6 @@ function compareLatestActivity<T extends { latestActivityAt: Date | null; title:
   return (a.threadKey ?? "").localeCompare(b.threadKey ?? "");
 }
 
-function threadSummaryAttentionRank(
-  summary: Pick<MessengerThreadSummary, "unreadCount" | "needsAttention" | "metadata">,
-) {
-  if (summary.unreadCount > 0 || summary.needsAttention) return 0;
-  if (
-    (typeof summary.metadata?.activeExecutionRunId === "string" && summary.metadata.activeExecutionRunId.length > 0)
-    || (typeof summary.metadata?.activeGenerationId === "string" && summary.metadata.activeGenerationId.length > 0)
-  ) {
-    return 1;
-  }
-  return 2;
-}
-
-function comparePinnedThenLatest<
-  T extends Pick<MessengerThreadSummary, "latestActivityAt" | "title" | "unreadCount" | "needsAttention" | "metadata">
-  & { threadKey?: string; isPinned?: boolean },
->(a: T, b: T) {
-  const aPinned = Boolean(a.isPinned);
-  const bPinned = Boolean(b.isPinned);
-  if (aPinned !== bPinned) return aPinned ? -1 : 1;
-  const attentionDiff = threadSummaryAttentionRank(a) - threadSummaryAttentionRank(b);
-  if (attentionDiff !== 0) return attentionDiff;
-  return compareLatestActivity(a, b);
-}
-
 function compareChronologicalActivity<T extends { latestActivityAt: Date | null; title: string }>(a: T, b: T) {
   const aTime = a.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
   const bTime = b.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
@@ -371,60 +345,6 @@ function normalizeIssueThreadLimit(limit: number | null | undefined) {
 function normalizeThreadSummaryLimit(limit: number | null | undefined) {
   if (typeof limit !== "number" || !Number.isFinite(limit)) return DEFAULT_THREAD_SUMMARY_LIMIT;
   return Math.min(MAX_THREAD_SUMMARY_LIMIT, Math.max(1, Math.floor(limit)));
-}
-
-function encodeThreadSummaryCursor(summary: MessengerThreadSummary) {
-  const payload: ThreadSummaryCursor = {
-    attentionRank: threadSummaryAttentionRank(summary),
-    activityAt: (normalizeDate(summary.latestActivityAt) ?? new Date(0)).toISOString(),
-    title: summary.title,
-    threadKey: summary.threadKey,
-    isPinned: summary.isPinned,
-  };
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-}
-
-function decodeThreadSummaryCursor(cursor: string | null | undefined): ThreadSummaryCursor | null {
-  if (!cursor) return null;
-  try {
-    const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<ThreadSummaryCursor>;
-    if (typeof decoded.activityAt !== "string" || Number.isNaN(new Date(decoded.activityAt).getTime())) return null;
-    if (typeof decoded.title !== "string") return null;
-    if (typeof decoded.threadKey !== "string" || decoded.threadKey.length === 0) return null;
-    return {
-      attentionRank: typeof decoded.attentionRank === "number"
-        && Number.isFinite(decoded.attentionRank)
-        ? decoded.attentionRank
-        : 2,
-      activityAt: decoded.activityAt,
-      title: decoded.title,
-      threadKey: decoded.threadKey,
-      isPinned: decoded.isPinned === true,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function threadSummaryIsAfterCursor(summary: MessengerThreadSummary, cursor: ThreadSummaryCursor | null) {
-  if (!cursor) return true;
-  return comparePinnedThenLatest<{
-    latestActivityAt: Date | null;
-    title: string;
-    threadKey: string;
-    isPinned: boolean;
-    unreadCount: number;
-    needsAttention: boolean;
-    metadata?: Record<string, unknown>;
-  }>(summary, {
-    latestActivityAt: new Date(cursor.activityAt),
-    title: cursor.title,
-    threadKey: cursor.threadKey,
-    isPinned: cursor.isPinned,
-    unreadCount: cursor.attentionRank === 0 ? 1 : 0,
-    needsAttention: cursor.attentionRank === 0,
-    metadata: cursor.attentionRank === 1 ? { activeGenerationId: "cursor" } : undefined,
-  }) > 0;
 }
 
 function threadSummaryPageInfo(limit: number, items: MessengerThreadSummary[], hasMore: boolean): MessengerThreadPageInfo {

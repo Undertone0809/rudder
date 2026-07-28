@@ -100,6 +100,8 @@ import {
 import { messengerSavedViewRoute } from "@/lib/messenger-saved-views";
 import { messengerThreadKindLabel } from "@/lib/messenger-thread-labels";
 import {
+  applyManualDirectoryOrder,
+  applyVisibleThreadAttentionOrder,
   chatConversationForThreadSummary,
   customGroupIdFromSectionKey,
   customGroupSectionKey,
@@ -120,6 +122,7 @@ import {
   threadConversationId,
   threadMatchesMessengerIssueRoute,
   threadSectionKeyToStoredId,
+  withLiveProcessingState,
   type OrganizedThreadEntry,
   type OrganizedThreadSection
 } from "@/lib/messenger-thread-organization";
@@ -217,10 +220,6 @@ type CustomGroupEditorState = { mode: "create"; threadKey?: string };
 type CustomGroupRenameState = { group: MessengerCustomGroupWithEntries; name: string };
 type MessengerDragIntent = "move-into-group" | "move-out-of-group" | "reorder-group" | "reorder-entry" | null;
 type MessengerInsertionPlacement = "before" | "after" | null;
-type MessengerTopLevelDirectoryItem =
-  | { key: string; kind: "section"; section: OrganizedThreadSection }
-  | { key: string; kind: "saved-view"; savedView: MessengerSavedView };
-
 const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
 const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const MESSENGER_SAVED_VIEW_PAGE_LIMIT = 50;
@@ -237,33 +236,6 @@ const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label:
 function sleep(ms: number) {
   return new Promise((resolve) => {
     globalThis.setTimeout(resolve, ms);
-  });
-}
-
-function applyManualDirectoryOrder(
-  items: MessengerTopLevelDirectoryItem[],
-  orderedKeys: string[],
-) {
-  if (orderedKeys.length === 0) return items;
-  const itemByKey = new Map(items.map((item) => [item.key, item]));
-  const manualItems = orderedKeys
-    .map((key) => itemByKey.get(key) ?? null)
-    .filter((item): item is MessengerTopLevelDirectoryItem => Boolean(item));
-  if (manualItems.length === 0) return items;
-  const manualKeys = new Set(manualItems.map((item) => item.key));
-  const firstManualIndex = items.findIndex((item) => manualKeys.has(item.key));
-  const manuallyOrderedItems = [
-    ...items.slice(0, firstManualIndex).filter((item) => !manualKeys.has(item.key)),
-    ...manualItems,
-    ...items.slice(firstManualIndex).filter((item) => !manualKeys.has(item.key)),
-  ];
-  const attentionOrderedSections = items.filter((item) => item.kind === "section");
-  let nextSectionIndex = 0;
-  return manuallyOrderedItems.map((item) => {
-    if (item.kind !== "section") return item;
-    const attentionOrderedSection = attentionOrderedSections[nextSectionIndex];
-    nextSectionIndex += 1;
-    return attentionOrderedSection ?? item;
   });
 }
 
@@ -1103,17 +1075,6 @@ export function MessengerContextSidebar() {
   }, [customGroups, locallyReadThreadWatermarks.size, model.threadSummaries]);
 
   const organizedThreadSections = useMemo(() => {
-    const withLiveProcessingState = (thread: MessengerThreadSummary) => {
-      const conversationId = threadConversationId(thread.threadKey);
-      if (!conversationId || !activeChatIds.has(conversationId)) return thread;
-      return {
-        ...thread,
-        metadata: {
-          ...thread.metadata,
-          isProcessing: true,
-        },
-      };
-    };
     const threadSummaries = splitIssueNotifications
       ? visibleThreadSummaries.filter((thread) => thread.threadKey !== "issues")
       : visibleThreadSummaries;
@@ -1127,6 +1088,7 @@ export function MessengerContextSidebar() {
         const pendingTitle = conversationId ? pendingChatRenameTitles[conversationId] : undefined;
         const readThread = withLiveProcessingState(
           locallyReadThreadSummary(entry.thread, locallyReadThreadWatermarks),
+          activeChatIds,
         );
         const displayThread = pendingTitle ? { ...readThread, title: pendingTitle } : readThread;
         return {
@@ -1140,7 +1102,7 @@ export function MessengerContextSidebar() {
     }));
     if (effectiveThreadOrganizationRule === "custom") {
       const looseEntries = threadSummaries.map((sourceThread) => {
-        const thread = withLiveProcessingState(sourceThread);
+        const thread = withLiveProcessingState(sourceThread, activeChatIds);
         const conversationId = threadConversationId(thread.threadKey);
         const loadedConversation = conversationId ? conversationsById.get(conversationId) ?? null : null;
         const pendingTitle = conversationId ? pendingChatRenameTitles[conversationId] : undefined;
@@ -1156,7 +1118,7 @@ export function MessengerContextSidebar() {
       return organizeCustomThreadDirectory(looseEntries, groupInputs, defaultThreadOrderKeys);
     }
     const entries = threadSummaries.map((sourceThread) => {
-      const thread = withLiveProcessingState(sourceThread);
+      const thread = withLiveProcessingState(sourceThread, activeChatIds);
       const conversationId = threadConversationId(thread.threadKey);
       const loadedConversation = conversationId ? conversationsById.get(conversationId) ?? null : null;
       const pendingTitle = conversationId ? pendingChatRenameTitles[conversationId] : undefined;
@@ -2994,22 +2956,10 @@ export function MessengerContextSidebar() {
     const manuallyOrderedCustomEntries = customGroup?.entries
       .slice()
       .sort((left, right) => left.sortOrder - right.sortOrder) ?? [];
-    const customThreadEntryByKey = new Map(
-      manuallyOrderedCustomEntries
-        .filter(isThreadCustomGroupEntry)
-        .map((entry) => [entry.threadKey, entry]),
+    const orderedCustomEntries = applyVisibleThreadAttentionOrder(
+      manuallyOrderedCustomEntries,
+      visibleEntries,
     );
-    const attentionOrderedVisibleThreadEntries = visibleEntries
-      .map((entry) => customThreadEntryByKey.get(entry.thread.threadKey) ?? null)
-      .filter((entry): entry is MessengerCustomGroupHydratedThreadEntry => Boolean(entry));
-    let nextVisibleThreadIndex = 0;
-    const orderedCustomEntries = manuallyOrderedCustomEntries.map((entry) => {
-      if (!isThreadCustomGroupEntry(entry)) return entry;
-      const attentionOrderedEntry = attentionOrderedVisibleThreadEntries[nextVisibleThreadIndex];
-      if (!attentionOrderedEntry) return entry;
-      nextVisibleThreadIndex += 1;
-      return attentionOrderedEntry;
-    });
     const renderedEntryNodes = customGroup
       ? orderedCustomEntries.map((entry) => {
         if (isSavedViewCustomGroupEntry(entry)) {

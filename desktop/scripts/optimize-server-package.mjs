@@ -535,5 +535,5 @@ export {
   OPTIMIZATION_MANIFEST,
   embeddedPostgresPlatformPackage,
   packageHasTypeMetadata,
-  stripPackageTypeMetadata,
+  stripPackageTypeMetadata
 };
