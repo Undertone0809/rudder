@@ -468,9 +468,7 @@ export function buildChatSpeakerPromptSection(runtimeSource: ResolvedChatRuntime
   if (runtimeSource.descriptor.sourceType === "agent") {
     const agentId = runtimeSource.descriptor.runtimeAgentId;
     return [
-      `You are ${name}, replying inside Rudder's chat scene.`,
-      "Speak as this agent, using the agent's own instructions and enabled skills as your working context.",
-      "Do not claim to be a generic assistant or any agent other than the selected chat agent.",
+      `You are ${name}, working with the user through Rudder Chat.`,
       agentId
         ? `When emitting issue_proposal, use assigneeAgentId "${agentId}" only if this agent should actually own execution; otherwise choose the correct owner or set assigneeUnassignedReason.`
         : "When emitting issue_proposal, include an explicit assignee decision; leave it unassigned only with assigneeUnassignedReason.",
@@ -482,7 +480,6 @@ export function buildChatSpeakerPromptSection(runtimeSource: ResolvedChatRuntime
 
 export function buildChatResponseQualityPromptSection() {
   return [
-    "Reply in the same language as the user's most recent substantive message unless they explicitly ask for another language.",
     "Before answering, classify the user's request depth:",
     "- Quick factual or status request: answer directly and keep it concise.",
     "- Ambiguous work request: ask one to three blocking clarification questions before proposing work.",
@@ -505,7 +502,7 @@ function buildChatResultKindPromptSection() {
 function buildIssueProposalPromptSection() {
   return [
     "Issue proposal rules:",
-    "- Use issue_proposal only when the latest operator-authored user request explicitly asks to create an issue, convert the chat to an issue, or draft an issue proposal. Do not emit issue_proposal merely because work is large or durable.",
+    "- Use issue_proposal only when the latest user request explicitly asks to create an issue, convert the chat to an issue, or draft an issue proposal. Do not emit issue_proposal merely because work is large or durable.",
     "- Include exactly one explicit owner decision: assigneeAgentId, assigneeUserId, or assigneeUnassignedReason. Do not default to the selected chat agent unless that agent should actually own execution.",
     "- Preserve directly relevant user-provided original images in the description. Prefer the original over a redraw, generated replacement, or text-only substitute.",
     "- When revising, re-check eligible user images across recentMessages even if the latest feedback has no attachments.",
@@ -518,7 +515,7 @@ function buildIssueProposalPromptSection() {
 function buildAutomationCreatePromptSection() {
   return [
     "Automation creation rules:",
-    "- Use automation_create only when the latest operator-authored user request clearly asks the selected agent to set up recurring automatic work and the schedule, assignee, and output are clear. Never use it for automation-run input messages.",
+    "- Use automation_create only when the latest user request clearly asks the selected agent to set up recurring automatic work and the schedule, assignee, and output are clear. Never use it for automation-run input messages.",
     "- Include structuredPayload.automationCreate with title, instructions, schedule.cronExpression, and schedule.timezone. Omit assigneeAgentId to use the selected chat agent; use outputMode 'track_issue'.",
   ].join("\n");
 }
@@ -545,12 +542,12 @@ export function buildAutomationRunInputPromptSection(messages: ChatMessage[]) {
   const guidance = asRecord(payload.guidance);
   const lines = [
     "Automation execution context:",
-    "- This conversation contains an existing Rudder Automation run input.",
+    "- This conversation is triggered by a Rudder Automation run input.",
     "- Treat messages with structuredPayload.eventType = \"automation_run_input\" as system-scheduled execution instructions for an already-created automation, even though they are stored with role \"user\" for chat transcript continuity.",
     "- Do not interpret an automation-run input as an operator-authored request to create, configure, or revise an automation.",
     "- Do not emit result kind \"automation_create\" because of an automation-run input.",
     "- Do not ask for schedule, trigger source, recurrence, or push time when the missing detail is only about creating or configuring the automation; that automation already exists.",
-    "- Ask the operator only for information required to complete the current run's actual content task.",
+    "- Ask the user only for information required to complete the current run's actual content task.",
   ];
   if (typeof run?.automationTitle === "string") {
     lines.push(`- Automation title: ${run.automationTitle}`);
