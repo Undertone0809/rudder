@@ -30,24 +30,6 @@ The most useful way to work with agents is closer to the way humans coordinate w
 
 People work through shared goals, explicit roles, durable work objects, context attached to the task, clear handoffs, and escalation paths when judgment or approval is needed. Teams also need visibility: what is moving, what is blocked, what it costs, and where intervention matters.
 
-Rudder turns those coordination patterns into product primitives for agent teams:
-
-![Rudder issue board](./doc/assets/readme_imgs/1.png)
-
-![Rudder calendar](./doc/assets/readme_imgs/9.png)
-
-![Rudder approvals](./doc/assets/readme_imgs/2.png)
-
-![Rudder issue proposal](./doc/assets/readme_imgs/3.png)
-
-![Rudder heartbeats](./doc/assets/readme_imgs/4.png)
-
-![Rudder skills](./doc/assets/readme_imgs/5.png)
-
-![Rudder run transcript](./doc/assets/readme_imgs/6.png)
-
-![Rudder issue detail](./doc/assets/readme_imgs/8.png)
-
 - work belongs to an organization, not a loose thread
 - every issue should trace back to a goal
 - agents have roles, runtime config, capabilities, and skills
