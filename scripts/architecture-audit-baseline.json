@@ -258,6 +258,14 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "server/src/services/chat-assistant.helpers.ts",
+      "lines": 1501,
+      "owner": "collaboration-server",
+      "rationale": "The extracted Chat assistant helper module still combines prompt assembly, transcript normalization, attachment handling, and result parsing.",
+      "target": "Split prompt, transcript, attachment, and result helpers into focused modules and reduce this compatibility surface below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
       "path": "server/src/services/mcp/oauth.ts",
       "lines": 1501,
       "owner": "integrations-server",

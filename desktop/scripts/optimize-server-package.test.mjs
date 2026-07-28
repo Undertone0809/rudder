@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -11,7 +12,10 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { optimizeServerPackage } from "./optimize-server-package.mjs";
+import {
+  optimizeServerPackage,
+  stripPackageTypeMetadata,
+} from "./optimize-server-package.mjs";
 
 const tempRoots = [];
 
@@ -173,6 +177,27 @@ afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+describe("Desktop production package manifest optimizer", () => {
+  it("breaks hardlinks before stripping deployed type metadata", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "rudder-optimize-manifest-"));
+    tempRoots.push(root);
+    const sourceManifest = path.join(root, "source-package.json");
+    const deployedManifest = path.join(root, "deployed-package.json");
+    const manifest = {
+      name: "postgres",
+      version: "3.4.8",
+      types: "types/index.d.ts",
+    };
+    writeJson(sourceManifest, manifest);
+    linkSync(sourceManifest, deployedManifest);
+
+    await stripPackageTypeMetadata(deployedManifest);
+
+    expect(JSON.parse(readFileSync(sourceManifest, "utf8"))).toEqual(manifest);
+    expect(JSON.parse(readFileSync(deployedManifest, "utf8")).types).toBeUndefined();
+  });
 });
 
 describe("Desktop production server package optimizer", () => {
