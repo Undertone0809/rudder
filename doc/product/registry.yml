@@ -1144,7 +1144,10 @@ contracts:
       - ui/src/components/MarkdownEditor.tsx
       - ui/src/lib/chat-client-checkpoints.ts
       - ui/src/lib/chat-stop-recovery.ts
+      - ui/src/lib/issue-proposal-side-panel-registry.tsx
+      - ui/src/lib/side-panel-targets.ts
       - ui/src/pages/Chat.messages.tsx
+      - ui/src/pages/Chat.side-panel.tsx
       - ui/src/components/transcript/RunTranscriptView.chat.tsx
       - ui/src/components/transcript/RunTranscriptView.blocks.tsx
       - ui/src/components/transcript/TranscriptLocalFilePreview.tsx
@@ -1185,6 +1188,7 @@ contracts:
       - tests/e2e/chat-prompt-starters.spec.ts
       - tests/e2e/chat-rich-references.spec.ts
       - tests/e2e/chat-runtime-boot-failure.spec.ts
+      - tests/e2e/chat-proposal-review.spec.ts
       - tests/e2e/chat-streaming.spec.ts
       - tests/e2e/chat-transcript-internal-events.spec.ts
       - tests/e2e/agent-run-conversation-grouping.spec.ts
@@ -1484,6 +1488,7 @@ contracts:
       - ui/src/components/transcript/TranscriptLocalFilePreview.tsx
       - ui/src/lib/browser-side-panel.ts
       - ui/src/lib/desktop-browser-link-router.ts
+      - ui/src/lib/issue-proposal-side-panel-registry.tsx
       - ui/src/lib/side-panel-targets.ts
       - ui/src/context/SidePanelContext.tsx
       - ui/src/context/MainWorkbenchContext.tsx
@@ -1499,7 +1504,10 @@ contracts:
       - ui/src/components/WorkspacePdfPreview.tsx
       - ui/src/components/ui/context-menu.tsx
       - ui/src/pages/Chat.side-panel.tsx
+      - ui/src/pages/Chat.messages.tsx
       - ui/src/pages/Chat.tsx
+      - ui/src/index.css
+      - ui/src/motion.css
       - ui/src/pages/IssueDetail.tsx
       - ui/src/components/workbench/MessengerMainWorkbench.tsx
       - ui/src/pages/MessengerSavedViewWorkspace.tsx
@@ -1517,6 +1525,7 @@ contracts:
       - ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx
       - ui/src/lib/browser-side-panel.test.ts
       - ui/src/lib/desktop-browser-link-router.test.ts
+      - ui/src/lib/motion-css.test.ts
       - ui/src/lib/side-panel-targets.test.ts
       - ui/src/components/InlineEditor.test.tsx
       - ui/src/components/Layout.test.ts
@@ -1533,6 +1542,7 @@ contracts:
       - ui/src/pages/MessengerSavedViewWorkspace.test.tsx
       - tests/e2e/built-in-browser.spec.ts
       - tests/e2e/chat-side-panel.spec.ts
+      - tests/e2e/chat-proposal-review.spec.ts
       - tests/e2e/chat-transcript-internal-events.spec.ts
       - tests/e2e/library-media-preview.spec.ts
       - tests/e2e/messenger-saved-views.spec.ts

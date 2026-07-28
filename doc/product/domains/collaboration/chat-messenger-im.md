@@ -189,6 +189,21 @@ Why:
   an issue proposal only when the latest operator-authored user request
   explicitly asks to create an issue, convert the chat to an issue, or draft an
   issue proposal.
+- A pending Issue Proposal is a reviewable Chat object, not only assistant
+  prose. It rests as a complete inline proposal card with a bounded details
+  preview. `Show full proposal` opens or focuses a dedicated `Issue proposal`
+  Side Panel tab for the same conversation message and replaces the inline card
+  with a compact launcher while that tab exists.
+- Hiding the Side Panel preserves the proposal tab and compact launcher so the
+  operator can resume review. Explicitly closing the proposal tab removes that
+  temporary panel target and restores the complete inline card in the
+  transcript.
+- Proposal fields, decision feedback, and review actions inside the Side Panel
+  operate on the same current proposal state as the inline card. Requesting
+  changes continues the Chat review loop, approval creates the issue through
+  the existing governed conversion path, and rejection preserves the existing
+  proposal-review semantics; opening the panel must not fork or snapshot those
+  actions.
 - User-provided original images are first-class proposal evidence when they
   directly explain a requirement, reproduction, design reference, or acceptance
   result. The proposal keeps that evidence inspectable instead of replacing it
@@ -397,24 +412,35 @@ Flow:
    attachment's canonical `contentPath` and a meaningful alt text. A revision
    turn re-checks relevant image attachments within the available bounded Chat
    prompt history even when the revision-feedback message has no attachments.
-10. When the operator refreshes a completed assistant answer, Rudder reuses the
+10. A pending Issue Proposal initially renders as the complete inline review
+    card. Choosing `Show full proposal` opens or focuses one Side Panel target
+    keyed to that conversation message, expands the full proposal details and
+    review controls there, and leaves a compact `Issue proposal` launcher in the
+    transcript. Hiding and reopening the Side Panel retains that tab; choosing
+    the compact launcher reopens it. Explicitly closing the proposal tab
+    restores the complete inline card.
+11. Review actions taken in the proposal tab use the current proposal fields
+    and decision note. Request changes persists that feedback and continues the
+    conversation with the revised-proposal path; approve and reject retain the
+    same domain behavior as the inline review surface.
+12. When the operator refreshes a completed assistant answer, Rudder reuses the
    original turn context, creates a new turn variant, and surfaces branch
    controls for moving between variants.
-11. While the refreshed or edited variant is still streaming, the operator may
+13. While the refreshed or edited variant is still streaming, the operator may
    switch the visible turn branch back to an earlier variant to inspect prior
    user and assistant content. The current stream continues in the background,
    generation controls remain available, and returning to the active/latest
    variant shows the live stream draft again.
-12. If the operator sends another local follow-up while the selected chat has an
+14. If the operator sends another local follow-up while the selected chat has an
    active generation, Rudder creates a queued follow-up with the current draft,
    attachments, selected project, skills, admitted Agent, effective primary
    model, effort, access mode, and expected active generation id. The queued
    Agent/model/effort snapshot remains authoritative even if conversation
    configuration or Agent availability changes before dequeue.
-13. The queue renders beside the composer with stable ordering. The first queued
+15. The queue renders beside the composer with stable ordering. The first queued
    item is marked as next, later items show their queue position, and editable
    queued items expose edit/delete controls.
-14. When the operator chooses Steer, Rudder atomically persists the durable
+16. When the operator chooses Steer, Rudder atomically persists the durable
    control action, one normal user message, their queue linkage, and message
    activity evidence before attempting provider delivery. The message records
    its target generation and exact Work Transcript boundary. It stays in the
@@ -422,13 +448,13 @@ Flow:
    failure; delivery status remains separate evidence. Pending, provider-
    acceptance-unknown, and accepted native delivery use that one anchored
    interjection. Continuation delivery keeps the message outside the old run.
-15. When the current reply completes, a server-owned worker claims the next
+17. When the current reply completes, a server-owned worker claims the next
    eligible queued follow-up, sends it as the next chat turn, and hides the
    queued row after it is linked to the delivered user message. The row leaves
    the composer as soon as that user message is visible, even while the new
    assistant reply is still running. Delivery does not depend on the
    originating page remaining open.
-16. If the operator Stops the current reply, the stopped generation remains
+18. If the operator Stops the current reply, the stopped generation remains
    visibly `Stopped`, including when it was stopped before producing body or
    transcript output, and the server-owned queue worker automatically delivers
    the next ordinary queued follow-up as a distinct subsequent turn after the
@@ -479,6 +505,19 @@ Invariants:
 - Assistant-created issue proposals must be grounded in an explicit latest
   operator-authored request for issue creation, chat-to-issue conversion, or
   issue-proposal drafting.
+- One pending proposal message must map to at most one temporary Side Panel tab
+  in its current Chat context. Opening it repeatedly focuses the existing tab
+  instead of duplicating review surfaces.
+- Side Panel visibility and proposal-tab existence are distinct. Hiding the
+  panel must keep the proposal compact and resumable; closing the proposal tab
+  must restore the complete inline card.
+- Inline and Side Panel proposal presentations must share current editable
+  proposal data, decision feedback, pending action state, and review callbacks.
+  A stale render captured when the tab opened must not submit obsolete fields or
+  feedback after the Chat state changes.
+- The proposal Side Panel presentation must expose the complete description and
+  the same available review decisions without requiring conversion to an issue
+  or navigation away from the current Chat.
 - Initial and revised Issue Proposal descriptions preserve directly relevant
   user-provided original images with Markdown image syntax, meaningful alt
   text, and the attachment's canonical `contentPath`.
@@ -628,6 +667,10 @@ Evidence:
   revised Issue Proposals. Proposal-review E2E covers the original upload,
   first proposal, Request changes replacement, approval, and the same image in
   the created Issue Detail.
+- Proposal-review E2E covers the complete inline card, `Show full proposal`
+  transition, one `Issue proposal` Side Panel tab, compact launcher,
+  hide/reopen behavior, explicit tab-close restoration, full details, and
+  current Request changes feedback submitted from the panel.
 - Chat assistant, route, queue, and runtime-selector tests cover model/effort
   precedence, atomic first-turn persistence, Agent-switch reset, fallback
   preservation, adapter effort projection and compatibility, in-flight
@@ -2567,10 +2610,22 @@ Product model:
 - Chat and Work manifest image attachments are intentionally not Side Panel
   Browser targets. They use the shared image preview overlay so image inspection
   has one consistent toolbar and exit path across Chat surfaces.
-- Side Panel targets are typed objects: issue, automation, Library file,
-  Library directory, structured transcript local file, chat, browser tab, and
-  explicit placeholders for target classes that need a link/search before
-  loading a concrete object.
+- Side Panel targets are typed objects: issue, Chat Issue Proposal, automation,
+  Library file, Library directory, structured transcript local file, chat,
+  browser tab, and explicit placeholders for target classes that need a
+  link/search before loading a concrete object.
+- A Chat Issue Proposal target is a temporary, message-scoped review tab. It is
+  not a Saved View and has no independent full-page route. Its identity is the
+  source conversation plus proposal message, and its content remains owned by
+  that live Chat message.
+- While a Chat Issue Proposal tab exists, the transcript replaces the complete
+  inline proposal card with a compact `Issue proposal` launcher. Hiding the
+  panel preserves the tab and launcher; the launcher reopens the same tab.
+  Explicitly closing the tab restores the complete inline proposal card.
+- The Issue Proposal tab presents full proposal details and the existing review
+  controls at the docked panel width. Its fields, decision note, pending state,
+  and actions stay synchronized with the owning Chat review state rather than
+  becoming a detached snapshot.
 - An ordinary click on an openable transcript file action opens or focuses a
   local-file tab in the current Chat's Side Panel context without replacing the
   Chat route. Desktop loads the target through the bounded local-file preview
@@ -2727,39 +2782,44 @@ Flow:
    docked width and keeps the current board route stable. On desktop, its right
    edge stays attached to the workspace while the divider and panel left edge
    move left and the current work surface narrows continuously.
-6. If an issue target is expanded to the wide Side Panel state, Rudder swaps the
+6. For a Chat Issue Proposal target, the transcript swaps its complete inline
+   card for the compact launcher as the tab is registered. The panel renders
+   the complete proposal details and current review actions. Hiding the panel
+   retains this registered state; closing the tab removes it and restores the
+   complete inline card.
+7. If an issue target is expanded to the wide Side Panel state, Rudder swaps the
    compact issue workbench for the embedded Issue Detail body so the operator
    can use the same issue content sections without leaving the current route.
    The same panel host continues expanding from right to left; it does not jump
    to the workspace left edge and then grow toward the right.
-7. When the operator clicks the add-tab affordance while a target is already
+8. When the operator clicks the add-tab affordance while a target is already
    open, Rudder keeps existing tabs available but sets the active panel content
    to the empty `Open a panel` picker instead of showing a dropdown menu.
    The Desktop new-tab shortcut follows this same flow, first opening a hidden
    Side Panel when necessary. Repeating it while the picker is active remains
    idempotent and does not create a tab until the operator chooses a target.
-8. Lightweight mutations exposed in the panel, such as issue title,
+9. Lightweight mutations exposed in the panel, such as issue title,
    description, status, priority, assignee, reviewer, project, goal, parent, or
    automation status edits, call the same domain APIs and show errors in the
    panel instead of silently ignoring failures.
-9. On desktop pointer surfaces, dragging a tab label onto the left or right half
+10. On desktop pointer surfaces, dragging a tab label onto the left or right half
    of another tab moves it before or after that tab. Reordering changes only the
    current Side Panel context's in-memory tab order and preserves the active tab.
-10. Closing a tab focuses a neighboring tab. Closing the final tab removes it and
+11. Closing a tab focuses a neighboring tab. Closing the final tab removes it and
     closes the Side Panel instead of leaving an empty picker open.
-11. Pressing the close-tab keyboard shortcut while an active Side Panel tab is
+12. Pressing the close-tab keyboard shortcut while an active Side Panel tab is
    present follows the same close behavior as the tab's close button and
    prevents the host window from handling that shortcut.
-12. When the operator hides the panel and reopens it in the same Messenger chat
+13. When the operator hides the panel and reopens it in the same Messenger chat
    or issue context, Rudder restores that context's tabs and active tab.
-13. When the operator switches from one Messenger item to another, Rudder
+14. When the operator switches from one Messenger item to another, Rudder
    switches the Side Panel to the destination item's session state. If that
    destination has no session state, the panel stays or becomes closed by
    default.
-14. App restart may clear all Side Panel tab/session state; this contract does
+15. App restart may clear all Side Panel tab/session state; this contract does
    not require server persistence, cross-device sync, or localStorage recovery
    for tabs.
-15. Browser tabs normalize address-bar input into a web URL, an explicit
+16. Browser tabs normalize address-bar input into a web URL, an explicit
     canonical local absolute `file:///` bootstrap, or search-query navigation;
     keep back/forward/reload state scoped to the embedded browser; and can open
     the current page externally as a secondary action. Only the address-bar
@@ -2771,39 +2831,39 @@ Flow:
     operate on only the active tab. Each tab keeps independent in-memory page
     zoom from 25% through 500%, reports non-default zoom in its title row, and
     resets to 100% without scaling the Rudder shell.
-16. When a main-frame Browser navigation fails for a reason other than an
+17. When a main-frame Browser navigation fails for a reason other than an
     intentional abort, Rudder keeps the attempted URL visible and renders the
     Browser failure state over the existing guest. `Details` reveals the failed
     URL. `Reload` retries that same guest and keeps the failure state visible
     until a new load actually starts; subframe failures do not replace the
     main-frame view. Missing local files follow this same path, expose the
     Chromium file error, and preserve the current Rudder route.
-17. Desktop routes ordinary external HTTP(S) links to a Browser Side Panel tab
+18. Desktop routes ordinary external HTTP(S) links to a Browser Side Panel tab
     when its instance preference is `built_in`, independently of Agent Browser
     access. The `default_browser` preference and explicit `Open externally`
     action use the operating-system browser instead.
-18. From a Library file tab, `Open in Library` navigates to the full Library
+19. From a Library file tab, `Open in Library` navigates to the full Library
     work surface with the same organization-scoped file selected.
-19. A recognized Library audio/video tab delegates playback, file switching,
+20. A recognized Library audio/video tab delegates playback, file switching,
     and codec recovery to the shared media renderer. Native seek requests use
     the organization-scoped byte-range content path without changing the
     Messenger route or Side Panel tab identity.
-20. Markdown autosave supplies the last confirmed content as a write
+21. Markdown autosave supplies the last confirmed content as a write
     precondition. When the server reports a conflict, the panel pauses autosave,
     keeps the draft visible, and offers `Keep mine` or `Use latest`; an older
     in-flight response must not override the operator's conflict decision.
-21. When the operator moves an eligible active target to Messenger, Rudder
+22. When the operator moves an eligible active target to Messenger, Rudder
     freezes its exact source context, `viewInstanceId`, and revision; performs
     the idempotent placement-aware keep mutation under
     `MESSENGER.SAVED.VIEWS.001`; stages the Main tab; navigates to
     `/messenger/saved/:id`; and waits for the Main anchor to claim the same live
     surface before detaching the source tab.
-22. A server failure leaves the source tab and Messenger directory unchanged.
+23. A server failure leaves the source tab and Messenger directory unchanged.
     An uncertain response keeps the source and retries with the same mutation
     identity. If the server committed but the Main host claim fails, the Saved
     View and source tab both remain with a retry action; Rudder must not delete
     the durable row or create a replacement runtime.
-23. Selecting a structured transcript file action opens or focuses a local-file
+24. Selecting a structured transcript file action opens or focuses a local-file
     tab keyed by its resolved absolute path. Desktop canonicalizes and validates
     the target through its preview bridge before returning bounded text or binary
     preview data; unsupported, missing, oversized, or Web-only targets fail in
@@ -2814,6 +2874,23 @@ Invariants:
 - The Side Panel must not infer cross-organization access from a link string; all
   target loads and mutations remain enforced by existing organization-scoped
   APIs.
+- A Chat Issue Proposal target must remain scoped to its owning conversation
+  and message. It must not be promoted to a Saved View, exposed as a full-page
+  target, carried into another Messenger item, or resolved from another
+  organization's message.
+- Hiding the Side Panel while a proposal tab exists and closing that tab must
+  remain separate actions. Hiding keeps the temporary target and compact
+  transcript launcher; closing removes the target and restores the complete
+  inline card. Closing the final proposal tab follows the normal final-tab
+  panel closure rule.
+- Proposal review in the Side Panel must use the live state of its owning Chat
+  message. Field edits, decision-note changes, pending actions, and review
+  callbacks must not become stale because the panel target was opened earlier.
+  A revised proposal is a new message-scoped review object with its own target;
+  it does not replace the proposal owned by an already open tab.
+- Proposal-panel entry, compact-card replacement, tab content, and inline-card
+  restoration must use the shared Side Panel and Chat motion tokens. Reduced
+  motion may move directly to the same final states.
 - Side Panel issue views must preserve `ISSUE.SURFACE.001`,
   `ISSUE.STATE.001`, assignment, reviewer, run, and routing semantics.
 - Side Panel issue views must remain readable at the docked panel width. They
@@ -2958,6 +3035,11 @@ Evidence:
 
 - Side-panel target tests cover parsing supported route/mention targets, stable
   keys, labels, and full-page href generation.
+- Side-panel target tests cover stable Issue Proposal keys and its intentional
+  absence of Saved View and full-page navigation support. Proposal-review E2E
+  covers full-card to compact-launcher replacement, dedicated tab rendering,
+  hide/reopen, final-tab close restoration, complete details, and review feedback
+  submitted from the panel.
 - Layout tests cover shared shell behavior and panel framing decisions.
 - Chat attachment/side-panel tests cover tab behavior, empty state, add-tab
   actions that return to the empty picker without opening a dropdown menu,
