@@ -2747,7 +2747,8 @@ test.describe("Messenger unified threads contract", () => {
     await expect(mainContent.getByTestId("messenger-panel-header")).not.toContainText(/\b\d+\s+(?:pending|total)\b/i);
     const approvalCard = page.locator('[data-testid^="messenger-approval-card-"]').first();
     await expect(approvalCard).toContainText("Messenger contract test");
-    await expect(approvalCard).toContainText("Agent proposed a new issue from chat");
+    await expect(approvalCard).not.toContainText("Agent proposed a new issue from chat");
+    await expect(approvalCard).not.toContainText("Review the draft before Rudder creates it on the issue board.");
     await expect(approvalCard).toContainText("Messenger intake");
     await expect(approvalCard).toContainText("Project Atlas");
     await expect(approvalCard).toContainText("Me");
@@ -2762,7 +2763,8 @@ test.describe("Messenger unified threads contract", () => {
     const approvalDialog = page.getByTestId("approval-detail-dialog");
     await expect(approvalDialog).toBeVisible();
     await expect(approvalDialog).toContainText("Messenger contract test");
-    await expect(approvalDialog).toContainText("Agent proposed a new issue from chat");
+    await expect(approvalDialog).not.toContainText("Agent proposed a new issue from chat");
+    await expect(approvalDialog).not.toContainText("Review the draft before Rudder creates it on the issue board.");
     await expect(approvalDialog).toContainText("Messenger intake");
     await expect(approvalDialog).toContainText("Project Atlas");
     await expect(approvalDialog).toContainText("Me");
