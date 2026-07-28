@@ -1,6 +1,7 @@
+import { readDesktopShell } from "@/lib/desktop-shell";
 import { RUDDER_DISCORD_URL } from "@/lib/product-links";
 import { X } from "lucide-react";
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 
 export const MESSENGER_DISCORD_CTA_STORAGE_KEY = "rudder:messenger:discord-cta:v1";
 
@@ -27,6 +28,14 @@ function DiscordLogo() {
   );
 }
 
+function openDiscordInSystemBrowser(event: MouseEvent<HTMLAnchorElement>) {
+  const desktopShell = readDesktopShell();
+  if (!desktopShell) return;
+
+  event.preventDefault();
+  void desktopShell.forceOpenExternal?.(RUDDER_DISCORD_URL);
+}
+
 export function MessengerDiscordCta() {
   const [visible, setVisible] = useState(() => !hasDismissedDiscordCta());
 
@@ -51,6 +60,7 @@ export function MessengerDiscordCta() {
           href={RUDDER_DISCORD_URL}
           target="_blank"
           rel="noopener noreferrer"
+          onClick={openDiscordInSystemBrowser}
           className="flex min-h-[68px] items-center gap-2.5 rounded-[calc(var(--radius-md)-1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_52%,transparent)] px-3 py-2.5 pr-9 text-left transition-[background-color,border-color,transform] duration-150 hover:border-[color:color-mix(in_oklab,var(--border-strong)_78%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,transparent)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
           aria-label="Join our Discord — chat with the team and other builders"
         >
