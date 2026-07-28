@@ -239,14 +239,13 @@ describe("AgentDetail skills tab", () => {
     renderAgentDetail();
     await flushQueries();
 
-    const dialog = document.querySelector("[role='dialog']");
-    expect(dialog).not.toBeNull();
+    const onboarding = document.querySelector("[data-testid='agent-skills-onboarding']");
+    expect(onboarding).not.toBeNull();
+    expect(onboarding?.getAttribute("role")).toBe("status");
+    expect(document.querySelector("[role='dialog']")).toBeNull();
     expect(document.body.textContent).toContain("Build your agent's skill set");
     expect(document.body.textContent).toContain(
-      "Manage which skills this agent can load for its work.",
-    );
-    expect(document.body.textContent).toContain(
-      "Rudder also discovers compatible skills already installed for local runtimes such as Codex and Claude Code.",
+      "Rudder also finds compatible skills already installed for local runtimes such as Codex and Claude Code.",
     );
   });
 

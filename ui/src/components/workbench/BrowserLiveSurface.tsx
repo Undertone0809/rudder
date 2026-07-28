@@ -1,3 +1,4 @@
+import { OnboardingCallout } from "@/components/OnboardingCallout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useI18n } from "@/context/I18nContext";
@@ -608,46 +609,34 @@ export function BrowserLiveSurface({
         data-testid="chat-side-panel-browser-content"
       >
         {active && surface === "side_panel" && showSidePanelOnboarding ? (
-          <aside
-            role="status"
-            aria-live="polite"
-            aria-labelledby="browser-side-panel-onboarding-title"
-            data-testid="browser-side-panel-onboarding"
-            className="absolute right-3 top-3 z-20 w-[min(22rem,calc(100%-1.5rem))] rounded-[var(--radius-md)] border border-[color:var(--border-strong)] bg-[color:var(--surface-elevated)] p-3 shadow-lg"
-          >
-            <div className="flex items-start gap-2.5">
-              <Info className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-              <div className="min-w-0 flex-1">
-                <h3
-                  id="browser-side-panel-onboarding-title"
-                  className="text-sm font-semibold text-foreground"
-                >
-                  {t("browser.onboarding.title")}
-                </h3>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {t("browser.onboarding.description")}
-                </p>
-                <div className="mt-2.5 flex items-center justify-between gap-2">
-                  {onOpenBrowserSettings ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        dismissSidePanelOnboarding();
-                        onOpenBrowserSettings();
-                      }}
-                    >
-                      {t("browser.onboarding.settings")}
-                    </Button>
-                  ) : <span />}
-                  <Button type="button" size="sm" onClick={dismissSidePanelOnboarding}>
-                    {t("browser.onboarding.dismiss")}
+          <OnboardingCallout
+            testId="browser-side-panel-onboarding"
+            className="absolute right-3 top-3 z-20 w-[min(24rem,calc(100%-1.5rem))] shadow-[var(--shadow-lg)]"
+            icon={<Info aria-hidden="true" />}
+            title={t("browser.onboarding.title")}
+            description={t("browser.onboarding.description")}
+            stackActions
+            actions={(
+              <>
+                {onOpenBrowserSettings ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      dismissSidePanelOnboarding();
+                      onOpenBrowserSettings();
+                    }}
+                  >
+                    {t("browser.onboarding.settings")}
                   </Button>
-                </div>
-              </div>
-            </div>
-          </aside>
+                ) : null}
+                <Button type="button" size="sm" onClick={dismissSidePanelOnboarding}>
+                  {t("browser.onboarding.dismiss")}
+                </Button>
+              </>
+            )}
+          />
         ) : null}
         {isBlank ? (
           <div

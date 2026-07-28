@@ -70,6 +70,9 @@ describe("BrowserLiveSurface", () => {
     expect(onboarding?.textContent).toContain("Rudder starts with its Built-in Browser");
     expect(onboarding?.textContent).toContain("Settings");
     expect(onboarding?.textContent).toContain("default browser");
+    expect(
+      onboarding?.querySelector("[data-onboarding-actions]")?.getAttribute("data-onboarding-actions"),
+    ).toBe("stacked");
 
     act(() => {
       onboarding?.querySelector<HTMLButtonElement>("button")?.click();
