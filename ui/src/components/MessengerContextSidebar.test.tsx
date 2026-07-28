@@ -220,14 +220,15 @@ describe("MessengerContextSidebar", () => {
     expect(html).not.toContain(`aria-label="${exactLabel}"`);
   });
 
-  it("keeps Messenger thread selection on the static active-row treatment", () => {
+  it("keeps Messenger thread selection on the static no-fill highlight treatment", () => {
     messengerRoute = { kind: "chat", conversationId: "chat-1" };
 
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
     expect(html).not.toContain("motion-context-nav--messenger-thread-list");
     expect(html).not.toContain('data-testid="messenger-sidebar-active-indicator"');
-    expect(html).toContain("chat-conversation-active");
+    expect(html).toContain("messenger-directory-highlight");
+    expect(html).not.toContain("chat-conversation-active");
   });
 
   it("formats markdown heading previews as readable sidebar summaries", () => {
@@ -1365,17 +1366,17 @@ describe("MessengerContextSidebar", () => {
     expect(regularClass).toContain("group/custom-group");
     expect(pinnedClass).toContain("mx-0.5");
     expect(regularClass).toContain("mx-0.5");
-    expect(pinnedClass).toContain("bg-[color:var(--messenger-group-bg)]");
+    expect(pinnedClass).toContain("bg-transparent");
     expect(pinnedClass).toContain("border-[color:var(--messenger-group-border)]");
     expect(regularClass).toContain("bg-transparent");
     expect(regularClass).toContain("border-transparent");
-    expect(regularClass).toContain("hover:bg-[color:var(--messenger-group-bg-hover)]");
+    expect(regularClass).toContain("hover:bg-transparent");
     expect(regularClass).toContain("hover:border-[color:var(--messenger-group-border)]");
-    expect(regularClass).toContain("has-[:focus-visible]:bg-[color:var(--messenger-group-bg-hover)]");
+    expect(regularClass).toContain("has-[:focus-visible]:bg-transparent");
     expect(regularClass).toContain("has-[:focus-visible]:border-[color:var(--messenger-group-border)]");
     expect(regularClass).toContain("dark:bg-transparent");
     expect(regularClass).toContain("dark:border-transparent");
-    expect(regularClass).toContain("dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)]");
+    expect(regularClass).toContain("dark:hover:bg-transparent");
     expect(regularClass).toContain("dark:hover:border-[color:var(--messenger-group-border-dark)]");
     expect(html.indexOf('data-testid="messenger-thread-section-custom-pinned"')).toBeLessThan(
       html.indexOf('data-testid="messenger-thread-section-custom-group-regular-group"'),

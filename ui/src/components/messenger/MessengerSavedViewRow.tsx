@@ -217,10 +217,10 @@ export function MessengerSavedViewRow({
       aria-label={displayTitle}
       title={displayTitle}
       className={cn(
-        "group relative flex min-w-0 [contain-intrinsic-size:auto_44px] [content-visibility:auto] rounded-[calc(var(--radius-md)-2px)] border text-[color:var(--messenger-group-entry-text)] transition-[background-color,border-color,color] dark:text-[color:var(--messenger-group-entry-text-dark)]",
+        "group relative flex min-w-0 [contain-intrinsic-size:auto_44px] [content-visibility:auto] rounded-[calc(var(--radius-md)-2px)] border text-foreground transition-[background-color,border-color,color]",
         compact ? "items-center gap-2 px-1.5 py-1.5" : "items-start gap-3 px-2 py-2.5",
         active
-          ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
+          ? "messenger-directory-highlight"
           : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
         dragging && "opacity-80 shadow-sm ring-1 ring-border/70",
       )}
