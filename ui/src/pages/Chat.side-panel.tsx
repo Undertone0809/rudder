@@ -1475,6 +1475,8 @@ export function ChatSidePanel({
   const [movingSideChatKey, setMovingSideChatKey] = useState<string | null>(null);
   const [desktopExitComplete, setDesktopExitComplete] = useState(!sidePanel.open);
   const panelRef = useRef<HTMLElement>(null);
+  const activeTabElementRef = useRef<HTMLDivElement>(null);
+  const tabScrollerElementRef = useRef<HTMLDivElement>(null);
   const browserShortcutControllersRef = useRef(new Map<string, (action: BrowserShortcutAction) => void>());
   const sideChatCloseHandlersRef = useRef(new Map<string, () => Promise<string | null>>());
   const closingSideChatKeysRef = useRef(new Set<string>());
@@ -1746,6 +1748,46 @@ export function ChatSidePanel({
   const organizationSkillFile = organizationSkillFileTarget ? organizationSkillFileQuery.data : null;
   const libraryDirectory = libraryDirectoryTarget ? libraryDirectoryQuery.data : null;
   const activeTargetKey = activeTarget ? sidePanelTargetKey(activeTarget) : "empty";
+  const visibleTabOrderKey = visibleTabs.map(sidePanelTargetKey).join("\n");
+
+  useLayoutEffect(() => {
+    if (!sidePanel.open) return;
+    const frameId = window.requestAnimationFrame(() => {
+      const scroller = tabScrollerElementRef.current;
+      const activeTabElement = activeTabElementRef.current;
+      if (!scroller || !activeTabElement) return;
+      const scrollerRect = scroller.getBoundingClientRect();
+      const tabRect = activeTabElement.getBoundingClientRect();
+      const leftOverflow = tabRect.left - scrollerRect.left;
+      const rightOverflow = tabRect.right - scrollerRect.right;
+      if (leftOverflow < 0) {
+        scroller.scrollLeft += leftOverflow;
+      } else if (rightOverflow > 0) {
+        scroller.scrollLeft += rightOverflow;
+      }
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeTargetKey, expanded, isMobile, sidePanel.open, visibleTabOrderKey]);
+
+  useEffect(() => {
+    const scroller = tabScrollerElementRef.current;
+    if (!scroller || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const activeTabElement = activeTabElementRef.current;
+      if (!activeTabElement) return;
+      const scrollerRect = scroller.getBoundingClientRect();
+      const tabRect = activeTabElement.getBoundingClientRect();
+      const leftOverflow = tabRect.left - scrollerRect.left;
+      const rightOverflow = tabRect.right - scrollerRect.right;
+      if (leftOverflow < 0) {
+        scroller.scrollLeft += leftOverflow;
+      } else if (rightOverflow > 0) {
+        scroller.scrollLeft += rightOverflow;
+      }
+    });
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, [sidePanel.open, visibleTabOrderKey]);
 
   const openSidePanelTarget = (nextTarget: SidePanelTarget) => {
     if (nextTarget.kind === "browser" && !browserAvailable) return;
@@ -1947,9 +1989,13 @@ export function ChatSidePanel({
           role="tablist"
           aria-label="Side Panel targets"
           data-testid="chat-side-panel-tabs"
-          className="workspace-tab-strip scrollbar-auto-hide flex shrink-0 items-center gap-1 overflow-x-auto px-2 py-1.5"
+          className="workspace-tab-strip flex shrink-0 items-center gap-1 overflow-hidden px-2 py-1.5"
         >
-          <div className="scrollbar-auto-hide flex min-w-0 flex-1 gap-1 overflow-x-auto">
+          <div
+            ref={tabScrollerElementRef}
+            data-testid="chat-side-panel-tab-scroller"
+            className="scrollbar-auto-hide flex min-w-0 flex-1 gap-1 overflow-x-auto"
+          >
             {visibleTabs.map((tab) => {
               const tabKey = sidePanelTargetKey(tab);
               const selected = tabKey === activeTargetKey;
@@ -1988,6 +2034,7 @@ export function ChatSidePanel({
                   onMoveSideChat={moveSideChatToMessenger}
                 >
                   <div
+                    ref={selected ? activeTabElementRef : undefined}
                     role="presentation"
                     data-side-panel-tab-key={tabKey}
                     data-dragging={dragging ? "true" : undefined}
@@ -2070,6 +2117,8 @@ export function ChatSidePanel({
                 </ChatSidePanelTabContextMenu>
               );
             })}
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <button
               type="button"
               data-testid="chat-side-panel-add-tab"
@@ -2079,8 +2128,6 @@ export function ChatSidePanel({
             >
               <Plus className="h-3.5 w-3.5" />
             </button>
-          </div>
-          <div className="ml-auto flex shrink-0 items-center gap-1">
             <KeepSidePanelViewButton
               contextKey={sidePanel.contextKey}
               organizationId={selectedOrganizationId}

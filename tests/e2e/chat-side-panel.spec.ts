@@ -2330,6 +2330,76 @@ test.describe("Chat Side Panel", () => {
     });
   });
 
+  test("keeps each newly opened Side Panel tab fully visible", async ({ page }, testInfo) => {
+    await installBrowserDesktopStub(page);
+    const browserSettings = await page.request.patch("/api/instance/settings/browser", {
+      data: { enabled: true, openLinksIn: "built_in" },
+    });
+    expect(browserSettings.ok(), await browserSettings.text()).toBe(true);
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Visible-Side-Panel-Tab-${Date.now()}`,
+        issuePrefix: `VST${randomUUID().replaceAll("-", "").slice(0, 7).toUpperCase()}`,
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Visible Tab Agent" });
+
+    const hostChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Visible Side Panel tab host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Keep new tabs visible." },
+      },
+    });
+    expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
+    const hostChat = await hostChatRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+    await page.getByTestId("chat-side-panel-trigger").click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    await sidePanel.getByRole("button", { name: /Browser/ }).click();
+    const openNewBrowserTab = page.getByRole("button", { name: "Open new browser tab" }).last();
+    await expect(openNewBrowserTab).toBeVisible();
+    const tabScroller = sidePanel.getByTestId("chat-side-panel-tab-scroller");
+    const activeTabShell = sidePanel.locator(
+      '[data-testid="chat-side-panel-tab"][aria-selected="true"]',
+    ).locator("..");
+    const expectActiveTabContained = async () => {
+      await expect.poll(async () => {
+        const [activeBox, scrollerBox] = await Promise.all([
+          activeTabShell.boundingBox(),
+          tabScroller.boundingBox(),
+        ]);
+        if (!activeBox || !scrollerBox) return false;
+        return activeBox.x >= scrollerBox.x - 1
+          && activeBox.x + activeBox.width <= scrollerBox.x + scrollerBox.width + 1;
+      }).toBe(true);
+    };
+    for (let index = 0; index < 5; index += 1) {
+      await openNewBrowserTab.click();
+      await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(index + 2);
+      await expectActiveTabContained();
+    }
+
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(6);
+    await expect(sidePanel.getByTestId("chat-side-panel-add-tab")).toBeVisible();
+    await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("chat-side-panel-active-tab-visible.png"),
+      fullPage: true,
+    });
+  });
+
   test("opens a Browser side panel tab with URL navigation controls", async ({ page }) => {
     await installBrowserDesktopStub(page);
     const browserSettings = await page.request.patch("/api/instance/settings/browser", {

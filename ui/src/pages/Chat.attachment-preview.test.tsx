@@ -3086,6 +3086,26 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
     const currentChatReferences = Array.from(container.querySelectorAll<HTMLAnchorElement>('a[data-mention-kind="chat"]'));
+    const tabScroller = container.querySelector<HTMLElement>("[data-testid='chat-side-panel-tab-scroller']");
+    const firstTabShell = container.querySelector<HTMLElement>("[data-side-panel-tab-key]");
+    expect(tabScroller).not.toBeNull();
+    expect(firstTabShell).not.toBeNull();
+    Object.defineProperty(tabScroller, "scrollLeft", {
+      configurable: true,
+      value: 0,
+      writable: true,
+    });
+    tabScroller!.getBoundingClientRect = () => ({
+      bottom: 40,
+      height: 40,
+      left: 0,
+      right: 300,
+      top: 0,
+      width: 300,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
     await act(async () => {
       currentChatReferences[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
       await Promise.resolve();
@@ -3096,6 +3116,26 @@ describe("Chat Side Panel link handling", () => {
     expect(tabs[0]?.textContent).toContain("Other chat");
     expect(tabs[1]?.textContent).toContain("Third chat");
     expect(tabs[1]?.getAttribute("aria-selected")).toBe("true");
+    const activeTabShell = tabs[1]?.parentElement;
+    expect(activeTabShell).not.toBeNull();
+    activeTabShell!.getBoundingClientRect = () => ({
+      bottom: 40,
+      height: 40,
+      left: 220,
+      right: 420,
+      top: 0,
+      width: 200,
+      x: 220,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    await act(async () => {
+      tabs[0]?.click();
+      await Promise.resolve();
+      tabs[1]?.click();
+      await Promise.resolve();
+    });
+    expect(tabScroller?.scrollLeft).toBe(120);
     expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Third chat side panel content");
 
     await act(async () => {
