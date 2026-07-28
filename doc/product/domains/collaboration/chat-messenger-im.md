@@ -1856,7 +1856,10 @@ before the exploration proves useful.
 - Apart from its expiry state, the Side Chat transcript and composer use the
   normal Chat visual and interaction grammar: normal user messages, assistant
   attribution, process transcript, streaming answer, editor, send affordance,
-  and visible Project, Agent, and Skills chips.
+  and visible Agent and Skills controls.
+- The Side Chat composer does not show a Project chip or project selector.
+  Source project context remains inherited through copied context links at
+  creation, without adding redundant project status to the focused composer.
 - The Side Chat Agent chip opens the same parent Agent menu used by normal
   Chat. Before first Send, the operator may choose an organization Agent; only
   the current row exposes its Model / Thinking child control. After first Send,

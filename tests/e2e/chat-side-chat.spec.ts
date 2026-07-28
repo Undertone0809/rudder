@@ -147,7 +147,8 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
   await page.screenshot({ path: testInfo.outputPath("01-assistant-action-draft.png"), fullPage: true });
   await expect(panel.locator(".chat-composer")).toBeVisible();
-  await expect(panel.getByTestId("side-chat-project-chip")).toBeVisible();
+  await expect(panel.getByTestId("side-chat-project-chip")).toHaveCount(0);
+  await expect(panel).not.toContainText("No project");
   const agentSelector = panel.getByTestId("side-chat-composer").getByTestId("chat-agent-selector");
   await expect(agentSelector).toContainText("Sidekick");
   await panel.getByRole("button", { name: "Add files and options" }).click();

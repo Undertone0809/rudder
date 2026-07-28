@@ -35,10 +35,6 @@ vi.mock("@/api/orgs", () => ({
   organizationsApi: { get: vi.fn() },
 }));
 
-vi.mock("@/api/projects", () => ({
-  projectsApi: { list: vi.fn(async () => []) },
-}));
-
 vi.mock("@/api/chats", () => ({
   chatsApi: {
     get: vi.fn(),
@@ -273,6 +269,16 @@ function changeTextarea(textarea: HTMLTextAreaElement, value: string) {
     textarea.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
+
+describe("SideChatPanelView composer controls", () => {
+  it("omits the project chip while keeping the agent and skills controls", async () => {
+    await renderView();
+
+    expect(host.querySelector('[data-testid="side-chat-project-chip"]')).toBeNull();
+    expect(host.querySelector('[data-testid="chat-agent-selector"]')).not.toBeNull();
+    expect(host.textContent).toContain("Skills");
+  });
+});
 
 describe("SideChatPanelView streaming reconciliation", () => {
   it("renders one live reply when the persisted streaming assistant message is refreshed", async () => {

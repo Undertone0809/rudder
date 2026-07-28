@@ -252,6 +252,14 @@ describe("sideChatService", () => {
 
   it("creates one hidden Side Chat per client mutation and copies context only through the anchor", async () => {
     const source = await createSource();
+    const projectId = randomUUID();
+    await db.insert(chatContextLinks).values({
+      orgId: source.orgId,
+      conversationId: source.sourceConversationId,
+      entityType: "project",
+      entityId: projectId,
+      metadata: { inheritedBy: "side-chat" },
+    });
     const before = Date.now();
     const first = await createSideChat(source);
     const second = await createSideChat(source);
@@ -282,6 +290,18 @@ describe("sideChatService", () => {
     expect(copied.map((message) => message.body)).not.toContain("Must not be copied");
     const copiedAnchor = copied.find((message) => message.body === "Anchored answer");
     expect(copiedAnchor).toMatchObject({ runId: null, approvalId: null, structuredPayload: null });
+    const copiedContextLinks = await db
+      .select()
+      .from(chatContextLinks)
+      .where(eq(chatContextLinks.conversationId, first.id));
+    expect(copiedContextLinks).toEqual([
+      expect.objectContaining({
+        orgId: source.orgId,
+        entityType: "project",
+        entityId: projectId,
+        metadata: { inheritedBy: "side-chat" },
+      }),
+    ]);
     expect(await db.select().from(messengerCustomGroups)).toHaveLength(0);
     expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(0);
   });

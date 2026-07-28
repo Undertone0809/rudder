@@ -4,7 +4,6 @@ import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
-import { projectsApi } from "@/api/projects";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import {
@@ -54,7 +53,7 @@ import type {
   ChatMessage,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Clock3, Folder, Loader2, Paperclip, Plus } from "lucide-react";
+import { ArrowUp, Clock3, Loader2, Paperclip, Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -213,10 +212,6 @@ export function SideChatPanelView({
     queryKey: queryKeys.agents.list(organizationId),
     queryFn: () => agentsApi.list(organizationId),
   });
-  const projectsQuery = useQuery({
-    queryKey: queryKeys.projects.list(organizationId),
-    queryFn: () => projectsApi.list(organizationId),
-  });
   const organizationQuery = useQuery({
     queryKey: queryKeys.organizations.detail(organizationId),
     queryFn: () => organizationsApi.get(organizationId),
@@ -301,14 +296,6 @@ export function SideChatPanelView({
   const stateLabel = readOnly
     ? "Expired · read-only"
     : expiryLabel(conversation?.sideChatExpiresAt, now);
-  const contextConversation = conversation?.contextLinks.some((link) => link.entityType === "project")
-    ? conversation
-    : sourceConversationQuery.data;
-  const projectId = contextConversation?.contextLinks.find((link) => link.entityType === "project")?.entityId ?? null;
-  const selectedProject = projectId
-    ? (projectsQuery.data ?? []).find((project) => project.id === projectId) ?? null
-    : null;
-
   const setConversationCache = (updated: ChatConversation) => {
     queryClient.setQueryData(queryKeys.chats.detail(organizationId, updated.id), updated);
   };
@@ -827,10 +814,6 @@ export function SideChatPanelView({
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                <span className="inline-flex max-w-[11rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:var(--surface-active)] px-2.5 py-1.5 text-xs font-medium text-muted-foreground" data-testid="side-chat-project-chip">
-                  <Folder className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{selectedProject?.name ?? "No project"}</span>
-                </span>
                 <ChatAgentSelectorButton
                   buttonRef={runtimeSelectorRef}
                   agent={selectedAgent}
