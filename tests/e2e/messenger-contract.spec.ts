@@ -2508,6 +2508,32 @@ test.describe("Messenger unified threads contract", () => {
     releaseFullChatList();
   });
 
+  test("shows the requesting agent identity in approval message headers", async ({ page }) => {
+    const organization = await createConfiguredOrganization(page, `Approval-requester-${Date.now()}`);
+    const approvalRes = await page.request.post(`/api/orgs/${organization.id}/approvals`, {
+      data: {
+        type: "chat_issue_creation",
+        requestedByAgentId: organization.chatAgent.id,
+        payload: {
+          proposedIssue: {
+            title: "Requester identity E2E",
+            description: "The approval message header should identify its requesting agent.",
+            priority: "medium",
+            assigneeUnassignedReason: "Routing will be selected during approval.",
+          },
+        },
+      },
+    });
+    expect(approvalRes.ok()).toBe(true);
+    const approval = await approvalRes.json() as { id: string };
+
+    await page.goto(`/${organization.issuePrefix}/messenger/approvals`, { waitUntil: "commit" });
+    const approvalMessage = page.getByTestId(`messenger-approval-message-${approval.id}`);
+    await expect(approvalMessage).toContainText(organization.chatAgent.name);
+    await expect(approvalMessage).not.toContainText("Approvals assistant");
+    await expect(approvalMessage.locator("img").first()).toBeVisible();
+  });
+
   test("renders the mixed Messenger directory and supports issue + approval actions", async ({ page }, testInfo) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);
@@ -2569,7 +2595,6 @@ test.describe("Messenger unified threads contract", () => {
     const approvalRes = await page.request.post(`/api/orgs/${organization.id}/approvals`, {
       data: {
         type: "chat_issue_creation",
-        requestedByAgentId: organization.chatAgent.id,
         payload: {
           chatConversationId: chat.id,
           proposedIssue: {
@@ -2695,10 +2720,6 @@ test.describe("Messenger unified threads contract", () => {
     await page.goto(`/${organizationPrefix}/messenger/approvals`, { waitUntil: "commit" });
     await expect(mainContent.getByRole("heading", { name: "Approvals" })).toBeVisible({ timeout: 15_000 });
     await expect(mainContent.getByTestId("messenger-panel-header")).not.toContainText(/\b\d+\s+(?:pending|total)\b/i);
-    const approvalMessage = page.getByTestId(`messenger-approval-message-${approval.id}`);
-    await expect(approvalMessage).toContainText(organization.chatAgent.name);
-    await expect(approvalMessage).not.toContainText("Approvals assistant");
-    await expect(approvalMessage.locator("img").first()).toBeVisible();
     const approvalCard = page.locator('[data-testid^="messenger-approval-card-"]').first();
     await expect(approvalCard).toContainText("Messenger contract test");
     await expect(approvalCard).toContainText("Agent proposed a new issue from chat");
