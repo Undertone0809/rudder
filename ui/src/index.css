@@ -2592,12 +2592,6 @@
     box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--border-strong) 10%, transparent);
   }
 
-  .messenger-directory-highlight {
-    background: transparent;
-    border-color: color-mix(in oklab, var(--accent-strong) 54%, var(--border-base));
-    box-shadow: inset 2px 0 0 color-mix(in oklab, var(--accent-strong) 82%, transparent);
-  }
-
   .chat-conversation-idle {
     border-color: transparent;
     background: transparent;

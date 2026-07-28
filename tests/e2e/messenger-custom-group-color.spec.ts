@@ -29,7 +29,7 @@ async function createOrganization(page: Page, name: string) {
   return { ...organization, agent };
 }
 
-test("default group color is a transparent-surface highlight shared with its icon", async ({
+test("default group icon uses the same generated palette tone as its group", async ({
   page,
 }) => {
   const organization = await createOrganization(
@@ -106,17 +106,16 @@ test("default group color is a transparent-surface highlight shared with its ico
     const icon = element.querySelector<HTMLElement>(
       '[data-testid="messenger-custom-group-icon"]',
     );
-    const styles = window.getComputedStyle(element);
     return {
-      groupBackground: styles.backgroundColor,
-      groupBorder: styles.borderTopColor,
+      groupBackground: element.style.getPropertyValue("--messenger-group-bg"),
       iconAccent: icon?.style.getPropertyValue("--project-accent-color") ?? "",
     };
   });
 
-  expect(colors.groupBackground).toBe("rgba(0, 0, 0, 0)");
-  expect(colors.groupBorder).not.toBe("rgba(0, 0, 0, 0)");
-  expect(colors.iconAccent).toBe("#08a88a");
+  expect(colors).toEqual({
+    groupBackground: "#dff4ed",
+    iconAccent: "#08a88a",
+  });
   await page.screenshot({
     path: "/tmp/rudder-messenger-default-group-color.png",
     fullPage: true,

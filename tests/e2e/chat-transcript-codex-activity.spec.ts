@@ -113,6 +113,14 @@ test("matches Codex activity disclosure in collapsed and expanded Messenger stat
   await expect(transcript).not.toContainText("10ms");
   await expect(transcript).not.toContainText("1.0s");
 
+  const skillTarget = transcript.locator('[data-transcript-skill-target="systematic-debugging"]');
+  await expect(skillTarget).toBeVisible();
+  await expect(skillTarget).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await skillTarget.hover();
+  await expect(skillTarget).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await skillTarget.focus();
+  await expect(skillTarget).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+
   const iconOffsets = await transcript.evaluate((element) => {
     const summary = element.querySelector<HTMLElement>("[data-transcript-action-summary-icon]");
     const rows = [...element.querySelectorAll<HTMLElement>("[data-transcript-action-icon-slot]")];

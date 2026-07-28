@@ -3107,10 +3107,10 @@ export function MessengerContextSidebar() {
           data-drag-move-target={isMoveIntoGroupTarget ? "true" : undefined}
           data-drag-intent={isMoveIntoGroupTarget ? "move-into-group" : undefined}
           className={cn(
-            "group/custom-group relative mx-0.5 rounded-[calc(var(--radius-md)-1px)] border p-1 text-foreground transition-[background-color,border-color,box-shadow] duration-150",
+            "group/custom-group relative mx-0.5 rounded-[calc(var(--radius-md)-1px)] border p-1 text-[color:var(--messenger-group-text)] transition-[background-color,border-color,box-shadow] duration-150 dark:text-[color:var(--messenger-group-text-dark)]",
             collapsed && !isMoveIntoGroupTarget
-              ? "border-transparent bg-transparent shadow-none hover:border-[color:var(--messenger-group-border)] hover:bg-transparent has-[:focus-visible]:border-[color:var(--messenger-group-border)] has-[:focus-visible]:bg-transparent dark:border-transparent dark:bg-transparent dark:hover:border-[color:var(--messenger-group-border-dark)] dark:hover:bg-transparent dark:has-[:focus-visible]:border-[color:var(--messenger-group-border-dark)] dark:has-[:focus-visible]:bg-transparent"
-              : "border-[color:var(--messenger-group-border)] bg-transparent shadow-none hover:bg-transparent dark:border-[color:var(--messenger-group-border-dark)] dark:bg-transparent dark:hover:bg-transparent",
+              ? "border-transparent bg-transparent shadow-none hover:border-[color:var(--messenger-group-border)] hover:bg-[color:var(--messenger-group-bg-hover)] has-[:focus-visible]:border-[color:var(--messenger-group-border)] has-[:focus-visible]:bg-[color:var(--messenger-group-bg-hover)] dark:border-transparent dark:bg-transparent dark:hover:border-[color:var(--messenger-group-border-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)] dark:has-[:focus-visible]:border-[color:var(--messenger-group-border-dark)] dark:has-[:focus-visible]:bg-[color:var(--messenger-group-bg-hover-dark)]"
+              : "border-[color:var(--messenger-group-border)] bg-[color:var(--messenger-group-bg)] shadow-[0_8px_20px_-18px_rgba(15,23,42,0.45)] hover:bg-[color:var(--messenger-group-bg-hover)] dark:border-[color:var(--messenger-group-border-dark)] dark:bg-[color:var(--messenger-group-bg-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)]",
             isMoveIntoGroupTarget && "ring-2 ring-[color:color-mix(in_oklab,var(--messenger-group-text)_34%,transparent)]",
           )}
           style={customGroupStyle(displayedCustomGroup)}
@@ -3938,7 +3938,7 @@ export function MessengerContextSidebar() {
             "mx-0.5 flex items-center rounded-[calc(var(--radius-md)-2px)] border border-transparent text-sm transition-[background-color,border-color,color]",
             threadDensity === "compact" ? "gap-2 px-2 py-1.5" : "gap-3 px-3 py-2.5",
             route.kind === "chat" && !route.conversationId
-              ? "messenger-directory-highlight font-medium text-foreground"
+              ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))] font-medium text-foreground"
               : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground",
           )}
         >

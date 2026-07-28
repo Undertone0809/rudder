@@ -520,8 +520,9 @@ export function ChatThreadRow({
           ? cn("items-center gap-2 py-1.5", customGroupId ? "px-1.5" : "px-2")
           : cn("items-start gap-3 py-2.5", customGroupId ? "px-2" : "px-3"),
         active
-          ? "messenger-directory-highlight"
+          ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
           : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
+        customGroupId && "text-[color:var(--messenger-group-entry-text)] dark:text-[color:var(--messenger-group-entry-text-dark)]",
         dragging && "shadow-sm ring-1 ring-border/70",
       )}
     >
@@ -898,8 +899,9 @@ export function ThreadRow({
           ? cn("items-center gap-2 py-1.5", customGroupId ? "px-1.5" : "px-2")
           : cn("items-start gap-3 py-2.5", customGroupId ? "px-2" : "px-3"),
         active
-          ? "messenger-directory-highlight"
+          ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
           : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
+        customGroupId && "text-[color:var(--messenger-group-entry-text)] dark:text-[color:var(--messenger-group-entry-text-dark)]",
         dragging && "opacity-80 shadow-sm ring-1 ring-border/70",
       )}
     >
