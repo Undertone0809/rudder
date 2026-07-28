@@ -6111,7 +6111,7 @@ describe("chat routes", () => {
     const userMessage = createMessage("message-user", "user", "message", "Need help");
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "Working on it");
     const runtimePrompt = [
-      "You are Chat Specialist, replying inside Rudder's chat scene.",
+      "You are Chat Specialist, handling the current task and communicating with the user through Rudder Chat.",
       "",
       "## Recent Rudder Context",
       "",
