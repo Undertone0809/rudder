@@ -24,6 +24,7 @@ test.describe("Agent detail integrations tab", () => {
 
     await page.addInitScript(({ orgId }) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.designStyle", "luma");
     }, { orgId: organization.id });
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${agent.id}/integrations`, {
@@ -59,6 +60,31 @@ test.describe("Agent detail integrations tab", () => {
     const feishuDialog = page.getByRole("dialog", { name: "Connect Feishu / Lark" });
     await expect(feishuDialog).toBeVisible();
     await expect(feishuDialog.getByText("Create a Feishu bot named Integration Scout - Rudder")).toBeVisible();
+    const regionGroup = feishuDialog.getByRole("group", { name: "Feishu or Lark region" });
+    const feishuRegionButton = regionGroup.getByRole("button", { name: "Feishu CN" });
+    const larkRegionButton = regionGroup.getByRole("button", { name: "Lark Global" });
+    await expect(feishuRegionButton).toHaveAttribute("aria-pressed", "true");
+    await expect(larkRegionButton).toHaveAttribute("aria-pressed", "false");
+
+    const regionRadii = await regionGroup.evaluate((group) => {
+      const [feishuButton, larkButton] = Array.from(group.querySelectorAll("button"));
+      return {
+        control: getComputedStyle(document.documentElement).getPropertyValue("--control-radius").trim(),
+        group: getComputedStyle(group).borderRadius,
+        feishu: feishuButton ? getComputedStyle(feishuButton).borderRadius : "",
+        lark: larkButton ? getComputedStyle(larkButton).borderRadius : "",
+      };
+    });
+    expect(regionRadii.feishu).toBe(regionRadii.control);
+    expect(regionRadii.lark).toBe(regionRadii.control);
+    expect(Number.parseFloat(regionRadii.group) - Number.parseFloat(regionRadii.control)).toBeCloseTo(2);
+
+    await larkRegionButton.click();
+    await expect(feishuRegionButton).toHaveAttribute("aria-pressed", "false");
+    await expect(larkRegionButton).toHaveAttribute("aria-pressed", "true");
+    await feishuRegionButton.click();
+    await expect(feishuRegionButton).toHaveAttribute("aria-pressed", "true");
+    await expect(larkRegionButton).toHaveAttribute("aria-pressed", "false");
     await feishuDialog.getByRole("button", { name: "Cancel" }).click();
     await expect(feishuDialog).toBeHidden();
 

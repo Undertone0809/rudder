@@ -1020,14 +1020,24 @@ describe("AgentIntegrationsTab", () => {
       setupButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     const dialog = document.body.querySelector('[role="dialog"]');
+    const regionGroup = dialog?.querySelector('[role="group"][aria-label="Feishu or Lark region"]');
+    const feishuButton = [...dialog!.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Feishu CN"));
     const larkButton = [...dialog!.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("Lark Global"));
 
+    expect(regionGroup?.className).toContain("rounded-[calc(var(--control-radius)+2px)]");
+    expect(feishuButton?.className).toContain("rounded-[var(--control-radius)]");
+    expect(larkButton?.className).toContain("rounded-[var(--control-radius)]");
+    expect(feishuButton?.getAttribute("aria-pressed")).toBe("true");
+    expect(larkButton?.getAttribute("aria-pressed")).toBe("false");
     expect(larkButton).toBeTruthy();
     act(() => {
       larkButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
+    expect(feishuButton?.getAttribute("aria-pressed")).toBe("false");
+    expect(larkButton?.getAttribute("aria-pressed")).toBe("true");
     expect(dialog?.textContent).toContain("Create a Lark bot named Wesley - Rudder");
     expect(dialog?.textContent).toContain("opens Lark with the bot name prefilled");
   });

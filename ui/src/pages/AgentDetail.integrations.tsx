@@ -1515,11 +1515,16 @@ function FeishuSetupPrompt({
         bot name prefilled; after you confirm, Rudder stores the app credential and starts the chat connection.
       </p>
       <FeishuQuickCommandSetupNote providerName={providerName} />
-      <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
+      <div
+        className="inline-flex rounded-[calc(var(--control-radius)+2px)] border border-border bg-muted/30 p-0.5"
+        role="group"
+        aria-label="Feishu or Lark region"
+      >
         <button
           type="button"
+          aria-pressed={providerRegion === "feishu_cn"}
           className={cn(
-            "h-7 rounded px-2.5 text-xs font-medium transition-colors",
+            "h-7 rounded-[var(--control-radius)] px-2.5 text-xs font-medium transition-colors",
             providerRegion === "feishu_cn"
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
@@ -1531,8 +1536,9 @@ function FeishuSetupPrompt({
         </button>
         <button
           type="button"
+          aria-pressed={providerRegion === "lark_global"}
           className={cn(
-            "h-7 rounded px-2.5 text-xs font-medium transition-colors",
+            "h-7 rounded-[var(--control-radius)] px-2.5 text-xs font-medium transition-colors",
             providerRegion === "lark_global"
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
