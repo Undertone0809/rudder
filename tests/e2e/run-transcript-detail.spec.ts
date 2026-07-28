@@ -343,6 +343,7 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByText("Command:", { exact: false })).toBeVisible();
     await expect(page.getByText(/^Events \(\d+\)$/)).toBeVisible();
     await expect(page.getByText("adapter invocation", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText("chat transcript entry", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "nice" })).toBeHidden();
 
     const promptBlock = page.getByTestId("invocation-prompt");
