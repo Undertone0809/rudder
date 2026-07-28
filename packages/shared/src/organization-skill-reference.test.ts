@@ -93,10 +93,20 @@ describe("organization-skill-reference", () => {
   it("formats scope-aware public refs", () => {
     expect(formatOrganizationSkillPublicRef(organizationSkill, organizationContext)).toBe("org/acme/alpha-test");
     expect(formatOrganizationSkillPublicRef(organizationSkill, agentContext)).toBe("org/acme/builder/alpha-test");
+    expect(formatOrganizationSkillPublicRef({
+      ...organizationSkill,
+      sourceBadge: "rudder",
+      sourceLabel: "Organization library",
+    }, organizationContext)).toBe("org/acme/alpha-test");
     expect(formatOrganizationSkillPublicRef(bundledSkill, agentContext)).toBe("rudder/build-advisor");
   });
 
   it("resolves public refs and legacy refs to the canonical internal key", () => {
+    const managedOrganizationSkill = {
+      ...organizationSkill,
+      sourceBadge: "rudder" as const,
+      sourceLabel: "Organization library",
+    };
     expect(resolveOrganizationSkillReference([organizationSkill, bundledSkill], "alpha-test", organizationContext)).toEqual({
       skill: organizationSkill,
       ambiguous: false,
@@ -119,6 +129,10 @@ describe("organization-skill-reference", () => {
     });
     expect(resolveOrganizationSkillReference([organizationSkill, bundledSkill], "rudder/rudder/build-advisor", organizationContext)).toEqual({
       skill: bundledSkill,
+      ambiguous: false,
+    });
+    expect(resolveOrganizationSkillReference([managedOrganizationSkill, bundledSkill], "rudder/alpha-test", organizationContext)).toEqual({
+      skill: managedOrganizationSkill,
       ambiguous: false,
     });
     expect(normalizeOrganizationSkillKey("org/acme/builder/alpha-test")).toBe(

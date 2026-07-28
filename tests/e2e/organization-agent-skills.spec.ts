@@ -219,6 +219,73 @@ test.describe("Organization and agent skills", () => {
     await expect(newAgentMain.getByText("rudder-create-plugin")).toHaveCount(0);
   });
 
+  test("persists selected new-agent skills by canonical public reference", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Org-New-Agent-Skill-Selection-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as {
+      id: string;
+      issuePrefix: string;
+      urlKey: string;
+    };
+
+    const customSkillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
+      data: {
+        name: "Alpha Test",
+        slug: "alpha-test",
+        markdown: "---\nname: alpha-test\ndescription: Alpha test skill.\n---\n\n# Alpha Test\n",
+      },
+    });
+    expect(customSkillRes.ok()).toBe(true);
+    const customSkill = await customSkillRes.json() as { key: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/agents/new`);
+
+    const newAgentMain = page.locator("#main-content");
+    await expect(newAgentMain.getByRole("heading", { name: "Organization skills" })).toBeVisible();
+
+    const deepResearchToggle = newAgentMain.getByRole("switch", { name: /\/deep-research$/ });
+    await expect(deepResearchToggle).toHaveAttribute("aria-checked", "false");
+    await expect(deepResearchToggle.locator("..")).toContainText("Community preset");
+    await deepResearchToggle.click();
+    await expect(deepResearchToggle).toHaveAttribute("aria-checked", "true");
+    await deepResearchToggle.click();
+    await expect(deepResearchToggle).toHaveAttribute("aria-checked", "false");
+
+    const alphaToggle = newAgentMain.getByRole("switch", { name: /\/alpha-test$/ });
+    await expect(alphaToggle).toHaveAttribute("aria-checked", "false");
+    await expect(alphaToggle.locator("..")).toContainText("Alpha test skill.");
+    await expect(alphaToggle.locator("..")).toContainText("/alpha-test");
+    await alphaToggle.click();
+    await expect(alphaToggle).toHaveAttribute("aria-checked", "true");
+
+    await newAgentMain.getByPlaceholder("Agent name").fill("Skill Selection Agent");
+    const hireResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && response.url().includes(`/api/orgs/${organization.id}/agent-hires`)
+    ));
+    await newAgentMain.getByRole("button", { name: "Create agent" }).click();
+    const hireResponse = await hireResponsePromise;
+    expect(hireResponse.ok()).toBe(true);
+    const hireRequest = hireResponse.request().postDataJSON() as { desiredSkills?: string[] };
+    expect(hireRequest.desiredSkills).toContain(`org/${organization.urlKey}/alpha-test`);
+    const hireResult = await hireResponse.json() as { agent: { id: string } };
+
+    const skillSnapshotRes = await page.request.get(
+      `/api/agents/${hireResult.agent.id}/skills?orgId=${encodeURIComponent(organization.id)}`,
+    );
+    expect(skillSnapshotRes.ok()).toBe(true);
+    const skillSnapshot = await skillSnapshotRes.json() as { desiredSkills: string[] };
+    expect(skillSnapshot.desiredSkills).toContain(`org:${customSkill.key}`);
+  });
+
   test("seeds bundled and community preset org skills and keeps bundled Rudder skills always enabled", async ({ page }) => {
     const organizationName = `Org-Skills-${Date.now()}`;
     const orgRes = await page.request.post("/api/orgs", {

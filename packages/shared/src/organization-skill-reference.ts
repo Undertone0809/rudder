@@ -136,8 +136,12 @@ function isOrganizationScopedSkill(skill: { sourceType?: OrganizationSkillSource
   return skill.sourceType !== "github" && skill.sourceType !== "skills_sh" && skill.sourceType !== "url";
 }
 
-function isRudderSkill(skill: SkillReferenceSource) {
-  return getBundledRudderSkillSlug(skill.key) !== null || skill.sourceBadge === "rudder";
+function isBundledRudderSkill(skill: SkillReferenceSource) {
+  return getBundledRudderSkillSlug(skill.key) !== null;
+}
+
+function isLegacyRudderReferenceCandidate(skill: SkillReferenceSource) {
+  return isBundledRudderSkill(skill) || skill.sourceBadge === "rudder";
 }
 
 function normalizeSegmentList(reference: string) {
@@ -204,7 +208,7 @@ export function formatOrganizationSkillPublicRef(
   const orgUrlKey = normalizeOrganizationUrlKey(context.orgUrlKey) ?? "organization";
   const agentUrlKey = normalizeAgentUrlKey(context.agentUrlKey ?? null);
 
-  if (isRudderSkill(skill)) {
+  if (isBundledRudderSkill(skill)) {
     return `rudder/${slug}`;
   }
 
@@ -376,7 +380,9 @@ export function resolveOrganizationSkillReference<TSkill extends SkillReferenceS
       }
     }
 
-    const rudderSkills = skills.filter((skill) => isRudderSkill(skill) && skill.slug === slug);
+    const rudderSkills = skills.filter(
+      (skill) => isLegacyRudderReferenceCandidate(skill) && skill.slug === slug,
+    );
     if (rudderSkills.length === 1) {
       return { skill: rudderSkills[0] ?? null, ambiguous: false };
     }
