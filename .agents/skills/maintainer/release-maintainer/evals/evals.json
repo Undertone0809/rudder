@@ -1,0 +1,54 @@
+{
+  "skill_name": "release-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "发 0.7.0 stable。main 在 dry-run 后又多了一个无关提交，但 0.7.0 的 CI 是在 abc123 上通过的。",
+      "expected_output": "Treats the imperative as full release authority, locks stable source to abc123, does not chase moving main, and verifies npm, tag, Release, Desktop, docs, cleanup, install, and next-version handoff.",
+      "files": [],
+      "expectations": [
+        "The response recognizes the release imperative as end-to-end standard release authorization without requesting routine second approval.",
+        "The response locks 0.7.0 to immutable source abc123 and does not silently retarget to the later main commit.",
+        "The response does not mark the release BLOCKED merely because main moved after abc123 passed CI and stable dry-run.",
+        "The response requires the complete stable surface set: package-map npm latest, stable tag, GitHub Release, Desktop assets/checksum, production docs, install proof, obsolete-canary cleanup, and next-version handoff.",
+        "The response routes stable-specific details without loading or narrating unrelated bootstrap and rollback procedures."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "0.7.0 已经发到 npm latest，v0.7.0 tag 也在，但 GitHub Release job 因为 GH_TOKEN 配置失败，Desktop 包也没有。继续修好。",
+      "expected_output": "Classifies partial release recovery, does not republish npm or rewrite the tag, creates/repairs the GitHub Release for the locked tag, dispatches Desktop, then verifies downstream docs/install/handoff surfaces.",
+      "files": [],
+      "expectations": [
+        "The response explicitly preserves the already-published immutable npm version and existing stable tag.",
+        "The response resumes at GitHub Release creation and Desktop dispatch for the exact locked version.",
+        "The response verifies checksums and remaining downstream public surfaces before declaring completion.",
+        "The response does not restart the full stable workflow in a way that republishes 0.7.0."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "先告诉我 0.7.1 canary 怎么发、现在缺什么，不要执行也不要改远端。",
+      "expected_output": "Keeps the request read-only, inspects current state, explains the automatic canary branch and Desktop/npm verification, and does not dispatch workflows or mutate tags/dist-tags.",
+      "files": [],
+      "expectations": [
+        "The response treats the request as inspection/advice rather than publish authority.",
+        "The response gathers or requests live canary state because npm, tags, Releases, and workflow status are temporally unstable.",
+        "The response explains the canary-specific npm/tag/Desktop/install checks without executing mutations.",
+        "The response does not confuse normal canary policy with the first-public pre-stable latest exception."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "把 npm latest 回滚到 0.6.9，GitHub 上的 v0.7.0 不要动，也不要 unpublish。",
+      "expected_output": "Uses the rollback branch, validates 0.6.9 across the package map and install surface, moves latest consistently, and leaves published tags/Releases/npm versions unchanged.",
+      "files": [],
+      "expectations": [
+        "The response treats rollback as a dist-tag move, not npm unpublish or tag rewriting.",
+        "The response verifies the target version across every public package before mutation.",
+        "The response preserves v0.7.0 and published package versions.",
+        "The response requires post-rollback package-map and isolated install verification."
+      ]
+    }
+  ]
+}
