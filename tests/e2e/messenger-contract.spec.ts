@@ -2569,6 +2569,7 @@ test.describe("Messenger unified threads contract", () => {
     const approvalRes = await page.request.post(`/api/orgs/${organization.id}/approvals`, {
       data: {
         type: "chat_issue_creation",
+        requestedByAgentId: organization.chatAgent.id,
         payload: {
           chatConversationId: chat.id,
           proposedIssue: {
@@ -2694,6 +2695,10 @@ test.describe("Messenger unified threads contract", () => {
     await page.goto(`/${organizationPrefix}/messenger/approvals`, { waitUntil: "commit" });
     await expect(mainContent.getByRole("heading", { name: "Approvals" })).toBeVisible({ timeout: 15_000 });
     await expect(mainContent.getByTestId("messenger-panel-header")).not.toContainText(/\b\d+\s+(?:pending|total)\b/i);
+    const approvalMessage = page.getByTestId(`messenger-approval-message-${approval.id}`);
+    await expect(approvalMessage).toContainText(organization.chatAgent.name);
+    await expect(approvalMessage).not.toContainText("Approvals assistant");
+    await expect(approvalMessage.locator("img").first()).toBeVisible();
     const approvalCard = page.locator('[data-testid^="messenger-approval-card-"]').first();
     await expect(approvalCard).toContainText("Messenger contract test");
     await expect(approvalCard).toContainText("Agent proposed a new issue from chat");

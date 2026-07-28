@@ -234,6 +234,7 @@ export interface MessengerIssueThreadItem extends MessengerThreadItem {
 
 export interface MessengerApprovalThreadItem extends MessengerThreadItem {
   approval: Approval;
+  requesterAgent: Pick<Agent, "id" | "name" | "icon" | "role"> | null;
 }
 
 export interface MessengerBudgetThreadItem extends MessengerThreadItem {

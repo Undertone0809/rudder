@@ -6,6 +6,7 @@ import { chatsApi } from "@/api/chats";
 import { issuesApi } from "@/api/issues";
 import { messengerApi } from "@/api/messenger";
 import { projectsApi } from "@/api/projects";
+import { AgentIcon } from "@/components/AgentAvatar";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { ApprovalDetailDialog } from "@/components/ApprovalDetailDialog";
 import {
@@ -695,6 +696,7 @@ function MessengerApprovalCard({
   const chatConversation = chatConversationId
     ? chatConversations?.find((conversation) => conversation.id === chatConversationId) ?? null
     : null;
+  const requesterAgent = item.requesterAgent;
 
   const invalidateApprovalViews = async () => {
     await Promise.all([
@@ -728,8 +730,17 @@ function MessengerApprovalCard({
 
   return (
     <ThreadMessage
-      icon={<ShieldCheck className="h-5 w-5" />}
-      label="Approvals assistant"
+      icon={requesterAgent
+        ? (
+            <AgentIcon
+              icon={requesterAgent.icon}
+              role={requesterAgent.role}
+              fallbackSeed={requesterAgent.name}
+              className="size-full"
+            />
+          )
+        : <ShieldCheck className="h-5 w-5" />}
+      label={requesterAgent?.name ?? "Approvals assistant"}
       timestamp={new Date(item.latestActivityAt)}
       testId={`messenger-approval-message-${item.id}`}
     >

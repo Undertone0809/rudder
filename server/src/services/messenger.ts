@@ -29,6 +29,7 @@ import {
   formatMessengerTitle,
   issueUpdatedChangedKeys,
   messengerSavedViewIdSchema,
+  type AgentRole,
   type Approval,
   type BudgetIncident,
   type JoinRequest,
@@ -864,6 +865,7 @@ function issueCard(
 
 function approvalCard(
   approval: ApprovalRow,
+  requesterAgent: MessengerApprovalThreadItem["requesterAgent"],
   latestComment: ApprovalCommentRow | null,
   currentUserId: string | null,
   latestActivityAt: Date,
@@ -895,6 +897,7 @@ function approvalCard(
       requester: approvalRequesterLabel(approval, currentUserId),
     },
     approval: approval as Approval,
+    requesterAgent,
   };
 }
 
@@ -2330,10 +2333,36 @@ export function messengerService(db: Db) {
     }
 
     const typedApprovalRows = approvalRows as ApprovalRow[];
+    const requesterAgentIds = typedApprovalRows
+      .map((approval) => approval.requestedByAgentId)
+      .filter((agentId): agentId is string => Boolean(agentId));
+    const requesterAgents = requesterAgentIds.length > 0
+      ? await db
+          .select({
+            id: agents.id,
+            name: agents.name,
+            icon: agents.icon,
+            role: agents.role,
+          })
+          .from(agents)
+          .where(and(eq(agents.orgId, orgId), inArray(agents.id, requesterAgentIds)))
+      : [];
+    const requesterAgentById = new Map(
+      requesterAgents.map((agent) => [
+        agent.id,
+        {
+          ...agent,
+          role: agent.role as AgentRole,
+        },
+      ]),
+    );
     const unsortedItems = typedApprovalRows.map((approval) => {
       const latestComment = latestCommentByApproval.get(approval.id) ?? null;
       const latestActivityAt = maxDate(approval.updatedAt, latestComment?.createdAt) ?? approval.updatedAt;
-      return approvalCard(approval, latestComment, userId, latestActivityAt);
+      const requesterAgent = approval.requestedByAgentId
+        ? requesterAgentById.get(approval.requestedByAgentId) ?? null
+        : null;
+      return approvalCard(approval, requesterAgent, latestComment, userId, latestActivityAt);
     });
     const latestFirstItems = [...unsortedItems].sort(compareLatestActivity);
     const chronologicalItems = [...unsortedItems].sort(compareChronologicalActivity);
@@ -2441,13 +2470,13 @@ export function messengerService(db: Db) {
     if (latestApproval) {
       const latestComment = (latestApprovalCommentRows[0] ?? null) as ApprovalCommentRow | null;
       const latestActivityAt = maxDate(latestApproval.updatedAt, latestComment?.createdAt) ?? latestApproval.updatedAt;
-      candidateItems.push(approvalCard(latestApproval, latestComment, userId, latestActivityAt));
+      candidateItems.push(approvalCard(latestApproval, null, latestComment, userId, latestActivityAt));
     }
     if (latestCommentRow) {
       const approval = (latestCommentApprovalRows[0] ?? null) as ApprovalRow | null;
       if (approval) {
         const latestActivityAt = maxDate(approval.updatedAt, latestCommentRow.createdAt) ?? approval.updatedAt;
-        candidateItems.push(approvalCard(approval, latestCommentRow, userId, latestActivityAt));
+        candidateItems.push(approvalCard(approval, null, latestCommentRow, userId, latestActivityAt));
       }
     }
 

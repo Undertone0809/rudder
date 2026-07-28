@@ -9054,6 +9054,57 @@ describe("messengerService and issue follows", () => {
     expect(item?.preview).not.toContain(assigneeUserId);
   });
 
+  it("preserves the requesting agent identity for approvals after the agent is terminated", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const approvalId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Terminated Approval Requester Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Terminated Approval Requester Org"),
+      issuePrefix: `TA${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Historical Requester",
+      role: "engineer",
+      icon: "bot",
+      status: "terminated",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(approvals).values({
+      id: approvalId,
+      orgId,
+      type: "chat_issue_creation",
+      status: "pending",
+      requestedByAgentId: agentId,
+      payload: {
+        proposedIssue: {
+          title: "Preserve requester identity",
+          description: "Historical approvals keep their initiating agent visible.",
+          priority: "medium",
+          assigneeUnassignedReason: "Routing will be selected during review.",
+        },
+      },
+    });
+
+    const thread = await messengerSvc.getApprovalsThread(orgId, "board-user");
+    const item = thread.detail.items.find((approvalItem) => approvalItem.id === approvalId);
+
+    expect(item?.requesterAgent).toEqual({
+      id: agentId,
+      name: "Historical Requester",
+      icon: "bot",
+      role: "engineer",
+    });
+  });
+
   it("returns Messenger failed-run detail items in chronological order while keeping the summary pinned to latest activity", async () => {
     const orgId = randomUUID();
     const userId = "board-user-failed-runs";
