@@ -2539,10 +2539,13 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Use flomo-local-api skill");
+    expect(html).toContain(">Use </span><button type=\"button\"");
+    expect(html).toContain(">flomo-local-api</button><span> skill</span>");
     expect(html).toContain('data-transcript-action-icon="skill"');
     expect(html).toContain('aria-label="Open skill flomo-local-api"');
     expect(html).toContain('data-transcript-skill-path="/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md"');
+    expect(html).toContain('class="rounded-sm px-0.5 underline');
+    expect(html).toContain('hover:bg-black hover:text-white hover:decoration-white');
     expect(html).not.toContain("Read /Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
     expect(html).not.toContain("Expand tool details");
     expect(html).not.toContain("aria-expanded=");

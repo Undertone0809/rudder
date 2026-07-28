@@ -366,16 +366,20 @@ export function TranscriptChatToolActionRow({
               const target = skillTargets[0]!;
               const openable = Boolean(onOpenSkill) && (canOpenSkill?.(target) ?? true);
               return openable ? (
-                <button
-                  type="button"
-                  className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                  aria-label={`Open skill ${target.name}`}
-                  data-transcript-skill-target={target.name}
-                  data-transcript-skill-path={target.path ?? undefined}
-                  onClick={() => onOpenSkill?.(target)}
-                >
-                  {displaySummary}
-                </button>
+                <>
+                  <span>Use </span>
+                  <button
+                    type="button"
+                    className="rounded-sm px-0.5 underline decoration-border underline-offset-4 transition-colors hover:bg-black hover:text-white hover:decoration-white focus-visible:bg-black focus-visible:text-white focus-visible:decoration-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                    aria-label={`Open skill ${target.name}`}
+                    data-transcript-skill-target={target.name}
+                    data-transcript-skill-path={target.path ?? undefined}
+                    onClick={() => onOpenSkill?.(target)}
+                  >
+                    {target.name}
+                  </button>
+                  <span> skill</span>
+                </>
               ) : (
                 <span data-transcript-skill-target={target.name}>{displaySummary}</span>
               );
@@ -390,7 +394,7 @@ export function TranscriptChatToolActionRow({
                       {openable ? (
                         <button
                           type="button"
-                          className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                          className="rounded-sm px-0.5 underline decoration-border underline-offset-4 transition-colors hover:bg-black hover:text-white hover:decoration-white focus-visible:bg-black focus-visible:text-white focus-visible:decoration-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                           aria-label={`Open skill ${target.name}`}
                           data-transcript-skill-target={target.name}
                           data-transcript-skill-path={target.path ?? undefined}
