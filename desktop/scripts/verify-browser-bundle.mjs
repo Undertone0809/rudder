@@ -29,7 +29,7 @@ function packagedExecutableForServerPackage(serverPackageDir) {
 
 export function packagedCliArgs(platform, args) {
   if (platform !== "linux") return args;
-  return ["--no-sandbox", ...args];
+  return ["--no-sandbox", "--disable-gpu", ...args];
 }
 
 export async function verifyBrowserBundle(options) {

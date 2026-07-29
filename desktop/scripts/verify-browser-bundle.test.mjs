@@ -5,6 +5,7 @@ describe("packaged Browser bundle verifier", () => {
   it("runs the Linux Electron CLI handshake in the Xvfb display session", () => {
     expect(packagedCliArgs("linux", ["--desktop-cli", "mcp-server"])).toEqual([
       "--no-sandbox",
+      "--disable-gpu",
       "--desktop-cli",
       "mcp-server",
     ]);
