@@ -1,3 +1,5 @@
+![Rudder — Build your self-improving Agent Team.](docs/images/rudder-social-card.png)
+
 # Rudder
 
 > Build your self-improving Agent Team.
