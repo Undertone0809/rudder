@@ -8,7 +8,8 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { flushSync } from "react-dom";
+
+const SCROLL_RANGE_CHUNK_ROWS = 4;
 
 export function VirtualizedActivityTimeline<T>({
   children,
@@ -38,6 +39,7 @@ export function VirtualizedActivityTimeline<T>({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const notifiedTargetRef = useRef<string | null>(null);
   const virtualizerRef = useRef<{
+    isScrolling: boolean;
     scrollDirection: "backward" | "forward" | null;
   } | null>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
@@ -51,11 +53,22 @@ export function VirtualizedActivityTimeline<T>({
   );
   const directionalRangeExtractor = useCallback((range: Range) => {
     const direction = virtualizerRef.current?.scrollDirection;
-    const trailingOverscan = Math.max(4, Math.ceil(overscan / 4));
+    // Fast trackpad reversals can move the viewport back into recently passed
+    // rows before the next virtual range commits. Retain half of the forward
+    // buffer behind the viewport so those reversal frames remain painted
+    // without making every scroll frame maintain a nearly symmetric window.
+    const trailingOverscan = Math.max(8, Math.ceil(overscan / 2));
     const before = direction === "backward" ? overscan : trailingOverscan;
     const after = direction === "backward" ? trailingOverscan : overscan;
-    const start = Math.max(0, range.startIndex - before);
-    const end = Math.min(range.count - 1, range.endIndex + after);
+    const rawStart = Math.max(0, range.startIndex - before);
+    const rawEnd = Math.min(range.count - 1, range.endIndex + after);
+    const start = Math.floor(rawStart / SCROLL_RANGE_CHUNK_ROWS)
+      * SCROLL_RANGE_CHUNK_ROWS;
+    const end = Math.min(
+      range.count - 1,
+      Math.ceil((rawEnd + 1) / SCROLL_RANGE_CHUNK_ROWS)
+        * SCROLL_RANGE_CHUNK_ROWS - 1,
+    );
     return Array.from({ length: end - start + 1 }, (_, index) => start + index);
   }, [overscan]);
   const virtualizer = useVirtualizer({
@@ -72,7 +85,7 @@ export function VirtualizedActivityTimeline<T>({
     scrollMargin,
     directDomUpdates: preventScrollBlanking,
     directDomUpdatesMode: "transform",
-    useFlushSync: preventScrollBlanking,
+    useFlushSync: false,
   });
   virtualizerRef.current = virtualizer;
   const setContainerRef = useCallback((node: HTMLDivElement | null) => {
@@ -89,15 +102,11 @@ export function VirtualizedActivityTimeline<T>({
     const scrollElement = scrollElementRef.current;
     if (!container || !scrollElement) return undefined;
 
-    const measureMargin = (synchronous = false) => {
+    const measureMargin = () => {
       const containerRect = container.getBoundingClientRect();
       const scrollRect = scrollElement.getBoundingClientRect();
       const next = Math.max(0, containerRect.top - scrollRect.top + scrollElement.scrollTop);
-      const update = () => {
-        setScrollMargin((current) => Math.abs(current - next) < 1 ? current : next);
-      };
-      if (synchronous && preventScrollBlanking) flushSync(update);
-      else update();
+      setScrollMargin((current) => Math.abs(current - next) < 1 ? current : next);
     };
     measureMargin();
     const ancestors: HTMLElement[] = [];
@@ -112,14 +121,27 @@ export function VirtualizedActivityTimeline<T>({
     resizeObserver?.observe(container);
     for (const element of ancestors) resizeObserver?.observe(element);
 
-    // Nested timelines share the outer sidebar scroll element. Direct DOM
-    // positioning can move an ancestor without resizing this container, so a
-    // ResizeObserver alone would leave scrollMargin stale after group/layout
-    // changes. Ancestor style/class mutations are infrequent and are committed
-    // synchronously before the next paint to keep the visible slice aligned.
+    // Nested timelines share the outer sidebar scroll element. The outer
+    // virtualizer writes transform styles while scrolling, so observing every
+    // ancestor style mutation with a layout read creates a forced-layout loop.
+    // Ignore that hot path and coalesce any meaningful group/layout correction
+    // until scrolling has settled.
+    let deferredMeasureTimer: ReturnType<typeof setTimeout> | null = null;
     const mutationObserver = typeof MutationObserver === "undefined"
       ? null
-      : new MutationObserver(() => measureMargin(true));
+      : new MutationObserver(() => {
+        if (!virtualizerRef.current?.isScrolling) {
+          measureMargin();
+          return;
+        }
+        if (deferredMeasureTimer !== null) {
+          clearTimeout(deferredMeasureTimer);
+        }
+        deferredMeasureTimer = setTimeout(() => {
+          deferredMeasureTimer = null;
+          measureMargin();
+        }, 180);
+      });
     for (const element of ancestors) {
       mutationObserver?.observe(element, {
         attributeFilter: ["class", "style"],
@@ -127,6 +149,9 @@ export function VirtualizedActivityTimeline<T>({
       });
     }
     return () => {
+      if (deferredMeasureTimer !== null) {
+        clearTimeout(deferredMeasureTimer);
+      }
       mutationObserver?.disconnect();
       resizeObserver?.disconnect();
     };

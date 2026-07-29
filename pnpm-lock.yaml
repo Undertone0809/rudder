@@ -20,6 +20,11 @@ overrides:
   undici: 7.28.0
   uuid: 11.1.1
 
+patchedDependencies:
+  '@tanstack/react-virtual@3.14.8':
+    hash: els2awg2be74q35kkpmr44of3e
+    path: patches/@tanstack__react-virtual@3.14.8.patch
+
 importers:
 
   .:
@@ -111,6 +116,10 @@ importers:
         version: 5.9.3
 
   desktop:
+    dependencies:
+      pnpm:
+        specifier: 9.15.4
+        version: 9.15.4
     devDependencies:
       '@types/node':
         specifier: ^24.12.0
@@ -791,7 +800,7 @@ importers:
         version: 5.95.2(react@19.2.4)
       '@tanstack/react-virtual':
         specifier: 3.14.8
-        version: 3.14.8(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 3.14.8(patch_hash=els2awg2be74q35kkpmr44of3e)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -6519,6 +6528,11 @@ packages:
     resolution: {integrity: sha512-uysumyrvkUX0rX/dEVqt8gC3sTBzd4zoWfLeS29nb53imdaXVvLINYXTI2GNqzaMuvacNx4uJQ8+b3zXR0pkgQ==}
     engines: {node: '>=10.4.0'}
 
+  pnpm@9.15.4:
+    resolution: {integrity: sha512-stwg4vxys+GISEWbNzWaMgZGY+VielHkx0ssKd2OjgSRSDw6u0B4nP1Xi/Ni+2uoJhsF8Dh9dnku1uI+o7G2oA==}
+    engines: {node: '>=18.12'}
+    hasBin: true
+
   points-on-curve@0.2.0:
     resolution: {integrity: sha512-0mYKnYYe9ZcqMCWhUjItv/oHjvgEsfKvnUTg8sAtnHr3GVy7rGkXCb6d5cSyqrWqL4k81b9CPg3urd+T7aop3A==}
 
@@ -11322,7 +11336,7 @@ snapshots:
       '@tanstack/query-core': 5.95.2
       react: 19.2.4
 
-  '@tanstack/react-virtual@3.14.8(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@tanstack/react-virtual@3.14.8(patch_hash=els2awg2be74q35kkpmr44of3e)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
       '@tanstack/virtual-core': 3.17.6
       react: 19.2.4
@@ -14599,6 +14613,8 @@ snapshots:
       '@xmldom/xmldom': 0.8.11
       base64-js: 1.5.1
       xmlbuilder: 15.1.1
+
+  pnpm@9.15.4: {}
 
   points-on-curve@0.2.0: {}
 

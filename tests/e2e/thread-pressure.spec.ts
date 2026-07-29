@@ -18,7 +18,7 @@ const CHAT_MESSAGE_COUNT = 2_000;
 const ISSUE_COMMENT_COUNT = 500;
 const TERMINAL_RUN_COUNT = 250;
 const ACTIVE_RUN_COUNT = 2;
-const MESSENGER_THREAD_COUNT = 220;
+const MESSENGER_THREAD_COUNT = 698;
 
 async function measureScrollFrames(page: Page, selector: string, durationMs: number) {
   const session = await page.context().newCDPSession(page);
@@ -120,12 +120,12 @@ async function measureMessengerFastScrollCoverage(page: Page) {
   return page.locator("[data-testid='workspace-sidebar'] nav").evaluate(async (element) => {
     const scrollElement = element as HTMLElement;
     const maxScroll = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-    const targets = Array.from({ length: 36 }, (_, index) => {
+    const targets = [0.02, 0.07].concat(Array.from({ length: 36 }, (_, index) => {
       const phase = index % 12;
       return phase < 6
         ? 0.12 + phase * 0.14
         : 0.82 - (phase - 6) * 0.14;
-    }).concat([0.82, 0.68, 0.54, 0.4]);
+    }), [0.82, 0.68, 0.54, 0.4]);
     let blankSamples = 0;
     let maxBlankPx = 0;
     let samplesWithVisibleThreadRows = 0;
@@ -177,7 +177,9 @@ async function measureMessengerFastScrollCoverage(page: Page) {
       }
       sampleMaxBlankPx = Math.max(sampleMaxBlankPx, viewport.bottom - cursor);
       maxBlankPx = Math.max(maxBlankPx, sampleMaxBlankPx);
-      if (sampleMaxBlankPx > 64) blankSamples += 1;
+      // Normal row/group spacing is at most 16px. Anything larger is a
+      // user-visible virtual-rendering hole rather than intentional layout.
+      if (sampleMaxBlankPx > 16) blankSamples += 1;
       samples.push({
         fraction,
         maxBlankPx: sampleMaxBlankPx,
@@ -477,6 +479,13 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
     "[data-testid='workspace-sidebar'] nav",
     5_000,
   );
+  for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+    await page.locator("[data-testid='workspace-sidebar'] nav").evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    await page.waitForTimeout(250);
+  }
   await page.locator("[data-testid='workspace-sidebar'] nav").evaluate(async (element) => {
     element.scrollTop = 0;
     element.dispatchEvent(new Event("scroll"));
@@ -490,20 +499,37 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
     name: pressureGroups[0]!.name,
     exact: true,
   });
+  let groupPersistenceRequests = 0;
+  let groupPersistenceResponses = 0;
+  const groupPersistenceUrl = `**/api/orgs/${organization.id}/messenger/groups/${pressureGroups[0]!.id}`;
+  await page.route(groupPersistenceUrl, async (route) => {
+    if (route.request().method() !== "PATCH") {
+      await route.continue();
+      return;
+    }
+    groupPersistenceRequests += 1;
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await route.continue();
+    groupPersistenceResponses += 1;
+  });
   await pressureGroupAToggle.click();
-  await expect(pressureGroupA).toHaveAttribute("data-collapsed", "true");
+  expect(await pressureGroupA.getAttribute("data-collapsed")).toBe("true");
   await pressureGroupAToggle.click();
-  await expect(pressureGroupA).toHaveAttribute("data-collapsed", "false");
+  expect(await pressureGroupA.getAttribute("data-collapsed")).toBe("false");
+  await expect.poll(() => groupPersistenceRequests).toBe(2);
+  await expect.poll(() => groupPersistenceResponses).toBe(2);
+  await page.unroute(groupPersistenceUrl);
   for (const group of pressureGroups) {
     await expect(page.getByTestId(
       `messenger-section-virtual-entries-custom-group-${group.id}`,
     )).toHaveCount(1);
   }
+  await expect(page.getByTestId("messenger-virtual-directory")).toHaveCount(1);
   const messengerFastScrollCoverage = await measureMessengerFastScrollCoverage(page);
   console.log(`THREAD_PRESSURE_FAST_SCROLL_COVERAGE ${JSON.stringify(messengerFastScrollCoverage)}`);
   await page.screenshot({ path: "/tmp/rudder-thread-pressure-messenger.png" });
   expect(messengerFastScrollCoverage.blankSamples).toBe(0);
-  expect(messengerFastScrollCoverage.maxBlankPx).toBeLessThanOrEqual(64);
+  expect(messengerFastScrollCoverage.maxBlankPx).toBeLessThanOrEqual(16);
   expect(messengerFastScrollCoverage.samplesWithVisibleThreadRows).toBe(
     messengerFastScrollCoverage.sampleCount,
   );
@@ -518,13 +544,11 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
     websocketUrls.filter((url) => new URL(url).pathname.endsWith("/events/ws")),
   );
   expect(genericOrganizationWebSockets.size).toBe(1);
-  const loadedMessengerVirtualHeight = await page.locator("[data-testid='messenger-virtual-directory']")
+  const loadedMessengerDirectoryHeight = await page.locator("[data-testid='messenger-virtual-directory']")
     .evaluate((element) => Number.parseFloat((element as HTMLElement).style.height) || 0);
-  // Messenger deliberately keeps about one viewport ahead plus a small
-  // trailing buffer mounted so a fast trackpad fling cannot outrun the next
-  // virtual range commit. The result remains bounded well below the complete
-  // 221-row pressure list.
-  expect(mountedMessengerRows).toBeLessThan(80);
+  // The chunked runway mounts enough rows to absorb a fast fling, but remains
+  // far below the complete 699-business-row pressure directory.
+  expect(mountedMessengerRows).toBeLessThan(160);
   const runtimeFootprint = await measureRuntimeFootprint(page);
   await page.screenshot({ path: "/tmp/rudder-thread-pressure-chat.png" });
 
@@ -650,7 +674,7 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
     messenger: {
       seededThreads: MESSENGER_THREAD_COUNT + 1,
       mountedRows: mountedMessengerRows,
-      virtualHeightPx: loadedMessengerVirtualHeight,
+      directoryHeightPx: loadedMessengerDirectoryHeight,
       scroll: sidebarScrollMetrics,
     },
     realtime: {

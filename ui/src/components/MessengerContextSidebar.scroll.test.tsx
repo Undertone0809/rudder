@@ -270,6 +270,213 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     vi.restoreAllMocks();
   });
 
+  it("opens and closes a custom group immediately while serializing persistence", async () => {
+    window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "custom" }));
+    const groupedThread = baseThread("chat:instant-group", "Instant group thread");
+    customGroupList = [{
+      id: "instant-group",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Instant group",
+      icon: "folder",
+      sortOrder: 0,
+      collapsed: false,
+      pinnedAt: null,
+      entries: [{
+        id: "entry-instant-group",
+        groupId: "instant-group",
+        threadKey: groupedThread.threadKey,
+        sortOrder: 0,
+        thread: groupedThread,
+      }],
+    }];
+    messengerModel = { ...messengerModel, threadSummaries: [groupedThread] };
+    const resolvers: Array<() => void> = [];
+    mockUpdateCustomGroup.mockImplementation(() => new Promise<void>((resolve) => {
+      resolvers.push(resolve);
+    }));
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    const group = document.querySelector<HTMLElement>(
+      '[data-testid="messenger-thread-section-custom-group-instant-group"]',
+    );
+    const toggle = group?.querySelector<HTMLButtonElement>('button[aria-expanded="true"]');
+    const content = group?.querySelector<HTMLElement>("[data-messenger-group-content]");
+    expect(group).not.toBeNull();
+    expect(toggle).not.toBeNull();
+    expect(content).not.toBeNull();
+
+    act(() => toggle?.click());
+    expect(group?.dataset.collapsed).toBe("true");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(content?.getAttribute("aria-hidden")).toBe("true");
+    expect(content?.hasAttribute("inert")).toBe(true);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockUpdateCustomGroup).toHaveBeenCalledTimes(1);
+
+    act(() => toggle?.click());
+    expect(group?.dataset.collapsed).toBe("false");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(content?.hasAttribute("aria-hidden")).toBe(false);
+    expect(content?.hasAttribute("inert")).toBe(false);
+    expect(mockUpdateCustomGroup).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolvers[0]?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mockUpdateCustomGroup).toHaveBeenCalledTimes(2);
+    expect(mockUpdateCustomGroup.mock.calls.map((call) => call[2])).toEqual([
+      { collapsed: true },
+      { collapsed: false },
+    ]);
+    await act(async () => {
+      resolvers[1]?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
+  it("rolls back an optimistic custom-group toggle when persistence fails", async () => {
+    window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "custom" }));
+    const groupedThread = baseThread("chat:failed-toggle", "Failed toggle thread");
+    customGroupList = [{
+      id: "failed-toggle-group",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Failed toggle group",
+      icon: "folder",
+      sortOrder: 0,
+      collapsed: false,
+      pinnedAt: null,
+      entries: [{
+        id: "entry-failed-toggle",
+        groupId: "failed-toggle-group",
+        threadKey: groupedThread.threadKey,
+        sortOrder: 0,
+        thread: groupedThread,
+      }],
+    }];
+    messengerModel = { ...messengerModel, threadSummaries: [groupedThread] };
+    mockUpdateCustomGroup.mockRejectedValue(new Error("offline"));
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    const group = document.querySelector<HTMLElement>(
+      '[data-testid="messenger-thread-section-custom-group-failed-toggle-group"]',
+    );
+    const toggle = group?.querySelector<HTMLButtonElement>('button[aria-expanded="true"]');
+    act(() => toggle?.click());
+    expect(group?.dataset.collapsed).toBe("true");
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(group?.dataset.collapsed).toBe("false");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("rolls a failed final custom-group toggle back to the last confirmed request", async () => {
+    window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "custom" }));
+    const groupedThread = baseThread("chat:failed-final-toggle", "Failed final toggle thread");
+    customGroupList = [{
+      id: "failed-final-toggle-group",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Failed final toggle group",
+      icon: "folder",
+      sortOrder: 0,
+      collapsed: false,
+      pinnedAt: null,
+      entries: [{
+        id: "entry-failed-final-toggle",
+        groupId: "failed-final-toggle-group",
+        threadKey: groupedThread.threadKey,
+        sortOrder: 0,
+        thread: groupedThread,
+      }],
+    }];
+    messengerModel = { ...messengerModel, threadSummaries: [groupedThread] };
+    let resolveFirst: (() => void) | undefined;
+    let rejectSecond: ((error: Error) => void) | undefined;
+    mockUpdateCustomGroup
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveFirst = () => {
+          customGroupList[0]!.collapsed = true;
+          resolve();
+        };
+      }))
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+        rejectSecond = reject;
+      }));
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    const group = document.querySelector<HTMLElement>(
+      '[data-testid="messenger-thread-section-custom-group-failed-final-toggle-group"]',
+    );
+    const toggle = group?.querySelector<HTMLButtonElement>('button[aria-expanded="true"]');
+    act(() => toggle?.click());
+    act(() => toggle?.click());
+    expect(group?.dataset.collapsed).toBe("false");
+
+    await vi.waitFor(() => {
+      expect(mockUpdateCustomGroup).toHaveBeenCalledTimes(1);
+    });
+    await act(async () => {
+      resolveFirst?.();
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await vi.waitFor(() => {
+      expect(mockUpdateCustomGroup).toHaveBeenCalledTimes(2);
+    });
+
+    await act(async () => {
+      rejectSecond?.(new Error("final request failed"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(group?.dataset.collapsed).toBe("true");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("scrolls the first unread thread row into view when the primary rail requests it", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
