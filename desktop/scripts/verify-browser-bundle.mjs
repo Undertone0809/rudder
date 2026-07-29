@@ -27,6 +27,23 @@ function packagedExecutableForServerPackage(serverPackageDir) {
   return path.resolve(resourcesDir, "..", "Rudder");
 }
 
+export function packagedCliArgs(platform, args) {
+  if (platform !== "linux") return args;
+  return [
+    "--no-sandbox",
+    "--headless",
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+    ...args,
+  ];
+}
+
+export function packagedCliRuntimeEnv(platform, env) {
+  const runtimeEnv = { ...env };
+  if (platform === "linux") delete runtimeEnv.DBUS_SESSION_BUS_ADDRESS;
+  return runtimeEnv;
+}
+
 export async function verifyBrowserBundle(options) {
   const serverPackageDir = path.resolve(options.serverPackageDir);
   const cliEntry = path.resolve(options.cliEntry ?? path.join(serverPackageDir, "desktop-cli.js"));
@@ -118,22 +135,23 @@ export async function verifyBrowserBundle(options) {
       const packagedCommand = {
         ...command,
         command: packagedExecutable,
-        args: process.platform === "linux" ? ["--no-sandbox", ...command.args] : command.args,
+        args: packagedCliArgs(process.platform, command.args),
       };
       const packagedBrowserCommand = {
         ...browserCommand,
         command: packagedExecutable,
-        args: process.platform === "linux" ? ["--no-sandbox", ...browserCommand.args] : browserCommand.args,
+        args: packagedCliArgs(process.platform, browserCommand.args),
       };
+      const packagedRuntimeEnv = packagedCliRuntimeEnv(process.platform, {
+        ...process.env,
+        HOME: tempRoot,
+        PATH: [staleBinDir, process.env.PATH].filter(Boolean).join(path.delimiter),
+        RUDDER_BROWSER_ENABLED: "true",
+        RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
+      });
       const coreResult = await preflightModule.preflightRudderMcpServer({
         command: packagedCommand,
-        runtimeEnv: {
-          ...process.env,
-          HOME: tempRoot,
-          PATH: [staleBinDir, process.env.PATH].filter(Boolean).join(path.delimiter),
-          RUDDER_BROWSER_ENABLED: "true",
-          RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
-        },
+        runtimeEnv: packagedRuntimeEnv,
         browserEnabled: false,
         timeoutMs: 15_000,
       });
@@ -144,13 +162,7 @@ export async function verifyBrowserBundle(options) {
       }
       const result = await preflightModule.preflightRudderBrowserMcpServer({
         command: packagedBrowserCommand,
-        runtimeEnv: {
-          ...process.env,
-          HOME: tempRoot,
-          PATH: [staleBinDir, process.env.PATH].filter(Boolean).join(path.delimiter),
-          RUDDER_BROWSER_ENABLED: "true",
-          RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
-        },
+        runtimeEnv: packagedRuntimeEnv,
         timeoutMs: 15_000,
       });
       if (!result.browserAvailable) {
