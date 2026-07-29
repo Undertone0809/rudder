@@ -256,29 +256,35 @@ npx @rudderhq/cli@canary onboard
 
 After at least one good canary exists:
 
-1. confirm the committed public package version on the source ref is the stable version you want to ship
-2. prepare `releases/v0.1.0.md`, `docs/releases.mdx`, and
-   `docs/zh/releases.mdx` on the source commit you want to promote; write a
-   concise user-facing summary, use localized headings, omit empty categories,
-   and keep release-engineering details out of the public entries
-3. open `Actions` -> `Release`
-4. run it with:
-   - `source_ref`: the tested commit SHA or canary tag source commit
-   - `dry_run`: `true`
-5. confirm the dry-run succeeds
-6. after an explicit stable release request—or an unqualified `release`/`发版`
-   request whose stable target is unambiguous—let the release agent
-   rerun with `dry_run: false`; production docs are part of the standard release
-   unless explicitly excluded; no second confirmation is required after dry-run
-7. confirm the `npm-stable` job starts without an interactive approval
-8. confirm npm `latest` points to the new stable version
-9. confirm git tag `v0.1.0` exists
-10. confirm the GitHub Release was created
-11. confirm `.github/workflows/desktop-release.yml` runs for `v0.1.0`
-12. confirm the GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets
-13. confirm the Docs production child workflow publishes `docs/release/v0.1.0`
+1. freeze the tested immutable source SHA immediately; do not chase later
+   unrelated `main` commits
+2. confirm the committed public package version on the source ref is the stable
+   version you want to ship
+3. when notes are missing, have a bounded release-notes subagent draft
+   `releases/v0.1.0.md`, `docs/releases.mdx`, and `docs/zh/releases.mdx` in
+   parallel with read-only preflight; the primary release agent reviews and
+   integrates them
+4. confirm the exact final source has successful main CI, stable preflight,
+   package validation, and no conflicting npm version or tag
+5. if a same-base canary is only waiting for Desktop assets, record its npm/tag
+   state and stop that remaining work; do not unpublish the npm canary
+6. open `Actions` -> `Release` and run one production execution with:
+   - `source_ref`: the locked commit SHA
+   - `dry_run`: `false`
+7. use `dry_run: true` only for a read-only preview or troubleshooting request,
+   not as a mandatory first dispatch for an already-authorized release
+8. confirm the `npm-stable` job starts without an interactive approval
+9. confirm npm `latest` points to the new stable version
+10. confirm git tag `v0.1.0` exists
+11. confirm the GitHub Release was created
+12. confirm `.github/workflows/desktop-release.yml` runs for `v0.1.0`
+13. confirm the GitHub Release contains macOS, Windows, Linux, and
+    `SHASUMS256.txt` assets
+14. confirm the Docs production child workflow publishes `docs/release/v0.1.0`
     from the matching `v0.1.0` source and passes public health checks
-14. confirm the workflow commits the next patch version directly to `main` and
+15. confirm Windows, macOS, and Linux public install smoke all pass; do not
+    remove a slow Windows smoke because it measures real installation behavior
+16. confirm the workflow commits the next patch version directly to `main` and
     dispatches CI for that exact commit, or reports that `main` already advanced
 
 Start-path check:
@@ -307,8 +313,15 @@ Use this policy going forward:
   omitted version when exactly one stable target is consistent, then runs end
   to end without another user or GitHub approval
 - only stables get public notes and announcements
-- release notes are committed before stable publish
+- release notes are drafted by a bounded subagent in parallel when useful,
+  reviewed by the primary release agent, and committed before stable publish
+- stable source freezes immediately when release authority arrives
+- an authorized stable uses one production execution after exact-source gates,
+  rather than mandatory preview and publish dispatches
+- same-base canary Desktop waiting does not outrank a gated stable release
 - stable docs deploy is included automatically unless explicitly excluded
+- cross-platform public install smoke remains mandatory even when one platform
+  exposes a real performance bottleneck
 - rollback uses `npm dist-tag`, not unpublish
 
 ## 14. Troubleshooting

@@ -49,6 +49,30 @@
         "The response preserves v0.7.0 and published package versions.",
         "The response requires post-rollback package-map and isolated install verification."
       ]
+    },
+    {
+      "id": 5,
+      "prompt": "发 0.7.2。锁定 SHA abc123 的 CI 已通过，但三份发布说明还没写；0.7.2-canary.4 已发到 npm，现在还在等 Desktop assets。",
+      "expected_output": "Freezes abc123 immediately, delegates the three release narratives to a bounded subagent in parallel with preflight, does not chase main, stops the superseded same-base canary wait after recording npm/tag state, and performs one gated stable execution while retaining all public install smoke.",
+      "files": [],
+      "expectations": [
+        "The response freezes abc123 before release-note preparation and assigns later main work to the next release.",
+        "The response starts a bounded release-notes subagent in parallel and keeps final review/integration with the primary agent.",
+        "The response records canary npm/tag state and does not wait for same-base canary Desktop assets once stable gates pass.",
+        "The response does not unpublish the canary npm version or cancel an unrelated next-base canary.",
+        "The response uses one stable publish execution with machine validation before mutation and retains cross-platform public install smoke."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "0.7.2 的 Windows public install smoke 要 15 分钟，其他平台一分钟。为了快点发版，把 Windows smoke 去掉吧。",
+      "expected_output": "Rejects removing the real Windows install gate, identifies the slow runtime preparation as product evidence, preserves release safety, and recommends optimizing the Windows installation path separately.",
+      "files": [],
+      "expectations": [
+        "The response keeps the Windows public install smoke as a stable completion gate.",
+        "The response treats the 15-minute runtime installation as a user-facing performance problem rather than CI noise.",
+        "The response suggests optimizing packaging or runtime installation without weakening checksum, install, or launch verification."
+      ]
     }
   ]
 }
