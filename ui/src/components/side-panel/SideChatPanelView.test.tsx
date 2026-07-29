@@ -270,6 +270,35 @@ function changeTextarea(textarea: HTMLTextAreaElement, value: string) {
   });
 }
 
+function dispatchSideChatPaste(target: Element, files: File[]) {
+  const event = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", {
+    configurable: true,
+    value: {
+      files,
+      items: files.map((file) => ({
+        kind: "file",
+        getAsFile: () => file,
+      })),
+    },
+  });
+  target.dispatchEvent(event);
+}
+
+function dispatchSideChatDrag(target: Element, type: string, files: File[]) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", {
+    configurable: true,
+    value: {
+      files,
+      items: files.map(() => ({ kind: "file" })),
+      types: ["Files"],
+      dropEffect: "none",
+    },
+  });
+  target.dispatchEvent(event);
+}
+
 describe("SideChatPanelView composer controls", () => {
   it("omits the project chip while keeping the agent and skills controls", async () => {
     await renderView();
@@ -277,6 +306,49 @@ describe("SideChatPanelView composer controls", () => {
     expect(host.querySelector('[data-testid="side-chat-project-chip"]')).toBeNull();
     expect(host.querySelector('[data-testid="chat-agent-selector"]')).not.toBeNull();
     expect(host.textContent).toContain("Skills");
+  });
+
+  it("reuses normal composer paste and drop attachment interactions", async () => {
+    await renderView();
+    const editorScroll = host.querySelector(
+      '[data-testid="side-chat-composer-editor-scroll"]',
+    );
+    const dropTarget = host.querySelector(
+      '[data-testid="side-chat-composer-file-drop-target"]',
+    );
+    expect(editorScroll).not.toBeNull();
+    expect(dropTarget).not.toBeNull();
+
+    await act(async () => {
+      dispatchSideChatPaste(
+        editorScroll!,
+        [new File(["paste"], "pasted.txt", { type: "text/plain" })],
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("pasted.txt"));
+
+    act(() => {
+      dispatchSideChatDrag(
+        dropTarget!,
+        "dragenter",
+        [new File(["drop"], "dropped.txt", { type: "text/plain" })],
+      );
+    });
+    expect(host.querySelector('[data-testid="chat-composer-file-drop-overlay"]'))
+      .not.toBeNull();
+
+    await act(async () => {
+      dispatchSideChatDrag(
+        dropTarget!,
+        "drop",
+        [new File(["drop"], "dropped.txt", { type: "text/plain" })],
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("dropped.txt"));
+    expect(host.querySelector('[data-testid="chat-composer-file-drop-overlay"]'))
+      .toBeNull();
   });
 });
 
@@ -369,6 +441,18 @@ describe("SideChatPanelView streaming reconciliation", () => {
     await vi.waitFor(() => expect(
       host.querySelectorAll('[data-testid="side-chat-process"]'),
     ).toHaveLength(1));
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="chat-agent-selector"]')?.click();
+      await Promise.resolve();
+    });
+    const runtimeSelector = await vi.waitFor(() => {
+      const selector = document.body.querySelector<HTMLButtonElement>(
+        '[data-testid="chat-agent-runtime-selector"]',
+      );
+      expect(selector).not.toBeNull();
+      return selector!;
+    });
+    expect(runtimeSelector.disabled).toBe(false);
 
     releaseStream();
   });
@@ -786,14 +870,39 @@ describe("SideChatPanelView composer controls", () => {
       await Promise.resolve();
     });
     await vi.waitFor(() => expect(host.textContent).toContain("evidence.txt"));
+    await act(async () => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+      }));
+      await Promise.resolve();
+    });
 
     await act(async () => {
       const skillsButton = host.querySelector<HTMLButtonElement>('[aria-label="Skills"]');
-      skillsButton?.dispatchEvent(new PointerEvent("pointerdown", {
+      skillsButton?.click();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(document.body.textContent).toContain("research-skill"));
+    const skillSearch = document.body.querySelector<HTMLInputElement>(
+      'input[placeholder="Search skills..."]',
+    )!;
+    await vi.waitFor(() => expect(document.activeElement).toBe(skillSearch));
+    await act(async () => {
+      skillSearch.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape",
         bubbles: true,
-        button: 0,
-        pointerType: "mouse",
       }));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-testid="side-chat-skill-menu"]')).toBeNull();
+      expect(document.activeElement).toBe(
+        host.querySelector<HTMLButtonElement>('[aria-label="Skills"]'),
+      );
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Skills"]')?.click();
       await Promise.resolve();
     });
     await vi.waitFor(() => expect(document.body.textContent).toContain("research-skill"));

@@ -11,13 +11,23 @@ import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
 import {
+  ChatComposerAddMenu,
+  ChatComposerContextMenu,
+  ChatComposerEditor,
+  ChatComposerSendButton,
+  ChatComposerSkillsButton,
+  ChatComposerSkillsMenuContent,
+  ChatComposerSurface,
+  ChatComposerToolbar,
+} from "@/components/chat/ChatComposer";
+import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
   useResponseAnnotationEditorController,
 } from "@/components/chat/ResponseAnnotations";
 import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
 import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
-import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
+import { type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { ProjectIcon } from "@/components/ProjectIdentity";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import type { TranscriptAgentInspection, TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
@@ -152,8 +162,6 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
-  ArrowUp,
-  Boxes,
   ChevronDown,
   CirclePlus,
   Copy,
@@ -167,7 +175,6 @@ import {
   MoreHorizontal,
   PanelLeft,
   PanelRight,
-  Paperclip,
   Pencil,
   PencilLine,
   Pin,
@@ -178,10 +185,14 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { PendingAttachmentPreview } from "./Chat.attachments";
-import { ChatComposerFileDropOverlay, useChatComposerFileDrop } from "./Chat.file-drop";
+import {
+  ChatComposerFileDropOverlay,
+  useChatComposerFileDrop,
+  useChatComposerPasteAttachments,
+} from "./Chat.file-drop";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
 import {
   ChatAgentMenuContent,
@@ -197,7 +208,7 @@ import { usePendingChatResponseAnnotationSelection } from "./Chat.response-annot
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
 import { ChatWorkManifest, ChatWorkManifestToggle, hasChatWorkManifestContent } from "./Chat.work-manifest";
-import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, canQueueComposerDraft, chatMessageJumpTargetFromHref, chatReferenceMarkdown, chatSendButtonDisabled, clipboardAttachmentPayloadKey, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, projectChatQueueDelivery, queuedMessagePayloadForBodyEdit, revealChatAnnotationSourceElement, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry, type SendButtonMode } from "./Chat.workspace-helpers";
+import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, canQueueComposerDraft, chatMessageJumpTargetFromHref, chatReferenceMarkdown, chatSendButtonDisabled, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, projectChatQueueDelivery, queuedMessagePayloadForBodyEdit, revealChatAnnotationSourceElement, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry, type SendButtonMode } from "./Chat.workspace-helpers";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
@@ -337,7 +348,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           body: error instanceof Error ? error.message : undefined,
           tone: "error",
         }); } }, [pushToast, setPendingFilesForCurrentScope], ); const removePendingFile = useCallback((targetKey: string) => { setPendingFilesForCurrentScope((current) => current.filter((file) => pendingAttachmentKey(file) !== targetKey)); }, [setPendingFilesForCurrentScope]);
-  const handlePendingAttachmentPasteCapture = useCallback((event: ReactClipboardEvent<HTMLElement>) => { const clipboardData = event.clipboardData; const filesFromItems = Array.from(clipboardData?.items ?? []) .filter((item) => item.kind === "file") .map((item) => item.getAsFile()) .filter((file): file is File => file instanceof File); const seenItemPayloads = new Map<string, number>(); for (const file of filesFromItems) { const key = clipboardAttachmentPayloadKey(file); seenItemPayloads.set(key, (seenItemPayloads.get(key) ?? 0) + 1); } const filesFromList = Array.from(clipboardData?.files ?? []) .filter((file) => { const key = clipboardAttachmentPayloadKey(file); const remaining = seenItemPayloads.get(key) ?? 0; if (remaining <= 0) return true; if (remaining === 1) { seenItemPayloads.delete(key); } else { seenItemPayloads.set(key, remaining - 1); } return false; }); const files = [...filesFromItems, ...filesFromList]; if (files.length === 0) return; event.preventDefault(); event.stopPropagation(); void appendPendingFiles(files); }, [appendPendingFiles]);
+  const handlePendingAttachmentPasteCapture = useChatComposerPasteAttachments(appendPendingFiles);
   const { active: composerFileDragActive, targetProps: composerFileDropTargetProps } = useChatComposerFileDrop(appendPendingFiles);
   useEffect(() => {
     if (draftState.scopeKey === draftStorageScopeKey) return;
@@ -2627,14 +2638,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     }
   }, [showEmptyStateSupplementalContent]); const renderComposerContextMenu = () => { if (!composerContextMenuOpen || !composerMenuPosition || typeof document === "undefined") return null; const activeMenu = projectMenuOpen ? "project" : agentMenuOpen ? "agent" : "skill";
     return createPortal(
-      <div
-        ref={composerContextMenuRef}
-        data-testid={`chat-${activeMenu}-menu`}
-        role="menu"
-        aria-label={activeMenu === "agent" ? "Chat agent" : undefined}
+      <ChatComposerContextMenu
+        menuRef={composerContextMenuRef}
+        testId={`chat-${activeMenu}-menu`}
+        ariaLabel={activeMenu === "agent" ? "Chat agent" : undefined}
         onKeyDown={agentMenuOpen ? handleChatAgentMenuKeyDown : undefined}
-        className="chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay fixed z-50 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
-        style={composerMenuPosition}
+        position={composerMenuPosition}
       >
         {projectMenuOpen && !projectSelectionLocked ? ( <>
             <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Project context</div>
@@ -2655,34 +2664,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         {agentMenuOpen ? (
           <ChatAgentMenuContent agents={liveAgents} activeAgentId={activeAgentId} agentSelectionLocked={agentSelectionLocked} runtimeSelectionPending={runtimeSelectionPending} newConversationSendInFlight={newConversationSendInFlight} externalBound={selectedConversationExternalBound} adapterModels={adapterModelsQuery.data} overrides={activeRuntimeOverrides} runtimeLabel={runtimePillLabel} isLoading={adapterModelsQuery.isPending} error={adapterModelsQuery.error} modelSelectRef={runtimeModelSelectRef} onSelectAgent={applyPreferredAgent} onChangeRuntime={applyRuntimeOverrides} />
         ) : null}
-        {skillMenuOpen ? ( <>
-            <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Skills</div>
-            {chatSkillsPending ? (
-              <div className="flex items-center gap-2 rounded-[var(--radius-md)] px-3 py-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Loading skills...</span> </div> ) : availableChatSkills.length === 0 ? (
-              <div className="rounded-[var(--radius-md)] px-3 py-2 text-sm leading-6 text-muted-foreground">
-                This agent has no enabled skills. </div> ) : ( <>
-                <div className="px-2 pb-2">
-                  <input ref={skillSearchInputRef} className="w-full rounded-[var(--radius-md)] border border-border bg-transparent px-2.5 py-2 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-ring" placeholder="Search skills..." value={skillSearchQuery} onChange={(event) => { setSkillSearchQuery(event.target.value);
-                    }} onKeyDown={(event) => { event.stopPropagation();
-                    }} /> </div>
-                <div>
-                  {filteredChatSkills.length === 0 ? (
-                    <div className="rounded-[var(--radius-md)] px-3 py-2 text-sm leading-6 text-muted-foreground">
-                      No skills match search. </div> ) : filteredChatSkills.map((entry) => (
-                    <button key={entry.id} type="button" role="menuitem"
-                      data-chat-composer-menu-item className="chat-composer-menu-row" onClick={() => insertSkillReference(entry)} >
-                      <Boxes className="h-4 w-4 shrink-0 text-[#2f80ed]" />
-                      <span className="flex min-w-0 flex-1 items-center gap-2">
-                        <span className="min-w-0 shrink truncate font-medium text-foreground">
-                          {entry.skillDisplayName} </span>
-                        {entry.skillCategoryLabel ? (
-                          <span className="inline-flex shrink-0 items-center rounded-[var(--radius-sm)] border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
-                            {entry.skillCategoryLabel} </span> ) : null}
-                        <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                          {entry.skillDescription ?? entry.skillLocationLabel ?? entry.skillRefLabel} </span> </span> </button>
-                  ))} </div> </> )} </> ) : null} </div>, document.body, ); }; const refreshQueue = (chatId: string) => {
+        {skillMenuOpen ? (
+          <ChatComposerSkillsMenuContent
+            pending={chatSkillsPending}
+            skills={availableChatSkills}
+            filteredSkills={filteredChatSkills}
+            searchQuery={skillSearchQuery}
+            searchInputRef={skillSearchInputRef}
+            onSearchQueryChange={setSkillSearchQuery}
+            onSelect={insertSkillReference}
+          />
+        ) : null}
+      </ChatComposerContextMenu>,
+      document.body,
+    );
+  }; const refreshQueue = (chatId: string) => {
     if (!selectedOrganizationId) return;
     void queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, chatId) });
   };
@@ -2876,7 +2872,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       );
     }
     return (
-    <div ref={composerSurfaceRef} data-testid="chat-composer-file-drop-target" {...composerFileDropTargetProps} className={cn("chat-composer relative rounded-[var(--radius-lg)] p-3 transition-all duration-300", composerStreaming && "chat-composer--streaming", composerFileDragActive && "ring-2 ring-[color:var(--accent-base)] ring-offset-2 ring-offset-background", centered ? "mx-auto w-full max-w-3xl" : "w-full")} >
+    <ChatComposerSurface
+      ref={composerSurfaceRef}
+      centered={centered}
+      streaming={composerStreaming}
+      fileDragActive={composerFileDragActive}
+      fileDropTargetProps={composerFileDropTargetProps}
+    >
       {composerFileDragActive ? <ChatComposerFileDropOverlay /> : null}
       {selectedConversation && visibleQueueItems.length > 0 ? (
         <div data-testid="chat-running-queue" className="mb-2.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_88%,transparent)] p-2">
@@ -3026,20 +3028,23 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               <div key={fileKey} data-testid="chat-pending-attachment" className="max-w-full" >
                 <PendingAttachmentPreview file={file} onRemove={() => removePendingFile(fileKey)} /> </div> );
           })} </div> ) : null}
-      <div ref={composerEditorScrollRef} data-testid="chat-composer-editor-scroll" className="chat-composer-editor-scroll scrollbar-auto-hide overflow-y-auto overscroll-contain" onKeyDownCapture={handleComposerSuggestionKeyDown} onPasteCapture={handlePendingAttachmentPasteCapture} >
-        <MarkdownEditor ref={composerEditorRef} value={draft} onChange={handleComposerDraftChange}
+      <ChatComposerEditor
+          ref={composerEditorRef}
+          scrollRef={composerEditorScrollRef}
+          value={draft}
+          onChange={handleComposerDraftChange}
           mentions={mentionOptions}
           onMentionQueryChange={setLibraryFileMentionQuery}
           mentionMenuAnchorRef={composerSurfaceRef}
           mentionMenuPlacement="container"
-          submitShortcut="enter"
           onInlineTokenClick={handleComposerInlineTokenClick}
-          plainText className="rounded-[var(--radius-md)] bg-transparent"
+          onKeyDownCapture={handleComposerSuggestionKeyDown}
+          onPasteCapture={handlePendingAttachmentPasteCapture}
           contentClassName={cn(
-            "min-h-[88px] bg-transparent text-[15px] leading-7 text-foreground",
             selectedEmptyStatePromptGroup && "font-semibold",
           )}
-          bordered={false} placeholder={composerPlaceholder} onSubmit={() => {
+          placeholder={composerPlaceholder}
+          onSubmit={() => {
             if (composerUnavailable || newConversationSendInFlight || runtimeSelectionPending) return;
             if (selectedConversationHasActiveReply && selectedConversation) {
               void queueComposerMessage(selectedConversation);
@@ -3047,7 +3052,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             }
             if (!controlsDisabled) {
               void sendMessage(); }
-          }} /> </div>
+          }}
+        />
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {responseAnnotationAnnouncement}
       </div>
@@ -3057,19 +3063,45 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           {composerUnavailableMessage}{" "}
           <Link to="/agents" className="underline underline-offset-4 hover:text-foreground">
             Open agents </Link> </div> ) : null}
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
-            <DropdownMenuTrigger type="button" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-sm font-medium text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Add files and options" >
-              <Plus className="h-4 w-4" /> </DropdownMenuTrigger>
-            <DropdownMenuContent align="start"
-              sideOffset={8} className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1.5 text-foreground" >
-              <DropdownMenuItem className="rounded-[var(--radius-md)] px-3 py-2.5" onSelect={(e) => { e.preventDefault(); setPlusMenuOpen(false); window.setTimeout(() => fileInputRef.current?.click(), 0);
-                }} >
-                <Paperclip className="mr-2 h-4 w-4" />
-                Add files </DropdownMenuItem>
+      <ChatComposerToolbar
+        actions={(
+          <>
+            {canStopSelectedConversationReply && selectedConversation && sendButtonMode !== "stop" && sendButtonMode !== "sending" && sendButtonMode !== "stopping" ? (
+              <Button type="button" variant="ghost" size="icon-sm" aria-label="Stop streaming" onClick={() => stopStreaming(selectedConversation.id)} className={cn(
+                "shrink-0 rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground",
+                "hover:bg-[color:var(--surface-active)]",
+                "focus-visible:ring-2 focus-visible:ring-ring/40",
+              )} >
+                <Square className="h-3.5 w-3.5 fill-current" /> </Button>
+            ) : null}
+            <ChatComposerSendButton
+              mode={sendButtonMode}
+              disabled={sendButtonDisabled}
+              stoppingComplete={activeStream?.state === "stopped"}
+              onClick={() => {
+                if (sendButtonMode === "stop" && selectedConversation) {
+                  stopStreaming(selectedConversation.id);
+                  return;
+                }
+                if (sendButtonMode === "queue" && selectedConversation) {
+                  void queueComposerMessage(selectedConversation);
+                  return;
+                }
+                if (sendButtonMode === "send") {
+                  void sendMessage();
+                }
+              }}
+            />
+          </>
+        )}
+      >
+          <ChatComposerAddMenu
+            open={plusMenuOpen}
+            onOpenChange={setPlusMenuOpen}
+            onAddFiles={() => fileInputRef.current?.click()}
+          >
               <ChatPlanModeMenuToggle active={activePlanMode} onChange={applyPlanMode} />
-              </DropdownMenuContent> </DropdownMenu>
+          </ChatComposerAddMenu>
           {activePlanMode ? <ChatPlanModeChip onDisable={() => applyPlanMode(false)} /> : null}
           {showProjectSelector ? (
             <div className="group/project relative inline-flex max-w-[min(100%,15rem)] min-w-0">
@@ -3110,43 +3142,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 return; } openComposerContextMenu("agent");
             }} />
           {showChatSkillsPicker ? (
-            <button type="button" className={cn(
-                "chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)]",
-                skillMenuOpen && "bg-[color:var(--surface-active)]",
-              )} aria-label="Skills" aria-expanded={skillMenuOpen} onClick={() => {
+            <ChatComposerSkillsButton open={skillMenuOpen} onClick={() => {
                 if (skillMenuOpen) { closeComposerContextMenus();
                   return; } openComposerContextMenu("skill");
-              }} >
-              <span className="min-w-0 truncate">Skills</span> </button> ) : null} </div>
-        {canStopSelectedConversationReply && selectedConversation && sendButtonMode !== "stop" && sendButtonMode !== "sending" && sendButtonMode !== "stopping" ? (
-          <Button type="button" variant="ghost" size="icon-sm" aria-label="Stop streaming" onClick={() => stopStreaming(selectedConversation.id)} className={cn(
-            "shrink-0 rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground",
-            "hover:bg-[color:var(--surface-active)]",
-            "focus-visible:ring-2 focus-visible:ring-ring/40",
-          )} >
-            <Square className="h-3.5 w-3.5 fill-current" /> </Button>
-        ) : null}
-        <Button type="button" variant="ghost" size="icon-sm" onClick={() => {
-            if (sendButtonMode === "stop" && selectedConversation) { stopStreaming(selectedConversation.id);
-              return; }
-            if (sendButtonMode === "queue" && selectedConversation) {
-              void queueComposerMessage(selectedConversation);
-              return; }
-            if (sendButtonMode === "send") {
-              void sendMessage(); }
-          }} disabled={sendButtonDisabled} aria-busy={sendButtonMode === "sending" || (sendButtonMode === "stopping" && activeStream?.state === "stopping") ? true : undefined} aria-label={
-            sendButtonMode === "sending" ? "Sending" : sendButtonMode === "stopping" ? activeStream?.state === "stopped" ? "Response stopped" : "Stopping response" : sendButtonMode === "stop" ? "Stop streaming" : sendButtonMode === "queue" ? "Queue" : "Send"
-          } className={cn(
-            "shrink-0 rounded-full border-0 bg-white text-black shadow-sm",
-            "hover:bg-zinc-100 dark:bg-white dark:text-black dark:hover:bg-zinc-100",
-            "disabled:pointer-events-none disabled:opacity-35",
-            "focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--surface-page)]",
-            (sendButtonMode === "sending" || sendButtonMode === "stopping") && "disabled:opacity-100",
-          )} >
-          {sendButtonMode === "sending" || (sendButtonMode === "stopping" && activeStream?.state === "stopping") ? (
-            <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={2.25} /> ) : sendButtonMode === "stop" || sendButtonMode === "stopping" ? (
-            <Square className="h-3.5 w-3.5 fill-current" /> ) : (
-            <ArrowUp className="h-[18px] w-[18px]" strokeWidth={2.25} /> )} </Button> </div>
+              }} />
+          ) : null}
+      </ChatComposerToolbar>
       {pendingResponseAnnotationSelection ? (
         <SelectionAnnotationToolbar
           open
@@ -3182,7 +3183,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           autoFocus={pendingResponseAnnotationSelection.autoFocusToolbar}
         />
       ) : null}
-      {renderComposerContextMenu()} </div> );
+      {renderComposerContextMenu()} </ChatComposerSurface> );
   };
   const renderEmptyStatePromptFlow = () => {
     const starterActive = emptyStatePromptFlowState === "starters";

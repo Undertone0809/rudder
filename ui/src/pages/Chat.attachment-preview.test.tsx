@@ -1988,7 +1988,7 @@ describe("Chat Side Panel link handling", () => {
       selector?.click();
       await Promise.resolve();
     });
-    const rowanOption = container.querySelector<HTMLButtonElement>(
+    const rowanOption = document.querySelector<HTMLButtonElement>(
       "[data-testid='chat-agent-option-agent-2'] [role='menuitemradio']",
     );
     expect(rowanOption?.disabled).toBe(false);
@@ -1998,12 +1998,12 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
     expect(selector?.textContent).toContain("Rowan");
-    expect(container.querySelector(
+    expect(document.querySelector(
       "[data-testid='chat-agent-option-agent-2'] [data-testid='chat-agent-runtime-selector']",
     )).not.toBeNull();
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>(
+      document.querySelector<HTMLButtonElement>(
         "[data-testid='chat-agent-option-agent-2'] [data-testid='chat-agent-runtime-selector']",
       )?.click();
       await Promise.resolve();
@@ -2039,12 +2039,12 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector("[data-testid='chat-agent-lock-state']")?.textContent)
+    expect(document.querySelector("[data-testid='chat-agent-lock-state']")?.textContent)
       .toContain("Bound to chat");
-    expect(container.querySelector<HTMLButtonElement>(
+    expect(document.querySelector<HTMLButtonElement>(
       "[data-testid='chat-agent-option-agent-2'] [role='menuitemradio']",
     )?.disabled).toBe(true);
-    expect(container.querySelector(
+    expect(document.querySelector(
       "[data-testid='chat-agent-option-agent-1'] [data-testid='chat-agent-runtime-selector']",
     )).not.toBeNull();
   });
