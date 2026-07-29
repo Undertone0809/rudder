@@ -49,10 +49,10 @@ function createPackageMapRepo() {
 }
 
 function addPrivateWorkspaceDependency(repo, packagePath) {
-  const privatePackageDir = join(repo, "packages", "identity-core");
+  const privatePackageDir = join(repo, "identity");
   mkdirSync(privatePackageDir, { recursive: true });
   writeJson(join(privatePackageDir, "package.json"), {
-    name: "@rudderhq/identity-core",
+    name: "@rudderhq/identity",
     version: "0.0.0",
     private: true,
   });
@@ -61,9 +61,23 @@ function addPrivateWorkspaceDependency(repo, packagePath) {
   writeJson(packagePath, {
     ...pkg,
     dependencies: {
-      "@rudderhq/identity-core": "workspace:*",
+      "@rudderhq/identity": "workspace:*",
     },
   });
+}
+
+function addPublicServerDependency(repo) {
+  const serverDir = join(repo, "server");
+  mkdirSync(serverDir, { recursive: true });
+  const serverPackagePath = join(serverDir, "package.json");
+  writeJson(serverPackagePath, {
+    name: "@rudderhq/server",
+    version: "0.2.10",
+    dependencies: {
+      "@rudderhq/shared": "workspace:*",
+    },
+  });
+  return serverPackagePath;
 }
 
 function runPackageMap(repo, args) {
@@ -88,8 +102,24 @@ describe("release package map", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "public package @rudderhq/shared depends on private workspace package @rudderhq/identity-core",
+      "public package @rudderhq/shared depends on private workspace package @rudderhq/identity",
     );
+  });
+
+  it("rewrites public workspace dependencies to the exact publish version", () => {
+    const { repo } = createPackageMapRepo();
+    const serverPackagePath = addPublicServerDependency(repo);
+
+    const result = runPackageMap(repo, [
+      "set-publish-version",
+      "0.2.11-canary.2",
+      "--allow-source-mutation",
+    ]);
+    const manifest = readJson(serverPackagePath);
+
+    expect(result.status).toBe(0);
+    expect(manifest.version).toBe("0.2.11-canary.2");
+    expect(manifest.dependencies["@rudderhq/shared"]).toBe("0.2.11-canary.2");
   });
 
   it("refuses publish manifest rewrites unless release automation opts in", () => {
