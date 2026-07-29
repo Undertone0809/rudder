@@ -6,6 +6,8 @@ import {
   chatAttachments,
   chatContextLinks,
   chatConversations,
+  chatGenerationEvents,
+  chatGenerations,
   chatMessages,
   chatWorkManifestItems,
   createDb,
@@ -204,6 +206,198 @@ describe("chatWorkManifestService", () => {
     expect(manifest.references).toHaveLength(0);
     expect(manifest.outputs.some((item) => item.url === "https://example.com/report")).toBe(false);
     expect(manifest.sources.filter((item) => item.url === "https://example.com/report")).toHaveLength(1);
+  });
+
+  it("projects conversation subagents from current legacy transcript evidence", async () => {
+    const { orgId, agentId, conversationId } = await seedBase("Subagents");
+    const firstMessageId = randomUUID();
+    const latestMessageId = randomUUID();
+    const supersededMessageId = randomUUID();
+    const transcriptEntry = (
+      id: string,
+      threadId: string,
+      status: string,
+      agentPath: string,
+      response?: string,
+    ) => ({
+      kind: "tool_call",
+      ts: id === "spawn-1" ? "2026-07-29T01:00:00.000Z" : "2026-07-29T01:00:10.000Z",
+      name: "subagent_activity",
+      toolUseId: id,
+      input: {
+        id,
+        activity_kind: status,
+        agent_path: agentPath,
+        receiver_thread_ids: [threadId],
+        agent_transcripts: {
+          [threadId]: {
+            status,
+            entries: response
+              ? [{ kind: "assistant", ts: "2026-07-29T01:00:12.000Z", text: response }]
+              : [],
+          },
+        },
+      },
+    });
+    await db.insert(chatMessages).values([
+      {
+        id: firstMessageId,
+        orgId,
+        conversationId,
+        role: "assistant",
+        status: "completed",
+        body: "Delegating.",
+        replyingAgentId: agentId,
+        structuredPayload: {
+          __chatTranscript: [
+            transcriptEntry("spawn-1", "thread-review", "inProgress", "/root/roadmap_reviewer"),
+          ],
+        },
+      },
+      {
+        id: latestMessageId,
+        orgId,
+        conversationId,
+        role: "assistant",
+        status: "completed",
+        body: "Review complete.",
+        replyingAgentId: agentId,
+        structuredPayload: {
+          __chatTranscript: [
+            transcriptEntry("activity-1", "thread-review", "completed", "/root/roadmap_reviewer", "Passed."),
+            transcriptEntry("activity-2", "thread-active", "inProgress", "/root/runtime_verifier"),
+          ],
+        },
+      },
+      {
+        id: supersededMessageId,
+        orgId,
+        conversationId,
+        role: "assistant",
+        status: "completed",
+        body: "Superseded.",
+        replyingAgentId: agentId,
+        supersededAt: new Date("2026-07-29T01:00:20.000Z"),
+        structuredPayload: {
+          __chatTranscript: [
+            transcriptEntry("activity-hidden", "thread-hidden", "completed", "/root/hidden_reviewer"),
+          ],
+        },
+      },
+    ]);
+
+    const manifest = await svc.getConversationManifest(conversationId);
+
+    expect(manifest.subagents.totalCount).toBe(2);
+    expect(manifest.subagents.active).toEqual([
+      expect.objectContaining({
+        threadId: "thread-active",
+        label: "Runtime Verifier",
+        state: "active",
+      }),
+    ]);
+    expect(manifest.subagents.done).toEqual([
+      expect.objectContaining({
+        threadId: "thread-review",
+        sourceMessageId: latestMessageId,
+        label: "Roadmap Reviewer",
+        state: "done",
+        status: "completed",
+      }),
+    ]);
+    expect([
+      ...manifest.subagents.active,
+      ...manifest.subagents.done,
+    ]).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ threadId: "thread-hidden" }),
+    ]));
+  });
+
+  it("uses accepted native generation transcript events instead of legacy payloads", async () => {
+    const { orgId, agentId, conversationId } = await seedBase("NativeSubagents");
+    const messageId = randomUUID();
+    const generationId = randomUUID();
+    await db.insert(chatMessages).values({
+      id: messageId,
+      orgId,
+      conversationId,
+      role: "assistant",
+      status: "streaming",
+      body: "Working.",
+      replyingAgentId: agentId,
+      structuredPayload: {
+        __chatTranscript: [{
+          kind: "tool_call",
+          ts: "2026-07-29T01:00:00.000Z",
+          name: "subagent_activity",
+          toolUseId: "legacy-hidden",
+          input: {
+            id: "legacy-hidden",
+            receiver_thread_ids: ["thread-legacy-hidden"],
+          },
+        }],
+      },
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "running",
+      acceptedThroughSeq: 1,
+    });
+    await db.insert(chatGenerationEvents).values([
+      {
+        orgId,
+        generationId,
+        generationSeq: 1,
+        attemptEpoch: 1,
+        eventKind: "transcript",
+        assistantMessageId: messageId,
+        payload: {
+          entry: {
+            kind: "tool_call",
+            ts: "2026-07-29T01:00:01.000Z",
+            name: "subagent_activity",
+            toolUseId: "native-active",
+            input: {
+              id: "native-active",
+              agent_path: "/root/native_verifier",
+              receiver_thread_ids: ["thread-native"],
+            },
+          },
+        },
+      },
+      {
+        orgId,
+        generationId,
+        generationSeq: 2,
+        attemptEpoch: 1,
+        eventKind: "transcript",
+        assistantMessageId: messageId,
+        payload: {
+          entry: {
+            kind: "tool_call",
+            ts: "2026-07-29T01:00:02.000Z",
+            name: "subagent_activity",
+            toolUseId: "native-late",
+            input: {
+              id: "native-late",
+              receiver_thread_ids: ["thread-native-late"],
+            },
+          },
+        },
+      },
+    ]);
+
+    const manifest = await svc.getConversationManifest(conversationId);
+    expect(manifest.subagents.active).toEqual([
+      expect.objectContaining({
+        threadId: "thread-native",
+        label: "Native Verifier",
+      }),
+    ]);
+    expect(manifest.subagents.done).toEqual([]);
+    expect(manifest.subagents.totalCount).toBe(1);
   });
 
   it("excludes annotation-owned attachments and quoted annotation content from work sources", async () => {

@@ -1,71 +1,65 @@
-# Issue proposal Side Panel — Design QA
+# Chat Work Manifest Subagents — Design QA
 
-- Source visual truth:
-  - `/Users/zeeland/.codex/attachments/a01e7734-d54b-45fb-8b89-f59c394744d3/image-1.png` (`3070 × 1998`)
-  - `/Users/zeeland/.codex/attachments/a01e7734-d54b-45fb-8b89-f59c394744d3/image-2.png` (`3600 × 2260`)
-  - `/Users/zeeland/.codex/attachments/a01e7734-d54b-45fb-8b89-f59c394744d3/image-3.png` (`3158 × 2260`)
-- Rendered implementation:
-  - `/tmp/rudder-issue-proposal-qa/issue-proposal-inline-card.png`
-  - `/tmp/rudder-issue-proposal-qa/issue-proposal-side-panel.png`
-- Viewport: `1280 × 720` CSS px, Chromium, device scale factor `1`
-- Implementation pixels: `1280 × 720`
-- Density normalization: the references are differently sized product-direction screenshots rather than a pixel-identical target. The comparison used matching desktop/light-theme product states and proportional region/layout comparison; no density-only differences were filed.
-- State:
-  - unopened full Issue proposal card with ten-line details preview
-  - opened `Issue proposal` Side Panel tab with compact inline launcher, full proposal content, and review actions
+## Reference and implementation evidence
 
-## Full-view comparison evidence
+- Codex list reference:
+  `/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/codex-clipboard-d6bf2e65-7a74-40c6-89e8-a01f8a19dae3.png`
+- Codex manifest reference:
+  `/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/codex-clipboard-e505e39d-77cd-457b-80c4-6d4216ea3195.png`
+- Rudder light manifest:
+  `/tmp/rudder-chat-work-manifest-subagents-final/manifest-subagents-light-1440x900.png`
+- Rudder light list:
+  `/tmp/rudder-chat-work-manifest-subagents-final/subagents-list-light-1440x900.png`
+- Rudder dark list:
+  `/tmp/rudder-chat-work-manifest-subagents-final/subagents-list-dark-1440x900.png`
+- Rudder narrow manifest:
+  `/tmp/rudder-chat-work-manifest-subagents-final/manifest-subagents-dark-narrow.png`
+- Full-view list comparison:
+  `/tmp/rudder-chat-work-manifest-subagents-final/reference-vs-rudder-list.png`
+- Focused manifest comparison:
+  `/tmp/rudder-chat-work-manifest-subagents-final/reference-vs-rudder-summary.png`
 
-The implementation preserves the existing Rudder Messenger shell and existing Side Panel outer frame. Opening the proposal produces a dedicated tab, narrows the conversation work surface, replaces the inline card with a compact launcher, and keeps the proposal review surface in the right panel. Closing the tab restores the full inline card. These are the same major-region and lifecycle relationships shown by the source references.
+The implementation evidence was captured from a real local Rudder API,
+embedded PostgreSQL database, Vite UI, and Chromium. Desktop captures use a
+1440×900 viewport; the compact capture uses 900×900. Reference crops were
+scaled to the implementation height only for side-by-side visual inspection.
 
-The final `1280 × 720` capture shows proposal details above the compact sticky review footer, avoiding the earlier state where the footer obscured all proposal body content at this viewport.
+## State coverage
 
-## Focused-region comparison evidence
+- Light: 2 Active and 4 Done, four Oreo avatars, long accessible name,
+  failed/interrupted terminal states, and list-to-detail navigation.
+- Live transition: an Active detail reaches Completed inside the same source
+  message and displays its final transcript response.
+- Dark: 0 Active and 6 Done after transition, with a stable Side Panel width.
+- Narrow: the compact `Subagents 6` manifest entry remains usable.
+- Persistence: reload, Side Panel hide/restore, and canonical detail-tab
+  deduplication were exercised.
 
-- Side Panel chrome: existing tab strip, expand/collapse controls, resize behavior, borders, radii, and surface tokens are reused rather than recreated.
-- Proposal header and facts: title, pending status, priority, issue status, owner, and reviewer retain the source hierarchy and product tokens.
-- Compact inline state: the row uses the requested `Issue proposal` label, a lightbulb icon, and a reopen affordance in the same location and density as the source's compact plan row.
-- Review footer: decision feedback and all three review actions remain visible at the narrow Side Panel width. The textarea and button padding were reduced only for this presentation so proposal content remains visible above it.
-- No focused asset comparison was needed: the implementation introduces no logos, illustrations, imagery, or non-standard icons; all new icons come from the project's existing Lucide library.
+## Fidelity assessment
 
-## Required fidelity surfaces
-
-- Fonts and typography: existing Rudder font stack, weights, title scale, compact tab text, and small metadata hierarchy are preserved.
-- Spacing and layout rhythm: existing Side Panel spacing and card tokens are reused; the narrow-panel facts become a single column and the action footer is compact enough for the target viewport.
-- Colors and visual tokens: all surfaces, borders, state badges, and action colors use existing Rudder CSS variables and semantic button variants.
-- Image quality and asset fidelity: no source imagery was replaced or approximated; the feature adds no raster or custom vector assets.
-- Copy and content: `Issue proposal`, `Show full proposal`, `Approve & create issue`, `Request changes`, and `Reject` match the requested review workflow. A polite live-region message announces the panel transition.
-
-## Findings
-
-No actionable P0, P1, or P2 visual differences remain.
-
-Acceptable differences:
-
-- The references mix dark and light themes and use different proposal data; the implementation follows the active Rudder theme and live proposal data.
-- The final viewport is smaller than the reference mock. The Side Panel therefore uses the existing narrow-width one-column fact layout and scrollable body.
+- Information architecture matches the Codex references: compact avatar/count
+  summary, then `Active · N` and `Done · N` groups with avatar, readable name,
+  status, and relative time.
+- Typography, spacing, radii, surfaces, shadows, and scrolling use Rudder's
+  existing design tokens. The Rudder shell remains intentionally rounder than
+  the Codex panel rather than introducing a foreign card style.
+- Existing Oreo avatar assets are used; no placeholder or approximated assets
+  were introduced.
+- Terminal failures and interruptions keep semantic visual treatment while
+  remaining inside the Done group.
+- Truncated labels retain the full value through title/accessibility text.
 
 ## Comparison history
 
-1. Initial rendered pass:
-   - P1: target-content replacement could enter a maximum-update-depth loop.
-   - Fix: replaced target mutation with a stable ID-only target and an external-store-backed content registry.
-   - Post-fix evidence: the full Side Panel lifecycle E2E completed without UI recovery.
-2. Reviewer/adversarial pass:
-   - P1: a stable ReactNode wrapper could retain stale review callbacks.
-   - P2: the disclosure ARIA model did not match opening a separate panel.
-   - P2: the tall sticky action footer hid proposal details at `1280 × 720`.
-   - Fixes: publish fresh proposal render state through a subscribable registry, remove false disclosure ARIA when opening the panel, add a live-region announcement, and compact the panel-only footer.
-   - Post-fix evidence: Request changes submitted current feedback in the real E2E environment; the final screenshot shows proposal details above the footer.
+1. Initial dark capture was taken during the Side Panel width transition and
+   clipped the tab/list edge.
+2. The E2E capture now waits for the panel to exceed 300px and settle before
+   taking the screenshot.
+3. The post-fix dark capture is stable and the independent verifier returned
+   PASS.
 
-## Implementation checklist
-
-- [x] Existing Side Panel outer design reused
-- [x] Full card → compact row → panel lifecycle verified
-- [x] Collapse/reopen and tab-close restoration verified
-- [x] Current review feedback reaches Request changes
-- [x] Transition is announced without false disclosure semantics
-- [x] Reduced-motion fallback included
-- [x] Final rendered screenshot reviewed
+No unresolved P0, P1, or P2 design-fidelity issues remain. The only visible
+difference from Codex is the intentional use of Rudder's established shell
+radius, width, and surface tokens.
 
 final result: passed

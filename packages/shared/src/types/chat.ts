@@ -512,12 +512,48 @@ export interface ChatWorkManifestItem {
   updatedAt: Date;
 }
 
+export type ChatWorkManifestSubagentState = "active" | "done";
+
+export type ChatWorkManifestSubagentStatus =
+  | "running"
+  | "pending"
+  | "completed"
+  | "failed"
+  | "interrupted"
+  | "cancelled"
+  | "stopped"
+  | "unknown";
+
+export interface ChatWorkManifestSubagentSummary {
+  callId: string;
+  threadId: string;
+  sourceMessageId: string;
+  runId: string | null;
+  senderLabel?: string | null;
+  label: string;
+  prompt: string;
+  avatarSeed: string;
+  model: string | null;
+  reasoningEffort: string | null;
+  state: ChatWorkManifestSubagentState;
+  status: ChatWorkManifestSubagentStatus;
+  startedAt: string;
+  updatedAt: string;
+}
+
+export interface ChatWorkManifestSubagents {
+  active: ChatWorkManifestSubagentSummary[];
+  done: ChatWorkManifestSubagentSummary[];
+  totalCount: number;
+}
+
 export interface ChatWorkManifestResponse {
   conversationId: string;
   totalCount: number;
   outputs: ChatWorkManifestItem[];
   sources: ChatWorkManifestItem[];
   references: ChatWorkManifestItem[];
+  subagents: ChatWorkManifestSubagents;
   project: {
     id: string;
     totalCount: number;

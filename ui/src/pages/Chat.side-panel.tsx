@@ -18,6 +18,7 @@ import { LocalAppPanelView } from "@/components/side-panel/LocalAppPanelView";
 import { LocalAppsPanel } from "@/components/side-panel/LocalAppsPanel";
 import { SideChatPanelView } from "@/components/side-panel/SideChatPanelView";
 import { SubagentPanelView } from "@/components/side-panel/SubagentPanelView";
+import { SubagentsPanelView } from "@/components/side-panel/SubagentsPanelView";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StatusIcon } from "@/components/StatusIcon";
 import { TranscriptLocalFilePreview } from "@/components/transcript/TranscriptLocalFilePreview";
@@ -272,7 +273,7 @@ function ChatSidePanelTabIcon({
   if (tab.kind === "chat" || tab.kind === "side_chat") {
     return <MessageSquare aria-hidden className={iconClassName} />;
   }
-  if (tab.kind === "subagent") return <Bot aria-hidden className={iconClassName} />;
+  if (tab.kind === "subagents" || tab.kind === "subagent") return <Bot aria-hidden className={iconClassName} />;
   if (tab.kind === "library_directory") return <Folder aria-hidden className={iconClassName} />;
   if (tab.kind === "library_document") return <FileText aria-hidden className={iconClassName} />;
   if (tab.kind === "library_entry") {
@@ -1755,6 +1756,7 @@ export function ChatSidePanel({
   const issueProposalTarget = activeTarget?.kind === "issue_proposal" ? activeTarget : null;
   const chatTarget = activeTarget?.kind === "chat" ? activeTarget : null;
   const sideChatTarget = activeTarget?.kind === "side_chat" ? activeTarget : null;
+  const subagentsTarget = activeTarget?.kind === "subagents" ? activeTarget : null;
   const subagentTarget = activeTarget?.kind === "subagent" ? activeTarget : null;
   const automationTarget = activeTarget?.kind === "automation" ? activeTarget : null;
   const libraryFileTarget = activeTarget?.kind === "library_file" ? activeTarget : null;
@@ -2311,7 +2313,7 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 flex-1",
-          activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
+          activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || subagentsTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
           {liveSurfaceTargets.map((target) => {
@@ -2447,6 +2449,8 @@ export function ChatSidePanel({
               onReplaceTarget={replaceSidePanelTarget}
               onSelectResponseAnnotation={selectSideChatResponseAnnotation}
             />
+          ) : subagentsTarget && selectedOrganizationId ? (
+            <SubagentsPanelView organizationId={selectedOrganizationId} target={subagentsTarget} />
           ) : subagentTarget ? (
             <SubagentPanelView target={subagentTarget} />
           ) : chatTarget ? (

@@ -2198,8 +2198,8 @@ Evidence:
 ## Contract Summary
 
 Messenger Chat exposes a compact, conversation-scoped manifest that keeps the
-current thread's inspectable Outputs, Sources, and References visible without
-requiring the operator to search the transcript. Work from other
+current thread's inspectable Outputs, direct Subagents, Sources, and References
+visible without requiring the operator to search the transcript. Work from other
 conversations linked to the same Project is intentionally omitted from this
 surface and remains available from Project-level surfaces. When the current
 Chat has successfully created or converted to a primary issue, that issue is a
@@ -2208,10 +2208,11 @@ message.
 
 ## Intent / User Job
 
-An operator returning to a long or active Chat needs to answer three questions
-quickly: what this thread produced, what input it used, which external sites the
-visible conversation cited. The manifest is an index into durable work and
-provenance, not a second chat transcript or a generic bookmark manager.
+An operator returning to a long or active Chat needs to answer four questions
+quickly: what this thread produced, which direct subagents are still active or
+done, what input it used, and which external sites the visible conversation
+cited. The manifest is an index into work and provenance, not a second chat
+transcript or a generic bookmark manager.
 
 ## Why / Design Reasoning
 
@@ -2244,6 +2245,10 @@ them through `CONTEXT.RESOURCES.001`.
 - Manifest item: category, target type/key, title, URL or internal locator,
   status, source role, message/Run/Agent/user provenance, Project id, metadata,
   and timestamps.
+- Subagent summary: a transcript-derived, conversation-scoped projection keyed
+  by subagent thread id. It carries the source message/Run, readable task name,
+  prompt, avatar seed, model/reasoning metadata, normalized state/status, and
+  start/update timestamps, but not the full nested transcript.
 - Output: Agent-created ordinary Chat attachment or Run-backed assistant Library
   artifact under the guarded `artifacts/...` output namespace. A trusted
   same-message inline visual backing attachment under `CHAT.INLINE.VISUAL.001`
@@ -2280,6 +2285,9 @@ them through `CONTEXT.RESOURCES.001`.
 - Chat edit, refresh/variant, fork, attachment, and message supersession state.
 - Response-annotation payload and attachment ownership, used only to exclude
   those private quote-supporting files from manifest classification.
+- Accepted native assistant transcript-ledger entries through each generation's
+  acceptance cutoff, plus legacy `structuredPayload.__chatTranscript` evidence
+  when no accepted native transcript is available for that message.
 
 ## Product Logic Flow
 
@@ -2287,9 +2295,11 @@ them through `CONTEXT.RESOURCES.001`.
 2. Rudder verifies Chat access through the same organization boundary as normal
    Chat reads.
 3. Reconciliation reads active, non-superseded user and assistant messages and
-   their attachments. Transcript entries, reasoning, tool results, stdout,
-   stderr, response-annotation text/comments, and annotation-owned attachments
-   are excluded.
+   their attachments. Transcript entries, reasoning, tool results, stdout, and
+   stderr remain excluded from Output/Source/Reference extraction. Direct
+   subagent lifecycle evidence is the narrow exception: Rudder reads accepted
+   native transcript-ledger events through the generation cutoff, or the
+   compatible legacy transcript payload when native evidence is absent.
 4. User attachments, user Library references, and user HTTP(S) links become
    Source candidates. Agent-created ordinary attachments become Output
    candidates. Before classification, Rudder validates and excludes only
@@ -2342,25 +2352,46 @@ them through `CONTEXT.RESOURCES.001`.
    now proven to be trusted inline visual presentation is removed because it
    was never production evidence. A primary-issue Reference is also removed
    when the association is cleared or the issue is deleted.
-13. The API returns the current Chat sections. It may continue returning a
+13. Rudder collects only direct subagents exposed by the current Chat's main
+    assistant transcripts. It deduplicates observations by `threadId`: the
+    earliest observation supplies identity and task metadata while the newest
+    accepted snapshot supplies status, source message/Run, and update time.
+    Running, in-progress, pending, queued, and started states are Active.
+    Completed, failed, error, interrupted, cancelled, and stopped states are
+    Done while retaining their terminal status. Unknown states follow whether
+    the owning message/generation is still running. Nested subagents remain
+    visible only inside their parent subagent detail.
+14. The API returns the current Chat sections. Its existing `totalCount`
+    continues to count only Outputs, Sources, and References; `subagents`
+    provides separate Active, Done, and total counts. The response never embeds
+    a complete subagent transcript. It may continue returning a
    Project id/count as compatibility metadata, but Chat does not render it or
    include it in the visible category count.
-14. When at least one current-thread item exists, wide Chat renders the compact
+15. When at least one current-thread item or subagent exists, wide Chat renders the compact
     shelf. Its fixed top row renders the first non-empty category in
-    `Outputs > Sources > References` order as a normal category header, with
+    `Outputs > Subagents > Sources > References` order as a normal category header, with
     the same icon, label, count, height, background, and typography used by
     every later category header. The fixed placement must not promote that
     category into a parent or a visually stronger panel title, and the label is
     not repeated above its rows. The shelf has no add/create action. A header
     icon animates the shelf between open and collapsed states; narrow Chat
-    exposes the same data from a compact category/count trigger. A project-only
+    exposes the same data from a compact category/count trigger. When Subagents
+    is the only section, the compact trigger reads `Subagents N`. The Subagents
+    row shows at most four existing Agent avatars, preferring Active and then
+    the most recently updated Done entries, plus `N active`, `M done`, or the
+    combined count. A project-only
     or otherwise empty current-thread manifest renders no control or shelf.
     Opening an internal target reuses Side Panel behavior from
     `CHAT.SIDE.PANEL.001`. Wide and compact panels cap their expanded height at
     `32rem` (512 CSS pixels) on normal viewports, shrink to the available
     viewport allowance when necessary, and keep longer lists internally
     scrollable.
-15. Opening an image attachment uses the application-level image preview shared
+16. While any subagent remains Active, Chat refreshes the manifest every two
+    seconds and invalidates it immediately when the owning generation changes or
+    finishes. A thread moves from Active to Done without appearing twice.
+    Selecting the Subagents summary opens the conversation-scoped Side Panel
+    target from `CHAT.SIDE.PANEL.001`.
+17. Opening an image attachment uses the application-level image preview shared
     with Chat message and Markdown images. The overlay exposes an explicit close
     control plus copy/download actions, closes on `Escape`, and does not create a
     Browser Side Panel tab. Non-image attachments keep their normal file-open
@@ -2385,6 +2416,8 @@ them through `CONTEXT.RESOURCES.001`.
 | Chat reference cannot be resolved safely | Target id is malformed, missing, a Side Chat in any lifecycle state, or belongs to another organization | Keep the visible message label, or generic `Chat` when none is usable, plus normal typed target metadata; reconciliation repairs any previously hydrated Side Chat title | Rudder must not load or persist the private or cross-organization conversation title | Service tests |
 | Message references an Automation | UUID-like Automation id resolves in the same organization | The Reference uses the Automation's current title | Missing, malformed, or cross-organization ids must not disclose a stored Automation title | Service tests and Chat Work Manifest E2E |
 | Link appears in tool history only | URL exists only in transcript, reasoning, stdout, or stderr | No manifest item | Tool exploration must not pollute the visible manifest | Service tests |
+| Chat transcript exposes direct subagents | Accepted, non-superseded assistant transcript evidence belongs to the current organization and Chat | One summary per thread, grouped under Active or Done, with the newest state and earliest identity | Full nested transcript, another Chat/Project/organization's subagent, or duplicate snapshots must not enter the response | Shared/service tests and Chat Work Manifest E2E |
+| Subagent changes from running to terminal | A later accepted snapshot for the same thread becomes completed, failed, interrupted, cancelled, or stopped | The same row moves from Active to Done and preserves terminal styling | Active and Done must not contain duplicate copies of the thread | Shared/service tests and Chat Work Manifest E2E |
 | Link or file supports an annotation | URL exists only inside selected text/comment, or attachment id is owned by a response annotation | No manifest item | Quoted context or its supporting file must not become a Source, Reference, or Output | Annotation/manifest regression tests |
 | Answer is refreshed or edited | Prior message becomes superseded | Stale derived References disappear; durable Outputs remain inspectable | Refresh must not erase a real artifact | Service tests |
 | Chat is forked | Copied historical assistant rows have no producing Run id | Sources can be re-derived; copied rows do not gain Output ownership | Fork must not claim the source thread's Outputs as newly produced | Fork/service tests |
@@ -2397,8 +2430,8 @@ them through `CONTEXT.RESOURCES.001`.
 ## Actor-Visible Input
 
 The operator sees the selected Chat, its normal transcript/composer, and a
-category-led files-and-links shelf containing only the current thread's
-Outputs, Sources, and References. Each row exposes a readable title and type
+category-led work shelf containing only the current thread's Outputs, direct
+Subagents, Sources, and References. Each row exposes a readable title and type
 icon. Normal Chat Reference rows expose the current same-organization
 conversation title; the complete title remains the row's text, hover title,
 and accessible name while compact layout applies a one-line ellipsis. Website
@@ -2415,11 +2448,14 @@ status description.
   the shelf with a short transition. Expanded height is capped at `32rem` (512
   CSS pixels) on normal viewports; short viewports use the smaller available
   allowance and long lists scroll inside the shelf.
-- Category hierarchy: Outputs, Sources, and References are peer sections. Every
+- Category hierarchy: Outputs, Subagents, Sources, and References are peer
+  sections in that order. Every
   visible category uses the same icon/label/count header treatment; fixed
   placement for the first section must not imply a higher level.
 - Actions: the shelf provides open and source-message navigation, but no add or
   create icon.
+- Subagents: up to four existing Agent avatars plus Active/Done counts open a
+  conversation-scoped list. Empty subagent projections reserve no section.
 - Normal Chat References: use the current same-organization conversation
   title, keep the complete title accessible, and constrain long visible labels
   to a one-line ellipsis without widening the compact shelf. Side Chat titles
@@ -2456,6 +2492,12 @@ context links, and Project resource attachments remain the source evidence used
 to reconcile the projection. `chat_conversations.primary_issue_id` is the
 authoritative current-thread association for the created issue; the matching
 issue context link is optional provenance, not authority.
+
+Subagents are not stored in `chat_work_manifest_items`. They are a bounded
+read-time projection from accepted `chat_generation_events` transcript evidence
+and compatible legacy message payloads. The complete child transcript remains
+behind the existing message-transcript API and is loaded only when the operator
+opens a detail row.
 
 For normal Chat References, reconciliation persists the latest safely resolved
 full title; visual truncation does not shorten the stored value. Side Chat
@@ -2628,6 +2670,17 @@ Product model:
   target in the Side Panel.
 - Chat Work manifest internal targets use the same typed Side Panel target model;
   the manifest is an index and does not create a second preview drawer.
+- Chat Work manifest exposes a conversation-scoped `Subagents` target keyed by
+  `subagents:<conversation-id>`. Its read-only body groups direct subagents into
+  `Active · N` and `Done · N`, shows explicit empty states for either group,
+  preserves failure/interruption status, and keeps long task names accessible
+  while visually truncating them.
+- Selecting a Subagents row lazily loads that row's source message transcript,
+  resolves the matching `threadId`, and opens or focuses the existing read-only
+  subagent detail without closing the aggregate list tab. Individual subagent
+  targets canonicalize to `subagent:<thread-id>` inside the current conversation
+  context so refreshed state and repeated clicks cannot create duplicate tabs.
+  A detail-load failure leaves the aggregate list open and exposes an error.
 - Chat and Work manifest image attachments are intentionally not Side Panel
   Browser targets. They use the shared image preview overlay so image inspection
   has one consistent toolbar and exit path across Chat surfaces.

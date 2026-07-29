@@ -427,6 +427,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryKey: queryKeys.chats.workManifest(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
     queryFn: () => chatsApi.getWorkManifest(conversationId!),
     enabled: !!conversationId && activeConversationBelongsToSelectedOrganization,
+    refetchInterval: (query) => (
+      (query.state.data?.subagents.active.length ?? 0) > 0 ? 2_000 : false
+    ),
     retry: false,
   });
   const workManifest = workManifestQuery.data ?? null;
@@ -2002,7 +2005,22 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     }
     const opened = window.open(href, "_blank", "noopener,noreferrer");
     if (opened) opened.opener = null;
-  }, [chatConversationPath, navigate, openImagePreview, openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]); const latestUnansweredAskUserMessage = useMemo(
+  }, [chatConversationPath, navigate, openImagePreview, openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]);
+  const openWorkManifestSubagents = useCallback(() => {
+    if (!conversationId) return;
+    openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), {
+      kind: "subagents",
+      conversationId,
+      label: "Subagents",
+    });
+  }, [conversationId, openSidePanelTargetForContext, resolveCurrentSidePanelChatContextKey]);
+  useEffect(() => {
+    if (!selectedOrganizationId || !conversationId || !activeStream) return;
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.chats.workManifest(selectedOrganizationId, conversationId),
+    });
+  }, [activeStream?.transcript.length, conversationId, queryClient, selectedOrganizationId]);
+  const latestUnansweredAskUserMessage = useMemo(
     () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const activeStreamUserTurnVisible = Boolean(activeStream && !activeStreamPreviewHidden); const activeStreamAskUserRequest = activeStreamUserTurnVisible && latestUnansweredAskUserMessage ? askUserRequestFromMessage(latestUnansweredAskUserMessage) : null; const pendingAskUserMessage = activeStreamUserTurnVisible ? null : latestUnansweredAskUserMessage; const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null); const optimisticReadBadgeMarkerRef = useRef<string | null>(null);
   useEffect(() => { if (!pendingAskUserRequest) return; closeComposerContextMenus(); }, [closeComposerContextMenus, pendingAskUserRequest]);
   useEffect(() => { const chatId = selectedConversation?.id ?? null; if (!chatId || showMessagesLoading) return; if (initialScrolledConversationRef.current === chatId) return; initialScrolledConversationRef.current = chatId; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; scrollChatMessagesToBottom(scrollElement); }); return () => cancelAnimationFrame(frame); }, [selectedConversation?.id, showMessagesLoading, visibleMessages.length]);
@@ -3464,6 +3482,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   sidePanelOpen={sidePanelOpen}
                   wideOpen={workManifestWideOpen}
                   onOpenItem={openWorkManifestItem}
+                  onOpenSubagents={openWorkManifestSubagents}
                   onJumpToMessage={jumpToChatMessage}
                 />
               </div>

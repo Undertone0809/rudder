@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import type { ChatWorkManifestItem, ChatWorkManifestResponse } from "@rudderhq/shared";
+import type {
+  ChatWorkManifestItem,
+  ChatWorkManifestResponse,
+  ChatWorkManifestSubagentSummary,
+} from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -57,6 +61,29 @@ function attachmentItem(id: string, title: string, contentType: string | null = 
   };
 }
 
+function subagent(
+  threadId: string,
+  state: "active" | "done",
+  status: ChatWorkManifestSubagentSummary["status"],
+  updatedAt: string,
+): ChatWorkManifestSubagentSummary {
+  return {
+    callId: `call-${threadId}`,
+    threadId,
+    sourceMessageId: `message-${threadId}`,
+    runId: `run-${threadId}`,
+    label: `Agent ${threadId}`,
+    prompt: `Investigate ${threadId}`,
+    avatarSeed: `avatar-${threadId}`,
+    model: "gpt-5.6",
+    reasoningEffort: "high",
+    state,
+    status,
+    startedAt: "2026-07-29T08:00:00.000Z",
+    updatedAt,
+  };
+}
+
 function referenceItem(
   id: string,
   targetType: ChatWorkManifestItem["targetType"],
@@ -87,11 +114,13 @@ const manifest: ChatWorkManifestResponse = {
   outputs: [item("out-1", "output", "Report.md"), item("out-2", "output", "Site build")],
   sources: [item("src-1", "source", "Brief.md"), item("src-2", "source", "Data.csv"), item("src-3", "source", "Notes.txt")],
   references: [item("ref-1", "reference", "docs.example")],
+  subagents: { active: [], done: [], totalCount: 0 },
   project: { id: "project-1", totalCount: 9 },
 };
 
 const handlers = {
   onOpenItem: vi.fn(),
+  onOpenSubagents: vi.fn(),
   onJumpToMessage: vi.fn(),
 };
 
@@ -285,6 +314,80 @@ describe("ChatWorkManifest", () => {
       />,
     );
     expect(projectOnly.querySelector("[data-testid='chat-work-manifest']")).toBeNull();
+  });
+
+  it("renders subagents between Outputs and Sources with active-first avatars and counts", () => {
+    handlers.onOpenSubagents.mockClear();
+    const withSubagents: ChatWorkManifestResponse = {
+      ...manifest,
+      subagents: {
+        active: [
+          subagent("active-1", "active", "running", "2026-07-29T10:04:00.000Z"),
+          subagent("active-2", "active", "pending", "2026-07-29T10:03:00.000Z"),
+        ],
+        done: [
+          subagent("done-1", "done", "completed", "2026-07-29T10:06:00.000Z"),
+          subagent("done-2", "done", "failed", "2026-07-29T10:05:00.000Z"),
+          subagent("done-3", "done", "interrupted", "2026-07-29T10:02:00.000Z"),
+        ],
+        totalCount: 5,
+      },
+    };
+    const container = render(
+      <ChatWorkManifest
+        manifest={withSubagents}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        {...wideProps}
+        {...handlers}
+      />,
+    );
+
+    const text = container.textContent ?? "";
+    expect(text.indexOf("Outputs")).toBeLessThan(text.indexOf("Subagents"));
+    expect(text.indexOf("Subagents")).toBeLessThan(text.indexOf("Sources"));
+    expect(container.querySelectorAll("[data-subagent-avatar]")).toHaveLength(4);
+    expect(Array.from(container.querySelectorAll("[data-subagent-avatar]")).map(
+      (element) => element.getAttribute("data-subagent-avatar"),
+    )).toEqual(["active-1", "active-2", "done-1", "done-2"]);
+    const summary = container.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-work-manifest-subagents-summary']",
+    );
+    expect(summary?.textContent).toContain("2 active · 3 done");
+    act(() => summary?.click());
+    expect(handlers.onOpenSubagents).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Subagents N as the compact entry when subagents are the only work", () => {
+    const onlySubagents: ChatWorkManifestResponse = {
+      ...manifest,
+      totalCount: 0,
+      outputs: [],
+      sources: [],
+      references: [],
+      subagents: {
+        active: [],
+        done: [subagent("done-only", "done", "failed", "2026-07-29T10:00:00.000Z")],
+        totalCount: 1,
+      },
+      project: null,
+    };
+    const container = render(
+      <ChatWorkManifest
+        manifest={onlySubagents}
+        loading={false}
+        error={null}
+        sidePanelOpen={false}
+        {...wideProps}
+        {...handlers}
+      />,
+    );
+
+    expect(container.querySelector("[data-testid='chat-work-manifest']")).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>("[data-testid='chat-work-manifest-trigger']")?.textContent)
+      .toContain("Subagents 1");
+    expect(container.textContent).toContain("1 done");
   });
 
   it("surfaces manifest request errors instead of treating them as empty", () => {

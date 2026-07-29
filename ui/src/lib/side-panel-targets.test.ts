@@ -13,6 +13,7 @@ import {
   sidePanelTargetFromHref,
   sidePanelTargetKey,
   sidePanelTargetSupportsSavedView,
+  type SidePanelTarget,
 } from "./side-panel-targets";
 
 describe("side panel targets", () => {
@@ -120,6 +121,32 @@ describe("side panel targets", () => {
     expect(sidePanelTargetKey(issueProposalTarget)).toBe("issue-proposal:chat-1:proposal-1");
     expect(sidePanelFullPageHref(issueProposalTarget)).toBeNull();
     expect(sidePanelTargetSupportsSavedView(issueProposalTarget)).toBe(false);
+
+    const subagentsTarget = {
+      kind: "subagents",
+      conversationId: "chat-1",
+      label: "Subagents",
+    } as const;
+    expect(sidePanelTargetKey(subagentsTarget)).toBe("subagents:chat-1");
+    expect(sidePanelFullPageHref(subagentsTarget)).toBeNull();
+
+    const subagentTarget: SidePanelTarget = {
+      kind: "subagent",
+      callId: "call-2",
+      threadId: "thread-shared",
+      avatarSeed: "avatar-2",
+      label: "Verifier",
+      senderLabel: "Main agent",
+      prompt: "Verify the work",
+      model: "gpt-5.6",
+      reasoningEffort: "high",
+      status: "running",
+      response: null,
+      entries: [],
+    };
+    expect(sidePanelTargetKey(subagentTarget)).toBe("subagent:thread-shared");
+    expect(sidePanelTargetKey({ ...subagentTarget, callId: "call-latest", status: "completed" }))
+      .toBe("subagent:thread-shared");
 
     const skillFileTarget = {
       kind: "organization_skill_file",

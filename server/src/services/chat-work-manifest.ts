@@ -1,9 +1,12 @@
 import {
+  agents,
   assets,
   automations,
   chatAttachments,
   chatContextLinks,
   chatConversations,
+  chatGenerationEvents,
+  chatGenerations,
   chatMessages,
   chatWorkManifestItems,
   heartbeatRuns,
@@ -16,18 +19,22 @@ import {
 import {
   chatInlineAnnotationsFromStructuredPayload,
   chatInlineVisualMappingsFromStructuredPayload,
+  collectChatSubagentInspections,
   extractVisibleChatWorkTargets,
   isUuidLike,
+  mergeChatSubagentSummaries,
   normalizeChatWorkExternalUrl,
   parseShortRef,
   preferChatWorkManifestCategory,
   rudderInlineVisualMappingsFromStructuredPayload,
+  type ChatStreamTranscriptEntry,
   type ChatWorkManifestCategory,
   type ChatWorkManifestItem,
   type ChatWorkManifestResponse,
+  type ChatWorkManifestSubagentSummary,
   type ChatWorkManifestTargetType,
 } from "@rudderhq/shared";
-import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 
 type ManifestCandidate = {
   orgId: string;
@@ -96,7 +103,140 @@ function asManifestItem(row: typeof chatWorkManifestItems.$inferSelect): ChatWor
   return row as ChatWorkManifestItem;
 }
 
+function legacyTranscriptFromPayload(
+  payload: Record<string, unknown> | null,
+): ChatStreamTranscriptEntry[] {
+  const transcript = payload?.__chatTranscript;
+  return Array.isArray(transcript) ? transcript as ChatStreamTranscriptEntry[] : [];
+}
+
+const ACTIVE_GENERATION_STATUSES = new Set([
+  "starting",
+  "active",
+  "running",
+  "tool_busy",
+  "closing",
+  "stop_requested",
+  "stopping",
+]);
+
 export function chatWorkManifestService(db: Db) {
+  async function getConversationSubagents(
+    conversation: { id: string; orgId: string },
+  ): Promise<ChatWorkManifestResponse["subagents"]> {
+    const messages = await db
+      .select({
+        id: chatMessages.id,
+        runId: chatMessages.runId,
+        status: chatMessages.status,
+        structuredPayload: chatMessages.structuredPayload,
+        createdAt: chatMessages.createdAt,
+        senderLabel: agents.name,
+      })
+      .from(chatMessages)
+      .leftJoin(agents, and(
+        eq(chatMessages.replyingAgentId, agents.id),
+        eq(agents.orgId, conversation.orgId),
+      ))
+      .where(and(
+        eq(chatMessages.orgId, conversation.orgId),
+        eq(chatMessages.conversationId, conversation.id),
+        eq(chatMessages.role, "assistant"),
+        isNull(chatMessages.supersededAt),
+      ))
+      .orderBy(asc(chatMessages.createdAt));
+    if (messages.length === 0) {
+      return { active: [], done: [], totalCount: 0 };
+    }
+
+    const messageIds = messages.map((message) => message.id);
+    const eventRows = await db
+      .select({
+        messageId: chatGenerationEvents.assistantMessageId,
+        generationId: chatGenerationEvents.generationId,
+        generationSeq: chatGenerationEvents.generationSeq,
+        payload: chatGenerationEvents.payload,
+        eventRunId: chatGenerationEvents.runId,
+        generationStatus: chatGenerations.status,
+        generationStartedAt: chatGenerations.startedAt,
+      })
+      .from(chatGenerationEvents)
+      .innerJoin(chatGenerations, eq(chatGenerationEvents.generationId, chatGenerations.id))
+      .where(and(
+        eq(chatGenerationEvents.orgId, conversation.orgId),
+        eq(chatGenerations.orgId, conversation.orgId),
+        eq(chatGenerations.conversationId, conversation.id),
+        inArray(chatGenerationEvents.assistantMessageId, messageIds),
+        eq(chatGenerationEvents.eventKind, "transcript"),
+        or(
+          isNull(chatGenerations.acceptedThroughSeq),
+          lte(chatGenerationEvents.generationSeq, chatGenerations.acceptedThroughSeq),
+        ),
+      ))
+      .orderBy(
+        asc(chatGenerations.startedAt),
+        asc(chatGenerationEvents.generationSeq),
+      );
+
+    const nativeByMessageId = new Map<string, {
+      generationId: string;
+      generationStartedAt: Date;
+      generationStatus: string;
+      runId: string | null;
+      entries: ChatStreamTranscriptEntry[];
+    }>();
+    for (const row of eventRows) {
+      if (!row.messageId) continue;
+      const entry = row.payload.entry;
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const current = nativeByMessageId.get(row.messageId);
+      const belongsToNewerGeneration = !current
+        || row.generationStartedAt.getTime() > current.generationStartedAt.getTime();
+      if (belongsToNewerGeneration) {
+        nativeByMessageId.set(row.messageId, {
+          generationId: row.generationId,
+          generationStartedAt: row.generationStartedAt,
+          generationStatus: row.generationStatus,
+          runId: row.eventRunId,
+          entries: [entry as ChatStreamTranscriptEntry],
+        });
+        continue;
+      }
+      if (current.generationId !== row.generationId) continue;
+      current.entries.push(entry as ChatStreamTranscriptEntry);
+      current.runId = row.eventRunId ?? current.runId;
+      current.generationStatus = row.generationStatus;
+    }
+
+    const summaries: ChatWorkManifestSubagentSummary[] = [];
+    for (const message of messages) {
+      const native = nativeByMessageId.get(message.id);
+      const entries = native?.entries?.length
+        ? native.entries
+        : legacyTranscriptFromPayload(message.structuredPayload);
+      if (entries.length === 0) continue;
+      const sourceActive = native
+        ? ACTIVE_GENERATION_STATUSES.has(native.generationStatus)
+        : message.status === "streaming";
+      for (const inspection of collectChatSubagentInspections(entries, {
+        sourceMessageId: message.id,
+        runId: message.runId ?? native?.runId ?? null,
+        sourceActive,
+        senderLabel: message.senderLabel,
+      })) {
+        const { response: _response, entries: _entries, ...summary } = inspection;
+        summaries.push(summary);
+      }
+    }
+
+    const merged = mergeChatSubagentSummaries(summaries);
+    const byRecentUpdate = (left: ChatWorkManifestSubagentSummary, right: ChatWorkManifestSubagentSummary) =>
+      Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    const active = merged.filter((item) => item.state === "active").sort(byRecentUpdate);
+    const done = merged.filter((item) => item.state === "done").sort(byRecentUpdate);
+    return { active, done, totalCount: active.length + done.length };
+  }
+
   async function reconcileConversation(conversationId: string) {
     const conversation = await db
       .select()
@@ -619,7 +759,15 @@ export function chatWorkManifestService(db: Db) {
       .where(eq(chatConversations.id, conversationId))
       .then((rows) => rows[0] ?? null);
     if (!conversation) {
-      return { conversationId, totalCount: 0, outputs: [], sources: [], references: [], project: null };
+      return {
+        conversationId,
+        totalCount: 0,
+        outputs: [],
+        sources: [],
+        references: [],
+        subagents: { active: [], done: [], totalCount: 0 },
+        project: null,
+      };
     }
     const rows = await db
       .select()
@@ -648,12 +796,14 @@ export function chatWorkManifestService(db: Db) {
       ))
       .then((projectRows) => new Set(projectRows.map((row) => row.targetKey)).size) : 0;
     const items = current.map(asManifestItem);
+    const subagents = await getConversationSubagents(conversation);
     return {
       conversationId,
       totalCount: items.length,
       outputs: items.filter((item) => item.category === "output"),
       sources: items.filter((item) => item.category === "source"),
       references: items.filter((item) => item.category === "reference"),
+      subagents,
       project: projectId ? { id: projectId, totalCount: projectTotal } : null,
     };
   }

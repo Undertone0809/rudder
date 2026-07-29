@@ -1,11 +1,13 @@
 import { WebsiteLinkIcon } from "@/components/MarkdownBody";
 import { StatusIcon } from "@/components/StatusIcon";
+import { getTranscriptAgentAvatarImageSrc } from "@/components/transcript/TranscriptAgentAvatarIcon";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { isPreviewableImage } from "@/lib/image-actions";
 import { cn } from "@/lib/utils";
 import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
-import type { ChatWorkManifestItem, ChatWorkManifestResponse } from "@rudderhq/shared";
+import type { ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagents } from "@rudderhq/shared";
 import {
+  Bot,
   ChevronDown,
   CircleAlert,
   ClipboardList,
@@ -30,6 +32,7 @@ export interface ChatWorkManifestProps {
   sidePanelOpen: boolean;
   wideOpen: boolean;
   onOpenItem(item: ChatWorkManifestItem): void;
+  onOpenSubagents(): void;
   onJumpToMessage(messageId: string): void;
 }
 
@@ -40,7 +43,8 @@ export function hasChatWorkManifestContent(manifest: ChatWorkManifestResponse | 
   const outputCount = Array.isArray(manifest.outputs) ? manifest.outputs.length : 0;
   const sourceCount = Array.isArray(manifest.sources) ? manifest.sources.length : 0;
   const referenceCount = Array.isArray(manifest.references) ? manifest.references.length : 0;
-  return outputCount + sourceCount + referenceCount > 0;
+  const subagentCount = manifest.subagents?.totalCount ?? 0;
+  return outputCount + sourceCount + referenceCount + subagentCount > 0;
 }
 
 function websiteUrl(item: ChatWorkManifestItem) {
@@ -309,6 +313,71 @@ function ManifestSectionHeader({
   );
 }
 
+function subagentSummaryLabel(subagents: ChatWorkManifestSubagents) {
+  const activeCount = subagents.active.length;
+  const doneCount = subagents.done.length;
+  if (activeCount > 0 && doneCount > 0) return `${activeCount} active · ${doneCount} done`;
+  if (activeCount > 0) return `${activeCount} active`;
+  return `${doneCount} done`;
+}
+
+function SubagentsSection({
+  subagents,
+  fixedHeader,
+  reserveActionSpace,
+  onOpen,
+}: {
+  subagents: ChatWorkManifestSubagents;
+  fixedHeader: boolean;
+  reserveActionSpace: boolean;
+  onOpen(): void;
+}) {
+  if (subagents.totalCount === 0) return null;
+  const visible = [...subagents.active, ...subagents.done].slice(0, 4);
+  return (
+    <section
+      aria-label="Subagents"
+      className={cn(!fixedHeader && "border-t border-border/70 first:border-t-0")}
+      data-testid="chat-work-manifest-subagents"
+    >
+      {fixedHeader ? null : (
+        <ManifestSectionHeader
+          label="Subagents"
+          icon={<Bot className="size-3.5" aria-hidden="true" />}
+          count={subagents.totalCount}
+          reserveActionSpace={reserveActionSpace}
+        />
+      )}
+      <button
+        type="button"
+        className="flex min-h-12 w-full items-center gap-2 rounded-[var(--radius-sm)] px-3 py-2 text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30"
+        onClick={onOpen}
+        aria-label={`Open subagents, ${subagentSummaryLabel(subagents)}`}
+        data-testid="chat-work-manifest-subagents-summary"
+      >
+        <span className="flex shrink-0 items-center pl-1">
+          {visible.map((item, index) => (
+            <img
+              key={item.threadId}
+              src={getTranscriptAgentAvatarImageSrc(item.avatarSeed)}
+              alt=""
+              className={cn(
+                "size-5 rounded-full object-cover ring-1 ring-background",
+                index > 0 && "-ml-1.5",
+                item.state === "active" ? "ring-cyan-500/45" : "ring-border/60",
+              )}
+              data-subagent-avatar={item.threadId}
+            />
+          ))}
+        </span>
+        <span className="truncate text-xs font-medium text-foreground">
+          {subagentSummaryLabel(subagents)}
+        </span>
+      </button>
+    </section>
+  );
+}
+
 function ManifestStatusHeader({ action }: { action?: ReactNode }) {
   return (
     <div className="flex h-9 shrink-0 items-center border-b border-border/70 px-3">
@@ -324,6 +393,7 @@ function ManifestContent({
   loading,
   error,
   onOpenItem,
+  onOpenSubagents,
   onJumpToMessage,
   fixedSectionLabel,
   reserveActionSpace = false,
@@ -345,6 +415,7 @@ function ManifestContent({
   const outputs = Array.isArray(manifest?.outputs) ? manifest.outputs : [];
   const sources = Array.isArray(manifest?.sources) ? manifest.sources : [];
   const references = Array.isArray(manifest?.references) ? manifest.references : [];
+  const subagents = manifest?.subagents ?? { active: [], done: [], totalCount: 0 };
   if (!manifest || !hasChatWorkManifestContent(manifest)) return null;
   return (
     <div
@@ -361,6 +432,12 @@ function ManifestContent({
         reserveActionSpace={reserveActionSpace}
         onOpenItem={onOpenItem}
         onJumpToMessage={onJumpToMessage}
+      />
+      <SubagentsSection
+        subagents={subagents}
+        fixedHeader={fixedSectionLabel === "Subagents"}
+        reserveActionSpace={reserveActionSpace}
+        onOpen={onOpenSubagents}
       />
       <ManifestSection
         idPrefix={idPrefix}
@@ -392,9 +469,12 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
   const outputs = Array.isArray(props.manifest?.outputs) ? props.manifest.outputs : [];
   const sources = Array.isArray(props.manifest?.sources) ? props.manifest.sources : [];
   const references = Array.isArray(props.manifest?.references) ? props.manifest.references : [];
+  const subagents = props.manifest?.subagents ?? { active: [], done: [], totalCount: 0 };
   const fixedSection = outputs.length > 0
     ? { label: "Outputs", count: outputs.length, icon: <FileOutput className="size-3.5" aria-hidden="true" /> }
-    : sources.length > 0
+    : subagents.totalCount > 0
+      ? { label: "Subagents", count: subagents.totalCount, icon: <Bot className="size-3.5" aria-hidden="true" /> }
+      : sources.length > 0
       ? { label: "Sources", count: sources.length, icon: <Paperclip className="size-3.5" aria-hidden="true" /> }
       : references.length > 0
         ? { label: "References", count: references.length, icon: <Link2 className="size-3.5" aria-hidden="true" /> }

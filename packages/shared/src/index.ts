@@ -37,6 +37,11 @@ export {
   type RudderInlineVisualPlacement
 } from "./chat-inline-visuals.js";
 export {
+  collectChatSubagentInspections,
+  mergeChatSubagentSummaries,
+  type ChatSubagentInspection
+} from "./chat-subagents.js";
+export {
   extractVisibleChatWorkTargets,
   normalizeChatWorkExternalUrl,
   preferChatWorkManifestCategory,
@@ -227,7 +232,7 @@ export type {
   ChatStreamAssistantDeltaEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent,
   ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
-  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
+  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagentState, ChatWorkManifestSubagentStatus, ChatWorkManifestSubagentSummary, ChatWorkManifestSubagents, ChatWorkManifestTargetType, CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent,
   CostSummary,
   CostTrendGranularity, CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
   FinanceByKind, FinanceEvent, FinanceSummary, Goal,
