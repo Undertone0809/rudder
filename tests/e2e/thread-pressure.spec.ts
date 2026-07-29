@@ -128,6 +128,8 @@ async function measureMessengerFastScrollCoverage(page: Page) {
     }).concat([0.82, 0.68, 0.54, 0.4]);
     let blankSamples = 0;
     let maxBlankPx = 0;
+    let samplesWithVisibleThreadRows = 0;
+    const visibleGroupTestIds = new Set<string>();
     const samples: Array<{
       fraction: number;
       maxBlankPx: number;
@@ -141,18 +143,27 @@ async function measureMessengerFastScrollCoverage(page: Page) {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
       const viewport = scrollElement.getBoundingClientRect();
-      const intervals = Array.from(
+      const coverageRows = Array.from(
         scrollElement.querySelectorAll<HTMLElement>(
           [
             "[data-messenger-thread-key]",
             "[data-messenger-scroll-coverage-row]",
-            "[data-messenger-scroll-coverage-surface]",
           ].join(", "),
         ),
       )
-        .map((row) => row.getBoundingClientRect())
-        .filter((rect) => rect.bottom > viewport.top && rect.top < viewport.bottom)
-        .map((rect) => ({
+        .map((row) => ({ row, rect: row.getBoundingClientRect() }))
+        .filter(({ rect }) => rect.bottom > viewport.top && rect.top < viewport.bottom);
+      const visibleThreadRows = coverageRows.filter(({ row }) => (
+        row.hasAttribute("data-messenger-thread-key")
+      ));
+      if (visibleThreadRows.length > 0) samplesWithVisibleThreadRows += 1;
+      for (const { row } of visibleThreadRows) {
+        const groupSurface = row.closest<HTMLElement>("[data-messenger-scroll-coverage-surface]");
+        const groupTestId = groupSurface?.dataset.testid;
+        if (groupTestId) visibleGroupTestIds.add(groupTestId);
+      }
+      const intervals = coverageRows
+        .map(({ rect }) => ({
           start: Math.max(viewport.top, rect.top),
           end: Math.min(viewport.bottom, rect.bottom),
         }))
@@ -179,7 +190,9 @@ async function measureMessengerFastScrollCoverage(page: Page) {
       blankSamples,
       maxBlankPx,
       sampleCount: targets.length,
+      samplesWithVisibleThreadRows,
       samples,
+      visibleGroupTestIds: Array.from(visibleGroupTestIds).sort(),
     };
   });
 }
@@ -491,6 +504,14 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   await page.screenshot({ path: "/tmp/rudder-thread-pressure-messenger.png" });
   expect(messengerFastScrollCoverage.blankSamples).toBe(0);
   expect(messengerFastScrollCoverage.maxBlankPx).toBeLessThanOrEqual(64);
+  expect(messengerFastScrollCoverage.samplesWithVisibleThreadRows).toBe(
+    messengerFastScrollCoverage.sampleCount,
+  );
+  expect(messengerFastScrollCoverage.visibleGroupTestIds).toEqual(
+    pressureGroups.map((group) => (
+      `messenger-thread-section-custom-group-${group.id}`
+    )).sort(),
+  );
   await page.waitForTimeout(500);
   const mountedMessengerRows = await page.locator("[data-messenger-thread-key]").count();
   const genericOrganizationWebSockets = new Set(
@@ -499,7 +520,11 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   expect(genericOrganizationWebSockets.size).toBe(1);
   const loadedMessengerVirtualHeight = await page.locator("[data-testid='messenger-virtual-directory']")
     .evaluate((element) => Number.parseFloat((element as HTMLElement).style.height) || 0);
-  expect(mountedMessengerRows).toBeLessThan(60);
+  // Messenger deliberately keeps about one viewport ahead plus a small
+  // trailing buffer mounted so a fast trackpad fling cannot outrun the next
+  // virtual range commit. The result remains bounded well below the complete
+  // 221-row pressure list.
+  expect(mountedMessengerRows).toBeLessThan(80);
   const runtimeFootprint = await measureRuntimeFootprint(page);
   await page.screenshot({ path: "/tmp/rudder-thread-pressure-chat.png" });
 

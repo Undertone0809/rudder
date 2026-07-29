@@ -1,4 +1,4 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer, type Range } from "@tanstack/react-virtual";
 import {
   useCallback,
   useLayoutEffect,
@@ -37,6 +37,9 @@ export function VirtualizedActivityTimeline<T>({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const notifiedTargetRef = useRef<string | null>(null);
+  const virtualizerRef = useRef<{
+    scrollDirection: "backward" | "forward" | null;
+  } | null>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
   const itemKeys = useMemo(
     () => items.map((item, index) => getItemKey(item, index)),
@@ -46,17 +49,32 @@ export function VirtualizedActivityTimeline<T>({
     (index: number) => itemKeys[index] ?? index,
     [itemKeys],
   );
+  const directionalRangeExtractor = useCallback((range: Range) => {
+    const direction = virtualizerRef.current?.scrollDirection;
+    const trailingOverscan = Math.max(4, Math.ceil(overscan / 4));
+    const before = direction === "backward" ? overscan : trailingOverscan;
+    const after = direction === "backward" ? trailingOverscan : overscan;
+    const start = Math.max(0, range.startIndex - before);
+    const end = Math.min(range.count - 1, range.endIndex + after);
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  }, [overscan]);
   const virtualizer = useVirtualizer({
     count: items.length,
     estimateSize,
     getItemKey: getVirtualItemKey,
     getScrollElement: () => scrollElementRef.current,
-    overscan,
+    ...(preventScrollBlanking
+      ? {
+        overscan: 0,
+        rangeExtractor: directionalRangeExtractor,
+      }
+      : { overscan }),
     scrollMargin,
     directDomUpdates: preventScrollBlanking,
     directDomUpdatesMode: "transform",
     useFlushSync: preventScrollBlanking,
   });
+  virtualizerRef.current = virtualizer;
   const setContainerRef = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
     if (preventScrollBlanking) virtualizer.containerRef(node);

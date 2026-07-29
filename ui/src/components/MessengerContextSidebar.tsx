@@ -222,6 +222,13 @@ type MessengerInsertionPlacement = "before" | "after" | null;
 const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
 const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const MESSENGER_SAVED_VIEW_PAGE_LIMIT = 50;
+// Keep roughly one additional sidebar viewport mounted ahead of the current
+// scroll direction. VirtualizedActivityTimeline retains only a small trailing
+// buffer and flips the larger buffer immediately when direction changes, so a
+// trackpad fling cannot expose the empty size container without doubling the
+// number of content-rich rows React must maintain.
+const MESSENGER_SCROLL_OVERSCAN_ROWS = 24;
+const MESSENGER_DRAG_OVERSCAN_ROWS = 32;
 const SELECTED_READ_EMPHASIS_HOLD_MS = 1200;
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
 const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
@@ -3025,7 +3032,9 @@ export function MessengerContextSidebar() {
         getItemKey={(item) => item.key}
         estimateSize={() => threadDensity === "compact" ? 34 : 42}
         itemGap={4}
-        overscan={draggingThreadId ? 16 : 12}
+        overscan={draggingThreadId
+          ? MESSENGER_DRAG_OVERSCAN_ROWS
+          : MESSENGER_SCROLL_OVERSCAN_ROWS}
         preventScrollBlanking
         scrollElementRef={sidebarScrollElementRef}
         targetKey={unreadTargetKey}

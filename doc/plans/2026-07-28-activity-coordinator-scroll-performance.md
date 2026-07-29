@@ -111,8 +111,11 @@ does not present JavaScript heap as OS RSS.
 Fast trackpad movement exposed a transient blank viewport when the browser
 advanced `scrollTop` before React committed the next virtual range. Messenger
 now uses synchronous range commits and the virtualizer's direct transform
-updates on this latency-sensitive surface. It also keeps a larger, still
-bounded overscan window so rows are ready before they enter the viewport.
+updates on this latency-sensitive surface. Nested Messenger lists keep roughly
+one extra viewport ahead of the current scroll direction (24 rows, raised to
+32 while dragging) and only a small trailing buffer. The larger buffer flips
+when direction changes, preventing high-velocity trackpad scrolling from
+outrunning the next range commit without doubling mounted row work.
 
 The production-build pressure E2E now performs 40 consecutive-frame,
 non-sequential scroll reversals over 221 Messenger threads split between two
