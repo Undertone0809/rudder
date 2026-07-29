@@ -1,11 +1,11 @@
 ---
 title: "Skills"
-description: "Package reusable operating procedures while keeping discovery, enablement, loading, and proven use distinct."
+description: "Turn a proven, repeatable way of working into instructions an Agent can reuse."
 icon: "book-open"
 keywords:
   - "Rudder Skills"
-  - "agent operating procedure"
-  - "skill evidence"
+  - "agent instructions"
+  - "reusable workflow"
 canonical: "https://docs.rudderhq.dev/concepts/skills"
 "og:url": "https://docs.rudderhq.dev/concepts/skills"
 hreflang_en: "https://docs.rudderhq.dev/concepts/skills"
@@ -14,58 +14,53 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/skills"
 
 <a id="definition" />
 
-## Definition
+## What a Skill is
 
-A Skill is a reusable operating procedure that an Agent can consult for a
-class of work. Skills can come from Rudder's bundled set, an organization
-library, an Agent home, a user-level source, or an adapter-native directory.
+A Skill is a reusable set of instructions for a class of work. It can explain
+how to review a release, debug a failed Run, prepare a report, or follow another
+repeatable procedure.
 
-Four states matter:
-
-| State | Meaning |
-| --- | --- |
-| Discovered | Rudder can show the Skill as a candidate |
-| Enabled | Rudder selected it for an Agent or invocation |
-| Loaded | The runtime received or materialized it |
-| Used | Run evidence shows the runtime actually applied it |
-
-These states are not interchangeable. A loaded Skill is not proof of use.
+Use a Skill for **how to do recurring work**. Keep facts about the current task
+in its Chat, Issue, project, or Library. Keep the Agent's long-term role in its
+Agent instructions.
 
 <a id="case" />
 
-## One illustrative case
+## Example: release checks
 
-A release team repeats the same checks for notes, packages, and rollback
-details. After several reviewed releases, it turns the stable procedure into a
-release-check Skill. A release Agent can then use the same instructions on the
-next release, while each Run still records whether evidence shows that the
-Skill was actually used.
+After several releases, a team notices the same useful checklist in every
+review: verify package versions, test the installer, check release notes, and
+name a rollback point. The team turns the stable checklist into a Skill.
+
+The next release Agent can reuse that procedure instead of receiving a copied
+prompt. Review still decides whether the result is good.
 
 ![Skills library](../images/skills-library.png)
 
 <a id="when-useful" />
 
-## When it is useful
+## When to create one
 
-Create a Skill when a procedure has repeated, has a clear trigger, and should be
-reused across future work. Keep task-specific facts in the Chat, Issue, project
-resources, or Library. Keep durable role expectations in Agent instructions.
+Create a Skill when:
 
-Rudder includes a small always-available bundled baseline for product guidance,
-memory files, Skill creation, and visualization. Availability lets a runtime
-discover a Skill when relevant; it does not instruct the model to use every
-Skill on every turn.
+- the same procedure has worked more than once
+- its trigger and expected result are clear
+- several future tasks or Agents will benefit
+- someone can maintain it when the process changes
+
+Do not turn every correction into a Skill. A one-off preference belongs in the
+current conversation; a stable lesson should be reviewed before it changes
+future work.
 
 <a id="operating-boundaries" />
 
-## Operating boundaries
+## Available does not mean used
 
-Rudder resolves the Skill set for each invocation. Provider-native, stale,
-project, or user-home Skills do not become Rudder-loaded Agent Skills merely
-because a runtime can see their directories. Adapters must remove, isolate, or
-ignore entries outside the selected set.
+Rudder may discover and enable a Skill for an Agent, but the runtime still has
+to load and apply it. Run details can show whether there is evidence that the
+Skill was used.
 
-The highest-risk boundary is silent behavior change. Feedback does not rewrite
-a Skill automatically. Promote a lesson only after its evidence, scope, review,
-and rollback or evaluation path are clear. Read [Reviews, feedback, and
-learning](/concepts/reviews-feedback-learning) for that distinction.
+Feedback never rewrites a Skill automatically. Update durable instructions only
+after the lesson, scope, and way to evaluate or undo the change are clear.
+
+See [Reviews, feedback, and learning](/concepts/reviews-feedback-learning).

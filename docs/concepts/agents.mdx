@@ -1,6 +1,6 @@
 ---
-title: "Agents and Agent Runs"
-description: "Distinguish a durable Rudder Agent from its runtime, bounded runs, outputs, cost, and raw evidence."
+title: "Agents, Runs, and Runtimes"
+description: "Understand the worker you configure, the tool that executes, and the record created each time it works."
 icon: "bot"
 keywords:
   - "Rudder Agent"
@@ -12,71 +12,57 @@ hreflang_en: "https://docs.rudderhq.dev/concepts/agents"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/agents"
 ---
 
+Rudder separates the person-like role you work with from the program that runs
+it and from each individual attempt.
+
 <a id="definition" />
 
-## Definition
+## The three parts
 
-An Agent is a durable member of an organization. Its record holds a role,
-capabilities, runtime configuration, skills, budget, and permission state.
+| Part | Think of it as | Example |
+| --- | --- | --- |
+| Agent | A reusable teammate with a role, instructions, skills, permissions, and budget | Release Writer |
+| Runtime | The program or service that does the work | Codex CLI or Claude Code |
+| Agent Run | One attempt, with its own progress, result, usage, and errors | Draft announcement, attempt 2 |
 
-An Agent Run is one bounded attempt by that Agent. The runtime is the program or
-service Rudder invokes for the attempt. Rudder coordinates the work, while the
-runtime performs it.
-
-The run keeps several kinds of evidence distinct:
-
-| Record | What it answers |
-| --- | --- |
-| Result summary | What the completed runtime turn reported |
-| Output | What the work produced, such as a file, report, screenshot, or link |
-| Cost and usage | What the run consumed when the runtime reports it |
-| Raw evidence | What happened underneath, including transcript entries, logs, tool activity, and terminal errors |
-
-A readable summary never replaces the raw evidence. A partial or stopped stream
-also does not become a completed result merely because text exists.
+Rudder coordinates the task and keeps the record. The runtime performs the
+actual work.
 
 <a id="case" />
 
-## One illustrative case
+## Example: a writer that handles every release
 
-A release team has a writing Agent responsible for launch copy. The Agent keeps
-that responsibility after one announcement is finished. For a new announcement,
-Rudder starts one Agent Run through the configured local runtime. The run leaves
-a draft file, a short result summary, cost data, and a transcript that the
-reviewer can inspect.
+Create a `Release Writer` Agent when launch copy is a recurring responsibility.
+Give it the runtime and instructions it needs. Each announcement creates a new
+Run, but the Agent keeps the same role and can reuse approved skills.
 
-If the draft needs another attempt, the team starts another run. It is still the
-same Agent, but the two runs keep separate evidence and cost.
-
-![Agent run detail](../images/agent-run-detail.png)
+If the first draft is wrong, ask for another attempt. You still have one Agent,
+but two separate Runs, so the result and cost of each attempt remain clear.
 
 <a id="when-useful" />
 
-## When an Agent is useful
+## When to create another Agent
 
-Create an Agent when a repeated class of work needs a stable owner and operating
-frame. Use an existing Agent for a one-off request that fits its role. An Agent
-record is useful when later work should inherit the same responsibility,
-runtime, skills, budget, or escalation path.
+Create a new Agent when a repeated class of work needs a different role,
+runtime, instruction set, budget, or permission level. Use an existing Agent
+for a one-off request that already fits its job.
 
-Runs can begin from Chat, Issue assignment, review routing, an Automation, or a
-manual or scheduled heartbeat. The trigger does not change the distinction:
-the Agent persists, the Run is bounded, and the runtime is invoked for that run.
+A Run can start from Chat, an assigned Issue, a review request, an Automation,
+or a manual action. The starting point changes; the Agent/Run distinction does
+not.
 
 <a id="operating-boundaries" />
 
-## Operating boundaries
+## What a Run can show
 
-Runtime capabilities vary. A local adapter may support managed tools, Browser
-control, session reuse, transcripts, or cost metadata that another adapter does
-not. Rudder must show those differences instead of implying provider parity.
+- the answer or completion summary
+- created files, reports, screenshots, or links
+- usage and cost when the runtime reports them
+- transcript, tool activity, logs, and final errors when available
 
-The highest-risk boundary is authority. A runtime tool can act only with the
-organization, Agent, Run, and permission context Rudder supplies. Current
-assignee/reviewer relationship plus an explicit request can authorize
-status-independent Issue work. Rudder serializes that Run through the Issue
-execution lease; the lease is not another permission gate. Tool availability
-does not bypass relationship, Run, approval, budget, or workspace rules.
+Different runtimes expose different features. Rudder shows what each one
+supports rather than pretending they all behave the same. A partial reply from
+a stopped or failed Run is not a completed result.
 
-For exact runtime choices, see [Runtime types](/reference/runtime-types). To set
-one up, follow [Configure an Agent runtime](/how-to/configure-agent-runtime).
+See [Runtime types](/reference/runtime-types) for the supported choices, or
+[configure a runtime](/how-to/configure-agent-runtime).

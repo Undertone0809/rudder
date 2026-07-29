@@ -1,11 +1,11 @@
 ---
 title: "Plugins"
-description: "Extend Rudder with host-managed capabilities, jobs, webhooks, and UI slots without redefining core workflows."
+description: "Add optional integrations, tools, background jobs, and interface panels to Rudder."
 icon: "plug"
 keywords:
   - "Rudder Plugins"
-  - "plugin capabilities"
-  - "plugin jobs and webhooks"
+  - "Rudder integrations"
+  - "Plugin tools"
 canonical: "https://docs.rudderhq.dev/concepts/plugins"
 "og:url": "https://docs.rudderhq.dev/concepts/plugins"
 hreflang_en: "https://docs.rudderhq.dev/concepts/plugins"
@@ -14,54 +14,50 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/plugins"
 
 <a id="definition" />
 
-## Definition
+## What a Plugin can add
 
-A Plugin is an optional package that Rudder's host installs and manages. A
-Plugin can declare tools, state, HTTP access, UI slots, event subscriptions,
-webhooks, jobs, and host service access.
+A Plugin is an optional package installed by the Rudder host. Depending on the
+package, it can add:
 
-The host validates the manifest, starts or stops the worker, checks declared
-capabilities for bridge operations, and preserves status, configuration, logs,
-jobs, webhooks, and state for inspection. Plugin tools use namespaced names, so
-they cannot shadow core tools or another Plugin.
+- tools an Agent can use
+- connections to another service
+- background jobs and webhooks
+- project panels or other interface sections
+- Plugin-specific settings and stored state
+
+Rudder shows the Plugin's version, configuration, worker status, logs, jobs,
+webhooks, and requested host capabilities.
 
 <a id="case" />
 
-## One illustrative case
+## Example: connect a CRM
 
-A team installs a CRM Plugin that adds a project panel and a scheduled account
-sync. The Plugin's configuration identifies the external service, its job is
-attributed to the Plugin, and a failed sync appears in Plugin logs. The CRM
-panel can link to Rudder work, but the Plugin does not invent a new Issue status
-or bypass the normal approval path.
+A CRM Plugin adds an account panel to a project and runs a scheduled sync. If
+the sync fails, its job and logs remain under that Plugin. The Plugin can link
+an account to Rudder work, but it does not invent a new Issue status or bypass
+normal approvals.
 
 ![Plugin manager](../images/plugin-manager.png)
 
 <a id="when-useful" />
 
-## When it is useful
+## Use a Plugin for an optional edge
 
-Use a Plugin for optional integrations or specialized surfaces that do not
-belong in Rudder's core work loop. Plugins fit provider connectors, custom
-tools, background jobs, webhooks, widgets, and operational views.
-
-Use built-in product objects for goals, Chat, Issues, Agent Runs, reviews,
-approvals, budgets, and workspaces. A Plugin may connect to those objects
-through host APIs, but it does not own their rules.
+Plugins fit integrations and specialized tools that not every Rudder user
+needs. Goals, Chat, Issues, Runs, reviews, budgets, and workspaces remain built
+in because they organize the core work.
 
 <a id="operating-boundaries" />
 
-## Operating boundaries
+## Install only code you trust
 
-Plugins are additive. They cannot override core routes or names, cross
-organization scope through undeclared state, or change approval, authentication,
-Issue checkout, or budget enforcement except through public host APIs that
-already enforce those contracts.
+Plugins contain worker or interface code that runs as part of the installation.
+Capability checks limit how a Plugin talks to Rudder, but they do not turn an
+untrusted package into a safe sandbox.
 
-The highest-risk boundary is trust. Plugin workers and frontend bundles are
-installed code, not a security sandbox for untrusted packages. Review the source,
-declared capabilities, configuration, external services, and update before
-activation. Uninstall is a host-managed lifecycle operation and must not erase
-core Issues, approvals, budgets, or Run history.
+Before activation, review the source, publisher, version, requested
+capabilities, external services, configuration, and update notes. Uninstalling
+a Plugin stops its workers and removes its own state; it should not delete core
+Issues, Runs, approvals, or budgets.
 
-Follow [Manage Plugins](/how-to/manage-plugins) to install and inspect one.
+Follow [Manage Plugins](/how-to/manage-plugins) to install and test one.

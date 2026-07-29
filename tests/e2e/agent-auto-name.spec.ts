@@ -32,9 +32,11 @@ test.describe("Agent auto naming", () => {
     await expect(
       newAgentMain.getByPlaceholder("Title (e.g. VP of Engineering)")
     ).toHaveValue("Operator Assistant");
-    await expect(
-      newAgentMain.getByRole("button", { name: /Operator Assistant/ })
-    ).toBeVisible();
+    await expect(newAgentMain.getByRole("button", { name: /Operator Assistant/ })).toHaveCount(0);
+    const formCornerRadius = await newAgentMain.getByTestId("new-agent-form").evaluate(
+      (element) => Number.parseFloat(window.getComputedStyle(element).borderTopLeftRadius),
+    );
+    expect(formCornerRadius).toBeGreaterThan(0);
     await expect(
       newAgentMain.getByRole("spinbutton", { name: "Agent run concurrency" })
     ).toHaveValue("8");
@@ -107,6 +109,7 @@ test.describe("Agent auto naming", () => {
     const suggestedName = (await nameInput.inputValue()).trim();
     expect(suggestedName.length).toBeGreaterThan(0);
 
+    await expect(newAgentMain.getByRole("button", { name: "General", exact: true })).toHaveCount(0);
     await newAgentMain.getByPlaceholder("Title (e.g. VP of Engineering)").fill(title);
     await newAgentMain.getByRole("button", { name: "Create agent" }).click();
 

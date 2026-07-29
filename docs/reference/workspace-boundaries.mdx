@@ -1,11 +1,11 @@
 ---
-title: "Workspace boundaries"
-description: "Look up where project work, durable files, Agent state, run workspaces, backups, and scratch files belong."
+title: "Where Rudder Stores and Uses Files"
+description: "Look up the right location for project files, reusable resources, Agent state, Run changes, and backups."
 icon: "folder-tree"
 keywords:
-  - "Rudder workspace boundaries"
-  - "Agent files"
-  - "Library files"
+  - "Rudder file locations"
+  - "Rudder workspace"
+  - "Rudder Library"
 canonical: "https://docs.rudderhq.dev/reference/workspace-boundaries"
 "og:url": "https://docs.rudderhq.dev/reference/workspace-boundaries"
 hreflang_en: "https://docs.rudderhq.dev/reference/workspace-boundaries"
@@ -14,67 +14,57 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/workspace-boundaries"
 
 <a id="definition" />
 
-## Definition
-
-Rudder separates curated context, durable output, mutable project work, private
-Agent state, and temporary files. The location determines who can find a file,
-whether it can enter a later Run, and which recovery rules apply.
+Use this page when you are unsure where a file belongs or which files an Agent
+will receive.
 
 <a id="states" />
 
-## States and locations
+## Location lookup
 
-| File or state | Put it here | What that means |
+| Location | Purpose | Typical content |
 | --- | --- | --- |
-| Shared organization reference or accepted output | Library | It remains a durable, referenceable organization file |
-| Starting material for project-linked Runs | Attach a Library or external resource to Project Context | Only selected resources become eligible starting context |
-| Repository or working folder | Primary project workspace | Project-linked Runs prefer it as their work location |
-| Files and branch for one execution | Run workspace | The Run records its concrete workspace strategy and state |
-| Agent instructions, memory, Skills, sessions, and managed state | Agent or adapter-managed home | The state belongs to that Agent or runtime, not ordinary Library browsing |
-| Recovery version | Workspace backup | The operator can inspect, download, restore, or delete an eligible version |
-| Scratch files and non-final verification screenshots | `/tmp` or the system temporary directory | They are disposable and stay outside durable organization content |
+| Library | Durable files people and future Agents should find | briefs, notes, accepted reports |
+| Project resources | Selected starting context for project Runs | a few relevant Library files or links |
+| Project workspace | Folder or repository where project work happens | source code, website, working documents |
+| Run workspace | Exact filesystem/branch used by one Run | that Run's changes |
+| Agent home | Managed state for one Agent | instructions, memory, Skills |
+| Workspace backup | Saved organization workspace version | files for inspection or restore |
+| Temporary storage | Short-lived scratch data | downloads, caches, intermediate files |
+
+On the default local Desktop layout, organization files are mapped under
+`~/Documents/Rudder`. Renaming the organization does not silently move its
+folder.
 
 <a id="constraints" />
 
-## Constraints
+## Rules that prevent accidental context leaks
 
-- A Project may have several workspaces but only one primary workspace.
-- Project Context is an admission list. Rudder does not inject every
-  organization resource into every Run.
-- Protected instructions, Skills, runtime directories, credentials, and cache
-  paths are not ordinary Library content.
-- A Run workspace cannot be archived while open Issues still depend on it.
-- Restoring a workspace backup creates a pre-restore safety version first.
+- A project Run receives selected project resources, not every Library file.
+- Agent instructions, Skills, credentials, and caches are not ordinary Library
+  content.
+- A produced file should remain linked to its Chat, Issue, Run, or project.
+- Browser and server deployments cannot use Desktop file-open actions to gain
+  arbitrary local application access.
 
 <a id="boundaries" />
 
-## Boundaries
+## Restore and archive safely
 
-Library paths remain organization-scoped and pass path validation. Desktop
-open actions do not let browser deployments open local applications, and a
-validated file link does not expose its absolute filesystem root.
-
-In the default local Desktop layout, organization files use a stable mapping
-under `~/Documents/Rudder`. If an established mapped folder disappears, Rudder
-treats it as a recovery problem. It does not create an empty replacement over
-the missing location.
+- A missing mapped organization folder is a recovery problem. Restore it or use
+  a backup; do not replace it with an empty folder.
+- Inspect the chosen backup before restore. Rudder creates a safety backup
+  first.
+- A Run workspace cannot be archived while open Issues still depend on it.
+- When editing a file reports a stale version, compare both versions before
+  choosing which one to keep.
 
 <a id="examples" />
 
 ## Examples
 
-- Keep source notes in Library, attach only the notes needed by a project, and
-  save the accepted report in that project's Library folder.
-- Let a coding Run use the primary project repository or an explicit isolated
-  Run workspace. Keep build caches and temporary screenshots out of Library.
-- Browse the selected backup before restoring it. If an open Issue still uses
-  a Run workspace, finish or move that dependency before archive.
-
-<CardGroup cols={2}>
-  <Card title="Manage Workspaces and Library" icon="folder-tree" href="/how-to/manage-workspaces-and-library">
-    Apply these boundaries to a project and its durable output.
-  </Card>
-  <Card title="Workspaces and Library" icon="folder-tree" href="/concepts/workspaces">
-    Read the mental model behind each location.
-  </Card>
-</CardGroup>
+- Put approved customer notes in Library; select only the notes needed for the
+  current project.
+- Let a coding Agent modify the project workspace, and keep its branch or
+  isolated folder on the Run.
+- Link the final report from the review Issue instead of leaving it only inside
+  the transcript.

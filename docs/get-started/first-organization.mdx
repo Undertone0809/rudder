@@ -1,125 +1,102 @@
 ---
-title: "Create Your First Organization"
-description: "Complete one inspectable task with a request, Agent Run, output, and review decision."
-icon: "building-2"
+title: "Run Your First Task"
+description: "Create a Rudder organization, connect an agent runtime, and get your first useful result in Chat."
+icon: "play"
 keywords:
-  - "Rudder organization"
-  - "first agent task"
-  - "agent work loop"
+  - "Rudder first task"
+  - "connect AI agent"
+  - "Rudder Chat"
 canonical: "https://docs.rudderhq.dev/get-started/first-organization"
 "og:url": "https://docs.rudderhq.dev/get-started/first-organization"
 hreflang_en: "https://docs.rudderhq.dev/get-started/first-organization"
 hreflang_zh: "https://docs.rudderhq.dev/zh/get-started/first-organization"
 ---
 
-At the end of this guide, you will have an organization, a working Agent, and
-one small result you can inspect. The example is illustrative: an Agent drafts
-a Markdown launch announcement and a human reviews it.
+This guide takes you from a new installation to one completed Agent task. You
+will create an organization, connect the runtime you already use, and ask for a
+small result in Chat.
 
-Before you begin, [install and open Rudder](/get-started/installation). Have a
-local runtime available for the first Agent and a folder where it can save the
-announcement.
+Before you begin, [install and open Rudder](/get-started/installation). If you
+plan to use a local runtime such as Codex or Claude Code, install it and sign in
+first.
 
 <a id="first-loop" />
 
-## 1. Name the organization
+## 1. Create your organization
 
-Enter a display name, such as `Launch team`. This first screen asks only for
-the name. Rudder creates the organization's internal identity for you. You can
-add goals and inspect its Issue Key later from the normal work surfaces and
-settings.
+Rudder calls a team workspace an **organization**. Enter a name you will
+recognize, such as your project, company, or personal workspace name.
 
-## 2. Configure the first Agent
+That is enough to start. You can add goals, projects, and more Agents later.
 
-Choose the runtime for the first Agent and complete its environment check. A
-runtime is the local execution environment the Agent uses for a run. Rudder
-creates the Agent only after the required check succeeds, so fix any reported
-runtime problem before continuing.
+## 2. Connect your first Agent
 
-When setup finishes, Rudder opens Messenger. The `Getting Started` group is
-already marked as read, so it teaches the workflow without creating false
-unread work. Open its welcome item, or start the example below.
+Choose the runtime already available on your computer, then follow the setup
+form:
 
-## 3. Choose Chat or an Issue
+- Choose **Codex** or **Claude Code** if you use its local CLI.
+- Choose a local command for your own script or Agent process.
+- Choose a webhook or remote option only when you already have that service.
 
-Use Chat if you want to draft and refine the announcement through one ongoing
-conversation.
+Run the environment check. A successful check means Rudder can start the
+runtime; it does not spend time on a real task yet. If the check fails, use the
+message in the form to install, sign in, or correct the command.
 
-An issue is a durable task record with an explicit status and lifecycle. Use
-one when work needs a named owner, dependencies, or a review path; comments,
-agent runs, artifacts, and review decisions can stay with the same record.
+## 3. Ask for one useful result
 
-This guide uses an Issue because the example has an output and a reviewer.
-Create one with this brief:
+Open Chat and use a request small enough to judge in a few minutes. For example:
 
-```md
-Title: Draft the launch announcement
+```text
+Write a short launch note for my product.
 
-Outcome:
-Create a reviewable Markdown announcement.
-
-Acceptance:
-- includes a short headline
-- includes the setup command
-- explains one concrete use case
-- lists unresolved questions
+Audience: developers trying the product for the first time.
+Include:
+- a one-sentence headline
+- what problem it solves
+- one concrete example
+- three questions I should answer before publishing
 ```
 
-![Issue board](../images/first-organization-issue-board.png)
+A good first request says who the result is for, what you want back, and any
+limits that matter. Avoid “test Rudder”—it gives you nothing useful to judge.
 
-## 4. Make the next step executable
+## 4. Follow the run
 
-Move the Issue to `todo` only when another person or Agent could start without
-asking what the request means. Assign the first Agent as the single owner and
-add a reviewer because another person will judge the announcement. Assigning
-actionable work wakes the Agent automatically, so there is no separate start
-step.
+Rudder starts the selected Agent and shows its reply in Chat. You can continue
+using the same conversation to clarify the request, stop an unhelpful run, or
+send a follow-up while it is working.
 
-Leave work in `backlog` if scope, priority, or acceptance criteria still need a
-decision. Split independent work into separate Issues instead of assigning one
-Issue to two owners.
+Open the Agent Run when you want more detail. It shows which runtime handled the
+request, whether the run finished, and the available transcript, usage, errors,
+or output.
 
-## 5. Inspect the Agent Run
+## 5. Judge the result
 
-Rudder invokes the configured runtime and records one Agent Run for this
-bounded attempt.
+Read the actual answer or open the file the Agent produced. Then choose the
+lightest next step:
 
-![Agent run detail](../images/agent-run-detail.png)
+- Ask for a revision in the same Chat.
+- Save or share the result if it is ready.
+- Create an Issue if the task now needs an owner, dependencies, a visible
+  status, or an independent reviewer.
 
-When the run finishes, look for:
+You have completed the first task when you can find the original request, the
+Agent's result, and the run that produced it from the same conversation.
 
-- a run summary or transcript
-- the Markdown output or a link to it
-- validation or checks the Agent performed
-- a clear blocker if the result is incomplete
+## If the Agent cannot finish
 
-If there is no inspectable output, ask the Agent to attach or link it before
-moving to review.
+Open the failed Agent Run and read the plain-language error first. Common causes
+are a runtime that is not signed in, a missing model or command, a folder the
+runtime cannot access, or a permission the task needs.
 
-## 6. Review the result
-
-Move the Issue to `in_review` when the output is ready for judgment. The
-reviewer inspects the Issue, output, run evidence, and comments, then records a
-structured decision with a required comment. Approving completes the Issue
-automatically. Requesting changes routes it back to the assignee; a blocked
-decision stays visible with the reason.
-
-The review is successful when a later reader can open the same Issue and find
-the request, Agent Run, output, and decision without reconstructing the story
-from another tool.
-
-## Recovery
-
-If the run fails, keep the Issue open, inspect the run evidence, and name the
-next action. If a missing credential or human decision blocks the task, move it
-to `blocked` and state who can unblock it. Messenger can bring that attention
-signal back to the responsible person.
+Fix the named problem and retry the small request. Do not add more Agents,
+projects, or automation until one simple Chat task works.
 
 <CardGroup cols={2}>
-  <Card title="Chat and Messenger" icon="messages-square" href="/concepts/chat-messenger">
-    Decide which tasks can remain conversational.
+  <Card title="Chat or Issue?" icon="messages-square" href="/concepts/chat-messenger">
+    Learn when a conversation is enough and when to add structure.
   </Card>
-  <Card title="Issue Lifecycle" icon="route" href="/how-to/issue-lifecycle">
-    Operate status, assignment, review, and close-out in detail.
+  <Card title="Configure a runtime" icon="terminal" href="/how-to/configure-agent-runtime">
+    Fix or fine-tune the environment an Agent uses.
   </Card>
 </CardGroup>

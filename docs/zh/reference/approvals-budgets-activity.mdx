@@ -1,131 +1,106 @@
 ---
-title: "审批、预算和活动记录"
-description: "查询 Rudder 中受治理的决策、费用限制、审计活动、运行证据和需要人处理的事项。"
+title: "审批、预算、活动和待处理事项"
+description: "找到敏感操作审批、费用、变更记录、Agent 运行和等待处理工作的正确入口。"
 icon: "sliders-horizontal"
 keywords:
-  - "Rudder 审批和预算"
-  - "Agent 预算硬停止"
-  - "Rudder 活动审计"
-  - "运行证据"
+  - "Rudder 审批"
+  - "Agent 预算"
+  - "Rudder 活动"
 canonical: "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity"
 "og:url": "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity"
 hreflang_en: "https://docs.rudderhq.dev/reference/approvals-budgets-activity"
 hreflang_zh: "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity"
 ---
 
-## 旧主题索引
-
-旧主题名称应查阅以下当前权威页面：
-
-| 主题 | 当前权威页面 |
-| --- | --- |
-| 审批 | [本页的审批条目](#approvals) |
-| 预算和成本 | [本页的预算和成本条目](#budgets-and-cost) |
-| 活动记录 | [本页的活动记录条目](#activity) |
-| 运行证据 | [Agent](/zh/concepts/agents)，本页下方另有[运行信息速查](#run-intelligence) |
-| Dashboard | [概览](/zh/concepts/overview) |
-| Calendar | [日历](/zh/concepts/calendar) |
-| 需要人处理的事项 | [Chat 和 Messenger](/zh/concepts/chat-messenger) |
-
 <a id="definition" />
 
-## 定义
-
-这些记录让 Agent 工作可以被检查。审批约束拟执行的动作，预算限制费用，活动
-记录保存重要的产品变更，运行证据解释执行过程。Dashboard、Calendar 和提醒
-页面从这些来源生成摘要，不会另外维护一套状态。
+不确定一项决定或运营问题应该去哪里处理时，查阅本页。
 
 <a id="states" />
 
-## 状态与记录
+## 去哪里看
+
+| 问题 | 打开 |
+| --- | --- |
+| 这项敏感操作是否允许发生？ | 审批 |
+| 一个 Agent 或项目花了多少？ | 预算和费用 |
+| 谁修改了这条记录？ | 活动 |
+| 某一次尝试发生了什么？ | Agent 运行 |
+| 整个组织哪些工作在推进或等待？ | Dashboard |
+| 某一天发生或计划了什么？ | Calendar |
+| 现在有哪些事情等我回复？ | Messenger |
 
 <a id="approvals" />
 
-### 审批
+## 审批
 
-一条审批记录会保存请求动作、目标、申请人、状态、讨论、结论和应用结果。
-请求被接受后，由该动作所属的服务执行。应用过程可以安全重试，并始终受组织
-范围约束。
+审批允许或拒绝一项计划中的操作。它不同于评审：评审判断产物是否合格，审批决定
+操作是否有权发生。
 
-| 状态 | 含义和下一步 |
-| --- | --- |
-| `pending` | 等待结论；可以接受、拒绝或要求修改 |
-| `revision_requested` | 需要修改；申请人可以重新提交到 `pending`，期间仍可作出结论 |
-| `approved` | 动作已获授权；所属服务以可安全重试的方式应用 |
-| `rejected` | 动作被拒绝，不会应用 |
-| `cancelled` | 请求在没有结论、也没有应用动作的情况下结束 |
-
-只有 `pending` 可以进入 `revision_requested`。`pending` 和
-`revision_requested` 都可以被接受或拒绝；只有 `revision_requested` 可以重新
-提交。`approved`、`rejected` 和 `cancelled` 是这条审批记录的终态。
+审批可以是 `pending`、`revision_requested`、`approved`、`rejected` 或
+`cancelled`。请求应说明具体操作、风险、申请人和相关上下文。重复处理同一请求，
+不能把操作执行两次。
 
 <a id="budgets-and-cost" />
 
-### 预算和成本
+## 预算和费用
 
-运行环境和结果写入会产生带来源身份的成本事件。在支持的地方，Rudder 可以按
-组织、Agent、项目、Issue、运行和时间窗口汇总。月度周期使用 UTC。软提醒用于
-显示费用压力；达到硬限制后会暂停或阻止新工作，而不是事后才报告。
+预算可以限制组织、项目或 Agent。费用会汇总到这些范围。达到硬限制后，Rudder
+会暂停受影响 Agent，不能继续产生隐藏花费。
+
+失败或取消的运行仍可能有费用。服务商没有提供用量时，会显示为不可用，不会用
+错误的零来代替。
 
 <a id="activity" />
 
-### 活动记录
+## 活动
 
-活动记录是跨页面的重要变更审计线索。每条记录保存参与者、组织、动作、对象、
-引用和摘要，也可以连接相关的 Chat、Issue、运行和审批上下文。
+活动保存重要操作的变更历史，例如状态改变、分配、评论、评审结论、审批结论和
+配置修改。记录会说明谁在什么时候修改了什么，以及影响了哪个组织内对象。
+
+“谁改了这项设置？”适合查活动；真实产物和执行过程仍应看原任务或运行。
 
 <a id="run-intelligence" />
 
-### 运行信息
+## Agent 运行
 
-组织运行列表默认返回有边界的摘要，包括身份、状态、时间、Agent 与运行环境、
-目标、结果或错误、用量与成本、技能证据和日志可用性。需要完整结果、上下文、
-记录、事件或日志时，再打开单条运行。原始证据不会被摘要替代，支持的详情读取
-会按有边界的页面返回。
+组织运行列表会显示简短摘要，包括 Agent、任务、状态、结果或错误、可用的用量
+与费用、技能使用和日志状态。打开单条运行，可以查看完整结果、对话记录、事件或
+原始日志。
+
+摘要方便快速浏览，但不会删除底层细节。
 
 <a id="dashboard-calendar-and-inbox" />
 
-### Dashboard、Calendar 和人员提醒
+## Dashboard、Calendar 和 Messenger
 
-Dashboard 根据实时领域记录汇总组织状态。Calendar 保留日期事件，并链接回
-来源自动化、Issue、运行或已配置日历来源。Inbox、侧栏计数和 Messenger 把需要
-人处理的事项带回对应来源对象。
+- **Dashboard** 汇总当前进展、失败、费用和需要注意的事项。
+- **Calendar** 把计划和已经完成的工作放到时间线上。
+- **Messenger** 汇总需要人回复的提问、失败、阻塞、评审和审批。
+
+三个入口都会带你回到原始 Chat、Issue、运行、自动化或审批。
 
 <a id="constraints" />
 
-## 约束
+## 需要记住的规则
 
-- 评审判断产物质量，审批授权受治理动作，两者不能互相替代。
-- 达到预算硬限制后，新产生的隐性工作会停止。成本事件保留来源运行或事件身份。
-- 活动记录只保存重要变更，不记录每次内部更新。
-- 运行摘要不能替代诊断和评审所需的记录、结果、日志、事件或关联产物。
+- 评审判断质量，审批授予权限。
+- 配置硬预算后，达到限制必须停止或暂停花费。
+- 活动说明记录怎样变化，运行详情解释执行过程。
+- 汇总页面不会变成第二份任务状态。
 
 <a id="boundaries" />
 
-## 边界
+## 组织范围
 
-所有记录都受组织范围约束。人员提醒和未读状态不能跨组织泄漏。Dashboard 和
-Calendar 是派生页面，不会重新定义 Issue、运行、审批、成本或自动化状态。
-
-摘要提出疑问时，应打开所属详情页。活动记录说明发生了什么变化；来源 Issue、
-运行、审批或自动化保存完整记录和可执行的下一步。
+审批、预算、活动、运行、Dashboard、Calendar 和 Messenger 都只属于自己的
+组织。在一个组织中创建的凭据，不能打开另一个组织的记录。
 
 <a id="examples" />
 
 ## 例子
 
-- Agent 提议执行敏感变更。审批记录保存动作内容和讨论；接受后，所属服务只
-  应用一次，并留下活动证据。
-- Agent 的月度预算达到硬限制。新工作暂停或被阻止，成本页面仍保留组成总额的
-  事件。
-- Dashboard 显示一次失败运行，Inbox 要求人处理。先打开来源运行查看记录和
-  日志，再到关联工作对象作出下一步决定。
-
-<CardGroup cols={2}>
-  <Card title="评审 Agent 工作" icon="message-square-check" href="/zh/how-to/review-agent-work">
-    判断产物证据并记录持久的评审结论。
-  </Card>
-  <Card title="日历" icon="calendar-days" href="/zh/concepts/calendar">
-    检查带日期的工作，并返回它的来源。
-  </Card>
-</CardGroup>
+- 发布说明写得很好，但真正发布仍需要单独审批。
+- Agent 达到月度硬预算，在下一次运行前暂停。
+- 评审人想知道谁重新分配了 Issue，于是检查活动。
+- 负责人从 Messenger 看到自动化失败，并打开来源运行。

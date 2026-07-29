@@ -1,11 +1,11 @@
 ---
-title: "Calendar"
-description: "按时间检查定时和已发生的工作，同时避免建立第二套任务状态。"
+title: "Calendar（日历）"
+description: "查看 Agent 何时工作、下一次任务何时开始，以及人的检查发生在什么时候。"
 icon: "calendar-days"
 keywords:
   - "Rudder Calendar"
-  - "Agent 运行历史"
-  - "定时工作"
+  - "Agent 工作历史"
+  - "自动化日程"
 canonical: "https://docs.rudderhq.dev/zh/concepts/calendar"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/calendar"
 hreflang_en: "https://docs.rudderhq.dev/concepts/calendar"
@@ -14,34 +14,42 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/calendar"
 
 <a id="definition" />
 
-## 定义
+## Calendar 用来做什么
 
-`Calendar` 是组织范围内的时间视图，用来展示已经带有日期或时间窗口的工作。事件可以来自自动化日程、Issue 日期、Agent 运行时间段或已配置的日历来源。可以打开的事件会保留指向来源对象的链接。
+Calendar 按时间显示本来就有日期的工作，包括 Agent 运行、自动化日程与运行，
+以及重要的人工检查。
 
-Calendar 回答某件事何时计划、何时发生。状态、结果和下一步仍由原始 Issue、自动化或运行记录负责。
+你可以用它回答：
 
-<a id="case" />
-
-## 一个示意案例
-
-运营简报安排在 18:00。Calendar 先显示定时事件，执行后再显示运行时间段。负责人打开事件，进入自动化，再检查关联的 Chat 结果。如果运行失败，失败应在原始运行和自动化记录中处理，不是在 Calendar 里另改一套状态。
+- 昨天有哪些 Agent 工作过？
+- 本周有哪些重复任务即将开始？
+- 几次高费用运行是否发生了重叠？
+- 某次评审或审批是什么时候完成的？
 
 ![Calendar 工作历史](../../images/calendar-work-history.png)
 
+<a id="case" />
+
+## 例子：检查每周报告
+
+一份运营简报安排在周一上午。Calendar 会先显示下次计划时间，真正执行后再显示
+运行记录。如果报告失败，打开来源自动化或 Agent 运行，查看原因并修复。
+
 <a id="when-useful" />
 
-## 什么时候有用
+## Calendar 不会代替任务本身
 
-需要查看一段时间内的安排、重叠、错过的时间窗口和人工检查点时，用 Calendar。日、周、月视图只改变同一批来源事件的排列方式，不会改变底层记录。
-
-要确认当前负责人或处理待决事项，应回到原始 Issue、Messenger 对话、自动化或 Agent 运行。
+日、周、月视图只是用不同方式排列同一批来源记录。想修改负责人、回答问题、
+评审产物或调整日程时，应回到原始 Issue、Chat、运行记录或自动化。
 
 <a id="operating-boundaries" />
 
-## 操作边界
+## 需要记住
 
-Calendar 不是任务分配队列，也不能因为出现了一段运行时间就推断工作成功。所有事件必须保持组织范围和来源身份。
+- Calendar 里出现一条记录，不代表任务已经成功。
+- Calendar 不会为 Issue 或自动化再建立一套状态。
+- 日程记录只属于自己的组织，并且会链接回来源。
+- 来源发生变化时，Calendar 会跟着更新，不需要维护另一份副本。
 
-风险最高的是重复状态。Calendar 事件不能变成 Issue 或自动化的第二份状态记录。来源发生变化时，Calendar 应反映来源，而不是维护一份独立事实。
-
-重复日程见[自动化](/zh/concepts/automations)，需要找回人的注意力时见 [Chat 和 Messenger](/zh/concepts/chat-messenger)。
+重复工作见[自动化](/zh/concepts/automations)，等待你处理的问题与失败见
+[Messenger](/zh/concepts/chat-messenger)。

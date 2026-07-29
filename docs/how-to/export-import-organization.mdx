@@ -1,87 +1,80 @@
 ---
-title: "Export and import an organization"
-description: "Build a portable organization bundle, preview dependencies and collisions, then import it with fresh identity and no secret leakage."
+title: "Move an Organization to Another Rudder Instance"
+description: "Export supported organization data, preview the import, and safely create a new copy."
 icon: "package-open"
 keywords:
   - "export Rudder organization"
   - "import Rudder organization"
-  - "organization portability"
+  - "move Rudder data"
 canonical: "https://docs.rudderhq.dev/how-to/export-import-organization"
 "og:url": "https://docs.rudderhq.dev/how-to/export-import-organization"
 hreflang_en: "https://docs.rudderhq.dev/how-to/export-import-organization"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/export-import-organization"
 ---
 
+Export/import moves the supported structure of an organization. It is not a
+full database backup.
+
 <a id="completed-state" />
 
-## Completed state
+## What can move
 
-At the end of this guide, a selected organization package has been exported and
-previewed before import. The current package supports organization, Agents,
-projects, Issues, Automations, and Skills. The imported copy has a fresh
-organization UUID, canonical route key, and Issue Key.
+The current package can include:
+
+- the organization
+- Agents
+- projects
+- Issues
+- Automations
+- Skills
+
+Goals, Library files, organization resources, and stored secrets are not
+included. Imported Issues do not keep their Goal links. Plan to move files and
+recreate secrets and Goal links separately.
 
 <a id="prerequisites" />
 
-## Prerequisites
+## Before you start
 
-You need board access to the source and destination instances, enough local
-space for the bundle, and an inventory limited to the supported entity types.
-Goals, Library files, and organization resources are not included in the
-package. Prepare replacement secrets and environment values separately. Export
-is a portable bundle with a `.rudder.yaml` manifest, not an unrestricted
-database dump, and it must not leak stored secrets.
-
-Imported Issues do not retain Goal links; their `goalId` is `null`. Plan to
-recreate Goals, Goal links, Library files, and organization resources separately
-after import when the destination needs them.
-
-The illustrative case moves a consulting team's client-brief project to a new
-local instance.
+You need access to both Rudder instances, enough disk space for the package, and
+a list of what must be recreated. Store replacement credentials in the
+destination's secret controls, never inside the export file.
 
 <a id="case-backed-steps" />
 
-## Move the client-brief project
+## Export and import
 
-1. Open the source organization's export surface and select the organization,
-   relevant Agents, the client-brief project, its Issues and Automation, and
-   the Skills those Agents need.
-2. Start the export job. Wait for it to finish, then download the resulting
-   bundle and keep its generated manifest and README together.
-3. Open the destination import surface and select the bundle.
-4. Review the preview before applying anything. Check the selected organization,
-   Agents, projects, Issues, Automations, and Skills, plus collisions and secret
-   or environment requirements. Confirm separately which unsupported Goals,
-   Library files, and organization resources you will recreate.
-5. Choose a new-organization import. Enter the new display name and inspect its
-   proposed Issue Key independently. Correct a conflicting Issue Key instead of
-   changing the imported display name to work around it.
-6. Supply required destination secrets through the destination's secret flow.
-7. Apply the import through the previewed plan.
-8. Open an imported Agent, project, Issue, Automation, and Skill. Confirm their
-   supported links resolve inside the new organization, and confirm the imported
-   Issue has no Goal link before recreating it deliberately.
+1. Open the source organization's export page.
+2. Select the Agents, projects, Issues, Automations, and Skills you want.
+3. Start the export, wait for it to finish, and download the package. Keep its
+   generated README and manifest with it.
+4. Open the import page on the destination and select the package.
+5. Read the preview. Check what will be created, any missing dependencies or
+   name collisions, and which files or secrets still need manual work.
+6. Choose to create a new organization and enter its display name and Issue
+   Key.
+7. Add required secrets through the destination's secret settings.
+8. Apply the previewed plan.
+9. Open one imported Agent, project, Issue, Automation, and Skill. Recreate Goal
+   links and move Library files only after confirming the import.
 
 <a id="success-signal" />
 
-## Success signal
+## Check the imported copy
 
-The destination shows a new organization identity, not a reused source UUID or
-historical route alias. The selected Agents, projects, Issues, Automations, and
-Skills are present; imported Issues have `goalId` set to `null`; and no
-credential value appears in the package preview or imported content.
+The destination should contain a new organization, not a second route to the
+source organization. Selected entities should open and link to one another.
+No credential value should appear in the package or imported content.
 
 <a id="recovery" />
 
-## Recovery
+## If the preview or import fails
 
-If preview reports a missing supported dependency, return to export and include
-it, or remove the dependent entity from the import. Recreate unsupported Goals,
-Goal links, Library files, and organization resources outside this package
-flow. If the Issue Key conflicts, choose an explicit alternative. If secrets
-are missing, stop before apply and create the destination values through its
-secret controls.
+- Add a supported dependency to the export or remove the item that requires it.
+- Choose a different Issue Key when the destination already uses it.
+- Add missing secrets before applying the import.
+- Move unsupported Goals and files separately.
+- If applying fails, inspect what the import reports as already created before
+  retrying.
 
-Do not bypass preview with raw database writes. If apply fails, keep the bundle
-and preview evidence, inspect the destination for any entities the import
-reports as applied, then resolve the named conflict before retrying.
+Do not skip the preview with direct database writes.

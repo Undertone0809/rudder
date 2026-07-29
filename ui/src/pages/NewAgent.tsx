@@ -1,15 +1,16 @@
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Input } from "@/components/ui/input";
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   buildOrganizationSkillPickerItems,
   filterOrganizationSkillPickerItems,
   filterSelectableNewAgentOrganizationSkillItems,
 } from "@/lib/organization-skill-picker";
+import {
+  formatOrganizationSkillSourceLabel,
+  formatOrganizationSkillSourceTooltip,
+} from "@/lib/organization-skill-source-label";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
@@ -18,22 +19,20 @@ import {
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
-import { AGENT_ROLES } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Shield } from "lucide-react";
+import { Loader2, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getUIAdapter } from "../agent-runtimes";
 import { agentsApi } from "../api/agents";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { defaultCreateValues } from "../components/agent-config-defaults";
-import { roleLabels } from "../components/agent-config-primitives";
 import { AgentConfigForm, type CreateConfigValues } from "../components/AgentConfigForm";
 import { defaultModelForRuntime } from "../components/AgentConfigForm.helpers";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { queryKeys } from "../lib/queryKeys";
 import { explicitProviderModelError, isProviderModelFormat, requiresExplicitProviderModel } from "../lib/runtime-models";
-import { agentUrl, cn } from "../lib/utils";
+import { agentUrl } from "../lib/utils";
 
 const SUPPORTED_ADVANCED_ADAPTER_TYPES = new Set<CreateConfigValues["agentRuntimeType"]>([
   "claude_local",
@@ -45,6 +44,25 @@ const SUPPORTED_ADVANCED_ADAPTER_TYPES = new Set<CreateConfigValues["agentRuntim
   "openclaw_gateway",
 ]);
 const DEFAULT_FIRST_AGENT_TITLE = "Operator Assistant";
+
+function organizationSkillSourceFallbackLabel(sourceBadge: string) {
+  switch (sourceBadge) {
+    case "community":
+      return "Community preset";
+    case "github":
+      return "GitHub";
+    case "local":
+      return "Local";
+    case "url":
+      return "URL";
+    case "skills_sh":
+      return "skills.sh";
+    case "rudder":
+      return "Organization library";
+    default:
+      return "Catalog";
+  }
+}
 
 function createValuesForAdapterType(
   agentRuntimeType: CreateConfigValues["agentRuntimeType"],
@@ -76,14 +94,10 @@ export function NewAgent() {
 
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
-  const [role, setRole] = useState("general");
   const [configValues, setConfigValues] = useState<CreateConfigValues>(defaultCreateValues);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [skillSearchQuery, setSkillSearchQuery] = useState("");
-  const [roleOpen, setRoleOpen] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [autoSuggestedName, setAutoSuggestedName] = useState<string | null>(null);
-  const previousEffectiveRoleRef = useRef<string | null>(null);
   const hasAppliedInitialGeneralNameRef = useRef(false);
 
   const { data: agents } = useQuery({
@@ -134,18 +148,11 @@ export function NewAgent() {
   const showOrganizationSkillPicker = selectableOrganizationSkillPickerItems.length > 0;
   const hasLoadedAgents = Array.isArray(agents);
   const isFirstAgent = hasLoadedAgents && agents.length === 0;
-  const effectiveRole = isFirstAgent ? "ceo" : role;
-  const effectiveRoleLabel = isFirstAgent
-    ? DEFAULT_FIRST_AGENT_TITLE
-    : roleLabels[effectiveRole] ?? effectiveRole;
+  const effectiveRole = isFirstAgent ? "ceo" : "general";
   const { data: nameSuggestion } = useQuery({
     queryKey: queryKeys.agents.nameSuggestion(selectedOrganizationId!),
     queryFn: () => agentsApi.suggestName(selectedOrganizationId!),
-    enabled: Boolean(
-      selectedOrganizationId
-        && hasLoadedAgents
-        && (isFirstAgent || effectiveRole === "general"),
-    ),
+    enabled: Boolean(selectedOrganizationId && hasLoadedAgents),
   });
   const suggestedName = nameSuggestion?.name.trim() ?? "";
 
@@ -180,28 +187,12 @@ export function NewAgent() {
   }, [selectableOrganizationSkillPickerItems]);
 
   useEffect(() => {
-    const shouldAutofillName = isFirstAgent || effectiveRole === "general";
-    const wasGeneralRole = previousEffectiveRoleRef.current === "general";
-    const shouldApplyInitialSuggestion =
-      shouldAutofillName && !hasAppliedInitialGeneralNameRef.current;
-    const justSelectedGeneralRole =
-      !isFirstAgent && effectiveRole === "general" && !wasGeneralRole;
-
-    if (!shouldAutofillName || !suggestedName) {
-      previousEffectiveRoleRef.current = effectiveRole;
-      return;
+    if (!suggestedName || hasAppliedInitialGeneralNameRef.current) return;
+    if (name.trim().length === 0) {
+      setName(suggestedName);
     }
-
-    if (shouldApplyInitialSuggestion || justSelectedGeneralRole) {
-      if (name.trim().length === 0 || name === autoSuggestedName) {
-        setName(suggestedName);
-        setAutoSuggestedName(suggestedName);
-      }
-      hasAppliedInitialGeneralNameRef.current = true;
-    }
-
-    previousEffectiveRoleRef.current = effectiveRole;
-  }, [autoSuggestedName, effectiveRole, isFirstAgent, name, suggestedName]);
+    hasAppliedInitialGeneralNameRef.current = true;
+  }, [name, suggestedName]);
 
   const createAgent = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
@@ -278,7 +269,10 @@ export function NewAgent() {
         </p>
       </div>
 
-      <div className="border border-border">
+      <div
+        data-testid="new-agent-form"
+        className="overflow-hidden rounded-xl border border-border bg-[color:var(--surface-elevated)]"
+      >
         {/* Name */}
         <div className="px-4 pt-4 pb-2">
           <input
@@ -300,39 +294,6 @@ export function NewAgent() {
           />
         </div>
 
-        {/* Property chips */}
-        <div className="flex items-center gap-1.5 px-4 py-2 border-t border-border flex-wrap">
-          <Popover open={roleOpen} onOpenChange={setRoleOpen}>
-            <PopoverTrigger asChild>
-              <button
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors",
-                  (isFirstAgent || !hasLoadedAgents) && "opacity-60 cursor-not-allowed"
-                )}
-                disabled={isFirstAgent || !hasLoadedAgents}
-              >
-                <Shield className="h-3 w-3 text-muted-foreground" />
-                {effectiveRoleLabel}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-36 p-1" align="start">
-              {AGENT_ROLES.map((r) => (
-                <button
-                  key={r}
-                  className={cn(
-                    "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
-                    r === role && "bg-accent"
-                  )}
-                  onClick={() => { setRole(r); setRoleOpen(false); }}
-                >
-                  {roleLabels[r] ?? r}
-                </button>
-              ))}
-            </PopoverContent>
-          </Popover>
-
-        </div>
-
         {/* Shared config form */}
         <AgentConfigForm
           mode="create"
@@ -346,9 +307,16 @@ export function NewAgent() {
           <div className="border-t border-border px-4 py-4">
             <div className="space-y-3">
               <div>
-                <h2 className="text-sm font-medium">Organization skills</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Optional skills from the organization library. Search by name, slug, source label, or public ref.
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-semibold">Organization skills</h2>
+                  {!organizationSkillsPending ? (
+                    <span className="text-xs text-muted-foreground">
+                      {selectableOrganizationSkillPickerItems.length}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
+                  Choose optional skills from the organization library for this agent.
                 </p>
               </div>
               {organizationSkillsPending ? (
@@ -356,41 +324,99 @@ export function NewAgent() {
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   <span>Loading skills...</span>
                 </div>
-              ) : filteredOrganizationSkillPickerItems.length === 0 ? (
-                // Once bundled defaults are excluded, an empty filtered list means
-                // only the current search produced no matches. If there were no
-                // optional skills at all, we would have hidden this section above.
-                <p className="text-xs text-muted-foreground">No skills match your search.</p>
               ) : (
                 <div className="space-y-3">
-                  <input
-                    className="w-full rounded-md border border-border bg-transparent px-2.5 py-2 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-ring"
-                    placeholder="Search skills..."
-                    value={skillSearchQuery}
-                    onChange={(event) => setSkillSearchQuery(event.target.value)}
-                  />
-                  {filteredOrganizationSkillPickerItems.map((skill) => {
-                    const inputId = `skill-${skill.id}`;
-                    const checked = selectedSkillIds.includes(skill.id);
-                    return (
-                      <label key={skill.id} htmlFor={inputId} className="flex items-start gap-3 rounded-md border border-border/60 px-3 py-2 transition-colors hover:bg-accent/30">
-                        <Checkbox
-                          id={inputId}
-                          checked={checked}
-                          onCheckedChange={(next) => toggleSkill(skill.id, next === true)}
-                        />
-                        <span className="grid min-w-0 gap-1 leading-none">
-                          <span className="truncate text-sm font-medium">{skill.publicRef}</span>
-                          <span className="truncate text-xs text-muted-foreground">
-                            {skill.name}
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="h-9 pl-9"
+                      placeholder="Search skills"
+                      aria-label="Search skills"
+                      value={skillSearchQuery}
+                      onChange={(event) => setSkillSearchQuery(event.target.value)}
+                    />
+                  </div>
+                  {filteredOrganizationSkillPickerItems.length === 0 ? (
+                    <p className="rounded-lg border border-border/70 px-3 py-4 text-xs text-muted-foreground">
+                      No skills match your search.
+                    </p>
+                  ) : (
+                    <div className="grid gap-2.5 sm:grid-cols-2">
+                      {filteredOrganizationSkillPickerItems.map((skill) => {
+                        const checked = selectedSkillIds.includes(skill.id);
+                        const sourceFallbackLabel = organizationSkillSourceFallbackLabel(skill.sourceBadge);
+                        const sourceLabel = formatOrganizationSkillSourceLabel({
+                          sourceBadge: skill.sourceBadge,
+                          sourceLabel: skill.sourceLabel,
+                          sourceLocator: skill.sourceLocator,
+                          sourcePath: skill.sourcePath,
+                          fallbackLabel: sourceFallbackLabel,
+                        });
+                        const sourceTooltip = formatOrganizationSkillSourceTooltip({
+                          sourceBadge: skill.sourceBadge,
+                          sourceLabel: skill.sourceLabel,
+                          sourceLocator: skill.sourceLocator,
+                          sourcePath: skill.sourcePath,
+                          fallbackLabel: sourceFallbackLabel,
+                        });
+                        const sourceBadge = (
+                          <span className="inline-flex max-w-[10.5rem] items-center truncate rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                            {sourceLabel}
                           </span>
-                          <span className="truncate text-[11px] text-muted-foreground/80">
-                            {skill.sourceBadge} · {skill.sourceLabel ?? "Unknown source"}
-                          </span>
-                        </span>
-                      </label>
-                    );
-                  })}
+                        );
+                        return (
+                          <div
+                            key={skill.id}
+                            className={
+                              checked
+                                ? "flex min-w-0 items-start justify-between gap-3 rounded-lg border border-border bg-background p-3 transition-colors"
+                                : "flex min-w-0 items-start justify-between gap-3 rounded-lg border border-border/70 bg-muted/35 p-3 text-muted-foreground transition-colors"
+                            }
+                          >
+                            <div className="min-w-0 space-y-2">
+                              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                <span className={
+                                  checked
+                                    ? "truncate text-sm font-semibold text-foreground"
+                                    : "truncate text-sm font-semibold text-foreground/80"
+                                }>
+                                  {skill.name}
+                                </span>
+                                {sourceTooltip ? (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>{sourceBadge}</TooltipTrigger>
+                                    <TooltipContent
+                                      side="top"
+                                      className="max-w-[18rem] break-words text-left leading-5"
+                                    >
+                                      {sourceTooltip}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                ) : sourceBadge}
+                              </div>
+                              <p
+                                className="truncate font-mono text-[11px] text-muted-foreground/80"
+                                title={skill.publicRef}
+                              >
+                                {skill.publicRef}
+                              </p>
+                              <p className="line-clamp-2 text-xs leading-[1.15rem] text-muted-foreground">
+                                {skill.description ?? "No description provided."}
+                              </p>
+                            </div>
+                            <ToggleSwitch
+                              checked={checked}
+                              size="sm"
+                              tone="success"
+                              aria-label={skill.publicRef}
+                              className="cursor-pointer"
+                              onClick={() => toggleSkill(skill.id, !checked)}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

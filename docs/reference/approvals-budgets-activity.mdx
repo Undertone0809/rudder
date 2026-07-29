@@ -1,145 +1,114 @@
 ---
-title: "Approvals, budgets, and activity"
-description: "Look up governed decisions, spend limits, audit activity, run evidence, and operator attention in Rudder."
+title: "Approvals, Budgets, Activity, and Attention"
+description: "Know where to approve sensitive actions, check spending, review changes, inspect Runs, and find work waiting for you."
 icon: "sliders-horizontal"
 keywords:
-  - "Rudder approvals and budgets"
-  - "Agent budget hard stop"
-  - "Rudder activity audit"
-  - "Run evidence"
+  - "Rudder approvals"
+  - "Agent budget"
+  - "Rudder activity"
 canonical: "https://docs.rudderhq.dev/reference/approvals-budgets-activity"
 "og:url": "https://docs.rudderhq.dev/reference/approvals-budgets-activity"
 hreflang_en: "https://docs.rudderhq.dev/reference/approvals-budgets-activity"
 hreflang_zh: "https://docs.rudderhq.dev/zh/reference/approvals-budgets-activity"
 ---
 
-## Legacy topic map
-
-Use the current owner for each older topic name:
-
-| Topic | Current authoritative page |
-| --- | --- |
-| Approval | [Approvals on this page](#approvals) |
-| Budget and cost | [Budgets and cost on this page](#budgets-and-cost) |
-| Activity | [Activity on this page](#activity) |
-| Run evidence | [Agents](/concepts/agents), with a [run intelligence lookup](#run-intelligence) below |
-| Dashboard | [Overview](/concepts/overview) |
-| Calendar | [Calendar](/concepts/calendar) |
-| Human attention | [Chat and Messenger](/concepts/chat-messenger) |
-
 <a id="definition" />
 
-## Definition
-
-These records make Agent work inspectable. Approvals govern proposed actions,
-budgets constrain spend, activity records material product changes, and Run
-evidence explains execution. Dashboard, Calendar, and human attention surfaces
-summarize those source records without owning a second copy of their state.
+Use this page to find the right place for a decision or operational question.
 
 <a id="states" />
 
-## States and records
+## Where to look
+
+| Question | Open |
+| --- | --- |
+| May this sensitive action happen? | Approval |
+| How much has an Agent or project spent? | Budget and cost |
+| Who changed this record? | Activity |
+| What happened in one attempt? | Agent Run |
+| What is moving or waiting across the organization? | Dashboard |
+| What happened or is scheduled on a date? | Calendar |
+| What needs my response now? | Messenger |
 
 <a id="approvals" />
 
-### Approvals
+## Approvals
 
-An Approval keeps the requested action, target, requester, status, discussion,
-decision, and application result together. An accepted request applies through
-the service that owns the action. Application is idempotent and remains scoped
-to the organization.
+An Approval gives or refuses permission for a proposed action. It is not the
+same as a Review, which judges whether an output is good enough.
 
-| Status | Meaning and next transition |
-| --- | --- |
-| `pending` | Waiting for a decision; it can be approved, rejected, or returned for revision |
-| `revision_requested` | Changes are required; the requester can resubmit it to `pending`, and it remains resolvable |
-| `approved` | The action was authorized; the owning service applies it idempotently |
-| `rejected` | The action was declined and is not applied |
-| `cancelled` | The request ended without a decision or application |
-
-Only `pending` can move to `revision_requested`. Approval or rejection can
-resolve `pending` and `revision_requested`; resubmission is available only from
-`revision_requested`. `approved`, `rejected`, and `cancelled` are terminal for
-that Approval record.
+An approval can be `pending`, `revision_requested`, `approved`, `rejected`, or
+`cancelled`. The request should name the action, risk, requester, and relevant
+context. Deciding the same request again should not apply the action twice.
 
 <a id="budgets-and-cost" />
 
-### Budgets and cost
+## Budgets and cost
 
-Runtime and result ingestion create cost events with source identity. Rudder
-can roll them up by organization, Agent, Project, Issue, Run, and time window
-where supported. Monthly periods use UTC. Soft alerts expose spend pressure;
-hard limits pause or block new work instead of reporting only after the fact.
+Budgets can limit an organization, project, or Agent. Cost events roll up to
+those scopes. When a hard limit is reached, Rudder pauses the affected Agent
+instead of allowing hidden additional spend.
+
+A failed or cancelled Run can still have cost. Missing provider usage is shown
+as unavailable rather than estimated as a false zero.
 
 <a id="activity" />
 
-### Activity
+## Activity
 
-Activity is the cross-surface audit record for material mutations. Entries keep
-the actor, organization, action, entity, references, and a summary. They can
-connect related Chat, Issue, Run, and Approval context.
+Activity is the change history for important actions: status changes,
+assignments, comments, review decisions, approval decisions, configuration
+changes, and similar mutations. Entries show who acted, what changed, when, and
+which organization record was affected.
+
+Use Activity to answer “who changed this?” It is not a replacement for the
+actual output or Run.
 
 <a id="run-intelligence" />
 
-### Run intelligence
+## Agent Runs
 
-Organization Run lists default to bounded summaries with identity, status,
-timing, Agent and runtime, target, outcome or error, usage and cost, Skill
-evidence, and log availability. Open one Run for full result, context,
-transcript, events, or logs. Raw evidence remains available and detail reads
-use bounded pages where supported.
+Organization Run lists show a compact summary: Agent, task, status, result or
+error, usage and cost when available, Skill usage, and log availability. Open a
+Run for the full result, transcript, events, or raw logs.
+
+Readable summaries make scanning easier; they do not delete the lower-level
+details.
 
 <a id="dashboard-calendar-and-inbox" />
 
-### Dashboard, Calendar, and human attention
+## Dashboard, Calendar, and Messenger
 
-Dashboard derives organization health from live domain records. Calendar keeps
-dated events linked to their source Automation, Issue, Run, or configured
-calendar source. Human attention routes through Inbox, sidebar badges, and
-Messenger to the source object that needs a decision or response.
+- **Dashboard** summarizes current movement, failures, cost, and items needing
+  attention.
+- **Calendar** places scheduled and completed work on a timeline.
+- **Messenger** gathers questions, failed Runs, blockers, reviews, and approvals
+  that need a human response.
+
+All three point back to the original Chat, Issue, Run, Automation, or Approval.
 
 <a id="constraints" />
 
-## Constraints
+## Rules worth remembering
 
-- A Review judges output quality. An Approval authorizes a governed action.
-  One does not substitute for the other.
-- A budget hard stop prevents new hidden work when the limit is reached. Cost
-  events retain their source Run or event identity.
-- Activity records material changes, not every internal update.
-- A Run summary does not replace transcripts, results, logs, events, or linked
-  artifacts needed for diagnosis and Review.
+- Review judges quality; Approval grants permission.
+- A budget limit must stop or pause spending where configured.
+- Activity records changes; Run details explain execution.
+- Summary screens never become a second copy of task state.
 
 <a id="boundaries" />
 
-## Boundaries
+## Organization boundary
 
-All records stay organization-scoped. User attention and unread state must not
-leak across organizations. Dashboard and Calendar are derived views, so they do
-not redefine Issue, Run, Approval, cost, or Automation state.
-
-Use the owning detail page when a summary raises a question. Activity explains
-that something changed; the source Issue, Run, Approval, or Automation provides
-the full record and the available action.
+Approvals, budgets, Activity, Runs, Dashboard, Calendar, and Messenger stay
+inside their organization. Credentials created in one organization cannot open
+records from another.
 
 <a id="examples" />
 
 ## Examples
 
-- An Agent proposes a sensitive change. The Approval records the payload and
-  discussion; after acceptance, the owning service applies it once and leaves
-  activity evidence.
-- A monthly Agent budget reaches its hard limit. New work pauses or is blocked,
-  while cost views retain the events that produced the total.
-- Dashboard shows a failed Run and Inbox asks for attention. Open the source
-  Run for its transcript and logs, then use the linked work object for the next
-  decision.
-
-<CardGroup cols={2}>
-  <Card title="Review Agent work" icon="message-square-check" href="/how-to/review-agent-work">
-    Judge output evidence and record a durable Review decision.
-  </Card>
-  <Card title="Calendar" icon="calendar-days" href="/concepts/calendar">
-    Inspect dated work and navigate to its source.
-  </Card>
-</CardGroup>
+- A release note is well written but publishing requires separate approval.
+- An Agent reaches its hard monthly limit and pauses before the next Run.
+- A reviewer wants to know who reassigned an Issue and checks Activity.
+- An operator sees a failed Automation in Messenger and opens its source Run.

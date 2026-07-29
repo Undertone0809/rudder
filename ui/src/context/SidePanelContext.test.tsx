@@ -114,6 +114,7 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
       <button type="button" onClick={sidePanel.openEmpty}>Open empty</button>
       <button type="button" onClick={sidePanel.hidePanel}>Hide</button>
       <button type="button" onClick={() => sidePanel.activeKey && sidePanel.closeTarget(sidePanel.activeKey)}>Close active</button>
+      <button type="button" onClick={() => sidePanel.activeKey && sidePanel.closeTargetAndHidePanel(sidePanel.activeKey)}>Close active and hide</button>
       <span data-testid="context-key">{sidePanel.contextKey}</span>
       <span data-testid="open">{String(sidePanel.open)}</span>
       <span data-testid="active-key">{sidePanel.activeKey ?? ""}</span>
@@ -244,6 +245,24 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "open")).toBe("false");
     expect(text(container, "active-key")).toBe("");
     expect(text(container, "tab-count")).toBe("0");
+  });
+
+  it("atomically closes the active tab, preserves its sibling, and hides the Side Panel", () => {
+    ({ container, root } = renderSidePanelProvider());
+
+    click(container, "Chat A");
+    click(container, "Open issue");
+    click(container, "Open file");
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "active-key")).toMatch(/^library-file:docs\/spec\.md:/);
+    expect(text(container, "tab-count")).toBe("2");
+
+    click(container, "Close active and hide");
+
+    expect(text(container, "open")).toBe("false");
+    expect(text(container, "active-key")).toBe("issue:issue-1:");
+    expect(text(container, "tab-count")).toBe("1");
+    expect(text(container, "tab-keys")).toBe("issue:issue-1:");
   });
 
   it("detaches the exact active middle tab and selects its right neighbor without requesting close", () => {

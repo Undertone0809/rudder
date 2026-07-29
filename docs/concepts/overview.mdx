@@ -1,95 +1,88 @@
 ---
-title: "Core Concepts"
-description: "Follow one task through Rudder's organizations, work surfaces, agents, runs, outputs, and review."
+title: "How Rudder Works"
+description: "Learn the five ideas you need to give Agents work and keep the result useful."
 icon: "book-open"
 keywords:
   - "Rudder concepts"
   - "AI agent team"
-  - "agent work management"
+  - "agent workspace"
 canonical: "https://docs.rudderhq.dev/concepts/overview"
 "og:url": "https://docs.rudderhq.dev/concepts/overview"
 hreflang_en: "https://docs.rudderhq.dev/concepts/overview"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/overview"
 ---
 
-Imagine a small team preparing a launch announcement. A human sets the goal,
-an Agent drafts the file, another person reviews it, and the final Markdown file
-must remain easy to find. Rudder gives every part of that loop a clear home.
+You do not need to learn the whole product before using Rudder. Start with five
+ideas.
 
-## The work loop through one case
+## 1. An organization is your team's workspace
 
-The **organization** is the workspace for the team. Its goal explains why the
-launch matters. A **project** can group the announcement with related launch
-work, resources, and dates.
+It contains the Agents, conversations, tasks, projects, files, and settings for
+one team or area of work. If you use Rudder alone, create one organization for
+your personal work and keep going.
 
-The operator can begin in **Chat** and refine the announcement through
-conversation. If the work needs a named owner, dependencies, status, or a
-review path, the operator can use an **Issue**.
+## 2. An Agent is a reusable worker
 
-An **Agent** is the durable team member responsible for a kind of work. An
-**Agent Run** is one bounded attempt by that Agent. The **runtime** is the
-execution environment Rudder invokes for the run. These are related, but they
-are not the same object.
+An Agent has a role and a runtime. The role says what kind of work it should
+handle. The runtime is the program that does the work, such as Codex, Claude
+Code, a local command, or a webhook.
 
-The run leaves evidence such as a summary and transcript. The finished
-announcement belongs with the Chat or Issue as an output. A review decision
-stays with the work record, so the team can see what was accepted or what must
-change.
+Each time the Agent works, Rudder creates an **Agent Run**. The Agent stays; a
+Run is only one attempt. Open the Run when you need to see progress, usage,
+errors, or lower-level details.
+
+## 3. Work can start in Chat or an Issue
+
+Use **Chat** when you want to ask, clarify, and revise in one conversation.
+
+Use an **Issue** when the task needs a clear owner, status, dependency, or
+reviewer. An Issue is useful structure, not a requirement for every task.
+
+## 4. The result belongs with the request
+
+An Agent may return an answer, change files, create a report, capture a
+screenshot, or provide a link. Rudder keeps these results connected to the Chat
+or Issue that asked for them, so you can understand them later.
+
+## 5. People still decide what happens next
+
+You can ask for another revision, accept the result, assign a reviewer, mark a
+task blocked, or create follow-up work. Rudder makes those decisions visible;
+it does not silently decide that every Agent response is correct.
 
 ![Rudder dashboard overview](../images/board-overview.png)
 
-## Surfaces you will meet
+## Add structure only when it helps
 
-| Need | Rudder surface |
+| When you need to… | Use |
 | --- | --- |
-| Explain the team's direction | Organization goal |
-| Group related work and context | Project |
-| Work through an ongoing conversation | Chat |
-| Track ownership, dependencies, status, or review | Issue |
-| See who performed a bounded attempt and what happened | Agent and Agent Runs |
-| Find replies, blockers, failed runs, and decisions needing attention | Messenger |
-| Keep web research and interaction beside the work | Built-in Browser |
-| Inspect when runs and human checkpoints happened | Calendar |
-| Reuse instructions for repeated work | Skills |
-| Trigger repeated work | Automations |
-| Keep resources and outputs in their intended filesystem area | Workspaces and Library |
-| Govern approvals, budgets, cost, and activity | Approvals, budgets, and activity |
-| Preserve review decisions and lessons for later work | Reviews, feedback, and learning |
-| Add integrations and specialized capabilities | Plugins |
+| Continue one task through conversation | Chat |
+| Track an owner, status, dependencies, or review | Issue |
+| Group related tasks, conversations, files, and dates | Project |
+| Reuse a proven procedure | Skill |
+| Run a stable task on a schedule or trigger | Automation |
+| Find questions, failures, and reviews waiting for you | Messenger |
+| Keep durable files and project folders organized | Library and Workspaces |
 
-The **Overview** summarizes the organization, including operational signals
-that help the operator see where work is moving or waiting. It does not replace
-the source Chat, Issue, run, review, or approval.
-
-## When structure helps
-
-Rudder does not require every task to use every object. A short drafting loop
-may remain in Chat. A release with dependencies and an independent reviewer is
-easier to operate as one or more Issues. Projects help when several work items
-share a result or context. Automations help only after the trigger and output
-path are predictable.
-
-The boundary is simple: preserve enough structure to make the next action and
-the final result inspectable. Do not create fields or objects that the work
-does not need.
+Dashboard and Calendar help you scan what is happening. They point back to the
+original Chat, Issue, Run, or Automation rather than creating a second copy of
+the work.
 
 <a id="learning-path" />
 
-## Recommended learning path
+## What to read next
 
-This sequence is independent of the sidebar order:
-
-1. [Create your first organization](/get-started/first-organization) and finish one small task.
-2. [Choose Chat or an Issue](/concepts/chat-messenger) for the way you want to work.
-3. [Understand Agents and Agent Runs](/concepts/agents), including the runtime boundary.
-4. [Run an Issue from intake to done](/how-to/issue-lifecycle) when explicit coordination helps.
-5. [Review agent work](/how-to/review-agent-work) and leave the result, evidence, and decision together.
+1. [Run your first task](/get-started/first-organization).
+2. [Choose Chat or an Issue](/concepts/chat-messenger).
+3. [Understand Agents and Runs](/concepts/agents).
+4. [Use an Issue from start to finish](/how-to/issue-lifecycle).
+5. [Review Agent work](/how-to/review-agent-work).
 
 <CardGroup cols={2}>
-  <Card title="Previous: First Organization" icon="arrow-left" href="/get-started/first-organization">
-    Complete the first work loop before exploring each concept.
+  <Card title="Previous: Run your first task" icon="arrow-left" href="/get-started/first-organization">
+    Get a useful result before exploring more features.
   </Card>
-  <Card title="Next: Goals, Projects, and Issues" icon="arrow-right" href="/concepts/goals-projects-issues">
-    See how direction becomes grouped, durable work.
+  <Card title="Next: Chat or Issue?" icon="arrow-right" href="/concepts/chat-messenger">
+    Pick the lightest way to organize a task.
   </Card>
 </CardGroup>

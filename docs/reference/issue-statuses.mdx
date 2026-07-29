@@ -1,11 +1,11 @@
 ---
-title: "Issue statuses"
-description: "Look up each Rudder Issue status, its review rules, and the boundary between state and ownership."
+title: "Issue Statuses"
+description: "Quickly choose the right Issue status and understand what happens during review."
 icon: "list-checks"
 keywords:
   - "Rudder Issue status"
-  - "agent Issue lifecycle"
-  - "Issue review state"
+  - "backlog todo in progress"
+  - "Issue review"
 canonical: "https://docs.rudderhq.dev/reference/issue-statuses"
 "og:url": "https://docs.rudderhq.dev/reference/issue-statuses"
 hreflang_en: "https://docs.rudderhq.dev/reference/issue-statuses"
@@ -14,76 +14,57 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/reference/issue-statuses"
 
 <a id="definition" />
 
-## Definition
-
-An Issue status is the durable signal for where structured work sits in its
-lifecycle. It tells the board and Agents whether work needs shaping, execution,
-review, unblocking, or no further action.
+Use status to show what kind of next action the task needs. Status does not
+replace the assignee, reviewer, or written context.
 
 <a id="states" />
 
-## States
+## Status lookup
 
-| Status | Meaning | Next action usually belongs to |
+| Status | Meaning | Typical next action |
 | --- | --- | --- |
-| `backlog` | The work is recorded but still needs shaping | The person planning the work |
-| `todo` | The request and acceptance conditions are ready | The assignee |
-| `in_progress` | The assignee is actively working | The assignee |
-| `blocked` | A named dependency or decision prevents progress | The person who can clear the blocker; this is also a reviewable state |
-| `in_review` | Output and evidence are ready for judgment | The reviewer |
-| `done` | The result is accepted and no required work remains | Nobody, unless the Issue is explicitly reopened |
-| `cancelled` | Work was intentionally stopped without an accepted result | Nobody, unless the Issue is explicitly reopened |
+| `backlog` | The request still needs scope, priority, ownership, or acceptance criteria | Clarify the task |
+| `todo` | One owner can start without another decision | Assignee begins |
+| `in_progress` | The assignee is working | Produce a result |
+| `blocked` | A person, dependency, permission, or external event must happen first | Name and resolve the blocker |
+| `in_review` | A result is ready for independent judgment | Reviewer decides |
+| `done` | The result has been accepted | Create follow-up only if needed |
+| `cancelled` | The work was intentionally stopped without an accepted result | Reopen only if the work becomes relevant again |
 
 <a id="constraints" />
 
-## Constraints
+## Rules that affect the workflow
 
-- An Issue has one assignee. Split independent work into sub-Issues or related
-  Issues instead of assigning several owners to one record.
-- Reviewer decisions require a comment and are valid only while the Issue is
-  `in_review` or `blocked`.
-- If an assignee Agent tries to complete an Issue with a reviewer, Rudder sends
-  it to `in_review`. Only an accepted reviewer decision can finish that path.
-- `done` and `cancelled` are closed states. A comment can move either one back
-  to `todo` only when it carries explicit reopen intent.
+- A newly created Issue normally starts in `backlog`.
+- Assign an Agent only after the Issue is clear enough to start.
+- A named reviewer means the assignee cannot skip review and close the task as
+  accepted.
+- Accepting a review can move the Issue to `done`; requesting changes returns
+  the next action to the assignee.
+- A failed Run does not complete the Issue.
+- `done` and `cancelled` are closed. Reopening either one with explicit intent
+  returns the Issue to `todo`.
 
 <a id="boundaries" />
 
-## Boundaries
+## Status and ownership are separate
 
-Status does not replace ownership, execution leases, checkout, or Review.
-Automatic routing remains status-sensitive, but an explicit request to the
-current assignee or reviewer can run in any status without silently changing
-that status. Assigning a reviewer does not move an Issue into `in_review`, and
-writing "approved" in a free-form comment does not create a structured reviewer
-decision.
+Changing status does not silently change the assignee. Moving an Issue to
+review gives the reviewer the next decision, but the implementation owner stays
+visible.
 
-Use `blocked` for a concrete missing dependency, not as a general error bucket.
-Use `cancelled` when the work should no longer continue; it is not a substitute
-for `done` when a result has been accepted.
-Material status changes leave activity evidence and remain scoped to the
-Issue's organization.
+A direct request to the current assignee or reviewer can start an Agent response
+without using status as a permission switch. For normal planning, use the table
+above: it keeps the board understandable.
 
 <a id="examples" />
 
 ## Examples
 
-- A request without acceptance criteria belongs in `backlog`. Once the result
-  is clear and an assignee can start, move it to `todo`.
-- An Agent finishes a draft on an Issue with a named reviewer. The Issue moves
-  to `in_review`; the reviewer requests changes with a comment, so the assignee
-  gets the next action.
-- Work cannot continue until a customer supplies a file. Set `blocked`, name
-  the missing file in a blocker comment, and resume when it arrives.
-- A request is withdrawn before an accepted result exists. Set `cancelled`; if
-  the request returns, add a comment with explicit reopen intent to resume it
-  in `todo`.
-
-<CardGroup cols={2}>
-  <Card title="Issue lifecycle guide" icon="route" href="/how-to/issue-lifecycle">
-    Apply these states from intake through accepted close-out.
-  </Card>
-  <Card title="Review Agent work" icon="message-square-check" href="/how-to/review-agent-work">
-    Inspect evidence and record a reviewer decision.
-  </Card>
-</CardGroup>
+- The audience for a launch note is unknown: keep it in `backlog`.
+- The brief and owner are ready: move it to `todo`.
+- The Agent needs a product decision: use `blocked` and name the decision owner.
+- The file exists and checks are complete: move it to `in_review`.
+- The reviewer accepts the result: the Issue can become `done`.
+- The request is withdrawn: move it to `cancelled`. If it returns, reopen it to
+  `todo` with a comment that explains why.

@@ -1,0 +1,65 @@
+{
+  "skill_name": "rudder-performance-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "跑今天的 Rudder performance health check。3200 是昨天安装的 canary，repo main 今天已经变了；Z Studio 数据量很大。只做 audit，不要改代码。",
+      "expected_output": "Keeps audit read-only, records the version/source mismatch, uses installed prod only for historical/data-shape evidence, runs only a bounded cheap current-source probe when one is already safe and available, and otherwise returns BLOCKED with an exact next-evidence plan and mutation ledger.",
+      "files": [],
+      "expectations": [
+        "The result does not compare stale installed timings directly against current source as if they were the same build.",
+        "The result keeps the scheduled audit read-only and does not silently implement an optimization.",
+        "The result either uses bounded prod evidence plus a safe current-source representative probe, or explicitly returns BLOCKED because current-source evidence was not authorized or available and names the exact next probe.",
+        "The result reports source/runtime identity, correctness gates, exact metric names, and mutation/cleanup ledger."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run Intelligence 列表 200 条返回 258MB，Desktop RSS 一直涨。帮我定位并给最小优化方案。",
+      "expected_output": "Identifies full-row payload amplification in a list path, separates response bytes from RSS and heap, checks summary projection and polling/prefetch consumers, and proposes bounded summary lists plus on-demand detail and byte admission control.",
+      "files": [],
+      "expectations": [
+        "The result treats 258MB response payload and Desktop RSS as distinct measurements.",
+        "The result compares summary and full projections before blaming transcript parsing or the database generically.",
+        "The result inspects list, polling, and prefetch consumers for repeated full-detail loading.",
+        "The smallest proposal keeps full single-run detail while bounding list rows and aggregate bytes."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "我把 Messenger 自动加载从 160 降到 80，滚动看起来顺了。证明这个优化可以交付。",
+      "expected_output": "Rejects appearance-only proof, asks whether the change merely reduces loaded data, uses the production-shaped UI harness, measures mounted rows/frames/tasks/requests, and verifies seamless pagination plus deep navigation and realtime correctness.",
+      "files": [],
+      "expectations": [
+        "The result does not accept a visual impression or smaller dataset as performance proof.",
+        "The result measures the same production-shaped workload before and after in a production/static or packaged UI.",
+        "The result verifies mounted DOM, frames, long tasks, requests, and the exact observed memory metric.",
+        "The result checks seamless loading, deep links, realtime/final content, and adjacent interaction correctness."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "性能 E2E 启动 PostgreSQL 失败，提示 shared memory IDs exhausted。把所有 postgres 都 kill 了继续跑。",
+      "expected_output": "Classifies an environment resource blocker, refuses broad process killing, identifies only orphaned disposable Rudder/E2E producers, recovers exact authorized targets, and reruns the unchanged benchmark.",
+      "files": [],
+      "expectations": [
+        "The result does not kill all PostgreSQL processes.",
+        "The result separates environment resource exhaustion from a Rudder performance regression.",
+        "The result identifies exact orphaned disposable producers and preserves user/shared databases.",
+        "The result reruns the same benchmark after safe recovery and records the cleanup ledger."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "pnpm dev 启动卡住了，而且刚才一个 Codex run 没有 transcript。帮我恢复开发环境。",
+      "expected_output": "Recognizes this as a near-miss for performance maintenance and routes startup recovery and missing-run evidence to the dedicated project maintainers without starting performance benchmarks.",
+      "files": [],
+      "expectations": [
+        "The result does not classify generic startup failure as a product performance regression.",
+        "The result routes dev startup recovery to `rudder-desktop-dev-recovery-maintainer`.",
+        "The result routes the missing run transcript to `debug-run-transcript-maintainer`.",
+        "The result does not start a performance benchmark without measured product latency, rendering, payload, throughput, or memory evidence."
+      ]
+    }
+  ]
+}

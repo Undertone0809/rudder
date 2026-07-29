@@ -1,75 +1,81 @@
 ---
-title: "核心概念"
-description: "通过一件任务理解 Rudder 中的组织、任务入口、Agent、运行记录、产物和评审。"
+title: "Rudder 如何工作"
+description: "了解把任务交给 Agent 并让结果继续发挥作用所需的五个概念。"
 icon: "book-open"
 keywords:
-  - "Rudder 核心概念"
+  - "Rudder 概念"
   - "AI Agent 团队"
-  - "Agent 工作管理"
+  - "Agent 工作台"
 canonical: "https://docs.rudderhq.dev/zh/concepts/overview"
 "og:url": "https://docs.rudderhq.dev/zh/concepts/overview"
 hreflang_en: "https://docs.rudderhq.dev/concepts/overview"
 hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/overview"
 ---
 
-假设一个小团队正在准备发布公告。人先定目标，Agent 起草文件，另一位成员评审，最后还要确保 Markdown 文件随时找得到。Rudder 给这条工作链上的每个环节安排了明确位置。
+使用 Rudder 前不需要学完整套产品。先理解五件事就够了。
 
-## 一件任务如何穿过 Rudder
+## 1. 组织就是团队工作空间
 
-**组织**是团队的工作空间，组织目标说明这次发布为什么重要。**项目**可以把公告和同一次发布的其他任务、资料及日期放在一起。
+一个组织包含某个团队或某类工作的 Agent、对话、任务、项目、文件和设置。
+如果只有你自己使用，创建一个个人组织，然后直接开始。
 
-负责人可以先在 **Chat** 中提出要求，通过对话逐步修改公告。如果工作需要明确负责人、跟踪依赖、显示状态或安排评审，就使用 **Issue**。
+## 2. Agent 是可以反复合作的执行者
 
-**Agent** 是长期承担某类职责的团队成员。**Agent 运行**是这个 Agent 的一次有边界执行。**运行环境**才是 Rudder 为这次执行调用的工具或服务。三者彼此相关，但不是一回事。
+一个 Agent 有自己的职责和运行工具。职责说明它适合做哪类工作；运行工具是真正
+执行任务的程序，例如 Codex、Claude Code、本地命令或 Webhook。
 
-一次运行会留下摘要和对话记录等证据。写好的公告作为产物留在 Chat 或 Issue 旁边。评审结论也回到同一条工作记录，团队因此能看见哪些内容已被接受、哪些内容还要改。
+Agent 每工作一次，Rudder 就会创建一条**运行记录**。Agent 会长期保留，运行
+记录只代表一次尝试。想看进度、用量、错误或底层细节时，再打开运行记录。
 
-![Rudder 总览](../../images/board-overview.png)
+## 3. 工作可以从 Chat 或 Issue 开始
 
-## 常用入口各自解决什么问题
+想在对话里提出要求、补充信息和反复修改，就用 **Chat**。
 
-| 需要解决的问题 | 对应入口 |
+任务需要明确负责人、状态、依赖或评审人时，就用 **Issue（任务单）**。它是一种
+按需增加的结构，不是每件事的必经步骤。
+
+## 4. 结果应该和请求放在一起
+
+Agent 可能返回一段回答、修改文件、创建报告、截取图片或提供链接。Rudder 会把
+这些结果连接到提出请求的 Chat 或 Issue，方便你以后仍然看得懂。
+
+## 5. 下一步仍然由人决定
+
+你可以要求继续修改、接受结果、指定评审人、标记阻塞或创建后续任务。Rudder
+让这些决定更清楚，但不会悄悄把每次 Agent 回复都当成正确答案。
+
+![Rudder 工作空间概览](../../images/board-overview.png)
+
+## 只在有帮助时增加结构
+
+| 当你想要…… | 使用 |
 | --- | --- |
-| 说明团队的方向 | 组织目标 |
-| 汇总相关任务和上下文 | 项目 |
-| 通过持续对话推进工作 | Chat |
-| 跟踪负责人、依赖、状态或评审 | Issue |
-| 查看谁执行了一次任务以及过程如何 | Agent 和运行记录 |
-| 找到等待回复、阻塞、失败运行和待决事项 | Messenger |
-| 按时间查看运行与人工检查点 | Calendar |
-| 复用稳定的工作步骤 | 技能 |
-| 定时或按事件重复执行工作 | 自动化 |
-| 把资料和产物放在合适的文件位置 | 工作区和 Library |
-| 在当前工作旁边完成网页研究和操作 | 内置 Browser |
-| 管理审批、预算、成本和活动记录 | 审批、预算和活动记录 |
-| 保存评审结论和以后可复用的经验 | 评审、反馈和学习 |
-| 添加集成和专门能力 | 插件 |
+| 在一段对话里持续推进任务 | Chat |
+| 跟踪负责人、状态、依赖或评审 | Issue |
+| 汇总相关任务、对话、文件和日期 | 项目 |
+| 复用已经验证过的操作步骤 | 技能 |
+| 按日程或触发条件运行稳定任务 | 自动化 |
+| 找到等你处理的问题、失败和评审 | Messenger |
+| 整理长期文件和项目目录 | Library 和工作区 |
 
-**Overview** 汇总组织近况，让负责人看到工作在哪里推进、在哪里等待。它只是入口，不替代原始 Chat、Issue、运行记录、评审或审批。
-
-## 什么时候值得增加结构
-
-Rudder 不要求每件事都用上所有对象。一轮短文案修改可以一直留在 Chat。涉及多项依赖和独立评审人的发布工作，更适合拆成一个或多个 Issue。多件工作共享结果或资料时，再建立项目。只有触发条件和结果去向已经稳定时，才值得使用自动化。
-
-判断标准很简单：保留足够的信息，让下一步和最终结果都能被检查；工作不需要的字段和对象，不必为了完整而创建。
+Dashboard 和 Calendar 用来快速了解情况。它们会带你回到原始的 Chat、Issue、
+运行记录或自动化，而不会再复制一套任务状态。
 
 <a id="learning-path" />
 
-## 建议阅读顺序
+## 接下来读什么
 
-这条路径不依赖侧边栏顺序：
-
-1. [创建第一个组织](/zh/get-started/first-organization)，完成一件小任务。
-2. [选择 Chat 或 Issue](/zh/concepts/chat-messenger)，确定适合自己的推进方式。
-3. [理解 Agent 和 Agent 运行](/zh/concepts/agents)，分清运行环境的边界。
-4. 需要明确协作时，按[任务生命周期](/zh/how-to/issue-lifecycle)从接收推进到完成。
-5. [评审 Agent 工作](/zh/how-to/review-agent-work)，把结果、证据和结论留在一起。
+1. [完成第一个任务](/zh/get-started/first-organization)。
+2. [选择 Chat 或 Issue](/zh/concepts/chat-messenger)。
+3. [理解 Agent 和运行记录](/zh/concepts/agents)。
+4. [让一条 Issue 从开始走到完成](/zh/how-to/issue-lifecycle)。
+5. [评审 Agent 工作](/zh/how-to/review-agent-work)。
 
 <CardGroup cols={2}>
-  <Card title="上一页：创建第一个组织" icon="arrow-left" href="/zh/get-started/first-organization">
-    先走完第一条工作链，再逐个理解概念。
+  <Card title="上一篇：完成第一个任务" icon="arrow-left" href="/zh/get-started/first-organization">
+    先拿到一个有用结果，再了解更多功能。
   </Card>
-  <Card title="下一页：目标、项目和任务" icon="arrow-right" href="/zh/concepts/goals-projects-issues">
-    了解方向如何变成一组可持续推进的工作。
+  <Card title="下一篇：Chat 还是 Issue？" icon="arrow-right" href="/zh/concepts/chat-messenger">
+    为任务选择最轻量的组织方式。
   </Card>
 </CardGroup>

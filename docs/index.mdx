@@ -1,12 +1,11 @@
 ---
 title: "Rudder"
-description: "Rudder is open-source software for assigning, running, reviewing, and improving AI agent work across goals, Chat, issues, runs, budgets, workspaces, and feedback loops."
+description: "Build your self-improving Agent Team."
 icon: "/favicon.svg"
 keywords:
-  - "AI agent orchestration"
-  - "agent team workspace"
-  - "agent work management"
-  - "self-improving agent team"
+  - "AI agent workspace"
+  - "agent team"
+  - "agent task management"
   - "Rudder"
 canonical: "https://docs.rudderhq.dev"
 "og:url": "https://docs.rudderhq.dev"
@@ -14,83 +13,70 @@ hreflang_en: "https://docs.rudderhq.dev"
 hreflang_zh: "https://docs.rudderhq.dev/zh"
 ---
 
-<a id="example-release-work" />
+<a id="start-here" />
 
-Releasing Rudder 0.5.0 required implementation, validation, review, and a
-publication decision. Rudder is designed for work of that shape: several
-actors contribute evidence, and a human decides whether the result is ready.
+Agents that think, build, play, and learn from real work.
 
-## A shared record for agent work
+Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop
+for agent teams. It gives humans and agents a shared operating structure for
+assigning work, running agents, reviewing outputs, controlling spend, and
+preserving the lessons that should make the next run better.
 
-Rudder is open-source software for assigning, running, reviewing, and improving
-AI agent work. It connects goals, Chat, Issues, agents, runs, outputs, reviews,
-budgets, and reusable instructions without replacing the runtime that performs
-the work.
-
-An Agent is a durable team member with a role and configuration. An Agent Run
-is one bounded attempt by that Agent. The runtime, such as Codex, Claude Code,
-a shell process, or a webhook, is the execution environment Rudder invokes.
+In practice, you give an Agent a task, watch it work, inspect the files or
+answers it produces, and decide what happens next. Rudder uses your existing
+runtime—such as Codex, Claude Code, a local command, or a webhook—rather than
+replacing it.
 
 ![Rudder workspace dashboard](./images/board-overview.png)
 
-## Why the work record matters
+## What Rudder helps you do
 
-A successful response is easy to lose in a terminal or a long conversation.
-Rudder keeps the surrounding decisions inspectable:
+- **Start in Chat.** Ask for a draft, a code change, research, or any other
+  concrete result. Continue the conversation until the result is useful.
+- **Track larger tasks as Issues.** Add an owner, status, dependencies, and a
+  reviewer when a conversation is no longer enough.
+- **See what the agent actually did.** Each run keeps its result, activity, and
+  available logs together.
+- **Keep useful output.** Files, links, screenshots, and reports stay connected
+  to the task that produced them.
+- **Control recurring work.** Reuse skills, schedule automations, and keep an
+  eye on cost and failures.
 
-- the goal and project that explain why the work exists
-- the Chat or Issue where the request and context live
-- the Agent Run and transcript that show what happened
-- files, links, screenshots, or other outputs produced by the work
-- the review decision, blocker, approval, and next owner
+## A simple example
 
-Use Chat when you want to clarify and complete a task through conversation.
-Use an Issue when the work needs a named owner, dependencies, explicit status,
-or a review path. Both can lead to a real result.
+Imagine asking an agent to improve your onboarding page.
 
-## Start with one task
+1. You describe the result you want in Chat.
+2. Rudder starts the agent with the runtime and project you selected.
+3. You follow its progress and open the changed file or preview.
+4. You ask for changes or accept the result.
+5. If the work grows, you turn it into an Issue so ownership and review remain
+   clear.
 
-Install Rudder, then choose one bounded part of your work. Keep the first loop
-to one request, one run, one inspectable output, and one review decision. This is
-the same connected path that made the 0.5.0 release record useful.
+The value is simple: you do not have to reconstruct the task later from a
+terminal, a long chat, and a folder full of unexplained files.
+
+## Start in three steps
+
+1. Install and open Rudder.
+2. Create an organization, your team workspace, and connect your first agent runtime.
+3. Ask the agent for one small, real result.
 
 ```bash
 npx @rudderhq/cli@latest start
 ```
 
-Open the app, create an organization, and give the default Agent your request
-in Chat. If the work needs a named reviewer or tracked dependencies, create an
-Issue instead.
-
 <CardGroup cols={2}>
-  <Card title="Quick Start" icon="download" href="/get-started/installation">
-    Install the local app and recognize a healthy startup.
+  <Card title="1. Install Rudder" icon="download" href="/get-started/installation">
+    Open the desktop app on your computer.
   </Card>
-  <Card title="First Organization" icon="building-2" href="/get-started/first-organization">
-    Complete one request, run, result, and review loop.
+  <Card title="2. Run your first task" icon="play" href="/get-started/first-organization">
+    Connect an agent and ask it to produce something useful.
   </Card>
-  <Card title="Core Concepts" icon="book-open" href="/concepts/overview">
-    Learn the product model in a five-step path.
+  <Card title="How Rudder works" icon="book-open" href="/concepts/overview">
+    Learn the few concepts you need after your first task.
   </Card>
-  <Card title="GDPval Harness Benchmark" icon="chart-bar" href="/benchmarks/gdpval-harness">
-    Read the protocol and results from a 10-task exploratory comparison of Rudder, Codex CLI, and Claude Code.
-  </Card>
-  <Card title="Issue Lifecycle Guide" icon="route" href="/how-to/issue-lifecycle">
-    Learn when to assign, review, block, and close agent work.
-  </Card>
-  <Card title="Automations" icon="workflow" href="/concepts/automations">
-    Run repeatable agent work with clear triggers and output paths.
-  </Card>
-  <Card title="Built-in Browser" icon="globe" href="/concepts/built-in-browser">
-    Keep web work beside Rudder and understand the shared-session boundary.
-  </Card>
-  <Card title="Create an Agent" icon="bot" href="/how-to/create-agent">
-    Add an agent when a new role needs clear ownership and runtime boundaries.
-  </Card>
-  <Card title="Approvals, budgets, and activity" icon="sliders-horizontal" href="/reference/approvals-budgets-activity">
-    Understand approvals, budget enforcement, activity history, run summaries, Calendar, and Inbox.
-  </Card>
-  <Card title="Chat and Messenger" icon="messages-square" href="/concepts/chat-messenger">
-    Choose a work surface and recover items needing attention.
+  <Card title="Chat or Issue?" icon="messages-square" href="/concepts/chat-messenger">
+    Choose the lightest way to organize your next task.
   </Card>
 </CardGroup>

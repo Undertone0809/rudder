@@ -1,11 +1,11 @@
 ---
 title: "Automations"
-description: "Run repeatable agent work from a defined trigger, owner, context, concurrency policy, and output route."
+description: "Run a stable Agent task on a schedule, from a webhook, or when you trigger it yourself."
 icon: "workflow"
 keywords:
   - "Rudder Automations"
-  - "scheduled agent work"
-  - "automation output"
+  - "scheduled Agent work"
+  - "recurring tasks"
 canonical: "https://docs.rudderhq.dev/concepts/automations"
 "og:url": "https://docs.rudderhq.dev/concepts/automations"
 hreflang_en: "https://docs.rudderhq.dev/concepts/automations"
@@ -14,57 +14,56 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/automations"
 
 <a id="definition" />
 
-## Definition
+## What an Automation does
 
-An Automation is a repeatable agent-work definition. It combines instructions,
-an Agent owner, optional goal or project context, a trigger, an output route,
-priority, and a concurrency policy.
+An Automation saves a repeatable request together with:
 
-Triggers can be scheduled, manual or API-driven, or webhook-based. Each
-dispatch creates an Automation run record, even when concurrency or eligibility
-causes the dispatch to skip or coalesce. The record connects the trigger to the
-Issue, Chat, and Agent Run that handled the work.
+- the Agent responsible for it
+- an optional goal or project
+- what starts it
+- where the result should appear
+- what to do if the previous run is still active
 
-Output has two modes. A tracked Issue enters the normal Issue lifecycle. Chat
-output creates a separate Messenger conversation for each real execution. See
-[Automation output routing](/reference/automation-output-routing) for the
-authoritative comparison.
+You can start one manually, on a schedule, through an API call, or from a
+webhook.
 
 <a id="case" />
 
-## One illustrative case
+## Example: a weekly operations summary
 
-An operations owner wants a digest every weekday evening. The Automation names
-a reporting Agent, links the operations project, and asks for completed work,
-blockers, and the next decision. Each execution sends its result to a new Chat,
-where the owner can inspect that run without mixing it with yesterday's digest.
+Every Monday morning, a reporting Agent summarizes completed work, blockers,
+and decisions needed this week. Each result opens in a new Chat, so the current
+report does not get mixed with last week's conversation.
+
+If the summary needs assignment, status, dependencies, or a formal reviewer,
+send each run to an Issue instead.
 
 <a id="when-useful" />
 
-## When it is useful
+## Automate only after the task is stable
 
-Use an Automation after the trigger, owner, instructions, and result destination
-are predictable. Keep exploratory work in Chat or an Issue while the request is
-still changing. Built-in templates are editable starting values in the creation
-form; selecting one does not create an Automation until the operator submits it.
+First run the request manually in Chat or an Issue. Create an Automation after
+you know:
 
-The current lifecycle has `active` and `paused` states. Pause an Automation when
-its definition and history should remain visible but new dispatches should
-stop. Return it to active when the definition is ready to run again.
+- when it should run
+- which Agent can handle it
+- what context it needs
+- what a useful result looks like
+- who will notice and fix failures
+
+Templates only fill the creation form. You can edit them before saving, and no
+Automation exists until you submit the form.
 
 <a id="operating-boundaries" />
 
-## Operating boundaries
+## Avoid duplicate work
 
-Automations belong to one organization. Linked goals, projects, parent Issues,
-and assignees must remain in that organization. A schedule is evaluated with
-its stored timezone. The current UI uses the browser's local timezone when it
-creates or edits that schedule. External triggers require replay and
-idempotency protection.
+If a new trigger arrives while the previous run is active, the concurrency
+setting can queue, skip, or combine the new request. The Run history explains
+what happened even when no new Chat or Issue was created.
 
-The highest-risk boundary is duplicate work. Concurrency policy decides whether
-active work causes a new dispatch to enqueue, skip, or coalesce. A skipped or
-coalesced run must still explain why no new Chat or Issue appeared, and it must
-not create an empty conversation.
+Pause an Automation while fixing its Agent, instructions, schedule, context, or
+output destination. The current UI uses your browser's local timezone when you
+create or edit a schedule.
 
-Follow [Create an Automation](/how-to/create-automation) to build and verify one.
+Follow [Create an Automation](/how-to/create-automation) for a complete setup.
