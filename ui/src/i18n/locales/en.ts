@@ -194,7 +194,6 @@ export const en = {
   "notFound.description.page": "This route does not exist.",
   "notFound.unknown": "unknown",
   "notFound.requestedPath": "Requested path:",
-  "notFound.openHome": "Open home",
   "notFound.goHome": "Go home",
   "organizationSettings.breadcrumb": "Settings",
   "organizationSettings.title": "Organization Settings",

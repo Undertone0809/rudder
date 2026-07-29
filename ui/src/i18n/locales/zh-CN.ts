@@ -187,7 +187,6 @@ export const zhCN: Messages = {
   "notFound.description.page": "这个路由不存在。",
   "notFound.unknown": "未知",
   "notFound.requestedPath": "请求路径：",
-  "notFound.openHome": "打开首页",
   "notFound.goHome": "返回首页",
   "organizationSettings.breadcrumb": "设置",
   "organizationSettings.title": "组织设置",

@@ -58,11 +58,8 @@ export function NotFoundPage({ scope = "global", requestedPrefix }: NotFoundPage
           <Button asChild>
             <Link to={homeHref}>
               <Compass className="mr-1.5 h-4 w-4" />
-              {t("notFound.openHome")}
+              {t("notFound.goHome")}
             </Link>
-          </Button>
-          <Button variant="outline" asChild>
-            <Link to="/">{t("notFound.goHome")}</Link>
           </Button>
         </div>
       </div>
