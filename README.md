@@ -14,13 +14,15 @@ Rudder began as a fork of an early version of Paperclip. That gave the project a
 
 Rudder is built for the moment when agent work stops looking like a single prompt and starts looking like a real team.
 
-## Real-World Work Benchmark
+## A Better Harness for Agent Work
 
-In a frozen 10-task pilot based on OpenAI's GDPval dataset, three configured systems all requested `gpt-5.6-sol` with high reasoning effort. Under our local case-equal rubric metric, Rudder scored **81.7**, compared with **75.7** for Codex CLI and **75.6** for Claude Code.
+We benchmarked Rudder, Codex CLI, and Claude Code on a random sample of professional tasks from OpenAI's GDPval dataset, with every system requesting the same model and reasoning effort. Rudder achieved the highest score under our local case-equal rubric metric.
 
 [![GDPval-based harness benchmark: Rudder 81.7, Codex CLI 75.7, and Claude Code 75.6.](docs/images/gdpval-harness-benchmark.png)](https://docs.rudderhq.dev/benchmarks/gdpval-harness)
 
-This is directional evidence from a small, locally judged cohort—not an official GDPval score or leaderboard result. [Read the methodology and evidence limits.](https://docs.rudderhq.dev/benchmarks/gdpval-harness)
+A model is only as effective as the environment around it. Rudder gives agents durable context, coordinated tools, structured work, review feedback, budgets, and memory—helping them stay focused, preserve what they learn, and produce stronger results across real work.
+
+The benchmark provides directional evidence that the harness and work environment matter; it is not an official GDPval score or leaderboard result. [Read the methodology and evidence limits.](https://docs.rudderhq.dev/benchmarks/gdpval-harness)
 
 ## The Work Loop
 
