@@ -75,7 +75,7 @@ production-shaped scale without manual loading or loss of live correctness.
 
 ## Measured evaluation
 
-The disposable dev pressure dataset contains 2,001 Chat messages, 221
+The disposable dev pressure dataset contains 2,001 Chat messages, 699
 Messenger threads, 500 Issue comments, 250 terminal Runs, and 2 active Runs.
 The comparison uses the same browser, viewport, interaction script, and
 production/static UI path.
@@ -83,18 +83,19 @@ production/static UI path.
 | Surface / metric | Before | After | Change |
 | --- | ---: | ---: | ---: |
 | Chat mounted messages | 4,002 | 16 | -99.6% |
-| Chat ready time | 6,356 ms | 1,150 ms | -81.9% |
-| Chat p95 frame interval | 791.7 ms | 9.3 ms | -98.8% |
-| Chat dropped-frame ratio | 95.9% | 0% | -95.9 pp |
-| Chat long tasks | 21 | 0 | -100% |
-| Chat renderer task time | 6,937 ms | 3,519 ms | -49.3% |
-| Messenger mounted rows | 222 | 24 | -89.2% |
-| Messenger p95 frame interval | 9.3 ms | 9.2 ms | -1.1% |
-| Messenger dropped-frame ratio | 1.7% | 0% | -1.7 pp |
-| Messenger renderer task time | 3,624 ms | 1,680 ms | -53.6% |
-| Total DOM nodes | 72,826 | 1,515 | -97.9% |
-| Event listeners | 10,440 | 488 | -95.3% |
-| JavaScript heap | 151.3 MiB | 24.1 MiB | -84.1% |
+| Chat ready time | 11,328 ms | 1,293 ms | -88.6% |
+| Chat p95 frame interval | 1,016.7 ms | 16.7 ms | -98.4% |
+| Chat dropped-frame ratio | 97.2% | 1.28% | -95.9 pp |
+| Chat long tasks | 13 | 0 | -100% |
+| Chat renderer task time | 6,418 ms | 4,925 ms | -23.3% |
+| Messenger mounted rows | 400 | 98 | -75.5% |
+| Messenger p95 frame interval | 9.2 ms | 16.7 ms | +81.5% |
+| Messenger dropped-frame ratio | 3.21% | 0.18% | -3.03 pp |
+| Messenger long tasks | 3 | 0 | -100% |
+| Messenger renderer task time | 3,472 ms | 2,188 ms | -37.0% |
+| Total DOM nodes | 78,017 | 3,671 | -95.3% |
+| Event listeners | 11,345 | 864 | -92.4% |
+| JavaScript heap | 166.6 MiB | 32.0 MiB | -80.8% |
 
 The after build used exactly one organization WebSocket. Before expanding a
 terminal Run, only the two active Runs fetched logs. Deep Chat and Issue
@@ -110,15 +111,36 @@ does not present JavaScript heap as OS RSS.
 
 Fast trackpad movement exposed a transient blank viewport when the browser
 advanced `scrollTop` before React committed the next virtual range. Messenger
-now uses synchronous range commits and the virtualizer's direct transform
-updates on this latency-sensitive surface. Nested Messenger lists keep roughly
-one extra viewport ahead of the current scroll direction (24 rows, raised to
-32 while dragging) and only a small trailing buffer. The larger buffer flips
-when direction changes, preventing high-velocity trackpad scrolling from
-outrunning the next range commit without doubling mounted row work.
+now uses direct transform updates plus a chunked outer range. The outer window
+keeps a 40-row runway on both sides (48 during drag) but changes its React range
+only at eight-row boundaries, avoiding both per-row reconciliation and a
+production-sized always-mounted directory. Its initial estimate is calibrated
+to the measured Z Studio row height so the scroll geometry settles quickly.
+The React Virtual adapter compares the extracted mounted range, rather than the
+raw visible range, before scheduling React work; scrolling inside an existing
+runway therefore stays on the browser's compositor path.
+Rich grouped sections keep roughly one extra viewport ahead (24 rows, raised to
+32 while dragging) and half that budget behind (12/16 rows).
+Nested timelines no longer read layout and synchronously commit React state for
+every transform mutation written by the outer virtualizer. Those ancestor
+corrections are skipped on the scroll hot path and coalesced once after
+scrolling settles.
+
+Custom Group collapse state is written to the disclosure DOM in the click task,
+before persistence or React reconciliation, and the former 200ms grid
+transition has been removed. React commits the same state after the first paint,
+with one cancellable deferred commit per Group. Disclosure state is local to
+the Group row, so a click does not rerender the directory. Persistence is
+serialized per Group, making rapid inverse clicks last-write-wins; the latest
+failed write rolls back to the last server-confirmed state.
 
 The production-build pressure E2E now performs 40 consecutive-frame,
-non-sequential scroll reversals over 221 Messenger threads split between two
-40-row custom groups and loose rows. It also collapses and re-expands a group
-before scrolling. After each browser paint it measures the largest uncovered
-part of the viewport and rejects gaps larger than one Messenger row.
+non-sequential scroll reversals over 699 Messenger threads split between two
+expanded virtualized groups. It measures only real row/header/footer coverage
+(not the group's full-height background) and fails when any visual hole exceeds
+the 16px intentional layout-spacing budget. The scenario also includes loose
+rows and collapses and re-expands a group before scrolling.
+
+The final production run observed zero blank samples across 42 fast reversals,
+a maximum uncovered interval of 10px, one dropped frame in five seconds
+(0.18%), no long tasks, and a 16.7ms p95 frame interval.
