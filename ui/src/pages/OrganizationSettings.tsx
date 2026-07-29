@@ -99,8 +99,6 @@ export function OrganizationSettings() {
     ?? DEFAULT_ORGANIZATION_HOME_PATH;
   // General settings local state
   const [organizationName, setOrganizationName] = useState("");
-  const [issuePrefix, setIssuePrefix] = useState("");
-  const [description, setDescription] = useState("");
   const [brandColor, setBrandColor] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const logoFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -134,8 +132,6 @@ export function OrganizationSettings() {
   useEffect(() => {
     if (!viewedOrganization) return;
     setOrganizationName(viewedOrganization.name);
-    setIssuePrefix(viewedOrganization.issuePrefix);
-    setDescription(viewedOrganization.description ?? "");
     setBrandColor(viewedOrganization.brandColor ?? "");
     setLogoUrl(viewedOrganization.logoUrl ?? "");
     setDefaultChatIssueCreationMode(viewedOrganization.defaultChatIssueCreationMode ?? "manual_approval");
@@ -157,8 +153,6 @@ export function OrganizationSettings() {
   const generalDirty =
     !!viewedOrganization &&
     (organizationName !== viewedOrganization.name ||
-      issuePrefix !== viewedOrganization.issuePrefix ||
-      description !== (viewedOrganization.description ?? "") ||
       brandColor !== (viewedOrganization.brandColor ?? ""));
 
   const chatSettingsDirty =
@@ -168,8 +162,6 @@ export function OrganizationSettings() {
   const generalMutation = useMutation({
     mutationFn: (data: {
       name: string;
-      issuePrefix?: string;
-      description: string | null;
       brandColor: string | null;
     }) => organizationsApi.update(viewedOrganizationId!, data),
     onSuccess: async () => {
@@ -447,9 +439,6 @@ export function OrganizationSettings() {
     if (!viewedOrganization) return;
     generalMutation.mutate(buildOrganizationGeneralPatch({
       name: organizationName.trim(),
-      issuePrefix,
-      persistedIssuePrefix: viewedOrganization.issuePrefix,
-      description,
       brandColor,
     }));
   }
@@ -572,30 +561,6 @@ export function OrganizationSettings() {
                   onChange={(event) => setOrganizationName(event.target.value)}
                 />
               </SettingsField>
-              <SettingsField
-                htmlFor="organization-settings-issue-key"
-                label={t("organizationSettings.general.issueKey.label")}
-                description={t("organizationSettings.general.issueKey.hint")}
-              >
-                <Input
-                  id="organization-settings-issue-key"
-                  className="font-mono uppercase"
-                  value={issuePrefix}
-                  onChange={(event) => setIssuePrefix(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12))}
-                />
-              </SettingsField>
-              <SettingsField
-                htmlFor="organization-settings-description"
-                label={t("organizationSettings.general.description.label")}
-                description={t("organizationSettings.general.description.hint")}
-              >
-                <Input
-                  id="organization-settings-description"
-                  value={description}
-                  placeholder={t("organizationSettings.general.description.placeholder")}
-                  onChange={(event) => setDescription(event.target.value)}
-                />
-              </SettingsField>
             </SettingsGroup>
           </SettingsSection>
 
@@ -716,7 +681,7 @@ export function OrganizationSettings() {
                   <Button
                     size="sm"
                     onClick={handleSaveGeneral}
-                    disabled={generalMutation.isPending || !organizationName.trim() || !issuePrefix.trim()}
+                    disabled={generalMutation.isPending || !organizationName.trim()}
                   >
                     {generalMutation.isPending
                       ? t("organizationSettings.save.saving")

@@ -24,6 +24,7 @@ import type {
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ChevronDown,
   ExternalLink,
   Loader2,
   Plus,
@@ -831,28 +832,35 @@ function ConnectionTargetSelect({
     ? "organization"
     : `agent:${target.ownerAgentId ?? ""}`;
   return (
-    <select
-      aria-label="Enable for"
-      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      value={value}
-      onChange={(event) => {
-        if (event.target.value === "organization") {
-          onChange({ scope: "organization", ownerAgentId: null });
-          return;
-        }
-        onChange({
-          scope: "agent",
-          ownerAgentId: event.target.value.replace(/^agent:/, ""),
-        });
-      }}
-    >
-      <option value="organization">Organization</option>
-      {agents.map((agent) => (
-        <option key={agent.id} value={`agent:${agent.id}`}>
-          {agent.name}
-        </option>
-      ))}
-    </select>
+    <div className="relative">
+      <select
+        aria-label="Enable for"
+        className="h-10 w-full appearance-none rounded-md border border-input bg-background py-0 pr-10 pl-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        value={value}
+        onChange={(event) => {
+          if (event.target.value === "organization") {
+            onChange({ scope: "organization", ownerAgentId: null });
+            return;
+          }
+          onChange({
+            scope: "agent",
+            ownerAgentId: event.target.value.replace(/^agent:/, ""),
+          });
+        }}
+      >
+        <option value="organization">Organization</option>
+        {agents.map((agent) => (
+          <option key={agent.id} value={`agent:${agent.id}`}>
+            {agent.name}
+          </option>
+        ))}
+      </select>
+      <ChevronDown
+        aria-hidden="true"
+        className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-muted-foreground"
+        data-testid="connection-target-chevron"
+      />
+    </div>
   );
 }
 

@@ -131,9 +131,9 @@ Product model:
   when the organization name or Issue Key changes.
 - `organization.name` is editable display text.
 - `organization.issuePrefix` is the Issue Key used to form readable issue
-  identifiers. New organization onboarding does not expose this implementation
-  detail: the server derives and allocates it from the organization name. An
-  operator can inspect and explicitly change it later in organization settings.
+  identifiers. It is a system-maintained implementation detail: the server
+  derives and allocates it from the organization name, while onboarding and
+  organization settings do not expose it as operator configuration.
 - Across different organizations, canonical `urlKey` values, current Issue
   Keys, and historical Issue Keys share one case-insensitive route namespace.
   A value owned by one organization cannot be allocated to another organization
@@ -145,15 +145,16 @@ Flow:
 2. Server derives an Issue Key that preserves letters and digits. If an
    automatically derived key conflicts, the server appends a numeric suffix
    without interrupting onboarding or exposing the key decision to the user.
-3. An Issue Key submitted explicitly through settings is validated and rejects
-   a current or historical conflict with an actionable error. Explicit key
-   changes must not silently append characters.
+3. An Issue Key submitted explicitly through compatibility API or portability
+   flows is validated and rejects a current or historical conflict with an
+   actionable error. Explicit key changes must not silently append characters.
 4. Server allocates an independent stable `urlKey`; URL-key collisions may use
    a numeric URL suffix without changing the submitted Issue Key.
 5. Organization navigation generates `/{urlKey}/...`. Current Issue Key and
    historical Issue Key routes remain accepted during compatibility migration.
-6. An explicit settings change migrates the Issue Key and current issue
-   identifiers transactionally while preserving the previous key as an alias.
+6. An explicit compatibility API or portability change migrates the Issue Key
+   and current issue identifiers transactionally while preserving the previous
+   key as an alias.
 
 Invariants:
 
@@ -200,6 +201,9 @@ Product model:
   and intentionally shares signed-in website sessions across organizations.
 - Operator profile settings are user-scoped.
 - Organization settings and intelligence profiles are organization-scoped.
+- Organization General settings expose the organization display name and
+  appearance controls. They do not expose the system-maintained Issue Key or
+  the optional organization description as operator configuration.
 - Appearance settings are presentation-only local shell/browser preferences.
   They do not mutate organization records, agent behavior, runtime behavior, or
   shared operator profile state.
@@ -321,6 +325,9 @@ Evidence:
   cover trusted clear/disable handling and preservation of Browser settings.
 - `tests/e2e/settings-appearance.spec.ts` covers the user-visible Appearance
   workflow, including persistence for expanded base and theme color options.
+- `tests/e2e/organization-issue-key.spec.ts` covers the absence of Issue Key and
+  description controls from organization settings while preserving
+  compatibility API migration and historical-link behavior.
 - `ui/src/components/settings/SettingsScaffold.test.tsx` covers the semantic
   page, header, group, item, field, action, and choice slots shared by Settings
   destinations.

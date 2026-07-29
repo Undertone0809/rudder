@@ -204,6 +204,8 @@ describe("organization MCP interaction", () => {
 
     const target = document.body.querySelector('select[aria-label="Enable for"]') as HTMLSelectElement;
     expect(target.value).toBe("organization");
+    expect(target.className).toContain("appearance-none");
+    expect(target.parentElement?.querySelector('[data-testid="connection-target-chevron"]')).not.toBeNull();
     expect([...target.options].map((option) => option.textContent)).toEqual([
       "Organization",
       "Noah",
