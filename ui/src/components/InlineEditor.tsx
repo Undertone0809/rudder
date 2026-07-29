@@ -58,6 +58,7 @@ export function InlineEditor({
   const latestQueuedValueRef = useRef<string | null>(null);
   const pendingSaveCountRef = useRef(0);
   const explicitSaveValueRef = useRef<string | null>(null);
+  const hasDraftChangeRef = useRef(false);
   const previousValueRef = useRef(value);
   const {
     state: autosaveState,
@@ -71,6 +72,7 @@ export function InlineEditor({
     previousValueRef.current = value;
     if (!valueChanged) return;
     if (multiline && multilineFocused) return;
+    hasDraftChangeRef.current = false;
     setDraft(value);
   }, [value, multiline, multilineFocused]);
 
@@ -213,7 +215,9 @@ export function InlineEditor({
           if (!alwaysEdit) {
             setEditing(false);
           }
-          const currentDraft = markdownRef.current?.getMarkdown?.() ?? draft;
+          const currentDraft = hasDraftChangeRef.current
+            ? markdownRef.current?.getMarkdown?.() ?? draft
+            : draft;
           const trimmed = currentDraft.trim();
           explicitSaveValueRef.current = trimmed;
           if (trimmed === value) {
@@ -231,6 +235,7 @@ export function InlineEditor({
           value={draft}
           onChange={(nextDraft) => {
             explicitSaveValueRef.current = null;
+            hasDraftChangeRef.current = true;
             setDraft(nextDraft);
           }}
           placeholder={placeholder}

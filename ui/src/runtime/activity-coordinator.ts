@@ -69,6 +69,10 @@ function statusForEvent(event: LiveEvent, key: ActivityKey): string | null {
   return null;
 }
 
+function shouldAdvanceLatestActivity(event: LiveEvent): boolean {
+  return event.type !== "issue.content_updated";
+}
+
 export class ActivityCoordinator {
   readonly orgId: string | null;
 
@@ -180,7 +184,9 @@ export class ActivityCoordinator {
         status: status ?? current?.status ?? null,
         unreadCount,
         needsAttention,
-        latestActivityAt: event.createdAt,
+        latestActivityAt: shouldAdvanceLatestActivity(event)
+          ? event.createdAt
+          : current?.latestActivityAt ?? null,
         previewRevision: (current?.previewRevision ?? 0) + (
           event.type === "heartbeat.run.log" || event.type === "heartbeat.run.event" ? 0 : 1
         ),

@@ -1,0 +1,50 @@
+diff --git a/dist/cjs/index.cjs b/dist/cjs/index.cjs
+index 16d960de53f03a5e080410dc6d8eaf53ccbcac00..e9a8cb3d8f2dff2b3661c0d7835a8687ccb715df 100644
+--- a/dist/cjs/index.cjs
++++ b/dist/cjs/index.cjs
+@@ -81,13 +81,15 @@ function useVirtualizerBase({
+       let shouldRerender = true;
+       if (state.enabled) {
+         applyDirectStyles(instance2);
+-        const range = instance2.range;
++        const renderedItems = instance2.getVirtualItems();
++        const renderedStartIndex = renderedItems[0]?.index;
++        const renderedEndIndex = renderedItems[renderedItems.length - 1]?.index;
+         const prev = state.prevRange;
+-        shouldRerender = !prev || prev.isScrolling !== instance2.isScrolling || prev.startIndex !== (range == null ? void 0 : range.startIndex) || prev.endIndex !== (range == null ? void 0 : range.endIndex);
++        shouldRerender = !prev || prev.isScrolling !== instance2.isScrolling || prev.startIndex !== renderedStartIndex || prev.endIndex !== renderedEndIndex;
+         if (shouldRerender) {
+-          state.prevRange = range ? {
+-            startIndex: range.startIndex,
+-            endIndex: range.endIndex,
++          state.prevRange = renderedItems.length ? {
++            startIndex: renderedStartIndex,
++            endIndex: renderedEndIndex,
+             isScrolling: instance2.isScrolling
+           } : null;
+         }
+diff --git a/dist/esm/index.js b/dist/esm/index.js
+index 6e38185b0340b49e538f9ac3fa2d2db14f740999..e5eba9d5d113b124a0ccb7256fe033de1964a625 100644
+--- a/dist/esm/index.js
++++ b/dist/esm/index.js
+@@ -63,13 +63,15 @@ function useVirtualizerBase({
+       let shouldRerender = true;
+       if (state.enabled) {
+         applyDirectStyles(instance2);
+-        const range = instance2.range;
++        const renderedItems = instance2.getVirtualItems();
++        const renderedStartIndex = renderedItems[0]?.index;
++        const renderedEndIndex = renderedItems[renderedItems.length - 1]?.index;
+         const prev = state.prevRange;
+-        shouldRerender = !prev || prev.isScrolling !== instance2.isScrolling || prev.startIndex !== (range == null ? void 0 : range.startIndex) || prev.endIndex !== (range == null ? void 0 : range.endIndex);
++        shouldRerender = !prev || prev.isScrolling !== instance2.isScrolling || prev.startIndex !== renderedStartIndex || prev.endIndex !== renderedEndIndex;
+         if (shouldRerender) {
+-          state.prevRange = range ? {
+-            startIndex: range.startIndex,
+-            endIndex: range.endIndex,
++          state.prevRange = renderedItems.length ? {
++            startIndex: renderedStartIndex,
++            endIndex: renderedEndIndex,
+             isScrolling: instance2.isScrolling
+           } : null;
+         }

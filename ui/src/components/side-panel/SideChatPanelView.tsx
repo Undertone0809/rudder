@@ -40,7 +40,12 @@ import {
   useChatComposerFileDrop,
   useChatComposerPasteAttachments,
 } from "@/pages/Chat.file-drop";
-import { AssistantDraftItem, ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
+import {
+  AssistantDraftItem,
+  ChatMessageItem,
+  OptimisticUserDraftItem,
+  StreamTranscriptItem,
+} from "@/pages/Chat.messages";
 import {
   ChatAgentMenuContent,
   ChatAgentSelectorButton,
@@ -83,6 +88,9 @@ type SideChatStream = {
   replyingAgentId: string | null;
   state: ChatStreamDraftState;
   transcript: TranscriptEntry[];
+  userBody: string;
+  userCreatedAt: Date;
+  userMessageId: string | null;
 };
 
 const EMPTY_SKILL_REFERENCES: MarkdownSkillReferencePreview[] = [];
@@ -305,6 +313,12 @@ export function SideChatPanelView({
         || message.generationId !== displayedStream.generationId
       ))
     : messages;
+  const showOptimisticUserMessage = Boolean(
+    displayedStream && (
+      !displayedStream.userMessageId
+      || !messages.some((message) => message.id === displayedStream.userMessageId)
+    )
+  );
   const readOnly = sideChatIsReadOnly(conversation, now);
   const stateLabel = readOnly
     ? "Expired · read-only"
@@ -411,6 +425,9 @@ export function SideChatPanelView({
       replyingAgentId: selectedAgentId,
       state: "streaming",
       transcript: [],
+      userBody: body,
+      userCreatedAt: createdAt,
+      userMessageId: null,
     });
     let conversationId = target.conversationId;
     try {
@@ -457,6 +474,9 @@ export function SideChatPanelView({
             setStream((current) => current ? {
               ...current,
               generationId: event.generationId ?? current.generationId,
+              userBody: event.userMessage.body,
+              userCreatedAt: new Date(event.userMessage.createdAt),
+              userMessageId: event.userMessage.id,
             } : current);
             dispatchAnnotation({ type: "clear" });
             setPendingFiles([]);
@@ -699,6 +719,15 @@ export function SideChatPanelView({
             }) : null}
             {displayedStream && displayConversation ? (
               <div className="flex flex-col gap-5" data-testid="side-chat-streaming-reply">
+                {showOptimisticUserMessage ? (
+                  <OptimisticUserDraftItem
+                    body={displayedStream.userBody}
+                    createdAt={displayedStream.userCreatedAt}
+                    onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}
+                    onEditDraftOnly={setDraft}
+                    skillReferences={EMPTY_SKILL_REFERENCES}
+                  />
+                ) : null}
                 <StreamTranscriptItem
                   entries={displayedStream.transcript}
                   state={displayedStream.state}

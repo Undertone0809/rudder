@@ -1435,6 +1435,50 @@ describe("issueService.list participantAgentId", () => {
     expect(cleared?.reviewerUserId).toBeNull();
   });
 
+  it("preserves updatedAt when an issue patch contains no persisted field change", async () => {
+    const orgId = randomUUID();
+    const labelIds = [randomUUID(), randomUUID()];
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "No-op Issue Update Org",
+      urlKey: deriveOrganizationUrlKey("No-op Issue Update Org"),
+      issuePrefix: `N${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(labels).values(
+      labelIds.map((id, index) => ({
+        id,
+        orgId,
+        name: `No-op label ${index + 1}`,
+        color: "#2563eb",
+      })),
+    );
+
+    const created = await svc.create(orgId, {
+      title: "No-op description update",
+      description: "Context\n\n- first\n- second",
+      status: "todo",
+      priority: "medium",
+      labelIds,
+    });
+    const originalUpdatedAt = created.updatedAt;
+
+    const updated = await svc.update(created.id, {
+      description: created.description,
+    });
+
+    expect(updated?.updatedAt.getTime()).toBe(originalUpdatedAt.getTime());
+    const persisted = await svc.getById(created.id);
+    expect(persisted?.updatedAt.getTime()).toBe(originalUpdatedAt.getTime());
+
+    const labelsReordered = await svc.update(created.id, {
+      labelIds: [...labelIds].reverse(),
+    });
+    expect(labelsReordered?.updatedAt.getTime()).toBe(originalUpdatedAt.getTime());
+    expect(new Set(labelsReordered?.labelIds)).toEqual(new Set(labelIds));
+  });
+
   it("atomically rejects stale agent relationship and review-state updates", async () => {
     const orgId = randomUUID();
     const formerAgentId = randomUUID();
@@ -1479,6 +1523,40 @@ describe("issueService.list participantAgentId", () => {
       assigneeAgentId: formerAgentId,
     });
     await svc.update(reassignedIssue.id, { assigneeAgentId: currentAgentId });
+    await expect(
+      svc.update(
+        reassignedIssue.id,
+        { title: reassignedIssue.title },
+        {
+          agentId: formerAgentId,
+          relationship: "assignee_or_reviewer",
+        },
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "Issue relationship or review state changed before update",
+    });
+
+    const nonReviewableIssue = await svc.create(orgId, {
+      title: "Review state changes before no-op mutation",
+      status: "done",
+      priority: "medium",
+      reviewerAgentId: formerAgentId,
+    });
+    await expect(
+      svc.update(
+        nonReviewableIssue.id,
+        { title: nonReviewableIssue.title },
+        {
+          agentId: formerAgentId,
+          relationship: "reviewer",
+          requireReviewableStatus: true,
+        },
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "Issue relationship or review state changed before update",
+    });
     await expect(
       svc.update(
         reassignedIssue.id,

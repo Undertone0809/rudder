@@ -91,6 +91,9 @@
       "set-cookie-parser": "3.1.1",
       "undici": "7.28.0",
       "uuid": "11.1.1"
+    },
+    "patchedDependencies": {
+      "@tanstack/react-virtual@3.14.8": "patches/@tanstack__react-virtual@3.14.8.patch"
     }
   },
   "packageManager": "pnpm@9.15.4"

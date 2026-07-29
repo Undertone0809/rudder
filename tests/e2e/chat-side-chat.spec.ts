@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
@@ -114,13 +114,24 @@ async function openSideChatTabContextMenu(page: Page, panel: Locator) {
   return { menu, sideChatTab };
 }
 
-async function sendFirstSideChatMessage(page: Page, panel: Locator, sourceConversationId: string) {
+async function sendFirstSideChatMessage(
+  page: Page,
+  panel: Locator,
+  sourceConversationId: string,
+  testInfo?: TestInfo,
+) {
   const createResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "POST"
     && response.url().includes(`/api/chats/${sourceConversationId}/side-chats`)
   ));
   await sideComposerEditor(panel).fill("What is the rollback trigger?");
   await panel.getByRole("button", { name: "Send Side Chat message" }).click();
+  const userMessage = panel.getByTestId("chat-user-message-bubble").filter({
+    hasText: "What is the rollback trigger?",
+  });
+  await expect(userMessage).toBeVisible();
+  const streamingReply = panel.getByTestId("side-chat-streaming-reply");
+  await expect(streamingReply).toBeVisible();
   const createResponse = await createResponsePromise;
   expect(createResponse.ok(), await createResponse.text()).toBe(true);
   const sideChat = await createResponse.json() as { id: string };
@@ -131,6 +142,19 @@ async function sendFirstSideChatMessage(page: Page, panel: Locator, sourceConver
   };
   await expect(panel.getByTestId("side-chat-messages")).toContainText("What is the rollback trigger?", { timeout: 15_000 });
   await expect(panel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", { timeout: 15_000 });
+  const assistantDraft = streamingReply.getByText("Streaming reply", { exact: true });
+  await expect(assistantDraft).toBeVisible();
+  const assistantElement = await assistantDraft.elementHandle();
+  expect(assistantElement).not.toBeNull();
+  expect(await userMessage.evaluate((element, assistant) => (
+    Boolean(element.compareDocumentPosition(assistant) & Node.DOCUMENT_POSITION_FOLLOWING)
+  ), assistantElement!)).toBe(true);
+  if (testInfo) {
+    await page.screenshot({
+      path: testInfo.outputPath("side-chat-user-before-assistant.png"),
+      fullPage: true,
+    });
+  }
   await expect(panel.getByTestId("side-chat-messages").getByTestId("chat-transcript-item")).toHaveCount(1);
   await expect(panel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toBeVisible({ timeout: 20_000 });
   await expect(panel.getByRole("button", { name: "Done & return" })).toHaveCount(0);
@@ -258,7 +282,7 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await page.getByTestId("chat-model-option-gpt-5.6-terra").click();
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
-  const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
+  const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId, testInfo);
   expect(sideChat.creationPayload).toMatchObject({
     preferredAgentId: source.alternateAgent.id,
     modelOverride: "gpt-5.6-terra",
