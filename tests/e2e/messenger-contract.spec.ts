@@ -440,7 +440,7 @@ test.describe("Messenger unified threads contract", () => {
     ]);
   });
 
-  test("prioritizes unread, processing, and read messages within latest and project views", async ({ page }) => {
+  test("keeps latest activity order regardless of unread and processing state", async ({ page }) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);
     const session = await sessionRes.json();
@@ -518,11 +518,11 @@ test.describe("Messenger unified threads contract", () => {
     const readTestId = threadTestId(`chat:${readChatId}`);
     await expect(page.getByTestId(unreadTestId)).toContainText("Oldest unread chat");
     await expect(page.getByTestId(processingTestId).getByLabel("Chat reply in progress")).toBeVisible();
-    await expectTestIdsInDomOrder(page, [unreadTestId, processingTestId, readTestId]);
+    await expectTestIdsInDomOrder(page, [readTestId, processingTestId, unreadTestId]);
 
     await page.getByTestId(unreadTestId).getByRole("link").click();
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${unreadChatId}`));
-    await expectTestIdsInDomOrder(page, [processingTestId, readTestId, unreadTestId]);
+    await expectTestIdsInDomOrder(page, [readTestId, processingTestId, unreadTestId]);
 
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "project" }));
@@ -531,8 +531,8 @@ test.describe("Messenger unified threads contract", () => {
     const projectSection = page.getByTestId(`messenger-thread-section-project-${projectId}`);
     await expect(projectSection).toBeVisible();
     await expectTestIdWithinSection(page, `messenger-thread-section-project-${projectId}`, processingTestId);
-    await expectTestIdsInDomOrder(page, [processingTestId, readTestId, unreadTestId]);
-    await page.screenshot({ path: "/tmp/rudder-messenger-attention-order-project.png", fullPage: true });
+    await expectTestIdsInDomOrder(page, [readTestId, processingTestId, unreadTestId]);
+    await page.screenshot({ path: "/tmp/rudder-messenger-latest-order-project.png", fullPage: true });
   });
 
   test("double-clicking primary rail Messenger cycles the sidebar through unread threads", async ({ page }) => {

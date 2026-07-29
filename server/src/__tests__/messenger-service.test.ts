@@ -4656,7 +4656,7 @@ describe("messengerService and issue follows", () => {
     expect(secondPage.pageInfo).toEqual({ limit: 3, nextCursor: null, hasMore: false });
   });
 
-  it("promotes older unread and processing chats across Messenger summary pages", async () => {
+  it("keeps latest-activity pagination stable across unread and processing chats", async () => {
     const orgId = randomUUID();
     const userId = "board-user-attention-pagination";
     await db.insert(organizations).values({
@@ -4723,19 +4723,15 @@ describe("messengerService and issue follows", () => {
     });
 
     expect(firstPage.items.map((item) => item.threadKey)).toEqual([
-      `chat:${unreadConversationId}`,
-      `chat:${processingConversationId}`,
       `chat:${conversationIds[0]}`,
+      `chat:${conversationIds[1]}`,
+      `chat:${conversationIds[2]}`,
     ]);
-    expect(firstPage.items[0]).toMatchObject({ unreadCount: 1, needsAttention: true });
-    expect(firstPage.items[1]?.metadata).toMatchObject({ activeGenerationId: generationId });
+    expect(secondPage.items[1]?.metadata).toMatchObject({ activeGenerationId: generationId });
+    expect(secondPage.items[2]).toMatchObject({ unreadCount: 1, needsAttention: true });
     const allThreadKeys = [...firstPage.items, ...secondPage.items].map((item) => item.threadKey);
     expect(new Set(allThreadKeys).size).toBe(6);
-    expect(allThreadKeys).toEqual([
-      `chat:${unreadConversationId}`,
-      `chat:${processingConversationId}`,
-      ...conversationIds.slice(0, 4).map((id) => `chat:${id}`),
-    ]);
+    expect(allThreadKeys).toEqual(conversationIds.map((id) => `chat:${id}`));
   });
 
   it("keeps older pinned chats in the first Messenger thread summary page", async () => {

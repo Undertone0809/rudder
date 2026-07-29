@@ -1,29 +1,15 @@
 import type { MessengerThreadSummary } from "@rudderhq/shared";
 
 export type ThreadSummaryCursor = {
-  attentionRank: number;
   activityAt: string;
   title: string;
   threadKey: string;
   isPinned: boolean;
 };
 
-export function threadSummaryAttentionRank(
-  summary: Pick<MessengerThreadSummary, "unreadCount" | "needsAttention" | "metadata">,
-) {
-  if (summary.unreadCount > 0 || summary.needsAttention) return 0;
-  if (
-    (typeof summary.metadata?.activeExecutionRunId === "string"
-      && summary.metadata.activeExecutionRunId.length > 0)
-    || (typeof summary.metadata?.activeGenerationId === "string"
-      && summary.metadata.activeGenerationId.length > 0)
-  ) return 1;
-  return 2;
-}
-
 type OrderableThreadSummary = Pick<
   MessengerThreadSummary,
-  "latestActivityAt" | "title" | "unreadCount" | "needsAttention" | "metadata"
+  "latestActivityAt" | "title"
 > & { threadKey?: string; isPinned?: boolean };
 
 export function comparePinnedThenLatest(
@@ -32,8 +18,6 @@ export function comparePinnedThenLatest(
 ) {
   const pinnedDiff = Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned));
   if (pinnedDiff !== 0) return pinnedDiff;
-  const attentionDiff = threadSummaryAttentionRank(a) - threadSummaryAttentionRank(b);
-  if (attentionDiff !== 0) return attentionDiff;
   const aTime = a.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
   const bTime = b.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
   if (aTime !== bTime) return bTime - aTime;
@@ -46,7 +30,6 @@ export function encodeThreadSummaryCursor(summary: MessengerThreadSummary) {
     ? new Date(summary.latestActivityAt)
     : new Date(0);
   const payload: ThreadSummaryCursor = {
-    attentionRank: threadSummaryAttentionRank(summary),
     activityAt: (Number.isNaN(activityAt.getTime()) ? new Date(0) : activityAt).toISOString(),
     title: summary.title,
     threadKey: summary.threadKey,
@@ -71,10 +54,6 @@ export function decodeThreadSummaryCursor(
       || decoded.threadKey.length === 0
     ) return null;
     return {
-      attentionRank: typeof decoded.attentionRank === "number"
-        && Number.isFinite(decoded.attentionRank)
-        ? decoded.attentionRank
-        : 2,
       activityAt: decoded.activityAt,
       title: decoded.title,
       threadKey: decoded.threadKey,
@@ -95,8 +74,5 @@ export function threadSummaryIsAfterCursor(
     title: cursor.title,
     threadKey: cursor.threadKey,
     isPinned: cursor.isPinned,
-    unreadCount: cursor.attentionRank === 0 ? 1 : 0,
-    needsAttention: cursor.attentionRank === 0,
-    metadata: cursor.attentionRank === 1 ? { activeGenerationId: "cursor" } : undefined,
   }) > 0;
 }

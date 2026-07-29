@@ -23,7 +23,6 @@ function isThreadCustomGroupEntry(
 
 function encodeMessengerThreadSummaryCursor(summary: MessengerThreadSummary) {
   const payload = {
-    attentionRank: messengerThreadSummaryAttentionRank(summary),
     activityAt: new Date(summary.latestActivityAt ?? 0).toISOString(),
     title: summary.title,
     threadKey: summary.threadKey,
@@ -36,24 +35,10 @@ function encodeMessengerThreadSummaryCursor(summary: MessengerThreadSummary) {
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function messengerThreadSummaryAttentionRank(summary: MessengerThreadSummary) {
-  if (summary.unreadCount > 0 || summary.needsAttention) return 0;
-  if (
-    (typeof summary.metadata?.activeExecutionRunId === "string" && summary.metadata.activeExecutionRunId.length > 0)
-    || (typeof summary.metadata?.activeGenerationId === "string" && summary.metadata.activeGenerationId.length > 0)
-  ) {
-    return 1;
-  }
-  return 2;
-}
-
 function compareMessengerThreadSummaries(a: MessengerThreadSummary, b: MessengerThreadSummary) {
   const aPinned = Boolean(a.isPinned);
   const bPinned = Boolean(b.isPinned);
   if (aPinned !== bPinned) return aPinned ? -1 : 1;
-  const attentionDiff =
-    messengerThreadSummaryAttentionRank(a) - messengerThreadSummaryAttentionRank(b);
-  if (attentionDiff !== 0) return attentionDiff;
   const aTime = a.latestActivityAt ? new Date(a.latestActivityAt).getTime() : Number.NEGATIVE_INFINITY;
   const bTime = b.latestActivityAt ? new Date(b.latestActivityAt).getTime() : Number.NEGATIVE_INFINITY;
   if (aTime !== bTime) return bTime - aTime;

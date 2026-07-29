@@ -135,7 +135,7 @@ describe("upsertMessengerThreadSummaryQueries", () => {
     expect(pages?.[1]?.items.map((item) => item.threadKey)).toEqual([]);
   });
 
-  it("keeps optimistic cache merges aligned with unread, processing, and read priority", () => {
+  it("keeps optimistic cache merges ordered by pinning and latest activity", () => {
     const queryClient = new QueryClient();
     const orgId = "org-1";
     const newerRead = thread({
@@ -170,9 +170,9 @@ describe("upsertMessengerThreadSummaryQueries", () => {
       pages: Array<{ items: MessengerThreadSummary[] }>;
     }>(queryKeys.messenger.threadPages(orgId, false))?.pages[0]?.items;
     expect(items?.map((item) => item.threadKey)).toEqual([
-      "chat:unread",
-      "chat:processing",
       "chat:read",
+      "chat:processing",
+      "chat:unread",
     ]);
   });
 });

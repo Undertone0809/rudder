@@ -635,7 +635,7 @@ describe("MessengerContextSidebar", () => {
     );
   });
 
-  it("keeps attention order across historical manual rows while preserving Saved View slots", () => {
+  it("keeps historical manual rows and Saved View slots regardless of unread state", () => {
     chatList = [];
     localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "custom" });
     localStorageValues["rudder.messengerDefaultThreadOrder:org-1:anonymous"] = JSON.stringify([
@@ -708,8 +708,8 @@ describe("MessengerContextSidebar", () => {
 
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
-    expect(html.indexOf("Older unread chat")).toBeLessThan(html.indexOf("Saved attention slot"));
-    expect(html.indexOf("Saved attention slot")).toBeLessThan(html.indexOf("Newer read chat"));
+    expect(html.indexOf("Newer read chat")).toBeLessThan(html.indexOf("Saved attention slot"));
+    expect(html.indexOf("Saved attention slot")).toBeLessThan(html.indexOf("Older unread chat"));
   });
 
   it("keeps pinned grouped threads inside their custom group in persisted order", () => {

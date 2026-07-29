@@ -101,7 +101,6 @@ import { messengerSavedViewRoute } from "@/lib/messenger-saved-views";
 import { messengerThreadKindLabel } from "@/lib/messenger-thread-labels";
 import {
   applyManualDirectoryOrder,
-  applyVisibleThreadAttentionOrder,
   chatConversationForThreadSummary,
   customGroupIdFromSectionKey,
   customGroupSectionKey,
@@ -2956,10 +2955,7 @@ export function MessengerContextSidebar() {
     const manuallyOrderedCustomEntries = customGroup?.entries
       .slice()
       .sort((left, right) => left.sortOrder - right.sortOrder) ?? [];
-    const orderedCustomEntries = applyVisibleThreadAttentionOrder(
-      manuallyOrderedCustomEntries,
-      visibleEntries,
-    );
+    const orderedCustomEntries = manuallyOrderedCustomEntries;
     const renderedEntryNodes = customGroup
       ? orderedCustomEntries.map((entry) => {
         if (isSavedViewCustomGroupEntry(entry)) {
