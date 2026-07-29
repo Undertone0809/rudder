@@ -81,6 +81,9 @@ vi.mock("@/pages/Chat.attachments", () => ({
 
 vi.mock("@/pages/Chat.messages", () => ({
   AssistantDraftItem: () => <div>Assistant draft</div>,
+  OptimisticUserDraftItem: ({ body }: { body: string }) => (
+    <div data-testid="optimistic-user-message">{body}</div>
+  ),
   ChatMessageItem: ({
     message,
     onSelectResponseAnnotation,
@@ -353,6 +356,82 @@ describe("SideChatPanelView composer controls", () => {
 });
 
 describe("SideChatPanelView streaming reconciliation", () => {
+  it("keeps the acknowledged user message ahead of the assistant when a stale refresh replaces the cache", async () => {
+    const generationId = "80000000-0000-4000-8000-000000000000";
+    const userMessage = {
+      id: "70000000-0000-4000-8000-000000000000",
+      orgId: sourceConversation.orgId,
+      conversationId: sideConversation.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Keep my message visible while you think.",
+      structuredPayload: null,
+      attachments: [],
+      replyingAgentId: null,
+      chatTurnId: "90000000-0000-4000-8000-000000000000",
+      turnVariant: 0,
+      supersededAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as ChatMessage;
+    let releaseStream!: () => void;
+    const streamPending = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+
+    vi.mocked(chatsApi.get).mockImplementation(async (conversationId) => (
+      conversationId === sideConversation.id ? sideConversation : sourceConversation
+    ));
+    vi.mocked(chatsApi.sendMessageStream).mockImplementationOnce(async (
+      conversationId,
+      body,
+      options,
+    ) => {
+      await options.onEvent({
+        type: "ack",
+        userMessage: { ...userMessage, conversationId, body },
+        generationId,
+      });
+      queryClient.setQueryData(
+        queryKeys.chats.messages(sourceConversation.orgId, sideConversation.id),
+        [],
+      );
+      await streamPending;
+    });
+
+    await renderView({
+      viewTarget: {
+        ...target,
+        conversationId: sideConversation.id,
+        inlineAnnotations: [],
+      },
+    });
+    await vi.waitFor(() => expect(queryClient.getQueryState(
+      queryKeys.chats.messages(sourceConversation.orgId, sideConversation.id),
+    )?.status).toBe("success"));
+    const draft = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Side Chat draft"]',
+    )!;
+    changeTextarea(draft, userMessage.body);
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side Chat message"]',
+      )?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(
+      host.querySelector('[data-testid="optimistic-user-message"]')?.textContent,
+    ).toBe(userMessage.body));
+    expect(host.textContent?.indexOf(userMessage.body)).toBeLessThan(
+      host.textContent?.indexOf("Assistant draft") ?? -1,
+    );
+
+    releaseStream();
+  });
+
   it("renders one live reply when the persisted streaming assistant message is refreshed", async () => {
     const generationId = "80000000-0000-4000-8000-000000000001";
     const userMessage = {
