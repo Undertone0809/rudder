@@ -97,6 +97,27 @@ test("manifest parses and covers every current navigation page", () => {
   for (const route of navigation) assert.ok(routes.has(route), `manifest is missing ${route}`);
 });
 
+test("localized navigation language codes match their route prefixes", () => {
+  const docsJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "docs/docs.json"), "utf8"));
+  const [defaultLanguage, ...localizedLanguages] = docsJson.navigation.languages;
+  assert.equal(defaultLanguage.language, "en");
+
+  for (const language of localizedLanguages) {
+    const pages = language.groups.flatMap((group) => group.pages);
+    assert.ok(
+      pages.every((page) => page === language.language || page.startsWith(`${language.language}/`)),
+      `${language.language} navigation pages must use the /${language.language} route prefix`,
+    );
+  }
+});
+
+test("home pages do not render the dashboard overview screenshot", () => {
+  for (const relativeFile of ["docs/index.mdx", "docs/zh.mdx"]) {
+    const source = fs.readFileSync(path.join(REPO_ROOT, relativeFile), "utf8");
+    assert.doesNotMatch(source, /board-overview\.png/u, relativeFile);
+  }
+});
+
 test("redirect generation includes the activated Batch 3 aliases", () => {
   const manifest = loadManifest();
   const mintlify = expectedRedirects(manifest, "mintlify");
