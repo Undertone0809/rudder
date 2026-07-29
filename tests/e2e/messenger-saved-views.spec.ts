@@ -64,6 +64,38 @@ async function selectOrganization(page: Page, organization: { id: string }) {
   }, organization.id);
 }
 
+async function installWorkbenchFileLauncherStub(page: Page) {
+  await page.addInitScript(() => {
+    const fileLocationCalls: Array<{
+      filePath: string;
+      rootPath: string;
+      targetId: string;
+    }> = [];
+    Object.defineProperty(window, "__rudderWorkbenchFileLocationCalls", {
+      configurable: true,
+      value: fileLocationCalls,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        listWorkspaceLaunchTargets: async () => [
+          { id: "cursor", label: "Cursor", kind: "ide" },
+          { id: "terminal", label: "Terminal", kind: "terminal" },
+          { id: "finder", label: "Finder", kind: "folder" },
+        ],
+        openWorkspaceFileInIde: async () => {},
+        openWorkspaceFileLocation: async (
+          rootPath: string,
+          filePath: string,
+          targetId: string,
+        ) => {
+          fileLocationCalls.push({ rootPath, filePath, targetId });
+        },
+      },
+    });
+  });
+}
+
 async function listGroups(page: Page, orgId: string) {
   const response = await page.request.get(`/api/orgs/${orgId}/messenger/groups`);
   expect(response.ok(), await response.text()).toBe(true);
@@ -563,6 +595,7 @@ test.describe("Messenger Saved Views", () => {
     expect(groupLibraryResponse.ok(), await groupLibraryResponse.text()).toBe(true);
 
     await selectOrganization(page, organization);
+    await installWorkbenchFileLauncherStub(page);
     await page.goto(`/${organization.issuePrefix}/messenger/workbench`);
 
     const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);
@@ -584,6 +617,35 @@ test.describe("Messenger Saved Views", () => {
       '[data-testid="library-live-surface"][data-surface="workbench"][data-active="true"]',
     );
     await expect(activeLibrarySurface).toHaveAttribute("data-target-kind", "library_file");
+    const fileOpenSelector = activeLibrarySurface.getByTestId(
+      "library-live-surface-file-open-selector",
+    );
+    await expect(fileOpenSelector.getByRole("button", {
+      name: "Open file options",
+    })).toBeVisible();
+    await fileOpenSelector.getByRole("button", {
+      name: "Open file options",
+    }).click();
+    await expect(page.getByRole("menuitem", { name: "Default app" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Cursor" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Terminal" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Finder" }).click();
+    await expect.poll(async () => page.evaluate(() => (
+      (
+        window as typeof window & {
+          __rudderWorkbenchFileLocationCalls?: Array<{
+            filePath: string;
+            rootPath: string;
+            targetId: string;
+          }>;
+        }
+      ).__rudderWorkbenchFileLocationCalls ?? []
+    ))).toEqual([
+      expect.objectContaining({
+        filePath: libraryFilePath,
+        targetId: "finder",
+      }),
+    ]);
     await activeLibrarySurface.evaluate((surface) => {
       surface.dataset.runtimeIdentity = "preserve-across-placement";
     });

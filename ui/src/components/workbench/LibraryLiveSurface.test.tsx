@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 
+import { ToastProvider } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
 import type {
   OrganizationWorkspaceFileDetail,
   OrganizationWorkspaceFileList,
 } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, useState } from "react";
+import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
   afterEach,
@@ -103,6 +104,7 @@ beforeEach(() => {
   listWorkspaceFiles.mockReset();
   readWorkspaceFile.mockReset();
   updateWorkspaceFile.mockReset();
+  Reflect.deleteProperty(window, "desktopShell");
 });
 
 afterEach(() => {
@@ -113,7 +115,16 @@ afterEach(() => {
   host = null;
   root = null;
   queryClient = null;
+  Reflect.deleteProperty(window, "desktopShell");
 });
+
+function Providers({ children }: { children: ReactNode }) {
+  return (
+    <QueryClientProvider client={queryClient!}>
+      <ToastProvider>{children}</ToastProvider>
+    </QueryClientProvider>
+  );
+}
 
 function FileHarness() {
   const [surface, setSurface] = useState<"side_panel" | "workbench">(
@@ -154,9 +165,9 @@ function renderFileHarness(initialFile = file()) {
   );
   act(() => {
     root!.render(
-      <QueryClientProvider client={queryClient!}>
+      <Providers>
         <FileHarness />
-      </QueryClientProvider>,
+      </Providers>,
     );
   });
 }
@@ -211,6 +222,67 @@ describe("LibraryLiveSurface", () => {
     );
   });
 
+  it("restores the file open selector on promoted Library file surfaces", async () => {
+    const openWorkspaceFileInIde = vi.fn(async () => undefined);
+    const openWorkspaceFileLocation = vi.fn(async () => undefined);
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        listWorkspaceLaunchTargets: vi.fn(async () => [
+          { id: "cursor", label: "Cursor", kind: "ide" },
+          { id: "finder", label: "Finder", kind: "folder" },
+        ]),
+        openWorkspaceFileInIde,
+        openWorkspaceFileLocation,
+      },
+    });
+    renderFileHarness();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const selector = host!.querySelector<HTMLElement>(
+      '[data-testid="library-live-surface-file-open-selector"]',
+    );
+    const toolbar = host!.querySelector<HTMLElement>(
+      '[data-testid="library-live-surface-file-toolbar"]',
+    );
+    const trigger = selector?.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open file options"]',
+    );
+    expect(toolbar?.textContent).toContain("reports/growth.md");
+    expect(toolbar?.contains(selector ?? null)).toBe(true);
+    expect(selector?.classList.contains("absolute")).toBe(false);
+    expect(trigger).not.toBeNull();
+
+    await act(async () => {
+      trigger?.dispatchEvent(new MouseEvent(
+        "pointerdown",
+        { bubbles: true, cancelable: true, button: 0 },
+      ));
+      await Promise.resolve();
+    });
+
+    const cursorItem = document.body.querySelector<HTMLElement>(
+      '[data-testid="library-live-surface-file-open-menu-target-cursor"]',
+    );
+    expect(document.body.textContent).toContain("Default app");
+    expect(cursorItem?.textContent).toContain("Cursor");
+    expect(document.body.textContent).toContain("Finder");
+
+    await act(async () => {
+      cursorItem?.click();
+      await Promise.resolve();
+    });
+    expect(openWorkspaceFileInIde).toHaveBeenCalledWith(
+      "/tmp/workspace",
+      "reports/growth.md",
+      "cursor",
+    );
+    expect(openWorkspaceFileLocation).not.toHaveBeenCalled();
+  });
+
   it("reconciles a stale write into an isolated conflict instead of overwriting server content", async () => {
     vi.useFakeTimers();
     updateWorkspaceFile.mockRejectedValue(new Error("Precondition failed"));
@@ -257,7 +329,7 @@ describe("LibraryLiveSurface", () => {
     const opened: unknown[] = [];
     act(() => {
       root!.render(
-        <QueryClientProvider client={queryClient!}>
+        <Providers>
           <LibraryLiveSurface
             active
             organizationId="org-a"
@@ -270,7 +342,7 @@ describe("LibraryLiveSurface", () => {
             }}
             onOpenTarget={(target) => opened.push(target)}
           />
-        </QueryClientProvider>,
+        </Providers>,
       );
     });
 
@@ -308,7 +380,7 @@ describe("LibraryLiveSurface", () => {
     );
     act(() => {
       root!.render(
-        <QueryClientProvider client={queryClient!}>
+        <Providers>
           <LibraryLiveSurface
             active
             organizationId="org-a"
@@ -321,7 +393,7 @@ describe("LibraryLiveSurface", () => {
             }}
             onOpenTarget={() => undefined}
           />
-        </QueryClientProvider>,
+        </Providers>,
       );
     });
 

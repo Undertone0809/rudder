@@ -3,10 +3,22 @@ import { organizationsApi } from "@/api/orgs";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { WorkspaceFilePreview } from "@/components/WorkspaceFilePreview";
+import { WorkspaceFileOpenMenu } from "@/components/workspaces/WorkspaceLaunchControls";
 import type { LiveSurfaceTarget } from "@/context/LiveSurfaceRuntimeContext";
+import { useToast } from "@/context/ToastContext";
+import {
+  readDesktopShell,
+  type DesktopWorkspaceLaunchTarget,
+} from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
+import {
+  isWorkspaceFileOpenTarget,
+  workspaceUnsupportedFileLaunchTargets,
+  type WorkspaceOpenTargetId,
+  type WorkspaceUnsupportedFileLaunchTarget,
+} from "@/lib/workspace-preferences";
 import {
   clearChatSidePanelMarkdownDraft,
   restoreChatSidePanelMarkdownDraft,
@@ -400,6 +412,13 @@ export function LibraryLiveSurface({
   target: LibraryTarget;
   onOpenTarget: (target: SidePanelTarget) => void;
 }) {
+  const { pushToast } = useToast();
+  const desktopShell = readDesktopShell();
+  const [launchTargets, setLaunchTargets] = useState<
+    DesktopWorkspaceLaunchTarget[]
+  >([]);
+  const [openingTargetId, setOpeningTargetId] =
+    useState<WorkspaceOpenTargetId | null>(null);
   const entryTarget = target.kind === "library_entry" ? target : null;
   const documentTarget = target.kind === "library_document" ? target : null;
   const directoryTarget = target.kind === "library_directory" ? target : null;
@@ -464,6 +483,77 @@ export function LibraryLiveSurface({
     enabled: Boolean(directoryTarget),
     refetchOnWindowFocus: false,
   });
+  const file = fileQuery.data;
+  const fileOpenTargets = workspaceUnsupportedFileLaunchTargets(
+    launchTargets,
+    {
+      canOpenFile: Boolean(
+        file?.rootPath
+        && typeof desktopShell?.openWorkspaceFileInIde === "function"
+      ),
+      canOpenLocation: Boolean(
+        file?.rootPath
+        && typeof desktopShell?.openWorkspaceFileLocation === "function"
+      ),
+    },
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (
+      !file?.rootPath
+      || typeof desktopShell?.listWorkspaceLaunchTargets !== "function"
+    ) {
+      setLaunchTargets([]);
+      return undefined;
+    }
+    void desktopShell.listWorkspaceLaunchTargets()
+      .then((targets) => {
+        if (!cancelled) setLaunchTargets(targets);
+      })
+      .catch(() => {
+        if (!cancelled) setLaunchTargets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopShell, file?.rootPath]);
+
+  const openFileTarget = async (
+    openTarget: WorkspaceUnsupportedFileLaunchTarget,
+  ) => {
+    if (!file?.rootPath || !desktopShell) return;
+    setOpeningTargetId(openTarget.id);
+    try {
+      if (isWorkspaceFileOpenTarget(openTarget)) {
+        await desktopShell.openWorkspaceFileInIde(
+          file.rootPath,
+          file.filePath,
+          openTarget.id,
+        );
+      } else {
+        await desktopShell.openWorkspaceFileLocation?.(
+          file.rootPath,
+          file.filePath,
+          openTarget.id,
+        );
+      }
+      pushToast({
+        title: `Opened in ${openTarget.label}`,
+        tone: "success",
+      });
+    } catch (openError) {
+      pushToast({
+        title: `Could not open in ${openTarget.label}`,
+        body: openError instanceof Error
+          ? openError.message
+          : "Try another app.",
+        tone: "error",
+      });
+    } finally {
+      setOpeningTargetId(null);
+    }
+  };
 
   // Disabled TanStack queries report a pending state. Gate every pending/error
   // branch by the target kind so a Library file cannot be stuck behind a
@@ -621,6 +711,24 @@ export function LibraryLiveSurface({
       data-target-kind={target.kind}
       data-testid="library-live-surface"
     >
+      {file && fileOpenTargets.length > 0 ? (
+        <div
+          className="flex h-11 shrink-0 items-center gap-3 border-b border-border/70 px-4"
+          data-testid="library-live-surface-file-toolbar"
+        >
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {file.filePath}
+          </span>
+          <div data-testid="library-live-surface-file-open-selector">
+            <WorkspaceFileOpenMenu
+              targets={fileOpenTargets}
+              openingTargetId={openingTargetId}
+              onOpenTarget={(nextTarget) => void openFileTarget(nextTarget)}
+              testId="library-live-surface-file-open-menu"
+            />
+          </div>
+        </div>
+      ) : null}
       {content}
     </section>
   );
