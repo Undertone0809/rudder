@@ -169,7 +169,7 @@ import {
 } from "@dnd-kit/sortable";
 import { buildChatMentionHref, type Agent, type ChatConversation, type MessengerCustomGroupHydratedEntry, type MessengerCustomGroupHydratedSavedViewEntry, type MessengerCustomGroupHydratedThreadEntry, type MessengerCustomGroupWithEntries, type MessengerSavedView, type MessengerThreadSummary, type Project } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer, type Range } from "@tanstack/react-virtual";
 import {
   ChevronDown,
   ChevronRight,
@@ -188,7 +188,17 @@ import {
   RefreshCw
 } from "lucide-react";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
 function isThreadCustomGroupEntry(
   entry: MessengerCustomGroupHydratedEntry,
@@ -219,16 +229,137 @@ type CustomGroupEditorState = { mode: "create"; threadKey?: string };
 type CustomGroupRenameState = { group: MessengerCustomGroupWithEntries; name: string };
 type MessengerDragIntent = "move-into-group" | "move-out-of-group" | "reorder-group" | "reorder-entry" | null;
 type MessengerInsertionPlacement = "before" | "after" | null;
+
+function InstantCustomGroupDisclosure({
+  children,
+  collapsed,
+  onCollapsedChange,
+}: {
+  children: (
+    collapsed: boolean,
+    toggle: (event: ReactMouseEvent<HTMLButtonElement>) => void,
+    rootRef: RefObject<HTMLDivElement | null>,
+  ) => ReactNode;
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => Promise<void>;
+}) {
+  const [renderState, setRenderState] = useState({ collapsed, generation: 0 });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const optimisticCollapsedRef = useRef(collapsed);
+  const lastConfirmedCollapsedRef = useRef(collapsed);
+  const changeGenerationRef = useRef(0);
+  const pendingGenerationRef = useRef(0);
+  const renderFrameRef = useRef<number | null>(null);
+  const renderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applyImmediateDisclosureState = useCallback((nextCollapsed: boolean) => {
+    const root = rootRef.current;
+    if (!root) return;
+    const trigger = root.querySelector<HTMLElement>("[data-messenger-group-trigger]");
+    const content = root.querySelector<HTMLElement>("[data-messenger-group-content]");
+    root.dataset.collapsed = nextCollapsed ? "true" : "false";
+    trigger?.setAttribute("aria-expanded", nextCollapsed ? "false" : "true");
+    if (!content) return;
+    if (nextCollapsed) {
+      content.setAttribute("aria-hidden", "true");
+      content.setAttribute("inert", "");
+    } else {
+      content.removeAttribute("aria-hidden");
+      content.removeAttribute("inert");
+    }
+    content.style.gridTemplateRows = nextCollapsed ? "0fr" : "1fr";
+    content.style.opacity = nextCollapsed ? "0" : "1";
+    content.style.marginTop = nextCollapsed ? "0px" : "0.25rem";
+  }, []);
+
+  const scheduleRenderedDisclosureState = useCallback((
+    nextCollapsed: boolean,
+    generation: number,
+  ) => {
+    if (renderFrameRef.current !== null) {
+      cancelAnimationFrame(renderFrameRef.current);
+    }
+    if (renderTimerRef.current !== null) {
+      clearTimeout(renderTimerRef.current);
+    }
+    renderFrameRef.current = requestAnimationFrame(() => {
+      renderFrameRef.current = null;
+      renderTimerRef.current = setTimeout(() => {
+        renderTimerRef.current = null;
+        if (changeGenerationRef.current !== generation) return;
+        setRenderState({ collapsed: nextCollapsed, generation });
+      }, 0);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (pendingGenerationRef.current !== 0) return;
+    const generation = changeGenerationRef.current + 1;
+    changeGenerationRef.current = generation;
+    optimisticCollapsedRef.current = collapsed;
+    lastConfirmedCollapsedRef.current = collapsed;
+    setRenderState({ collapsed, generation });
+  }, [collapsed]);
+
+  useEffect(() => () => {
+    if (renderFrameRef.current !== null) {
+      cancelAnimationFrame(renderFrameRef.current);
+    }
+    if (renderTimerRef.current !== null) {
+      clearTimeout(renderTimerRef.current);
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    const content = rootRef.current?.querySelector<HTMLElement>("[data-messenger-group-content]");
+    if (!content) return;
+    content.style.removeProperty("grid-template-rows");
+    content.style.removeProperty("opacity");
+    content.style.removeProperty("margin-top");
+  }, [renderState.generation]);
+
+  const toggle = (_event: ReactMouseEvent<HTMLButtonElement>) => {
+    const next = !optimisticCollapsedRef.current;
+    const generation = changeGenerationRef.current + 1;
+    changeGenerationRef.current = generation;
+    pendingGenerationRef.current = generation;
+    optimisticCollapsedRef.current = next;
+    applyImmediateDisclosureState(next);
+    scheduleRenderedDisclosureState(next, generation);
+    void onCollapsedChange(next).then(
+      () => {
+        lastConfirmedCollapsedRef.current = next;
+        if (pendingGenerationRef.current === generation) {
+          pendingGenerationRef.current = 0;
+        }
+      },
+      () => {
+        if (pendingGenerationRef.current !== generation) return;
+        pendingGenerationRef.current = 0;
+        const confirmed = lastConfirmedCollapsedRef.current;
+        const rollbackGeneration = changeGenerationRef.current + 1;
+        changeGenerationRef.current = rollbackGeneration;
+        optimisticCollapsedRef.current = confirmed;
+        applyImmediateDisclosureState(confirmed);
+        scheduleRenderedDisclosureState(confirmed, rollbackGeneration);
+      },
+    );
+  };
+
+  return children(renderState.collapsed, toggle, rootRef);
+}
+
 const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
 const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const MESSENGER_SAVED_VIEW_PAGE_LIMIT = 50;
 // Keep roughly one additional sidebar viewport mounted ahead of the current
-// scroll direction. VirtualizedActivityTimeline retains only a small trailing
-// buffer and flips the larger buffer immediately when direction changes, so a
-// trackpad fling cannot expose the empty size container without doubling the
-// number of content-rich rows React must maintain.
+// scroll direction. VirtualizedActivityTimeline retains half a viewport behind
+// the current direction and flips the larger buffer when direction changes.
 const MESSENGER_SCROLL_OVERSCAN_ROWS = 24;
 const MESSENGER_DRAG_OVERSCAN_ROWS = 32;
+const MESSENGER_DIRECTORY_CHUNK_ROWS = 8;
+const MESSENGER_DIRECTORY_RUNWAY_ROWS = 40;
+const MESSENGER_DIRECTORY_DRAG_RUNWAY_ROWS = 48;
 const SELECTED_READ_EMPHASIS_HOLD_MS = 1200;
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
 const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
@@ -702,6 +833,7 @@ export function MessengerContextSidebar() {
   const dragIntentRef = useRef<MessengerDragIntent>(null);
   const collapsedGroupOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const collapsedGroupOpenTargetRef = useRef<string | null>(null);
+  const customGroupCollapsedUpdateQueuesRef = useRef<Record<string, Promise<void>>>({});
   const selectedReadEmphasisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentOrganizationIdRef = useRef(model.selectedOrganizationId);
   const relativePathRef = useRef(relativePath);
@@ -1461,15 +1593,31 @@ export function MessengerContextSidebar() {
     looseSavedViews,
     organizedThreadSections,
   ]);
+  const directoryRangeExtractor = useCallback((range: Range) => {
+    const runway = draggingThreadId
+      ? MESSENGER_DIRECTORY_DRAG_RUNWAY_ROWS
+      : MESSENGER_DIRECTORY_RUNWAY_ROWS;
+    const rawStart = Math.max(0, range.startIndex - runway);
+    const rawEnd = Math.min(range.count - 1, range.endIndex + runway);
+    const start = Math.floor(rawStart / MESSENGER_DIRECTORY_CHUNK_ROWS)
+      * MESSENGER_DIRECTORY_CHUNK_ROWS;
+    const end = Math.min(
+      range.count - 1,
+      Math.ceil((rawEnd + 1) / MESSENGER_DIRECTORY_CHUNK_ROWS)
+        * MESSENGER_DIRECTORY_CHUNK_ROWS - 1,
+    );
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  }, [draggingThreadId]);
   const directoryVirtualizer = useVirtualizer({
     count: topLevelDirectoryItems.length,
     getScrollElement: () => sidebarScrollElementRef.current,
-    estimateSize: () => threadDensity === "compact" ? 46 : 74,
+    estimateSize: () => threadDensity === "compact" ? 42 : 58,
     getItemKey: (index) => topLevelDirectoryItems[index]?.key ?? index,
-    overscan: draggingThreadId ? 16 : 12,
+    overscan: 0,
+    rangeExtractor: directoryRangeExtractor,
     directDomUpdates: true,
     directDomUpdatesMode: "transform",
-    useFlushSync: true,
+    useFlushSync: false,
   });
   const virtualDirectoryItems = directoryVirtualizer.getVirtualItems();
   const sortableThreadSectionKeys = useMemo(() => (
@@ -1667,6 +1815,42 @@ export function MessengerContextSidebar() {
     },
     onSuccess: refreshCustomGroups,
   });
+  const updateCustomGroupCollapsed = useCallback((
+    groupId: string,
+    collapsed: boolean,
+  ): Promise<void> => {
+    const organizationId = model.selectedOrganizationId;
+    if (!organizationId) {
+      return Promise.reject(new Error("Organization is required to update a Messenger group"));
+    }
+
+    const previous = customGroupCollapsedUpdateQueuesRef.current[groupId] ?? Promise.resolve();
+    const request = previous.catch(() => undefined).then(async () => {
+      await messengerApi.updateCustomGroup(organizationId, groupId, { collapsed });
+    });
+    customGroupCollapsedUpdateQueuesRef.current[groupId] = request;
+
+    void request.then(
+      async () => {
+        if (customGroupCollapsedUpdateQueuesRef.current[groupId] !== request) return;
+        delete customGroupCollapsedUpdateQueuesRef.current[groupId];
+        await refreshCustomGroups();
+      },
+      (error) => {
+        if (customGroupCollapsedUpdateQueuesRef.current[groupId] === request) {
+          delete customGroupCollapsedUpdateQueuesRef.current[groupId];
+          void refreshCustomGroups();
+        }
+        pushToast({
+          title: "Could not update group",
+          body: error instanceof Error ? error.message : "Please try again.",
+          tone: "error",
+        });
+      },
+    );
+
+    return request;
+  }, [model.selectedOrganizationId, pushToast, refreshCustomGroups]);
 
   const regenerateCustomGroupTitleMutation = useMutation({
     mutationFn: (groupId: string) => {
@@ -2131,7 +2315,7 @@ export function MessengerContextSidebar() {
       ?? customEntryGroupByItemKey.get(overId)
       ?? null;
     const group = overGroupId ? customGroups.find((candidate) => candidate.id === overGroupId) : null;
-    if (!group?.collapsed) {
+    if (!group || !group.collapsed) {
       clearCollapsedGroupOpenTimer();
       return;
     }
@@ -2141,14 +2325,14 @@ export function MessengerContextSidebar() {
     collapsedGroupOpenTimerRef.current = setTimeout(() => {
       collapsedGroupOpenTimerRef.current = null;
       collapsedGroupOpenTargetRef.current = null;
-      updateCustomGroupMutation.mutate({ groupId: group.id, data: { collapsed: false } });
+      void updateCustomGroupCollapsed(group.id, false);
     }, 500);
-  }, [clearCollapsedGroupOpenTimer, customEntryGroupByItemKey, customGroups, effectiveThreadOrganizationRule, organizedThreadSections, resolveCustomDragIntent, savedViewEntryByItemKey, updateCustomGroupMutation, updateDragIntent, updateDragOverId]);
+  }, [clearCollapsedGroupOpenTimer, customEntryGroupByItemKey, customGroups, effectiveThreadOrganizationRule, organizedThreadSections, resolveCustomDragIntent, savedViewEntryByItemKey, updateCustomGroupCollapsed, updateDragIntent, updateDragOverId]);
 
   const handleThreadGroupToggle = (groupKey: string) => {
     const group = customGroupBySectionKey.get(groupKey);
     if (group) {
-      updateCustomGroupMutation.mutate({ groupId: group.id, data: { collapsed: !group.collapsed } });
+      void updateCustomGroupCollapsed(group.id, !group.collapsed);
       return;
     }
     if (!isLocallyCollapsedThreadGroupRule(effectiveThreadOrganizationRule)) return;
@@ -2841,7 +3025,9 @@ export function MessengerContextSidebar() {
     const customGroup = customGroupBySectionKey.get(section.key) ?? null;
     const customGroupTitleGenerating = Boolean(customGroup && generatingGroupTitleIds.has(customGroup.id));
     const displayedCustomGroup = customGroup;
-    const collapsed = customGroup ? customGroup.collapsed : isManagedSection && collapsedThreadGroupKeys.has(section.key);
+    const collapsed = customGroup
+      ? customGroup.collapsed
+      : isManagedSection && collapsedThreadGroupKeys.has(section.key);
     const draggingEntryGroupId = draggingThreadId
       ? customEntryGroupByItemKey.get(draggingThreadId)
       : undefined;
@@ -3107,21 +3293,29 @@ export function MessengerContextSidebar() {
     if (section.label && displayedCustomGroup) {
       const attentionCount = sectionAttentionCount(section);
       return (
-        <div
-          data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
-          data-messenger-scroll-coverage-surface
-          data-collapsed={collapsed ? "true" : "false"}
-          data-drag-move-target={isMoveIntoGroupTarget ? "true" : undefined}
-          data-drag-intent={isMoveIntoGroupTarget ? "move-into-group" : undefined}
-          className={cn(
-            "group/custom-group relative mx-0.5 rounded-[calc(var(--radius-md)-1px)] border p-1 text-[color:var(--messenger-group-text)] transition-[background-color,border-color,box-shadow] duration-150 dark:text-[color:var(--messenger-group-text-dark)]",
-            collapsed && !isMoveIntoGroupTarget
-              ? "border-transparent bg-transparent shadow-none hover:border-[color:var(--messenger-group-border)] hover:bg-[color:var(--messenger-group-bg-hover)] has-[:focus-visible]:border-[color:var(--messenger-group-border)] has-[:focus-visible]:bg-[color:var(--messenger-group-bg-hover)] dark:border-transparent dark:bg-transparent dark:hover:border-[color:var(--messenger-group-border-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)] dark:has-[:focus-visible]:border-[color:var(--messenger-group-border-dark)] dark:has-[:focus-visible]:bg-[color:var(--messenger-group-bg-hover-dark)]"
-              : "border-[color:var(--messenger-group-border)] bg-[color:var(--messenger-group-bg)] shadow-[0_8px_20px_-18px_rgba(15,23,42,0.45)] hover:bg-[color:var(--messenger-group-bg-hover)] dark:border-[color:var(--messenger-group-border-dark)] dark:bg-[color:var(--messenger-group-bg-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)]",
-            isMoveIntoGroupTarget && "ring-2 ring-[color:color-mix(in_oklab,var(--messenger-group-text)_34%,transparent)]",
+        <InstantCustomGroupDisclosure
+          collapsed={displayedCustomGroup.collapsed}
+          onCollapsedChange={(nextCollapsed) => (
+            updateCustomGroupCollapsed(displayedCustomGroup.id, nextCollapsed)
           )}
-          style={customGroupStyle(displayedCustomGroup)}
         >
+          {(collapsed, toggleCollapsed, disclosureRootRef) => (
+            <div
+              ref={disclosureRootRef}
+              data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
+              data-messenger-scroll-coverage-surface
+              data-collapsed={collapsed ? "true" : "false"}
+              data-drag-move-target={isMoveIntoGroupTarget ? "true" : undefined}
+              data-drag-intent={isMoveIntoGroupTarget ? "move-into-group" : undefined}
+              className={cn(
+                "group/custom-group relative mx-0.5 rounded-[calc(var(--radius-md)-1px)] border p-1 text-[color:var(--messenger-group-text)] transition-[background-color,border-color,box-shadow] duration-150 dark:text-[color:var(--messenger-group-text-dark)]",
+                collapsed && !isMoveIntoGroupTarget
+                  ? "border-transparent bg-transparent shadow-none hover:border-[color:var(--messenger-group-border)] hover:bg-[color:var(--messenger-group-bg-hover)] has-[:focus-visible]:border-[color:var(--messenger-group-border)] has-[:focus-visible]:bg-[color:var(--messenger-group-bg-hover)] dark:border-transparent dark:bg-transparent dark:hover:border-[color:var(--messenger-group-border-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)] dark:has-[:focus-visible]:border-[color:var(--messenger-group-border-dark)] dark:has-[:focus-visible]:bg-[color:var(--messenger-group-bg-hover-dark)]"
+                  : "border-[color:var(--messenger-group-border)] bg-[color:var(--messenger-group-bg)] shadow-[0_8px_20px_-18px_rgba(15,23,42,0.45)] hover:bg-[color:var(--messenger-group-bg-hover)] dark:border-[color:var(--messenger-group-border-dark)] dark:bg-[color:var(--messenger-group-bg-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)]",
+                isMoveIntoGroupTarget && "ring-2 ring-[color:color-mix(in_oklab,var(--messenger-group-text)_34%,transparent)]",
+              )}
+              style={customGroupStyle(displayedCustomGroup)}
+            >
           <MessengerInsertionLine placement={sectionInsertionPlacement} tone="group" />
           <div
             data-messenger-scroll-coverage-row
@@ -3134,9 +3328,10 @@ export function MessengerContextSidebar() {
             />
             <button
               type="button"
+              data-messenger-group-trigger
               aria-expanded={!collapsed}
               className="flex min-w-0 flex-1 items-center gap-1.5 rounded-[calc(var(--radius-sm)-2px)] px-0.5 text-left text-[12px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
-              onClick={() => handleThreadGroupToggle(section.key)}
+              onClick={toggleCollapsed}
             >
               {collapsed ? (
                 <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
@@ -3274,8 +3469,9 @@ export function MessengerContextSidebar() {
           </div>
           <div
             data-testid={sectionContentTestId}
+            data-messenger-group-content
             className={cn(
-              "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out",
+              "grid",
               collapsed || draggingSection ? "mt-0 grid-rows-[0fr] opacity-0" : "mt-1 grid-rows-[1fr] opacity-100",
             )}
             aria-hidden={collapsed || draggingSection ? "true" : undefined}
@@ -3285,7 +3481,9 @@ export function MessengerContextSidebar() {
               {sectionBody}
             </div>
           </div>
-        </div>
+            </div>
+          )}
+        </InstantCustomGroupDisclosure>
       );
     }
 
@@ -3780,10 +3978,7 @@ export function MessengerContextSidebar() {
           collapsedCustomGroup.id,
           unreadScrollRequestId,
         );
-        updateCustomGroupMutation.mutate({
-          groupId: collapsedCustomGroup.id,
-          data: { collapsed: false },
-        });
+        void updateCustomGroupCollapsed(collapsedCustomGroup.id, false);
       }
       return;
     }
@@ -3816,7 +4011,11 @@ export function MessengerContextSidebar() {
       }
     }
 
+    let cancelled = false;
+    let frame = 0;
+    let attempts = 0;
     const scrollFirstUnreadThreadIntoView = () => {
+      if (cancelled) return;
       const container = sidebarScrollElementRef.current;
       if (!container) return;
 
@@ -3829,14 +4028,21 @@ export function MessengerContextSidebar() {
         handledUnreadScrollRequestIdRef.current = unreadScrollRequestId;
         markMessengerUnreadScrollRequestHandled(unreadScrollRequestId);
         unreadLoadMoreRequestRef.current = null;
+        return;
+      }
+
+      attempts += 1;
+      if (attempts <= 12) {
+        frame = requestAnimationFrame(scrollFirstUnreadThreadIntoView);
       }
     };
 
-    const frame = requestAnimationFrame(scrollFirstUnreadThreadIntoView);
+    frame = requestAnimationFrame(scrollFirstUnreadThreadIntoView);
     return () => {
+      cancelled = true;
       cancelAnimationFrame(frame);
     };
-  }, [collapsedThreadGroupKeys, customGroupBySectionKey, directoryVirtualizer, effectiveThreadOrganizationRule, model.selectedOrganizationId, topLevelDirectoryItems, unreadScrollRequestId, unreadScrollTarget, updateCustomGroupMutation, visibleThreadGroupEntryLimits]);
+  }, [collapsedThreadGroupKeys, customGroupBySectionKey, directoryVirtualizer, effectiveThreadOrganizationRule, model.selectedOrganizationId, topLevelDirectoryItems, unreadScrollRequestId, unreadScrollTarget, updateCustomGroupCollapsed, visibleThreadGroupEntryLimits]);
 
   useEffect(() => {
     const sentinel = loadMoreThreadSummariesRef.current;
@@ -3992,7 +4198,9 @@ export function MessengerContextSidebar() {
                 {performanceBaselineMode ? (
                   <div data-testid="messenger-directory-baseline" className="flex flex-col gap-1">
                     {topLevelDirectoryItems.map((item) => (
-                      <div key={item.key}>{renderManagedDirectoryItem(item)}</div>
+                      <div key={item.key}>
+                        {renderManagedDirectoryItem(item)}
+                      </div>
                     ))}
                   </div>
                 ) : (
@@ -4042,7 +4250,9 @@ export function MessengerContextSidebar() {
           performanceBaselineMode ? (
             <div data-testid="messenger-directory-baseline" className="flex flex-col gap-1">
               {topLevelDirectoryItems.map((item) => (
-                <div key={item.key}>{renderPlainDirectoryItem(item)}</div>
+                <div key={item.key}>
+                  {renderPlainDirectoryItem(item)}
+                </div>
               ))}
             </div>
           ) : (
