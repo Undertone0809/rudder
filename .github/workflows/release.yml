@@ -66,7 +66,7 @@ jobs:
             -f head_sha="$SOURCE_SHA" \
             -f status=success \
             -f per_page=100 \
-            --jq '[.workflow_runs[] | select(.event == "push" and .head_branch == "main")] | length')"
+            --jq '[.workflow_runs[] | select((.event == "push" and .head_branch == "main") or .event == "workflow_dispatch")] | length')"
           if [ "$count" -lt 1 ]; then
             echo "No successful CI workflow found for exact source $SOURCE_SHA." >&2
             exit 1

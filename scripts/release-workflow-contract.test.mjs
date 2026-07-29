@@ -32,8 +32,9 @@ describe("release workflow latency contracts", () => {
     expect(releaseWorkflow).toContain("Require successful CI for exact source");
     expect(releaseWorkflow).toContain('-f head_sha="$SOURCE_SHA"');
     expect(releaseWorkflow).toContain("-f status=success");
-    expect(releaseWorkflow).toContain('.event == "push"');
-    expect(releaseWorkflow).toContain('.head_branch == "main"');
+    expect(releaseWorkflow).toContain(
+      'select((.event == "push" and .head_branch == "main") or .event == "workflow_dispatch")',
+    );
     expect(releaseWorkflow).toContain(
       "if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'",
     );
