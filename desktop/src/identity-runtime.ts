@@ -1,9 +1,12 @@
-import { app, ipcMain, safeStorage, session, shell } from "electron";
+import { app, ipcMain, session, shell } from "electron";
 import { randomBytes } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { createDesktopIdentityClient } from "./identity-client.js";
-import { createIdentityCredentialVault } from "./identity-credential-vault.js";
+import {
+  createIdentityCredentialVault,
+  type IdentitySafeStorage,
+} from "./identity-credential-vault.js";
 import {
   createDesktopIdentityIpcController,
   registerDesktopIdentityIpcHandlers,
@@ -79,29 +82,35 @@ function localAuthOptions(
 export function createDesktopIdentityRuntime(options: {
   installationId: string;
   appName: string;
+  safeStorage: IdentitySafeStorage;
   getMainRenderer(): MainRenderer | null;
   getLocalApiUrl(): string | null;
   onSignedIn(): Promise<void>;
   onSignedOut(): Promise<void>;
   onLocalExchange(): void;
 }) {
+  const debug = booleanFlagEnabled(process.env.RUDDER_DESKTOP_DEBUG_STARTUP);
+  if (debug) console.info("[rudder-desktop] identity-runtime:resolve-origin");
   const origin = resolveDesktopIdentityOrigin({
     isPackaged: app.isPackaged,
     override: process.env.RUDDER_IDENTITY_ORIGIN,
   });
   const credentialVault = createIdentityCredentialVault({
-    safeStorage,
+    safeStorage: options.safeStorage,
     platform: process.platform,
     credentialPath: path.join(app.getPath("userData"), "identity", "device-credential.bin"),
   });
+  if (debug) console.info("[rudder-desktop] identity-runtime:create-session-store");
   const vault = createDesktopIdentitySessionStore(credentialVault);
+  if (debug) console.info("[rudder-desktop] identity-runtime:create-offline-store");
   const offlineGrantStore = createDesktopOfflineGrantStore({
-    safeStorage,
+    safeStorage: options.safeStorage,
     platform: process.platform,
     statePath: path.join(app.getPath("userData"), "identity", "offline-grant.bin"),
     issuer: origin,
     installationId: options.installationId,
   });
+  if (debug) console.info("[rudder-desktop] identity-runtime:create-client");
   let controller: ReturnType<typeof createDesktopIdentityIpcController>;
   const client = createDesktopIdentityClient({
     identityOrigin: origin,
@@ -112,6 +121,7 @@ export function createDesktopIdentityRuntime(options: {
     openExternal: (url) => shell.openExternal(url),
     onDeviceAuthorizationPrompt: (prompt) => controller.showDeviceAuthorizationPrompt(prompt),
   });
+  if (debug) console.info("[rudder-desktop] identity-runtime:create-controller");
   controller = createDesktopIdentityIpcController({
     origin,
     vault,
@@ -139,6 +149,7 @@ export function createDesktopIdentityRuntime(options: {
       await options.onSignedOut();
     },
   });
+  if (debug) console.info("[rudder-desktop] identity-runtime:ready");
   const accountRequired = !desktopAccountBypassAllowed({
     isPackaged: app.isPackaged,
     bypassRequested: booleanFlagEnabled(process.env.RUDDER_DESKTOP_AUTH_BYPASS),

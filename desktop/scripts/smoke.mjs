@@ -1922,6 +1922,12 @@ async function runAccountGateScenario(mode) {
     ? path.resolve(browserSmokeScreenshotPath)
     : path.join(os.tmpdir(), "rudder-desktop-account-gate-packaged.png");
   const { electronApp, page } = await launchDesktopWindow(scenarioRoot, mode, ports, {
+    // Electron safeStorage must use the active macOS login keychain. A synthetic
+    // HOME can leave the synchronous keychain probe waiting for a keychain that
+    // does not exist; Rudder and Electron data paths remain scenario-isolated.
+    ...(process.platform === "darwin" && process.env.HOME
+      ? { HOME: process.env.HOME }
+      : {}),
     // A packaged release must ignore this development-only escape hatch.
     RUDDER_DESKTOP_AUTH_BYPASS: "1",
   });

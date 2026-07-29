@@ -1,5 +1,5 @@
 import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, OpenDialogOptions, Session, WebContents } from "electron";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, session, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, safeStorage, session, shell, systemPreferences, Tray } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -749,6 +749,7 @@ function initializeDesktopIdentity(desktopInstallationId: string): void {
   desktopIdentityRuntime = createDesktopIdentityRuntime({
     installationId: desktopInstallationId,
     appName: APP_NAME,
+    safeStorage,
     getMainRenderer: getCurrentMainRenderer,
     getLocalApiUrl: () => serverHandle?.apiUrl ?? lastKnownAppUrl,
     onSignedIn: startLocalRudder,
@@ -2405,8 +2406,11 @@ async function bootstrap(): Promise<void> {
       instanceId: profile.instanceId,
     },
   };
+  if (desktopDebugEnabled()) console.info("[rudder-desktop] bootstrap:initialize-local-apps");
   initializeLocalApps(profile.instanceId);
+  if (desktopDebugEnabled()) console.info("[rudder-desktop] bootstrap:initialize-identity");
   initializeDesktopIdentity(profile.instanceId);
+  if (desktopDebugEnabled()) console.info("[rudder-desktop] bootstrap:register-ipc");
   registerIpc();
   installApplicationMenu(appName);
   createResidentShellControls();
