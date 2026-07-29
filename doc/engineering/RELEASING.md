@@ -64,9 +64,10 @@ Release preparation and release execution are separate operations:
 1. **Review Ready** — identify the exact source SHA, complete verification, and
    prepare release notes/screenshots.
 2. **Release execution** — an explicit release/publish request authorizes
-   committing and pushing the reviewed source directly to `main`, waiting for
-   exact-source CI, running release preflight/dry-run, and publishing all
-   standard surfaces.
+   immediately freezing the reviewed source, committing and pushing any
+   release-only narratives directly to `main`, waiting for exact-source CI,
+   running preflight and package validation, and publishing all standard
+   surfaces in one production execution.
 3. **Status and verification** — report the exact source ref, version/tag,
    targets, successful and failing checks, and rollback point. An explicit
    release/publish imperative authorizes the release agent to complete the
@@ -85,6 +86,29 @@ The workflow still fails closed on machine evidence: the release source must be
 reachable from `main`, have successful exact-source CI, pass stable preflight,
 and preserve immutable npm/tag semantics. The `npm-stable` environment remains
 main-only and non-interactive, with no reviewer click or wait timer.
+
+### Fast Stable Operating Model
+
+Use this model for an explicit stable release:
+
+1. Freeze one immutable source SHA immediately. Do not extend the release window
+   to absorb later unrelated `main` commits.
+2. If release narratives are missing, assign one bounded release-notes subagent
+   to draft `releases/vX.Y.Z.md`, `docs/releases.mdx`, and
+   `docs/zh/releases.mdx` from the locked diff while the primary agent runs
+   read-only preflight. The primary agent reviews and integrates the drafts.
+3. Require successful exact-source CI, stable preflight, immutable npm/tag
+   checks, and package validation before publication.
+4. Run one production stable execution. Do not make a separate dry-run workflow
+   a human or agent hand-off and then repeat checkout, dependency installation,
+   and validation in a second run.
+5. Preserve every public-surface verification gate, especially the real
+   Windows/macOS/Linux install smoke.
+
+The workflow still exposes `dry_run` for read-only preview requests and
+troubleshooting. For an already-authorized release whose equivalent machine
+gates passed, use the production path directly; `dry_run: true` is not a
+mandatory first dispatch.
 
 Only an explicit production-release instruction authorizes proceeding. Once it
 exists and the reviewed source, resolved target, checks, known failures, and
@@ -154,11 +178,17 @@ The release workflow dispatches the Desktop workflow explicitly after pushing th
 canary tag. Do not rely on a tag push made by `GITHUB_TOKEN` to trigger another
 workflow.
 
-Canary and stable publication use the same non-cancelling concurrency group, so
-their npm/Desktop orchestration cannot run at the same time. GitHub retains at
-most one pending job per group rather than a FIFO queue. If a pending manual
-stable is superseded by a newer pending run, rerun the same locked stable SHA
-after the active publication finishes; do not silently retarget it.
+Canary and stable publication currently use the same non-cancelling concurrency
+group. An explicit stable release takes priority over an in-flight canary for
+the same or an older version base after the locked stable source passes
+exact-source CI and preflight. Record whether canary npm/tag mutation completed,
+then stop its remaining Desktop wait and dispatch stable; do not unpublish the
+canary npm version. Never stop an active next-base canary or a canary whose
+source is not superseded by the stable release.
+
+GitHub retains at most one pending job per group rather than a FIFO queue. If a
+pending manual stable is superseded, rerun the same locked stable SHA; do not
+silently retarget it.
 
 Users install canaries with:
 
@@ -179,22 +209,27 @@ Inputs:
 - `source_ref`
   - commit SHA, branch, or tag
 - `dry_run`
-  - preview only when true
+  - optional read-only preview when true; an authorized stable release normally
+    uses `false` after equivalent exact-source gates pass
 
 Before running stable:
 
-1. pick the canary commit or tag you trust
-2. confirm the committed public package version is the stable version you want to ship
-3. create or update `releases/vX.Y.Z.md`, `docs/releases.mdx`, and
-   `docs/zh/releases.mdx` on that source ref
-4. confirm that exact source commit has a successful `CI` run
-5. run the workflow with `dry_run: true`
-6. present the exact source ref, version, checks, targets, and rollback point as
-   a progress update; the existing release request remains the production and
-   standard docs authorization
-7. continue without another confirmation unless the user excluded
+1. freeze the tested canary commit or immutable SHA immediately
+2. confirm the committed public package version is the stable version you want
+   to ship
+3. if narratives are missing, start a bounded release-notes subagent in
+   parallel with read-only preflight; review and commit
+   `releases/vX.Y.Z.md`, `docs/releases.mdx`, and `docs/zh/releases.mdx`
+4. confirm that exact final source commit has successful `CI`, stable preflight,
+   package validation, and no existing immutable npm version/tag
+5. present the exact source ref, version, checks, targets, data impact, and
+   rollback point as a progress update
+6. if a same-base canary is only waiting for Desktop assets, record its npm/tag
+   state and stop the remaining wait; do not unpublish it
+7. run one production workflow with `dry_run: false`; the existing release
+   request remains the npm, GitHub, Desktop, and production-docs authorization
+8. continue without another confirmation unless the user excluded
    `docs.rudderhq.dev` or a genuinely ambiguous/nonstandard decision appears
-8. run the workflow with `dry_run: false`
 9. after stable and the docs deployment are both published, confirm the
    workflow committed the next-patch base directly to `main` and its explicitly
    dispatched CI succeeded
@@ -378,14 +413,20 @@ plumbing such as CI checks, source locking, branch history, workflow inputs,
 account approvals, deployment authorization, or maintainer-only cleanup.
 Put those details in engineering docs or the release closeout record.
 
-Recommended local generation flow:
+Recommended agent generation flow:
 
-```bash
-VERSION="$(./scripts/release.sh stable --print-version)"
-claude --print --output-format stream-json --verbose --dangerously-skip-permissions --model claude-opus-4-6 "Draft user-facing stable notes for v${VERSION}. Read doc/engineering/RELEASING.md, summarize only changes users can see or act on, add a one-sentence value summary, use New/Improved/Fixed only when non-empty, and keep CI, workflow, source-locking, approval, and deployment details out of public notes. Do not create a canary changelog."
-```
+1. Freeze the stable SHA and previous stable tag.
+2. Start one release-notes subagent with that exact diff and the three required
+   output paths. Ask it to draft only user-visible outcomes, localized
+   naturally, with no release plumbing.
+3. In parallel, keep the primary agent on version/tag/npm preflight and CI
+   evidence.
+4. Have the primary agent review factual coverage, integrate the three files,
+   and run stable preflight plus docs checks.
 
-The repo intentionally does not run this through GitHub Actions because:
+The subagent drafts narratives but does not select or retarget the release
+source, publish, or push independently. The repo intentionally does not generate
+notes through GitHub Actions because:
 
 - canaries are too frequent
 - stable notes are the only public narrative surface that needs LLM help

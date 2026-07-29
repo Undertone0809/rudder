@@ -52,9 +52,19 @@ early.
 
 ## Source And Concurrency
 
-- Resolve branches to immutable SHAs before publish.
+- On an explicit stable release request, resolve and freeze the immutable SHA
+  before drafting notes or waiting on unrelated `main` work. Later commits are
+  next-release candidates unless the user explicitly retargets the release.
 - Canary and stable share the non-cancelling `release-publish` concurrency
-  group. Do not start a competing publish path.
+  group in the current workflow.
+- Do not let an in-flight canary for the same or an older base hold a ready
+  stable release behind Desktop asset generation. After the locked stable SHA
+  passes exact-source CI and stable preflight, record whether canary npm/tag
+  mutation completed, then cancel or stop the canary's remaining wait and
+  dispatch stable. Never unpublish its npm version; stable cleanup handles its
+  obsolete Release/tag.
+- Do not stop an active next-line canary or a canary from a source the stable
+  release does not supersede.
 - GitHub concurrency is not FIFO and retains only one pending job. If a stable
   run is superseded, rerun the same locked SHA after the active publish ends.
 - A `GITHUB_TOKEN` tag push does not trigger another workflow automatically;
@@ -62,6 +72,19 @@ early.
 - Release-maintenance commits that should not publish canary use
   `[skip release]`, and the resulting release workflow must be observed as
   skipped.
+
+## Single Stable Execution
+
+An explicit stable imperative authorizes one production execution. Run
+exact-source CI, stable preflight, version immutability checks, and package
+validation before the first publish mutation, then continue in the same
+workflow/run. Do not dispatch a preview workflow and later repeat checkout,
+dependency installation, and validation in a second workflow.
+
+If the executable workflow still exposes a legacy `dry_run` input, use the real
+stable path only after the equivalent exact-source gates have passed and record
+the workflow consolidation as follow-up work. Do not replace machine validation
+with human confidence.
 
 ## Package And Desktop Verification
 
@@ -76,7 +99,7 @@ Expected Desktop asset family:
 - Windows x64 portable zip
 - `SHASUMS256.txt`
 
-A dry-run proves resolution only. User-facing install claims require a real
+A package preview proves resolution only. User-facing install claims require a real
 isolated `npx ... start --no-open` download/install smoke on the available
 platform. When update behavior changed, also perform an older-installed-build
 to candidate update drill.
@@ -90,7 +113,7 @@ to candidate update drill.
 - Do not delete the active next-line canary during stable cleanup.
 - Do not treat anonymous GitHub REST `403` as proof that a Release is absent;
   check authenticated `gh release view` and direct asset state.
-- Do not use a dry-run as proof of download, checksum, extraction, symlink,
+- Do not use a package preview as proof of download, checksum, extraction, symlink,
   quarantine, or launch behavior.
 
 ## Final Evidence

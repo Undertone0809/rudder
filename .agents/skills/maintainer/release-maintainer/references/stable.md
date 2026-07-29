@@ -3,7 +3,8 @@
 ## Preflight
 
 1. Resolve the stable version with `./scripts/release.sh stable --print-version`.
-2. Lock the reviewed source SHA. Do not keep following a moving `main`.
+2. Immediately lock the reviewed source SHA. Do not keep following a moving
+   `main`; work that lands after the cutoff belongs to the next release.
 3. Require matching English and Chinese public changelog entries and
    `releases/vX.Y.Z.md`.
 4. Confirm the exact source passed CI and stable preflight.
@@ -14,7 +15,8 @@
 
 ### Moving `main` Is Not A Blocker
 
-When the exact stable SHA has already passed CI and stable dry-run, a later
+When the exact stable SHA has already passed CI, stable preflight, and package
+validation, a later
 unrelated `main` commit does not invalidate that evidence and is not, by itself,
 a release blocker. Continue the real publish with `source_ref=<locked-sha>`.
 Do not speculate that the workflow might require current `main` when its
@@ -25,8 +27,10 @@ be dispatched.
 
 ## Publish
 
-Dispatch or execute the main-only stable workflow with the locked source. The
-standard sequence is:
+Dispatch or execute one main-only stable workflow with the locked source. It
+must complete preflight and package validation before its first publish
+mutation; do not require a separate preview dispatch or second human hand-off.
+The standard sequence is:
 
 1. publish every public package once under `latest`;
 2. create `vX.Y.Z` at the locked source;
@@ -46,6 +50,13 @@ use `partial-recovery.md`; do not republish.
 
 ## Public Notes
 
+When any of the three narratives are missing and subagents are available, start
+a dedicated release-notes subagent immediately after freezing the SHA. Give it
+the previous stable tag, locked SHA, user-visible diff, and the three exact
+output paths. Let it draft in parallel with read-only preflight while the
+primary agent owns source selection, reviews the narrative, integrates the
+files, and runs the notes checks.
+
 Start with a one-sentence user value summary. Use optional `New`, `Improved`,
 and `Fixed` headings, omitting empty sections. Localize public-doc headings
 naturally and include upgrade instructions only when users must act.
@@ -64,7 +75,19 @@ When the release changes or depends on update/install behavior:
 5. inspect checksum, replacement, progress-pipe, `EPIPE`, and relaunch evidence;
 6. exercise active-work safeguards when practical.
 
-Dry-run or asset-list evidence cannot replace this drill.
+Package-preview or asset-list evidence cannot replace this drill.
+
+## Stable Priority Over Same-Base Canary
+
+Once the locked stable source has successful exact-source CI and stable
+preflight, a canary for the same or an older version base no longer needs to
+finish Desktop assets before stable starts. Record whether its npm publish and
+tag mutation completed, stop its remaining wait when safe, and dispatch stable
+for the frozen SHA.
+
+Do not unpublish the canary npm version. Do not cancel a next-base canary or one
+from a source not superseded by the stable release. The normal stable cleanup
+removes obsolete same-base Releases and tags.
 
 ## Canary Cleanup
 

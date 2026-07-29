@@ -35,12 +35,12 @@ An explicit imperative such as `release`, `publish`, `ship this version`,
 
 1. resolve and lock the single consistent version and source SHA;
 2. land reviewed release source on `main` when needed;
-3. run required CI, preflight, and dry-run checks;
+3. run required exact-source CI, preflight, and package validation once;
 4. publish npm, tag, GitHub Release, Desktop, and production-docs surfaces;
 5. verify public installation and clean obsolete canary Releases/tags;
 6. advance the next-version base.
 
-Do not create a release PR or ask for routine second approval after dry-run.
+Do not create a release PR or ask for routine second approval after validation.
 Ask only when channel, version, source, or destination is materially ambiguous.
 
 Questions such as “how does release work?” or “is this ready?” are read-only.
@@ -55,6 +55,9 @@ exposing secrets, or expanding to another product/environment.
 
 - Lock stable source to an immutable commit SHA or stable tag. Later `main`
   movement does not silently retarget it.
+- Freeze that source as soon as a stable release imperative arrives. New
+  unrelated `main` work belongs to the next release instead of extending the
+  active release window.
 - Never republish an npm version that already exists.
 - npm packages use `@rudderhq`; Desktop binaries belong to GitHub Releases.
 - Stable uses npm `latest`; canary uses `canary`. A first-public pre-stable
@@ -69,6 +72,12 @@ exposing secrets, or expanding to another product/environment.
   changelog/docs, install smoke, and next-version handoff evidence.
 - Cleanup removes obsolete GitHub Releases and `canary/*` tags, not published
   npm canary versions.
+- A stable release takes priority over an in-flight canary for the same or an
+  older version base once the locked stable source passes its gates. Do not wait
+  for obsolete canary Desktop assets; record npm/tag state, stop the remaining
+  canary work when safe, and let stable cleanup remove its Release/tag.
+- Keep public install smoke, including slow Windows runtime installation. A slow
+  real install is product evidence to optimize, not a release gate to delete.
 - Preserve unrelated dirty work. Prefer a clean temporary worktree/clone for
   hands-on publication.
 
@@ -77,12 +86,18 @@ exposing secrets, or expanding to another product/environment.
 1. Classify the request as setup, canary, stable, rollback, partial recovery,
    or read-only inspection.
 2. Read `references/shared.md` and the selected primary reference.
-3. Resolve live local and remote state; release truth is temporally unstable.
-4. State the selected version, locked source SHA, channel, and unresolved
+3. Resolve live local and remote state, then freeze the stable SHA immediately;
+   release truth is temporally unstable.
+4. When release narratives are missing and subagents are available, start one
+   bounded release-notes subagent in parallel with read-only preflight. Give it
+   the locked diff and require drafts for the GitHub notes plus both public
+   changelogs; the primary agent reviews and integrates the drafts.
+5. State the selected version, locked source SHA, channel, and unresolved
    blockers in a progress update.
-5. Execute only the authorized branch.
-6. Verify every applicable public surface from the same locked source.
-7. Report version/ref, workflow runs, npm tags, Release assets, install proof,
+6. Execute one stable publish path whose machine gates run before mutation; do
+   not introduce a separate preview dispatch or second human hand-off.
+7. Verify every applicable public surface from the same locked source.
+8. Report version/ref, workflow runs, npm tags, Release assets, install proof,
    changelog/docs state, cleanup, and remaining manual work.
 
 ## Output
