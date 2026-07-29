@@ -1,6 +1,83 @@
 import { expect, test } from "@playwright/test";
 import { E2E_BASE_URL } from "./support/e2e-env";
 
+test("opening and blurring a list description does not rewrite the issue", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+    data: { name: `Issue-Description-Noop-${Date.now()}` },
+  });
+  expect(orgRes.ok(), await orgRes.text()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const originalDescription = "Regression context\n\n- first item\n- second item";
+
+  const issueRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Description must not rewrite itself",
+      description: originalDescription,
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok(), await issueRes.text()).toBe(true);
+  const issue = await issueRes.json() as {
+    id: string;
+    identifier: string | null;
+    updatedAt: string;
+  };
+
+  const descriptionPatches: unknown[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    const issuePaths = new Set([
+      `/api/issues/${issue.id}`,
+      `/api/issues/${issue.identifier ?? issue.id}`,
+    ]);
+    if (request.method() !== "PATCH" || !issuePaths.has(url.pathname)) return;
+    descriptionPatches.push(request.postDataJSON());
+  });
+
+  await page.goto(E2E_BASE_URL, { waitUntil: "domcontentloaded" });
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/issues/${issue.identifier ?? issue.id}`);
+
+  const editor = page
+    .locator(".rudder-issue-description-surface")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
+  const sourceEditor = editor.locator(".cm-content");
+  await expect(editor).toBeVisible();
+  await sourceEditor.click();
+  await sourceEditor.evaluate((element) => {
+    if (element instanceof HTMLElement) element.blur();
+  });
+  await page.waitForTimeout(1_000);
+  expect(descriptionPatches).toEqual([]);
+
+  const unchangedRes = await page.request.get(`${E2E_BASE_URL}/api/issues/${issue.id}`);
+  expect(unchangedRes.ok(), await unchangedRes.text()).toBe(true);
+  const unchanged = await unchangedRes.json() as { description: string | null; updatedAt: string };
+  expect(unchanged.description).toBe(originalDescription);
+  expect(unchanged.updatedAt).toBe(issue.updatedAt);
+
+  await sourceEditor.click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.insertText(`${originalDescription} updated`);
+  await sourceEditor.evaluate((element) => {
+    if (element instanceof HTMLElement) element.blur();
+  });
+
+  await expect.poll(() => descriptionPatches.length).toBe(1);
+  await expect.poll(async () => {
+    const response = await page.request.get(`${E2E_BASE_URL}/api/issues/${issue.id}`);
+    expect(response.ok()).toBe(true);
+    const updated = await response.json() as { description: string | null };
+    return updated.description;
+  }).toBe(`${originalDescription} updated`);
+});
+
 test("issue description stays Library-style source-backed and preserves exact line breaks", async ({ page }) => {
   test.setTimeout(120_000);
 

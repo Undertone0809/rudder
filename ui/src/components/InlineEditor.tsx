@@ -66,6 +66,7 @@ export function InlineEditor({
   const latestQueuedValueRef = useRef<string | null>(null);
   const pendingSaveCountRef = useRef(0);
   const explicitSaveValueRef = useRef<string | null>(null);
+  const hasDraftChangeRef = useRef(false);
   const previousValueRef = useRef(value);
   const draftDirtyRef = useRef(false);
   const pendingExternalValueRef = useRef<string | null>(null);
@@ -107,6 +108,7 @@ export function InlineEditor({
       return;
     }
     draftDirtyRef.current = false;
+    hasDraftChangeRef.current = false;
     pendingExternalValueRef.current = null;
     setHasExternalUpdate(false);
     setDraft(value);
@@ -201,6 +203,7 @@ export function InlineEditor({
       reset();
       suppressNextBlurSaveRef.current = true;
       draftDirtyRef.current = false;
+      hasDraftChangeRef.current = false;
       pendingExternalValueRef.current = null;
       setHasExternalUpdate(false);
       setDraft(value);
@@ -267,7 +270,9 @@ export function InlineEditor({
             suppressNextBlurSaveRef.current = false;
             return;
           }
-          const currentDraft = markdownRef.current?.getMarkdown?.() ?? draft;
+          const currentDraft = hasDraftChangeRef.current
+            ? markdownRef.current?.getMarkdown?.() ?? draft
+            : draft;
           const normalized = editorEngine === "codemirror"
             ? normalizeMarkdownDocumentValue(currentDraft)
             : currentDraft.trim();
@@ -291,6 +296,7 @@ export function InlineEditor({
           value={draft}
           onChange={(nextDraft) => {
             explicitSaveValueRef.current = null;
+            hasDraftChangeRef.current = true;
             const normalized = editorEngine === "codemirror"
               ? normalizeMarkdownDocumentValue(nextDraft)
               : nextDraft.trim();

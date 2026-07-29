@@ -429,6 +429,40 @@ describe("InlineEditor", () => {
     vi.unstubAllGlobals();
   });
 
+  it("does not save a serializer-only Markdown rewrite on blur", async () => {
+    const onSave = vi.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      await act(async () => {
+        root.render(
+          <InlineEditor
+            value={"Context\n\n- first\n- second"}
+            onSave={onSave}
+            multiline
+            alwaysEdit
+            editorEngine="milkdown"
+          />,
+        );
+      });
+
+      markdownEditorHarness.currentMarkdown = "Context\n\n* first\n\n* second";
+      await act(async () => {
+        host.querySelector("[data-testid='markdown-editor']")!.dispatchEvent(
+          new FocusEvent("focusout", { bubbles: true, relatedTarget: null }),
+        );
+      });
+
+      expect(onSave).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      host.remove();
+    }
+  });
+
   it("serializes an in-flight autosave before the latest explicit save", async () => {
     vi.useFakeTimers();
     let resolveFirstSave: (() => void) | undefined;
