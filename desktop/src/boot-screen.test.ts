@@ -4,6 +4,21 @@ import { createBootScreenHtml, createRendererRecoveryScreenHtml } from "./boot-s
 const BRAND_ICON = "data:image/png;base64,c2FmZS1icmFuZC1pY29u";
 
 describe("desktop boot screen", () => {
+  it("renders a usable account gate without exposing the Local board", () => {
+    const html = createBootScreenHtml("Rudder", BRAND_ICON, {
+      view: "account_required",
+      stage: "account_required",
+      runtime: { profile: "prod_local", instance: "default", version: "0.6.5" },
+    });
+
+    expect(html).toContain('data-boot-view="account_required"');
+    expect(html).toContain('id="account-sheet" role="region" aria-labelledby="account-title">');
+    expect(html).toContain("Sign in to Rudder Account");
+    expect(html).toContain("Your work stays local.");
+    expect(html).toContain("window.rudderBoot.signIn()");
+    expect(html).toContain('id="loading-view" aria-hidden="true" hidden');
+  });
+
   it("renders healthy startup as icon-only motion with failure UI hidden", () => {
     const html = createBootScreenHtml("Rudder", BRAND_ICON, {
       view: "loading",

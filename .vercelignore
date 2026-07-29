@@ -1,0 +1,11 @@
+.pnpm-store
+node_modules
+**/node_modules
+**/dist
+desktop/.packaged
+desktop/out
+desktop/release
+desktop/release-smoke
+desktop/test-results
+test-results
+playwright-report

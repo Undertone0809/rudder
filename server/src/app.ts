@@ -17,7 +17,7 @@ export async function createRudderApp(
   db: Db,
   opts: RudderAppOptions,
 ) {
-  configureBrowserCapabilityDeployment(db, opts.deploymentMode);
+  configureBrowserCapabilityDeployment(db, opts.deploymentMode, opts.localRuntimeTrust);
   const supervisor = new RuntimeSupervisor({
     onDisposeError: ({ name, error }) => {
       logger.warn({ err: error, resource: name }, "Failed to close Rudder app resource");

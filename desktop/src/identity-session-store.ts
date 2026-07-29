@@ -1,0 +1,61 @@
+import type {
+  IdentityCredentialVault,
+  IdentityCredentialVaultStatus,
+  IdentityDeviceCredential,
+} from "./identity-credential-vault.js";
+
+export type DesktopIdentitySessionStore = {
+  persistence: "secure" | "memory";
+  status(): IdentityCredentialVaultStatus | {
+    available: true;
+    backend: "memory";
+    persistence: "process-only";
+    reason: "secure_storage_unavailable" | "insecure_linux_backend";
+  };
+  read(): IdentityDeviceCredential | null;
+  write(credential: IdentityDeviceCredential): void;
+  clear(): void;
+};
+
+/**
+ * Keeps online sign-in usable when Electron cannot provide a secure store.
+ * The fallback deliberately has no filesystem path and therefore cannot
+ * survive process restart or qualify for an offline grant.
+ */
+export function createDesktopIdentitySessionStore(
+  vault: Pick<IdentityCredentialVault, "status" | "read" | "write" | "clear">,
+): DesktopIdentitySessionStore {
+  const vaultStatus = vault.status();
+  if (vaultStatus.available) {
+    return {
+      persistence: "secure",
+      status: () => vault.status(),
+      read: () => vault.read(),
+      write: (credential) => vault.write(credential),
+      clear: () => vault.clear(),
+    };
+  }
+
+  let credential: IdentityDeviceCredential | null = null;
+  const reason = vaultStatus.reason === "insecure_linux_backend"
+    ? "insecure_linux_backend"
+    : "secure_storage_unavailable";
+  return {
+    persistence: "memory",
+    status: () => ({
+      available: true,
+      backend: "memory",
+      persistence: "process-only",
+      reason,
+    }),
+    read: () => credential,
+    write: (next) => {
+      credential = structuredClone(next);
+    },
+    clear: () => {
+      credential = null;
+      // Clear any old secure credential that may remain after a backend change.
+      vault.clear();
+    },
+  };
+}

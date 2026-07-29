@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { BootScreenState } from "./boot-screen.js";
+import {
+  DESKTOP_IDENTITY_IPC_CHANNELS,
+  type DesktopIdentityState,
+} from "./identity-ipc.js";
 
 contextBridge.exposeInMainWorld("rudderBoot", {
   getState: () => ipcRenderer.invoke("desktop:get-recovery-state") as Promise<BootScreenState>,
@@ -15,6 +19,14 @@ contextBridge.exposeInMainWorld("rudderBoot", {
   copyBugReportUrl: () => ipcRenderer.invoke("desktop:copy-bug-report-url") as Promise<void>,
   copyDiagnostic: () => ipcRenderer.invoke("desktop:copy-recovery-diagnostic") as Promise<void>,
   openInstanceFolder: () => ipcRenderer.invoke("desktop:open-recovery-instance-folder") as Promise<void>,
+  signIn: () =>
+    ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.signIn) as Promise<DesktopIdentityState>,
+  onIdentityState: (listener: (state: DesktopIdentityState) => void) => {
+    const wrapped = (_event: IpcRendererEvent, state: DesktopIdentityState) => listener(state);
+    ipcRenderer.on(DESKTOP_IDENTITY_IPC_CHANNELS.stateChanged, wrapped);
+    return () => ipcRenderer.removeListener(DESKTOP_IDENTITY_IPC_CHANNELS.stateChanged, wrapped);
+  },
+  copyText: (value: string) => ipcRenderer.invoke("desktop:copy-text", value) as Promise<void>,
 });
 
 declare global {
@@ -29,6 +41,9 @@ declare global {
       copyBugReportUrl(): Promise<void>;
       copyDiagnostic(): Promise<void>;
       openInstanceFolder(): Promise<void>;
+      signIn(): Promise<DesktopIdentityState>;
+      onIdentityState(listener: (state: DesktopIdentityState) => void): () => void;
+      copyText(value: string): Promise<void>;
     };
   }
 }

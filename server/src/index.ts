@@ -80,6 +80,12 @@ import {
   isFeishuLongConnectionEnabled,
 } from "./services/integrations/feishu/runtime-registry.js";
 import { feishuIntegrationRuntimeService } from "./services/integrations/feishu/runtime.js";
+import {
+  createIdentityServerExchangeVerifier,
+  createLocalAccountSessionResolver,
+  type LocalAccountExchangePolicy,
+} from "./services/local-account-auth.js";
+import { createLocalAccountSessionRevocation } from "./services/local-account-session-revocation.js";
 import { startManagedMcpOAuthSessionGc } from "./services/mcp/oauth-session-gc.js";
 import { managedMcpOAuthService } from "./services/mcp/oauth.js";
 import { printStartupBanner } from "./startup-banner.js";
@@ -165,6 +171,20 @@ export interface StartServerOptions {
   printBanner?: boolean;
   onEvent?: (event: ServerBootstrapEvent) => void;
   runtimeOwnerKind?: LocalRuntimeOwnerKind | null;
+  localAccountAuth?: {
+    identityOrigin: string;
+    audience: string;
+    sessionSecret: string;
+    secureCookie?: boolean;
+    offline?: {
+      identityKeyId: string;
+      identityPublicKeySpki: string;
+      expectedAccountId: string;
+      expectedDeviceId: string;
+      lastTrustedTimeMs: number;
+      localSignOutEpoch: number;
+    };
+  };
 }
 
 export interface BootstrapCeoInviteOptions {
@@ -952,8 +972,39 @@ async function startServerRuntime(
   let resolveSessionFromHeaders:
     | ((headers: Headers) => Promise<BetterAuthSessionResult | null>)
     | undefined;
+  let localAccountExchangePolicy: LocalAccountExchangePolicy | undefined;
   if (config.deploymentMode === "local_trusted") {
     await ensureLocalTrustedBoardPrincipal(db as any);
+  }
+  if (options.localAccountAuth) {
+    if (config.deploymentMode !== "local_trusted" || !isLoopbackHost(config.host)) {
+      throw new Error("Desktop account authentication is supported only by a loopback local_trusted runtime");
+    }
+    const localAuth = options.localAccountAuth;
+    localAccountExchangePolicy = {
+      expectedIssuer: new URL(localAuth.identityOrigin).origin,
+      audience: localAuth.audience,
+      installationId: instanceId,
+      sessionSecret: localAuth.sessionSecret,
+      secureCookie: localAuth.secureCookie ?? false,
+      offline: localAuth.offline,
+      verifier: createIdentityServerExchangeVerifier({
+        identityOrigin: localAuth.identityOrigin,
+        expectedAudience: localAuth.audience,
+        expectedInstallationId: instanceId,
+      }),
+    };
+    const resolveLocalSession = createLocalAccountSessionResolver(db as any, {
+      sessionSecret: localAuth.sessionSecret,
+      secureCookie: localAuth.secureCookie ?? false,
+    });
+    resolveSession = (req) => resolveLocalSession(req.headers);
+    resolveSessionFromHeaders = (headers) => {
+      const rawHeaders: Record<string, string> = {};
+      headers.forEach((value, key) => { rawHeaders[key] = value; });
+      return resolveLocalSession(rawHeaders);
+    };
+    authReady = true;
   }
   if (config.deploymentMode === "authenticated") {
     const {
@@ -997,6 +1048,9 @@ async function startServerRuntime(
   }
   
   const listenPort = await detectPort(config.port);
+  const localAccountSessionRevocation = options.localAccountAuth
+    ? createLocalAccountSessionRevocation()
+    : undefined;
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   options.onEvent?.({ stage: "app", message: "Creating Rudder app" });
@@ -1006,6 +1060,8 @@ async function startServerRuntime(
     authPublicBaseUrl: config.authPublicBaseUrl ?? null,
     storageService,
     deploymentMode: config.deploymentMode,
+    authRequirement: options.localAccountAuth ? "required" : undefined,
+    localRuntimeTrust: options.localAccountAuth ? "trusted" : undefined,
     deploymentExposure: config.deploymentExposure,
     allowedHostnames: config.allowedHostnames,
     bindHost: config.host,
@@ -1018,6 +1074,8 @@ async function startServerRuntime(
     runtimeOwnerKind,
     betterAuthHandler,
     resolveSession,
+    localAccountExchangePolicy,
+    localAccountSessionRevocation,
   });
   supervisor.own("app", () => appHandle.close());
   const server = createServer(appHandle.app as unknown as Parameters<typeof createServer>[0]);
@@ -1046,7 +1104,9 @@ async function startServerRuntime(
   
   const liveEventsRuntime = setupLiveEventsWebSocketServer(server, db as any, {
     deploymentMode: config.deploymentMode,
+    authRequirement: options.localAccountAuth ? "required" : undefined,
     resolveSessionFromHeaders,
+    sessionRevocation: localAccountSessionRevocation,
   });
   supervisor.own("live-events-websocket", () => liveEventsRuntime.close());
 

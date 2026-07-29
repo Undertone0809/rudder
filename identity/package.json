@@ -1,0 +1,28 @@
+{
+  "name": "@rudderhq/identity",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter @rudderhq/identity-core build && pnpm --filter @rudderhq/identity-db build",
+    "clean": "rm -rf dist",
+    "dev": "tsx src/dev.ts",
+    "start": "node dist/src/dev.js",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rudderhq/identity-core": "workspace:*",
+    "@rudderhq/identity-db": "workspace:*",
+    "better-auth": "1.6.23",
+    "drizzle-orm": "^0.45.2",
+    "postgres": "^3.4.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "embedded-postgres": "18.1.0-beta.16",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

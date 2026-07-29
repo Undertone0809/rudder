@@ -1,6 +1,13 @@
-import type { DeploymentExposure, DeploymentMode } from "@rudderhq/shared";
+import type {
+  AuthRequirement,
+  DeploymentExposure,
+  DeploymentMode,
+  LocalRuntimeTrust,
+} from "@rudderhq/shared";
 import type { Request, RequestHandler } from "express";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
+import type { LocalAccountExchangePolicy } from "../services/local-account-auth.js";
+import type { LocalAccountSessionRevocation } from "../services/local-account-session-revocation.js";
 import type { McpDeploymentAllowlists } from "../services/mcp/security-policy.js";
 import type { StorageService } from "../storage/types.js";
 
@@ -13,6 +20,10 @@ export interface RudderAppOptions {
   authPublicBaseUrl?: string | null;
   storageService: StorageService;
   deploymentMode: DeploymentMode;
+  /** Independent human-login gate; omitted callers preserve deployment-mode behavior. */
+  authRequirement?: AuthRequirement;
+  /** Independent host capability trust; omitted callers preserve deployment-mode behavior. */
+  localRuntimeTrust?: LocalRuntimeTrust;
   deploymentExposure: DeploymentExposure;
   allowedHostnames: string[];
   bindHost: string;
@@ -34,4 +45,6 @@ export interface RudderAppOptions {
   localPluginDir?: string;
   betterAuthHandler?: RequestHandler;
   resolveSession?: (req: Request) => Promise<BetterAuthSessionResult | null>;
+  localAccountExchangePolicy?: LocalAccountExchangePolicy;
+  localAccountSessionRevocation?: LocalAccountSessionRevocation;
 }

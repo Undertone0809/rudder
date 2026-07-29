@@ -1,6 +1,10 @@
 import type { Db } from "@rudderhq/db";
 import { agentApiKeys, agents, instanceUserRoles, organizationMemberships } from "@rudderhq/db";
-import type { DeploymentMode } from "@rudderhq/shared";
+import {
+  authRequirementForDeploymentMode,
+  type AuthRequirement,
+  type DeploymentMode,
+} from "@rudderhq/shared";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Request, RequestHandler, Response } from "express";
 import { createHash } from "node:crypto";
@@ -15,14 +19,16 @@ function hashToken(token: string) {
 
 interface ActorMiddlewareOptions {
   deploymentMode: DeploymentMode;
+  authRequirement?: AuthRequirement;
   resolveSession?: (req: Request) => Promise<BetterAuthSessionResult | null>;
 }
 
 export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHandler {
   const boardAuth = boardAuthService(db);
+  const authRequirement = opts.authRequirement ?? authRequirementForDeploymentMode(opts.deploymentMode);
   return async (req, res, next) => {
     req.actor =
-      opts.deploymentMode === "local_trusted"
+      authRequirement === "optional"
         ? { type: "board", userId: "local-board", isInstanceAdmin: true, source: "local_implicit" }
         : { type: "none", source: "none" };
 
@@ -31,7 +37,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
 
     const authHeader = req.header("authorization");
     if (!authHeader?.toLowerCase().startsWith("bearer ")) {
-      if (opts.deploymentMode === "authenticated" && opts.resolveSession) {
+      if (authRequirement === "required" && opts.resolveSession) {
         let session: BetterAuthSessionResult | null = null;
         try {
           session = await opts.resolveSession(req);

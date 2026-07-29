@@ -553,6 +553,7 @@ describe("applyPendingMigrations", () => {
           "0122_jazzy_tyger_tiger.sql",
           "0123_fine_king_bedlam.sql",
           "0124_petite_cargill.sql",
+          "0125_ambiguous_winter_soldier.sql",
         ],
         reason: "pending-migrations",
       });
@@ -697,6 +698,7 @@ describe("applyPendingMigrations", () => {
           "0122_jazzy_tyger_tiger.sql",
           "0123_fine_king_bedlam.sql",
           "0124_petite_cargill.sql",
+          "0125_ambiguous_winter_soldier.sql",
         ],
         reason: "pending-migrations",
       });

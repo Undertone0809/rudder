@@ -1898,6 +1898,7 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
       RUDDER_AGENT_JWT_AUDIENCE: smokeAgentJwtAudience,
       RUDDER_AGENT_JWT_ISSUER: smokeAgentJwtIssuer,
       RUDDER_AGENT_JWT_SECRET: smokeAgentJwtSecret,
+      ...(mode === "dev" ? { RUDDER_DESKTOP_AUTH_BYPASS: "1" } : {}),
       PORT: String(ports.appPort),
       RUDDER_EMBEDDED_POSTGRES_PORT: String(ports.dbPort),
       ...extraEnv,
@@ -1911,6 +1912,43 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
   });
   const page = await electronApp.firstWindow();
   return { electronApp, page };
+}
+
+async function runAccountGateScenario(mode) {
+  assert.equal(mode, "packaged", "the release account gate must be verified against a packaged Desktop");
+  const scenarioRoot = path.join(tmpRoot, "account-gate");
+  const ports = await allocateSmokePorts();
+  const screenshotPath = browserSmokeScreenshotPath
+    ? path.resolve(browserSmokeScreenshotPath)
+    : path.join(os.tmpdir(), "rudder-desktop-account-gate-packaged.png");
+  const { electronApp, page } = await launchDesktopWindow(scenarioRoot, mode, ports, {
+    // A packaged release must ignore this development-only escape hatch.
+    RUDDER_DESKTOP_AUTH_BYPASS: "1",
+  });
+  try {
+    await page.waitForFunction(
+      () => document.body.dataset.bootView === "account_required",
+      undefined,
+      { timeout: 30_000 },
+    );
+    await page.getByRole("heading", { name: "Sign in to Rudder Account" }).waitFor();
+    await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
+    assert.equal(
+      await page.locator("body").getAttribute("data-stage"),
+      "account_required",
+      "packaged Desktop should remain at the account gate while signed out",
+    );
+    const healthProbe = await fetch(`http://127.0.0.1:${ports.appPort}/api/health`).catch(() => null);
+    assert.equal(
+      healthProbe,
+      null,
+      "packaged Desktop must not start the Local Workspace server before account sign-in",
+    );
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    console.log(`[desktop-smoke] packaged account gate screenshot: ${screenshotPath}`);
+  } finally {
+    await closeDesktop(electronApp);
+  }
 }
 
 async function launchDesktop(userDataDir, mode, ports, extraEnv = {}) {
@@ -5058,13 +5096,16 @@ function resolveScenarioList(mode, scenario) {
   if (!scenario || scenario === "default") {
     const localApps = process.platform === "darwin" ? ["local-apps"] : [];
     return mode === "packaged"
-      ? ["startup-recovery", "postgres-runtime-handoff", "clean", ...localApps, "upgrade"]
+      ? ["account-gate"]
       : ["startup-recovery", "clean", ...localApps];
   }
   if (scenario === "all") {
-    return ["startup-recovery", "postgres-runtime-handoff", "clean", "local-apps", "agent-browser", "upgrade"];
+    return mode === "packaged"
+      ? ["account-gate"]
+      : ["startup-recovery", "postgres-runtime-handoff", "clean", "local-apps", "agent-browser", "upgrade"];
   }
-  if (scenario === "startup-recovery"
+  if (scenario === "account-gate"
+    || scenario === "startup-recovery"
     || scenario === "postgres-runtime-handoff"
     || scenario === "clean"
     || scenario === "upgrade"
@@ -5083,7 +5124,9 @@ try {
   executedScenarios = resolveScenarioList(smokeMode, smokeScenario);
   for (const scenario of executedScenarios) {
     console.log(`[desktop-smoke] running ${scenario} scenario`);
-    if (scenario === "startup-recovery") {
+    if (scenario === "account-gate") {
+      await runAccountGateScenario(smokeMode);
+    } else if (scenario === "startup-recovery") {
       await runStartupRecoveryScenario(smokeMode);
     } else if (scenario === "postgres-runtime-handoff") {
       await runPostgresRuntimeHandoffScenario(smokeMode);

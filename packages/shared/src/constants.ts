@@ -13,6 +13,20 @@ export type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
 export const DEPLOYMENT_EXPOSURES = ["private", "public"] as const;
 export type DeploymentExposure = (typeof DEPLOYMENT_EXPOSURES)[number];
 
+export const AUTH_REQUIREMENTS = ["optional", "required"] as const;
+export type AuthRequirement = (typeof AUTH_REQUIREMENTS)[number];
+
+export const LOCAL_RUNTIME_TRUST_LEVELS = ["trusted", "untrusted"] as const;
+export type LocalRuntimeTrust = (typeof LOCAL_RUNTIME_TRUST_LEVELS)[number];
+
+export function authRequirementForDeploymentMode(mode: DeploymentMode): AuthRequirement {
+  return mode === "authenticated" ? "required" : "optional";
+}
+
+export function localRuntimeTrustForDeploymentMode(mode: DeploymentMode): LocalRuntimeTrust {
+  return mode === "local_trusted" ? "trusted" : "untrusted";
+}
+
 export const AUTH_BASE_URL_MODES = ["auto", "explicit"] as const;
 export type AuthBaseUrlMode = (typeof AUTH_BASE_URL_MODES)[number];
 

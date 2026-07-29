@@ -57,6 +57,7 @@
     "@rudderhq/agent-runtime-pi-local": "workspace:*",
     "@rudderhq/agent-runtime-utils": "workspace:*",
     "@rudderhq/db": "workspace:*",
+    "@rudderhq/identity-core": "workspace:*",
     "@rudderhq/plugin-sdk": "workspace:*",
     "@rudderhq/run-intelligence-core": "workspace:*",
     "@rudderhq/shared": "workspace:*",

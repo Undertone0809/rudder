@@ -4,6 +4,11 @@ import type { BrowserImportSource } from "./browser-import-sources.js";
 import type { DesktopBrowserResetEvent } from "./browser-profile.js";
 import { isDesktopBrowserShortcutAction, type DesktopBrowserShortcutAction } from "./browser-shortcuts.js";
 import { readDesktopCapabilities, type DesktopCapabilities } from "./desktop-capabilities.js";
+import {
+  DESKTOP_IDENTITY_IPC_CHANNELS,
+  type DesktopIdentityDeviceSession,
+  type DesktopIdentityState,
+} from "./identity-ipc.js";
 import type {
   LocalAppDefinition,
   LocalAppDefinitionDraft,
@@ -206,6 +211,60 @@ async function invokeOptionalDesktopChannel(
   if (!capabilities[capability]) return;
   await ipcRenderer.invoke(channel, ...args);
 }
+
+function parseDesktopIdentityState(value: unknown): DesktopIdentityState | null {
+  if (!value || typeof value !== "object") return null;
+  const state = value as Record<string, unknown>;
+  if (state.status === "signed-out") return { status: "signed-out" };
+  if (state.status === "signing-in") return { status: "signing-in" };
+  if (state.status === "error" && typeof state.message === "string") {
+    return {
+      status: "error",
+      message: state.message,
+      ...(typeof state.recoverable === "boolean" ? { recoverable: state.recoverable } : {}),
+    };
+  }
+  if (state.status !== "signed-in" || !state.account || typeof state.account !== "object") return null;
+  const account = state.account as Record<string, unknown>;
+  if (
+    typeof account.id !== "string"
+    || (typeof account.email !== "string" && account.email !== null)
+    || typeof state.deviceId !== "string"
+  ) return null;
+  return {
+    status: "signed-in",
+    account: { id: account.id, email: account.email },
+    deviceId: state.deviceId,
+  };
+}
+
+contextBridge.exposeInMainWorld("desktopIdentity", {
+  getState: () =>
+    ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.getState) as Promise<DesktopIdentityState>,
+  signIn: () =>
+    ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.signIn) as Promise<DesktopIdentityState>,
+  signOut: () =>
+    ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.signOut) as Promise<DesktopIdentityState>,
+  listDeviceSessions: () =>
+    ipcRenderer.invoke(
+      DESKTOP_IDENTITY_IPC_CHANNELS.listDeviceSessions,
+    ) as Promise<DesktopIdentityDeviceSession[]>,
+  revokeDeviceSession: (deviceId: string) =>
+    ipcRenderer.invoke(
+      DESKTOP_IDENTITY_IPC_CHANNELS.revokeDeviceSession,
+      { deviceId },
+    ) as Promise<void>,
+  onStateChanged: (listener: (state: DesktopIdentityState) => void) => {
+    const wrapped = (_event: IpcRendererEvent, state: unknown) => {
+      const parsed = parseDesktopIdentityState(state);
+      if (parsed) listener(parsed);
+    };
+    ipcRenderer.on(DESKTOP_IDENTITY_IPC_CHANNELS.stateChanged, wrapped);
+    return () => {
+      ipcRenderer.removeListener(DESKTOP_IDENTITY_IPC_CHANNELS.stateChanged, wrapped);
+    };
+  },
+});
 
 contextBridge.exposeInMainWorld("desktopShell", {
   getBootState: () => ipcRenderer.invoke("desktop:get-boot-state") as Promise<BootState>,
@@ -423,6 +482,14 @@ contextBridge.exposeInMainWorld("desktopShell", {
 
 declare global {
   interface Window {
+    desktopIdentity: {
+      getState(): Promise<DesktopIdentityState>;
+      signIn(): Promise<DesktopIdentityState>;
+      signOut(): Promise<DesktopIdentityState>;
+      listDeviceSessions(): Promise<DesktopIdentityDeviceSession[]>;
+      revokeDeviceSession(deviceId: string): Promise<void>;
+      onStateChanged(listener: (state: DesktopIdentityState) => void): () => void;
+    };
     desktopShell: {
       getBootState(): Promise<BootState>;
       onBootState(listener: (state: BootState) => void): () => void;

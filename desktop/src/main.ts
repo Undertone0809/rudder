@@ -1,7 +1,8 @@
 import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, OpenDialogOptions, Session, WebContents } from "electron";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, session, shell, systemPreferences, Tray } from "electron";
-import { randomUUID } from "node:crypto";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, safeStorage, session, shell, systemPreferences, Tray } from "electron";
+import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveDesktopAppName } from "./app-identity.js";
@@ -53,6 +54,22 @@ import {
   type DesktopFileLaunchTargetId,
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
+import { createDesktopIdentityClient } from "./identity-client.js";
+import { createIdentityCredentialVault } from "./identity-credential-vault.js";
+import {
+  createDesktopIdentityIpcController,
+  registerDesktopIdentityIpcHandlers,
+  resolveDesktopIdentityOrigin,
+} from "./identity-ipc.js";
+import {
+  clearDesktopLocalSessionCookies,
+  establishDesktopLocalSession,
+  establishDesktopOfflineLocalSession,
+  revokeDesktopLocalSessions,
+} from "./identity-local-session.js";
+import { createDesktopOfflineGrantStore } from "./identity-offline-grant.js";
+import { createDesktopIdentitySessionStore } from "./identity-session-store.js";
+import { desktopAccountBypassAllowed } from "./identity-startup-policy.js";
 import { LocalAppsController } from "./local-apps-controller.js";
 import { registerLocalAppsIpcHandlers } from "./local-apps-ipc.js";
 import { LocalAppRegistry, type PreparedLocalAppDefinition } from "./local-apps-registry.js";
@@ -168,6 +185,21 @@ type StartServerOptions = {
 type StartManagedLocalServerOptions = StartServerOptions & {
   ownerKind: "desktop";
   takeoverOnVersionMismatch?: boolean;
+  preferredOwner?: boolean;
+  localAccountAuth?: {
+    identityOrigin: string;
+    audience: string;
+    sessionSecret: string;
+    secureCookie?: boolean;
+    offline?: {
+      identityKeyId: string;
+      identityPublicKeySpki: string;
+      expectedAccountId: string;
+      expectedDeviceId: string;
+      lastTrustedTimeMs: number;
+      localSignOutEpoch: number;
+    };
+  };
 };
 
 type StartedServer = {
@@ -461,6 +493,11 @@ let browserAgentTabController: ReturnType<typeof createBrowserAgentTabController
 let browserRuntimeLifecycle: ReturnType<typeof createDesktopBrowserRuntimeLifecycle> | null = null;
 let localAppsController: LocalAppsController | null = null;
 let localAppsRuntime: LocalAppRuntimeManager | null = null;
+let desktopIdentityController: ReturnType<typeof createDesktopIdentityIpcController> | null = null;
+let desktopIdentityClient: ReturnType<typeof createDesktopIdentityClient> | null = null;
+let desktopIdentityOrigin: string | null = null;
+let desktopOfflineGrantStore: ReturnType<typeof createDesktopOfflineGrantStore> | null = null;
+const desktopLocalSessionSecret = randomBytes(32).toString("base64url");
 let browserCookieImporter: {
   listBrowserImportSources(): Promise<BrowserImportSource[]>;
   importBrowserData(input: { sourceId: string; importCookies: true }): Promise<BrowserDataImportResult>;
@@ -795,6 +832,94 @@ function initializeLocalApps(desktopInstallationId: string): void {
   });
 }
 
+function initializeDesktopIdentity(desktopInstallationId: string): void {
+  if (desktopIdentityController) return;
+  const origin = resolveDesktopIdentityOrigin({
+    isPackaged: app.isPackaged,
+    override: process.env.RUDDER_IDENTITY_ORIGIN,
+  });
+  const secureVault = createIdentityCredentialVault({
+    safeStorage,
+    platform: process.platform,
+    credentialPath: path.join(app.getPath("userData"), "identity", "device-credential.bin"),
+  });
+  const vault = createDesktopIdentitySessionStore(secureVault);
+  const offlineGrantStore = createDesktopOfflineGrantStore({
+    safeStorage,
+    platform: process.platform,
+    statePath: path.join(app.getPath("userData"), "identity", "offline-grant.bin"),
+    issuer: origin,
+    installationId: desktopInstallationId,
+  });
+  desktopOfflineGrantStore = offlineGrantStore;
+  const client = createDesktopIdentityClient({
+    identityOrigin: origin,
+    installationId: desktopInstallationId,
+    deviceName: `${APP_NAME} on ${os.hostname()}`.slice(0, 200),
+    vault,
+    offlineGrantStore,
+    openExternal: (url) => shell.openExternal(url),
+    onDeviceAuthorizationPrompt: (prompt) => {
+      desktopIdentityController?.showDeviceAuthorizationPrompt(prompt);
+    },
+  });
+  desktopIdentityClient = client;
+  desktopIdentityOrigin = origin;
+  desktopIdentityController = createDesktopIdentityIpcController({
+    origin,
+    vault,
+    client,
+    getMainRenderer: getCurrentMainRenderer,
+    onSignedIn: async () => {
+      await startLocalRudder();
+    },
+    onBeforeSignedOut: async () => {
+      const localSessionUrl = serverHandle?.apiUrl ?? lastKnownAppUrl;
+      if (localSessionUrl) {
+        await revokeDesktopLocalSessions({
+          localApiUrl: localSessionUrl,
+          getCookies: (url) => session.defaultSession.cookies.get({ url }),
+        });
+      }
+    },
+    onSignedOut: async () => {
+      const localSessionUrl = serverHandle?.apiUrl ?? lastKnownAppUrl;
+      if (localSessionUrl) {
+        await clearDesktopLocalSessionCookies({
+          localApiUrl: localSessionUrl,
+          removeCookie: (url, name) =>
+            session.defaultSession.cookies.remove(url, name).catch(() => undefined),
+        });
+      }
+      await stopLocalRudder();
+      updateBootState({
+        stage: "account_required",
+        message: "Sign in to Rudder Account",
+        detail: "Your Local Workspace stays on this device.",
+        error: undefined,
+        failure: undefined,
+      });
+      await openBootWindow();
+    },
+  });
+}
+
+function requireDesktopIdentityController(): ReturnType<typeof createDesktopIdentityIpcController> {
+  if (!desktopIdentityController) throw new Error("Rudder Account has not been initialized.");
+  return desktopIdentityController;
+}
+
+function desktopAccountBypassEnabled(): boolean {
+  return desktopAccountBypassAllowed({
+    isPackaged: app.isPackaged,
+    bypassRequested: normalizeBooleanEnvFlag(process.env.RUDDER_DESKTOP_AUTH_BYPASS) === true,
+  });
+}
+
+function desktopAccountRequired(): boolean {
+  return !desktopAccountBypassEnabled();
+}
+
 function prepareLocalAppPartition(partition: string): void {
   if (localAppSessions.has(partition)) return;
   const localAppSession = session.fromPartition(partition);
@@ -1015,7 +1140,11 @@ function refreshDesktopSystemPermissions(): DesktopSystemPermissions {
 
 function createBootScreenState(): BootScreenState {
   return {
-    view: currentBootState.stage === "error" ? "failed" : "loading",
+    view: currentBootState.stage === "error"
+      ? "failed"
+      : currentBootState.stage === "account_required"
+        ? "account_required"
+        : "loading",
     stage: currentBootState.stage,
     ...(currentBootState.failure ? { failure: currentBootState.failure } : {}),
     runtime: {
@@ -1704,13 +1833,33 @@ function serverRuntimeOptions(): StartServerOptions {
 
 async function startLocalRudder(): Promise<void> {
   if (startInFlight) return startInFlight;
+  const pendingProfile = resolveDesktopLocalEnvProfile();
+  const identityState = requireDesktopIdentityController().getState();
+  if (desktopAccountRequired() && identityState.status !== "signed-in") {
+    updateBootState({
+      stage: "account_required",
+      message: "Sign in to Rudder Account",
+      detail: "Sign in before Rudder starts your Local Workspace. Local workspace content stays on this device.",
+      error: undefined,
+      failure: undefined,
+      paths: resolveSharedInstancePaths(pendingProfile.instanceId),
+      runtime: {
+        localEnv: pendingProfile.name,
+        instanceId: pendingProfile.instanceId,
+        mode: undefined,
+        ownerKind: undefined,
+        version: undefined,
+        apiUrl: undefined,
+      },
+    });
+    return;
+  }
   startInFlight = (async () => {
     let releasePostgresLifecycleLock: (() => Promise<void>) | null = null;
     startupAttemptCount += 1;
     const attempt = startupAttemptCount;
     const profile = resolveDesktopLocalEnvProfile();
     const sharedPaths = resolveSharedInstancePaths(profile.instanceId);
-
     updateBootState({
       stage: "starting",
       message: "Resolving shared local Rudder instance…",
@@ -1738,6 +1887,7 @@ async function startLocalRudder(): Promise<void> {
         );
       }
       const serverModule = await importServerModule();
+      const offlineCredential = desktopOfflineGrantStore?.read() ?? null;
       updateBootState({
         stage: "config",
         message: "Checking for an existing shared runtime…",
@@ -1746,6 +1896,27 @@ async function startLocalRudder(): Promise<void> {
       serverHandle = await serverModule.startManagedLocalServer({
         ownerKind: "desktop",
         takeoverOnVersionMismatch: true,
+        preferredOwner: true,
+        ...(desktopAccountRequired()
+          ? {
+              localAccountAuth: {
+                identityOrigin: desktopIdentityOrigin!,
+                audience: profile.instanceId,
+                sessionSecret: desktopLocalSessionSecret,
+                secureCookie: false,
+                ...(offlineCredential ? {
+                  offline: {
+                    identityKeyId: offlineCredential.keyId,
+                    identityPublicKeySpki: offlineCredential.identityPublicKeySpki,
+                    expectedAccountId: offlineCredential.accountId,
+                    expectedDeviceId: offlineCredential.deviceId,
+                    lastTrustedTimeMs: offlineCredential.trustedTimeMs,
+                    localSignOutEpoch: offlineCredential.signOutEpoch,
+                  },
+                } : {}),
+              },
+            }
+          : {}),
         ...serverRuntimeOptions(),
       });
       if (releasePostgresLifecycleLock) {
@@ -1769,6 +1940,38 @@ async function startLocalRudder(): Promise<void> {
             "[rudder-desktop] shared PostgreSQL runtime cleanup deferred until a verified shared cold start",
             error,
           );
+        }
+      }
+      if (desktopAccountRequired()) {
+        if (!desktopIdentityClient) throw new Error("Rudder Account client is unavailable");
+        updateBootState({
+          stage: "account_exchange",
+          message: "Connecting your Rudder Account…",
+          detail: "Creating a private session for this Local Workspace.",
+        });
+        let exchangeCode: string | null = null;
+        try {
+          exchangeCode = await desktopIdentityClient.createServerExchange(profile.instanceId);
+        } catch (onlineError) {
+          if (
+            !offlineCredential
+            || !desktopOfflineGrantStore
+            || (onlineError as { code?: unknown }).code === "IDENTITY_SESSION_REJECTED"
+          ) throw onlineError;
+        }
+        if (exchangeCode) {
+          await establishDesktopLocalSession({
+            localApiUrl: serverHandle.apiUrl,
+            exchangeCode,
+            installCookie: (details) => session.defaultSession.cookies.set(details),
+          });
+        } else {
+          await establishDesktopOfflineLocalSession({
+            localApiUrl: serverHandle.apiUrl,
+            credential: offlineCredential!,
+            installCookie: (details) => session.defaultSession.cookies.set(details),
+            updateTrustedTime: (next) => desktopOfflineGrantStore?.updateTrustedTime(next),
+          });
         }
       }
       try {
@@ -1994,6 +2197,10 @@ function registerIpc(): void {
   registerLocalAppsIpcHandlers(ipcMain, {
     getMainRenderer: getCurrentMainRenderer,
     controller: requireLocalAppsController(),
+  });
+  registerDesktopIdentityIpcHandlers(ipcMain, {
+    getMainRenderer: getCurrentMainRenderer,
+    controller: requireDesktopIdentityController(),
   });
   ipcMain.handle("desktop:get-boot-state", async (event) => {
     assertCurrentMainFrame(event, "Desktop boot state");
@@ -2412,6 +2619,7 @@ async function bootstrap(): Promise<void> {
     },
   };
   initializeLocalApps(profile.instanceId);
+  initializeDesktopIdentity(profile.instanceId);
   registerIpc();
   installApplicationMenu(appName);
   createResidentShellControls();

@@ -8,7 +8,7 @@ function escapeHtml(value: string): string {
 }
 
 export type BootScreenState = {
-  view: "loading" | "failed";
+  view: "loading" | "account_required" | "failed";
   stage: string;
   failure?: {
     id: string;
@@ -40,6 +40,7 @@ export function createBootScreenHtml(
     : `<span class="brand-fallback" aria-hidden="true">R</span>`;
   const initialStateJson = serializeForInlineScript(initialState);
   const initialFailure = initialState.view === "failed";
+  const initialAccountRequired = initialState.view === "account_required";
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -179,6 +180,20 @@ export function createBootScreenHtml(
         transform: translateY(8px);
         animation: reveal-failure 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
       }
+      .account-sheet {
+        width: min(460px, calc(100vw - 56px));
+        padding: 28px;
+        background: var(--paper);
+        border: 1px solid var(--border-strong);
+        border-radius: 10px;
+        box-shadow: 0 24px 64px rgba(29, 32, 36, 0.16);
+      }
+      .account-sheet h1 { margin-top: 18px; }
+      .account-sheet p { margin-top: 10px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+      .account-sheet .privacy-note { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; }
+      .device-approval { margin-top: 18px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; }
+      .device-code { margin-top: 8px; font: 650 24px/1.2 ui-monospace, "SFMono-Regular", monospace; letter-spacing: 0.08em; }
+      .device-url { margin-top: 8px; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, "SFMono-Regular", monospace; }
       @keyframes reveal-failure { to { opacity: 1; transform: translateY(0); } }
       .failure-header { display: flex; align-items: flex-start; gap: 14px; }
       .failure-mark {
@@ -291,13 +306,32 @@ export function createBootScreenHtml(
       }
     </style>
   </head>
-  <body data-boot-view="${initialFailure ? "failed" : "loading"}" data-stage="${escapeHtml(initialState.stage)}">
-    <main class="boot-shell" id="boot-shell" aria-busy="${initialFailure ? "false" : "true"}">
+  <body data-boot-view="${initialFailure ? "failed" : initialAccountRequired ? "account_required" : "loading"}" data-stage="${escapeHtml(initialState.stage)}">
+    <main class="boot-shell" id="boot-shell" aria-busy="${initialFailure || initialAccountRequired ? "false" : "true"}">
       <p class="sr-only" role="status" aria-live="polite">Rudder is opening.</p>
-      <section class="loading-view" id="loading-view" aria-hidden="true"${initialFailure ? " hidden" : ""}>
+      <section class="loading-view" id="loading-view" aria-hidden="true"${initialFailure || initialAccountRequired ? " hidden" : ""}>
         <div class="brand-stage">
           <div class="brand-mark">${brandMark}</div>
         </div>
+      </section>
+      <section class="account-sheet" id="account-sheet" role="region" aria-labelledby="account-title"${initialAccountRequired ? "" : " hidden"}>
+        <div class="failure-mark" aria-hidden="true">${brandMark}</div>
+        <h1 id="account-title" tabindex="-1">Sign in to Rudder Account</h1>
+        <p>Sign in to open your Local Workspace and manage this device.</p>
+        <div class="actions">
+          <button class="primary" id="sign-in-button" type="button">Sign in</button>
+        </div>
+        <p class="inline-status" id="account-status" role="status" aria-live="polite"></p>
+        <div class="device-approval" id="device-approval" hidden>
+          <strong>Approve this device</strong>
+          <p>Open the address below in a browser and enter this one-time code:</p>
+          <div class="device-code" id="device-code"></div>
+          <div class="device-url" id="device-url"></div>
+          <div class="actions">
+            <button class="secondary" id="copy-device-button" type="button">Copy address and code</button>
+          </div>
+        </div>
+        <p class="privacy-note"><strong>Your work stays local.</strong> Signing in sends account and device information, not Local Workspace content.</p>
       </section>
       <section class="failure-sheet" id="failure-sheet" role="region" aria-labelledby="failure-title"${initialFailure ? "" : " hidden"}>
         <div class="failure-header">
@@ -351,6 +385,14 @@ export function createBootScreenHtml(
       const bootShell = document.getElementById("boot-shell");
       const loadingView = document.getElementById("loading-view");
       const failureSheet = document.getElementById("failure-sheet");
+      const accountSheet = document.getElementById("account-sheet");
+      const accountTitle = document.getElementById("account-title");
+      const signInButton = document.getElementById("sign-in-button");
+      const accountStatus = document.getElementById("account-status");
+      const deviceApproval = document.getElementById("device-approval");
+      const deviceCode = document.getElementById("device-code");
+      const deviceUrl = document.getElementById("device-url");
+      const copyDeviceButton = document.getElementById("copy-device-button");
       const failureTitle = document.getElementById("failure-title");
       const failureSummary = document.getElementById("failure-summary");
       const diagnosticGrid = document.getElementById("diagnostic-grid");
@@ -367,6 +409,7 @@ export function createBootScreenHtml(
       let latestState = ${initialStateJson};
       let failureWasVisible = false;
       let viewGeneration = 0;
+      let latestDeviceApproval = null;
 
       function syncFallbackActions() {
         fallbackActions.hidden = copyEmailButton.hidden && copyIssueButton.hidden;
@@ -404,11 +447,19 @@ export function createBootScreenHtml(
         if (stateIdentityChanged) viewGeneration += 1;
         latestState = state;
         const failed = state?.view === "failed";
-        document.body.dataset.bootView = failed ? "failed" : "loading";
+        const accountRequired = state?.view === "account_required";
+        document.body.dataset.bootView = failed ? "failed" : accountRequired ? "account_required" : "loading";
         document.body.dataset.stage = state?.stage || "starting";
-        bootShell.setAttribute("aria-busy", failed ? "false" : "true");
-        loadingView.hidden = failed;
+        bootShell.setAttribute("aria-busy", failed || accountRequired ? "false" : "true");
+        loadingView.hidden = failed || accountRequired;
         failureSheet.hidden = !failed;
+        accountSheet.hidden = !accountRequired;
+        if (accountRequired) {
+          signInButton.disabled = false;
+          accountStatus.textContent = "";
+          requestAnimationFrame(() => accountTitle.focus({ preventScroll: true }));
+          return;
+        }
         if (!failed) {
           failureWasVisible = false;
           inlineStatus.textContent = "";
@@ -428,6 +479,37 @@ export function createBootScreenHtml(
           requestAnimationFrame(() => failureTitle.focus({ preventScroll: true }));
         }
       }
+
+      signInButton.addEventListener("click", async () => {
+        if (signInButton.disabled) return;
+        signInButton.disabled = true;
+        latestDeviceApproval = null;
+        deviceApproval.hidden = true;
+        accountStatus.textContent = "Opening secure sign-in…";
+        try {
+          const state = await window.rudderBoot.signIn();
+          if (state?.status === "error") {
+            accountStatus.textContent = state.message || "Rudder Account sign-in failed.";
+            signInButton.disabled = false;
+          } else {
+            accountStatus.textContent = "Signed in. Opening your Local Workspace…";
+          }
+        } catch {
+          accountStatus.textContent = "Rudder Account sign-in could not start.";
+          signInButton.disabled = false;
+        }
+      });
+      copyDeviceButton.addEventListener("click", async () => {
+        if (!latestDeviceApproval) return;
+        try {
+          await window.rudderBoot.copyText(
+            latestDeviceApproval.verificationUri + "\\nCode: " + latestDeviceApproval.userCode,
+          );
+          accountStatus.textContent = "Approval address and code copied.";
+        } catch {
+          accountStatus.textContent = "Rudder could not copy the approval details.";
+        }
+      });
 
       retryButton.addEventListener("click", async () => {
         if (retryButton.disabled) return;
@@ -531,6 +613,20 @@ export function createBootScreenHtml(
 
       applyState(latestState);
       window.rudderBoot.onState(applyState);
+      window.rudderBoot.onIdentityState((state) => {
+        if (state?.status === "device-authorization") {
+          latestDeviceApproval = state;
+          deviceCode.textContent = state.userCode;
+          deviceUrl.textContent = state.verificationUri;
+          deviceApproval.hidden = false;
+          accountStatus.textContent = "Waiting for approval in your browser…";
+          return;
+        }
+        if (state?.status === "error") {
+          accountStatus.textContent = state.message || "Rudder Account sign-in failed.";
+          signInButton.disabled = false;
+        }
+      });
     </script>
   </body>
 </html>`;
