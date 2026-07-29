@@ -29,7 +29,6 @@ import {
 } from "@rudderhq/shared";
 import detectPort from "detect-port";
 import { and, eq, gt, isNull } from "drizzle-orm";
-import type { Request as ExpressRequest, RequestHandler } from "express";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
@@ -39,7 +38,11 @@ import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 import { createRudderApp } from "./app.js";
 import { shouldStartAutomaticBackupSchedulers } from "./backup-scheduler-policy.js";
-import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
+import { getBoardClaimWarningUrl } from "./board-claim.js";
+import {
+  createAuthRuntime,
+  type LocalAccountAuthOptions,
+} from "./bootstrap/auth-runtime.js";
 import { loadConfig, type Config } from "./config.js";
 import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
 import {
@@ -85,17 +88,6 @@ import { managedMcpOAuthService } from "./services/mcp/oauth.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { serverVersion } from "./version.js";
-
-type BetterAuthSessionUser = {
-  id: string;
-  email?: string | null;
-  name?: string | null;
-};
-
-type BetterAuthSessionResult = {
-  session: { id: string; userId: string } | null;
-  user: BetterAuthSessionUser | null;
-};
 
 const WORKSPACE_BACKUP_SCHEDULER_TICK_MS = 60 * 60 * 1000;
 
@@ -165,6 +157,7 @@ export interface StartServerOptions {
   printBanner?: boolean;
   onEvent?: (event: ServerBootstrapEvent) => void;
   runtimeOwnerKind?: LocalRuntimeOwnerKind | null;
+  localAccountAuth?: LocalAccountAuthOptions;
 }
 
 export interface BootstrapCeoInviteOptions {
@@ -944,57 +937,20 @@ async function startServerRuntime(
     }
   }
   
-  let authReady = config.deploymentMode === "local_trusted";
-  let betterAuthHandler: RequestHandler | undefined;
-  let resolveSession:
-    | ((req: ExpressRequest) => Promise<BetterAuthSessionResult | null>)
-    | undefined;
-  let resolveSessionFromHeaders:
-    | ((headers: Headers) => Promise<BetterAuthSessionResult | null>)
-    | undefined;
-  if (config.deploymentMode === "local_trusted") {
-    await ensureLocalTrustedBoardPrincipal(db as any);
-  }
-  if (config.deploymentMode === "authenticated") {
-    const {
-      createBetterAuthHandler,
-      createBetterAuthInstance,
-      deriveAuthTrustedOrigins,
-      resolveBetterAuthSession,
-      resolveBetterAuthSessionFromHeaders,
-    } = await import("./auth/better-auth.js");
-    const betterAuthSecret =
-      process.env.BETTER_AUTH_SECRET?.trim() ?? process.env.RUDDER_AGENT_JWT_SECRET?.trim();
-    if (!betterAuthSecret) {
-      throw new Error(
-        "authenticated mode requires BETTER_AUTH_SECRET (or RUDDER_AGENT_JWT_SECRET) to be set",
-      );
-    }
-    const derivedTrustedOrigins = deriveAuthTrustedOrigins(config);
-    const envTrustedOrigins = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
-    const effectiveTrustedOrigins = Array.from(new Set([...derivedTrustedOrigins, ...envTrustedOrigins]));
-    logger.info(
-      {
-        authBaseUrlMode: config.authBaseUrlMode,
-        authPublicBaseUrl: config.authPublicBaseUrl ?? null,
-        trustedOrigins: effectiveTrustedOrigins,
-        trustedOriginsSource: {
-          derived: derivedTrustedOrigins.length,
-          env: envTrustedOrigins.length,
-        },
-      },
-      "Authenticated mode auth origin configuration",
-    );
-    const auth = createBetterAuthInstance(db as any, config, effectiveTrustedOrigins);
-    betterAuthHandler = createBetterAuthHandler(auth);
-    resolveSession = (req) => resolveBetterAuthSession(auth, req);
-    resolveSessionFromHeaders = (headers) => resolveBetterAuthSessionFromHeaders(auth, headers);
-    await initializeBoardClaimChallenge(db as any, { deploymentMode: config.deploymentMode });
-    authReady = true;
-  }
+  const {
+    authReady,
+    betterAuthHandler,
+    resolveSession,
+    resolveSessionFromHeaders,
+    localAccountExchangePolicy,
+    localAccountSessionRevocation,
+  } = await createAuthRuntime({
+    db: db as any,
+    config,
+    instanceId,
+    localAccountAuth: options.localAccountAuth,
+    ensureLocalTrustedBoardPrincipal: () => ensureLocalTrustedBoardPrincipal(db as any),
+  });
   
   const listenPort = await detectPort(config.port);
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
@@ -1006,6 +962,8 @@ async function startServerRuntime(
     authPublicBaseUrl: config.authPublicBaseUrl ?? null,
     storageService,
     deploymentMode: config.deploymentMode,
+    authRequirement: options.localAccountAuth ? "required" : undefined,
+    localRuntimeTrust: options.localAccountAuth ? "trusted" : undefined,
     deploymentExposure: config.deploymentExposure,
     allowedHostnames: config.allowedHostnames,
     bindHost: config.host,
@@ -1018,6 +976,8 @@ async function startServerRuntime(
     runtimeOwnerKind,
     betterAuthHandler,
     resolveSession,
+    localAccountExchangePolicy,
+    localAccountSessionRevocation,
   });
   supervisor.own("app", () => appHandle.close());
   const server = createServer(appHandle.app as unknown as Parameters<typeof createServer>[0]);
@@ -1046,7 +1006,9 @@ async function startServerRuntime(
   
   const liveEventsRuntime = setupLiveEventsWebSocketServer(server, db as any, {
     deploymentMode: config.deploymentMode,
+    authRequirement: options.localAccountAuth ? "required" : undefined,
     resolveSessionFromHeaders,
+    sessionRevocation: localAccountSessionRevocation,
   });
   supervisor.own("live-events-websocket", () => liveEventsRuntime.close());
 

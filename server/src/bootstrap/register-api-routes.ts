@@ -19,6 +19,7 @@ import { healthRoutes } from "../routes/health.js";
 import { instanceSettingsRoutes } from "../routes/instance-settings.js";
 import { integrationRoutes } from "../routes/integrations.js";
 import { issueRoutes } from "../routes/issues.js";
+import { localAccountAuthRoutes } from "../routes/local-account-auth.js";
 import { managedMcpAgentBindingRoutes } from "../routes/managed-mcp-agent-bindings.js";
 import { managedMcpConnectionRoutes } from "../routes/managed-mcp-connections.js";
 import { messengerRoutes } from "../routes/messenger.js";
@@ -45,6 +46,13 @@ export function registerApiRoutes(
   const api = Router();
 
   api.use(boardMutationGuard());
+  if (opts.localAccountExchangePolicy && opts.instanceId) {
+    api.use(localAccountAuthRoutes(db, {
+      installationId: opts.instanceId,
+      exchangePolicy: opts.localAccountExchangePolicy,
+      sessionRevocation: opts.localAccountSessionRevocation,
+    }));
+  }
   api.use(
     "/health",
     healthRoutes(db, {

@@ -56,6 +56,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { GoalDetail } from "./pages/GoalDetail";
 import { Goals } from "./pages/Goals";
 import { InstanceAboutSettings } from "./pages/InstanceAboutSettings";
+import { InstanceAccountSettings } from "./pages/InstanceAccountSettings";
 import { InstanceAppearanceSettings } from "./pages/InstanceAppearanceSettings";
 import { InstanceBrowserSettings } from "./pages/InstanceBrowserSettings";
 import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
@@ -573,6 +574,7 @@ export function App() {
           <Route path="instance/settings" element={<Layout />}>
             <Route index element={<InstanceSettingsRedirect requestedPath="/instance/settings" />} />
             <Route path="profile" element={<InstanceProfileSettings />} />
+            <Route path="account" element={<InstanceAccountSettings />} />
             <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
             <Route path="appearance" element={<InstanceAppearanceSettings />} />
@@ -647,6 +649,7 @@ export function App() {
             <Route path="instance/settings" element={<DesktopSettingsOverlayLayout />}>
               <Route index element={<InstanceSettingsRedirect requestedPath="/instance/settings" />} />
               <Route path="profile" element={<InstanceProfileSettings />} />
+              <Route path="account" element={<InstanceAccountSettings />} />
               <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
               <Route path="general" element={<InstanceGeneralSettings />} />
               <Route path="appearance" element={<InstanceAppearanceSettings />} />

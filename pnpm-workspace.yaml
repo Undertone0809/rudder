@@ -7,6 +7,7 @@ packages:
   - ui
   - cli
   - desktop
+  - identity
 # pnpm 11 reads security overrides here; package.json mirrors them for the
 # pnpm 9 version pinned by this repository and CI.
 overrides:

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { setupLiveEventsWebSocketServer } from "../realtime/live-events-ws.js";
 import { publishLiveEvent } from "../services/live-events.js";
+import { createLocalAccountSessionRevocation } from "../services/local-account-session-revocation.js";
 
 type LiveEventsRuntime = ReturnType<typeof setupLiveEventsWebSocketServer>;
 
@@ -60,6 +61,25 @@ afterEach(async () => {
 });
 
 describe("Live Events WebSocket runtime", () => {
+  it("rejects an anonymous local WebSocket when account auth is required", async () => {
+    const server = createServer();
+    const runtime = setupLiveEventsWebSocketServer(server, {} as Db, {
+      deploymentMode: "local_trusted",
+      authRequirement: "required",
+      resolveSessionFromHeaders: async () => null,
+    });
+    openRuntimes.add(runtime);
+    const port = await listen(server);
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/api/orgs/org-1/events/ws`);
+    socket.on("error", () => undefined);
+    openSockets.add(socket);
+
+    const [, response] = await once(socket, "unexpected-response");
+    expect((response as { statusCode?: number }).statusCode).toBe(403);
+    socket.terminate();
+    openSockets.delete(socket);
+  });
+
   it("preserves local-trusted event delivery and payload shape", async () => {
     const server = createServer();
     const runtime = setupLiveEventsWebSocketServer(server, {} as Db, {
@@ -84,6 +104,75 @@ describe("Live Events WebSocket runtime", () => {
     const closed = once(socket, "close");
     socket.close();
     await closed;
+    openSockets.delete(socket);
+  });
+
+  it("closes active board WebSockets when all local account sessions are revoked", async () => {
+    const server = createServer();
+    const sessionRevocation = createLocalAccountSessionRevocation();
+    const runtime = setupLiveEventsWebSocketServer(server, {} as Db, {
+      deploymentMode: "local_trusted",
+      sessionRevocation,
+    });
+    openRuntimes.add(runtime);
+    const port = await listen(server);
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/api/orgs/org-1/events/ws`);
+    openSockets.add(socket);
+    await once(socket, "open");
+
+    const closed = once(socket, "close");
+    sessionRevocation.publish("board");
+    const [code, reason] = await closed;
+
+    expect(code).toBe(1008);
+    expect(String(reason)).toBe("account signed out");
+    openSockets.delete(socket);
+  });
+
+  it("rejects an account WebSocket when revocation wins during session lookup", async () => {
+    let releaseSession!: () => void;
+    let markSessionRequested!: () => void;
+    const sessionRequested = new Promise<void>((resolve) => {
+      markSessionRequested = resolve;
+    });
+    const delayedSession = new Promise<void>((resolve) => {
+      releaseSession = resolve;
+    });
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: () => Promise.resolve([{ id: "role-1", orgId: "org-1" }]),
+        }),
+      }),
+    } as unknown as Db;
+    const sessionRevocation = createLocalAccountSessionRevocation();
+    const server = createServer();
+    const runtime = setupLiveEventsWebSocketServer(server, db, {
+      deploymentMode: "local_trusted",
+      authRequirement: "required",
+      sessionRevocation,
+      resolveSessionFromHeaders: async () => {
+        markSessionRequested();
+        await delayedSession;
+        return {
+          session: { id: "session-1", userId: "user-1" },
+          user: { id: "user-1", email: "user@example.com", name: "User" },
+        };
+      },
+    });
+    openRuntimes.add(runtime);
+    const port = await listen(server);
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/api/orgs/org-1/events/ws`);
+    socket.on("error", () => undefined);
+    openSockets.add(socket);
+
+    await sessionRequested;
+    sessionRevocation.publish("user-1");
+    releaseSession();
+    const [, response] = await once(socket, "unexpected-response");
+
+    expect((response as { statusCode?: number }).statusCode).toBe(403);
+    socket.terminate();
     openSockets.delete(socket);
   });
 

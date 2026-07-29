@@ -1,11 +1,11 @@
 import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, OpenDialogOptions, Session, WebContents } from "electron";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, session, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, safeStorage, session, shell, systemPreferences, Tray } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveDesktopAppName } from "./app-identity.js";
-import { createBootScreenHtml, createRendererRecoveryScreenHtml, type BootScreenState } from "./boot-screen.js";
+import { createBootScreenHtml, createRendererRecoveryScreenHtml, deriveBootScreenState } from "./boot-screen.js";
 import { createElectronBrowserAgentTabFactory } from "./browser-agent-electron.js";
 import {
   BrowserAgentError,
@@ -53,10 +53,12 @@ import {
   type DesktopFileLaunchTargetId,
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
-import { LocalAppsController } from "./local-apps-controller.js";
+import {
+  createDesktopIdentityRuntime,
+  type DesktopLocalAccountAuth,
+} from "./identity-runtime.js";
 import { registerLocalAppsIpcHandlers } from "./local-apps-ipc.js";
-import { LocalAppRegistry, type PreparedLocalAppDefinition } from "./local-apps-registry.js";
-import { LocalAppRuntimeManager } from "./local-apps-runtime.js";
+import { createDesktopLocalAppsRuntime } from "./local-apps-main-runtime.js";
 import { previewLocalFile } from "./local-file-preview.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import {
@@ -168,6 +170,8 @@ type StartServerOptions = {
 type StartManagedLocalServerOptions = StartServerOptions & {
   ownerKind: "desktop";
   takeoverOnVersionMismatch?: boolean;
+  preferredOwner?: boolean;
+  localAccountAuth?: DesktopLocalAccountAuth;
 };
 
 type StartedServer = {
@@ -459,8 +463,9 @@ const acceptBrowserPopup = createBrowserPopupRateLimiter();
 let browserProfileController: BrowserProfileController | null = null;
 let browserAgentTabController: ReturnType<typeof createBrowserAgentTabController> | null = null;
 let browserRuntimeLifecycle: ReturnType<typeof createDesktopBrowserRuntimeLifecycle> | null = null;
-let localAppsController: LocalAppsController | null = null;
-let localAppsRuntime: LocalAppRuntimeManager | null = null;
+let localAppsController: ReturnType<typeof createDesktopLocalAppsRuntime>["controller"] | null = null;
+let localAppsRuntime: ReturnType<typeof createDesktopLocalAppsRuntime>["runtime"] | null = null;
+let desktopIdentityRuntime: ReturnType<typeof createDesktopIdentityRuntime> | null = null;
 let browserCookieImporter: {
   listBrowserImportSources(): Promise<BrowserImportSource[]>;
   importBrowserData(input: { sourceId: string; importCookies: true }): Promise<BrowserDataImportResult>;
@@ -723,76 +728,53 @@ function requireBrowserRuntimeLifecycle() {
   return browserRuntimeLifecycle;
 }
 
-function requireLocalAppsController(): LocalAppsController {
+function requireLocalAppsController(): ReturnType<typeof createDesktopLocalAppsRuntime>["controller"] {
   if (!localAppsController) throw new Error("Desktop Local Apps have not been initialized.");
   return localAppsController;
 }
 
-function formatLocalAppConfirmationDetail(definition: PreparedLocalAppDefinition): string {
-  const argumentsDetail = definition.argv.length > 0
-    ? definition.argv.map((argument) => JSON.stringify(argument)).join(" ")
-    : "(none)";
-  const environmentDetail = definition.inheritedEnvNames.length > 0
-    ? definition.inheritedEnvNames.join(", ")
-    : "(none)";
-  return [
-    `Working directory: ${definition.cwd}`,
-    `Executable: ${definition.executable}`,
-    `Arguments: ${argumentsDetail}`,
-    `Inherited environment variable names: ${environmentDetail}`,
-    `Readiness: ${definition.readiness.path} (${definition.readiness.timeoutMs} ms)`,
-    `Open path: ${definition.openPath}`,
-    "",
-    "Selected project code and commands may modify local files or data.",
-    "Rudder itself will not install dependencies, build assets, or run migrations.",
-  ].join("\n");
-}
-
 function initializeLocalApps(desktopInstallationId: string): void {
   if (localAppsController) return;
-  const userDataPath = app.getPath("userData");
-  const registry = new LocalAppRegistry({
-    registryPath: path.join(userDataPath, "local-apps", "registry.json"),
+  const localApps = createDesktopLocalAppsRuntime({
     installationId: desktopInstallationId,
+    appName: APP_NAME,
+    userDataPath: app.getPath("userData"),
+    getOwner: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
   });
-  const runtime = new LocalAppRuntimeManager({ registry });
-  localAppsRuntime = runtime;
-  localAppsController = new LocalAppsController({
-    registry,
-    runtime,
-    selectFolder: async () => {
-      const options: OpenDialogOptions = {
-        title: "Choose a local app folder",
-        buttonLabel: "Review App",
-        properties: ["openDirectory"],
-      };
-      const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-      const result = owner
-        ? await dialog.showOpenDialog(owner, options)
-        : await dialog.showOpenDialog(options);
-      return result.canceled ? null : result.filePaths[0] ?? null;
-    },
-    confirmDefinition: async (definition, action) => {
-      const confirmLabel = action === "start" ? "Start App" : "Approve App";
-      const options = {
-        type: "warning" as const,
-        title: `${APP_NAME} Local App`,
-        buttons: [confirmLabel, "Cancel"],
-        defaultId: 1,
-        cancelId: 1,
-        noLink: true,
-        message: action === "start"
-          ? `Start “${definition.title}”?`
-          : `${action === "create" ? "Add" : "Update"} “${definition.title}”?`,
-        detail: formatLocalAppConfirmationDetail(definition),
-      };
-      const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-      const result = owner
-        ? await dialog.showMessageBox(owner, options)
-        : await dialog.showMessageBox(options);
-      return result.response === 0;
+  ({ controller: localAppsController, runtime: localAppsRuntime } = localApps);
+}
+
+function initializeDesktopIdentity(desktopInstallationId: string): void {
+  if (desktopIdentityRuntime) return;
+  desktopIdentityRuntime = createDesktopIdentityRuntime({
+    installationId: desktopInstallationId,
+    appName: APP_NAME,
+    safeStorage,
+    getMainRenderer: getCurrentMainRenderer,
+    getLocalApiUrl: () => serverHandle?.apiUrl ?? lastKnownAppUrl,
+    onSignedIn: startLocalRudder,
+    onLocalExchange: () => updateBootState({
+      stage: "account_exchange",
+      message: "Connecting your Rudder Account…",
+      detail: "Creating a private session for this Local Workspace.",
+    }),
+    onSignedOut: async () => {
+      await stopLocalRudder();
+      updateBootState({
+        stage: "account_required",
+        message: "Sign in to Rudder Account",
+        detail: "Your Local Workspace stays on this device.",
+        error: undefined,
+        failure: undefined,
+      });
+      await openBootWindow();
     },
   });
+}
+
+function requireDesktopIdentityRuntime(): ReturnType<typeof createDesktopIdentityRuntime> {
+  if (!desktopIdentityRuntime) throw new Error("Rudder Account has not been initialized.");
+  return desktopIdentityRuntime;
 }
 
 function prepareLocalAppPartition(partition: string): void {
@@ -989,7 +971,7 @@ function updateBootState(nextState: Partial<BootState> & Pick<BootState, "stage"
   };
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (currentMainWindowKind === "boot") {
-      mainWindow.webContents.send("desktop:recovery-state", createBootScreenState());
+      mainWindow.webContents.send("desktop:recovery-state", deriveBootScreenState(currentBootState));
     } else {
       mainWindow.webContents.send("desktop:boot-state", currentBootState);
     }
@@ -1005,26 +987,12 @@ function refreshDesktopSystemPermissions(): DesktopSystemPermissions {
   };
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (currentMainWindowKind === "boot") {
-      mainWindow.webContents.send("desktop:recovery-state", createBootScreenState());
+      mainWindow.webContents.send("desktop:recovery-state", deriveBootScreenState(currentBootState));
     } else {
       mainWindow.webContents.send("desktop:boot-state", currentBootState);
     }
   }
   return permissions;
-}
-
-function createBootScreenState(): BootScreenState {
-  return {
-    view: currentBootState.stage === "error" ? "failed" : "loading",
-    stage: currentBootState.stage,
-    ...(currentBootState.failure ? { failure: currentBootState.failure } : {}),
-    runtime: {
-      profile: currentBootState.runtime?.localEnv,
-      instance: currentBootState.runtime?.instanceId,
-      version: currentBootState.runtime?.version,
-    },
-    instanceRoot: currentBootState.paths?.instanceRoot,
-  };
 }
 
 function resolveDesktopBrandIconDataUrl(): string | null {
@@ -1047,7 +1015,7 @@ function createCurrentRecoveryDiagnostic(): string {
 }
 
 function resolveBootScreenUrl(): string {
-  const html = createBootScreenHtml(APP_NAME, resolveDesktopBrandIconDataUrl(), createBootScreenState());
+  const html = createBootScreenHtml(APP_NAME, resolveDesktopBrandIconDataUrl(), deriveBootScreenState(currentBootState));
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
@@ -1704,13 +1672,33 @@ function serverRuntimeOptions(): StartServerOptions {
 
 async function startLocalRudder(): Promise<void> {
   if (startInFlight) return startInFlight;
+  const pendingProfile = resolveDesktopLocalEnvProfile();
+  const identityRuntime = requireDesktopIdentityRuntime();
+  if (identityRuntime.accountRequired && identityRuntime.controller.getState().status !== "signed-in") {
+    updateBootState({
+      stage: "account_required",
+      message: "Sign in to Rudder Account",
+      detail: "Sign in before Rudder starts your Local Workspace. Local workspace content stays on this device.",
+      error: undefined,
+      failure: undefined,
+      paths: resolveSharedInstancePaths(pendingProfile.instanceId),
+      runtime: {
+        localEnv: pendingProfile.name,
+        instanceId: pendingProfile.instanceId,
+        mode: undefined,
+        ownerKind: undefined,
+        version: undefined,
+        apiUrl: undefined,
+      },
+    });
+    return;
+  }
   startInFlight = (async () => {
     let releasePostgresLifecycleLock: (() => Promise<void>) | null = null;
     startupAttemptCount += 1;
     const attempt = startupAttemptCount;
     const profile = resolveDesktopLocalEnvProfile();
     const sharedPaths = resolveSharedInstancePaths(profile.instanceId);
-
     updateBootState({
       stage: "starting",
       message: "Resolving shared local Rudder instance…",
@@ -1738,6 +1726,7 @@ async function startLocalRudder(): Promise<void> {
         );
       }
       const serverModule = await importServerModule();
+      const localAccountSession = identityRuntime.prepareLocalSession(profile.instanceId);
       updateBootState({
         stage: "config",
         message: "Checking for an existing shared runtime…",
@@ -1746,6 +1735,10 @@ async function startLocalRudder(): Promise<void> {
       serverHandle = await serverModule.startManagedLocalServer({
         ownerKind: "desktop",
         takeoverOnVersionMismatch: true,
+        preferredOwner: true,
+        ...(localAccountSession.localAccountAuth
+          ? { localAccountAuth: localAccountSession.localAccountAuth }
+          : {}),
         ...serverRuntimeOptions(),
       });
       if (releasePostgresLifecycleLock) {
@@ -1771,6 +1764,7 @@ async function startLocalRudder(): Promise<void> {
           );
         }
       }
+      await localAccountSession.connect(serverHandle.apiUrl);
       try {
         await requireBrowserRuntimeLifecycle().connect(serverHandle.apiUrl);
       } catch (error) {
@@ -1995,6 +1989,7 @@ function registerIpc(): void {
     getMainRenderer: getCurrentMainRenderer,
     controller: requireLocalAppsController(),
   });
+  requireDesktopIdentityRuntime().registerIpc();
   ipcMain.handle("desktop:get-boot-state", async (event) => {
     assertCurrentMainFrame(event, "Desktop boot state");
     refreshDesktopSystemPermissions();
@@ -2002,7 +1997,7 @@ function registerIpc(): void {
   });
   ipcMain.handle("desktop:get-recovery-state", async (event) => {
     assertStartupRecoveryFrame(event, "Desktop recovery state");
-    return createBootScreenState();
+    return deriveBootScreenState(currentBootState);
   });
   ipcMain.handle("desktop:retry-startup", async (event) => {
     assertStartupRecoveryFrame(event, "Desktop startup retry");
@@ -2411,7 +2406,11 @@ async function bootstrap(): Promise<void> {
       instanceId: profile.instanceId,
     },
   };
+  if (desktopDebugEnabled()) console.info("[rudder-desktop] bootstrap:initialize-local-apps");
   initializeLocalApps(profile.instanceId);
+  if (desktopDebugEnabled()) console.info("[rudder-desktop] bootstrap:initialize-identity");
+  initializeDesktopIdentity(profile.instanceId);
+  if (desktopDebugEnabled()) console.info("[rudder-desktop] bootstrap:register-ipc");
   registerIpc();
   installApplicationMenu(appName);
   createResidentShellControls();

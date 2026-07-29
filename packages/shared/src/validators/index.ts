@@ -255,3 +255,10 @@ export {
   pluginUiSlotDeclarationSchema, pluginWebhookDeclarationSchema, setPluginStateSchema, uninstallPluginSchema, updatePluginStatusSchema, upsertPluginConfigSchema, type InstallPlugin, type ListPluginState, type PatchPluginConfig, type PluginJobDeclarationInput, type PluginLauncherActionDeclarationInput, type PluginLauncherDeclarationInput, type PluginLauncherRenderDeclarationInput, type PluginManifestV1Input, type PluginStateScopeKey, type PluginToolDeclarationInput,
   type PluginUiSlotDeclarationInput, type PluginWebhookDeclarationInput, type SetPluginState, type UninstallPlugin, type UpdatePluginStatus, type UpsertPluginConfig
 } from "./plugin.js";
+
+export {
+  localOfflineGrantSchema,
+  localServerExchangeSchema,
+  type LocalOfflineGrantInput,
+  type LocalServerExchangeInput
+} from "./local-account-auth.js";
