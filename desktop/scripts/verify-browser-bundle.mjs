@@ -27,11 +27,6 @@ function packagedExecutableForServerPackage(serverPackageDir) {
   return path.resolve(resourcesDir, "..", "Rudder");
 }
 
-export function packagedCliArgs(platform, args) {
-  if (platform !== "linux") return args;
-  return ["--no-sandbox", "--disable-gpu", ...args];
-}
-
 export async function verifyBrowserBundle(options) {
   const serverPackageDir = path.resolve(options.serverPackageDir);
   const cliEntry = path.resolve(options.cliEntry ?? path.join(serverPackageDir, "desktop-cli.js"));
@@ -105,15 +100,14 @@ export async function verifyBrowserBundle(options) {
       assertEqual(browserCommand.provenance, "desktop_bundle", "Browser resolver provenance");
       assertEqual(command.expectedVersion, expectedVersion, "core resolver expected version");
       assertEqual(browserCommand.expectedVersion, expectedVersion, "Browser resolver expected version");
-      const expectedArgs = process.platform === "win32" || process.platform === "darwin"
-        ? [path.join(path.dirname(cliEntry), "desktop-cli-runner.js"), "mcp-server"]
-        : ["--desktop-cli", "mcp-server"];
+      const expectedArgs = [
+        path.join(path.dirname(cliEntry), "desktop-cli-runner.js"),
+        "mcp-server",
+      ];
       const expectedBrowserArgs = [...expectedArgs, "--server", "browser"];
       assertEqual(JSON.stringify(command.args), JSON.stringify(expectedArgs), "core resolver arguments");
       assertEqual(JSON.stringify(browserCommand.args), JSON.stringify(expectedBrowserArgs), "Browser resolver arguments");
-      if (process.platform === "win32" || process.platform === "darwin") {
-        assertEqual(command.env?.ELECTRON_RUN_AS_NODE, "1", "resolver Electron Node mode");
-      }
+      assertEqual(command.env?.ELECTRON_RUN_AS_NODE, "1", "resolver Electron Node mode");
       const packagedExecutable = options.desktopExecutable
         ? path.resolve(options.desktopExecutable)
         : packagedExecutableForServerPackage(path.dirname(cliEntry));
@@ -123,12 +117,10 @@ export async function verifyBrowserBundle(options) {
       const packagedCommand = {
         ...command,
         command: packagedExecutable,
-        args: packagedCliArgs(process.platform, command.args),
       };
       const packagedBrowserCommand = {
         ...browserCommand,
         command: packagedExecutable,
-        args: packagedCliArgs(process.platform, browserCommand.args),
       };
       const packagedRuntimeEnv = {
         ...process.env,
