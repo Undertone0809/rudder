@@ -2689,6 +2689,16 @@
   background: color-mix(in oklab, var(--ink-faint) 72%, transparent) !important;
 }
 
+/* Dense option menus keep their transient scrollbar clear of the rounded edge. */
+.scrollbar-menu-inset::-webkit-scrollbar {
+  width: 10px !important;
+}
+.scrollbar-menu-inset::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-right-width: 3px;
+  background-clip: content-box;
+}
+
 /* Expandable dialog transition for max-width changes */
 [data-slot="dialog-content"] {
   transition: max-width 200ms cubic-bezier(0.16, 1, 0.3, 1);

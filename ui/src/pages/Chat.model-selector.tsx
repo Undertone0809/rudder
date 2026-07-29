@@ -7,6 +7,7 @@ import {
   thinkingEffortOptionsForRuntime,
 } from "@/components/AgentConfigForm.helpers";
 import { AgentIcon } from "@/components/AgentIconPicker";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { queryKeys } from "@/lib/queryKeys";
 import { resolveRuntimeModels } from "@/lib/runtime-models";
@@ -251,6 +252,8 @@ export function ChatConversationRuntimeControls(props: {
   const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
   const firstModelOptionRef = useRef<HTMLButtonElement | null>(null);
   const firstEffortOptionRef = useRef<HTMLButtonElement | null>(null);
+  const modelSubmenuScrollRef = useScrollbarActivityRef();
+  const effortSubmenuScrollRef = useScrollbarActivityRef();
   const options = chatConversationModelOptions(
     props.agent,
     props.adapterModels,
@@ -331,7 +334,7 @@ export function ChatConversationRuntimeControls(props: {
     closeSubmenu(kind);
   };
   const submenuClassName = cn(
-    "surface-overlay fixed z-[70] max-h-80 w-64 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 shadow-lg",
+    "surface-overlay scrollbar-auto-hide scrollbar-menu-inset fixed z-[70] max-h-80 w-64 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 shadow-lg",
   );
   const triggerClassName = cn(
     "chat-composer-menu-row grid min-h-10 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2",
@@ -373,6 +376,7 @@ export function ChatConversationRuntimeControls(props: {
         </button>
         {activeSubmenu === "model" && submenuPosition && typeof document !== "undefined" ? createPortal(
           <div
+            ref={modelSubmenuScrollRef}
             data-chat-runtime-submenu
             data-testid="chat-model-options"
             role="listbox"
@@ -468,6 +472,7 @@ export function ChatConversationRuntimeControls(props: {
           </button>
           {activeSubmenu === "effort" && submenuPosition && typeof document !== "undefined" ? createPortal(
             <div
+              ref={effortSubmenuScrollRef}
               data-chat-runtime-submenu
               data-testid="chat-effort-options"
               role="listbox"
