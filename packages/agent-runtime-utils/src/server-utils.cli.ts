@@ -165,10 +165,10 @@ async function resolveDesktopExecutableBesideCliEntry(cliEntry: string): Promise
 export function resolveDesktopCliSpawnTarget(
   cliEntry: string,
   executable: string,
-  platform: NodeJS.Platform = process.platform,
+  _platform: NodeJS.Platform = process.platform,
   nodeRunner: string | null = null,
 ): Pick<RudderCliSpawnTarget, "command" | "args" | "env"> {
-  if ((platform === "win32" || platform === "darwin") && nodeRunner) {
+  if (nodeRunner) {
     return {
       command: executable,
       args: [nodeRunner],
