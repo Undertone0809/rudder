@@ -64,12 +64,40 @@ test("clears stale keyboard selection when the query or dialog is reset", async 
   await expect(page).toHaveURL(reopenedUrl);
 });
 
+test("keeps the language switcher, sidebar, and footer aligned with the current locale", async ({ page }) => {
+  await page.goto("/zh/get-started/installation");
+
+  await expect(page.getByRole("button", { name: "简体中文", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "English", exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("navigation", { name: "Pages" }).getByRole("link", {
+      name: "安装 Rudder",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.locator("footer").getByRole("link", { name: "安装 Rudder", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator("footer").getByRole("link", { name: "Install Rudder", exact: true }),
+  ).toHaveCount(0);
+
+  await page.goto("/get-started/installation");
+  await expect(page.getByRole("button", { name: "English", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Pages" }).getByRole("link", {
+      name: "Install Rudder",
+      exact: true,
+    }),
+  ).toBeVisible();
+});
+
 test("renders representative English and Chinese pages on desktop and mobile", async ({ page }) => {
   const cases = [
     { route: "/concepts/agents", title: "Agents, Runs, and Runtimes", language: "en", width: 1440, height: 900 },
-    { route: "/zh/concepts/agents", title: "Agent、运行记录和运行工具", language: "zh-CN", width: 1440, height: 900 },
+    { route: "/zh/concepts/agents", title: "Agent、运行记录和运行工具", language: /^(?:cn|zh-Hans)$/, width: 1440, height: 900 },
     { route: "/reference/workspace-boundaries", title: "Where Rudder Stores and Uses Files", language: "en", width: 390, height: 844 },
-    { route: "/zh/reference/workspace-boundaries", title: "Rudder 在哪里保存和使用文件", language: "zh-CN", width: 390, height: 844 },
+    { route: "/zh/reference/workspace-boundaries", title: "Rudder 在哪里保存和使用文件", language: /^(?:cn|zh-Hans)$/, width: 390, height: 844 },
   ];
 
   for (const item of cases) {
