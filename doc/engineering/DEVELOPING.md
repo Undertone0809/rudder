@@ -100,6 +100,12 @@ Default engineering rules:
 - For performance work, record the workload shape, baseline measurement, and
   post-change measurement. A faster implementation without a named workload is
   not enough evidence.
+- For repeatable production-shaped UI and API checks, reuse the dev-only
+  `Rudder Performance Lab` organization (`rudder-performance-lab`) when its
+  schema is current. Treat it as a persistent benchmark fork: keep automation
+  disabled, exclude credentials and host configuration, and copy both Library
+  catalog rows and safe workspace files when refreshing it. Use an isolated
+  synthetic organization instead for destructive or mutation-heavy pressure.
 
 Reviewers should challenge any new data surface that fetches "everything",
 resets the user's place during refresh, or proves only a tiny happy-path

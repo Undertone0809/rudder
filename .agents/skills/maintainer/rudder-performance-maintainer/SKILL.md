@@ -86,17 +86,21 @@ comparison.
 2. Establish runtime/source identity and select an evidence target:
    current-source isolated, packaged candidate, installed prod-local, or named
    external environment.
-3. Start with bounded metadata and summary endpoints. Do not fetch maximum
+3. For production-shaped dev checks, reuse the persistent `Rudder Performance
+   Lab` organization described in `references/environment-and-safety.md` when
+   it is compatible with the current schema. Do not create another large seed
+   by default.
+4. Start with bounded metadata and summary endpoints. Do not fetch maximum
    transcripts or full projections until the hypothesis requires them.
-4. Run the smallest representative workload, then a production-shaped edge
+5. Run the smallest representative workload, then a production-shaped edge
    case where scaling risk appears.
-5. Capture correctness and performance from the same run.
-6. Identify the first scaling boundary and propose one smallest safe change.
-7. In IMPLEMENT mode, use an isolated branch/worktree when the current checkout
+6. Capture correctness and performance from the same run.
+7. Identify the first scaling boundary and propose one smallest safe change.
+8. In IMPLEMENT mode, use an isolated branch/worktree when the current checkout
    contains unrelated changes.
-8. Run before/after on the same harness and source identities.
-9. Require independent review and black-box acceptance for implementation.
-10. Report measured improvements, unchanged metrics, regressions, skipped
+9. Run before/after on the same harness and source identities.
+10. Require independent review and black-box acceptance for implementation.
+11. Report measured improvements, unchanged metrics, regressions, skipped
     evidence, proxy limitations, and remaining risk.
 
 ## Evidence Language
