@@ -48,6 +48,38 @@ function createPackageMapRepo() {
   return { repo, packagePath };
 }
 
+function addPrivateWorkspaceDependency(repo, packagePath) {
+  const privatePackageDir = join(repo, "identity");
+  mkdirSync(privatePackageDir, { recursive: true });
+  writeJson(join(privatePackageDir, "package.json"), {
+    name: "@rudderhq/identity",
+    version: "0.0.0",
+    private: true,
+  });
+
+  const pkg = readJson(packagePath);
+  writeJson(packagePath, {
+    ...pkg,
+    dependencies: {
+      "@rudderhq/identity": "workspace:*",
+    },
+  });
+}
+
+function addPublicServerDependency(repo) {
+  const serverDir = join(repo, "server");
+  mkdirSync(serverDir, { recursive: true });
+  const serverPackagePath = join(serverDir, "package.json");
+  writeJson(serverPackagePath, {
+    name: "@rudderhq/server",
+    version: "0.2.10",
+    dependencies: {
+      "@rudderhq/shared": "workspace:*",
+    },
+  });
+  return serverPackagePath;
+}
+
 function runPackageMap(repo, args) {
   return spawnSync("node", ["scripts/release-package-map.mjs", ...args], {
     cwd: repo,
@@ -62,6 +94,34 @@ afterEach(() => {
 });
 
 describe("release package map", () => {
+  it("rejects public packages that depend on private workspace packages", () => {
+    const { repo, packagePath } = createPackageMapRepo();
+    addPrivateWorkspaceDependency(repo, packagePath);
+
+    const result = runPackageMap(repo, ["list"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "public package @rudderhq/shared depends on private workspace package @rudderhq/identity",
+    );
+  });
+
+  it("rewrites public workspace dependencies to the exact publish version", () => {
+    const { repo } = createPackageMapRepo();
+    const serverPackagePath = addPublicServerDependency(repo);
+
+    const result = runPackageMap(repo, [
+      "set-publish-version",
+      "0.2.11-canary.2",
+      "--allow-source-mutation",
+    ]);
+    const manifest = readJson(serverPackagePath);
+
+    expect(result.status).toBe(0);
+    expect(manifest.version).toBe("0.2.11-canary.2");
+    expect(manifest.dependencies["@rudderhq/shared"]).toBe("0.2.11-canary.2");
+  });
+
   it("refuses publish manifest rewrites unless release automation opts in", () => {
     const { repo, packagePath } = createPackageMapRepo();
     const before = readFileSync(packagePath, "utf8");
