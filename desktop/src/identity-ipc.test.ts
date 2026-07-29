@@ -153,8 +153,9 @@ describe("Desktop Rudder Account IPC", () => {
     expect(revokeDeviceSession).toHaveBeenCalledWith("device-1");
   });
 
-  it("does not destroy Identity credentials when Local session revocation fails", async () => {
+  it("still clears Identity credentials when Local session revocation fails", async () => {
     const signOut = vi.fn(async () => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const controller = createDesktopIdentityIpcController({
       origin: "https://accounts.rudderhq.dev",
       vault: {
@@ -182,11 +183,13 @@ describe("Desktop Rudder Account IPC", () => {
       },
     });
 
-    await expect(controller.signOut()).rejects.toThrow("Local session revocation failed");
-    expect(signOut).not.toHaveBeenCalled();
-    expect(controller.getState()).toMatchObject({
-      status: "signed-in",
-      account: { id: "account-1" },
-    });
+    await expect(controller.signOut()).resolves.toEqual({ status: "signed-out" });
+    expect(signOut).toHaveBeenCalledOnce();
+    expect(controller.getState()).toEqual({ status: "signed-out" });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("continuing account sign-out"),
+      expect.any(Error),
+    );
+    warn.mockRestore();
   });
 });

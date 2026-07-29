@@ -43,6 +43,27 @@ describe("HTTP request-body logging", () => {
     expect(requestBodyForLogs({ originalUrl: "/api/issues" }, body)).toBe(body);
   });
 
+  it("redacts local account exchange and Offline Grant bodies before route validation", () => {
+    const exchange = { exchangeCode: "live-one-time-code" };
+    const offline = {
+      grant: "signed-offline-grant",
+      proof: { signature: "device-proof" },
+    };
+
+    expect(requestBodyForLogs(
+      { originalUrl: "/api/auth/local-exchange" },
+      exchange,
+    )).toBe("[REDACTED]");
+    expect(requestBodyForLogs(
+      { url: "/API/AUTH/LOCAL-OFFLINE/?retry=1" },
+      offline,
+    )).toBe("[REDACTED]");
+    expect(JSON.stringify([
+      requestBodyForLogs({ originalUrl: "/api/auth/local-exchange" }, exchange),
+      requestBodyForLogs({ originalUrl: "/api/auth/local-offline" }, offline),
+    ])).not.toContain("live-one-time-code");
+  });
+
   it("redacts direct and queued inline annotation request bodies", () => {
     const direct = {
       body: "",

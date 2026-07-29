@@ -25,6 +25,33 @@ export type BootScreenState = {
   instanceRoot?: string | null;
 };
 
+export function deriveBootScreenState(state: {
+  stage: string;
+  failure?: BootScreenState["failure"];
+  runtime?: {
+    localEnv?: string | null;
+    instanceId?: string | null;
+    version?: string | null;
+  };
+  paths?: { instanceRoot?: string | null };
+}): BootScreenState {
+  return {
+    view: state.stage === "error"
+      ? "failed"
+      : state.stage === "account_required"
+        ? "account_required"
+        : "loading",
+    stage: state.stage,
+    ...(state.failure ? { failure: state.failure } : {}),
+    runtime: {
+      profile: state.runtime?.localEnv,
+      instance: state.runtime?.instanceId,
+      version: state.runtime?.version,
+    },
+    instanceRoot: state.paths?.instanceRoot,
+  };
+}
+
 function serializeForInlineScript(value: unknown): string {
   return JSON.stringify(value).replaceAll("<", "\\u003c");
 }

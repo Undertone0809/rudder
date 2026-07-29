@@ -203,7 +203,14 @@ export function createDesktopIdentityIpcController(options: {
     },
 
     async signOut(): Promise<DesktopIdentityState> {
-      await options.onBeforeSignedOut?.();
+      try {
+        await options.onBeforeSignedOut?.();
+      } catch (error) {
+        console.warn(
+          "[rudder-desktop] local session revocation failed; continuing account sign-out",
+          error,
+        );
+      }
       await options.client.signOut();
       const signedOut = publish({ status: "signed-out" });
       await options.onSignedOut?.();

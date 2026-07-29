@@ -29,7 +29,6 @@ import {
 } from "@rudderhq/shared";
 import detectPort from "detect-port";
 import { and, eq, gt, isNull } from "drizzle-orm";
-import type { Request as ExpressRequest, RequestHandler } from "express";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
@@ -39,7 +38,11 @@ import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 import { createRudderApp } from "./app.js";
 import { shouldStartAutomaticBackupSchedulers } from "./backup-scheduler-policy.js";
-import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
+import { getBoardClaimWarningUrl } from "./board-claim.js";
+import {
+  createAuthRuntime,
+  type LocalAccountAuthOptions,
+} from "./bootstrap/auth-runtime.js";
 import { loadConfig, type Config } from "./config.js";
 import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
 import {
@@ -80,28 +83,11 @@ import {
   isFeishuLongConnectionEnabled,
 } from "./services/integrations/feishu/runtime-registry.js";
 import { feishuIntegrationRuntimeService } from "./services/integrations/feishu/runtime.js";
-import {
-  createIdentityServerExchangeVerifier,
-  createLocalAccountSessionResolver,
-  type LocalAccountExchangePolicy,
-} from "./services/local-account-auth.js";
-import { createLocalAccountSessionRevocation } from "./services/local-account-session-revocation.js";
 import { startManagedMcpOAuthSessionGc } from "./services/mcp/oauth-session-gc.js";
 import { managedMcpOAuthService } from "./services/mcp/oauth.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { serverVersion } from "./version.js";
-
-type BetterAuthSessionUser = {
-  id: string;
-  email?: string | null;
-  name?: string | null;
-};
-
-type BetterAuthSessionResult = {
-  session: { id: string; userId: string } | null;
-  user: BetterAuthSessionUser | null;
-};
 
 const WORKSPACE_BACKUP_SCHEDULER_TICK_MS = 60 * 60 * 1000;
 
@@ -171,20 +157,7 @@ export interface StartServerOptions {
   printBanner?: boolean;
   onEvent?: (event: ServerBootstrapEvent) => void;
   runtimeOwnerKind?: LocalRuntimeOwnerKind | null;
-  localAccountAuth?: {
-    identityOrigin: string;
-    audience: string;
-    sessionSecret: string;
-    secureCookie?: boolean;
-    offline?: {
-      identityKeyId: string;
-      identityPublicKeySpki: string;
-      expectedAccountId: string;
-      expectedDeviceId: string;
-      lastTrustedTimeMs: number;
-      localSignOutEpoch: number;
-    };
-  };
+  localAccountAuth?: LocalAccountAuthOptions;
 }
 
 export interface BootstrapCeoInviteOptions {
@@ -964,93 +937,22 @@ async function startServerRuntime(
     }
   }
   
-  let authReady = config.deploymentMode === "local_trusted";
-  let betterAuthHandler: RequestHandler | undefined;
-  let resolveSession:
-    | ((req: ExpressRequest) => Promise<BetterAuthSessionResult | null>)
-    | undefined;
-  let resolveSessionFromHeaders:
-    | ((headers: Headers) => Promise<BetterAuthSessionResult | null>)
-    | undefined;
-  let localAccountExchangePolicy: LocalAccountExchangePolicy | undefined;
-  if (config.deploymentMode === "local_trusted") {
-    await ensureLocalTrustedBoardPrincipal(db as any);
-  }
-  if (options.localAccountAuth) {
-    if (config.deploymentMode !== "local_trusted" || !isLoopbackHost(config.host)) {
-      throw new Error("Desktop account authentication is supported only by a loopback local_trusted runtime");
-    }
-    const localAuth = options.localAccountAuth;
-    localAccountExchangePolicy = {
-      expectedIssuer: new URL(localAuth.identityOrigin).origin,
-      audience: localAuth.audience,
-      installationId: instanceId,
-      sessionSecret: localAuth.sessionSecret,
-      secureCookie: localAuth.secureCookie ?? false,
-      offline: localAuth.offline,
-      verifier: createIdentityServerExchangeVerifier({
-        identityOrigin: localAuth.identityOrigin,
-        expectedAudience: localAuth.audience,
-        expectedInstallationId: instanceId,
-      }),
-    };
-    const resolveLocalSession = createLocalAccountSessionResolver(db as any, {
-      sessionSecret: localAuth.sessionSecret,
-      secureCookie: localAuth.secureCookie ?? false,
-    });
-    resolveSession = (req) => resolveLocalSession(req.headers);
-    resolveSessionFromHeaders = (headers) => {
-      const rawHeaders: Record<string, string> = {};
-      headers.forEach((value, key) => { rawHeaders[key] = value; });
-      return resolveLocalSession(rawHeaders);
-    };
-    authReady = true;
-  }
-  if (config.deploymentMode === "authenticated") {
-    const {
-      createBetterAuthHandler,
-      createBetterAuthInstance,
-      deriveAuthTrustedOrigins,
-      resolveBetterAuthSession,
-      resolveBetterAuthSessionFromHeaders,
-    } = await import("./auth/better-auth.js");
-    const betterAuthSecret =
-      process.env.BETTER_AUTH_SECRET?.trim() ?? process.env.RUDDER_AGENT_JWT_SECRET?.trim();
-    if (!betterAuthSecret) {
-      throw new Error(
-        "authenticated mode requires BETTER_AUTH_SECRET (or RUDDER_AGENT_JWT_SECRET) to be set",
-      );
-    }
-    const derivedTrustedOrigins = deriveAuthTrustedOrigins(config);
-    const envTrustedOrigins = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
-    const effectiveTrustedOrigins = Array.from(new Set([...derivedTrustedOrigins, ...envTrustedOrigins]));
-    logger.info(
-      {
-        authBaseUrlMode: config.authBaseUrlMode,
-        authPublicBaseUrl: config.authPublicBaseUrl ?? null,
-        trustedOrigins: effectiveTrustedOrigins,
-        trustedOriginsSource: {
-          derived: derivedTrustedOrigins.length,
-          env: envTrustedOrigins.length,
-        },
-      },
-      "Authenticated mode auth origin configuration",
-    );
-    const auth = createBetterAuthInstance(db as any, config, effectiveTrustedOrigins);
-    betterAuthHandler = createBetterAuthHandler(auth);
-    resolveSession = (req) => resolveBetterAuthSession(auth, req);
-    resolveSessionFromHeaders = (headers) => resolveBetterAuthSessionFromHeaders(auth, headers);
-    await initializeBoardClaimChallenge(db as any, { deploymentMode: config.deploymentMode });
-    authReady = true;
-  }
+  const {
+    authReady,
+    betterAuthHandler,
+    resolveSession,
+    resolveSessionFromHeaders,
+    localAccountExchangePolicy,
+    localAccountSessionRevocation,
+  } = await createAuthRuntime({
+    db: db as any,
+    config,
+    instanceId,
+    localAccountAuth: options.localAccountAuth,
+    ensureLocalTrustedBoardPrincipal: () => ensureLocalTrustedBoardPrincipal(db as any),
+  });
   
   const listenPort = await detectPort(config.port);
-  const localAccountSessionRevocation = options.localAccountAuth
-    ? createLocalAccountSessionRevocation()
-    : undefined;
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   options.onEvent?.({ stage: "app", message: "Creating Rudder app" });
