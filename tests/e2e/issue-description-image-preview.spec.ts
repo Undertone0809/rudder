@@ -15,6 +15,79 @@ async function placeCaretAtEnd(locator: Locator) {
   });
 }
 
+test("opening and blurring a list description does not rewrite the issue", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+    data: { name: `Issue-Description-Noop-${Date.now()}` },
+  });
+  expect(orgRes.ok(), await orgRes.text()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const originalDescription = "Regression context\n\n- first item\n- second item";
+
+  const issueRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Description must not rewrite itself",
+      description: originalDescription,
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok(), await issueRes.text()).toBe(true);
+  const issue = await issueRes.json() as {
+    id: string;
+    identifier: string | null;
+    updatedAt: string;
+  };
+
+  const descriptionPatches: unknown[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    const issuePaths = new Set([
+      `/api/issues/${issue.id}`,
+      `/api/issues/${issue.identifier ?? issue.id}`,
+    ]);
+    if (request.method() !== "PATCH" || !issuePaths.has(url.pathname)) return;
+    descriptionPatches.push(request.postDataJSON());
+  });
+
+  await page.goto(E2E_BASE_URL, { waitUntil: "domcontentloaded" });
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/issues/${issue.identifier ?? issue.id}`);
+
+  const editor = page.locator(".rudder-issue-description-markdown .ProseMirror");
+  await expect(editor).toBeVisible();
+  await page.waitForTimeout(1_200);
+  await page.getByRole("region", { name: "Issue properties" }).getByText("Properties", { exact: true }).click();
+  await page.waitForTimeout(1_000);
+  expect(descriptionPatches).toEqual([]);
+
+  const unchangedRes = await page.request.get(`${E2E_BASE_URL}/api/issues/${issue.id}`);
+  expect(unchangedRes.ok(), await unchangedRes.text()).toBe(true);
+  const unchanged = await unchangedRes.json() as { description: string | null; updatedAt: string };
+  expect(unchanged.description).toBe(originalDescription);
+  expect(unchanged.updatedAt).toBe(issue.updatedAt);
+
+  await placeCaretAtEnd(editor.locator(":scope > p", { hasText: "Regression context" }));
+  await page.keyboard.type(" updated");
+  await page.getByRole("region", { name: "Issue properties" }).getByText("Properties", { exact: true }).click();
+
+  await expect.poll(() => descriptionPatches.length).toBe(1);
+  await expect.poll(async () => {
+    const response = await page.request.get(`${E2E_BASE_URL}/api/issues/${issue.id}`);
+    expect(response.ok()).toBe(true);
+    const updated = await response.json() as { description: string | null };
+    return updated.description;
+  }).toContain("Regression context updated");
+  await page.screenshot({
+    path: "/tmp/rudder-time-display-fix-verified.png",
+    fullPage: false,
+  });
+});
+
 test("issue description stays Library-style editable and preserves Enter-created paragraphs", async ({ page }) => {
   test.setTimeout(120_000);
 

@@ -90,6 +90,38 @@ describe("ActivityCoordinator", () => {
     expect(coordinator.getSummary("run:run-1")?.status).toBe("running");
   });
 
+  it("refreshes issue content without treating it as new Messenger activity", () => {
+    const coordinator = new ActivityCoordinator("org-1");
+    coordinator.updateSummary("issue:issue-1", {
+      latestActivityAt: "2026-07-28T09:00:00.000Z",
+      previewRevision: 4,
+    });
+    coordinator.updateSummary("run:run-1", {
+      latestActivityAt: "2026-07-28T09:30:00.000Z",
+      previewRevision: 2,
+    });
+
+    coordinator.publishLiveEvent(event({
+      type: "issue.content_updated",
+      createdAt: "2026-07-28T10:00:00.000Z",
+      payload: {
+        runId: "run-1",
+        entityType: "issue",
+        entityId: "issue-1",
+        details: { description: "Refreshed description" },
+      },
+    }));
+
+    expect(coordinator.getSummary("issue:issue-1")).toMatchObject({
+      latestActivityAt: "2026-07-28T09:00:00.000Z",
+      previewRevision: 5,
+    });
+    expect(coordinator.getSummary("run:run-1")).toMatchObject({
+      latestActivityAt: "2026-07-28T09:30:00.000Z",
+      previewRevision: 3,
+    });
+  });
+
   it("reference-counts detail leases", () => {
     const coordinator = new ActivityCoordinator("org-1");
     const first = coordinator.acquireDetail("run:run-1");

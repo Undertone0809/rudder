@@ -951,6 +951,93 @@ export function issueService(db: Db) {
       if (!existing) return null;
 
       const { labelIds: nextLabelIds, ...issueData } = data;
+      const hasIssueFieldChangesFrom = (current: typeof existing) => Object.entries(issueData).some(([key, value]) => {
+        const currentValue = current[key as keyof typeof current];
+        if (currentValue instanceof Date || value instanceof Date) {
+          const currentTime = currentValue instanceof Date
+            ? currentValue.getTime()
+            : new Date(String(currentValue)).getTime();
+          const nextTime = value instanceof Date
+            ? value.getTime()
+            : new Date(String(value)).getTime();
+          return !Number.isFinite(currentTime) || !Number.isFinite(nextTime) || currentTime !== nextTime;
+        }
+        if (typeof currentValue === "object" || typeof value === "object") {
+          return JSON.stringify(currentValue ?? null) !== JSON.stringify(value ?? null);
+        }
+        return currentValue !== value;
+      });
+      const labelSetsDiffer = (currentLabelIds: string[]) => {
+        if (nextLabelIds === undefined) return false;
+        const currentSet = new Set(currentLabelIds);
+        const nextSet = new Set(nextLabelIds);
+        return currentSet.size !== nextSet.size
+          || [...currentSet].some((labelId) => !nextSet.has(labelId));
+      };
+      const readCurrentLabelIds = async (dbOrTx: any) => dbOrTx
+        .select({ labelId: issueLabels.labelId })
+        .from(issueLabels)
+        .where(eq(issueLabels.issueId, id))
+        .then((rows: Array<{ labelId: string }>) => rows.map((row) => row.labelId));
+      const hasIssueFieldChanges = hasIssueFieldChangesFrom(existing);
+      const hasLabelChanges = nextLabelIds === undefined
+        ? false
+        : labelSetsDiffer(await readCurrentLabelIds(db));
+      const relationshipCondition = authorization
+        ? authorization.relationship === "reviewer"
+          ? eq(issues.reviewerAgentId, authorization.agentId)
+          : or(
+              eq(issues.reviewerAgentId, authorization.agentId),
+              and(
+                eq(issues.assigneeAgentId, authorization.agentId),
+                or(
+                  ne(issues.status, "in_progress"),
+                  authorization.runId
+                    ? and(
+                        eq(issues.status, "in_progress"),
+                        eq(issues.checkoutRunId, authorization.runId),
+                      )
+                    : sql`false`,
+                ),
+              ),
+            )
+        : undefined;
+      const authorizationCondition = relationshipCondition && authorization?.requireReviewableStatus
+        ? and(relationshipCondition, inArray(issues.status, ["in_review", "blocked"]))
+        : relationshipCondition;
+      if (!hasIssueFieldChanges && !hasLabelChanges) {
+        return db.transaction(async (tx) => {
+          const current = await tx
+            .select()
+            .from(issues)
+            .where(
+              authorizationCondition
+                ? and(eq(issues.id, id), authorizationCondition)
+                : eq(issues.id, id),
+            )
+            .for("update")
+            .then((rows) => rows[0] ?? null);
+          if (!current) {
+            if (!authorization) return null;
+            throw conflict("Issue relationship or review state changed before update", {
+              issueId: id,
+              agentId: authorization.agentId,
+            });
+          }
+          if (hasIssueFieldChangesFrom(current)) {
+            throw conflict("Issue changed before no-op update could be confirmed", {
+              issueId: id,
+            });
+          }
+          if (nextLabelIds !== undefined && labelSetsDiffer(await readCurrentLabelIds(tx))) {
+            throw conflict("Issue labels changed before no-op update could be confirmed", {
+              issueId: id,
+            });
+          }
+          const [enriched] = await withIssueLabels(tx, [current]);
+          return enriched;
+        });
+      }
 
       if (issueData.status) {
         assertTransition(existing.status, issueData.status);
@@ -1050,28 +1137,6 @@ export function issueService(db: Db) {
           goalId: issueData.goalId,
           defaultGoalId: defaultCompanyGoal?.id ?? null,
         });
-        const relationshipCondition = authorization
-          ? authorization.relationship === "reviewer"
-            ? eq(issues.reviewerAgentId, authorization.agentId)
-            : or(
-                eq(issues.reviewerAgentId, authorization.agentId),
-                and(
-                  eq(issues.assigneeAgentId, authorization.agentId),
-                  or(
-                    ne(issues.status, "in_progress"),
-                    authorization.runId
-                      ? and(
-                          eq(issues.status, "in_progress"),
-                          eq(issues.checkoutRunId, authorization.runId),
-                        )
-                      : sql`false`,
-                  ),
-                ),
-              )
-          : undefined;
-        const authorizationCondition = relationshipCondition && authorization?.requireReviewableStatus
-          ? and(relationshipCondition, inArray(issues.status, ["in_review", "blocked"]))
-          : relationshipCondition;
         const updated = await tx
           .update(issues)
           .set(patch)

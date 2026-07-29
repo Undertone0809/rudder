@@ -1113,6 +1113,8 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   }, [mentions, resolvedIssueMentions]);
   const containerRef = useRef<HTMLDivElement>(null);
   const latestValueRef = useRef(editorValue);
+  const userEditPendingRef = useRef(false);
+  const userEditPendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onChangeRef = useRef(onChange);
   const onBlurRef = useRef(onBlur);
   const imageUploadHandlerRef = useRef(imageUploadHandler);
@@ -1137,12 +1139,51 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     imageUploadHandlerRef.current = imageUploadHandler;
   }, [imageUploadHandler, onBlur, onChange]);
 
+  const clearUserEditPending = useCallback(() => {
+    if (userEditPendingTimerRef.current) {
+      clearTimeout(userEditPendingTimerRef.current);
+      userEditPendingTimerRef.current = null;
+    }
+  }, []);
+
+  const markUserEditPending = useCallback(() => {
+    clearUserEditPending();
+    userEditPendingRef.current = true;
+    userEditPendingTimerRef.current = setTimeout(() => {
+      userEditPendingRef.current = false;
+      userEditPendingTimerRef.current = null;
+    }, 1_000);
+  }, [clearUserEditPending]);
+
+  useEffect(() => () => {
+    if (userEditPendingTimerRef.current) {
+      clearTimeout(userEditPendingTimerRef.current);
+    }
+  }, []);
+
+  const finishUserEdit = useCallback(() => {
+    userEditPendingRef.current = false;
+    if (userEditPendingTimerRef.current) {
+      clearTimeout(userEditPendingTimerRef.current);
+      userEditPendingTimerRef.current = null;
+    }
+  }, []);
+
+  const publishUserMarkdown = useCallback((markdown: string) => {
+    if (markdown === latestValueRef.current) return false;
+    latestValueRef.current = markdown;
+    finishUserEdit();
+    onChangeRef.current(markdown);
+    return true;
+  }, [finishUserEdit]);
+
   const tokenDecorationsPlugin = useMemo(
     () => $prose(() => new ProsePlugin({
       props: {
         decorations: (state) => buildMilkdownTokenDecorations(state.doc as unknown as ProseMirrorDoc, mentionsRef.current),
         handleDOMEvents: {
           beforeinput: (view, event) => {
+            markUserEditPending();
             const inputEvent = event as InputEvent;
             if (inputEvent.inputType === "insertCompositionText") {
               moveSelectionAfterRudderTokenBoundary(view as unknown as ProseMirrorView);
@@ -1156,13 +1197,14 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
             return true;
           },
           input: (view) => {
+            markUserEditPending();
             insertMissingRudderTokenBoundarySpaces(view as unknown as ProseMirrorView);
             return false;
           },
         },
       },
     })),
-    [],
+    [markUserEditPending],
   );
 
   const { get } = useEditor((root) =>
@@ -1174,10 +1216,17 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         const listenerManager = ctx.get(listenerCtx);
         listenerManager.markdownUpdated((listenerCtx, markdown) => {
           if (!getMilkdownProseMirrorView(listenerCtx)) return;
+          const shouldPublish = userEditPendingRef.current;
+          const changed = markdown !== latestValueRef.current;
           latestValueRef.current = markdown;
+          if (!shouldPublish || !changed) return;
+          finishUserEdit();
           onChangeRef.current(markdown);
         });
-        listenerManager.blur(() => {
+        listenerManager.blur((listenerCtx) => {
+          if (userEditPendingRef.current && getMilkdownProseMirrorView(listenerCtx)) {
+            publishUserMarkdown(getMarkdown()(listenerCtx));
+          }
           onBlurRef.current?.();
         });
       })
@@ -1239,6 +1288,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
 
   const runHistoryCommand = useCallback((direction: "undo" | "redo") => {
     let handled = false;
+    markUserEditPending();
     const editor = loading ? get() : getInstance();
     editor?.action((ctx) => {
       const view = getMilkdownProseMirrorView(ctx);
@@ -1246,8 +1296,9 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       handled = ctx.get(commandsCtx).call(direction === "undo" ? undoCommand.key : redoCommand.key);
       if (handled) view.focus?.();
     });
+    if (!handled) finishUserEdit();
     return handled;
-  }, [get, getInstance, loading]);
+  }, [finishUserEdit, get, getInstance, loading, markUserEditPending]);
 
   const getHistoryAvailability = useCallback((direction: "undo" | "redo") => {
     let available = false;
@@ -1264,6 +1315,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   const insertTextAtSelection = useCallback((text: string) => {
     if (!text) return false;
     let inserted = false;
+    markUserEditPending();
     const editor = loading ? get() : getInstance();
     editor?.action((ctx) => {
       const view = getMilkdownProseMirrorView(ctx);
@@ -1273,8 +1325,9 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       view.focus?.();
       inserted = true;
     });
+    if (!inserted) finishUserEdit();
     return inserted;
-  }, [get, getInstance, loading]);
+  }, [finishUserEdit, get, getInstance, loading, markUserEditPending]);
 
   const repairUnexpectedBlankDom = useCallback(() => {
     const editable = containerRef.current?.querySelector('[contenteditable="true"]');
@@ -1458,13 +1511,11 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       );
     });
     if (insertedInEditor && next !== latestValueRef.current) {
-      latestValueRef.current = next;
-      onChangeRef.current(next);
+      publishUserMarkdown(next);
     }
     if (!insertedInEditor) {
       if (next !== latestValueRef.current) {
-        latestValueRef.current = next;
-        onChangeRef.current(next);
+        publishUserMarkdown(next);
         editor?.action(runWhenMilkdownViewReady(replaceAll(next, true)));
       }
     }
@@ -1482,7 +1533,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     });
     mentionStateRef.current = null;
     setMentionState(null);
-  }, [get, getInstance, loading]);
+  }, [get, getInstance, loading, publishUserMarkdown]);
 
   const removeAdjacentRudderToken = useCallback((direction: "backward" | "forward") => {
     const editor = loading ? get() : getInstance();
@@ -1513,11 +1564,12 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       setUploadError(null);
       const markdown = `![${file.name}](${src})\n\n`;
       const editor = loading ? get() : getInstance();
+      markUserEditPending();
       editor?.action(runWhenMilkdownViewReady(insert(markdown, false)));
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "Image upload failed");
     }
-  }, [get, getInstance, loading]);
+  }, [get, getInstance, loading, markUserEditPending]);
   const uploadImages = useCallback(async (files: File[]) => {
     for (const file of files) {
       await uploadImage(file);
@@ -1552,6 +1604,16 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
           event.stopPropagation();
           onSubmit();
           return;
+        }
+
+        if (
+          isPrintableInputKey(event)
+          || event.key === "Backspace"
+          || event.key === "Delete"
+          || event.key === "Enter"
+          || ((event.metaKey || event.ctrlKey) && (event.key.toLowerCase() === "z" || event.key.toLowerCase() === "y"))
+        ) {
+          markUserEditPending();
         }
 
         if (event.key === "Backspace" || event.key === "Delete") {
@@ -1603,18 +1665,17 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         }
       }}
       onInputCapture={() => {
+        markUserEditPending();
         const editor = loading ? get() : getInstance();
         editor?.action((ctx) => {
           const view = getMilkdownProseMirrorView(ctx);
           if (!view) return;
           insertMissingRudderTokenBoundarySpaces(view);
           const markdown = getMarkdown()(ctx);
-          if (markdown !== latestValueRef.current) {
-            latestValueRef.current = markdown;
-            onChangeRef.current(markdown);
-          }
+          publishUserMarkdown(markdown);
         });
       }}
+      onCutCapture={markUserEditPending}
       onCopyCapture={(event) => {
         const selection = window.getSelection();
         const editable = containerRef.current?.querySelector('[contenteditable="true"]');
@@ -1734,6 +1795,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       onKeyUpCapture={checkMention}
       onMouseUpCapture={checkMention}
       onPasteCapture={(event) => {
+        markUserEditPending();
         if (canDropImage && hasFilePayload(event)) {
           const files = imageFilesFromFileList(event.clipboardData.files);
           if (files.length === 0) return;
@@ -1760,6 +1822,9 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       }}
       onDragLeave={() => {
         setIsDragOver(false);
+      }}
+      onDropCapture={() => {
+        markUserEditPending();
       }}
       onDrop={(event) => {
         setIsDragOver(false);
