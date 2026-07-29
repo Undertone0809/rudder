@@ -2780,7 +2780,6 @@ export function messengerService(db: Db) {
     const syntheticAfterCursor = syntheticSummaries.filter((summary) => threadSummaryIsAfterCursor(summary, cursor));
     const chatAfter = cursor && !cursor.isPinned
       ? {
-        attentionRank: cursor.attentionRank,
         activityAt: new Date(cursor.activityAt),
         title: cursor.title,
         threadKey: cursor.threadKey,

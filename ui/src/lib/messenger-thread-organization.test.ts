@@ -10,7 +10,6 @@ import {
   flattenThreadSectionEntries,
   flattenThreadSections,
   locallyReadThreadSummary,
-  messengerThreadAttentionRank,
   nextDefaultThreadOrderKeysAfterMove,
   organizeCustomThreadDirectory,
   organizeProjectThreadDirectory,
@@ -217,7 +216,7 @@ describe("messenger thread organization", () => {
     )).toEqual(["chat:hidden", "chat:c", "chat:a", "chat:b"]);
   });
 
-  it("orders unread or attention work before processing work and settled work", () => {
+  it("orders work by latest activity regardless of unread or processing state", () => {
     const entries = [
       entry("chat:new-read", {
         latestActivityAt: new Date("2026-07-17T08:05:00.000Z"),
@@ -244,16 +243,15 @@ describe("messenger thread organization", () => {
     ].sort(compareThreadEntries);
 
     expect(entries.map((item) => item.thread.threadKey)).toEqual([
-      "chat:older-unread",
-      "issue:attention-and-processing",
+      "chat:new-read",
       "issue:newer-processing",
       "chat:older-processing",
-      "chat:new-read",
+      "chat:older-unread",
+      "issue:attention-and-processing",
     ]);
-    expect(entries.map((item) => messengerThreadAttentionRank(item.thread))).toEqual([0, 0, 1, 1, 2]);
   });
 
-  it("keeps pinning above attention rank and manual order within each rank", () => {
+  it("keeps pinning above the persisted manual order", () => {
     const sections = organizeCustomThreadDirectory(
       [
         entry("chat:pinned-read", { isPinned: true }),
@@ -267,13 +265,13 @@ describe("messenger thread organization", () => {
 
     expect(flattenThreadSectionEntries(sections).map((item) => item.thread.threadKey)).toEqual([
       "chat:pinned-read",
+      "chat:read",
       "chat:unread",
       "chat:processing",
-      "chat:read",
     ]);
   });
 
-  it("applies attention rank within project and custom-group boundaries", () => {
+  it("uses latest activity in projects and preserves custom-group order", () => {
     const projectConversation = conversation("project", {
       contextLinks: [{
         entityType: "project",
@@ -282,14 +280,22 @@ describe("messenger thread organization", () => {
       } as ChatConversation["contextLinks"][number]],
     });
     const projectSections = organizeThreadEntries([
-      entry("chat:project-read", {}, projectConversation),
-      entry("chat:project-processing", { metadata: { isProcessing: true } }, projectConversation),
-      entry("chat:project-unread", { unreadCount: 1 }, projectConversation),
+      entry("chat:project-read", {
+        latestActivityAt: new Date("2026-07-17T08:03:00.000Z"),
+      }, projectConversation),
+      entry("chat:project-processing", {
+        latestActivityAt: new Date("2026-07-17T08:02:00.000Z"),
+        metadata: { isProcessing: true },
+      }, projectConversation),
+      entry("chat:project-unread", {
+        latestActivityAt: new Date("2026-07-17T08:01:00.000Z"),
+        unreadCount: 1,
+      }, projectConversation),
     ], "project", new Map(), new Map(), (kind) => kind);
     expect(projectSections[0]?.entries.map((item) => item.thread.threadKey)).toEqual([
-      "chat:project-unread",
-      "chat:project-processing",
       "chat:project-read",
+      "chat:project-processing",
+      "chat:project-unread",
     ]);
 
     const customSections = organizeProjectThreadDirectory([], [{
@@ -303,7 +309,7 @@ describe("messenger thread organization", () => {
       ],
     }], new Map());
     expect(customSections[0]?.childSections?.[0]?.entries.map((item) => item.thread.threadKey))
-      .toEqual(["chat:group-unread", "chat:group-processing", "chat:group-read"]);
+      .toEqual(["chat:group-read", "chat:group-processing", "chat:group-unread"]);
   });
 
   it("never moves an unpinned custom section ahead of a pinned section", () => {

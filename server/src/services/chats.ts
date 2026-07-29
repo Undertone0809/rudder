@@ -39,7 +39,6 @@ import {
 } from "./chat-queued-message-materialization.js";
 import { createChatAnnotationMessagePersistence } from "./chats.annotation-persistence.js";
 import {
-  chatSummaryAttentionSql,
   listActiveChatGenerationIds,
   listPendingChatProposalConversationIds,
 } from "./chats.attention-order.js";
@@ -3557,28 +3556,23 @@ export function chatService(db: Db) {
     ) {
       const status = options?.status ?? "active";
       const conditions = [eq(chatConversations.orgId, orgId)];
-      const { activityAtSql, attentionRankSql, threadKeySql } =
-        chatSummaryAttentionSql(orgId, userId);
+      const activityAtSql =
+        sql<Date>`coalesce(${chatConversations.lastMessageAt}, ${chatConversations.updatedAt})`;
+      const threadKeySql = sql<string>`'chat:' || ${chatConversations.id}`;
       if (status !== "all") {
         conditions.push(eq(chatConversations.status, status));
       }
       if (options?.after) {
         const afterActivityAt = options.after.activityAt.toISOString();
         conditions.push(sql<boolean>`(
-          ${attentionRankSql} > ${options.after.attentionRank}
+          ${activityAtSql} < ${afterActivityAt}
           OR (
-            ${attentionRankSql} = ${options.after.attentionRank}
+            ${activityAtSql} = ${afterActivityAt}
             AND (
-              ${activityAtSql} < ${afterActivityAt}
+              ${chatConversations.title} > ${options.after.title}
               OR (
-                ${activityAtSql} = ${afterActivityAt}
-                AND (
-                  ${chatConversations.title} > ${options.after.title}
-                  OR (
-                    ${chatConversations.title} = ${options.after.title}
-                    AND ${threadKeySql} > ${options.after.threadKey}
-                  )
-                )
+                ${chatConversations.title} = ${options.after.title}
+                AND ${threadKeySql} > ${options.after.threadKey}
               )
             )
           )
@@ -3598,7 +3592,7 @@ export function chatService(db: Db) {
         .select()
         .from(chatConversations)
         .where(and(...conditions))
-        .orderBy(asc(attentionRankSql), desc(activityAtSql), chatConversations.title, chatConversations.id)
+        .orderBy(desc(activityAtSql), chatConversations.title, chatConversations.id)
         .$dynamic();
       if (typeof options?.limit === "number" && Number.isFinite(options.limit)) {
         query = query.limit(Math.max(1, Math.floor(options.limit)));
