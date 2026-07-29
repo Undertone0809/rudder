@@ -1,5 +1,12 @@
 import { Paperclip } from "lucide-react";
-import { useCallback, useRef, useState, type DragEvent as ReactDragEvent } from "react";
+import {
+  useCallback,
+  useRef,
+  useState,
+  type ClipboardEvent as ReactClipboardEvent,
+  type DragEvent as ReactDragEvent,
+} from "react";
+import { clipboardAttachmentPayloadKey } from "./Chat.workspace-helpers";
 
 function isFileDrag(event: ReactDragEvent<HTMLElement>) {
   const transfer = event.dataTransfer;
@@ -51,6 +58,40 @@ export function useChatComposerFileDrop(
       onDrop,
     },
   };
+}
+
+export function useChatComposerPasteAttachments(
+  onFiles: (files: Iterable<File>) => void | Promise<void>,
+) {
+  return useCallback((event: ReactClipboardEvent<HTMLElement>) => {
+    const clipboardData = event.clipboardData;
+    const filesFromItems = Array.from(clipboardData?.items ?? [])
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file instanceof File);
+    const seenItemPayloads = new Map<string, number>();
+    for (const file of filesFromItems) {
+      const key = clipboardAttachmentPayloadKey(file);
+      seenItemPayloads.set(key, (seenItemPayloads.get(key) ?? 0) + 1);
+    }
+    const filesFromList = Array.from(clipboardData?.files ?? [])
+      .filter((file) => {
+        const key = clipboardAttachmentPayloadKey(file);
+        const remaining = seenItemPayloads.get(key) ?? 0;
+        if (remaining <= 0) return true;
+        if (remaining === 1) {
+          seenItemPayloads.delete(key);
+        } else {
+          seenItemPayloads.set(key, remaining - 1);
+        }
+        return false;
+      });
+    const files = [...filesFromItems, ...filesFromList];
+    if (files.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void onFiles(files);
+  }, [onFiles]);
 }
 
 export function ChatComposerFileDropOverlay() {

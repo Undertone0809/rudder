@@ -4,18 +4,21 @@ import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
-import { MarkdownEditor } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
+import {
+  ChatComposerAddMenu,
+  ChatComposerContextMenu,
+  ChatComposerEditor,
+  ChatComposerSendButton,
+  ChatComposerSkillsButton,
+  ChatComposerSkillsMenuContent,
+  ChatComposerSurface,
+  ChatComposerToolbar,
+} from "@/components/chat/ChatComposer";
 import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import type { ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
@@ -32,6 +35,11 @@ import { queryKeys } from "@/lib/queryKeys";
 import { latestSideChatAnchor, sideChatConversationMessages, sideChatIsReadOnly } from "@/lib/side-chat";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { PendingAttachmentPreview } from "@/pages/Chat.attachments";
+import {
+  ChatComposerFileDropOverlay,
+  useChatComposerFileDrop,
+  useChatComposerPasteAttachments,
+} from "@/pages/Chat.file-drop";
 import { AssistantDraftItem, ChatMessageItem, StreamTranscriptItem } from "@/pages/Chat.messages";
 import {
   ChatAgentMenuContent,
@@ -42,6 +50,7 @@ import {
   type ChatRuntimeOverrides,
 } from "@/pages/Chat.model-selector";
 import {
+  composerMenuPositionForAnchor,
   materializePendingAttachment,
   mergeChatMessages,
   pendingAttachmentKey,
@@ -53,7 +62,7 @@ import type {
   ChatMessage,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Clock3, Loader2, Paperclip, Plus } from "lucide-react";
+import { Clock3 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -63,6 +72,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import { createPortal } from "react-dom";
 
 type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
 
@@ -114,7 +124,7 @@ export function SideChatPanelView({
   const [now, setNow] = useState(() => new Date());
   const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string | null>(null);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
-  const [agentMenuPosition, setAgentMenuPosition] = useState<CSSProperties | null>(null);
+  const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [skillMenuOpen, setSkillMenuOpen] = useState(false);
   const [skillSearchQuery, setSkillSearchQuery] = useState("");
@@ -128,7 +138,10 @@ export function SideChatPanelView({
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const editingAnnotationAnchorRef = useRef<HTMLButtonElement | null>(null);
   const annotationDetailsChipRef = useRef<HTMLButtonElement | null>(null);
-  const agentMenuRef = useRef<HTMLDivElement | null>(null);
+  const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const composerContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const skillSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const skillButtonRef = useRef<HTMLButtonElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftAgentInitializedRef = useRef(false);
   const closeRequestedRef = useRef(false);
@@ -337,7 +350,7 @@ export function SideChatPanelView({
     setSkillSearchQuery("");
   };
 
-  const appendPendingFiles = async (incomingFiles: Iterable<File>) => {
+  const appendPendingFiles = useCallback(async (incomingFiles: Iterable<File>) => {
     const files = Array.from(incomingFiles).filter((file) => file.size > 0);
     if (files.length === 0) return;
     try {
@@ -349,7 +362,14 @@ export function SideChatPanelView({
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Could not stage this attachment.");
     }
-  };
+  }, []);
+  const handlePendingAttachmentPasteCapture = useChatComposerPasteAttachments(
+    appendPendingFiles,
+  );
+  const {
+    active: composerFileDragActive,
+    targetProps: composerFileDropTargetProps,
+  } = useChatComposerFileDrop(appendPendingFiles);
   const insertSkillReference = (entry: (typeof availableChatSkills)[number]) => {
     if (!entry.skillRefLabel || !entry.skillMarkdownTarget) return;
     setDraft((current) => appendSkillReferencesToDraft(
@@ -539,23 +559,33 @@ export function SideChatPanelView({
     : agentsQuery.isPending
       ? "Loading agents"
       : "No agent";
+  const composerContextMenuOpen = agentMenuOpen || skillMenuOpen;
+  const closeComposerContextMenus = useCallback(() => {
+    setAgentMenuOpen(false);
+    setSkillMenuOpen(false);
+    setSkillSearchQuery("");
+  }, []);
+  const openComposerContextMenu = useCallback((kind: "agent" | "skill") => {
+    const anchor = kind === "agent"
+      ? runtimeSelectorRef.current ?? composerSurfaceRef.current
+      : composerSurfaceRef.current;
+    if (anchor) setComposerMenuPosition(composerMenuPositionForAnchor(anchor));
+    setAgentMenuOpen(kind === "agent");
+    setSkillMenuOpen(kind === "skill");
+    if (kind !== "skill") setSkillSearchQuery("");
+  }, [runtimeSelectorRef]);
 
   useEffect(() => {
-    if (!agentMenuOpen) {
-      setAgentMenuPosition(null);
+    if (!composerContextMenuOpen) {
+      setComposerMenuPosition(null);
       return;
     }
     const updatePosition = () => {
-      const anchor = runtimeSelectorRef.current;
+      const anchor = agentMenuOpen
+        ? runtimeSelectorRef.current ?? composerSurfaceRef.current
+        : composerSurfaceRef.current;
       if (!anchor) return;
-      const rect = anchor.getBoundingClientRect();
-      const width = Math.min(360, window.innerWidth - 24);
-      setAgentMenuPosition({
-        left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
-        bottom: Math.max(12, window.innerHeight - rect.top + 8),
-        width,
-        maxHeight: Math.max(180, rect.top - 24),
-      });
+      setComposerMenuPosition(composerMenuPositionForAnchor(anchor));
     };
     updatePosition();
     window.addEventListener("resize", updatePosition);
@@ -564,21 +594,28 @@ export function SideChatPanelView({
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [agentMenuOpen, runtimeSelectorRef]);
+  }, [agentMenuOpen, composerContextMenuOpen, runtimeSelectorRef]);
 
   useEffect(() => {
-    if (!agentMenuOpen) return;
+    if (!composerContextMenuOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
       const node = event.target;
       if (!(node instanceof Node)) return;
       if (node instanceof Element && node.closest("[data-chat-runtime-submenu]")) return;
-      if (agentMenuRef.current?.contains(node) || runtimeSelectorRef.current?.contains(node)) return;
-      setAgentMenuOpen(false);
+      if (composerContextMenuRef.current?.contains(node)) return;
+      if (runtimeSelectorRef.current?.contains(node)) return;
+      closeComposerContextMenus();
     };
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      setAgentMenuOpen(false);
-      requestAnimationFrame(() => runtimeSelectorRef.current?.focus());
+      const restoreRuntimeFocus = agentMenuOpen;
+      const restoreSkillsFocus = skillMenuOpen;
+      closeComposerContextMenus();
+      if (restoreRuntimeFocus) {
+        requestAnimationFrame(() => runtimeSelectorRef.current?.focus());
+      } else if (restoreSkillsFocus) {
+        requestAnimationFrame(() => skillButtonRef.current?.focus());
+      }
     };
     document.addEventListener("pointerdown", handlePointerDown, true);
     document.addEventListener("keydown", handleKeyDown);
@@ -586,7 +623,25 @@ export function SideChatPanelView({
       document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [agentMenuOpen, runtimeSelectorRef]);
+  }, [
+    agentMenuOpen,
+    closeComposerContextMenus,
+    composerContextMenuOpen,
+    runtimeSelectorRef,
+    skillMenuOpen,
+  ]);
+  useEffect(() => {
+    if (!agentMenuOpen) return;
+    requestAnimationFrame(() => {
+      composerContextMenuRef.current
+        ?.querySelector<HTMLButtonElement>("[data-chat-composer-menu-item]")
+        ?.focus();
+    });
+  }, [agentMenuOpen]);
+  useEffect(() => {
+    if (!skillMenuOpen) return;
+    requestAnimationFrame(() => skillSearchInputRef.current?.focus());
+  }, [skillMenuOpen]);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="side-chat-panel-view">
@@ -671,7 +726,14 @@ export function SideChatPanelView({
 
       {!readOnly ? (
         <div className="shrink-0 px-4 pb-4" data-testid="side-chat-composer">
-          <div className="chat-composer mx-auto w-full max-w-4xl rounded-[var(--radius-lg)] p-3">
+          <ChatComposerSurface
+            ref={composerSurfaceRef}
+            fileDragActive={composerFileDragActive}
+            fileDropTargetProps={composerFileDropTargetProps}
+            className="mx-auto max-w-4xl"
+            testId="side-chat-composer-file-drop-target"
+          >
+            {composerFileDragActive ? <ChatComposerFileDropOverlay /> : null}
             {annotationState.annotations.length > 0 ? (
               <div
                 className="mb-3 flex flex-col items-start gap-2"
@@ -758,7 +820,7 @@ export function SideChatPanelView({
               </div>
             ) : null}
             {pendingFiles.length > 0 ? (
-              <div data-testid="side-chat-pending-attachments" className="mb-2.5 flex flex-wrap gap-2">
+              <div data-testid="side-chat-pending-attachments" className="mb-2.5 flex flex-wrap gap-2 px-3">
                 {pendingFiles.map((file) => {
                   const fileKey = pendingAttachmentKey(file);
                   return (
@@ -774,161 +836,104 @@ export function SideChatPanelView({
                 })}
               </div>
             ) : null}
-            <MarkdownEditor
+            <ChatComposerEditor
               value={draft}
               onChange={setDraft}
-              submitShortcut="enter"
-              plainText
-              bordered={false}
-              className="rounded-[var(--radius-md)] bg-transparent"
-              contentClassName="min-h-[88px] bg-transparent text-[15px] leading-7 text-foreground"
+              onPasteCapture={handlePendingAttachmentPasteCapture}
+              scrollTestId="side-chat-composer-editor-scroll"
               placeholder="Ask a focused follow-up…"
               onSubmit={() => void handleSend()}
             />
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="side-chat-composer-toolbar">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
-                  <DropdownMenuTrigger
-                    type="button"
-                    aria-label="Add files and options"
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="start"
-                    side="top"
-                    sideOffset={8}
-                    className="surface-overlay w-64 rounded-[var(--radius-lg)] border p-1.5 text-foreground"
-                  >
-                    <DropdownMenuItem
-                      className="rounded-[var(--radius-md)] px-3 py-2.5"
-                      onSelect={(event) => {
-                        event.preventDefault();
-                        setPlusMenuOpen(false);
-                        window.setTimeout(() => fileInputRef.current?.click(), 0);
-                      }}
-                    >
-                      <Paperclip className="mr-2 h-4 w-4" />
-                      Add files
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+            <ChatComposerToolbar
+              testId="side-chat-composer-toolbar"
+              actions={(
+                <ChatComposerSendButton
+                  mode={sending ? "sending" : "send"}
+                  ariaLabel={sending ? "Sending Side Chat message" : "Send Side Chat message"}
+                  disabled={
+                    (pendingFiles.length === 0
+                      && !canSubmitChatResponseAnnotations(draft, annotationState))
+                    || sending
+                    || runtimeMutation.isPending
+                    || !selectedAgentId
+                    || noAnchor
+                  }
+                  onClick={() => void handleSend()}
+                />
+              )}
+            >
+                <ChatComposerAddMenu
+                  open={plusMenuOpen}
+                  onOpenChange={setPlusMenuOpen}
+                  onAddFiles={() => fileInputRef.current?.click()}
+                />
                 <ChatAgentSelectorButton
                   buttonRef={runtimeSelectorRef}
                   agent={selectedAgent}
                   label={agentLabel}
                   expanded={agentMenuOpen}
-                  disabled={agentsQuery.isPending || sending || runtimeMutation.isPending}
-                  onClick={() => setAgentMenuOpen((open) => !open)}
-                />
-                <DropdownMenu
-                  open={skillMenuOpen}
-                  onOpenChange={(open) => {
-                    setSkillMenuOpen(open);
-                    if (!open) setSkillSearchQuery("");
+                  disabled={agentsQuery.isPending}
+                  onClick={() => {
+                    if (agentMenuOpen) {
+                      closeComposerContextMenus();
+                      return;
+                    }
+                    openComposerContextMenu("agent");
                   }}
-                >
-                  <DropdownMenuTrigger
-                    type="button"
-                    aria-label="Skills"
-                    className="chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
-                  >
-                    Skills
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="start"
-                    side="top"
-                    sideOffset={8}
-                    className="surface-overlay max-h-[min(60vh,320px)] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
-                  >
-                    {agentSkillsQuery.isPending || organizationSkillsQuery.isPending ? (
-                      <div className="flex items-center gap-2 rounded-[var(--radius-md)] px-3 py-2 text-sm text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Loading skills...
-                      </div>
-                    ) : availableChatSkills.length === 0 ? (
-                      <div className="rounded-[var(--radius-md)] px-3 py-2 text-sm text-muted-foreground">
-                        This agent has no enabled skills.
-                      </div>
-                    ) : (
-                      <>
-                        <div className="p-1">
-                          <input
-                            className="w-full rounded-[var(--radius-md)] border border-border bg-transparent px-2.5 py-2 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-ring"
-                            placeholder="Search skills..."
-                            value={skillSearchQuery}
-                            onChange={(event) => setSkillSearchQuery(event.target.value)}
-                          />
-                        </div>
-                        {filteredChatSkills.length === 0 ? (
-                          <div className="rounded-[var(--radius-md)] px-3 py-2 text-sm text-muted-foreground">
-                            No skills match search.
-                          </div>
-                        ) : filteredChatSkills.map((entry) => (
-                          <DropdownMenuItem
-                            key={entry.skillMarkdownTarget}
-                            className="items-start rounded-[var(--radius-md)] px-3 py-2"
-                            onSelect={() => insertSkillReference(entry)}
-                          >
-                            <span className="flex min-w-0 flex-col">
-                              <span className="truncate text-sm font-medium">{entry.skillDisplayName}</span>
-                              <span className="truncate text-xs text-muted-foreground">
-                                {entry.skillDescription ?? entry.skillLocationLabel ?? entry.skillRefLabel}
-                              </span>
-                            </span>
-                          </DropdownMenuItem>
-                        ))}
-                      </>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-              <button
-                type="button"
-                aria-label="Send Side Chat message"
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:cursor-not-allowed disabled:opacity-45"
-                disabled={
-                  (pendingFiles.length === 0 && !canSubmitChatResponseAnnotations(draft, annotationState))
-                  || sending
-                  || runtimeMutation.isPending
-                  || !selectedAgentId
-                  || noAnchor
-                }
-                onClick={() => void handleSend()}
-              >
-                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
-              </button>
-            </div>
-          </div>
-          {agentMenuOpen && agentMenuPosition ? (
-            <div
-              ref={agentMenuRef}
-              role="menu"
-              aria-label="Side Chat agent"
-              data-testid="side-chat-agent-menu"
-              className="chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay fixed z-50 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
-              style={agentMenuPosition}
-              onKeyDown={handleChatAgentMenuKeyDown}
+                />
+                <ChatComposerSkillsButton
+                  open={skillMenuOpen}
+                  buttonRef={skillButtonRef}
+                  onClick={() => {
+                    if (skillMenuOpen) {
+                      closeComposerContextMenus();
+                      return;
+                    }
+                    openComposerContextMenu("skill");
+                  }}
+                />
+            </ChatComposerToolbar>
+          </ChatComposerSurface>
+          {composerContextMenuOpen && composerMenuPosition && typeof document !== "undefined" ? createPortal(
+            <ChatComposerContextMenu
+              menuRef={composerContextMenuRef}
+              testId={agentMenuOpen ? "side-chat-agent-menu" : "side-chat-skill-menu"}
+              ariaLabel={agentMenuOpen ? "Side Chat agent" : "Side Chat skills"}
+              position={composerMenuPosition}
+              onKeyDown={agentMenuOpen ? handleChatAgentMenuKeyDown : undefined}
             >
-              <ChatAgentMenuContent
-                agents={liveAgents}
-                activeAgentId={selectedAgentId ?? ""}
-                agentSelectionLocked={Boolean(conversation)}
-                runtimeSelectionPending={runtimeMutation.isPending}
-                newConversationSendInFlight={sending}
-                externalBound={false}
-                adapterModels={adapterModelsQuery.data}
-                overrides={activeRuntimeOverrides}
-                runtimeLabel={runtimeLabel}
-                isLoading={adapterModelsQuery.isPending}
-                error={adapterModelsQuery.error}
-                runtimePanelPlacement="above"
-                modelSelectRef={runtimeModelSelectRef}
-                onSelectAgent={applyPreferredAgent}
-                onChangeRuntime={applyRuntimeOverrides}
-              />
-            </div>
+              {agentMenuOpen ? (
+                <ChatAgentMenuContent
+                  agents={liveAgents}
+                  activeAgentId={selectedAgentId ?? ""}
+                  agentSelectionLocked={Boolean(conversation)}
+                  runtimeSelectionPending={runtimeMutation.isPending}
+                  newConversationSendInFlight={sending && !conversation}
+                  externalBound={false}
+                  adapterModels={adapterModelsQuery.data}
+                  overrides={activeRuntimeOverrides}
+                  runtimeLabel={runtimeLabel}
+                  isLoading={adapterModelsQuery.isPending}
+                  error={adapterModelsQuery.error}
+                  runtimePanelPlacement="above"
+                  modelSelectRef={runtimeModelSelectRef}
+                  onSelectAgent={applyPreferredAgent}
+                  onChangeRuntime={applyRuntimeOverrides}
+                />
+              ) : null}
+              {skillMenuOpen ? (
+                <ChatComposerSkillsMenuContent
+                  pending={agentSkillsQuery.isPending || organizationSkillsQuery.isPending}
+                  skills={availableChatSkills}
+                  filteredSkills={filteredChatSkills}
+                  searchQuery={skillSearchQuery}
+                  searchInputRef={skillSearchInputRef}
+                  onSearchQueryChange={setSkillSearchQuery}
+                  onSelect={insertSkillReference}
+                />
+              ) : null}
+            </ChatComposerContextMenu>,
+            document.body,
           ) : null}
           <input
             ref={fileInputRef}

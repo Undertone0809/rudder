@@ -147,6 +147,16 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
   await page.screenshot({ path: testInfo.outputPath("01-assistant-action-draft.png"), fullPage: true });
   await expect(panel.locator(".chat-composer")).toBeVisible();
+  const mainComposerSurface = page.getByTestId("chat-composer-file-drop-target");
+  const sideComposerSurface = panel.getByTestId("side-chat-composer-file-drop-target");
+  await expect(mainComposerSurface).toHaveClass(/chat-composer/);
+  await expect(sideComposerSurface).toHaveClass(/chat-composer/);
+  await expect(mainComposerSurface.getByTestId("chat-composer-toolbar")).toBeVisible();
+  await expect(sideComposerSurface.getByTestId("side-chat-composer-toolbar")).toBeVisible();
+  await expect(mainComposerSurface.getByRole("button", { name: "Send" })).toHaveClass(
+    await sideComposerSurface.getByRole("button", { name: "Send Side Chat message" })
+      .getAttribute("class") ?? "",
+  );
   await expect(panel.getByTestId("side-chat-project-chip")).toHaveCount(0);
   await expect(panel).not.toContainText("No project");
   const agentSelector = panel.getByTestId("side-chat-composer").getByTestId("chat-agent-selector");
@@ -154,6 +164,49 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await panel.getByRole("button", { name: "Add files and options" }).click();
   await expect(page.getByRole("menuitem", { name: "Add files" })).toBeVisible();
   await page.keyboard.press("Escape");
+  await sideComposerSurface.evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["pasted"], "side-chat-pasted.txt", {
+      type: "text/plain",
+    }));
+    element.querySelector('[data-testid="side-chat-composer-editor-scroll"]')
+      ?.dispatchEvent(new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer,
+      }));
+  });
+  await expect(panel.getByTestId("side-chat-pending-attachments")).toContainText(
+    "side-chat-pasted.txt",
+  );
+  await panel.getByRole("button", { name: "Remove side-chat-pasted.txt" }).click();
+  await sideComposerSurface.evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["dropped"], "side-chat-dropped.txt", {
+      type: "text/plain",
+    }));
+    element.dispatchEvent(new DragEvent("dragenter", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    }));
+  });
+  await expect(sideComposerSurface.getByTestId("chat-composer-file-drop-overlay")).toBeVisible();
+  await sideComposerSurface.evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["dropped"], "side-chat-dropped.txt", {
+      type: "text/plain",
+    }));
+    element.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    }));
+  });
+  await expect(panel.getByTestId("side-chat-pending-attachments")).toContainText(
+    "side-chat-dropped.txt",
+  );
+  await panel.getByRole("button", { name: "Remove side-chat-dropped.txt" }).click();
   const sideFileInput = panel.getByTestId("side-chat-composer").locator('input[type="file"]');
   await sideFileInput.setInputFiles({
     name: "side-chat-evidence.txt",
@@ -166,7 +219,11 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await panel.getByRole("button", { name: "Remove side-chat-evidence.txt" }).click();
   await expect(panel.getByTestId("side-chat-pending-attachments")).toHaveCount(0);
   await panel.getByRole("button", { name: "Skills" }).click();
-  const sideChatSkill = page.getByRole("menuitem").filter({ hasText: "Side Chat Research" });
+  const sideChatSkillMenu = page.getByTestId("side-chat-skill-menu");
+  await expect(sideChatSkillMenu).toBeVisible();
+  const sideChatSkill = sideChatSkillMenu
+    .getByRole("menuitem")
+    .filter({ hasText: /Side Chat Research|side-chat-research/ });
   await expect(sideChatSkill).toBeVisible();
   await sideChatSkill.click();
   await expect(sideComposerEditor(panel)).toContainText("side-chat-research");
@@ -175,7 +232,7 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
   await expect(panel).not.toContainText("From the main chat");
   await agentSelector.click();
-  const analystRow = panel.getByTestId(`chat-agent-option-${source.alternateAgent.id}`);
+  const analystRow = page.getByTestId(`chat-agent-option-${source.alternateAgent.id}`);
   await expect(analystRow.getByRole("menuitemradio")).toBeEnabled();
   await analystRow.getByRole("menuitemradio").click();
   await expect(agentSelector).toContainText("Analyst");
@@ -212,18 +269,18 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
     agentSelector.getByLabel("Agent is bound to this chat"),
   ).toHaveCount(0);
   await agentSelector.click();
-  await expect(panel.getByTestId("chat-agent-lock-state")).toContainText("Bound to chat");
+  await expect(page.getByTestId("chat-agent-lock-state")).toContainText("Bound to chat");
   await expect(
-    panel
+    page
       .getByTestId(`chat-agent-option-${source.agent.id}`)
       .getByRole("menuitemradio"),
   ).toBeDisabled();
   await expect(
-    panel
+    page
       .getByTestId(`chat-agent-option-${source.alternateAgent.id}`)
       .getByTestId("chat-agent-runtime-selector"),
   ).toBeVisible();
-  await expect(panel.getByTestId("side-chat-agent-menu")).toBeVisible();
+  await expect(page.getByTestId("side-chat-agent-menu")).toBeVisible();
   await page.waitForTimeout(250);
   await page.screenshot({
     path: testInfo.outputPath(
