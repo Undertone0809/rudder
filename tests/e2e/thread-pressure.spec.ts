@@ -199,6 +199,139 @@ async function measureMessengerFastScrollCoverage(page: Page) {
   });
 }
 
+async function measureMessengerBidirectionalFling(page: Page, durationMs: number) {
+  const session = await page.context().newCDPSession(page);
+  await session.send("Performance.enable");
+  const readTaskDuration = async () => {
+    const result = await session.send("Performance.getMetrics") as {
+      metrics: Array<{ name: string; value: number }>;
+    };
+    return result.metrics.find((metric) => metric.name === "TaskDuration")?.value ?? 0;
+  };
+  const taskDurationBefore = await readTaskDuration();
+  const result = await page.locator("[data-testid='workspace-sidebar'] nav").evaluate(
+    async (element, duration) => {
+      const scrollElement = element as HTMLElement;
+      const frameIntervals: number[] = [];
+      const longTasks: number[] = [];
+      const uncoveredPointCounts: number[] = [];
+      let previousFrame = performance.now();
+      let observer: PerformanceObserver | null = null;
+      if (typeof PerformanceObserver !== "undefined") {
+        observer = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) longTasks.push(entry.duration);
+        });
+        try {
+          observer.observe({ entryTypes: ["longtask"] });
+        } catch {
+          observer = null;
+        }
+      }
+
+      const measureCoverage = () => {
+        const viewport = scrollElement.getBoundingClientRect();
+        const x = viewport.left + viewport.width / 2;
+        const sampleFractions = [0.25, 0.5, 0.75];
+        let uncoveredPoints = 0;
+        for (const fraction of sampleFractions) {
+          const y = viewport.top + viewport.height * fraction;
+          const hit = document.elementFromPoint(x, y) as HTMLElement | null;
+          const covered = Boolean(hit?.closest(
+            "[data-messenger-thread-key], [data-messenger-scroll-coverage-row]",
+          ));
+          if (!covered) uncoveredPoints += 1;
+        }
+        return uncoveredPoints;
+      };
+
+      const startedAt = performance.now();
+      const segmentDurationMs = 650;
+      const lowFraction = 0.08;
+      const highFraction = 0.92;
+      const maxScroll = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+      let frameIndex = 0;
+      let observedDirectionChanges = 0;
+      let lastDirection = 0;
+      let lastScrollTop = scrollElement.scrollTop;
+      let minScrollTop = lastScrollTop;
+      let maxScrollTop = lastScrollTop;
+      await new Promise<void>((resolve) => {
+        const step = (now: number) => {
+          frameIntervals.push(now - previousFrame);
+          previousFrame = now;
+          // Sample the position painted by the previous frame, before writing
+          // the next scroll offset. Sampling at 15Hz catches persistent visual
+          // holes without forcing three synchronous hit tests on every frame.
+          if (frameIndex % 4 === 0) {
+            uncoveredPointCounts.push(measureCoverage());
+          }
+          frameIndex += 1;
+          const elapsed = now - startedAt;
+          const segment = Math.floor(elapsed / segmentDurationMs);
+          const segmentProgress = Math.min(1, (elapsed % segmentDurationMs) / segmentDurationMs);
+          const fraction = segment % 2 === 0
+            ? lowFraction + (highFraction - lowFraction) * segmentProgress
+            : highFraction - (highFraction - lowFraction) * segmentProgress;
+          scrollElement.scrollTop = maxScroll * fraction;
+          const nextScrollTop = scrollElement.scrollTop;
+          const direction = Math.sign(nextScrollTop - lastScrollTop);
+          if (direction !== 0) {
+            if (lastDirection !== 0 && direction !== lastDirection) {
+              observedDirectionChanges += 1;
+            }
+            lastDirection = direction;
+          }
+          lastScrollTop = nextScrollTop;
+          minScrollTop = Math.min(minScrollTop, nextScrollTop);
+          maxScrollTop = Math.max(maxScrollTop, nextScrollTop);
+          if (elapsed < duration) requestAnimationFrame(step);
+          else resolve();
+        };
+        requestAnimationFrame(step);
+      });
+      observer?.disconnect();
+
+      const sorted = [...frameIntervals].sort((left, right) => left - right);
+      const percentile = (fraction: number) => sorted[Math.min(
+        sorted.length - 1,
+        Math.max(0, Math.ceil(sorted.length * fraction) - 1),
+      )] ?? 0;
+      const droppedFrames = frameIntervals.reduce(
+        (total, interval) => total + Math.max(0, Math.round(interval / 16.67) - 1),
+        0,
+      );
+      return {
+        durationMs: performance.now() - startedAt,
+        frameCount: frameIntervals.length,
+        directionChanges: observedDirectionChanges,
+        maxScroll,
+        minScrollTop,
+        maxScrollTop,
+        scrollSpanRatio: maxScroll > 0 ? (maxScrollTop - minScrollTop) / maxScroll : 0,
+        droppedFrames,
+        droppedFrameRatio: droppedFrames / Math.max(1, frameIntervals.length + droppedFrames),
+        p95FrameIntervalMs: percentile(0.95),
+        maxFrameIntervalMs: sorted.at(-1) ?? 0,
+        longTaskCount: longTasks.length,
+        longTaskTotalMs: longTasks.reduce((total, value) => total + value, 0),
+        maxLongTaskMs: longTasks.length > 0 ? Math.max(...longTasks) : 0,
+        largeBlankSampleCount: uncoveredPointCounts.filter((count) => count >= 2).length,
+        fullBlankSampleCount: uncoveredPointCounts.filter((count) => count === 3).length,
+        maxUncoveredPoints: uncoveredPointCounts.length > 0
+          ? Math.max(...uncoveredPointCounts)
+          : 0,
+      };
+    },
+    durationMs,
+  );
+  const taskDurationAfter = await readTaskDuration();
+  await session.detach();
+  return {
+    ...result,
+    rendererTaskDurationMs: (taskDurationAfter - taskDurationBefore) * 1_000,
+  };
+}
+
 test.afterAll(async () => {
   await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
 });
@@ -486,6 +619,7 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
     });
     await page.waitForTimeout(250);
   }
+  await expect(page.getByTestId("messenger-thread-page-sentinel")).toHaveCount(0);
   await page.locator("[data-testid='workspace-sidebar'] nav").evaluate(async (element) => {
     element.scrollTop = 0;
     element.dispatchEvent(new Event("scroll"));
@@ -514,8 +648,24 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   });
   await pressureGroupAToggle.click();
   expect(await pressureGroupA.getAttribute("data-collapsed")).toBe("true");
-  await pressureGroupAToggle.click();
+  const groupOpenFrame = await pressureGroupAToggle.evaluate(async (button) => {
+    const startedAt = performance.now();
+    (button as HTMLButtonElement).click();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const groupRoot = button.closest<HTMLElement>("[data-collapsed]");
+    const content = groupRoot?.querySelector<HTMLElement>("[data-messenger-group-content]");
+    return {
+      elapsedMs: performance.now() - startedAt,
+      ariaHidden: content?.getAttribute("aria-hidden") ?? null,
+      inert: content?.hasAttribute("inert") ?? null,
+      visibleHeight: content?.getBoundingClientRect().height ?? 0,
+    };
+  });
   expect(await pressureGroupA.getAttribute("data-collapsed")).toBe("false");
+  expect(groupOpenFrame.elapsedMs).toBeLessThan(50);
+  expect(groupOpenFrame.ariaHidden).toBeNull();
+  expect(groupOpenFrame.inert).toBe(false);
+  expect(groupOpenFrame.visibleHeight).toBeGreaterThan(0);
   await expect.poll(() => groupPersistenceRequests).toBe(2);
   await expect.poll(() => groupPersistenceResponses).toBe(2);
   await page.unroute(groupPersistenceUrl);
@@ -527,6 +677,8 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   await expect(page.getByTestId("messenger-virtual-directory")).toHaveCount(1);
   const messengerFastScrollCoverage = await measureMessengerFastScrollCoverage(page);
   console.log(`THREAD_PRESSURE_FAST_SCROLL_COVERAGE ${JSON.stringify(messengerFastScrollCoverage)}`);
+  const messengerBidirectionalFling = await measureMessengerBidirectionalFling(page, 6_000);
+  console.log(`THREAD_PRESSURE_BIDIRECTIONAL_FLING ${JSON.stringify(messengerBidirectionalFling)}`);
   await page.screenshot({ path: "/tmp/rudder-thread-pressure-messenger.png" });
   expect(messengerFastScrollCoverage.blankSamples).toBe(0);
   expect(messengerFastScrollCoverage.maxBlankPx).toBeLessThanOrEqual(16);
@@ -538,6 +690,15 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
       `messenger-thread-section-custom-group-${group.id}`
     )).sort(),
   );
+  expect(messengerBidirectionalFling.directionChanges).toBeGreaterThanOrEqual(8);
+  expect(messengerBidirectionalFling.maxScroll).toBeGreaterThan(1_000);
+  expect(messengerBidirectionalFling.scrollSpanRatio).toBeGreaterThan(0.8);
+  expect(messengerBidirectionalFling.largeBlankSampleCount).toBe(0);
+  expect(messengerBidirectionalFling.fullBlankSampleCount).toBe(0);
+  expect(messengerBidirectionalFling.maxUncoveredPoints).toBeLessThanOrEqual(1);
+  expect(messengerBidirectionalFling.droppedFrameRatio).toBeLessThan(0.05);
+  expect(messengerBidirectionalFling.p95FrameIntervalMs).toBeLessThan(20);
+  expect(messengerBidirectionalFling.longTaskCount).toBe(0);
   await page.waitForTimeout(500);
   const mountedMessengerRows = await page.locator("[data-messenger-thread-key]").count();
   const genericOrganizationWebSockets = new Set(
@@ -546,8 +707,8 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   expect(genericOrganizationWebSockets.size).toBe(1);
   const loadedMessengerDirectoryHeight = await page.locator("[data-testid='messenger-virtual-directory']")
     .evaluate((element) => Number.parseFloat((element as HTMLElement).style.height) || 0);
-  // The chunked runway mounts enough rows to absorb a fast fling, but remains
-  // far below the complete 699-business-row pressure directory.
+  // Loaded rows in the rendered group window remain stable during scrolling;
+  // paging and the outer directory still cap the overall DOM footprint.
   expect(mountedMessengerRows).toBeLessThan(160);
   const runtimeFootprint = await measureRuntimeFootprint(page);
   await page.screenshot({ path: "/tmp/rudder-thread-pressure-chat.png" });
@@ -675,7 +836,9 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
       seededThreads: MESSENGER_THREAD_COUNT + 1,
       mountedRows: mountedMessengerRows,
       directoryHeightPx: loadedMessengerDirectoryHeight,
+      groupOpenFrameMs: groupOpenFrame.elapsedMs,
       scroll: sidebarScrollMetrics,
+      bidirectionalFling: messengerBidirectionalFling,
     },
     realtime: {
       genericOrganizationWebSockets: genericOrganizationWebSockets.size,
