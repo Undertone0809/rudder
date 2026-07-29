@@ -14,6 +14,14 @@ Rudder began as a fork of an early version of Paperclip. That gave the project a
 
 Rudder is built for the moment when agent work stops looking like a single prompt and starts looking like a real team.
 
+## Real-World Work Benchmark
+
+In a frozen 10-task pilot based on OpenAI's GDPval dataset, three configured systems all requested `gpt-5.6-sol` with high reasoning effort. Under our local case-equal rubric metric, Rudder scored **81.7**, compared with **75.7** for Codex CLI and **75.6** for Claude Code.
+
+[![GDPval-based harness benchmark: Rudder 81.7, Codex CLI 75.7, and Claude Code 75.6.](docs/images/gdpval-harness-benchmark.png)](https://docs.rudderhq.dev/benchmarks/gdpval-harness)
+
+This is directional evidence from a small, locally judged cohort—not an official GDPval score or leaderboard result. [Read the methodology and evidence limits.](https://docs.rudderhq.dev/benchmarks/gdpval-harness)
+
 ## The Work Loop
 
 Rudder is designed around the loop that makes agent work compound:
@@ -54,6 +62,14 @@ Rudder is open-source software for assigning, running, reviewing, and improving 
 | Budget discipline | Spend tracking and hard stops |
 
 Rudder coordinates agents. It does not force one runtime, one model, one prompt format, or one execution environment.
+
+## Bring Your Own Runtime
+
+Rudder is the coordination layer, not the model provider. Run agents with the local tools and provider accounts you already use—including Codex, Claude Code, Cursor, OpenClaw, Bash, or your own HTTP service. Local runtimes keep their existing installation, login, and credentials; Rudder connects assignment, context, execution, review, budgets, and memory around them.
+
+![Rudder coordinates agent teams across local runtimes and provider environments.](docs/images/rudder-runtime-adapters.png)
+
+[See supported runtimes and configuration options.](https://docs.rudderhq.dev/reference/runtime-types)
 
 ## Get Started
 
