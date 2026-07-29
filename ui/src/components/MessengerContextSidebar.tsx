@@ -1460,8 +1460,10 @@ export function MessengerContextSidebar() {
     getScrollElement: () => sidebarScrollElementRef.current,
     estimateSize: () => threadDensity === "compact" ? 46 : 74,
     getItemKey: (index) => topLevelDirectoryItems[index]?.key ?? index,
-    overscan: draggingThreadId ? 20 : 8,
-    useFlushSync: false,
+    overscan: draggingThreadId ? 16 : 12,
+    directDomUpdates: true,
+    directDomUpdatesMode: "transform",
+    useFlushSync: true,
   });
   const virtualDirectoryItems = directoryVirtualizer.getVirtualItems();
   const sortableThreadSectionKeys = useMemo(() => (
@@ -3027,7 +3029,8 @@ export function MessengerContextSidebar() {
         getItemKey={(item) => item.key}
         estimateSize={() => threadDensity === "compact" ? 34 : 42}
         itemGap={4}
-        overscan={draggingThreadId ? 20 : 8}
+        overscan={draggingThreadId ? 16 : 12}
+        preventScrollBlanking
         scrollElementRef={sidebarScrollElementRef}
         targetKey={unreadTargetKey}
         onTargetMounted={(targetKey) => {
@@ -3070,7 +3073,10 @@ export function MessengerContextSidebar() {
           {renderedEntries}
         </div>
         {showMoreControl || showCollapseControl ? (
-          <div className="mx-1.5 flex items-center gap-1.5 px-2 py-1">
+          <div
+            data-messenger-scroll-coverage-row
+            className="mx-1.5 flex items-center gap-1.5 px-2 py-1"
+          >
             {showMoreControl ? (
               <MessengerSectionAutoLoader
                 testId={`messenger-thread-section-${sanitizeThreadKey(section.key)}-auto-loader`}
@@ -3098,6 +3104,7 @@ export function MessengerContextSidebar() {
       return (
         <div
           data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
+          data-messenger-scroll-coverage-surface
           data-collapsed={collapsed ? "true" : "false"}
           data-drag-move-target={isMoveIntoGroupTarget ? "true" : undefined}
           data-drag-intent={isMoveIntoGroupTarget ? "move-into-group" : undefined}
@@ -3111,7 +3118,10 @@ export function MessengerContextSidebar() {
           style={customGroupStyle(displayedCustomGroup)}
         >
           <MessengerInsertionLine placement={sectionInsertionPlacement} tone="group" />
-          <div className="flex min-h-8 items-center gap-1.5">
+          <div
+            data-messenger-scroll-coverage-row
+            className="flex min-h-8 items-center gap-1.5"
+          >
             <MessengerDragHandle
               dragHandleProps={dragHandleProps}
               label={`Drag group ${section.label}`}
@@ -3982,13 +3992,13 @@ export function MessengerContextSidebar() {
                   </div>
                 ) : (
                   <div
-                  data-testid="messenger-virtual-directory"
-                  style={{
-                    height: `${directoryVirtualizer.getTotalSize()}px`,
-                    position: "relative",
-                    width: "100%",
-                  }}
-                >
+                    ref={directoryVirtualizer.containerRef}
+                    data-testid="messenger-virtual-directory"
+                    style={{
+                      position: "relative",
+                      width: "100%",
+                    }}
+                  >
                   {virtualDirectoryItems.map((virtualItem) => {
                     const item = topLevelDirectoryItems[virtualItem.index];
                     if (!item) return null;
@@ -4001,7 +4011,6 @@ export function MessengerContextSidebar() {
                           left: 0,
                           position: "absolute",
                           top: 0,
-                          transform: `translateY(${virtualItem.start}px)`,
                           width: "100%",
                         }}
                       >
@@ -4033,13 +4042,13 @@ export function MessengerContextSidebar() {
             </div>
           ) : (
             <div
-            data-testid="messenger-virtual-directory"
-            style={{
-              height: `${directoryVirtualizer.getTotalSize()}px`,
-              position: "relative",
-              width: "100%",
-            }}
-          >
+              ref={directoryVirtualizer.containerRef}
+              data-testid="messenger-virtual-directory"
+              style={{
+                position: "relative",
+                width: "100%",
+              }}
+            >
             {virtualDirectoryItems.map((virtualItem) => {
               const item = topLevelDirectoryItems[virtualItem.index];
               if (!item) return null;
@@ -4052,7 +4061,6 @@ export function MessengerContextSidebar() {
                     left: 0,
                     position: "absolute",
                     top: 0,
-                    transform: `translateY(${virtualItem.start}px)`,
                     width: "100%",
                   }}
                 >

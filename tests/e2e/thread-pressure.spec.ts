@@ -8,6 +8,8 @@ import {
   createDb,
   heartbeatRuns,
   issueComments,
+  messengerCustomGroupEntries,
+  messengerCustomGroups,
 } from "../../packages/db/src/index.ts";
 import { E2E_DATABASE_URL, E2E_INSTANCE_ROOT } from "./support/e2e-env";
 
@@ -114,6 +116,74 @@ async function measureRuntimeFootprint(page: Page) {
   };
 }
 
+async function measureMessengerFastScrollCoverage(page: Page) {
+  return page.locator("[data-testid='workspace-sidebar'] nav").evaluate(async (element) => {
+    const scrollElement = element as HTMLElement;
+    const maxScroll = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+    const targets = Array.from({ length: 36 }, (_, index) => {
+      const phase = index % 12;
+      return phase < 6
+        ? 0.12 + phase * 0.14
+        : 0.82 - (phase - 6) * 0.14;
+    }).concat([0.82, 0.68, 0.54, 0.4]);
+    let blankSamples = 0;
+    let maxBlankPx = 0;
+    const samples: Array<{
+      fraction: number;
+      maxBlankPx: number;
+      scrollTop: number;
+      visibleCoverageCount: number;
+    }> = [];
+
+    for (const fraction of targets) {
+      scrollElement.scrollTop = maxScroll * fraction;
+      scrollElement.dispatchEvent(new Event("scroll"));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      const viewport = scrollElement.getBoundingClientRect();
+      const intervals = Array.from(
+        scrollElement.querySelectorAll<HTMLElement>(
+          [
+            "[data-messenger-thread-key]",
+            "[data-messenger-scroll-coverage-row]",
+            "[data-messenger-scroll-coverage-surface]",
+          ].join(", "),
+        ),
+      )
+        .map((row) => row.getBoundingClientRect())
+        .filter((rect) => rect.bottom > viewport.top && rect.top < viewport.bottom)
+        .map((rect) => ({
+          start: Math.max(viewport.top, rect.top),
+          end: Math.min(viewport.bottom, rect.bottom),
+        }))
+        .sort((left, right) => left.start - right.start);
+
+      let cursor = viewport.top;
+      let sampleMaxBlankPx = 0;
+      for (const interval of intervals) {
+        sampleMaxBlankPx = Math.max(sampleMaxBlankPx, interval.start - cursor);
+        cursor = Math.max(cursor, interval.end);
+      }
+      sampleMaxBlankPx = Math.max(sampleMaxBlankPx, viewport.bottom - cursor);
+      maxBlankPx = Math.max(maxBlankPx, sampleMaxBlankPx);
+      if (sampleMaxBlankPx > 64) blankSamples += 1;
+      samples.push({
+        fraction,
+        maxBlankPx: sampleMaxBlankPx,
+        scrollTop: scrollElement.scrollTop,
+        visibleCoverageCount: intervals.length,
+      });
+    }
+
+    return {
+      blankSamples,
+      maxBlankPx,
+      sampleCount: targets.length,
+      samples,
+    };
+  });
+}
+
 test.afterAll(async () => {
   await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
 });
@@ -160,6 +230,14 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   });
   expect(orgResponse.ok()).toBe(true);
   const organization = await orgResponse.json() as { id: string; issuePrefix: string };
+  const sessionResponse = await page.request.get("/api/auth/get-session");
+  expect(sessionResponse.ok()).toBe(true);
+  const session = await sessionResponse.json() as {
+    session?: { userId?: string | null };
+    user?: { id?: string | null };
+  };
+  const currentUserId = session.user?.id ?? session.session?.userId;
+  expect(currentUserId).toBeTruthy();
 
   const agentResponse = await page.request.post(`/api/orgs/${organization.id}/agents`, {
     data: {
@@ -188,12 +266,15 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
   const chat = await chatResponse.json() as { id: string };
 
   const messengerBase = Date.now() - 60_000;
+  const messengerThreadIds: string[] = [];
   await insertGeneratedChunks(
     MESSENGER_THREAD_COUNT,
     (index) => {
       const activityAt = new Date(messengerBase - index * 1_000);
+      const id = randomUUID();
+      messengerThreadIds.push(id);
       return {
-        id: randomUUID(),
+        id,
         orgId: organization.id,
         title: `Disposable performance thread ${String(index + 1).padStart(3, "0")}`,
         summary: `Synthetic Messenger pressure row ${index + 1}.`,
@@ -207,6 +288,25 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
       };
     },
     (rows) => e2eDb.insert(chatConversations).values(rows),
+  );
+  const pressureGroups = [
+    { id: randomUUID(), name: "Pressure group A", sortOrder: 0 },
+    { id: randomUUID(), name: "Pressure group B", sortOrder: 1 },
+  ];
+  await e2eDb.insert(messengerCustomGroups).values(pressureGroups.map((group) => ({
+    ...group,
+    orgId: organization.id,
+    userId: currentUserId!,
+    icon: "folder::slate",
+  })));
+  await e2eDb.insert(messengerCustomGroupEntries).values(
+    messengerThreadIds.slice(0, 80).map((conversationId, index) => ({
+      orgId: organization.id,
+      userId: currentUserId!,
+      groupId: pressureGroups[Math.floor(index / 40)]!.id,
+      threadKey: `chat:${conversationId}`,
+      sortOrder: index % 40,
+    })),
   );
 
   const issueResponse = await page.request.post(`/api/orgs/${organization.id}/issues`, {
@@ -364,6 +464,33 @@ test("keeps whale Chat and Issue detail correct without terminal run-log fanout"
     "[data-testid='workspace-sidebar'] nav",
     5_000,
   );
+  await page.locator("[data-testid='workspace-sidebar'] nav").evaluate(async (element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  });
+  const pressureGroupA = page.getByTestId(
+    `messenger-thread-section-custom-group-${pressureGroups[0]!.id}`,
+  );
+  await expect(pressureGroupA).toBeVisible({ timeout: 10_000 });
+  const pressureGroupAToggle = pressureGroupA.getByRole("button", {
+    name: pressureGroups[0]!.name,
+    exact: true,
+  });
+  await pressureGroupAToggle.click();
+  await expect(pressureGroupA).toHaveAttribute("data-collapsed", "true");
+  await pressureGroupAToggle.click();
+  await expect(pressureGroupA).toHaveAttribute("data-collapsed", "false");
+  for (const group of pressureGroups) {
+    await expect(page.getByTestId(
+      `messenger-section-virtual-entries-custom-group-${group.id}`,
+    )).toHaveCount(1);
+  }
+  const messengerFastScrollCoverage = await measureMessengerFastScrollCoverage(page);
+  console.log(`THREAD_PRESSURE_FAST_SCROLL_COVERAGE ${JSON.stringify(messengerFastScrollCoverage)}`);
+  await page.screenshot({ path: "/tmp/rudder-thread-pressure-messenger.png" });
+  expect(messengerFastScrollCoverage.blankSamples).toBe(0);
+  expect(messengerFastScrollCoverage.maxBlankPx).toBeLessThanOrEqual(64);
   await page.waitForTimeout(500);
   const mountedMessengerRows = await page.locator("[data-messenger-thread-key]").count();
   const genericOrganizationWebSockets = new Set(

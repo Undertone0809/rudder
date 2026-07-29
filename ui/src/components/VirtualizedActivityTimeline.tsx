@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { flushSync } from "react-dom";
 
 export function VirtualizedActivityTimeline<T>({
   children,
@@ -16,6 +17,7 @@ export function VirtualizedActivityTimeline<T>({
   items,
   itemGap = 20,
   overscan = 3,
+  preventScrollBlanking = false,
   onTargetMounted,
   scrollElementRef,
   targetKey,
@@ -27,6 +29,7 @@ export function VirtualizedActivityTimeline<T>({
   items: T[];
   itemGap?: number;
   overscan?: number;
+  preventScrollBlanking?: boolean;
   onTargetMounted?: (key: string) => void;
   scrollElementRef: RefObject<HTMLElement | null>;
   targetKey?: string | null;
@@ -50,8 +53,14 @@ export function VirtualizedActivityTimeline<T>({
     getScrollElement: () => scrollElementRef.current,
     overscan,
     scrollMargin,
-    useFlushSync: false,
+    directDomUpdates: preventScrollBlanking,
+    directDomUpdatesMode: "transform",
+    useFlushSync: preventScrollBlanking,
   });
+  const setContainerRef = useCallback((node: HTMLDivElement | null) => {
+    containerRef.current = node;
+    if (preventScrollBlanking) virtualizer.containerRef(node);
+  }, [preventScrollBlanking, virtualizer]);
   const virtualItems = virtualizer.getVirtualItems();
   const baselineMode = import.meta.env.MODE === "test"
     || (typeof window !== "undefined"
@@ -62,18 +71,48 @@ export function VirtualizedActivityTimeline<T>({
     const scrollElement = scrollElementRef.current;
     if (!container || !scrollElement) return undefined;
 
-    const measureMargin = () => {
+    const measureMargin = (synchronous = false) => {
       const containerRect = container.getBoundingClientRect();
       const scrollRect = scrollElement.getBoundingClientRect();
       const next = Math.max(0, containerRect.top - scrollRect.top + scrollElement.scrollTop);
-      setScrollMargin((current) => Math.abs(current - next) < 1 ? current : next);
+      const update = () => {
+        setScrollMargin((current) => Math.abs(current - next) < 1 ? current : next);
+      };
+      if (synchronous && preventScrollBlanking) flushSync(update);
+      else update();
     };
     measureMargin();
-    if (typeof ResizeObserver === "undefined") return undefined;
-    const observer = new ResizeObserver(measureMargin);
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [scrollElementRef]);
+    const ancestors: HTMLElement[] = [];
+    let ancestor = container.parentElement;
+    while (ancestor && ancestor !== scrollElement) {
+      ancestors.push(ancestor);
+      ancestor = ancestor.parentElement;
+    }
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(() => measureMargin());
+    resizeObserver?.observe(container);
+    for (const element of ancestors) resizeObserver?.observe(element);
+
+    // Nested timelines share the outer sidebar scroll element. Direct DOM
+    // positioning can move an ancestor without resizing this container, so a
+    // ResizeObserver alone would leave scrollMargin stale after group/layout
+    // changes. Ancestor style/class mutations are infrequent and are committed
+    // synchronously before the next paint to keep the visible slice aligned.
+    const mutationObserver = typeof MutationObserver === "undefined"
+      ? null
+      : new MutationObserver(() => measureMargin(true));
+    for (const element of ancestors) {
+      mutationObserver?.observe(element, {
+        attributeFilter: ["class", "style"],
+        attributes: true,
+      });
+    }
+    return () => {
+      mutationObserver?.disconnect();
+      resizeObserver?.disconnect();
+    };
+  }, [preventScrollBlanking, scrollElementRef]);
 
   useLayoutEffect(() => {
     if (!targetKey) return;
@@ -113,10 +152,10 @@ export function VirtualizedActivityTimeline<T>({
 
   return (
     <div
-      ref={containerRef}
+      ref={setContainerRef}
       data-testid={testId}
       style={{
-        height: `${virtualizer.getTotalSize()}px`,
+        ...(!preventScrollBlanking ? { height: `${virtualizer.getTotalSize()}px` } : {}),
         position: "relative",
         width: "100%",
       }}
@@ -135,7 +174,9 @@ export function VirtualizedActivityTimeline<T>({
               paddingBottom: `${itemGap}px`,
               position: "absolute",
               top: 0,
-              transform: `translateY(${virtualItem.start - scrollMargin}px)`,
+              ...(!preventScrollBlanking
+                ? { transform: `translateY(${virtualItem.start - scrollMargin}px)` }
+                : {}),
               width: "100%",
             }}
           >

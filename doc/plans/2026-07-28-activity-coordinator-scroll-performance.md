@@ -25,7 +25,7 @@ related_code:
   - tests/e2e/thread-pressure.spec.ts
   - scripts/perf/compare-scroll-evals.mjs
 commit_refs: []
-updated_at: 2026-07-28
+updated_at: 2026-07-29
 ---
 
 # Activity coordinator and scroll performance
@@ -105,3 +105,17 @@ and back.
 Renderer task time is the repeatable CPU-pressure proxy exposed by Chromium.
 Comparable process RSS was not available from the browser trace, so the report
 does not present JavaScript heap as OS RSS.
+
+## 2026-07-29 scroll continuity follow-up
+
+Fast trackpad movement exposed a transient blank viewport when the browser
+advanced `scrollTop` before React committed the next virtual range. Messenger
+now uses synchronous range commits and the virtualizer's direct transform
+updates on this latency-sensitive surface. It also keeps a larger, still
+bounded overscan window so rows are ready before they enter the viewport.
+
+The production-build pressure E2E now performs 40 consecutive-frame,
+non-sequential scroll reversals over 221 Messenger threads split between two
+40-row custom groups and loose rows. It also collapses and re-expands a group
+before scrolling. After each browser paint it measures the largest uncovered
+part of the viewport and rejects gaps larger than one Messenger row.
