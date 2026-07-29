@@ -45,7 +45,11 @@ export interface ChatAttachment {
   contentPath: string;
 }
 
-export type ChatInlineAnnotationSurface = "assistant_body" | "process_transcript";
+export type ChatInlineAnnotationSurface =
+  | "assistant_body"
+  | "process_transcript"
+  | "workspace_file"
+  | "local_file";
 export type ChatInlineAnnotationTranscriptKind = "thinking" | "assistant";
 
 interface ChatInlineAnnotationBase {
@@ -53,7 +57,6 @@ interface ChatInlineAnnotationBase {
   selectedText: string;
   comment?: string | null;
   sourceConversationId: string;
-  sourceMessageId: string;
   sourceHash: string;
   start: number;
   end: number;
@@ -64,6 +67,9 @@ interface ChatInlineAnnotationBase {
 type ChatInlineAnnotationProvenance =
   | {
     surface: "assistant_body";
+    sourceMessageId: string;
+    sourceFilePath?: never;
+    sourceLibraryEntryId?: never;
     transcriptKind?: never;
     generationId?: never;
     generationSeqStart?: never;
@@ -71,10 +77,35 @@ type ChatInlineAnnotationProvenance =
   }
   | {
     surface: "process_transcript";
+    sourceMessageId: string;
+    sourceFilePath?: never;
+    sourceLibraryEntryId?: never;
     transcriptKind: ChatInlineAnnotationTranscriptKind;
     generationId: string;
     generationSeqStart: number;
     generationSeqEnd: number;
+  }
+  | {
+    surface: "workspace_file";
+    sourceMessageId?: never;
+    sourceFilePath: string;
+    sourceLibraryEntryId: string | null;
+    sourceRenderMode: "markdown" | "text";
+    transcriptKind?: never;
+    generationId?: never;
+    generationSeqStart?: never;
+    generationSeqEnd?: never;
+  }
+  | {
+    surface: "local_file";
+    sourceMessageId?: never;
+    sourceFilePath: string;
+    sourceRenderMode: "markdown" | "text";
+    sourceLibraryEntryId?: never;
+    transcriptKind?: never;
+    generationId?: never;
+    generationSeqStart?: never;
+    generationSeqEnd?: never;
   };
 
 export type ChatInlineAnnotation = ChatInlineAnnotationBase & ChatInlineAnnotationProvenance & {

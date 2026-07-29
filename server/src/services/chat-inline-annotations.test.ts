@@ -26,6 +26,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  ensureOrganizationWorkspaceLayout,
+  resolveOrganizationWorkspaceRoot,
+} from "../home-paths.js";
+import {
   bindPreparedChatInlineAnnotationFiles,
   chatInlineAnnotationService,
 } from "./chat-inline-annotations.js";
@@ -103,9 +107,15 @@ describe("chatInlineAnnotationService", () => {
   let service!: ReturnType<typeof chatInlineAnnotationService>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
+  let originalWorkspaceHome: string | undefined;
 
   beforeAll(async () => {
     const started = await startTempDatabase();
+    originalWorkspaceHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = path.join(
+      started.dataDir || os.tmpdir(),
+      `rudder-annotation-workspaces-${randomUUID()}`,
+    );
     db = createDb(started.connectionString);
     service = chatInlineAnnotationService(db);
     instance = started.instance;
@@ -127,6 +137,17 @@ describe("chatInlineAnnotationService", () => {
 
   afterAll(async () => {
     await instance?.stop();
+    if (process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME) {
+      fs.rmSync(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME, {
+        recursive: true,
+        force: true,
+      });
+      if (originalWorkspaceHome === undefined) {
+        delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+      } else {
+        process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalWorkspaceHome;
+      }
+    }
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
@@ -188,6 +209,108 @@ describe("chatInlineAnnotationService", () => {
       ...overrides,
     } as ChatInlineAnnotationInput;
   }
+
+  it("accepts exact saved workspace-file and local-file annotations", async () => {
+    const source = await seedSource();
+    await ensureOrganizationWorkspaceLayout(source.orgId);
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(source.orgId);
+    const workspaceContent = "alpha beta gamma";
+    fs.mkdirSync(path.join(workspaceRoot, "notes"), { recursive: true });
+    fs.writeFileSync(path.join(workspaceRoot, "notes", "example.txt"), workspaceContent);
+    const workspaceStart = workspaceContent.indexOf("beta");
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "workspace_file",
+        selectedText: "beta",
+        comment: "Use this value.",
+        sourceConversationId: source.conversationId,
+        sourceFilePath: "notes/example.txt",
+        sourceLibraryEntryId: null,
+        sourceRenderMode: "text",
+        sourceHash: sha256(workspaceContent),
+        start: workspaceStart,
+        end: workspaceStart + "beta".length,
+        prefix: "alpha ",
+        suffix: " gamma",
+        attachmentIds: [],
+      }, {
+        id: randomUUID(),
+        surface: "local_file",
+        selectedText: "local",
+        comment: null,
+        sourceConversationId: source.conversationId,
+        sourceFilePath: path.join(os.tmpdir(), "local-example.txt"),
+        sourceRenderMode: "text",
+        sourceHash: sha256("local source"),
+        start: 0,
+        end: "local".length,
+        prefix: "",
+        suffix: " source",
+        attachmentIds: [],
+      }],
+    })).resolves.toMatchObject({
+      annotations: [
+        expect.objectContaining({ surface: "workspace_file", selectedText: "beta" }),
+        expect.objectContaining({ surface: "local_file", selectedText: "local" }),
+      ],
+    });
+  });
+
+  it("rejects protected workspace paths and unrelated file-annotation conversations", async () => {
+    const source = await seedSource();
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "workspace_file",
+        selectedText: "secret",
+        sourceConversationId: source.conversationId,
+        sourceFilePath: "skills/private.md",
+        sourceLibraryEntryId: null,
+        sourceRenderMode: "text",
+        sourceHash: sha256("secret"),
+        start: 0,
+        end: 6,
+        prefix: "",
+        suffix: "",
+        attachmentIds: [],
+      }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("Protected workspace"),
+    });
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "local_file",
+        selectedText: "local",
+        sourceConversationId: randomUUID(),
+        sourceFilePath: path.join(os.tmpdir(), "local-example.txt"),
+        sourceRenderMode: "text",
+        sourceHash: sha256("local"),
+        start: 0,
+        end: 5,
+        prefix: "",
+        suffix: "",
+        attachmentIds: [],
+      }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("target conversation"),
+    });
+  });
 
   async function seedProcessEvidence(input: {
     source: Awaited<ReturnType<typeof seedSource>>;

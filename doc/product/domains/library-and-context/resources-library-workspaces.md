@@ -187,10 +187,12 @@ Product model:
   returning the whole file. Recognized AVI/MKV and other browser-dependent
   containers still enter media recovery rather than the generic binary state;
   classification does not promise that the browser can decode their codecs.
-- Markdown files opened from Messenger render as directly editable documents in
-  the Side Panel. Autosave uses the last confirmed server content as a write
-  precondition so changes already visible at the server's final guarded read
-  produce a conflict instead of being silently overwritten by a stale draft.
+- Non-truncated Markdown, plain-text, and code/source files opened from
+  Messenger are directly editable in the Side Panel. HTML and CSV keep their
+  existing Preview/Source modes and become editable in Source mode. Autosave
+  uses the last confirmed server content as a write precondition so changes
+  already visible at the server's final guarded read produce a conflict instead
+  of being silently overwritten by a stale draft.
 - HTML files in the full Library work surface and Messenger Side Panel follow
   `LIBRARY.WEB.PREVIEW.001` for multi-file rendering, the Connected default,
   the unified preview toolbar, isolated runtime boundaries, and static Offline
@@ -221,11 +223,12 @@ Flow:
    than through the server file API.
 8. From a Messenger Library preview, the operator can open the same validated
    file path in the full Library route without changing its organization scope.
-9. A Markdown Side Panel edit saves only when its expected prior content still
-   matches. A conflict pauses autosave, preserves the local draft, and lets the
-   operator either retry the draft against the latest version (`Keep mine`) or
-   replace it with the latest server content (`Use latest`). If a save response
-   is ambiguous, Rudder rereads the file before deciding whether the save failed.
+9. An eligible text/source Side Panel edit saves only when its expected prior
+   content still matches. A conflict pauses autosave, preserves the local draft,
+   and lets the operator either retry the draft against the latest version
+   (`Keep mine`) or replace it with the latest server content (`Use latest`). If
+   a save response is ambiguous, Rudder rereads the file before deciding whether
+   the save failed.
 10. From either Library surface, selecting an image opens the shared image
     overlay without replacing the current Library route or Side Panel target.
 11. Opening recognized audio or video delegates playback and codec recovery to

@@ -58,13 +58,14 @@ function withOrdinals(
   }));
 }
 
-function annotationRangeKey(annotation: ChatInlineAnnotationInput) {
+export function chatResponseAnnotationRangeKey(annotation: ChatInlineAnnotationInput) {
   const generationKey = annotation.surface === "process_transcript"
     ? `${annotation.generationId}:${annotation.generationSeqStart}:${annotation.generationSeqEnd}`
     : "";
   return [
     annotation.sourceConversationId,
     annotation.sourceMessageId,
+    annotation.sourceFilePath,
     annotation.surface,
     generationKey,
     annotation.sourceHash,
@@ -182,7 +183,10 @@ export function responseAnnotationReducer(
 
   if (action.type === "add") {
     const duplicate = state.annotations.some(
-      (annotation) => annotationRangeKey(annotation) === annotationRangeKey(action.annotation),
+      (annotation) => (
+        chatResponseAnnotationRangeKey(annotation)
+        === chatResponseAnnotationRangeKey(action.annotation)
+      ),
     );
     if (duplicate) return state;
     if (validateChatResponseAnnotationState(

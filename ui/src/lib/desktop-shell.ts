@@ -171,6 +171,7 @@ export type DesktopLocalFilePreview = {
   sizeBytes: number;
   modifiedAt: string;
   truncated: boolean;
+  writeCapability?: string | null;
 };
 
 export type DesktopIdeTarget = {
@@ -287,6 +288,10 @@ export type DesktopShellApi = {
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   openPath(targetPath: string): Promise<void>;
   previewLocalFile(targetPath: string): Promise<DesktopLocalFilePreview>;
+  updateLocalFile(
+    targetPath: string,
+    input: { content: string; expectedContent: string; writeCapability: string },
+  ): Promise<DesktopLocalFilePreview>;
   listAvailableIdes(): Promise<DesktopIdeTarget[]>;
   listWorkspaceLaunchTargets?(): Promise<DesktopWorkspaceLaunchTarget[]>;
   openWorkspace?(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;

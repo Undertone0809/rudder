@@ -196,6 +196,9 @@ contracts:
       - ui/src/lib/transcript-skill-targets.ts
       - ui/src/lib/side-panel-targets.ts
       - ui/src/pages/Chat.side-panel.tsx
+      - ui/src/components/WorkspaceCodeEditor.tsx
+      - ui/src/components/chat/FileAnnotationSelectionToolbar.tsx
+      - desktop/src/local-file-preview.ts
       - ui/src/pages/Chat.tsx
     related_tests:
       - packages/agent-runtimes/codex-local/src/server/app-server-chat.test.ts
@@ -946,6 +949,9 @@ contracts:
       - ui/src/pages/OrganizationResources.tsx
       - ui/src/pages/OrganizationWorkspaces.tsx
       - ui/src/pages/Chat.side-panel.tsx
+      - ui/src/components/WorkspaceCodeEditor.tsx
+      - ui/src/components/chat/FileAnnotationSelectionToolbar.tsx
+      - desktop/src/local-file-preview.ts
       - desktop/src/ide-opener.ts
     related_tests:
       - server/src/__tests__/home-paths.test.ts
@@ -963,11 +969,14 @@ contracts:
       - ui/src/components/WorkspacePdfPreview.test.tsx
       - ui/src/components/workspaces/WorkspaceLaunchControls.test.tsx
       - ui/src/lib/workspace-preferences.test.ts
+      - ui/src/components/chat/FileAnnotationSelectionToolbar.test.tsx
+      - desktop/src/local-file-preview.test.ts
       - tests/e2e/chat-side-panel.spec.ts
       - tests/e2e/organization-workspaces-image-preview.spec.ts
       - tests/e2e/organization-workspaces-launcher.spec.ts
       - tests/e2e/library-media-preview.spec.ts
     related_plans:
+      - doc/plans/2026-07-29-side-panel-text-file-editing-and-annotations.md
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-30-org-library-folder-and-backup-zip.md
       - doc/plans/2026-07-20-library-unsupported-file-launcher.md
@@ -1257,11 +1266,14 @@ contracts:
       - ui/src/lib/chat-response-annotations.ts
       - ui/src/components/chat/ResponseAnnotations.tsx
       - ui/src/components/chat/SelectionAnnotationToolbar.tsx
+      - ui/src/components/chat/FileAnnotationSelectionToolbar.tsx
+      - ui/src/lib/chat-file-annotation-events.ts
       - ui/src/components/MarkdownBody.tsx
       - ui/src/components/transcript/RunTranscriptView.chat.tsx
       - ui/src/pages/Chat.messages.tsx
       - ui/src/pages/Chat.side-panel.tsx
       - ui/src/pages/Chat.tsx
+      - desktop/src/local-file-preview.ts
     related_tests:
       - packages/shared/src/validators/chat.test.ts
       - packages/shared/src/chat-transcript-provenance.test.ts
@@ -1273,6 +1285,7 @@ contracts:
       - server/src/__tests__/chat-work-manifest.test.ts
       - ui/src/components/chat/ResponseAnnotations.test.tsx
       - ui/src/components/chat/SelectionAnnotationToolbar.test.tsx
+      - ui/src/components/chat/FileAnnotationSelectionToolbar.test.tsx
       - ui/src/components/MarkdownBody.test.tsx
       - ui/src/components/transcript/RunTranscriptView.test.tsx
       - ui/src/lib/chat-draft-storage.test.ts
@@ -1281,6 +1294,7 @@ contracts:
       - ui/src/pages/Chat.messages.test.tsx
     related_plans:
       - doc/plans/2026-07-23-chat-response-annotations.md
+      - doc/plans/2026-07-29-side-panel-text-file-editing-and-annotations.md
   CHAT.INLINE.VISUAL.001:
     owner: product
     domain: collaboration
@@ -1508,6 +1522,7 @@ contracts:
       - desktop/src/browser-shortcuts.ts
       - desktop/src/side-panel-close-shortcut.ts
       - desktop/src/preload.ts
+      - desktop/src/local-file-preview.ts
       - packages/shared/src/browser-shortcuts.ts
       - ui/src/components/DesktopBrowserLinkBridge.tsx
       - ui/src/components/transcript/TranscriptLocalFilePreview.tsx
@@ -1524,6 +1539,8 @@ contracts:
       - ui/src/components/IssueProperties.tsx
       - ui/src/components/Layout.tsx
       - ui/src/components/WorkspaceFilePreview.tsx
+      - ui/src/components/WorkspaceCodeEditor.tsx
+      - ui/src/components/chat/FileAnnotationSelectionToolbar.tsx
       - ui/src/components/WorkspaceMediaPreview.tsx
       - ui/src/components/transcript/TranscriptLocalFilePreview.tsx
       - ui/src/components/WorkspacePdfPreview.tsx
@@ -1545,9 +1562,11 @@ contracts:
       - desktop/src/navigation-guard.test.ts
       - desktop/src/browser-shortcuts.test.ts
       - desktop/src/side-panel-close-shortcut.test.ts
+      - desktop/src/local-file-preview.test.ts
       - packages/shared/src/browser-shortcuts.test.ts
       - ui/src/components/DesktopBrowserLinkBridge.test.tsx
       - ui/src/components/transcript/TranscriptLocalFilePreview.test.tsx
+      - ui/src/components/chat/FileAnnotationSelectionToolbar.test.tsx
       - ui/src/lib/browser-side-panel.test.ts
       - ui/src/lib/desktop-browser-link-router.test.ts
       - ui/src/lib/motion-css.test.ts
@@ -1582,6 +1601,7 @@ contracts:
       - doc/plans/2026-07-21-chat-local-file-side-panel.md
       - doc/plans/2026-07-21-library-media-preview.md
       - doc/plans/2026-07-23-messenger-main-workbench-promotion.md
+      - doc/plans/2026-07-29-side-panel-text-file-editing-and-annotations.md
   MESSENGER.ATTENTION.001:
     owner: product
     domain: collaboration

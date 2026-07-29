@@ -727,9 +727,10 @@ Evidence:
 ## Contract Summary
 
 Rudder lets an operator quote a precise selection from a stable assistant
-answer or already-loaded, operator-visible Process prose and attach that quote
-to a Chat message. Each annotation may include an optional operator comment and
-its own images or files. Draft annotations remain editable; after Send they are
+answer, already-loaded operator-visible Process prose, or an eligible saved text
+file open in the current Chat's Side Panel and attach that quote to a Chat
+message. Each annotation may include an optional operator comment and its own
+images or files. Draft annotations remain editable; after Send they are
 immutable, message-owned evidence that Queue, Steer, retry, edit branching,
 Fork, and Side Chat preserve.
 
@@ -765,7 +766,7 @@ copying context into the composer or losing the relationship to its source.
   image/file attachments.
 - Canonical annotation: a typed `ChatInlineAnnotation` stored in the owning user
   message's structured payload. It contains `id`, `selectedText`, nullable
-  `comment`, `sourceConversationId`, `sourceMessageId`, `surface`,
+  `comment`, `sourceConversationId`, surface-specific source identity,
   `sourceHash`, source `start`/`end`, bounded `prefix`/`suffix`, and canonical
   annotation attachment ids.
 - Assistant-body source: one stable `completed`, `stopped`, or `failed`
@@ -778,6 +779,14 @@ copying context into the composer or losing the relationship to its source.
   `transcriptKind`, `generationId`, and inclusive
   `generationSeqStart`/`generationSeqEnd`. Generation event sequence is source
   identity; transcript-array index and wall-clock timestamp are not.
+- Workspace-file source: one saved, non-truncated Markdown, plain-text, or
+  code/source file visible in the current Chat's Library Side Panel. It stores
+  the normalized Library-relative path, optional stable Library entry id,
+  Markdown/text render mode, exact saved-content hash, and canonical range.
+- Local-file source: one saved, non-truncated text file loaded from a canonical
+  absolute path through the trusted Desktop bridge. The server stores its
+  operator-selected snapshot and path as untrusted user context but never reads
+  that Desktop path while admitting a Chat message.
 - Annotation attachment: an ordinary governed Chat asset and
   `chat_attachment`, but assigned to exactly one annotation and owned by the
   same organization, conversation, and user message as its annotation. Before
@@ -793,7 +802,8 @@ copying context into the composer or losing the relationship to its source.
 ## Entry Points / Inputs
 
 - A mouse, touch, or keyboard text selection contained within one eligible
-  assistant body or one eligible visible Process transcript block.
+  assistant body, visible Process transcript block, or saved editable text
+  file in the current Chat's Side Panel.
 - `Add to chat` on every eligible selection. `Ask in side chat` is additionally
   available when the owning assistant message satisfies the completed-message
   anchor required by `CHAT.SIDE.CHAT.001`.
@@ -814,6 +824,8 @@ copying context into the composer or losing the relationship to its source.
    normalization, mention-label resolution, and visual-piece splitting; the
    selected snapshot preserves visible paragraph/list/line-break boundaries
    while offsets and hashes continue to address the persisted raw source.
+   File selection actions are withheld while that file is saving, conflicted,
+   truncated, binary, or otherwise not editable.
 2. Rudder shows a portal-based selection toolbar positioned with flip/shift
    collision handling. `Add to chat` adds the annotation, immediately opens its
    anchored editor, and focuses the optional comment field without sending.
@@ -821,7 +833,9 @@ copying context into the composer or losing the relationship to its source.
    annotation in a provisional Side Chat draft and leaves the main Chat draft
    unchanged. The action is unavailable for a stopped or failed source because
    those messages are not valid Side Chat anchors. Opening the draft creates no
-   conversation; first Send follows `CHAT.SIDE.CHAT.001`.
+   conversation; first Send follows `CHAT.SIDE.CHAT.001`. A file selection uses
+   the current Chat's latest eligible completed assistant response as that Side
+   Chat lifecycle anchor while preserving the file as annotation source.
 4. Adding the same source surface and canonical range to the same draft is
    idempotent. New distinct annotations append in order and immediately render
    a non-interactive translucent highlight over the exact selected source text
@@ -868,7 +882,11 @@ copying context into the composer or losing the relationship to its source.
    status, source hash, range, surrounding context, generation sequence
    provenance, annotation limits, and every file reference. A source or file
    from another organization, conversation, user message, or annotation is
-   rejected without revealing its content.
+   rejected without revealing its content. Workspace-file annotations are
+   reread through the organization-scoped Library boundary and must match the
+   saved hash/range; protected Library paths are rejected. Desktop-local file
+   snapshots require canonical absolute-path provenance and valid bounded
+   metadata, but the server does not gain permission to read that local path.
 10. Multipart input refers to newly uploaded annotation files by bounded request
     indexes. Queue uses private staged asset references, never client-supplied
     persisted staging ids. On message materialization Rudder creates
@@ -898,7 +916,9 @@ copying context into the composer or losing the relationship to its source.
     markers. Selecting a card item reveals eligible collapsed Process details,
     scrolls to the source, and briefly highlights it. If the immutable snapshot
     remains readable but its source cannot be loaded or verified, the card says
-    it cannot be located and does not fabricate a marker.
+    it cannot be located and does not fabricate a marker. Selecting a
+    workspace- or local-file annotation opens or focuses its matching Side
+    Panel file target before attempting source location.
 15. Fork copies annotation snapshots with copied user messages, remaps source
     message ids to the child copies, and creates child-owned annotation
     attachment rows. Side Chat validates the owning completed assistant anchor
@@ -912,6 +932,7 @@ copying context into the composer or losing the relationship to its source.
 | --- | --- | --- | --- | --- |
 | Stable final-answer selection | One completed/stopped/failed assistant body; one valid range | Add one ordered annotation, exact-range highlight, source marker, and focused comment editor; expose Side Chat only for a completed owning assistant message | Select a user/system message, cross-message range, streaming content, or create a Side Chat from a stopped/failed anchor | UI, service, and E2E tests |
 | Visible Process selection | Loaded visible assistant/thinking prose; terminal generation; one provenance range | Add one process annotation with generation sequence identity | Use transcript index/timestamp, hidden reasoning, tool payload, stdout/stderr, or lifecycle events | Provenance, service, UI, and E2E tests |
+| Saved Side Panel file selection | Current Chat; saved eligible workspace or Desktop-local text file; one canonical range | Add one file annotation and open its comment editor; allow Side Chat through the current Chat's latest completed assistant lifecycle anchor | Annotate an unsaved/conflicted/truncated/binary file, protected Library path, foreign conversation, or grant the server arbitrary Desktop filesystem reads | Desktop bridge, service, UI, and E2E tests |
 | Comment and files | Draft annotation is editable and uploads satisfy Chat file policy | Save optional comment and annotation-owned images/files from the picker or pasted clipboard images | Attach a foreign asset, duplicate the file as a generic message tile, replace ordinary pasted text, or log file contents | Multipart, ownership, UI, and E2E tests |
 | Inspect or edit one draft | Operator adds an annotation, explicitly opens the count chip, or activates one marker/edit action | Open the new annotation editor directly, show the ordered list above the composer on request, or show only the activated annotation editor | Expand the complete list automatically, repeat selected text inside the editor, increase composer height, show unrelated annotations, or cover response text with a marker | UI and E2E tests |
 | Annotation-only Send | Existing Chat; body empty; at least one valid annotation | Persist and run one normal user turn | Reject solely for empty body or create an empty first Chat | Shared, route, and E2E tests |
@@ -1665,7 +1686,10 @@ Product model:
 - Response annotations copied with a user message remain immutable snapshots
   under `CHAT.RESPONSE.ANNOTATION.001`. The child receives remapped source
   message ids and child-owned annotation attachment rows rather than retaining
-  mutable ownership in the source conversation.
+  mutable ownership in the source conversation. File annotations retain their
+  normalized source path and immutable selected snapshot while their
+  `sourceConversationId` is remapped to the child; copying the snapshot does not
+  copy or claim ownership of the underlying file.
 
 Flow:
 
@@ -1677,10 +1701,12 @@ Flow:
    `(2)`.
 3. Rudder copies context links and messages up to the requested fork point. If
    no source message is supplied, it copies through the latest eligible message.
-4. For every copied response annotation, Rudder maps the source-message anchor
-   to the corresponding child message, copies its annotation-owned files, and
-   rewrites attachment ids to child-owned rows without assigning copied Run or
-   Output provenance.
+4. For every copied response annotation, Rudder maps response-source message
+   anchors to corresponding child messages, remaps file-source conversation
+   identity to the child while preserving the source path and selection
+   snapshot, copies annotation-owned files, and rewrites attachment ids to
+   child-owned rows without assigning copied Run, Output, or filesystem
+   ownership provenance.
 5. Rudder writes a system message in the child conversation naming the fork
    source.
 6. When the source is Feishu-bound, Rudder leaves the Feishu binding on the
@@ -3006,11 +3032,16 @@ Invariants:
   route, transcript, draft, scroll context, and Side Panel session. Web,
   missing-file, inaccessible, unsupported, and malformed targets show a stable
   in-panel error instead of navigating externally or failing silently.
-- Side Panel Markdown editing must preserve `LIBRARY.FILES.001` conditional
-  write semantics. External updates visible to the server's guarded comparison,
-  failed responses, and overlapping in-process saves must not silently discard
-  or overwrite a dirty draft. Arbitrary filesystem writes retain the narrow
-  cross-process commit boundary defined by `LIBRARY.FILES.001`.
+- Side Panel editing for eligible Markdown, plain-text, and code/source files
+  must preserve `LIBRARY.FILES.001` conditional-write semantics. HTML and CSV
+  remain preview-first and become editable only in Source mode. External updates
+  visible to the guarded comparison, failed responses, and overlapping
+  in-process saves must not silently discard or overwrite a dirty draft.
+- Desktop local-file editing uses a separate trusted-renderer-only conditional
+  write bridge. It accepts only the canonical regular UTF-8 text file already
+  admitted by the bounded preview contract, rejects aliases, binaries,
+  truncation-sized content, stale expected content, and NUL-bearing writes, and
+  never turns the server Library API into an arbitrary filesystem writer.
 - Side Panel PDF previews must use the organization-scoped inline workspace
   content endpoint. Full-path hover text and full-Library navigation must use
   the Library-relative path rather than exposing an absolute filesystem root.

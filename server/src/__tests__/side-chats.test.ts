@@ -491,6 +491,83 @@ describe("sideChatService", () => {
     expect(copiedUser?.attachments[0]?.id).not.toBe(kept.annotatedUser.attachments[0]?.id);
   });
 
+  it("copies workspace-file annotations without inventing an assistant source message", async () => {
+    const source = await createSource();
+    const annotatedMessageId = randomUUID();
+    const laterAnchorId = randomUUID();
+    const annotationId = randomUUID();
+    const libraryEntryId = randomUUID();
+    await db.insert(chatMessages).values([
+      {
+        id: annotatedMessageId,
+        orgId: source.orgId,
+        conversationId: source.sourceConversationId,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Please review this file selection.",
+        structuredPayload: {
+          inlineAnnotations: [{
+            id: annotationId,
+            surface: "workspace_file",
+            selectedText: "const answer = 42",
+            comment: "Is this correct?",
+            sourceConversationId: source.sourceConversationId,
+            sourceFilePath: "src/answer.ts",
+            sourceLibraryEntryId: libraryEntryId,
+            sourceRenderMode: "text",
+            sourceHash: "a".repeat(64),
+            start: 7,
+            end: 24,
+            prefix: "export ",
+            suffix: ";\n",
+            attachmentIds: [],
+          }],
+        },
+        createdAt: new Date("2026-07-19T02:00:03.000Z"),
+        updatedAt: new Date("2026-07-19T02:00:03.000Z"),
+      },
+      {
+        id: laterAnchorId,
+        orgId: source.orgId,
+        conversationId: source.sourceConversationId,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: "I reviewed the file.",
+        createdAt: new Date("2026-07-19T02:00:04.000Z"),
+        updatedAt: new Date("2026-07-19T02:00:04.000Z"),
+      },
+    ]);
+
+    const sideChat = await service.create({
+      orgId: source.orgId,
+      userId: source.userId,
+      sourceConversationId: source.sourceConversationId,
+      sourceMessageId: laterAnchorId,
+      clientMutationId: "side-chat-file-annotation",
+    });
+    const copiedMessages = await chats.listMessages(sideChat.id, {
+      includeTranscript: false,
+    });
+    const copiedUser = copiedMessages.find((message) =>
+      message.body === "Please review this file selection."
+    );
+    const [copiedAnnotation] = chatInlineAnnotationsFromStructuredPayload(
+      copiedUser?.structuredPayload,
+    );
+
+    expect(copiedAnnotation).toMatchObject({
+      id: annotationId,
+      surface: "workspace_file",
+      sourceConversationId: sideChat.id,
+      sourceFilePath: "src/answer.ts",
+      sourceLibraryEntryId: libraryEntryId,
+      selectedText: "const answer = 42",
+    });
+    expect("sourceMessageId" in (copiedAnnotation ?? {})).toBe(false);
+  });
+
   it("remaps an exact inherited parent-anchor annotation when forking a kept Side Chat", async () => {
     const source = await createSource();
     const kept = await createKeptSideChatWithParentAnchorAnnotation(source);

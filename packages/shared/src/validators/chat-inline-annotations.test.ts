@@ -63,6 +63,29 @@ function processAnnotation(index = 1, overrides: Record<string, unknown> = {}) {
   };
 }
 
+function fileAnnotation(
+  surface: "workspace_file" | "local_file",
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    id: uuid(surface === "workspace_file" ? 10 : 11),
+    selectedText: "selected",
+    comment: null,
+    sourceConversationId,
+    surface,
+    sourceFilePath: surface === "workspace_file" ? "notes/example.md" : "/tmp/example.md",
+    ...(surface === "workspace_file" ? { sourceLibraryEntryId: null } : {}),
+    sourceRenderMode: "markdown",
+    sourceHash: "b".repeat(64),
+    start: 2,
+    end: 10,
+    prefix: "# ",
+    suffix: " text",
+    attachmentIds: [],
+    ...overrides,
+  };
+}
+
 describe("chat inline annotation contracts", () => {
   it("exports the message limits", () => {
     expect({
@@ -253,6 +276,19 @@ describe("chat inline annotation contracts", () => {
       generationSeqEnd: 1,
     })).success).toBe(false);
   });
+
+  it("accepts workspace and Desktop-local file provenance without a source message", () => {
+    expect(chatInlineAnnotationInputSchema.safeParse(fileAnnotation("workspace_file")).success)
+      .toBe(true);
+    expect(chatInlineAnnotationInputSchema.safeParse(fileAnnotation("local_file")).success)
+      .toBe(true);
+    expect(chatInlineAnnotationInputSchema.safeParse(fileAnnotation("workspace_file", {
+      sourceFilePath: "",
+    })).success).toBe(false);
+    expect(chatInlineAnnotationInputSchema.safeParse(fileAnnotation("local_file", {
+      sourceMessageId,
+    })).success).toBe(false);
+  });
 });
 
 describe("chat inline annotation structured payloads", () => {
@@ -260,6 +296,8 @@ describe("chat inline annotation structured payloads", () => {
     const annotations = [
       assistantAnnotation(1),
       processAnnotation(2),
+      fileAnnotation("workspace_file"),
+      fileAnnotation("local_file"),
     ];
     expect(chatInlineAnnotationsSchema.parse(annotations)).toEqual(annotations);
     expect(chatInlineAnnotationsFromStructuredPayload({

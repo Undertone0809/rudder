@@ -14,7 +14,7 @@ import {
   type WorkspaceOpenTargetId,
   type WorkspaceUnsupportedFileLaunchTarget,
 } from "@/lib/workspace-preferences";
-import { ChevronDown, Code2, ExternalLink, FolderOpen, Loader2, Terminal } from "lucide-react";
+import { ChevronDown, Code2, ExternalLink, FolderOpen, LibraryBig, Loader2, Terminal } from "lucide-react";
 import { useState } from "react";
 
 const WORKSPACE_LAUNCH_TARGET_BRAND_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
@@ -288,11 +288,13 @@ export function UnsupportedWorkspaceFileLauncher({
 }
 
 export function WorkspaceFileOpenMenu({
+  onOpenInLibrary,
   targets,
   openingTargetId,
   onOpenTarget,
   testId = "workspace-file-open-menu",
 }: {
+  onOpenInLibrary?: () => void;
   targets: WorkspaceUnsupportedFileLaunchTarget[];
   openingTargetId: WorkspaceOpenTargetId | null;
   onOpenTarget: (target: WorkspaceUnsupportedFileLaunchTarget) => void;
@@ -318,6 +320,15 @@ export function WorkspaceFileOpenMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="center" sideOffset={8} className="w-60 whitespace-nowrap p-1">
+        {onOpenInLibrary ? (
+          <DropdownMenuItem
+            className="h-9 gap-2 rounded-[6px]"
+            onSelect={onOpenInLibrary}
+          >
+            <LibraryBig className="h-4 w-4" aria-hidden />
+            <span>Open in Library</span>
+          </DropdownMenuItem>
+        ) : null}
         {targets.map((target) => (
           <DropdownMenuItem
             key={target.id}

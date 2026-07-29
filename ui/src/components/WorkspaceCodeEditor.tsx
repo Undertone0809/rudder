@@ -1,3 +1,10 @@
+import {
+  CHAT_FILE_ANNOTATION_LOCATE_EVENT,
+  consumePendingChatFileAnnotationLocation,
+  readPendingChatFileAnnotationLocation,
+  type ChatFileAnnotationLocateDetail,
+} from "@/lib/chat-file-annotation-events";
+import { hashChatAnnotationSource } from "@/lib/chat-response-annotation-selection";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { python } from "@codemirror/lang-python";
@@ -20,9 +27,19 @@ type WorkspaceCodeLanguage =
 type WorkspaceCodeEditorProps = {
   "data-testid"?: string;
   ariaLabel?: string;
+  annotationSource?: {
+    surface: "workspace_file" | "local_file";
+    sourceFilePath: string;
+  };
   filePath: string | null;
   value: string;
   onChange?: (value: string) => void;
+  onSelectionChange?: (selection: {
+    start: number;
+    end: number;
+    selectedText: string;
+    anchorRect: Pick<DOMRect, "left" | "right" | "top" | "bottom" | "width" | "height">;
+  } | null) => void;
   readOnly?: boolean;
   scrollRef?: (element: HTMLDivElement | null) => void;
 };
@@ -161,22 +178,29 @@ export function isWorkspaceCodeFilePath(filePath: string | null) {
 export function WorkspaceCodeEditor({
   "data-testid": testId,
   ariaLabel = "Code editor",
+  annotationSource,
   filePath,
   value,
   onChange = ignoreWorkspaceCodeChange,
+  onSelectionChange,
   readOnly = false,
   scrollRef,
 }: WorkspaceCodeEditorProps) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const valueRef = useRef(value);
+  const applyingControlledValueRef = useRef(false);
   const onChangeRef = useRef(onChange);
+  const onSelectionChangeRef = useRef(onSelectionChange);
   const language = getWorkspaceCodeExtension(filePath);
   const languageExtension = useMemo(() => languageSupportFor(language), [language]);
 
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+  useEffect(() => {
+    onSelectionChangeRef.current = onSelectionChange;
+  }, [onSelectionChange]);
 
   useEffect(() => {
     valueRef.current = value;
@@ -184,10 +208,58 @@ export function WorkspaceCodeEditor({
     if (!view) return;
     const currentValue = view.state.doc.toString();
     if (currentValue === value) return;
-    view.dispatch({
-      changes: { from: 0, to: currentValue.length, insert: value },
-    });
+    applyingControlledValueRef.current = true;
+    try {
+      view.dispatch({
+        changes: { from: 0, to: currentValue.length, insert: value },
+      });
+    } finally {
+      applyingControlledValueRef.current = false;
+    }
   }, [value]);
+
+  useEffect(() => {
+    const handleLocation = (detail: ChatFileAnnotationLocateDetail | null) => {
+      const view = viewRef.current;
+      if (
+        !view
+        || !detail
+        || !annotationSource
+        || detail.sourceRenderMode !== "text"
+        || detail.surface !== annotationSource.surface
+        || detail.sourceFilePath !== annotationSource.sourceFilePath
+      ) return;
+      const currentValue = view.state.doc.toString();
+      void hashChatAnnotationSource(currentValue).then((sourceHash) => {
+        if (
+          sourceHash !== detail.sourceHash
+          || detail.start < 0
+          || detail.end <= detail.start
+          || detail.end > view.state.doc.length
+        ) return;
+        const canMeasureRange = !navigator.userAgent.toLowerCase().includes("jsdom")
+          && typeof document.createRange().getClientRects === "function";
+        if (canMeasureRange) {
+          view.dispatch({
+            selection: { anchor: detail.start, head: detail.end },
+            effects: EditorView.scrollIntoView(detail.start, { y: "center" }),
+          });
+          view.focus();
+        }
+        if (parentRef.current) {
+          parentRef.current.dataset.annotationLocationStart = String(detail.start);
+          parentRef.current.dataset.annotationLocationEnd = String(detail.end);
+        }
+        consumePendingChatFileAnnotationLocation(detail);
+      });
+    };
+    const listener = (event: Event) => {
+      handleLocation((event as CustomEvent<ChatFileAnnotationLocateDetail>).detail);
+    };
+    window.addEventListener(CHAT_FILE_ANNOTATION_LOCATE_EVENT, listener);
+    handleLocation(readPendingChatFileAnnotationLocation());
+    return () => window.removeEventListener(CHAT_FILE_ANNOTATION_LOCATE_EVENT, listener);
+  }, [annotationSource]);
 
   useEffect(() => {
     const parent = parentRef.current;
@@ -202,10 +274,43 @@ export function WorkspaceCodeEditor({
       EditorView.editable.of(!readOnly),
       EditorView.contentAttributes.of({ "aria-label": ariaLabel }),
       EditorView.updateListener.of((update) => {
-        if (!update.docChanged) return;
-        const nextValue = update.state.doc.toString();
-        valueRef.current = nextValue;
-        onChangeRef.current(nextValue);
+        if (update.docChanged) {
+          const nextValue = update.state.doc.toString();
+          valueRef.current = nextValue;
+          if (!applyingControlledValueRef.current) {
+            onChangeRef.current(nextValue);
+          }
+        }
+        if (update.selectionSet || update.focusChanged || update.docChanged) {
+          const selection = update.state.selection.main;
+          if (selection.empty || !update.view.hasFocus) {
+            onSelectionChangeRef.current?.(null);
+          } else {
+            const start = Math.min(selection.from, selection.to);
+            const end = Math.max(selection.from, selection.to);
+            const startRect = update.view.coordsAtPos(start);
+            const endRect = update.view.coordsAtPos(end);
+            if (startRect && endRect) {
+              const left = Math.min(startRect.left, endRect.left);
+              const right = Math.max(startRect.right, endRect.right);
+              const top = Math.min(startRect.top, endRect.top);
+              const bottom = Math.max(startRect.bottom, endRect.bottom);
+              onSelectionChangeRef.current?.({
+                start,
+                end,
+                selectedText: update.state.doc.sliceString(start, end),
+                anchorRect: {
+                  left,
+                  right,
+                  top,
+                  bottom,
+                  width: Math.max(1, right - left),
+                  height: Math.max(1, bottom - top),
+                },
+              });
+            }
+          }
+        }
       }),
     ];
     if (languageExtension) {

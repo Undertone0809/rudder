@@ -2,7 +2,17 @@ import { organizationsApi } from "@/api/orgs";
 
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
-import { WorkspaceFilePreview } from "@/components/WorkspaceFilePreview";
+import { WorkspaceCodeEditor } from "@/components/WorkspaceCodeEditor";
+import {
+  isWorkspaceCsvPreviewFile,
+  isWorkspaceHtmlPreviewFile,
+  WorkspaceFilePreview,
+} from "@/components/WorkspaceFilePreview";
+import { WorkspaceHtmlPreviewToolbar } from "@/components/WorkspaceHtmlPreview";
+import {
+  FileAnnotationSelectionToolbar,
+  type FileTextSelection,
+} from "@/components/chat/FileAnnotationSelectionToolbar";
 import { WorkspaceFileOpenMenu } from "@/components/workspaces/WorkspaceLaunchControls";
 import type { LiveSurfaceTarget } from "@/context/LiveSurfaceRuntimeContext";
 import { useToast } from "@/context/ToastContext";
@@ -10,7 +20,12 @@ import {
   readDesktopShell,
   type DesktopWorkspaceLaunchTarget,
 } from "@/lib/desktop-shell";
+import {
+  applyOrganizationPrefix,
+  extractOrganizationPrefixFromPath,
+} from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
+import { useLocation, useNavigate } from "@/lib/router";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import {
@@ -32,12 +47,14 @@ import {
   FileText,
   Folder,
   RotateCw,
+  Table2,
 } from "lucide-react";
 import {
   useCallback,
   useEffect,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 
 type LibraryTarget = Extract<
@@ -58,7 +75,7 @@ function fileLabel(path: string) {
   return path.split("/").filter(Boolean).at(-1) ?? path;
 }
 
-function editableMarkdownFile(file: OrganizationWorkspaceFileDetail) {
+function editableTextFile(file: OrganizationWorkspaceFileDetail) {
   if (
     file.truncated
     || file.previewKind !== "text"
@@ -66,15 +83,23 @@ function editableMarkdownFile(file: OrganizationWorkspaceFileDetail) {
   ) {
     return false;
   }
-  return /\.(?:md|markdown|mdown|mdx|text|txt)$/i.test(file.filePath);
+  return true;
 }
 
-function LibraryMarkdownEditor({
+function markdownFile(file: OrganizationWorkspaceFileDetail) {
+  return /\.(?:md|markdown|mdown|mdx)$/i.test(file.filePath);
+}
+
+function LibraryTextEditor({
+  annotationConversationId,
   file,
   organizationId,
+  sourceToolbar,
 }: {
+  annotationConversationId: string | null;
   file: OrganizationWorkspaceFileDetail;
   organizationId: string;
+  sourceToolbar?: ReactNode;
 }) {
   const queryClient = useQueryClient();
   const filePath = file.filePath;
@@ -106,6 +131,11 @@ function LibraryMarkdownEditor({
   const [errorMessage, setErrorMessage] = useState<string | null>(
     restoredDraft.conflicted ? LIBRARY_LIVE_SURFACE_CONFLICT : null,
   );
+  const annotationContainerRef = useRef<HTMLDivElement | null>(null);
+  const [codeSelection, setCodeSelection] = useState<FileTextSelection | null>(
+    null,
+  );
+  const markdown = markdownFile(file);
 
   draftContentRef.current = draft;
   latestServerContentRef.current = serverContent;
@@ -320,25 +350,73 @@ function LibraryMarkdownEditor({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col"
-      data-testid="library-live-surface-markdown-editor"
+      className="relative flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden"
+      data-testid={markdown
+        ? "library-live-surface-markdown-editor"
+        : "library-live-surface-text-editor"}
     >
-      <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-6 py-6">
-        <MarkdownEditor
-          key={filePath}
-          engine="milkdown"
-          value={draft}
-          onChange={(content) => {
-            draftContentRef.current = content;
-            setDraft(content);
-            setStatus(conflictRef.current ? "error" : "saving");
-            if (!conflictRef.current) setErrorMessage(null);
-          }}
-          bordered={false}
-          placeholder="Write in Markdown..."
-          contentClassName="rudder-library-document-editor min-h-[420px] text-[15px] leading-7 text-foreground"
-        />
+      {sourceToolbar}
+      <div
+        ref={annotationContainerRef}
+        className={cn(
+          "min-h-0 flex-1",
+          markdown
+            ? "scrollbar-auto-hide overflow-y-auto px-6 py-6"
+            : "overflow-hidden",
+        )}
+      >
+        {markdown ? (
+          <MarkdownEditor
+            key={filePath}
+            engine="milkdown"
+            value={draft}
+            onChange={(content) => {
+              draftContentRef.current = content;
+              setDraft(content);
+              setStatus(conflictRef.current ? "error" : "saving");
+              if (!conflictRef.current) setErrorMessage(null);
+            }}
+            bordered={false}
+            placeholder="Write in Markdown..."
+            contentClassName="rudder-library-document-editor min-h-[420px] text-[15px] leading-7 text-foreground"
+          />
+        ) : (
+          <WorkspaceCodeEditor
+            data-testid="library-live-surface-text-source-editor"
+            annotationSource={{
+              surface: "workspace_file",
+              sourceFilePath: filePath,
+            }}
+            ariaLabel={`${filePath} source editor`}
+            filePath={filePath}
+            value={draft}
+            onChange={(content) => {
+              draftContentRef.current = content;
+              setDraft(content);
+              setStatus(conflictRef.current ? "error" : "saving");
+              if (!conflictRef.current) setErrorMessage(null);
+            }}
+            onSelectionChange={setCodeSelection}
+          />
+        )}
       </div>
+      <FileAnnotationSelectionToolbar
+        containerRef={annotationContainerRef}
+        conversationId={annotationConversationId}
+        explicitSelection={markdown ? undefined : codeSelection}
+        saved={
+          status === "saved"
+          && !conflictRef.current
+          && draft === syncedContentRef.current
+        }
+        source={draft}
+        sourceIdentity={{
+          surface: "workspace_file",
+          sourceFilePath: filePath,
+          sourceLibraryEntryId: file.libraryEntryId,
+        }}
+        sourceRenderMode={markdown ? "markdown" : "text"}
+      />
       <div
         className={cn(
           "flex min-h-10 shrink-0 items-center gap-2 border-t border-border/70 px-4 text-xs",
@@ -401,24 +479,30 @@ function unavailable(message: string) {
 
 export function LibraryLiveSurface({
   active,
+  annotationConversationId = null,
   organizationId,
   surface,
   target,
   onOpenTarget,
 }: {
   active: boolean;
+  annotationConversationId?: string | null;
   organizationId: string;
   surface: "side_panel" | "workbench";
   target: LibraryTarget;
   onOpenTarget: (target: SidePanelTarget) => void;
 }) {
   const { pushToast } = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
   const desktopShell = readDesktopShell();
   const [launchTargets, setLaunchTargets] = useState<
     DesktopWorkspaceLaunchTarget[]
   >([]);
   const [openingTargetId, setOpeningTargetId] =
     useState<WorkspaceOpenTargetId | null>(null);
+  const [filePreviewMode, setFilePreviewMode] =
+    useState<"preview" | "source">("preview");
   const entryTarget = target.kind === "library_entry" ? target : null;
   const documentTarget = target.kind === "library_document" ? target : null;
   const directoryTarget = target.kind === "library_directory" ? target : null;
@@ -484,6 +568,13 @@ export function LibraryLiveSurface({
     refetchOnWindowFocus: false,
   });
   const file = fileQuery.data;
+  const previewFirstFile = file
+    ? isWorkspaceHtmlPreviewFile(file) || isWorkspaceCsvPreviewFile(file)
+    : false;
+
+  useEffect(() => {
+    setFilePreviewMode("preview");
+  }, [filePath]);
   const fileOpenTargets = workspaceUnsupportedFileLaunchTargets(
     launchTargets,
     {
@@ -608,20 +699,53 @@ export function LibraryLiveSurface({
     (target.kind === "library_file" || target.kind === "library_entry")
     && fileQuery.data
   ) {
-    content = editableMarkdownFile(fileQuery.data) ? (
-      <LibraryMarkdownEditor
+    content = editableTextFile(fileQuery.data)
+      && (!previewFirstFile || filePreviewMode === "source") ? (
+      <LibraryTextEditor
         key={fileQuery.data.filePath}
+        annotationConversationId={annotationConversationId}
         file={fileQuery.data}
         organizationId={organizationId}
+        sourceToolbar={isWorkspaceHtmlPreviewFile(fileQuery.data) ? (
+          <WorkspaceHtmlPreviewToolbar
+            viewMode="source"
+            onViewModeChange={setFilePreviewMode}
+            testIdPrefix="library-live-surface"
+          />
+        ) : isWorkspaceCsvPreviewFile(fileQuery.data) ? (
+          <div className="flex h-10 shrink-0 items-center justify-end border-b border-border px-3">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={() => setFilePreviewMode("preview")}
+              aria-label="Show table"
+            >
+              <Table2 className="h-3.5 w-3.5" aria-hidden />
+              Show table
+            </button>
+          </div>
+        ) : undefined}
       />
     ) : (
-      <div
-        className="min-h-0 flex-1 overflow-hidden"
-        data-testid="library-live-surface-file-preview"
-      >
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="library-live-surface-file-preview">
+        {isWorkspaceCsvPreviewFile(fileQuery.data) ? (
+          <div className="flex h-10 shrink-0 items-center justify-end border-b border-border px-3">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={() => setFilePreviewMode("source")}
+              aria-label="Show source"
+            >
+              <FileCode2 className="h-3.5 w-3.5" aria-hidden />
+              Show source
+            </button>
+          </div>
+        ) : null}
         <WorkspaceFilePreview
           file={fileQuery.data}
           organizationId={organizationId}
+          mode={filePreviewMode}
+          onModeChange={setFilePreviewMode}
           testIdPrefix="library-live-surface"
         />
       </div>
@@ -705,7 +829,7 @@ export function LibraryLiveSurface({
   return (
     <section
       aria-hidden={!active}
-      className="flex h-full min-h-0 flex-col bg-[color:var(--surface-panel)]"
+      className="flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden bg-[color:var(--surface-panel)]"
       data-active={active ? "true" : "false"}
       data-surface={surface}
       data-target-kind={target.kind}
@@ -724,6 +848,10 @@ export function LibraryLiveSurface({
               targets={fileOpenTargets}
               openingTargetId={openingTargetId}
               onOpenTarget={(nextTarget) => void openFileTarget(nextTarget)}
+              onOpenInLibrary={() => navigate(applyOrganizationPrefix(
+                `/library?path=${encodeURIComponent(file.filePath)}`,
+                extractOrganizationPrefixFromPath(location.pathname),
+              ))}
               testId="library-live-surface-file-open-menu"
             />
           </div>

@@ -322,6 +322,25 @@ export function sideChatService(db: Db) {
         const copiedAnnotations = chatInlineAnnotationsFromStructuredPayload(
           message.structuredPayload,
         ).map((annotation) => {
+          const copiedAnnotationAttachments = annotation.attachmentIds.map((attachmentId) => {
+            const sourceAttachment = sourceAttachmentById.get(attachmentId);
+            const copiedAttachmentId = copiedAttachmentIds.get(attachmentId);
+            if (
+              !sourceAttachment
+              || sourceAttachment.messageId !== message.id
+              || !copiedAttachmentId
+            ) {
+              throw unprocessable("Side Chat annotation attachment is not owned by its copied user message");
+            }
+            return copiedAttachmentId;
+          });
+          if (annotation.surface === "workspace_file" || annotation.surface === "local_file") {
+            return {
+              ...annotation,
+              sourceConversationId: child.id,
+              attachmentIds: copiedAnnotationAttachments,
+            };
+          }
           const sourceMessage = resolveAnnotationSource(annotation);
           const copiedSourceMessageId = sourceMessage
             ? copiedMessageIds.get(sourceMessage.id)
@@ -338,18 +357,7 @@ export function sideChatService(db: Db) {
             ...annotation,
             sourceConversationId: child.id,
             sourceMessageId: copiedSourceMessageId,
-            attachmentIds: annotation.attachmentIds.map((attachmentId) => {
-              const sourceAttachment = sourceAttachmentById.get(attachmentId);
-              const copiedAttachmentId = copiedAttachmentIds.get(attachmentId);
-              if (
-                !sourceAttachment
-                || sourceAttachment.messageId !== message.id
-                || !copiedAttachmentId
-              ) {
-                throw unprocessable("Side Chat annotation attachment is not owned by its copied user message");
-              }
-              return copiedAttachmentId;
-            }),
+            attachmentIds: copiedAnnotationAttachments,
           };
         });
         await tx.insert(chatMessages).values({

@@ -123,7 +123,17 @@ const SEMANTIC_LINE_BREAK_ELEMENTS = new Set([
   "TR",
 ]);
 
-function semanticVisibleText(node: Node): string {
+export type ChatAnnotationSemanticTextSpan = {
+  node: Text;
+  start: number;
+  end: number;
+};
+
+function semanticVisibleText(
+  node: Node,
+  spans?: ChatAnnotationSemanticTextSpan[],
+  cursor = { value: 0 },
+): string {
   if (
     node instanceof Element
     && (
@@ -133,28 +143,110 @@ function semanticVisibleText(node: Node): string {
   ) {
     return "";
   }
-  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
-  if (node instanceof HTMLBRElement) return "\n";
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node.textContent ?? "";
+    if (text && spans) {
+      spans.push({
+        node: node as Text,
+        start: cursor.value,
+        end: cursor.value + text.length,
+      });
+    }
+    cursor.value += text.length;
+    return text;
+  }
+  if (node instanceof HTMLBRElement) {
+    cursor.value += 1;
+    return "\n";
+  }
 
   const content = Array.from(node.childNodes)
-    .map((child) => semanticVisibleText(child))
+    .map((child) => semanticVisibleText(child, spans, cursor))
     .join("");
   if (
     node instanceof HTMLElement
     && SEMANTIC_LINE_BREAK_ELEMENTS.has(node.tagName)
     && content.length > 0
   ) {
+    cursor.value += 1;
     return `${content}\n`;
   }
   return content;
 }
 
-function textWithoutIgnoredContent(fragment: DocumentFragment | HTMLElement) {
+export function chatAnnotationSemanticText(fragment: DocumentFragment | HTMLElement) {
   const clone = fragment.cloneNode(true) as DocumentFragment | HTMLElement;
   return semanticVisibleText(clone).replace(/^\n+|\n+$/gu, "");
 }
 
-function textBeforeBoundary(root: HTMLElement, container: Node, offset: number) {
+export function chatAnnotationSemanticTextWithTrailingBreaks(
+  fragment: DocumentFragment | HTMLElement,
+) {
+  const clone = fragment.cloneNode(true) as DocumentFragment | HTMLElement;
+  return semanticVisibleText(clone).replace(/^\n+/gu, "");
+}
+
+export function chatAnnotationSemanticTextSpans(root: HTMLElement) {
+  const spans: ChatAnnotationSemanticTextSpan[] = [];
+  const rawText = semanticVisibleText(root, spans);
+  const leadingBreaks = rawText.match(/^\n+/u)?.[0].length ?? 0;
+  const semanticLength = rawText.replace(/^\n+|\n+$/gu, "").length;
+  return spans
+    .map((span) => ({
+      ...span,
+      start: span.start - leadingBreaks,
+      end: span.end - leadingBreaks,
+    }))
+    .filter((span) => span.end > 0 && span.start < semanticLength)
+    .map((span) => ({
+      ...span,
+      start: Math.max(0, span.start),
+      end: Math.min(semanticLength, span.end),
+    }));
+}
+
+export function chatAnnotationSemanticOffsetForBoundary(
+  root: HTMLElement,
+  container: Node,
+  offset: number,
+) {
+  const spans = chatAnnotationSemanticTextSpans(root);
+  if (container.nodeType === Node.TEXT_NODE) {
+    const span = spans.find((candidate) => candidate.node === container);
+    return span
+      ? Math.max(span.start, Math.min(span.end, span.start + offset))
+      : null;
+  }
+  if (!(container instanceof Element || container instanceof DocumentFragment)) {
+    return null;
+  }
+  const child = container.childNodes[offset] ?? null;
+  if (child) {
+    const next = spans.find((span) => child === span.node || child.contains(span.node));
+    if (next) return next.start;
+  }
+  const previous = offset > 0 ? container.childNodes[offset - 1] ?? null : null;
+  if (previous) {
+    const prior = [...spans].reverse()
+      .find((span) => previous === span.node || previous.contains(span.node));
+    if (prior) return prior.end;
+  }
+  if (container === root && offset === 0) return 0;
+  if (container === root && offset === root.childNodes.length) {
+    return chatAnnotationSemanticText(root).length;
+  }
+  return null;
+}
+
+export function chatAnnotationSemanticTextBeforeBoundary(
+  root: HTMLElement,
+  container: Node,
+  offset: number,
+) {
+  const semanticOffset = chatAnnotationSemanticOffsetForBoundary(root, container, offset);
+  if (semanticOffset !== null) {
+    return chatAnnotationSemanticText(root).slice(0, semanticOffset);
+  }
   const range = document.createRange();
   range.selectNodeContents(root);
   try {
@@ -162,11 +254,11 @@ function textBeforeBoundary(root: HTMLElement, container: Node, offset: number) 
   } catch {
     return null;
   }
-  return textWithoutIgnoredContent(range.cloneContents());
+  return chatAnnotationSemanticText(range.cloneContents());
 }
 
-function selectedTextFromRange(range: Range) {
-  return textWithoutIgnoredContent(range.cloneContents());
+export function chatAnnotationSemanticSelectedText(range: Range) {
+  return chatAnnotationSemanticText(range.cloneContents());
 }
 
 type SourceCharacterSpan = { start: number; end: number };
@@ -182,32 +274,102 @@ function decodedEntityAt(source: string, index: number) {
   return decoded.length === 1 ? { decoded, length: candidate.length } : null;
 }
 
-function renderedTextToSourceSpans(
+function markdownVisibleSourceMask(source: string) {
+  const visible = Array<boolean>(source.length).fill(true);
+  const hide = (start: number, end: number) => {
+    for (let index = start; index < end; index += 1) visible[index] = false;
+  };
+  for (const match of source.matchAll(/!?\[[^\]\n]*\]\[[^\]\n]*\]/gu)) {
+    const value = match[0];
+    const start = match.index;
+    const labelEnd = value.indexOf("]");
+    if (value.startsWith("!")) hide(start, start + value.length);
+    else {
+      hide(start, start + 1);
+      if (labelEnd >= 0) hide(start + labelEnd, start + value.length);
+    }
+  }
+  for (const match of source.matchAll(/!?\[[^\]\n]*\]\((?:\\.|[^)\n])*\)/gu)) {
+    const value = match[0];
+    const start = match.index;
+    const labelEnd = value.indexOf("]");
+    if (labelEnd >= 0) hide(start + labelEnd, start + value.length);
+    hide(start, start + (value.startsWith("!") ? 2 : 1));
+  }
+  for (const match of source.matchAll(/!\[[^\]\n]*\](?![\[(])/gu)) {
+    hide(match.index, match.index + match[0].length);
+  }
+  for (const match of source.matchAll(/^[\t ]*\[[^\]\n]+\]:[^\n]*$/gmu)) {
+    hide(match.index, match.index + match[0].length);
+  }
+  for (const match of source.matchAll(/<\/?[a-zA-Z][^>\n]*>/gu)) {
+    hide(match.index, match.index + match[0].length);
+  }
+  return visible;
+}
+
+export function chatAnnotationRenderedTextToSourceSpans(
   renderedText: string,
   source: string,
   sourceBase = 0,
 ) {
   const spans: SourceCharacterSpan[] = [];
+  const boundaryMap = createMarkdownSourceBoundaryMap(source, renderedText);
+  const visibleSource = markdownVisibleSourceMask(source);
   let sourceCursor = 0;
   for (let index = 0; index < renderedText.length; index += 1) {
     const character = renderedText[index]!;
-    let sourceIndex = source.indexOf(character, sourceCursor);
-    let sourceEnd = sourceIndex + 1;
+    const preferredSourceIndex = Math.max(
+      sourceCursor,
+      boundaryMap.renderedBoundaryToRaw[index + 1]! - 1,
+    );
+    let sourceIndex = -1;
+    let sourceEnd = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    const consider = (candidateStart: number, candidateEnd: number) => {
+      const distance = Math.abs(candidateStart - preferredSourceIndex);
+      if (
+        distance < bestDistance
+        || (
+          distance === bestDistance
+          && (
+            candidateStart > sourceIndex
+            || (candidateStart === sourceIndex && candidateEnd > sourceEnd)
+          )
+        )
+      ) {
+        sourceIndex = candidateStart;
+        sourceEnd = candidateEnd;
+        bestDistance = distance;
+      }
+    };
 
-    for (let entityIndex = source.indexOf("&", sourceCursor); entityIndex >= 0; entityIndex = source.indexOf("&", entityIndex + 1)) {
-      if (sourceIndex >= 0 && entityIndex > sourceIndex) break;
+    for (
+      let literalIndex = source.indexOf(character, sourceCursor);
+      literalIndex >= 0;
+      literalIndex = source.indexOf(character, literalIndex + 1)
+    ) {
+      if (visibleSource[literalIndex]) {
+        consider(literalIndex, literalIndex + 1);
+        if (literalIndex >= preferredSourceIndex) break;
+      }
+    }
+    for (
+      let entityIndex = source.indexOf("&", sourceCursor);
+      entityIndex >= 0;
+      entityIndex = source.indexOf("&", entityIndex + 1)
+    ) {
       const entity = decodedEntityAt(source, entityIndex);
-      if (!entity || entity.decoded !== character) continue;
-      sourceIndex = entityIndex;
-      sourceEnd = entityIndex + entity.length;
-      break;
+      if (visibleSource[entityIndex] && entity?.decoded === character) {
+        consider(entityIndex, entityIndex + entity.length);
+        if (entityIndex >= preferredSourceIndex) break;
+      }
     }
 
     if (sourceIndex < 0) {
-      const mapping = createMarkdownSourceBoundaryMap(source, renderedText);
       return Array.from({ length: renderedText.length }, (_, renderedIndex) => ({
-        start: sourceBase + mapping.renderedBoundaryToRaw[renderedIndex]!,
-        end: sourceBase + mapping.renderedBoundaryToRaw[renderedIndex + 1]!,
+        start: sourceBase + boundaryMap.renderedBoundaryToRaw[renderedIndex]!,
+        end: sourceBase + boundaryMap.renderedBoundaryToRaw[renderedIndex + 1]!,
       }));
     }
     spans.push({
@@ -309,8 +471,8 @@ function domBoundaryForSourceOffset(
     edge,
   );
   if (!candidate) return null;
-  const renderedText = textWithoutIgnoredContent(candidate.element);
-  const spans = renderedTextToSourceSpans(
+  const renderedText = chatAnnotationSemanticText(candidate.element);
+  const spans = chatAnnotationRenderedTextToSourceSpans(
     renderedText,
     source.slice(candidate.bounds.start, candidate.bounds.end),
     candidate.bounds.start,
@@ -408,10 +570,10 @@ function sourceOffsetForBoundary(
   if (!sourceElement) return null;
   const bounds = sourceBoundsForElement(sourceElement, source.length);
   if (!bounds) return null;
-  const renderedBefore = textBeforeBoundary(sourceElement, container, offset);
+  const renderedBefore = chatAnnotationSemanticTextBeforeBoundary(sourceElement, container, offset);
   if (renderedBefore === null) return null;
-  const renderedText = textWithoutIgnoredContent(sourceElement);
-  const spans = renderedTextToSourceSpans(
+  const renderedText = chatAnnotationSemanticText(sourceElement);
+  const spans = chatAnnotationRenderedTextToSourceSpans(
     renderedText,
     source.slice(bounds.start, bounds.end),
     bounds.start,
@@ -456,9 +618,13 @@ export function resolveChatAnnotationRange(
     if (!startBlock || startBlock !== endBlock) return null;
   }
 
-  const selectedText = selectedTextFromRange(range);
+  const selectedText = chatAnnotationSemanticSelectedText(range);
   if (!selectedText) return null;
-  const beforeSelection = textBeforeBoundary(sourceRoot, range.startContainer, range.startOffset);
+  const beforeSelection = chatAnnotationSemanticTextBeforeBoundary(
+    sourceRoot,
+    range.startContainer,
+    range.startOffset,
+  );
   if (beforeSelection === null) return null;
   const elementStart = sourceOffsetForBoundary(
     sourceRoot,
@@ -477,8 +643,8 @@ export function resolveChatAnnotationRange(
   let start = elementStart ?? undefined;
   let end = elementEnd ?? undefined;
   if (start === undefined || end === undefined) {
-    const renderedText = textWithoutIgnoredContent(sourceRoot);
-    const renderedSpans = renderedTextToSourceSpans(renderedText, input.source);
+    const renderedText = chatAnnotationSemanticText(sourceRoot);
+    const renderedSpans = chatAnnotationRenderedTextToSourceSpans(renderedText, input.source);
     if (!renderedSpans) return null;
     const renderedStart = beforeSelection.length;
     const renderedEnd = renderedStart + selectedText.length;

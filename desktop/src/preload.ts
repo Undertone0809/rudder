@@ -221,6 +221,11 @@ contextBridge.exposeInMainWorld("desktopShell", {
   openPath: (targetPath: string) => ipcRenderer.invoke("desktop:open-path", targetPath),
   previewLocalFile: (targetPath: string) =>
     ipcRenderer.invoke("desktop:preview-local-file", targetPath) as Promise<DesktopLocalFilePreview>,
+  updateLocalFile: (
+    targetPath: string,
+    input: { content: string; expectedContent: string; writeCapability: string },
+  ) =>
+    ipcRenderer.invoke("desktop:update-local-file", targetPath, input) as Promise<DesktopLocalFilePreview>,
   listAvailableIdes: () => ipcRenderer.invoke("desktop:list-available-ides") as Promise<DesktopIdeTarget[]>,
   listWorkspaceLaunchTargets: () =>
     ipcRenderer.invoke("desktop:list-workspace-launch-targets") as Promise<DesktopWorkspaceLaunchTarget[]>,
@@ -428,6 +433,10 @@ declare global {
       onBootState(listener: (state: BootState) => void): () => void;
       openPath(targetPath: string): Promise<void>;
       previewLocalFile(targetPath: string): Promise<DesktopLocalFilePreview>;
+      updateLocalFile(
+        targetPath: string,
+        input: { content: string; expectedContent: string; writeCapability: string },
+      ): Promise<DesktopLocalFilePreview>;
       listAvailableIdes(): Promise<DesktopIdeTarget[]>;
       listWorkspaceLaunchTargets(): Promise<DesktopWorkspaceLaunchTarget[]>;
       openWorkspace(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;

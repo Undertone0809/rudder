@@ -6,6 +6,10 @@ import { issuesApi } from "@/api/issues";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
 import { AgentIcon } from "@/components/AgentIconPicker";
+import {
+  FileAnnotationSelectionToolbar,
+  type FileTextSelection,
+} from "@/components/chat/FileAnnotationSelectionToolbar";
 import { CommentThread } from "@/components/CommentThread";
 import { InlineEditor } from "@/components/InlineEditor";
 import { IssueProperties } from "@/components/IssueProperties";
@@ -31,6 +35,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { BrowserLiveSurface } from "@/components/workbench/BrowserLiveSurface";
+import { WorkspaceCodeEditor } from "@/components/WorkspaceCodeEditor";
 import {
   isWorkspaceCsvPreviewFile,
   isWorkspaceHtmlPreviewFile,
@@ -38,6 +43,7 @@ import {
   WorkspaceFilePreview,
   type WorkspaceFilePreviewMode,
 } from "@/components/WorkspaceFilePreview";
+import { WorkspaceHtmlPreviewToolbar } from "@/components/WorkspaceHtmlPreview";
 import { WorkspaceLaunchTargetIcon } from "@/components/workspaces/WorkspaceLaunchControls";
 import {
   createLiveSurfaceRuntimeId,
@@ -52,7 +58,9 @@ import { useToast } from "@/context/ToastContext";
 import { useBrowserSavedViewMetadataPersister } from "@/hooks/useBrowserSavedViewMetadataPersister";
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import { createBrowserSidePanelTarget as createChatSidePanelBrowserTarget } from "@/lib/browser-side-panel";
+import { requestChatFileAnnotationLocation } from "@/lib/chat-file-annotation-events";
 import { createChatResponseAnnotationNavigationState } from "@/lib/chat-response-annotation-navigation";
+import { hashChatAnnotationSource } from "@/lib/chat-response-annotation-selection";
 import { readDesktopShell, type DesktopFileLaunchTargetId, type DesktopWorkspaceLaunchTarget } from "@/lib/desktop-shell";
 import { IssueProposalSidePanelContent } from "@/lib/issue-proposal-side-panel-registry";
 import { MAIN_WORKBENCH_BROWSER_CAPACITY } from "@/lib/main-workbench-state";
@@ -129,6 +137,7 @@ import {
   useState,
   type ReactElement,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { AutomationDetail } from "./AutomationDetail";
@@ -880,12 +889,18 @@ function ChatSidePanelLibraryTreeNode({
   );
 }
 
-function ChatSidePanelMarkdownFileEditor({
+function ChatSidePanelTextFileEditor({
   libraryFile,
   organizationId,
+  sourceConversationId,
+  markdown,
+  sourceToolbar,
 }: {
   libraryFile: OrganizationWorkspaceFileDetail;
   organizationId: string;
+  sourceConversationId: string | null;
+  markdown: boolean;
+  sourceToolbar?: ReactNode;
 }) {
   const queryClient = useQueryClient();
   const filePath = libraryFile.filePath;
@@ -896,6 +911,8 @@ function ChatSidePanelMarkdownFileEditor({
   }
   const restoredDraft = restoredDraftRef.current;
   const editorRef = useRef<MarkdownEditorRef>(null);
+  const annotationContainerRef = useRef<HTMLDivElement | null>(null);
+  const [codeSelection, setCodeSelection] = useState<FileTextSelection | null>(null);
   const syncedContentRef = useRef(restoredDraft.baseContent);
   const latestServerContentRef = useRef(serverContent);
   const draftContentRef = useRef(restoredDraft.content);
@@ -1127,7 +1144,9 @@ function ChatSidePanelMarkdownFileEditor({
     enqueueSave(draftContentRef.current);
   };
 
-  const markdownParts = splitChatSidePanelYamlFrontmatter(draftContent);
+  const markdownParts = markdown
+    ? splitChatSidePanelYamlFrontmatter(draftContent)
+    : { frontmatter: null, separator: "", body: draftContent };
   const wordCount = countChatSidePanelMarkdownWords(markdownParts.body);
   const canUndo = editorRef.current?.canUndo?.() ?? false;
   const canRedo = editorRef.current?.canRedo?.() ?? false;
@@ -1135,46 +1154,86 @@ function ChatSidePanelMarkdownFileEditor({
   return (
     <div
       className="relative flex min-h-0 flex-1 flex-col"
-      data-testid="chat-side-panel-library-markdown-editor"
+      data-testid={markdown
+        ? "chat-side-panel-library-markdown-editor"
+        : "chat-side-panel-library-text-editor"}
     >
-      <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 pb-20 pt-5">
-        {markdownParts.frontmatter !== null ? (
-          <details
-            className="group mb-6 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-page)]"
-            data-testid="chat-side-panel-library-frontmatter-editor"
-          >
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
-              <span>Frontmatter</span>
-              <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
-            </summary>
-            <textarea
-              value={markdownParts.frontmatter}
-              onChange={(event) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
-                event.currentTarget.value,
-                markdownParts.separator,
-                markdownParts.body,
-              ))}
-              spellCheck={false}
-              className="block min-h-28 w-full resize-y border-t border-[color:var(--border-soft)] bg-transparent px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none"
-              aria-label="Frontmatter"
-            />
-          </details>
-        ) : null}
-        <MarkdownEditor
-          ref={editorRef}
-          key={filePath}
-          engine="milkdown"
-          value={markdownParts.body}
-          onChange={(body) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
-            markdownParts.frontmatter,
-            markdownParts.separator,
-            body,
-          ))}
-          bordered={false}
-          placeholder="Write in Markdown..."
-          contentClassName="rudder-library-document-editor rudder-side-panel-library-document min-h-[420px] text-[15px] leading-7 text-foreground"
-        />
-      </div>
+      {sourceToolbar}
+      {markdown ? (
+        <div ref={annotationContainerRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-5 pb-20 pt-5">
+          {markdownParts.frontmatter !== null ? (
+            <details
+              className="group mb-6 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-page)]"
+              data-chat-annotation-ignore
+              data-testid="chat-side-panel-library-frontmatter-editor"
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+                <span>Frontmatter</span>
+                <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+              </summary>
+              <textarea
+                value={markdownParts.frontmatter}
+                onChange={(event) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
+                  event.currentTarget.value,
+                  markdownParts.separator,
+                  markdownParts.body,
+                ))}
+                spellCheck={false}
+                className="block min-h-28 w-full resize-y border-t border-[color:var(--border-soft)] bg-transparent px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none"
+                aria-label="Frontmatter"
+              />
+            </details>
+          ) : null}
+          <MarkdownEditor
+            ref={editorRef}
+            key={filePath}
+            engine="milkdown"
+            value={markdownParts.body}
+            onChange={(body) => handleDraftChange(joinChatSidePanelYamlFrontmatter(
+              markdownParts.frontmatter,
+              markdownParts.separator,
+              body,
+            ))}
+            bordered={false}
+            placeholder="Write in Markdown..."
+            contentClassName="rudder-library-document-editor rudder-side-panel-library-document min-h-[420px] text-[15px] leading-7 text-foreground"
+          />
+        </div>
+      ) : (
+        <div ref={annotationContainerRef} className="min-h-0 flex-1 pb-14">
+          <WorkspaceCodeEditor
+            data-testid="chat-side-panel-library-text-source-editor"
+            annotationSource={{
+              surface: "workspace_file",
+              sourceFilePath: filePath,
+            }}
+            ariaLabel={`${filePath || "Library file"} source editor`}
+            filePath={filePath}
+            value={draftContent}
+            onChange={handleDraftChange}
+            onSelectionChange={setCodeSelection}
+          />
+        </div>
+      )}
+      <FileAnnotationSelectionToolbar
+        containerRef={annotationContainerRef}
+        conversationId={sourceConversationId}
+        explicitSelection={markdown ? undefined : codeSelection}
+        saved={
+          saveStatus === "saved"
+          && !saveConflict
+          && draftContent === syncedContentRef.current
+        }
+        source={draftContent}
+        sourceIdentity={{
+          surface: "workspace_file",
+          sourceFilePath: filePath,
+          sourceLibraryEntryId: libraryFile.libraryEntryId,
+        }}
+        sourceRenderMode={markdown ? "markdown" : "text"}
+        renderedSource={markdown ? markdownParts.body : draftContent}
+        renderedSourceOffset={markdown ? draftContent.length - markdownParts.body.length : 0}
+      />
 
       <div className="pointer-events-none absolute inset-x-3 bottom-3 flex min-w-0 items-end justify-between gap-3">
         <div
@@ -1221,7 +1280,7 @@ function ChatSidePanelMarkdownFileEditor({
           ) : null}
         </div>
 
-        <TooltipProvider delayDuration={120}>
+        {markdown ? <TooltipProvider delayDuration={120}>
           <div
             className="pointer-events-auto flex shrink-0 items-center rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] p-0.5 shadow-sm"
             data-testid="chat-side-panel-library-history-controls"
@@ -1261,7 +1320,7 @@ function ChatSidePanelMarkdownFileEditor({
               <TooltipContent side="top">Redo</TooltipContent>
             </Tooltip>
           </div>
-        </TooltipProvider>
+        </TooltipProvider> : null}
       </div>
     </div>
   );
@@ -1270,9 +1329,11 @@ function ChatSidePanelMarkdownFileEditor({
 function ChatSidePanelLibraryFileView({
   libraryFile,
   organizationId,
+  sourceConversationId,
 }: {
   libraryFile: OrganizationWorkspaceFileDetail;
   organizationId: string;
+  sourceConversationId: string | null;
 }) {
   const { pushToast } = useToast();
   const { selectedOrganization } = useOrganization();
@@ -1281,6 +1342,9 @@ function ChatSidePanelLibraryFileView({
   const html = isWorkspaceHtmlPreviewFile(libraryFile); const media = libraryFile.previewKind === "video" || libraryFile.previewKind === "audio";
   const csv = isWorkspaceCsvPreviewFile(libraryFile);
   const markdown = isWorkspaceMarkdownPreviewFile(libraryFile);
+  const editableText = libraryFile.previewKind === "text"
+    && libraryFile.content !== null
+    && !libraryFile.truncated;
   const [previewMode, setPreviewMode] = useState<WorkspaceFilePreviewMode>("preview");
   const pathSegments = libraryFile.filePath.split("/").filter(Boolean);
   const visiblePathSegments = pathSegments.length > 3
@@ -1477,11 +1541,29 @@ function ChatSidePanelLibraryFileView({
           </div>
         ) : null}
       </div>
-      {markdown && !libraryFile.truncated ? (
-        <ChatSidePanelMarkdownFileEditor
+      {editableText && (
+        markdown
+        || (!html && !csv)
+        || previewMode === "source"
+      ) ? (
+        <ChatSidePanelTextFileEditor
           key={`${organizationId}:${libraryFile.filePath}`}
           libraryFile={libraryFile}
           organizationId={organizationId}
+          sourceConversationId={sourceConversationId}
+          markdown={markdown}
+          sourceToolbar={html ? (
+            <WorkspaceHtmlPreviewToolbar
+              viewMode="source"
+              onViewModeChange={setPreviewMode}
+              openAction={(
+                <div className="shrink-0" data-testid="chat-side-panel-library-open-in">
+                  {openInMenu}
+                </div>
+              )}
+              testIdPrefix="chat-side-panel-library"
+            />
+          ) : undefined}
         />
       ) : (
         <>
@@ -1656,6 +1738,80 @@ export function ChatSidePanel({
     annotation: ChatInlineAnnotation,
     ordinal: number,
   ) => {
+    if (annotation.surface === "workspace_file" || annotation.surface === "local_file") {
+      void (async () => {
+        try {
+          let resolvedPath = annotation.sourceFilePath;
+          let source: string | null;
+          if (annotation.surface === "workspace_file") {
+            if (!selectedOrganizationId) throw new Error("No organization selected");
+            if (annotation.sourceLibraryEntryId) {
+              const entry = await organizationsApi.getLibraryEntry(
+                selectedOrganizationId,
+                annotation.sourceLibraryEntryId,
+              );
+              if (entry.status !== "active" || !entry.currentPath) {
+                throw new Error("Library source is unavailable");
+              }
+              resolvedPath = entry.currentPath;
+            }
+            source = (
+              await organizationsApi.readWorkspaceFile(
+                selectedOrganizationId,
+                resolvedPath,
+              )
+            ).content;
+          } else {
+            const desktopShell = readDesktopShell();
+            if (!desktopShell) throw new Error("Desktop file access is unavailable");
+            source = (await desktopShell.previewLocalFile(resolvedPath)).content;
+          }
+          if (
+            source === null
+            || await hashChatAnnotationSource(source) !== annotation.sourceHash
+            || source.slice(
+              Math.max(0, annotation.start - annotation.prefix.length),
+              annotation.start,
+            ) !== annotation.prefix
+            || source.slice(
+              annotation.end,
+              annotation.end + annotation.suffix.length,
+            ) !== annotation.suffix
+          ) {
+            throw new Error("Annotation source changed");
+          }
+          const label = resolvedPath.split(/[\\/]/u).filter(Boolean).at(-1)
+            ?? resolvedPath;
+          requestChatFileAnnotationLocation({
+            surface: annotation.surface,
+            sourceFilePath: resolvedPath,
+            sourceHash: annotation.sourceHash,
+            sourceRenderMode: annotation.sourceRenderMode,
+            start: annotation.start,
+            end: annotation.end,
+          });
+          sidePanel.openTarget(
+            annotation.surface === "workspace_file"
+              ? annotation.sourceLibraryEntryId
+                ? {
+                    kind: "library_entry",
+                    entryId: annotation.sourceLibraryEntryId,
+                    path: resolvedPath,
+                    label,
+                  }
+                : { kind: "library_file", filePath: resolvedPath, label }
+              : { kind: "local_file", filePath: resolvedPath, label },
+          );
+        } catch {
+          pushToast({
+            title: "Source is no longer available",
+            body: "The file was changed, moved without a Library identity, or deleted.",
+            tone: "error",
+          });
+        }
+      })();
+      return;
+    }
     sidePanel.hidePanel();
     navigate(
       {
@@ -1666,7 +1822,7 @@ export function ChatSidePanel({
         state: createChatResponseAnnotationNavigationState(annotation, ordinal),
       },
     );
-  }, [navigate, sidePanel]);
+  }, [navigate, pushToast, selectedOrganizationId, sidePanel]);
 
   const visibleTabs = sidePanel.tabs;
   const browserTargets = useMemo(
@@ -2308,11 +2464,11 @@ export function ChatSidePanel({
         </div>
       </div>
       <div className={cn(
-        "workspace-tab-content-card workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]",
+        "workspace-tab-content-card workspace-main-card flex min-h-0 min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]",
         isMobile && "!bg-[color:var(--surface-page)]",
       )}>
         <div className={cn(
-          "scrollbar-auto-hide min-h-0 flex-1",
+          "scrollbar-auto-hide min-h-0 min-w-0 max-w-full flex-1",
           activeLiveSurfaceTarget || localAppsTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || subagentsTarget || subagentTarget ? "overflow-hidden" : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
         )} data-testid="chat-side-panel-scroll-body">
@@ -2329,6 +2485,7 @@ export function ChatSidePanel({
                 key={runtimeId}
                 active={active}
                 callbacks={{
+                  annotationConversationId: sourceConversationId,
                   canOpenNewTab: canOpenNewBrowserGuest,
                   onCloseTarget: (nextTarget) => {
                     void closeSidePanelTab(nextTarget);
@@ -2341,7 +2498,7 @@ export function ChatSidePanel({
                     replaceSidePanelTarget(targetKey, nextTarget)
                   ),
                 }}
-                className={cn("h-full min-h-0", active ? "block" : "hidden")}
+                className={cn("h-full min-h-0 min-w-0 max-w-full", active ? "block" : "hidden")}
                 hostId={ownerId}
                 ownerId={ownerId}
                 runtimeId={runtimeId}
@@ -2474,12 +2631,14 @@ export function ChatSidePanel({
               key={libraryFile.filePath}
               libraryFile={libraryFile}
               organizationId={selectedOrganizationId}
+              sourceConversationId={sourceConversationId}
             />
           ) : localFileTarget ? (
             <TranscriptLocalFilePreview
               key={localFileTarget.filePath}
               targetPath={localFileTarget.filePath}
               label={localFileTarget.label}
+              sourceConversationId={sourceConversationId}
             />
           ) : organizationSkillFileTarget && organizationSkillFile ? (
             <ChatSidePanelSkillFileView
