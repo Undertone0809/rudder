@@ -110,7 +110,7 @@ test.describe("Cost trend chart", () => {
     await expect(agentDistribution).toBeVisible();
     await expect(projectDistribution).toBeVisible();
     await expect(projectDistribution.getByText("Cost Visibility")).toBeVisible();
-    await expect(projectDistribution.getByText("Unattributed", { exact: true })).toBeVisible();
+    await expect(projectDistribution.getByText("No project", { exact: true })).toBeVisible();
     await projectDistribution.getByRole("button", { name: "Cost" }).click();
     await expect(projectDistribution.getByText("$6.90")).toBeVisible();
 

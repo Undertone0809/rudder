@@ -331,7 +331,7 @@ function trendAgentLabel(row: CostByAgent): string {
 }
 
 function trendProjectLabel(row: CostByProject): string {
-  return row.projectName ?? row.projectId ?? "Unattributed";
+  return row.projectName ?? row.projectId ?? "No project";
 }
 
 export function CostTrendChart({
@@ -1169,8 +1169,8 @@ export function Costs() {
   );
   const projectDistributionRows = useMemo<DistributionDatum[]>(
     () => (spendData?.byProject ?? []).map((row) => ({
-      id: row.projectId ?? "unattributed",
-      label: row.projectName ?? "Unattributed",
+      id: row.projectId ?? "no-project",
+      label: row.projectName ?? "No project",
       tokens: summarizeTokenUsage(row).totalTokens,
       costCents: row.costCents,
     })),
@@ -1343,7 +1343,7 @@ export function Costs() {
                 />
                 <DistributionPanel
                   title="Project distribution"
-                  description="Usage by project, including unattributed events."
+                  description="Usage by project, including events with no project."
                   rows={projectDistributionRows}
                 />
               </div>
