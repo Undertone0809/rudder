@@ -34,6 +34,15 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
 
+      - name: Require dispatch ref to match exact source
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          DISPATCH_REF_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$DISPATCH_REF_SHA" = "$SOURCE_SHA"
+
       - name: Architecture audit tests
         run: node --test scripts/architecture-audit.test.mjs scripts/architecture-boundaries.test.mjs
 
