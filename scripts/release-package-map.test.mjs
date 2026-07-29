@@ -48,6 +48,24 @@ function createPackageMapRepo() {
   return { repo, packagePath };
 }
 
+function addPrivateWorkspaceDependency(repo, packagePath) {
+  const privatePackageDir = join(repo, "packages", "identity-core");
+  mkdirSync(privatePackageDir, { recursive: true });
+  writeJson(join(privatePackageDir, "package.json"), {
+    name: "@rudderhq/identity-core",
+    version: "0.0.0",
+    private: true,
+  });
+
+  const pkg = readJson(packagePath);
+  writeJson(packagePath, {
+    ...pkg,
+    dependencies: {
+      "@rudderhq/identity-core": "workspace:*",
+    },
+  });
+}
+
 function runPackageMap(repo, args) {
   return spawnSync("node", ["scripts/release-package-map.mjs", ...args], {
     cwd: repo,
@@ -62,6 +80,18 @@ afterEach(() => {
 });
 
 describe("release package map", () => {
+  it("rejects public packages that depend on private workspace packages", () => {
+    const { repo, packagePath } = createPackageMapRepo();
+    addPrivateWorkspaceDependency(repo, packagePath);
+
+    const result = runPackageMap(repo, ["list"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "public package @rudderhq/shared depends on private workspace package @rudderhq/identity-core",
+    );
+  });
+
   it("refuses publish manifest rewrites unless release automation opts in", () => {
     const { repo, packagePath } = createPackageMapRepo();
     const before = readFileSync(packagePath, "utf8");

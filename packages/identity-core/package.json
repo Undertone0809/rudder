@@ -1,15 +1,34 @@
 {
   "name": "@rudderhq/identity-core",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.6.6",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://github.com/Undertone0809/rudder",
+  "bugs": {
+    "url": "https://github.com/Undertone0809/rudder/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Undertone0809/rudder",
+    "directory": "packages/identity-core"
+  },
   "type": "module",
   "exports": {
-    ".": {
-      "development": "./src/index.ts",
-      "types": "./src/index.ts",
-      "default": "./dist/index.js"
-    }
+    ".": "./src/index.ts"
   },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",

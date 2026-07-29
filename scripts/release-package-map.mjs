@@ -16,7 +16,7 @@ function writeJson(filePath, value) {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function discoverPublicPackages() {
+function discoverWorkspacePackages() {
   const packages = [];
 
   function walk(relDir) {
@@ -26,15 +26,13 @@ function discoverPublicPackages() {
     const pkgPath = join(absDir, "package.json");
     if (existsSync(pkgPath)) {
       const pkg = readJson(pkgPath);
-      if (!pkg.private) {
-        packages.push({
-          dir: relDir,
-          pkgPath,
-          name: pkg.name,
-          version: pkg.version,
-          pkg,
-        });
-      }
+      packages.push({
+        dir: relDir,
+        pkgPath,
+        name: pkg.name,
+        version: pkg.version,
+        pkg,
+      });
       return;
     }
 
@@ -50,6 +48,34 @@ function discoverPublicPackages() {
   }
 
   return packages;
+}
+
+function discoverPublicPackages() {
+  const workspacePackages = discoverWorkspacePackages();
+  const privatePackageNames = new Set(
+    workspacePackages.filter((pkg) => pkg.pkg.private).map((pkg) => pkg.name),
+  );
+  const publicPackages = workspacePackages.filter((pkg) => !pkg.pkg.private);
+
+  for (const pkg of publicPackages) {
+    const dependencySections = [
+      pkg.pkg.dependencies ?? {},
+      pkg.pkg.optionalDependencies ?? {},
+      pkg.pkg.peerDependencies ?? {},
+    ];
+
+    for (const deps of dependencySections) {
+      for (const depName of Object.keys(deps)) {
+        if (privatePackageNames.has(depName)) {
+          throw new Error(
+            `public package ${pkg.name} depends on private workspace package ${depName}`,
+          );
+        }
+      }
+    }
+  }
+
+  return publicPackages;
 }
 
 function sortTopologically(packages) {
