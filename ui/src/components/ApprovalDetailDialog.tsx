@@ -21,7 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AgentIdentity } from "./AgentAvatar";
-import { ApprovalInset, ApprovalPanel } from "./approval-ui";
+import { ApprovalInset } from "./approval-ui";
 import {
   approvalLabel,
   ApprovalPayloadRenderer,
@@ -283,7 +283,7 @@ export function ApprovalDetailDialog({
                   </div>
                 ) : null}
 
-                <ApprovalPanel className="space-y-4">
+                <div className="space-y-4" data-testid="approval-detail-content">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex min-w-0 items-start gap-3">
                       <TypeIcon className="h-5 w-5 shrink-0 text-muted-foreground" />
@@ -460,7 +460,7 @@ export function ApprovalDetailDialog({
                       </Button>
                     ) : null}
                   </div>
-                </ApprovalPanel>
+                </div>
 
               </div>
             )}

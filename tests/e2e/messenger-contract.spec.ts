@@ -3251,6 +3251,10 @@ test.describe("Messenger unified threads contract", () => {
     await expect(dialog.getByText("Comments (10)")).toHaveCount(0);
     await expect(dialog.getByText("Scrollable approval comment 1", { exact: false })).toHaveCount(0);
     await expect(dialog.getByPlaceholder("Add a comment...")).toHaveCount(0);
+    const approvalContent = dialog.getByTestId("approval-detail-content");
+    await expect(approvalContent).not.toHaveClass(/surface-panel/);
+    await expect(approvalContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(approvalContent).toHaveCSS("padding-left", "0px");
     await expect(dialog).toBeInViewport();
     await expect(dialog.getByRole("button", { name: "Request changes" })).toBeInViewport();
     await expect(page.getByTestId("approval-decision-note")).toBeVisible();
